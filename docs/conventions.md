@@ -324,6 +324,15 @@ The shape that comes out of `/documents` and the shape the indexer consumes are 
 - Canonical mapper: `packages/gateway/src/data/document-mappers.ts`
 - DTO doc: `packages/gateway/src/http/dto/document-dto.ts`
 
+Sources that combine independent entries into one document can declare
+`metadata.extra.chunkBoundaries`: strictly increasing UTF-16 start offsets,
+beginning at zero, into the literal stored body. The final section ends at the
+body's length. The indexer normalizes and chunks each section independently,
+without merging or carrying overlap between sections. Include these boundaries
+in the source's content hash so boundary changes invalidate embeddings even when
+the rendered text is identical. Invalid boundaries fall back to ordinary
+document-type chunking.
+
 ### Typed worker dispatch + typed WS message registry
 
 The writer/compute worker protocol uses a typed dispatch table derived from `WRITE_OP_DEFS` / `COMPUTE_OP_DEFS` rather than `{op: string; args: unknown[]}`. A handler that isn't registered is a compile error, not a runtime "op not found". Same shape for the WebSocket message contract: `WsMessageRegistry` is a type-level map keyed by message type with payload + response + event schemas, all zod-validated. `PROTOCOL_VERSION` in the hello frame is bumped whenever the registry changes shape.

@@ -217,6 +217,33 @@ function makeDoc(id: string, content = "Hello world"): IndexableDocument {
 
 describe("Indexer", () => {
   test.each(["indexUpdated", "reindexMissing"] as const)(
+    "%s keeps explicit section offsets intact until each body is normalized",
+    async (method) => {
+      const first = "## 09:00\n\nTelescope\u200b workshop.\n\n\n\n";
+      const second = "## 10:00\n\nWater the plants.";
+      const doc = makeDoc("sections", first + second);
+      doc.metadata.extra = { chunkBoundaries: [0, first.length] };
+      source.documents = [doc];
+      source.allIds = [doc.id];
+      const embedded: string[] = [];
+      const originalEmbed = embedder.embed.bind(embedder);
+      vi.spyOn(embedder, "embed").mockImplementation(async (texts) => {
+        embedded.push(...texts);
+        return originalEmbed(texts);
+      });
+      const result = await indexer[method]();
+      expect(result.errors).toBe(0);
+      expect(getChunkCount(db)).toBe(2);
+      expect(embedded).toHaveLength(2);
+      expect(embedded[0]).toContain("Telescope workshop.");
+      expect(embedded[0]).not.toContain("Water");
+      expect(embedded[1]).toContain(second);
+      expect(embedded[1]).not.toContain("Telescope");
+      expect(embedded.join("")).not.toContain("\u200b");
+    },
+  );
+
+  test.each(["indexUpdated", "reindexMissing"] as const)(
     "%s normalizes structured bodies before refencing without invalidating offsets",
     async (method) => {
       const rendered = renderConversationDay({

@@ -326,8 +326,9 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
 
 /**
  * Days whose ledger and projection disagree: ledger days with no
- * projected document, plus projected documents whose ledger days are
- * empty. Both converge through one `runUpsert` per day.
+ * projected document, projected documents whose ledger days are empty,
+ * and projections missing the entry boundaries used for indexing.
+ * Each converges through one `runUpsert` per day.
  */
 function daysToReconcile(db: Database.Database, vocabularyEnabled = false): string[] {
   const unprojected = db
@@ -345,6 +346,16 @@ function daysToReconcile(db: Database.Database, vocabularyEnabled = false): stri
          AND external_id NOT IN (SELECT DISTINCT day FROM note_entries)`,
     )
     .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID);
+  // Persist explicit entry boundaries through the acknowledged projection path.
+  // The boundary-aware content hash makes the indexer refresh these documents;
+  // failed writes remain eligible at the next boot.
+  const unbounded = db
+    .prepare<[string, string], { day: string }>(
+      `SELECT external_id AS day FROM documents
+       WHERE provider_id = ? AND source_id = ?
+         AND json_extract(metadata, '$.extra.chunkBoundaries') IS NULL`,
+    )
+    .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID);
   // Source-owned metadata-only enrollment: old day projections had no safe
   // written-text view. Persist it once through the normal acknowledged write
   // path; failed writes remain eligible at the next boot. Enabling mid-run
@@ -358,5 +369,5 @@ function daysToReconcile(db: Database.Database, vocabularyEnabled = false): stri
         )
         .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID)
     : [];
-  return [...new Set([...unprojected, ...stale, ...unmarked].map((row) => row.day))];
+  return [...new Set([...unprojected, ...stale, ...unbounded, ...unmarked].map((row) => row.day))];
 }

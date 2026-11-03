@@ -11,8 +11,10 @@ import { ProviderId, SourceId } from "@omnesis/types";
 import { marked, type Tokens } from "marked";
 import { createDatabase, upsertDocuments, listDocuments } from "../db.js";
 import { toListedDocument } from "../data/document-mappers.js";
+import { buildNotesDayDocument } from "../sources/omnesis-notes/upsert.js";
 import { DocumentChunker } from "./chunker.js";
 import { DirectDocumentSource } from "./direct-document-source.js";
+import type { NoteEntry } from "../sources/omnesis-notes/storage.js";
 import type { DocumentInput } from "@omnesis/types";
 
 let directory: string;
@@ -129,5 +131,44 @@ test("persisted conversation boundaries survive direct and HTTP projections into
       ).toEqual(["**14:00 · Agent (Nova)**"]);
       expect(tokens.filter((token): token is Tokens.Code => token.type === "code")).toHaveLength(1);
     }
+  }
+});
+
+test("captured note boundaries survive storage and both document projections", async () => {
+  const base = {
+    day: "2026-07-20",
+    capturedAt: "2026-07-20T09:00:00.000Z",
+    updatedAt: "2026-07-20T09:00:00.000Z",
+    capturedTimeZoneId: null,
+    capturedUtcOffsetSeconds: 0,
+    receivedAt: null,
+    surface: "cli",
+    deviceId: null,
+    latitude: null,
+    longitude: null,
+    placeName: null,
+  } satisfies Omit<NoteEntry, "id" | "text">;
+  const rendered = buildNotesDayDocument(base.day, [
+    {
+      ...base,
+      id: "first",
+      text: "Plan the telescope workshop.\u200b\n\n## Supplies\nBring lenses.",
+    },
+    { ...base, id: "second", text: "Water the balcony plants." },
+  ]);
+  upsertDocuments(writer, [rendered]);
+  const page = await source.listUpdated(null, 10);
+  const byId = await source.getByIds(page.documents.map((d) => d.id));
+  const http = listDocuments(reader, { limit: 10 }).documents.map((row) => toListedDocument(row));
+  for (const listed of [page.documents[0], byId[0], http[0]]) {
+    expect(listed.metadata.extra?.chunkBoundaries).toEqual(
+      rendered.metadata.extra?.chunkBoundaries,
+    );
+    const chunks = new DocumentChunker().chunk(listed);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].text).toContain("## Supplies\nBring lenses.");
+    expect(chunks[0].text).not.toContain("Water");
+    expect(chunks[1].text).toBe("## 09:00 · cli\n\nWater the balcony plants.");
+    expect(chunks.every((chunk) => !chunk.embeddingInput.includes("\u200b"))).toBe(true);
   }
 });

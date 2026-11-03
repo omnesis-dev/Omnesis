@@ -145,7 +145,10 @@ describe("buildNotesDayDocument", () => {
     expect(doc.metadata.sourceUrl).toBeUndefined();
     expect(doc.metadata.appUrl).toBeUndefined();
     expect(doc.metadata.people).toEqual([{ name: "You", role: "author", isSelf: true }]);
-    expect(doc.metadata.extra).toEqual({ entryCount: 2 });
+    expect(doc.metadata.extra).toEqual({
+      entryCount: 2,
+      chunkBoundaries: [0, doc.content.indexOf("##", 2)],
+    });
     expect(doc.contentHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -204,6 +207,29 @@ describe("buildNotesDayDocument", () => {
     ]);
     expect(doc.sourceCreatedAt).toBe("2026-06-15T09:00:00.000Z");
     expect(doc.sourceUpdatedAt).toBe("2026-06-15T17:45:00.000Z");
+  });
+
+  test("identical daily text with different note boundaries has a different index identity", () => {
+    const first = makeEntry({
+      id: "a",
+      capturedAt: "2026-06-15T09:00:00.000Z",
+      capturedUtcOffsetSeconds: 0,
+      text: "Plan the garden",
+    });
+    const second = makeEntry({
+      id: "b",
+      capturedAt: "2026-06-15T10:00:00.000Z",
+      capturedUtcOffsetSeconds: 0,
+      text: "Study the star chart",
+    });
+    const separate = buildNotesDayDocument("2026-06-15", [first, second]);
+    const combined = buildNotesDayDocument("2026-06-15", [
+      { ...first, text: `${first.text}\n\n## 10:00 · cli\n\n${second.text}` },
+    ]);
+    expect(separate.content).toBe(combined.content);
+    expect(separate.contentHash).not.toBe(combined.contentHash);
+    expect(separate.metadata.extra?.chunkBoundaries).toHaveLength(2);
+    expect(combined.metadata.extra?.chunkBoundaries).toEqual([0]);
   });
 
   test("content hash tracks the rendered body", () => {

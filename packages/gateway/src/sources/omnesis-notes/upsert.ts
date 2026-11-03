@@ -159,8 +159,12 @@ export function buildNotesDayDocument(
   if (entries.length === 0) {
     throw new Error(`buildNotesDayDocument: no entries for day ${day}`);
   }
-  const { title, body } = renderNotesDay(day, entries);
-  const contentHash = createHash("sha256").update(body).digest("hex");
+  const { title, body, chunkBoundaries } = renderNotesDay(day, entries);
+  // Retrieval boundaries are part of the indexed content identity, even when
+  // the rendered body is unchanged.
+  const contentHash = createHash("sha256")
+    .update(JSON.stringify({ body, chunkBoundaries }))
+    .digest("hex");
   // First capture opens the day; the newest capture-or-edit instant is
   // the update stamp (an edit to an old entry must bump it so consumers
   // keyed on sourceUpdatedAt notice the change).
@@ -230,6 +234,7 @@ export function buildNotesDayDocument(
       })),
       extra: {
         entryCount: entries.length,
+        chunkBoundaries,
         ...(entries.some((entry) => entry.page)
           ? {
               retainedLinkUrls: [
