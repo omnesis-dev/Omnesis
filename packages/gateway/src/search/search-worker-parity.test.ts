@@ -32,6 +32,7 @@ import { UsearchReadRegistry } from "../indexer/usearch-read-registry.js";
 import { SearchWorkerPool } from "../workers/search-pool.js";
 import { SearchPipeline } from "./pipeline.js";
 import { runCandidateGen, type CandidateGenRequest } from "./candidate-gen.js";
+import { parseTemporalIntent, type TemporalIntentOptions } from "./temporal-intent.js";
 import { LexicalIndex } from "./lexical-index.js";
 import {
   resolveDiversityConfig,
@@ -244,6 +245,53 @@ describe("SearchPipeline candidate-gen gate", () => {
     });
   });
 
+  test("pool's temporal intent rejects → reads the same time inline", async () => {
+    const query = {
+      text: "budget last week",
+      timeZone: "Europe/London",
+      temporal: { referenceTime: "2026-03-18T12:00:00Z" },
+    };
+    const baseline = await pipeline.search(query);
+    expect(baseline.query.temporal?.windows).toHaveLength(1);
+
+    let calls = 0;
+    pipeline.setSearchPool(
+      fakePool({
+        isReady: true,
+        inflightCount: 0,
+        maxInflightBeforeFallback: 2,
+        candidateGen: (req) => Promise.resolve(runCandidateGen({ indexDb: db }, req)),
+        temporalIntent: () => {
+          calls += 1;
+          return Promise.reject(new Error("worker crashed"));
+        },
+      }),
+    );
+    const fellBack = await pipeline.search(query);
+    expect(calls).toBe(1);
+    expect(fellBack.query.temporal).toStrictEqual(baseline.query.temporal);
+    expect(fellBack.results).toEqual(baseline.results);
+  });
+
+  test("starting pool → the reading waits for it rather than running inline", async () => {
+    const asked: string[] = [];
+    pipeline.setSearchPool(
+      fakePool({
+        isReady: false,
+        isStarting: true,
+        inflightCount: 0,
+        maxInflightBeforeFallback: 2,
+        candidateGen: (req) => Promise.resolve(runCandidateGen({ indexDb: db }, req)),
+        temporalIntent: (text, options) => {
+          asked.push(text);
+          return Promise.resolve(parseTemporalIntent(text, options));
+        },
+      }),
+    );
+    await pipeline.search({ text: "budget last week" });
+    expect(asked).toEqual(["budget last week"]);
+  });
+
   test("not-ready pool → runs inline (bucketed as saturated)", async () => {
     let calls = 0;
     pipeline.setSearchPool(
@@ -270,6 +318,8 @@ function fakePool(shape: {
   inflightCount: number;
   maxInflightBeforeFallback: number;
   candidateGen: SearchWorkerPool["candidateGen"];
+  temporalIntent?: SearchWorkerPool["temporalIntent"];
+  isStarting?: boolean;
 }): SearchWorkerPool {
   return {
     isReady: shape.isReady,
@@ -277,6 +327,11 @@ function fakePool(shape: {
     inflightCount: shape.inflightCount,
     maxInflightBeforeFallback: shape.maxInflightBeforeFallback,
     candidateGen: shape.candidateGen,
+    isStarting: shape.isStarting ?? false,
+    temporalIntent:
+      shape.temporalIntent ??
+      ((text: string, options: TemporalIntentOptions) =>
+        Promise.resolve(parseTemporalIntent(text, options))),
   } as unknown as SearchWorkerPool;
 }
 

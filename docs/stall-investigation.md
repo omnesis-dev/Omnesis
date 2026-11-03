@@ -17,6 +17,7 @@ Each of these has removed a real stall. Reach for the one that matches the shape
 - **Writer work is sliced.** A writer op that iterates commits in sub-batches with a preempt check between them, so its callers' awaits resolve in bounded time and the main thread never handles one enormous result.
 - **A shared serialized resource gets priority lanes.** When interactive and background work queue for the same one-at-a-time resource, the interactive request should not wait behind a backlog: one queue, an ordered set of lanes, interactive first. The transcription queue is the case that called for it (#674): someone dictating should not wait behind queued source audio.
 - **CPU-bound pure computation goes to the cpu worker pool** (`scheduler/cpu-ops.ts`), with plain-data arguments and results.
+- **Computation a search waits for goes to the search worker pool** (`workers/search-pool.ts`), which the pipeline calls directly rather than through the scheduler, so an interactive query never queues behind background compute. Candidate generation runs there, and so does reading a query's temporal intent: the date recognizer takes a second or more to build its models and milliseconds per culture to parse, so each search worker builds them as it starts and the pipeline sends it the moment, zone and numeric-date order it resolved, everything the reading depends on.
 
 What does not count as a fix: wrapping the loop in `setImmediate` batches without bounding the batch, raising a timeout, or lowering the frequency of a periodic task that still stalls each time it runs.
 
