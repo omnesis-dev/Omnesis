@@ -271,7 +271,7 @@ observation_note(summary, why?, citations, claims?: [{docId, quote}], relatedLoo
                  windowStart?, relevantUntil?, supersedes?)
                                               -> {id, userAuthored, superseded, scores?}
 observation_withdraw(id)                      -> {id}
-morning_brief_send(text, omittedObservationIds?)  # the morning run only
+morning_brief_send(text, omittedObservationIds?, referenceDocumentIds?)  # the morning run only
                                               -> {conversationId, shippedObservations}
 
 # Conversations and the note agent (not the steward):

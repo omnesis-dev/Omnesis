@@ -70,6 +70,12 @@ let SPENT_K = 0;
 // ── stimuli ─────────────────────────────────────────────────────────────────
 
 const DUE_TASK_TITLE = "Return the library books";
+const DUE_TASK_EMAIL = {
+  externalId: "mb-library-return",
+  title: "Library return reminder",
+  content:
+    "Please return your borrowed library books. The return deadline is listed in your library account.",
+};
 const BOILER_TASK_TITLE = "Book the boiler engineer";
 
 interface Noted {
@@ -181,6 +187,7 @@ const ORDINARY = "Put buying stamps on my list for this Saturday.";
 describe("brain bench: the morning brief", () => {
   let bench: BrainBench;
   let briefConversationId = "";
+  let dueTaskDocumentId = "";
 
   const digestRun = async (day: string) => {
     const runs = await bench.obs.runs({ kind: "daily" });
@@ -304,8 +311,14 @@ describe("brain bench: the morning brief", () => {
               ].join("\n");
               return {
                 calls: [
+                  ...(day === DAYS.dueTask
+                    ? [call("fetch_many", { documents: [{ documentId: dueTaskDocumentId }] })]
+                    : []),
                   call("morning_brief_send", {
                     text,
+                    ...(day === DAYS.dueTask
+                      ? { referenceDocumentIds: [dueTaskDocumentId, dueTaskDocumentId] }
+                      : {}),
                     ...(omitted.length ? { omittedObservationIds: omitted } : {}),
                   }),
                   // A second send the same morning is refused.
@@ -393,8 +406,11 @@ describe("brain bench: the morning brief", () => {
 
   test("a task coming due is enough for a brief: one message in the pinned Morning brief conversation", async () => {
     await bench.clock.set(noon(1));
+    await bench.pushAndSettle([email({ ...DUE_TASK_EMAIL, at: noon(1) })]);
+    dueTaskDocumentId = await bench.docId(DUE_TASK_EMAIL.externalId);
     const created = await bench.obs.createTask({
       title: DUE_TASK_TITLE,
+      description: "The library sent a reminder to return the borrowed books.",
       deadline: { type: "by", date: DAYS.dueTask },
     });
     expect(created.task).toMatchObject({ origin: "user", state: "open" });
@@ -411,6 +427,24 @@ describe("brain bench: the morning brief", () => {
     expect(brief.sent).toMatchObject({ day: DAYS.dueTask, runId: run.id, itemCount: 0 });
     expect(brief.items).toEqual([]);
     briefConversationId = brief.sent!.conversationId;
+    const detail = await bench.obs.briefDetail(briefConversationId, DAYS.dueTask);
+    expect(detail.items).toEqual([]);
+    expect(detail.references).toEqual([
+      {
+        id: dueTaskDocumentId,
+        title: DUE_TASK_EMAIL.title,
+        sourceType: expect.any(String),
+        createdAt: new Date(noon(1)).toISOString(),
+      },
+    ]);
+    const executed = await bench.obs.executedTools(run.id);
+    expect(executed.find((step) => step.tool === "fetch_many")?.result).toMatchObject({
+      kind: "document.batch",
+    });
+    expect(executed.find((step) => step.tool === "morning_brief_send")?.result).toMatchObject({
+      kind: "structured",
+      resultType: "morning_brief.sent",
+    });
 
     const listed = (await bench.obs.conversations()).conversations.filter(
       (c) => c.origin?.kind === "daily_brief",
@@ -602,8 +636,12 @@ describe("brain bench: the morning brief", () => {
       }),
     ]);
 
-    // A brief with no ranked items is based on nothing.
-    expect((await bench.obs.briefDetail(briefConversationId, DAYS.dueTask)).items).toEqual([]);
+    // Its source remains visible after the task is completed, without an observation.
+    const dueTask = await bench.obs.briefDetail(briefConversationId, DAYS.dueTask);
+    expect(dueTask.items).toEqual([]);
+    expect(dueTask.references).toEqual([
+      expect.objectContaining({ id: dueTaskDocumentId, title: DUE_TASK_EMAIL.title }),
+    ]);
 
     // A day with no brief in the thread, and a malformed day, are refused.
     const path = (day: string) => `/agent/conversations/${briefConversationId}/briefs/${day}`;

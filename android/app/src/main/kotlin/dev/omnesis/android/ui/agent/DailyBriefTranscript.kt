@@ -164,7 +164,7 @@ data class DailyBriefViewState(
         (brief.messageId == latestId) != (brief.messageId in toggledFooters)
 
     /** How many things a day's brief was based on, once known. */
-    fun itemCount(day: String): Int? = (items[day] as? DailyBriefItemsState.Loaded)?.page?.items?.size
+    fun itemCount(day: String): Int? = (items[day] as? DailyBriefItemsState.Loaded)?.page?.basedOnCount
 
     /** When a day's brief was sent, as its items read says. */
     fun sentAt(day: String): String? = (items[day] as? DailyBriefItemsState.Loaded)?.page?.sentAt

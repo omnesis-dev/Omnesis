@@ -2089,7 +2089,13 @@ export interface WriteGate extends KnowledgeWriteGate {
   ): Promise<boolean>;
   /** Record a sent morning brief and ship its listed observations, at most once a day. */
   markMorningBriefSent(
-    input: { day: string; runId: string; conversationId: string; messageId: string },
+    input: {
+      day: string;
+      runId: string;
+      conversationId: string;
+      messageId: string;
+      referenceDocumentIds?: readonly string[];
+    },
     now: number,
   ): Promise<MarkMorningBriefSentResult>;
   /** Replace the agent-notes blob (size-capped); returns the stored content. */

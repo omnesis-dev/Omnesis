@@ -12,6 +12,7 @@
  */
 
 import { z } from "zod";
+import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.js";
 import { listMorningBriefItems, morningBriefSent } from "../storage/morning-brief-items.js";
 import type { ToolHandle } from "@omnesis/agent";
 import type { Logger, ToolResult } from "@omnesis/core";
@@ -33,28 +34,51 @@ export interface MorningBriefSenderDeps {
   db: Database.Database;
   getPort: () => MorningBriefConversationPort | null;
   markSent: (
-    input: { day: string; runId: string; conversationId: string; messageId: string },
+    input: {
+      day: string;
+      runId: string;
+      conversationId: string;
+      messageId: string;
+      referenceDocumentIds?: readonly string[];
+    },
     now: number,
   ) => Promise<MarkMorningBriefSentResult>;
   /** Drop an observation the composer left out because of a stated preference. */
   suppressObservation: (id: string, now: number) => Promise<boolean>;
   /** Whether sending the brief also notifies the user's devices. */
   getPushEnabled: () => boolean;
+  /** A reference must have been supplied to, or successfully read by, this run. */
+  canReferenceDocument?: (id: string) => boolean;
   clock: () => number;
   log: Logger;
 }
 
 export type SendMorningBriefResult =
   | { sent: true; conversationId: string; messageId: string; shipped: string[] }
-  | { sent: false; reason: "already_sent" | "conversation_unavailable" };
+  | { sent: false; reason: "already_sent" | "conversation_unavailable" | "invalid_references" };
 
 export async function sendMorningBrief(
   deps: MorningBriefSenderDeps,
-  input: { day: string; runId: string; text: string; omittedObservationIds?: readonly string[] },
+  input: {
+    day: string;
+    runId: string;
+    text: string;
+    omittedObservationIds?: readonly string[];
+    referenceDocumentIds?: readonly string[];
+  },
 ): Promise<SendMorningBriefResult> {
   if (morningBriefSent(deps.db, input.day)) return { sent: false, reason: "already_sent" };
   const port = deps.getPort();
   if (!port) return { sent: false, reason: "conversation_unavailable" };
+  const referenceDocumentIds = [...new Set(input.referenceDocumentIds ?? [])];
+  if (
+    referenceDocumentIds.some(
+      (id) =>
+        !isKnowledgeEvidenceReadable(deps.db, id) ||
+        (deps.canReferenceDocument && !deps.canReferenceDocument(id)),
+    )
+  )
+    return { sent: false, reason: "invalid_references" };
   const listed = new Set(listMorningBriefItems(deps.db, input.day).map((i) => i.observationId));
   for (const id of input.omittedObservationIds ?? [])
     if (listed.has(id)) await deps.suppressObservation(id, deps.clock());
@@ -65,7 +89,13 @@ export async function sendMorningBrief(
     notify: deps.getPushEnabled(),
   });
   const marked = await deps.markSent(
-    { day: input.day, runId: input.runId, conversationId, messageId },
+    {
+      day: input.day,
+      runId: input.runId,
+      conversationId,
+      messageId,
+      ...(referenceDocumentIds.length ? { referenceDocumentIds } : {}),
+    },
     deps.clock(),
   );
   if (!marked.ok) {
@@ -89,6 +119,13 @@ const schema = z
       .min(1)
       .max(MORNING_BRIEF_MAX_CHARS)
       .describe("The complete morning brief message, in Markdown."),
+    referenceDocumentIds: z
+      .array(z.string().trim().min(1).max(512))
+      .max(100)
+      .optional()
+      .describe(
+        "Original documents actually used in the brief, including calendar events, emails, messages and files used outside ranked observations. Use document IDs from source-owned horizon lines or fetch_many reads. Do not list unused context. Observation citations are already attached automatically.",
+      ),
     omittedObservationIds: z
       .array(z.string().min(1))
       .max(100)
@@ -109,7 +146,7 @@ export function buildMorningBriefSendTool(
     description:
       "Send today's morning brief to the user. Call exactly once, with the complete message. " +
       "It is appended to the user's Morning brief conversation and the listed observations " +
-      "are marked as shown.",
+      "are marked as shown. Include referenceDocumentIds for every other document used in the message; these appear as sources without reaction controls.",
     schema,
     mutates: true,
     async invoke(rawArgs): Promise<ToolResult> {
@@ -123,6 +160,9 @@ export function buildMorningBriefSendTool(
       const result = await sendMorningBrief(deps, {
         ...run,
         text: parsed.data.text,
+        ...(parsed.data.referenceDocumentIds
+          ? { referenceDocumentIds: parsed.data.referenceDocumentIds }
+          : {}),
         ...(parsed.data.omittedObservationIds
           ? { omittedObservationIds: parsed.data.omittedObservationIds }
           : {}),
@@ -132,9 +172,11 @@ export function buildMorningBriefSendTool(
           kind: "error",
           code: result.reason,
           message:
-            result.reason === "already_sent"
-              ? "Today's morning brief has already been sent. Do not send another."
-              : "The conversation is unavailable right now; the run will retry.",
+            result.reason === "invalid_references"
+              ? "A reference is unavailable or was not read by this run. Use original documents from the supplied source-owned horizon or successful fetch_many reads, and retry."
+              : result.reason === "already_sent"
+                ? "Today's morning brief has already been sent. Do not send another."
+                : "The conversation is unavailable right now; the run will retry.",
         };
       return {
         kind: "structured",

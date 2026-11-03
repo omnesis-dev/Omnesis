@@ -23,6 +23,7 @@ import {
   getObservation,
   transitionObservation,
 } from "../storage/observations.js";
+import { readDailyBriefDetail } from "./brief-detail.js";
 import {
   buildMorningBriefSendTool,
   MORNING_BRIEF_MAX_CHARS,
@@ -191,6 +192,63 @@ describe("morning brief sending", () => {
   describe("morning_brief_send tool", () => {
     const tool = () => buildMorningBriefSendTool(deps(), { day: DAY, runId: "run_morning" });
 
+    test("attaches documents of any source without creating observations", async () => {
+      for (const [id, source] of [
+        ["email_ref", "gmail:fiction"],
+        ["chat_ref", "whatsapp:fiction"],
+      ]) {
+        db.prepare(
+          `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+          source_created_at, source_updated_at, ingested_at, updated_at)
+          VALUES (?, 'p', ?, ?, 'Supporting record', 'body', 'h', '2026-07-01', '2026-07-01', '2026-07-01', '2026-07-01')`,
+        ).run(id, source, id);
+      }
+      const t = buildMorningBriefSendTool(deps(), { day: "2026-07-03", runId: "run_next" });
+      expect(
+        await t.invoke(
+          {
+            text: "Two records support this brief.",
+            referenceDocumentIds: ["email_ref", "chat_ref", "email_ref"],
+          },
+          CTX,
+        ),
+      ).toMatchObject({ kind: "structured" });
+      const detail = readDailyBriefDetail(db, { day: "2026-07-03", messageId: "msg_1" });
+      expect(detail.items).toEqual([]);
+      expect(detail.references?.map((r) => [r.id, r.sourceType])).toEqual([
+        ["email_ref", "gmail"],
+        ["chat_ref", "whatsapp"],
+      ]);
+      expect(detail.references?.every((r) => !("reaction" in r))).toBe(true);
+    });
+
+    test("unavailable references reject before sending or suppressing observations", async () => {
+      expect(
+        await tool().invoke(
+          { text: "Brief.", referenceDocumentIds: ["missing"], omittedObservationIds: ["obs_1"] },
+          CTX,
+        ),
+      ).toMatchObject({ kind: "error", code: "invalid_references" });
+      expect(port.appendMorningBrief).not.toHaveBeenCalled();
+      expect(getObservation(db, "obs_1")?.state).toBe("live");
+    });
+
+    test("an existing document outside the run's evidence is refused", async () => {
+      db.prepare(
+        `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+        source_created_at, source_updated_at, ingested_at, updated_at)
+        VALUES ('unread', 'p', 'files:fiction', 'unread', 'Unread', 'body', 'h', '2026-07-01', '2026-07-01', '2026-07-01', '2026-07-01')`,
+      ).run();
+      const t = buildMorningBriefSendTool(deps({ canReferenceDocument: () => false }), {
+        day: DAY,
+        runId: "run_morning",
+      });
+      expect(
+        await t.invoke({ text: "Brief.", referenceDocumentIds: ["unread"] }, CTX),
+      ).toMatchObject({ kind: "error", code: "invalid_references" });
+      expect(port.appendMorningBrief).not.toHaveBeenCalled();
+    });
+
     test("is a mutating tool named morning_brief_send", () => {
       expect(tool()).toMatchObject({ name: "morning_brief_send", mutates: true });
     });
@@ -214,6 +272,8 @@ describe("morning brief sending", () => {
       ["blank text", { text: "   " }],
       ["text over the limit", { text: "x".repeat(MORNING_BRIEF_MAX_CHARS + 1) }],
       ["an unknown key", { text: "Brief.", extra: true }],
+      ["an empty reference id", { text: "Brief.", referenceDocumentIds: [""] }],
+      ["too many references", { text: "Brief.", referenceDocumentIds: Array(101).fill("doc") }],
       ["an empty omitted id", { text: "Brief.", omittedObservationIds: [""] }],
     ])("rejects %s", async (_label, args) => {
       const result = await tool().invoke(args, CTX);

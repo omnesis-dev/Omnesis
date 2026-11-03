@@ -4,7 +4,8 @@
 /**
  * What a sent morning brief was based on: the observations it shipped, in the
  * order it showed them, with the documents each cites and the tasks each
- * relates to. Read-only — every query here runs on a reader connection.
+ * relates to, plus its independently selected original document references.
+ * Read-only — every query here runs on a reader connection.
  */
 
 import { parseSourceKey } from "@omnesis/core";
@@ -12,7 +13,9 @@ import { getDocumentTitlesAndSources } from "../../db.js";
 import {
   getSentMorningBrief,
   listMorningBriefItemsForMessage,
+  listMorningBriefReferences,
 } from "../storage/morning-brief-items.js";
+import { isKnowledgeEvidenceReadable } from "../knowledge/storage-source-fence.js";
 import { getObservation } from "../storage/observations.js";
 import { getOpenLoop } from "../storage/open-loops.js";
 import { listBriefItemReactions, type BriefItemReaction } from "../storage/interest.js";
@@ -59,19 +62,37 @@ function isoOrNull(value: string): string | null {
   return Number.isNaN(ms) ? null : new Date(ms).toISOString();
 }
 
-/** One sent brief's items with their sources, tasks and reactions, and when it was sent. */
+/** One sent brief's observations, original references, reactions and send time. */
 export function readDailyBriefDetail(
   db: Database.Database,
   brief: { day: string; messageId: string },
 ): DailyBriefDetail {
   const sent = getSentMorningBrief(db, brief.day);
   const items = shippedBriefItems(db, brief.messageId);
+  const observationCitations = new Set(items.flatMap((item) => item.observation.citations));
+  const referenceIds = listMorningBriefReferences(db, brief).filter(
+    (id) => !observationCitations.has(id) && isKnowledgeEvidenceReadable(db, id),
+  );
   const documents = getDocumentTitlesAndSources(db, [
-    ...new Set(items.flatMap((item) => item.observation.citations)),
+    ...new Set([...observationCitations, ...referenceIds]),
   ]);
+  const references = referenceIds.flatMap((id) => {
+    const doc = documents.get(id);
+    return doc
+      ? [
+          {
+            id,
+            title: doc.title || null,
+            sourceType: sourceTypeOf(doc.sourceId),
+            createdAt: isoOrNull(doc.createdAt),
+          },
+        ]
+      : [];
+  });
   const reactions = listBriefItemReactions(db, brief.messageId);
   return {
     sentAt: sent && sent.messageId === brief.messageId ? new Date(sent.sentAt).toISOString() : null,
+    ...(references.length > 0 ? { references } : {}),
     items: items.map(({ rank, observation }) => ({
       rank,
       observationId: observation.id,

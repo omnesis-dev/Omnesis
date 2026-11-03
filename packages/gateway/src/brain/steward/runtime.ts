@@ -667,6 +667,7 @@ export async function createCognitionRuntime(
     const daily = run.kind === "daily" ? parseCognitionDailyRunPayload(run.payload) : null;
     return daily !== null && sourceFence.excludesSource(daily.sourceId);
   };
+  const digestDocumentsByRun = new WeakMap<ClaimedCognitionRun, Set<string>>();
   const successfulDocumentReadsByRun = new WeakMap<ClaimedCognitionRun, Set<string>>();
   const consumptionFor = (run: ClaimedCognitionRun): RunConsumptionTracker => {
     let tracker = consumptionByRun.get(run);
@@ -788,6 +789,10 @@ export async function createCognitionRuntime(
               buildMorningBriefSendTool(
                 {
                   ...deps.observations.sender,
+                  canReferenceDocument: (id) =>
+                    sourceFence.excludedDocuments([id]).size === 0 &&
+                    (digestDocumentsByRun.get(run)?.has(id) === true ||
+                      successfulDocumentReadsByRun.get(run)?.has(id) === true),
                   db: deps.db,
                   clock,
                   log: deps.log.child("morning-brief"),
@@ -940,6 +945,18 @@ export async function createCognitionRuntime(
             return undefined;
           })
         : undefined;
+      if (isDigest) {
+        digestDocumentsByRun.set(
+          run,
+          new Set(
+            (digestHorizon?.items ?? []).flatMap((item) =>
+              item.origin === "projection" && item.projection?.documentId
+                ? [item.projection.documentId]
+                : [],
+            ),
+          ),
+        );
+      }
       const presentedRefileIds: string[] = [];
       const cfg = deps.getSettings();
       // The self person's live annotations, gated on the annotation feature
