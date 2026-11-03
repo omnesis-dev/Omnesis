@@ -190,6 +190,7 @@ import {
   type SearchConfig,
   DEFAULT_SEARCH_READ_MMAP_BYTES,
   DEFAULT_SEARCH_READ_CACHE_BYTES,
+  resolveTemporalConfig,
 } from "./search/search-config.js";
 import { AnalyticsDb } from "./analytics-db.js";
 import { defaultMemoryLimitMiB as defaultAnalyticsMemoryLimitMiB } from "./analytics/connection-pool.js";
@@ -1081,6 +1082,9 @@ if (runtime.searchWorkerConcurrency > 0) {
     backgroundWorkerNice: runtime.backgroundWorkerNice,
     workerUrl: searchWorker.url,
     workerExecArgv: searchWorker.execArgv,
+    // The workers read each query's temporal intent, so they, not the main
+    // thread, build the date recognizer's models.
+    warmTemporalIntent: resolveTemporalConfig(searchConfig).enabled,
   });
   searchWorkerPool = pool;
   searchPipeline.setSearchPool(pool);

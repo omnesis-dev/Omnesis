@@ -48,7 +48,11 @@ import {
   type NumericDateOrderSetting,
 } from "../enrichment/dates/config.js";
 import { eventDocumentsInWindows, type TemporalIndexReader } from "./temporal-event-docs.js";
-import { parseTemporalIntent, warmTemporalIntent, type TemporalIntent } from "./temporal-intent.js";
+import {
+  parseTemporalIntent,
+  type TemporalIntent,
+  type TemporalIntentOptions,
+} from "./temporal-intent.js";
 import { runCandidateGen } from "./candidate-gen.js";
 import { describeQuery } from "./query-log.js";
 import { dedupeByContentHashWith } from "./dedupe.js";
@@ -177,12 +181,12 @@ export class SearchPipeline {
   private readonly refCountStage = new RefCountStage();
   /**
    * Optional dedicated search-worker pool. When wired and ready, candidate
-   * generation runs OFF the main event loop on a worker thread, queueing there
-   * when every worker is busy (unless the pool sets an inflight ceiling); on
-   * any worker problem the pipeline degrades to the identical
-   * `runCandidateGen` inline on main (byte-identical result). `undefined` (the
-   * test path and `gateway.searchWorker.concurrency: 0`) means pure main-thread
-   * candidate-gen — the pre-Slice-3B behaviour.
+   * generation and the query's temporal-intent reading run OFF the main event
+   * loop on a worker thread, queueing there when every worker is busy (unless
+   * the pool sets an inflight ceiling); on any worker problem the pipeline
+   * degrades to the identical `runCandidateGen` / `parseTemporalIntent` inline
+   * on main (byte-identical result). `undefined` (the test path and
+   * `gateway.searchWorker.concurrency: 0`) means both run on the main thread.
    */
   private searchWorkerPool?: SearchWorkerPool;
   /**
@@ -243,19 +247,11 @@ export class SearchPipeline {
    * Attach the gateway's time index, which the temporal lane reads for the
    * documents a query's window is about (event time), and how the operator's
    * English numeric dates read. Without it the lane still runs on document
-   * time alone. When the lane is enabled, the date recognizer's models are
-   * built now rather than on the first temporal query.
+   * time alone.
    */
   setTemporalIndex(reader: TemporalIndexReader, numericDateOrder: NumericDateOrderSetting): void {
     this.temporalIndex = reader;
     this.numericDateOrder = numericDateOrder;
-    if (resolveTemporalConfig(this.searchConfig).enabled) {
-      setTimeout(() => {
-        const start = Date.now();
-        warmTemporalIntent();
-        log.info(`Temporal lane: date recognizer ready in ${Date.now() - start}ms`);
-      }, 0).unref?.();
-    }
   }
 
   /**
@@ -370,21 +366,47 @@ export class SearchPipeline {
   /**
    * The time a query's words name, or null. A malformed time zone or a
    * recognizer fault leaves the query without a temporal lane rather than
-   * failing the search.
+   * failing the search; the promise never rejects.
+   *
+   * The date recognizer is CPU-heavy (building its models takes a second or
+   * more), so the reading runs on a search worker whenever a pool is wired:
+   * the request carries the moment, zone and numeric-date order resolved
+   * here, which is all the reading depends on. A pool that is still starting
+   * takes the reading as soon as its first worker is ready. Without a ready
+   * or starting pool, past an operator's inflight ceiling, or when the worker
+   * fails the call, the identical `parseTemporalIntent` runs inline, as
+   * candidate generation does.
    */
-  private readTemporalIntent(
+  private async readTemporalIntent(
     text: string,
     timeZone: string,
     referenceTime: string | undefined,
-  ): TemporalIntent | null {
+  ): Promise<TemporalIntent | null> {
     const reference = referenceTime ? Date.parse(referenceTime) : Date.now();
     if (Number.isNaN(reference)) return null;
+    const options: TemporalIntentOptions = {
+      nowMs: reference,
+      timeZone,
+      numericDateOrder: resolveNumericDateOrder(this.numericDateOrder, timeZone),
+    };
+    const pool = this.searchWorkerPool;
+    if (
+      pool &&
+      (pool.isReady || pool.isStarting) &&
+      pool.inflightCount < pool.maxInflightBeforeFallback
+    ) {
+      try {
+        return await pool.temporalIntent(text, options);
+      } catch (err) {
+        log.warn(
+          `search-worker temporal intent failed, reading on main: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
     try {
-      return parseTemporalIntent(text, {
-        nowMs: reference,
-        timeZone,
-        numericDateOrder: resolveNumericDateOrder(this.numericDateOrder, timeZone),
-      });
+      return parseTemporalIntent(text, options);
     } catch (err) {
       log.warn(
         `Temporal lane: query not read (${err instanceof Error ? err.message : String(err)})`,
@@ -517,8 +539,8 @@ export class SearchPipeline {
     //      agnostic, so the caller owns the model. Hybrid path only.
     //   3. Candidate generation (`runCandidateGen`, synchronous): browse OR
     //      bm25 + vector + fusion + boost + diversity, plus full-pool chunk-text
-    //      hydration and the content-hash map. This is the heavy block a later
-    //      slice relocates to a worker; today it runs inline.
+    //      hydration and the content-hash map. This is the heavy block, run on
+    //      a search worker when the pool can take it.
     //   4. RefCount (this thread), then the bounded finalize.
 
     const mode: "browse" | "hybrid" = shouldBrowse(effectiveText, allowedDocumentIds, filters)
@@ -531,15 +553,13 @@ export class SearchPipeline {
     // to sit in.
     const temporalConfig = resolveTemporalConfig(this.searchConfig, query.temporal);
     const timeZone = normalizeTimeZone(query.timeZone) ?? hostTimeZone();
-    const temporalIntent =
+    // Read off this thread when a search worker is wired; the query embedding
+    // starts alongside it, since only the temporal lane's own embedding and
+    // event-time read wait for the reading.
+    const reading: Promise<TemporalIntent | null> =
       mode === "hybrid" && temporalConfig.enabled
         ? this.readTemporalIntent(effectiveText, timeZone, query.temporal?.referenceTime)
-        : null;
-    const temporalWindows = temporalIntent?.windows.map((w) => ({
-      start: new Date(w.startMs).toISOString(),
-      endExclusive: new Date(w.endExclusiveMs).toISOString(),
-      text: w.text,
-    }));
+        : Promise.resolve(null);
 
     let queryVector: Float32Array | null = null;
     let laneVector: Float32Array | null = null;
@@ -553,40 +573,58 @@ export class SearchPipeline {
       // inside the core. The temporal lane ranks its window by the query's
       // words without the time phrase, which embeddings would otherwise blur;
       // that embedding is best effort, like the rest of the lane.
+      // `embedMs` is the longer of the two embeddings, each timed on its own,
+      // so the wait for the reading never counts as embedding time.
       const embedder = this.embedder;
-      const embedStart = Date.now();
-      const laneText = temporalIntent?.strippedText ?? "";
-      const laneEmbedding =
-        laneText && laneText !== effectiveText
-          ? embedder.embedQuery(laneText).catch((err: unknown) => {
+      const timed = async <T>(embed: () => Promise<T>): Promise<T> => {
+        const start = Date.now();
+        try {
+          return await embed();
+        } finally {
+          embedMs = Math.max(embedMs, Date.now() - start);
+        }
+      };
+      const laneEmbedding = reading.then((intent) => {
+        const laneText = intent?.strippedText ?? "";
+        return laneText && laneText !== effectiveText
+          ? timed(() => embedder.embedQuery(laneText)).catch((err: unknown) => {
               log.warn(
                 `Temporal lane: query not embedded (${err instanceof Error ? err.message : String(err)})`,
               );
               return null;
             })
-          : Promise.resolve(null);
+          : null;
+      });
       [queryVector, laneVector] = await Promise.all([
-        embedder.embedQuery(effectiveText),
+        timed(() => embedder.embedQuery(effectiveText)),
         laneEmbedding,
       ]);
+      const laneText = (await reading)?.strippedText ?? "";
       if (laneText && laneText === effectiveText) laneVector = queryVector;
-      embedMs = Date.now() - embedStart;
     };
-    const eventStart = Date.now();
     let eventMs = 0;
-    const [, eventDocumentIds] = await Promise.all([
+    const eventDocuments = reading.then((intent) => {
+      if (!intent || !this.temporalIndex) return [];
+      const eventStart = Date.now();
+      return eventDocumentsInWindows(
+        this.temporalIndex,
+        intent.windows,
+        timeZone,
+        filters.sourceIds,
+      ).finally(() => {
+        eventMs = Date.now() - eventStart;
+      });
+    });
+    const [, eventDocumentIds, temporalIntent] = await Promise.all([
       embedding(),
-      temporalIntent && this.temporalIndex
-        ? eventDocumentsInWindows(
-            this.temporalIndex,
-            temporalIntent.windows,
-            timeZone,
-            filters.sourceIds,
-          ).finally(() => {
-            eventMs = Date.now() - eventStart;
-          })
-        : Promise.resolve([]),
+      eventDocuments,
+      reading,
     ]);
+    const temporalWindows = temporalIntent?.windows.map((w) => ({
+      start: new Date(w.startMs).toISOString(),
+      endExclusive: new Date(w.endExclusiveMs).toISOString(),
+      text: w.text,
+    }));
     const temporal: TemporalLaneRequest | undefined =
       temporalIntent && temporalWindows
         ? {

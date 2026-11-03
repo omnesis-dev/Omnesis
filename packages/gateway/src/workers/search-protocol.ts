@@ -14,9 +14,10 @@
  *
  * Wire format mirrors the io/writer envelope (id-correlated call → result with
  * queueMs/execMs/cpu) so the pool's metrics + correlation code reads uniform
- * across workers. The one deliberate difference: the `call` carries the typed
- * {@link CandidateGenRequest} directly (not a generic `op` + `args[]`), because
- * there is exactly one operation.
+ * across workers. The one deliberate difference: each operation has its own
+ * typed message (not a generic `op` + `args[]`) — `call` carries a
+ * {@link CandidateGenRequest}, `temporalIntent` a query to read for the time
+ * it names — and both answer with the same `result`.
  *
  * CRITICAL: the transport is the structured-clone `postMessage` algorithm,
  * NEVER JSON. The request's `queryVector` is a `Float32Array` and the result's
@@ -28,6 +29,7 @@
 
 import type { CandidateGenRequest, CandidateGenResult } from "../search/candidate-gen.js";
 import type { LexicalIndexData } from "../search/lexical-index-data.js";
+import type { TemporalIntent, TemporalIntentOptions } from "../search/temporal-intent.js";
 import type { WorkerLogMessage } from "./protocol.js";
 
 export type SearchInit = {
@@ -43,6 +45,11 @@ export type SearchInit = {
   heartbeatIntervalMs: number;
   /** OS nice for this compute thread (resolved on the main thread). */
   backgroundWorkerNice: number;
+  /**
+   * Build the date recognizer's models once the worker is ready, so a search's
+   * temporal intent does not pay for them. Off when the temporal lane is.
+   */
+  warmTemporalIntent: boolean;
 };
 
 export type SearchCall = {
@@ -59,22 +66,37 @@ export type SearchCall = {
 };
 
 /**
+ * Read the time a query names (`parseTemporalIntent`). Everything the reading
+ * depends on travels in `options`: the moment the query is asked, the asker's
+ * zone, and how English numeric dates read.
+ */
+export type SearchTemporalIntentCall = {
+  type: "temporalIntent";
+  id: number;
+  text: string;
+  options: TemporalIntentOptions;
+  enqueueMs: number;
+};
+
+/**
  * Attach the in-memory lexical index, replacing any earlier one. Its arrays live
  * on `SharedArrayBuffer`s, so every worker reads the one copy the builder made.
  */
 export type SearchLexicalIndex = { type: "lexicalIndex"; data: LexicalIndexData };
 
-export type MainToSearch = SearchInit | SearchCall | SearchLexicalIndex | { type: "shutdown" };
+export type MainToSearch =
+  SearchInit | SearchCall | SearchTemporalIntentCall | SearchLexicalIndex | { type: "shutdown" };
 
 export type SearchResult =
   | {
       type: "result";
       id: number;
       ok: true;
-      value: CandidateGenResult;
+      /** A `call`'s candidates, or a `temporalIntent`'s reading. */
+      value: CandidateGenResult | TemporalIntent | null;
       /** Time (ms) the call sat in the worker's FIFO before running. */
       queueMs: number;
-      /** Time (ms) the worker actually spent inside `runCandidateGen`. */
+      /** Time (ms) the worker actually spent running the operation. */
       execMs: number;
       /** CPU time (µs) the op consumed in user-space JS. */
       cpuUserUs: number;
