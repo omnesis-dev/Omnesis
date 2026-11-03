@@ -29,7 +29,7 @@ import {
   fixtureScopes,
   seedTemporalFixture,
   type FixtureIds,
-} from "./test-utils.js";
+} from "./__fixtures__/test-utils.js";
 import type Database from "better-sqlite3";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
 
