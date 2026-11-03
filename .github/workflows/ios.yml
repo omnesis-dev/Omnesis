@@ -21,7 +21,9 @@ jobs:
     # The project requires Xcode 26. Prepare its actual installed simulator
     # runtimes and use one booted iPhone by UDID rather than an image's name.
     runs-on: macos-26
-    timeout-minutes: 60
+    # Cold Release and Debug builds share this budget with simulator tests
+    # and test-result finalization.
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
