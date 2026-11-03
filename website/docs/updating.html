@@ -659,9 +659,11 @@
           was started some other way, by exiting for its supervisor to restart. A machine with an
           agent harness installs the new plugin and restarts the harness.
           <strong>OpenClaw restarts at once, interrupting any agent run in progress.</strong>
-          Hermes lets running work finish for up to its drain timeout (three minutes by default)
-          first. When the harness cannot be restarted from there, its device row records the restart
-          still owed and the command to run.
+          The restart follows even when OpenClaw tried to load the new plugin while running and
+          could not, so the update ends with OpenClaw on the new plugin. Hermes lets running work
+          finish for up to its drain timeout (three minutes by default) first. When the harness
+          cannot be restarted from there, its device row records the restart still owed and the
+          command to run.
         </p>
         <p>
           <code>--dry-run</code> cannot be combined with <code>--fleet</code>, because the fleet

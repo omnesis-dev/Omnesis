@@ -17,7 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
 import { createServer } from "node:http";
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi, type Mock } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 type OAuthAuthorizationResult = "AUTHORIZED" | "REDIRECT";
@@ -3439,6 +3439,82 @@ describe("connect loads the plugin it installed", () => {
     expect(output()).toMatch(/Restart openclaw to load the refreshed plugin .*gateway restart/u);
     // The skill is still checked: whether it is ready does not wait on the restart.
     expect(captured()).toHaveLength(1);
+  });
+
+  /**
+   * An OpenClaw whose running gateway saved the plugin but could not swap it
+   * in: the install exits non-zero, and the inspection that follows reports
+   * the install record of `recorded` — the archive just installed unless a
+   * path is given.
+   */
+  function openClawSavedWithoutSwap(recorded?: string): void {
+    let archive = "";
+    onTestFinished(() => {
+      (spawnSync as Mock).mockImplementation(() => ({ status: 0, stdout: "", stderr: "" }));
+    });
+    (spawnSync as Mock).mockImplementation((_command: string, args: string[]) => {
+      if (args[1] === "install") {
+        archive = (args.at(-1) ?? "").replace(/^npm-pack:/u, "");
+        return {
+          status: 1,
+          stdout: "",
+          stderr:
+            "Plugin operation failed during drain: an invented timeout | UNAVAILABLE\n" +
+            'Plugin "omnesis-integration" installation is saved.',
+        };
+      }
+      if (args[1] === "inspect") {
+        const bytes = readFileSync(recorded ?? archive);
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            plugin: { id: "omnesis-integration" },
+            install: {
+              integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    });
+  }
+
+  it("a plugin OpenClaw saved but could not swap in is installed, and the restart loads it", async () => {
+    const home = refreshableHome("openclaw");
+    const output = captureLog();
+    openClawSavedWithoutSwap();
+
+    await run({ harness: "openclaw", dir: home, refresh: true, yes: true });
+
+    const inspect = (spawnSync as Mock).mock.calls.find(([, args]) => args[1] === "inspect");
+    expect(inspect?.[1]).toEqual(["plugins", "inspect", "omnesis-integration", "--json"]);
+    expect(inspect?.[2].env).toMatchObject({ OPENCLAW_STATE_DIR: home });
+    expect(output()).toContain(
+      "OpenClaw saved the plugin but could not load it into the running harness " +
+        "(Plugin operation failed during drain: an invented timeout | UNAVAILABLE). " +
+        "Restarting OpenClaw loads it.",
+    );
+    // The rest of the install still runs, and so does the restart.
+    expect(
+      (spawnSync as Mock).mock.calls.some(
+        ([, args]) => args.join(" ") === "plugins registry --refresh --json",
+      ),
+    ).toBe(true);
+    expect(streamed().map((spec) => spec.args)).toEqual([["gateway", "restart"]]);
+  });
+
+  it("a failed OpenClaw install that recorded a different archive is a failed refresh", async () => {
+    const home = refreshableHome("openclaw");
+    captureLog();
+    const previous = join(home, "previous.tgz");
+    writeFileSync(previous, "an invented earlier archive");
+    openClawSavedWithoutSwap(previous);
+
+    await expect(run({ harness: "openclaw", dir: home, refresh: true, yes: true })).rejects.toThrow(
+      /Could not install the Omnesis integration plugin: Plugin operation failed/u,
+    );
+    expect(streamed()).toEqual([]);
   });
 
   it("--no-restart names the restart even under --yes", async () => {

@@ -220,7 +220,25 @@ describe("the harness plugin's device.update handler", () => {
     expect(frames(socket)).toHaveLength(2);
   });
 
-  test("a plugin stopped while its update ran does not restart the harness", async () => {
+  test("stopping the plugin does not wait for its update", async () => {
+    // A harness that replaces the running plugin while the update installs
+    // it stops this instance mid-update, with seconds to spare. The update
+    // is still running when the stop has to finish.
+    const run = vi.fn(() => new Promise<HarnessUpdateAttempt>(() => {}));
+    const { socket, client } = setup({ run });
+    sendUpdate(socket, "0.5.0");
+    await flush();
+    expect(run).toHaveBeenCalled();
+    let stopped = false;
+    void client.stop().then(() => {
+      stopped = true;
+    });
+    await flush();
+    expect(stopped).toBe(true);
+    expect(client.getState()).toBe("stopped");
+  });
+
+  test("an install still restarts the harness after the plugin was stopped meanwhile", async () => {
     let release: (attempt: HarnessUpdateAttempt) => void = () => {};
     const restart: HarnessRestart = { command: "openclaw gateway restart", start: vi.fn() };
     const { socket, client } = setup({
@@ -228,10 +246,28 @@ describe("the harness plugin's device.update handler", () => {
     });
     sendUpdate(socket, "0.5.0");
     await flush();
-    const stopped = client.stop();
-    release({ state: "installed", restart });
-    await stopped;
-    expect(restart.start).not.toHaveBeenCalled();
+    await client.stop();
+    release({ state: "installed", detail: "Installed 0.5.0", restart });
+    await flush();
+    await flush();
+    expect(restart.start).toHaveBeenCalledTimes(1);
+    // The connection the command came on is gone, so nothing is sent on it:
+    // the harness's reconnect on the installed plugin is the report.
+    expect(frames(socket)).toHaveLength(1);
+  });
+
+  test("a failed update restarts nothing after the plugin was stopped meanwhile", async () => {
+    let release: (attempt: HarnessUpdateAttempt) => void = () => {};
+    const { socket, client } = setup({
+      run: () => new Promise((resolve) => (release = resolve)),
+    });
+    sendUpdate(socket, "0.5.0");
+    await flush();
+    await client.stop();
+    release({ state: "failed", detail: "`omnesis update` exited 1." });
+    await flush();
+    await flush();
+    expect(frames(socket)).toHaveLength(1);
   });
 
   test("a plugin with no updater refuses rather than going silent", async () => {
