@@ -320,7 +320,11 @@ describe("source-declared chunk boundaries", () => {
     });
     return makeDoc({
       content: sections.join(""),
-      metadata: { documentType: "note", extra: { chunkBoundaries: boundaries } },
+      metadata: {
+        documentType: "note",
+        sourceCreatedAt: "2026-03-10T00:00:00Z",
+        extra: { chunkBoundaries: boundaries },
+      },
     });
   }
 
@@ -399,7 +403,11 @@ describe("source-declared chunk boundaries", () => {
       const chunks = new DocumentChunker().chunk(
         makeDoc({
           content: "x🌙\u200b note",
-          metadata: { documentType: "note", extra: { chunkBoundaries: boundaries } },
+          metadata: {
+            documentType: "note",
+            sourceCreatedAt: "2026-03-10T00:00:00Z",
+            extra: { chunkBoundaries: boundaries },
+          },
         }),
       );
       expect(chunks.map((chunk) => chunk.text)).toEqual(["x🌙 note"]);
