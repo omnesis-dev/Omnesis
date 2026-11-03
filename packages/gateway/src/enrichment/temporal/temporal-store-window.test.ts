@@ -20,7 +20,7 @@ import {
   fixtureScopes,
   seedTemporalFixture,
   type FixtureIds,
-} from "./test-utils.js";
+} from "./__fixtures__/test-utils.js";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
 
 function cleanup(path: string): void {
