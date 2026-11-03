@@ -8,15 +8,21 @@
  * `snapshot(windowSeconds)` returns the windowed view — same contract
  * as MetricsRegistry. Zero external dependencies; everything comes
  * from Node built-ins (`perf_hooks`, `process`).
+ *
+ * Stalls are not reported here: the stall monitor
+ * (`observability/stall-monitor.ts`) detects each one from another thread
+ * and names what was running, and reads the collections that overlapped it
+ * from {@link ProcessVitalsCollector.gcBetween}.
  */
 
 import { monitorEventLoopDelay, PerformanceObserver } from "node:perf_hooks";
 
-import { createLogger } from "@omnesis/core";
-
 import { Ring } from "./ring-buffer.js";
+import type { GcWindow } from "./observability/stall-report.js";
 
 const RING_SIZE = 600; // 10 min @ 1 Hz
+/** Individual collections remembered for {@link ProcessVitalsCollector.gcBetween}. */
+const GC_EVENT_RING_SIZE = 256;
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -80,15 +86,6 @@ export interface ProcessVitalsSnapshot {
 
 // ── Collector ────────────────────────────────────────────────────────
 
-const log = createLogger("gateway:vitals");
-
-/**
- * A loop delay at or above this is worth a line in the journal. Well above
- * ordinary scheduling jitter, well below the multi-second stalls that make
- * a gateway look down.
- */
-const LOOP_STALL_WARN_MS = 1_000;
-
 /**
  * V8 reports the collection kind as a number; name it. Exported so the
  * mapping can be pinned directly — the numbers are V8's, not ours, and a
@@ -110,8 +107,11 @@ export function gcKindName(entry: PerformanceEntry): string {
   }
 }
 
-function formatGiB(bytes: number): string {
-  return `${(bytes / 1024 ** 3).toFixed(2)}GiB`;
+interface GcEvent {
+  /** Epoch ms the collection started. */
+  ts: number;
+  durationMs: number;
+  kind: string;
 }
 
 export class ProcessVitalsCollector {
@@ -124,7 +124,8 @@ export class ProcessVitalsCollector {
   private prevCpu = process.cpuUsage();
   private prevCpuTs = Date.now();
 
-  private gcAccum = { count: 0, totalMs: 0, maxMs: 0, maxKind: "" };
+  private gcAccum = { count: 0, totalMs: 0, maxMs: 0 };
+  private gcEvents = new Ring<GcEvent>(GC_EVENT_RING_SIZE);
   private gcObserver: PerformanceObserver;
 
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -136,13 +137,12 @@ export class ProcessVitalsCollector {
       for (const entry of list.getEntries()) {
         this.gcAccum.count += 1;
         this.gcAccum.totalMs += entry.duration;
-        if (entry.duration > this.gcAccum.maxMs) {
-          this.gcAccum.maxMs = entry.duration;
-          // Which collection it was, not just how long it took: a major
-          // collection on a large heap is a different diagnosis from a
-          // string of minor ones.
-          this.gcAccum.maxKind = gcKindName(entry);
-        }
+        if (entry.duration > this.gcAccum.maxMs) this.gcAccum.maxMs = entry.duration;
+        this.gcEvents.push({
+          ts: performance.timeOrigin + entry.startTime,
+          durationMs: entry.duration,
+          kind: gcKindName(entry),
+        });
       }
     });
     this.gcObserver.observe({ entryTypes: ["gc"] });
@@ -177,27 +177,6 @@ export class ProcessVitalsCollector {
     this.elRing.push(loopSample);
     this.eld.reset();
 
-    // Write a stall down when it happens.
-    //
-    // The loop is where every HTTP handler, the scheduler and the
-    // WebSocket run, so a stall here is every request stalling at once.
-    // These samples were already collected — but only into a ring buffer
-    // behind an admin route, so a stall at three in the morning left
-    // nothing in the journal, no record of what the thread was doing and
-    // no GC state. This is the line that makes the next one diagnosable
-    // instead of merely known to have happened.
-    if (loopSample.maxMs >= LOOP_STALL_WARN_MS) {
-      const mem = process.memoryUsage();
-      const gc =
-        this.gcAccum.count > 0
-          ? `gc=${this.gcAccum.count} in ${Math.round(this.gcAccum.totalMs)}ms, worst ${Math.round(this.gcAccum.maxMs)}ms ${this.gcAccum.maxKind || "unknown"}`
-          : "gc=none";
-      log.warn(
-        `event loop stalled ${Math.round(loopSample.maxMs)}ms (p99 ${Math.round(loopSample.p99Ms)}ms); ` +
-          `${gc}; heap=${formatGiB(mem.heapUsed)} rss=${formatGiB(mem.rss)}`,
-      );
-    }
-
     // CPU usage — delta since last tick, expressed as fraction of one core.
     const cpuDelta = process.cpuUsage(this.prevCpu);
     const wallUs = (now - this.prevCpuTs) * 1_000;
@@ -229,7 +208,29 @@ export class ProcessVitalsCollector {
       totalMs: this.gcAccum.totalMs,
       maxMs: this.gcAccum.maxMs,
     });
-    this.gcAccum = { count: 0, totalMs: 0, maxMs: 0, maxKind: "" };
+    this.gcAccum = { count: 0, totalMs: 0, maxMs: 0 };
+  }
+
+  /**
+   * The collections that overlapped `[startMs, endMs]` (epoch ms), worst one
+   * named by kind — a major collection on a large heap is a different
+   * diagnosis from a string of minor ones. Null when there were none. Only
+   * the last `GC_EVENT_RING_SIZE` collections are remembered, so for a long,
+   * allocation-heavy span the count is a lower bound.
+   */
+  gcBetween(startMs: number, endMs: number): GcWindow | null {
+    let found: GcWindow | null = null;
+    for (const e of this.gcEvents.inWindow(Number.NEGATIVE_INFINITY)) {
+      if (e.ts >= endMs || e.ts + e.durationMs <= startMs) continue;
+      found ??= { count: 0, totalMs: 0, maxMs: 0, maxKind: "unknown" };
+      found.count += 1;
+      found.totalMs += e.durationMs;
+      if (e.durationMs > found.maxMs) {
+        found.maxMs = e.durationMs;
+        found.maxKind = e.kind;
+      }
+    }
+    return found;
   }
 
   snapshot(windowSeconds: number): ProcessVitalsSnapshot {

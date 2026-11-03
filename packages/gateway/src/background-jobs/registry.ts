@@ -23,6 +23,7 @@
  *   - No persistence. Lost on restart, by design.
  */
 
+import { withActivity } from "../observability/main-activity.js";
 import type { Logger } from "@omnesis/core";
 import type { BackgroundJob, BackgroundJobsSnapshot, JobObservation } from "./types.js";
 
@@ -104,7 +105,10 @@ export class BackgroundJobsRegistry {
   start(): void {
     if (this.timer) return;
     this.refresh();
-    this.timer = setInterval(() => this.refresh(), this.refreshIntervalMs);
+    this.timer = setInterval(
+      () => withActivity("backgroundJobs.refresh", () => this.refresh()),
+      this.refreshIntervalMs,
+    );
     this.timer.unref?.();
   }
 

@@ -5,6 +5,8 @@ import type Database from "better-sqlite3";
 type Db = Database.Database;
 import {
   createLogger,
+  isKnownCommandType,
+  isKnownEventType,
   isWsCommand,
   isWsEnvelope,
   isWsEvent,
@@ -40,6 +42,7 @@ import {
 import { getDevice } from "./data/repositories/DeviceRepository.js";
 import { isTokenActive, lookupToken } from "./data/repositories/TokenRepository.js";
 import { wsHelloRateLimiter, type IpRateLimiter } from "./rate-limit.js";
+import { withActivity } from "./observability/main-activity.js";
 import type { WriteGate } from "./write-gate.js";
 
 const log = createLogger("gateway:ws");
@@ -384,7 +387,17 @@ export class DeviceWsServer {
     }
   }
 
+  /**
+   * Dispatch one frame from a device. Marked as an activity (`ws.message`,
+   * and `ws <type>` once the frame parses) so a stall it causes on the main
+   * thread is reported under that name. Only a type the message registry
+   * knows becomes part of a name; anything else a device sends is `ws (unknown)`.
+   */
   onMessage(ws: WsHandle, message: string | Buffer): void {
+    withActivity("ws.message", () => this.dispatchMessage(ws, message));
+  }
+
+  private dispatchMessage(ws: WsHandle, message: string | Buffer): void {
     const raw = typeof message === "string" ? message : message.toString();
     let parsed: unknown;
     try {
@@ -426,12 +439,14 @@ export class DeviceWsServer {
     }
 
     if (isWsCommand(parsed)) {
-      this.handleCommand(ws, state, parsed);
+      const name = isKnownCommandType(parsed.type) ? `ws ${parsed.type}` : "ws (unknown)";
+      withActivity(name, () => this.handleCommand(ws, state, parsed));
       return;
     }
 
     if (isWsEvent(parsed)) {
-      this.handleEvent(state, parsed);
+      const name = isKnownEventType(parsed.type) ? `ws ${parsed.type}` : "ws (unknown)";
+      withActivity(name, () => this.handleEvent(state, parsed));
       return;
     }
   }

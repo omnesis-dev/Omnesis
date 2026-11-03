@@ -67,6 +67,8 @@ export interface AdminRoutesDeps {
   processVitals?: {
     snapshot(windowSeconds: number): import("../../../process-vitals.js").ProcessVitalsSnapshot;
   };
+  /** Recorded main-thread stalls; absent in compositions without a stall monitor. */
+  stalls?: import("../../../observability/stall-monitor.js").StallReportPort;
   scheduler?: {
     snapshot(windowSeconds: number): SchedulerMetricsSnapshot;
     pauseBackground(): void;

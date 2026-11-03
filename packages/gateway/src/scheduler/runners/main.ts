@@ -17,6 +17,9 @@
  * `concurrency` in parallel. Per-task work is just JS event-loop work,
  * so concurrency overhead is microseconds.
  *
+ * Each run is marked with the task's name (`withActivity`), so a stall
+ * the task causes on the main thread is reported under that name.
+ *
  * No preempt support: main-thread tasks shouldn't be doing work long
  * enough to need cooperative yielding. If you find yourself wanting
  * `signalPreempt()` on the main runner, that's a sign the work belongs
@@ -29,6 +32,7 @@
  * circuit cleanly; the rest hit the cap and the runner returns anyway.
  */
 
+import { withActivity } from "../../observability/main-activity.js";
 import type { TaskRunner } from "../runner.js";
 import type { Task, TaskContext, TaskOutcome } from "../types.js";
 
@@ -58,7 +62,7 @@ export class MainTaskRunner implements TaskRunner {
     args: TArgs,
     ctx: TaskContext,
   ): Promise<TaskOutcome<TArgs, TResult>> {
-    const p = task.run(args, ctx);
+    const p = withActivity(task.name, () => task.run(args, ctx));
     this.inflight.add(p);
     try {
       return await p;

@@ -370,6 +370,28 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           owner-only file modes under its configuration directory.
         </p>
 
+        <h3 id="stalls">Event-loop stalls</h3>
+        <p>
+          The gateway answers every request on one event loop, so work that holds it for a moment
+          makes every client wait. The gateway watches the loop from a separate thread and records
+          each stall of 250 ms or more with the work that caused it. A stall of a second or more is
+          written to the gateway log as <code>event loop stalled 2200ms in &lt;activity&gt;</code>,
+          where the activity is a request (<code>GET /search</code>), a background task or a device
+          message. Doctor warns when stalls of a second or more add up to ten seconds or more in an
+          hour, and names the activity behind most of it.
+        </p>
+        <p>
+          <code>omnesis stalls</code> ranks the activities by how long they blocked the loop (<code
+            >--window</code
+          >
+          sets the minutes to look back) and lists the CPU profiles the gateway captured. When long
+          stalls recur, it profiles itself for a minute and keeps a summary under
+          <code>diagnostics/stalls/</code> in its configuration directory, at most one every 15
+          minutes and the newest five; <code>gateway.stalls</code> configures both. A summary holds
+          function names, source file paths and line numbers, never data. Include the
+          <code>omnesis stalls</code> output when you report a slow gateway.
+        </p>
+
         <h3 id="calendar">Reading the calendar</h3>
         <p>
           <strong>Debug → Cognition → Timeline</strong> combines structured dates supplied by
@@ -1484,7 +1506,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               <tr>
                 <td>
                   <code>service</code>, <code>status</code>, <code>doctor</code>,
-                  <code>health</code>
+                  <code>health</code>, <code>stalls</code>
                 </td>
                 <td>Run and check the daemons</td>
                 <td><a href="#services">Services</a>, <a href="#monitoring">Monitoring</a></td>
