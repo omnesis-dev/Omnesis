@@ -25,7 +25,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
 import { createLegacyBriefClaimsTables, createLegacyBriefTables } from "./legacy-brief-tables.js";
-import { LATEST_SCHEMA_VERSION } from "./migrations.js";
+import { CURSOR_COMPAT_SCHEMA_VERSION, LATEST_SCHEMA_VERSION } from "./migrations.js";
 import { retractAliasAssertions } from "./repositories/PersonAliasRepository.js";
 import type Database from "better-sqlite3";
 import type { Db } from "./types.js";
@@ -71,6 +71,8 @@ const WOUND_BACK = [
   209,
   // 210 handoff outbox is dropped with the note queue.
   210,
+  // 211 lowers cursor stamps; its input is the sync_state rows a test plants.
+  211,
 ];
 
 let dir: string;
@@ -1033,6 +1035,57 @@ describe("an install several versions behind, upgrading", () => {
         .get()!;
       expect(row.updated).toBe("integer");
       expect(row.updated_at).toBe(1_700_000_000_003);
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+
+  test("every source keeps its cursor and write epoch, shared and per member", () => {
+    // An install this far behind stamped each cursor with its own head; those
+    // stamps are already at or below the cursor-compatibility version.
+    seedOlderInstall((db) => {
+      const plant = db.prepare(
+        `INSERT INTO sync_state (source_id, device_id, cursor, last_synced_at, minimum_gateway_version)
+         VALUES (?, ?, ?, '2026-01-01T00:00:00.000Z', ?)`,
+      );
+      plant.run("example-mail:one", "", '{"historyId":"981","page":12}', BEFORE_TAIL);
+      plant.run("example-notes:shared", "", "{}", 0);
+      plant.run("example-notes:shared", "device-a", '{"page":4}', BEFORE_TAIL);
+      plant.run("example-notes:shared", "device-b", '{"page":9}', 150);
+      db.prepare(
+        "INSERT INTO source_wipe_epoch (source_id, device_id, epoch) VALUES ('example-notes:shared', 'device-a', 2)",
+      ).run();
+    });
+
+    const db = upgrade();
+    try {
+      expect(BEFORE_TAIL).toBeLessThanOrEqual(CURSOR_COMPAT_SCHEMA_VERSION);
+      expect(
+        db
+          .prepare(
+            `SELECT source_id, device_id, cursor, minimum_gateway_version AS v
+               FROM sync_state ORDER BY source_id, device_id`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          source_id: "example-mail:one",
+          device_id: "",
+          cursor: '{"historyId":"981","page":12}',
+          v: BEFORE_TAIL,
+        },
+        { source_id: "example-notes:shared", device_id: "", cursor: "{}", v: 0 },
+        {
+          source_id: "example-notes:shared",
+          device_id: "device-a",
+          cursor: '{"page":4}',
+          v: BEFORE_TAIL,
+        },
+        { source_id: "example-notes:shared", device_id: "device-b", cursor: '{"page":9}', v: 150 },
+      ]);
+      expect(db.prepare("SELECT * FROM source_wipe_epoch ORDER BY 1, 2").all()).toEqual([
+        { source_id: "example-notes:shared", device_id: "device-a", epoch: 2 },
+      ]);
     } finally {
       (db as unknown as Database.Database).close();
     }

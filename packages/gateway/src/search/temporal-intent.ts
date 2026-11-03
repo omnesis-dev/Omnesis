@@ -36,9 +36,11 @@
  *   ("March to May 2025", "between June and August") and ISO days it merged.
  *
  * Pure apart from the shared per-culture model cache; runs on whichever thread
- * calls it. The search pipeline calls it on the main thread: a warm parse of
- * a short query costs one to a few milliseconds per culture, and the input is
- * capped at {@link MAX_QUERY_CHARS} characters.
+ * calls it. The search pipeline sends each query to a search worker
+ * (`workers/search-worker.ts`), which builds the models at its own start; it
+ * calls it inline only when no search worker can take the query. A warm parse
+ * of a short query costs one to a few milliseconds per culture, and the input
+ * is capped at {@link MAX_QUERY_CHARS} characters.
  */
 
 import {
@@ -424,19 +426,24 @@ function monthRanges(text: string, today: string, direction: Direction): Reading
   return found;
 }
 
+/** Every culture {@link parseTemporalIntent} can read a query in. */
+export const TEMPORAL_INTENT_CULTURES: readonly DateCulture[] = [
+  englishCulture("month-first"),
+  englishCulture("day-first"),
+  ...CULTURE_EVIDENCE.map(([culture]) => culture),
+];
+
 /**
- * Build every culture's recognizer model and run its first parse, which is
- * where most of the one-time cost lies (up to about a second for French);
- * paid at boot, it never lands on a search.
+ * Build one culture's recognizer model and run its first parse, which is where
+ * most of the one-time cost lies (up to about a second for French). A search
+ * worker warms each of {@link TEMPORAL_INTENT_CULTURES} as it starts, so a
+ * search rarely pays it; one that arrives first builds the models it needs.
  */
-export function warmTemporalIntent(): void {
-  const reference = new Date();
-  for (const culture of ["en-us", "en-*", "fr-fr", "es-es"] as const) {
-    dateTimeModel(culture).parse(
-      "du 1 au 3 mars 2026, la semaine prochaine, next Monday",
-      reference,
-    );
-  }
+export function warmTemporalIntent(culture: DateCulture): void {
+  dateTimeModel(culture).parse(
+    "du 1 au 3 mars 2026, la semaine prochaine, next Monday",
+    new Date(),
+  );
 }
 
 /**

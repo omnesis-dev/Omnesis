@@ -25,7 +25,6 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { describeSchedule } from "../../../gateway/src/brain/storage/tasks.js";
 import { createOpenLoop } from "../../../gateway/src/brain/storage/open-loops.js";
-import type { SyntheticE2EHarness } from "./synth-harness.js";
 import {
   BrainBench,
   call,
@@ -34,6 +33,7 @@ import {
   waitFor,
   type ListedNoteDto,
 } from "./brain-bench/index.js";
+import type { SyntheticE2EHarness } from "./synth-harness.js";
 
 compressCognitionCadences();
 

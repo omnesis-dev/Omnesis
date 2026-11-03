@@ -41,7 +41,13 @@ describe("installer coverage CI admission and verdict", () => {
       expect(run("pull_request", true, "failure").status).toBe(1);
       expect(run("pull_request", true, "skipped").status).toBe(1);
       expect(run("pull_request", false, "skipped").status).toBe(0);
-      expect(run("push", false, "skipped").status).toBe(1);
+      // Main pushes intentionally defer macOS coverage to full sweeps.
+      expect(run("push", false, "skipped").status).toBe(0);
+      for (const event of ["push", "schedule", "workflow_dispatch"]) {
+        expect(run(event, true, "success").status).toBe(0);
+        expect(run(event, true, "skipped").status).toBe(1);
+        expect(run(event, true, "failure").status).toBe(1);
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -9276,6 +9276,23 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// Direct documents remain visible when no observation was shipped.
+    func testDailyBriefDirectReferences() {
+        snapshot(
+            DailyBriefFooter(
+                day: "2026-10-14",
+                state: .loaded(PreviewMocks.dailyBriefReferences),
+                isOpen: true,
+                onToggle: {},
+                onRetry: {}
+            )
+            .padding()
+            .environment(AppStore.preview()),
+            name: "342-daily-brief-direct-references",
+            size: CGSize(width: 393, height: 350)
+        )
+    }
+
     /// The reader folded today's "Based on" list.
     func testDailyBriefTodayListFolded() {
         let model = DailyBriefTranscriptPreview.model { $0.toggleFooter(PreviewMocks.dailyBriefOrigin.briefs[2]) }

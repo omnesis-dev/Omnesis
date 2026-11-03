@@ -35,6 +35,13 @@
  * least once, and rejects when a slot fails — exits, errors or reports
  * `initError` — before it ever reported ready: such a slot is not respawned,
  * and what becomes of the pool is the caller's to decide.
+ *
+ * The pool also reads each query's temporal intent (`temporalIntent`), so the
+ * date recognizer runs on the workers. A reading asked for while the pool is
+ * still starting waits (for a bounded time) for its first worker instead of
+ * being refused: the caller's fallback would run the recognizer on the main
+ * thread, and building its models there is the stall the workers exist to
+ * avoid. Each worker holds its own models, a few tens of megabytes.
  */
 
 import { Worker } from "node:worker_threads";
@@ -43,6 +50,7 @@ import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-pr
 import { DEFAULT_BACKGROUND_WORKER_NICE } from "./worker-priority.js";
 import type { LexicalIndexData } from "../search/lexical-index-data.js";
 import type { CandidateGenRequest, CandidateGenResult } from "../search/candidate-gen.js";
+import type { TemporalIntent, TemporalIntentOptions } from "../search/temporal-intent.js";
 import type { MainToSearch, SearchInit, SearchToMain } from "./search-protocol.js";
 
 const log = createLogger("gateway:search-pool");
@@ -73,11 +81,15 @@ export interface SearchWorkerPoolOptions {
   respawnStableMs?: number;
   /** Respawns allowed in one streak before the slot is abandoned. */
   maxRespawnStreak?: number;
+  /** Have each worker build the date recognizer's models once it is ready. */
+  warmTemporalIntent?: boolean;
+  /** How long a temporal-intent reading waits for a starting pool's first worker. */
+  startWaitMs?: number;
 }
 
 interface Pending {
   slot: WorkerSlot;
-  resolve: (value: CandidateGenResult) => void;
+  resolve: (value: CandidateGenResult | TemporalIntent | null) => void;
   reject: (err: Error) => void;
   /**
    * Profiler captured at enqueue time. The reply lands in a `message`
@@ -85,6 +97,8 @@ interface Pending {
    * would always miss — the reference travels with the pending entry.
    */
   profiler: AnswerProfiler | undefined;
+  /** The queue name the call's span is recorded under. */
+  span: string;
 }
 
 interface WorkerSlot {
@@ -137,6 +151,10 @@ export class SearchWorkerPool {
   private readyPromise: Promise<void>;
   private resolveReady!: () => void;
   private rejectReady!: (err: Error) => void;
+  /** Settles when the first worker reports ready, or when `start()` fails first. */
+  private firstReadyPromise: Promise<void>;
+  private resolveFirstReady!: () => void;
+  private rejectFirstReady!: (err: Error) => void;
   private nextId = 1;
   private inflight = new Map<number, Pending>();
   /** The lexical index every worker ranks with; re-sent to respawned workers. */
@@ -170,11 +188,20 @@ export class SearchWorkerPool {
       respawnMaxDelayMs: opts.respawnMaxDelayMs ?? 30_000,
       respawnStableMs: opts.respawnStableMs ?? 60_000,
       maxRespawnStreak: opts.maxRespawnStreak ?? 5,
+      warmTemporalIntent: opts.warmTemporalIntent ?? false,
+      startWaitMs: opts.startWaitMs ?? 5_000,
     };
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
     });
+    this.firstReadyPromise = new Promise<void>((resolve, reject) => {
+      this.resolveFirstReady = resolve;
+      this.rejectFirstReady = reject;
+    });
+    // Awaited only by readings asked for during start; a failed start is
+    // reported through `start()` itself.
+    this.firstReadyPromise.catch(() => {});
   }
 
   /** True while at least one worker has reported `ready`. Read by the pipeline's gate. */
@@ -186,7 +213,12 @@ export class SearchWorkerPool {
     return this.disposed;
   }
 
-  /** Current in-flight candidate-gen calls — the synchronous saturation signal. */
+  /** True from `start()` until it settles: no worker has reported ready yet, and none has failed. */
+  get isStarting(): boolean {
+    return this.slots.length > 0 && !this.readySettled && !this.ready && !this.disposed;
+  }
+
+  /** Current in-flight calls of either operation — the synchronous saturation signal. */
   get inflightCount(): number {
     return this.inflight.size;
   }
@@ -237,10 +269,68 @@ export class SearchWorkerPool {
    * identical `runCandidateGen` on main.
    */
   async candidateGen(request: CandidateGenRequest): Promise<CandidateGenResult> {
-    if (this.disposed) throw new Error("search worker pool disposed");
-    if (this.slots.length === 0) throw new Error("search worker pool not started");
+    return (await this.dispatch("search-worker", (id, enqueueMs) => ({
+      type: "call",
+      id,
+      request,
+      enqueueMs,
+    }))) as CandidateGenResult;
+  }
+
+  /**
+   * Read the time a query names on a worker — the same `parseTemporalIntent`
+   * the caller would run, over the same text and options. While `start()` has
+   * not settled it waits up to `startWaitMs` for the first worker to report
+   * ready. Rejects like
+   * {@link candidateGen}, and when the pool fails to start.
+   */
+  async temporalIntent(
+    text: string,
+    options: TemporalIntentOptions,
+  ): Promise<TemporalIntent | null> {
+    if (this.isStarting) await this.firstReady();
+    return (await this.dispatch("search-worker:temporal-intent", (id, enqueueMs) => ({
+      type: "temporalIntent",
+      id,
+      text,
+      options,
+      enqueueMs,
+    }))) as TemporalIntent | null;
+  }
+
+  /**
+   * The first worker's `ready`, waited for at most `startWaitMs`: a worker that
+   * never answers its `init` must not hold every search that names a time.
+   */
+  private async firstReady(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(new Error(`no search worker reported ready within ${this.opts.startWaitMs}ms`)),
+        this.opts.startWaitMs,
+      );
+      timer.unref?.();
+    });
+    try {
+      await Promise.race([this.firstReadyPromise, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Post one operation to the ready worker with the fewest calls in flight
+   * (ties rotate) and correlate its reply by id.
+   */
+  private dispatch(
+    span: string,
+    message: (id: number, enqueueMs: number) => MainToSearch,
+  ): Promise<CandidateGenResult | TemporalIntent | null> {
+    if (this.disposed) return Promise.reject(new Error("search worker pool disposed"));
+    if (this.slots.length === 0) return Promise.reject(new Error("search worker pool not started"));
     const live = this.slots.filter((s) => s.ready && s.worker !== null);
-    if (live.length === 0) throw new Error("no search worker is ready");
+    if (live.length === 0) return Promise.reject(new Error("no search worker is ready"));
     const id = this.nextId++;
     const slot = leastLoaded(
       live,
@@ -252,15 +342,16 @@ export class SearchWorkerPool {
     // see the ambient profiler (cross-thread event), so the reference
     // travels with the pending entry.
     const profiler = ambientAnswerProfiler();
-    return new Promise<CandidateGenResult>((resolve, reject) => {
-      this.inflight.set(id, { slot, resolve, reject, profiler });
-      slot.worker!.postMessage({ type: "call", id, request, enqueueMs } satisfies MainToSearch);
+    return new Promise((resolve, reject) => {
+      this.inflight.set(id, { slot, resolve, reject, profiler, span });
+      slot.worker!.postMessage(message(id, enqueueMs));
     });
   }
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.rejectFirstReady(new Error("search worker pool disposed"));
 
     const shutdowns = this.slots.map((slot) => {
       if (slot.heartbeatCheck) clearInterval(slot.heartbeatCheck);
@@ -346,6 +437,7 @@ export class SearchWorkerPool {
       configDir: this.opts.configDir,
       heartbeatIntervalMs: this.opts.heartbeatIntervalMs,
       backgroundWorkerNice: this.opts.backgroundWorkerNice,
+      warmTemporalIntent: this.opts.warmTemporalIntent,
       ...(this.opts.indexDbKeyHex ? { indexDbKeyHex: this.opts.indexDbKeyHex } : {}),
       ...(this.opts.cacheSizeBytes != null ? { cacheSizeBytes: this.opts.cacheSizeBytes } : {}),
     };
@@ -409,6 +501,7 @@ export class SearchWorkerPool {
     if (this.readySettled) return;
     this.readySettled = true;
     this.rejectReady(err);
+    this.rejectFirstReady(err);
   }
 
   private handleMessage(slot: WorkerSlot, msg: SearchToMain): void {
@@ -419,6 +512,7 @@ export class SearchWorkerPool {
         slot.readySince = Date.now();
         slot.lastHeartbeat = slot.readySince;
         this.ready = true;
+        this.resolveFirstReady();
         if (slot.crashStreak > 0) log.info(`search worker ${slot.index} respawned and ready`);
         if (this.slots.every((s) => s.everReady)) this.resolveStart();
         break;
@@ -449,9 +543,9 @@ export class SearchWorkerPool {
           return;
         }
         this.inflight.delete(msg.id);
-        // The profiler rode in on the pending entry (see candidateGen):
-        // the ambient store is unreachable from this handler.
-        pending.profiler?.recordQueueSpan("search-worker", msg.queueMs, msg.execMs);
+        // The profiler rode in on the pending entry (see dispatch): the
+        // ambient store is unreachable from this handler.
+        pending.profiler?.recordQueueSpan(pending.span, msg.queueMs, msg.execMs);
         if (msg.ok) pending.resolve(msg.value);
         else pending.reject(new Error(msg.error));
         break;

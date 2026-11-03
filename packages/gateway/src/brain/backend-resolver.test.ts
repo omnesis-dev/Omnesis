@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, expect, test, vi } from "vitest";
-import type { CapabilityRole, ResolvedAssignment } from "@omnesis/core";
 import { loadBrainCompletionProvider } from "./backend-resolver.js";
+import type { CapabilityRole, ResolvedAssignment } from "@omnesis/core";
 
 const readiness = { hasReplayFixture: () => false };
 const assigned: ResolvedAssignment = {

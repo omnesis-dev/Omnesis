@@ -6,20 +6,27 @@
  * Whether an exact commit passed full validation.
  *
  * The evidence is the repository's own `full-validation` workflow runs for
- * that commit. Only a run started by a push to `main` or by a maintainer's
- * manual dispatch counts: a pull-request run validates a merge commit, not the
- * commit being released.
+ * that commit. Only a scheduled run or an explicit all-lanes manual dispatch
+ * counts: push and Linux-only manual runs omit macOS, and a pull-request run
+ * validates a merge commit, not the commit being released.
  */
 import { pathToFileURL } from "node:url";
 
-const TRUSTED_EVENTS = new Set(["push", "workflow_dispatch"]);
+/** The dispatch's run name records whether macOS was included. */
+function isFullRun(run) {
+  return (
+    run.event === "schedule" ||
+    (run.event === "workflow_dispatch" &&
+      run.display_title === "full-validation (workflow_dispatch, lanes: all)")
+  );
+}
 
 /** The command that starts a fresh full validation of the current `main`. */
 export const RERUN_COMMAND = "gh workflow run full-validation.yml --ref main";
 
 export function fullCiVerdict(runs, targetSha) {
   const own = (runs ?? [])
-    .filter((run) => run.head_sha === targetSha && TRUSTED_EVENTS.has(run.event))
+    .filter((run) => run.head_sha === targetSha && isFullRun(run))
     .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
   const green = own.find((run) => run.status === "completed" && run.conclusion === "success");
   if (green) return { ok: true, state: "green", runId: green.id, url: green.html_url };

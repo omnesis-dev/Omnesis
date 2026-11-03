@@ -89,6 +89,18 @@ jobs:
             testDebugUnitTest \
             --no-daemon --max-workers=2
 
+      - name: Upload Android JVM failure reports
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: android-jvm-failures
+          path: |
+            android/**/build/test-results/**/*.xml
+            android/**/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: lane [android-policy]
         run: ./gradlew :app:verifyPlayReleasePolicy --no-daemon --max-workers=2
 

@@ -7404,6 +7404,22 @@ extension PreviewMocks {
         ]
     )
 
+    static let dailyBriefReferences = DailyBriefItems(
+        day: "2026-10-14",
+        messageId: "mb_references",
+        items: [],
+        references: [
+            DailyBriefSource(id: "doc_schedule", title: "Thursday workshop schedule", sourceType: "gmail"),
+            DailyBriefSource(id: "doc_chat", title: "Workshop conversation", sourceType: "whatsapp"),
+            DailyBriefSource(
+                id: "doc_notes",
+                title: "Workshop preparation notes and equipment checklist for the community studio",
+                sourceType: "notion"
+            ),
+            DailyBriefSource(id: "doc_untitled", title: nil, sourceType: ""),
+        ]
+    )
+
     static let dailyBriefPages = [dailyBriefMonday, dailyBriefYesterday, dailyBriefToday]
 
     /// One brief item per reaction state, for the thumbs on their own.

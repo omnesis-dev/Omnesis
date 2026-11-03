@@ -8,6 +8,7 @@ import dev.omnesis.android.transport.dto.ChatMessage
 import dev.omnesis.android.transport.dto.ConversationOrigin
 import dev.omnesis.android.transport.dto.DailyBriefItemDto
 import dev.omnesis.android.transport.dto.DailyBriefItemsDto
+import dev.omnesis.android.transport.dto.DailyBriefSourceDto
 import dev.omnesis.android.transport.dto.DailyBriefMessageRef
 import dev.omnesis.android.transport.dto.UserPart
 import java.time.Instant
@@ -210,6 +211,19 @@ class DailyBriefTranscriptTest {
         assertEquals("06:02", DailyBriefCopy.sentTime("2026-10-25T06:02:00Z", london, Locale.UK))
         assertNull(DailyBriefCopy.sentTime(null, london, Locale.UK))
         assertNull(DailyBriefCopy.sentTime("yesterday morning", london, Locale.UK))
+    }
+
+    @Test
+    fun loaded_counts_include_direct_references_alongside_observations() {
+        val page = DailyBriefItemsDto(
+            day = "2026-10-14",
+            messageId = "mb_wed",
+            items = listOf(DailyBriefItemDto(observationId = "obs_workshop", summary = "The workshop moved.")),
+            references = listOf(DailyBriefSourceDto("doc_agenda", "Workshop agenda", "notion")),
+        )
+        val view = DailyBriefViewState().withItems(page.day, DailyBriefItemsState.Loaded(page))
+        assertEquals(2, view.itemCount(page.day))
+        assertEquals("Morning brief · 2 things", DailyBriefCopy.foldedSummary(view.itemCount(page.day), 0))
     }
 
     @Test

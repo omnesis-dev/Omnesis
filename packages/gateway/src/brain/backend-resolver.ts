@@ -14,14 +14,14 @@
 
 import { resolveRoleBackend } from "../agent/agent-lifecycle.js";
 import {
+  loadCompletionFromResolved,
+  type LoadCompletionDeps,
+} from "../inference/completion-loader.js";
+import {
   BACKGROUND_AGENT_ROLE,
   briefsFeatureStatus,
   type BackgroundAgentResolver,
 } from "./feature-gate.js";
-import {
-  loadCompletionFromResolved,
-  type LoadCompletionDeps,
-} from "../inference/completion-loader.js";
 import type { ChatRoleReadinessDeps } from "../models/chat-role-readiness.js";
 import type { ChatBackend } from "@omnesis/agent";
 import type { Logger } from "@omnesis/core";

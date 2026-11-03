@@ -129,6 +129,21 @@ scripts/android-logic.sh --tests dev.omnesis.android.transport.dto.DtoDecodeTest
 
 The scratch checkout is kept **warm**: the script rsyncs into a persistent dir (default `~/omnesis-android-logic` on the host, override with `OMNESIS_EPIC_MACOS_ANDROID_LOGIC_WORKTREE`) and **preserves the Gradle build cache** across runs (it excludes `.gradle` / `build` from the up-sync, so the host's caches survive) and opts into the **configuration cache** (`--configuration-cache`, a lane-local flag — `gradle.properties` keeps it off globally so the Roborazzi/CI lanes are unaffected). So a repeat run skips the configuration phase and most recompilation. Use this lane while iterating on logic; the Roborazzi lane to self-critique a UI change.
 
+## Robolectric runtime dependencies
+
+`prepareRobolectricRuntime` resolves the instrumented Android SDK jars through
+Gradle and stages them under `android/build/robolectric-runtime` before JVM tests.
+Robolectric reads that directory without downloading artifacts inside test JVMs;
+Gradle owns dependency caching, repository access and download failures.
+
+The inventory includes explicit test SDKs and the manifest default SDK 26 used
+by library tests without a `@Config` SDK override. When updating Robolectric,
+changing a manifest default or adding a tested SDK level, update the coordinates in
+`android/build.gradle.kts` and the SDK inventory in
+`RobolectricRuntimeDependenciesTest`. Its plain JVM checks use Robolectric's real
+SDK resolver, so a missing or mismatched jar fails without a network fallback.
+Android JVM CI failures retain XML and HTML reports as `android-jvm-failures`.
+
 ## Tests (rigor matches iOS)
 
 - **Unit** (`./gradlew test`, JVM/Robolectric): port the iOS unit tests —

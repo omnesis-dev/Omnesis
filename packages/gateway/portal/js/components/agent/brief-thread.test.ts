@@ -157,6 +157,43 @@ describe("BriefThread", () => {
     expect(host.querySelector(".brief-footer")).toBeNull();
   });
 
+  test("a brief with only document references lists them without reaction controls", async () => {
+    mocks.getBrief.mockResolvedValue({
+      ...detail(TODAY, []),
+      references: [
+        { id: "doc_message", title: "Workshop planning conversation", sourceType: "whatsapp", createdAt: null },
+        { id: "doc_file", title: null, sourceType: "files", createdAt: null },
+      ],
+    });
+    await mount();
+    expect(host.querySelector(".brief-footer-toggle").textContent).toContain("Based on 2 things");
+    expect(host.querySelector("[data-doc='doc_message']").textContent).toBe("Workshop planning conversation");
+    expect(host.querySelector("[data-doc='doc_file']").textContent).toBe("Untitled");
+    expect(host.querySelectorAll(".brief-reference")).toHaveLength(2);
+    expect(host.querySelectorAll(".brief-thumb")).toHaveLength(0);
+    await click(host.querySelector(".brief-footer-toggle"));
+    expect(host.querySelector(".brief-items")).toBeNull();
+    await click(host.querySelector(".brief-footer-toggle"));
+    expect(host.querySelectorAll(".brief-reference")).toHaveLength(2);
+  });
+
+  test("mixed briefs count both kinds and reserve thumbs for observations", async () => {
+    mocks.getBrief.mockImplementation(async (_id, day) => ({
+      ...detail(day, [ITEMS[0]]),
+      references: [{ id: "doc_email", title: "Workshop confirmation", sourceType: "gmail", createdAt: null }],
+    }));
+    await mount();
+    expect(host.querySelector(".brief-footer-toggle").textContent).toContain("Based on 2 things");
+    expect(host.querySelectorAll(".brief-item")).toHaveLength(2);
+    expect([...host.querySelectorAll(".brief-item-rank")].map((el) => el.textContent)).toEqual(["1"]);
+    expect(host.querySelectorAll(".brief-thumb-up")).toHaveLength(1);
+    expect(host.querySelector(".brief-reference .brief-thumb")).toBeNull();
+    expect(host.querySelector(".brief-reference [data-doc='doc_email']").textContent).toBe("Workshop confirmation");
+    await click(host.querySelector(".brief-day-folded"));
+    await click(host.querySelector(".brief-day-toggle"));
+    expect(host.querySelector(".brief-day-folded").textContent).toContain("Morning brief · 2 things · 1 reply");
+  });
+
   test("a failed read shows a quiet retry line that reloads", async () => {
     mocks.getBrief.mockRejectedValueOnce(new Error("offline"));
     await mount();

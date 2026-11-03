@@ -14,7 +14,7 @@ import {
   syncStateCursorCodec,
   type SyncStateCursor,
 } from "../json-columns.js";
-import { LATEST_SCHEMA_VERSION } from "../migrations.js";
+import { CURSOR_COMPAT_SCHEMA_VERSION } from "../migrations.js";
 import type { StoredSyncState } from "../types.js";
 import type { SourceMeta, SourceMetaEntry, SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
 import { sourceTypeOf } from "@omnesis/types";
@@ -299,7 +299,7 @@ export function setSyncState(
           meta?.contentRetention ?? null,
           nextConsent,
           hadDocuments ? now : null,
-          LATEST_SCHEMA_VERSION,
+          CURSOR_COMPAT_SCHEMA_VERSION,
         ),
     { op: "setSyncState" },
   );

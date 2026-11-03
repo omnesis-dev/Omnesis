@@ -220,6 +220,17 @@ export function createBriefsStorageTables(db: Db): void {
       sent_at INTEGER NOT NULL
     )
   `);
+  // Original documents selected by the composer independently of observations.
+  // Metadata is resolved when read, so erased documents leave no copied text.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS morning_brief_references (
+      message_id TEXT NOT NULL,
+      rank INTEGER NOT NULL,
+      document_id TEXT NOT NULL,
+      PRIMARY KEY (message_id, rank),
+      UNIQUE (message_id, document_id)
+    )
+  `);
   // What remains of a closed observation once its retention window passes:
   // enough to calibrate the decision bar and review the "would have pushed"
   // log, without the cited text or evidence links.

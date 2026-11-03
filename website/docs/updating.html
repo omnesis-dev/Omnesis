@@ -380,9 +380,11 @@
         </p>
         <p>
           Rolling back the code does not roll back the data. If the new gateway got far enough to
-          run its migrations, the previous release clears the sync positions the newer version wrote
-          and those sources sync again from the start. An existing backup can restore the data state
-          it captured; see <a href="#restore">Restore</a>.
+          run its migrations, the previous release keeps running on the migrated database. Sources
+          keep their sync positions and continue where they left off, unless the newer version
+          changed how the gateway reads them; only those sources sync again from the start. An
+          existing backup can restore the data state it captured; see
+          <a href="#restore">Restore</a>.
         </p>
         <p>
           An older release does not know the settings a newer one added, and drops them from
@@ -498,11 +500,12 @@
                 <td><code>--force</code></td>
                 <td>
                   Allows moving to an older release, and implies <code>--allow-rewind</code>. There
-                  are no down-migrations, and an older release clears the sync positions the newer
-                  one wrote. Settings it does not know are saved for the next upgrade, as described
-                  under <a href="#update-failures">If it fails</a>. An OpenClaw or Hermes plugin
-                  that has followed a certificate renewal stops connecting when moved back to a
-                  release whose plugin pins the certificate; afterwards, run
+                  are no down-migrations. Sources keep their sync positions, except where the older
+                  release predates a change in how the gateway reads them; those sources sync again
+                  from the start. Settings it does not know are saved for the next upgrade, as
+                  described under <a href="#update-failures">If it fails</a>. An OpenClaw or Hermes
+                  plugin that has followed a certificate renewal stops connecting when moved back to
+                  a release whose plugin pins the certificate; afterwards, run
                   <code
                     >omnesis connect &lt;harness&gt; --refresh --trust-fingerprint
                     sha256:&lt;served&gt;</code

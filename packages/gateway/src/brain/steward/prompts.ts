@@ -851,6 +851,8 @@ function buildDigestRunPrompt(
     "",
     "Include every ranked observation, in the given order: each already passed this morning's recheck. Leave one out only when the user's profile states a preference against that kind of item; pass its id in omittedObservationIds. Loops and inferred horizon lines are your own earlier interpretations: re-ground anything you state about them.",
     "",
+    "Pass referenceDocumentIds to morning_brief_send for the original documents actually used in the message beyond the ranked observations. Include calendar documents from source-owned horizon lines and emails, conversations, files or other original documents you read with fetch_many to ground tasks or inferred entries. Do not cite every document in context: include only those supporting what you actually wrote. Ranked observations already carry their own citations. These additional references appear under Based on without observation reactions.",
+    "",
     MORNING_BRIEF_STYLE,
     "",
     itemLines.length > 0

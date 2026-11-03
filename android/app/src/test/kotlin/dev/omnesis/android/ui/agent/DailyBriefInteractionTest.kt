@@ -24,6 +24,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
+import dev.omnesis.android.transport.dto.DailyBriefItemsDto
+import dev.omnesis.android.transport.dto.DailyBriefSourceDto
 import dev.omnesis.android.transport.dto.DailyBriefReactionKind
 import dev.omnesis.android.ui.capture.TaskNoteKind
 import org.junit.Assert.assertEquals
@@ -62,9 +64,10 @@ class DailyBriefInteractionTest {
         failingOnce: Set<String> = emptySet(),
         failingReactions: Set<String> = emptySet(),
         withNoteCapture: Boolean = false,
+        pages: List<DailyBriefItemsDto> = DailyBriefFixtures.pages,
     ) {
         val (origin, messages) = DailyBriefFixtures.conversation(days, latestAnswer)
-        loader = DailyBriefFixtures.Loader(DailyBriefFixtures.pages, failingOnce)
+        loader = DailyBriefFixtures.Loader(pages, failingOnce)
         sender = DailyBriefFixtures.Sender(failing = failingReactions)
         val state = AgentCoordinator.UiState(
             hasClient = true,
@@ -118,6 +121,25 @@ class DailyBriefInteractionTest {
         compose.onNodeWithText("The venue deposit is due on Friday.").assertExists()
         // The composer speaks to the brief.
         compose.onNodeWithText("Reply about today's brief…").assertExists()
+    }
+
+    @Test
+    fun direct_references_show_and_open_without_observation_reactions() {
+        start(pages = listOf(DailyBriefFixtures.today.copy(
+            items = emptyList(),
+            references = listOf(
+                DailyBriefSourceDto("doc_workshop", "Workshop schedule", "gmail"),
+                DailyBriefSourceDto("doc_chat", "Workshop conversation", "whatsapp"),
+            ),
+        )))
+        compose.onNodeWithText("Based on 2 things").assertExists()
+        node("dailyBrief.source.doc_workshop").performClick()
+        node("dailyBrief.source.doc_chat").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf("doc_workshop", "doc_chat"), opened)
+        compose.onNodeWithContentDescription(DailyBriefCopy.THUMBS_UP).assertDoesNotExist()
+        compose.onNodeWithContentDescription(DailyBriefCopy.THUMBS_DOWN).assertDoesNotExist()
+        assertTrue(sender.sent.isEmpty())
     }
 
     /** Opening on a long history still lands on the latest brief, header first, not the oldest day. */
