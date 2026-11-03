@@ -254,6 +254,11 @@ function install(
     FAKE_AGENT_ASSIGNMENT: agentAssignment,
     FAKE_CURL_LOG: join(home, "curl-argv-log"),
     OMNESIS_GATEWAY_WAIT_SECONDS: "1",
+    // A fake gateway the supervisor reports running but that never answers
+    // /health would otherwise hold the installer in its startup wait (up to
+    // 600s in 15s windows), which is what a slow macOS runner hit.
+    OMNESIS_GATEWAY_STARTUP_MAX_SECONDS: "2",
+    OMNESIS_GATEWAY_STARTUP_POLL_SECONDS: "1",
   };
   const result =
     ttyAnswers === null
