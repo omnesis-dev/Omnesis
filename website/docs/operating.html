@@ -1261,6 +1261,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td><a href="/docs/setup#repairing-a-device">Bringing a revoked device back</a></td>
               </tr>
               <tr>
+                <td>A sync reports a gateway source-contract check timeout</td>
+                <td>The gateway did not answer its compatibility health check in time</td>
+                <td>
+                  The collector retries this read up to four attempts before failing the sync. Check
+                  the gateway logs for stalls or resource pressure, then use Sync now.
+                </td>
+              </tr>
+              <tr>
                 <td>Apple sources on a Mac report “Access Required”</td>
                 <td>The collector's <code>node</code> binary lacks Full Disk Access</td>
                 <td><a href="#full-disk-access">Full Disk Access</a></td>

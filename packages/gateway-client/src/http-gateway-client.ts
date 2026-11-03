@@ -119,6 +119,16 @@ function isTransportFailure(message: string): boolean {
   );
 }
 
+/** A read-only compatibility probe can safely retry its own deadline. */
+function hasTimeoutCause(error: unknown): boolean {
+  const seen = new Set<Error>();
+  for (let cause = error; cause instanceof Error && !seen.has(cause); cause = cause.cause) {
+    if (cause.name === "TimeoutError") return true;
+    seen.add(cause);
+  }
+  return false;
+}
+
 /**
  * Parse a `Retry-After` header (numeric seconds, as the gateway emits) into a
  * positive millisecond hint. Returns undefined for an absent, non-numeric, or
@@ -200,7 +210,7 @@ export class HttpGatewayClient implements GatewayClient {
         await this.beforeRequest?.();
       } catch (err) {
         const guardMessage = toErrorMessage(err);
-        if (attempt < MAX_RETRIES && isTransportFailure(guardMessage)) {
+        if (attempt < MAX_RETRIES && (isTransportFailure(guardMessage) || hasTimeoutCause(err))) {
           const delay = INITIAL_BACKOFF_MS * Math.pow(2, attempt);
           log.warn(
             `Network error on the gateway compatibility check before ${path}: ${guardMessage}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
