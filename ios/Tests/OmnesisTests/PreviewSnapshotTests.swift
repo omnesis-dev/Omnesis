@@ -577,7 +577,7 @@ final class PreviewSnapshotTests: XCTestCase {
             "delta": Data(repeating: 0x40, count: 4800).base64EncodedString(),
         ])
         XCTAssertEqual(session.scheduledPlaybackFramesForTesting, 2400)
-        let resumedPeak = try await renderVoicePlayback(session, engine: engine, format: format)
+        let resumedPeak = try await renderVoicePlayback(session, engine: engine, format: format, minimumPeak: 0.4)
         XCTAssertGreaterThan(resumedPeak, 0.4)
         XCTAssertTrue(session.playbackIsEmptyForTesting)
         try session.receiveForTesting(["type": "input_audio_buffer.speech_started"])
@@ -621,7 +621,7 @@ final class PreviewSnapshotTests: XCTestCase {
         try audio(seconds: 31, value: 0x20)
         XCTAssertTrue(session.connected)
         XCTAssertEqual(session.scheduledPlaybackFramesForTesting, 48000)
-        let first = try await renderVoicePlayback(session, engine: engine, format: format)
+        let first = try await renderVoicePlayback(session, engine: engine, format: format, minimumPeak: 0.2)
         XCTAssertGreaterThan(first, 0.2)
         XCTAssertTrue(session.playbackIsEmptyForTesting)
         // Tool execution can leave the player running with no scheduled audio.
@@ -636,7 +636,7 @@ final class PreviewSnapshotTests: XCTestCase {
         }
         try session.receiveForTesting(["type": "response.created", "response": ["id": "after-tool-gap"]])
         try audio(seconds: 1, value: 0x40)
-        let finalAnswer = try await renderVoicePlayback(session, engine: engine, format: format)
+        let finalAnswer = try await renderVoicePlayback(session, engine: engine, format: format, minimumPeak: 0.4)
         XCTAssertGreaterThan(finalAnswer, 0.4)
         XCTAssertTrue(session.connected)
         // Leave an old queued reply behind, then interrupt and start a new one.
@@ -648,7 +648,7 @@ final class PreviewSnapshotTests: XCTestCase {
         try session.receiveForTesting(["type": "input_audio_buffer.speech_stopped"])
         try session.receiveForTesting(["type": "response.created", "response": ["id": "after-interruption"]])
         try audio(seconds: 1, value: 0x40)
-        let second = try await renderVoicePlayback(session, engine: engine, format: format)
+        let second = try await renderVoicePlayback(session, engine: engine, format: format, minimumPeak: 0.4)
         XCTAssertGreaterThan(second, 0.4)
         XCTAssertNil(session.error)
         XCTAssertTrue(session.connected)
@@ -659,15 +659,62 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testRealtimePlaybackObservesOutputAfterSourceCompletion() async throws {
+        let session = RealtimeCallSession()
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let delay = AVAudioUnitDelay()
+        delay.delayTime = 0.5
+        delay.feedback = 0
+        delay.wetDryMix = 100
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1))
+        engine.attach(player)
+        engine.attach(delay)
+        engine.connect(player, to: delay, format: format)
+        engine.connect(delay, to: engine.mainMixerNode, format: format)
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        try engine.start()
+        player.play()
+        session.configurePlaybackForTesting(engine: engine, player: player)
+        defer { session.stop() }
+        try session.receiveForTesting([
+            "type": "response.output_audio.delta", "item_id": "delayed-answer",
+            "delta": Data(repeating: 0x40, count: 4800).base64EncodedString(),
+        ])
+        XCTAssertEqual(session.scheduledPlaybackFramesForTesting, 2400)
+        let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+        // The source completes before this delayed signal reaches the mixer.
+        XCTAssertEqual(try engine.renderOffline(4096, to: output), .success)
+        let channel = try XCTUnwrap(output.floatChannelData?[0])
+        let firstPeak = (0 ..< Int(output.frameLength)).reduce(Float.zero) { max($0, abs(channel[$1])) }
+        XCTAssertEqual(firstPeak, 0, accuracy: 0.001)
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while !session.playbackIsEmptyForTesting, clock.now < deadline {
+            await Task.yield()
+        }
+        XCTAssertTrue(session.playbackIsEmptyForTesting)
+        XCTAssertEqual(engine.manualRenderingSampleTime, 4096)
+        let delayedPeak = try await renderVoicePlayback(session, engine: engine, format: format, minimumPeak: 0.4)
+        XCTAssertGreaterThan(delayedPeak, 0.4)
+        XCTAssertTrue(session.connected)
+        snapshot(
+            RealtimeCallView(pairing: nil, session: session).environment(AppStore.preview()),
+            name: "realtime-delayed-playback",
+            ignoresSafeArea: true
+        )
+    }
+
+    /// Source completion excludes downstream latency; observe the required output too.
     private func renderVoicePlayback(
-        _ session: RealtimeCallSession, engine: AVAudioEngine, format: AVAudioFormat
+        _ session: RealtimeCallSession, engine: AVAudioEngine, format: AVAudioFormat, minimumPeak: Float
     ) async throws
         -> Float {
         let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
         var peak: Float = 0
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(10))
-        while !session.playbackIsEmptyForTesting, clock.now < deadline {
+        while !session.playbackIsEmptyForTesting || peak <= minimumPeak, clock.now < deadline {
             XCTAssertLessThanOrEqual(session.scheduledPlaybackFramesForTesting, 48000)
             let result = try engine.renderOffline(4096, to: output)
             XCTAssertEqual(result, .success)
