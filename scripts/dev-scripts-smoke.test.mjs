@@ -47,6 +47,7 @@ import {
   statSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
+import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { gatewayBootBudgetMs } from "./lib/boot-budget.mjs";
@@ -72,6 +73,18 @@ function schedulerManagedScripts(scripts) {
     }
   }
   return managed;
+}
+
+/** Evaluate the closed event/matrix expressions used by the hosted workflows. */
+function workflowExpression(expression, event, inputs = {}, needs = {}) {
+  const source = expression.startsWith("${{") ? expression.slice(3, -2) : expression;
+  return runInNewContext(source, {
+    github: { event_name: event },
+    inputs,
+    needs,
+    cancelled: () => false,
+    fromJSON: JSON.parse,
+  });
 }
 
 function workflowCheckOwnershipErrors(workflow, scripts, filename = "workflow.yml") {
@@ -2132,14 +2145,155 @@ describe("full-validation workflow topology", () => {
         expect(step("node", name).if, name).toBeUndefined();
     });
 
-    it("lets the verdict accept a skip only for a lane the pull request scoped out", () => {
+    it("lets the verdict accept a skip only for a lane explicitly scoped out", () => {
       const run = workflows["full-validation"].jobs.verdict.steps[0].run;
       expect(run).toContain('result === "skipped" && scopedOut(id)');
-      expect(run).toContain('const pr = process.env.EVENT === "pull_request";');
+      expect(run).not.toContain("pr &&");
       for (const [job, key] of Object.entries(switches))
         expect(run).toContain(`${/^[a-z]+$/u.test(job) ? job : `"${job}"`}: "${key}"`);
       expect(run).toContain('results.scope.outputs[switches[id]] === "false"');
     });
+  });
+
+  it("sweeps main twice daily and defaults manual runs to all lanes", () => {
+    const workflow = workflows["full-validation"];
+    expect(workflow.on.schedule).toEqual([{ cron: "17 1,13 * * *" }]);
+    expect(workflow.on.workflow_dispatch.inputs.lanes).toMatchObject({
+      type: "choice",
+      options: ["all", "linux"],
+      default: "all",
+    });
+    const planner = workflow.jobs.scope.steps.find((step) => step.id === "scope");
+    expect(planner.env.LANES).toBe("${{ inputs.lanes || 'all' }}");
+    expect(workflow["run-name"]).toContain("format(', lanes: {0}', inputs.lanes)");
+    expect(workflow.concurrency.group).toContain("github.sha, inputs.lanes || 'all'");
+  });
+
+  it("keeps macOS on selected PRs while main pushes reserve no ancillary Mac", async () => {
+    const { parse } = await import("yaml");
+    const install = parse(
+      readFileSync(join(repoRoot, ".github/workflows/install-e2e.yml"), "utf8"),
+    );
+    const mobile = parse(
+      readFileSync(join(repoRoot, ".github/workflows/mobile-journeys.yml"), "utf8"),
+    );
+    expect(install.on.schedule).toEqual([{ cron: "23 2,14 * * *" }]);
+    expect(mobile.on.schedule).toEqual([{ cron: "17 3,15 * * *" }]);
+    for (const event of ["push", "pull_request", "schedule", "workflow_dispatch"]) {
+      for (const id of ["single-host", "uninstall"]) {
+        const rows = workflowExpression(install.jobs[id].strategy.matrix.include, event);
+        expect(rows.map((row) => row.os)).toEqual(
+          event === "push" ? ["ubuntu-22.04"] : ["ubuntu-22.04", "macos-15"],
+        );
+      }
+      const upgrade = install.jobs["lockfile-upgrade"];
+      expect(workflowExpression(upgrade.strategy.matrix.os, event)).toEqual(
+        event === "push" ? ["ubuntu-24.04"] : ["ubuntu-24.04", "macos-15"],
+      );
+      const selected = { changes: { outputs: { ios: "true", android: "true" } } };
+      expect(workflowExpression(mobile.jobs.ios.if, event, { platforms: "both" }, selected)).toBe(
+        event !== "push",
+      );
+      expect(
+        workflowExpression(mobile.jobs.android.if, event, { platforms: "both" }, selected),
+      ).toBe(event !== "schedule");
+    }
+    const unselected = { changes: { outputs: { ios: "false", android: "false" } } };
+    for (const id of ["ios", "android"])
+      expect(workflowExpression(mobile.jobs[id].if, "pull_request", {}, unselected)).toBe(false);
+    expect(
+      workflowExpression(mobile.jobs.ios.if, "workflow_dispatch", { platforms: "android" }),
+    ).toBe(false);
+    expect(
+      workflowExpression(mobile.jobs.android.if, "workflow_dispatch", { platforms: "ios" }),
+    ).toBe(false);
+  });
+
+  it("accepts an intentional main skip but rejects skipped selected lanes and failed planning", () => {
+    const script =
+      workflows["full-validation"].jobs.verdict.steps[0].run.match(/node -e '([\s\S]+)'/u)[1];
+    const directory = mkdtempSync(join(tmpdir(), "validation-verdict-"));
+    const execute = (results) =>
+      spawnSync(process.execPath, ["-e", script], {
+        env: {
+          ...process.env,
+          EVENT: "push",
+          RESULTS_JSON: JSON.stringify(results),
+          GITHUB_STEP_SUMMARY: join(directory, "summary"),
+        },
+        encoding: "utf8",
+      });
+    try {
+      const results = {
+        scope: { result: "success", outputs: { apple: "false", scope: "full" } },
+        node: { result: "success" },
+        ios: { result: "skipped" },
+      };
+      expect(execute(results).status).toBe(0);
+      expect(
+        execute({ ...results, scope: { result: "success", outputs: { apple: "true" } } }).status,
+      ).toBe(1);
+      expect(execute({ ...results, scope: { result: "failure", outputs: {} } }).status).toBe(1);
+      expect(execute({ ...results, ios: { result: "failure" } }).status).toBe(1);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let a Linux green hide a failed macOS sweep", async () => {
+    const { parse } = await import("yaml");
+    const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/ci-status.yml"), "utf8"));
+    const source = workflow.jobs["main-verdict"].steps[0].run;
+    const script = source.match(/node -e '([\s\S]+)'/u)[1];
+    const run = (event, conclusion, hour, extra = {}) => ({
+      event,
+      conclusion,
+      status: "completed",
+      id: hour,
+      created_at: `2026-01-01T${String(hour).padStart(2, "0")}:00:00Z`,
+      ...extra,
+    });
+    const execute = (runs) =>
+      spawnSync(process.execPath, ["-e", script], {
+        input: JSON.stringify(runs),
+        encoding: "utf8",
+      }).status;
+    expect(execute([run("schedule", "failure", 1), run("push", "success", 2)])).toBe(1);
+    expect(execute([run("schedule", "success", 1), run("push", "failure", 2)])).toBe(1);
+    expect(execute([run("push", "failure", 1), run("schedule", "success", 2)])).toBe(0);
+    expect(execute([run("schedule", "success", 1), run("push", "success", 2)])).toBe(0);
+    expect(execute([run("push", "success", 2)])).toBe(1);
+    expect(
+      execute([
+        run("schedule", "failure", 1),
+        run("workflow_dispatch", "success", 2, {
+          display_title: "full-validation (workflow_dispatch, lanes: linux)",
+        }),
+      ]),
+    ).toBe(1);
+    expect(
+      execute([
+        run("schedule", "failure", 1),
+        run("workflow_dispatch", "success", 2, {
+          display_title: "full-validation (workflow_dispatch, lanes: all)",
+        }),
+      ]),
+    ).toBe(0);
+    expect(execute([run("schedule", "success", 1), run("schedule", "cancelled", 2)])).toBe(0);
+  });
+
+  it("fails the badge when any event listing cannot be read", async () => {
+    const { parse } = await import("yaml");
+    const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/ci-status.yml"), "utf8"));
+    const script = workflow.jobs["main-verdict"].steps[0].run;
+    for (const failed of ["push", "schedule", "workflow_dispatch"]) {
+      const mock = `gh() { if [[ "$*" == *"event=${failed}&"* ]]; then return 23; fi; printf '[]'; };\n`;
+      const result = spawnSync("bash", ["-c", mock + script], {
+        env: { ...process.env, GITHUB_REPOSITORY: "example/repo" },
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(23);
+    }
   });
 
   it("keeps live gateway tests out of the standalone iOS unit lane", () => {
@@ -2257,8 +2411,8 @@ describe("full-validation workflow topology", () => {
     // A dispatched run of main counts — the Dependabot auto-merge validates the
     // main it merged that way — and a pull request whose branch is named main
     // does not.
-    expect(run).toContain('.event == "push" or .event == "workflow_dispatch"');
-    expect(run).toContain('.conclusion != "cancelled"');
+    expect(run).toContain("for event in push schedule workflow_dispatch");
+    expect(run).toContain("verdicts.every");
     const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
     expect(readme).toContain("actions/workflows/ci-status.yml/badge.svg?branch=main");
   });
@@ -2277,6 +2431,7 @@ describe("full-validation workflow topology", () => {
     const run = job.steps.map((step) => step.run ?? "").join("\n");
     expect(run).toContain("version-update:semver-patch");
     expect(run).toContain('--match-head-commit "$HEAD_SHA"');
+    expect(run).toContain("--field lanes=linux");
     expect(job.steps.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
   });
 
@@ -2511,6 +2666,17 @@ describe("full-validation workflow topology", () => {
               ...installerCoverageMatrix(true).include,
             ],
           };
+        }
+        // Event-scoped installer matrices keep all possible hosted labels under audit.
+        for (const field of key ? [key, "include"] : []) {
+          if (typeof matrix?.[field] === "string") {
+            matrix = {
+              ...matrix,
+              [field]: ["push", "pull_request", "schedule", "workflow_dispatch"].flatMap((event) =>
+                workflowExpression(matrix[field], event),
+              ),
+            };
+          }
         }
         const labels = key
           ? [...(matrix?.[key] ?? []), ...(matrix?.include ?? []).map((entry) => entry[key])]

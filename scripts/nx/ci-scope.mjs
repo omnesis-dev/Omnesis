@@ -4,7 +4,8 @@
 /**
  * Which full-validation lanes a CI run executes.
  *
- * A push to `main` and a manual run execute every lane. A pull request runs the
+ * A push to `main` executes every Linux lane. Twice-daily scheduled runs and
+ * full manual runs execute every lane. A pull request runs the
  * lanes its change affects: the Node lanes follow the same Nx affected plan as
  * `npm run checks:plan` (projects through the dependency graph, E2E files through
  * the declared behavioral bundles), the Android lane runs when the plan selects
@@ -14,9 +15,7 @@
  * change to `packages/core`, or a planner failure — runs every Linux lane. The
  * macOS lanes (`MACOS_LANES`) run on a pull request only for the paths they
  * cover: GitHub lends the repository a few macOS runners at a time, and `main`
- * runs them on every push, so a platform-only regression a pull request could
- * not see reddens `main` within the hour instead of queueing every pull
- * request behind a Mac. The one exception is iOS, which also runs when the plan
+ * runs them twice daily, leaving capacity for relevant pull requests. The one exception is iOS, which also runs when the plan
  * selects an iOS bundle: a gateway wire change must run the Swift decoders and
  * the live-gateway E2E before it merges.
  *
@@ -236,8 +235,15 @@ function isNativeBundle(name) {
 }
 
 /** The pull-request scope of the checked-out merge commit against its first parent. */
-export async function planScope(event = process.env.EVENT) {
-  if (event !== "pull_request") return fullScope(`${event || "unknown"} event runs every lane`);
+export async function planScope(event = process.env.EVENT, lanes = process.env.LANES || "all") {
+  if (event !== "pull_request") {
+    const scope = fullScope(`${event || "unknown"} event runs every lane`);
+    if (event === "push" || (event === "workflow_dispatch" && lanes === "linux")) {
+      scope.reason = `${event} event runs every Linux lane; macOS runs twice daily or on full dispatch`;
+      for (const lane of MACOS_LANES) scope[lane] = "false";
+    }
+    return scope;
+  }
   try {
     const { buildPlan, workspaceProjects } = await import("./checks.mjs");
     const { bundleTestArgs } = await import("./bundles.mjs");
