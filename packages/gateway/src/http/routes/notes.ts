@@ -117,7 +117,8 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
     const pending = deps.pendingTranscriptions?.(ids) ?? new Set<string>();
     const runs = deps.noteAgentRuns?.(ids) ?? new Map<string, NoteAgentRow>();
     return entries.map((entry) => {
-      const run = runs.get(entry.id);
+      const candidate = runs.get(entry.id);
+      const run = candidate?.inputText === entry.text ? candidate : undefined;
       return {
         ...publicBrowserNoteEntry(entry),
         ...(pending.has(entry.id) ? { transcription: "pending" as const } : {}),
@@ -147,6 +148,7 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
       capturedUtcOffsetSeconds: body.capturedUtcOffsetSeconds,
       surface: body.surface,
       deviceId: body.deviceId,
+      taskId: body.taskId,
       latitude: body.latitude,
       longitude: body.longitude,
       placeName: body.placeName,
@@ -212,9 +214,10 @@ export function mountNotesRoutes(app: RouteApp, deps: NotesRoutesDeps): void {
     const auth = c.get("auth");
     enforceWriteScopeForSource(auth.scopes, "omnesis-notes");
     const { text } = c.req.valid("json");
-    const entry = await runtime().edit(c.req.param("id"), text);
+    const owner = auth.scopes.includes(SCOPE_ADMIN);
+    const entry = await runtime().edit(c.req.param("id"), text, owner);
     if (!entry) throw new NotFoundError("Note entry not found");
-    return c.json(publicBrowserNoteEntry(entry));
+    return c.json(owner ? markPending([entry])[0] : publicBrowserNoteEntry(entry));
   });
 
   app.delete("/notes/:id", scope.writeAny(), async (c) => {

@@ -84,6 +84,7 @@ final class NotesHistoryModel {
         guard let client else { return note }
         let request = generation
         let updated = try await client.dayEntries(day: note.day).first { $0.id == note.id }
+        try Task.checkCancellation()
         guard request == generation else { return entries.first { $0.id == note.id } }
         if let updated, let index = entries.firstIndex(where: { $0.id == note.id }) { entries[index] = updated }
         if updated == nil { entries.removeAll { $0.id == note.id } }
@@ -101,25 +102,8 @@ final class NotesHistoryModel {
             throw GatewayClient.Error.notFound
         }
         generation += 1
-        let enriched = NoteEntry(
-            id: saved.id,
-            day: saved.day,
-            capturedAt: saved.capturedAt,
-            updatedAt: saved.updatedAt,
-            capturedTimeZoneId: saved.capturedTimeZoneId,
-            capturedUtcOffsetSeconds: saved.capturedUtcOffsetSeconds,
-            receivedAt: saved.receivedAt,
-            text: saved.text,
-            surface: saved.surface,
-            deviceId: saved.deviceId,
-            latitude: saved.latitude,
-            longitude: saved.longitude,
-            placeName: saved.placeName,
-            transcribedAt: saved.transcribedAt,
-            agent: note.agent
-        )
-        if let index = entries.firstIndex(where: { $0.id == saved.id }) { entries[index] = enriched }
-        return enriched
+        if let index = entries.firstIndex(where: { $0.id == saved.id }) { entries[index] = saved }
+        return saved
     }
 
     func undo(seq: Int) async throws {

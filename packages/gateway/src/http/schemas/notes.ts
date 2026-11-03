@@ -53,6 +53,8 @@ const noteFields = {
   capturedUtcOffsetSeconds: z.number().int().min(-64_800).max(64_800).optional(),
   surface: surfaceSlug.optional(),
   deviceId: z.string().max(128).optional(),
+  /** A task capture keeps its context even when delivery was queued offline. */
+  taskId: z.string().trim().min(1).max(200).optional(),
   /**
    * WGS-84 capture location. The device attaches it best-effort when
    * location permission is granted and a fix is available (photo

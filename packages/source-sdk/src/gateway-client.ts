@@ -109,8 +109,12 @@ export interface ListedDocument {
   content: string;
   contentHash: string;
   metadata: {
-    /** Structured conversation boundaries needed by every indexer transport. */
-    extra?: { conversationTurns?: unknown };
+    /** Source-declared retrieval boundaries, validated against the literal body by the indexer. */
+    extra?: {
+      conversationTurns?: unknown;
+      /** UTF-16 start offsets of independent sections, beginning at zero. */
+      chunkBoundaries?: unknown;
+    };
     documentType?: string;
     sourceUrl?: string;
     sourceCreatedAt: string;

@@ -34,6 +34,15 @@ describe("CAPABILITY_METADATA", () => {
     expect(CAPABILITY_METADATA["privacy-reviewer"].experimental).not.toBe(true);
   });
 
+  it("keeps owner-triggered work on Agent and exposes Brain only experimentally", () => {
+    expect(CAPABILITY_METADATA.agent.experimental).not.toBe(true);
+    expect(CAPABILITY_METADATA["background-agent"]).toMatchObject({
+      role: "background-agent",
+      title: "Brain agent",
+      experimental: true,
+    });
+  });
+
   it("groups the reasoning capabilities under cognition, the substrate under core", () => {
     // The section split is "does this component interpret what the user's
     // records mean", not "does it call a model" — embedding and OCR do, and

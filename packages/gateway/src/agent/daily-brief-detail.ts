@@ -4,7 +4,8 @@
 /**
  * What one morning brief in the Morning brief conversation was based on: the
  * observations it shipped, in the order it showed them, each with the
- * documents it cites and the tasks it relates to. Served by
+ * documents it cites and the tasks it relates to, plus original document
+ * references selected independently of those observations. Served by
  * `GET /agent/conversations/:id/briefs/:day`; the Brain supplies the reader.
  */
 
@@ -48,6 +49,8 @@ export interface DailyBriefDetail {
   /** When the brief was sent (ISO 8601 UTC), or null when no send was recorded. */
   sentAt: string | null;
   items: DailyBriefItemDetail[];
+  /** Original documents used by the brief outside its observations; no reactions. */
+  references?: DailyBriefItemSource[];
 }
 
 /** Reads one sent brief's detail; read-only. */

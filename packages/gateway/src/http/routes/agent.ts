@@ -691,6 +691,7 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
       messageId: ref.messageId,
       ...(sentAt ? { sentAt } : {}),
       items: detail.items,
+      ...(detail.references ? { references: detail.references } : {}),
     });
   });
 

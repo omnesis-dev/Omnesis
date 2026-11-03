@@ -7423,6 +7423,52 @@ fi
   exit 1
 }
 
+# This host's network, for a gateway behind Docker's bridge. Inside its
+# container the gateway sees only the container's own address and name, which
+# no phone can reach, while Docker publishes its port on every interface here.
+# So before each command this records, in the config directory the gateway
+# reads, the port Docker publishes, this host's IPv4 interface addresses (the
+# gateway judges them by its own rules) and its .local name when this host
+# answers mDNS: macOS always does, Linux when avahi-daemon runs. Rewriting it
+# on every command lets a new address from the router reach the next pairing.
+# Under host networking the gateway sees this host's network itself, and no
+# record is kept.
+host_network_record() {
+  HOST_NETWORK="$(dirname "$COMPOSE_FILE")/host-network"
+  HOST_NETWORK_PORT="$(sed -n 's/^      - "\([0-9][0-9]*\):7600"$/\1/p' "$COMPOSE_FILE" | head -n 1)"
+  if [ -z "$HOST_NETWORK_PORT" ]; then
+    rm -f "$HOST_NETWORK"
+    return 0
+  fi
+  HOST_NETWORK_OS="$(uname -s 2>/dev/null || true)"
+  HOST_NETWORK_NAME=""
+  if [ "$HOST_NETWORK_OS" = Darwin ]; then
+    HOST_NETWORK_NAME="$(scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || true)"
+  elif command -v avahi-daemon >/dev/null 2>&1 && avahi-daemon --check >/dev/null 2>&1; then
+    HOST_NETWORK_NAME="$(hostname -s 2>/dev/null || true)"
+  fi
+  HOST_NETWORK_NAME="$(printf '%s' "${HOST_NETWORK_NAME%%.*}" | tr 'A-Z' 'a-z')"
+  HOST_NETWORK_TMP="$HOST_NETWORK.$$"
+  {
+    printf '%s\n' "# This host's network, as the Omnesis launcher ($0) last read it." \
+      "# The gateway offers phones these addresses; every omnesis command rewrites it."
+    printf 'port %s\n' "$HOST_NETWORK_PORT"
+    case "$HOST_NETWORK_NAME" in
+      ''|localhost|-*|*-|*[!a-z0-9-]*) ;;
+      *) printf 'local-name %s.local\n' "$HOST_NETWORK_NAME" ;;
+    esac
+    if [ "$HOST_NETWORK_OS" = Linux ] && command -v ip >/dev/null 2>&1; then
+      ip -o -4 addr show 2>/dev/null | awk '$3 == "inet" { sub(/\/.*/, "", $4); print "interface", $2, $4 }'
+    else
+      ifconfig 2>/dev/null | awk '
+        /^[^ \t]/ { iface = $1; sub(/:$/, "", iface) }
+        $1 == "inet" { a = $2; sub(/^addr:/, "", a); print "interface", iface, a }'
+    fi
+  } > "$HOST_NETWORK_TMP" 2>/dev/null && chmod 644 "$HOST_NETWORK_TMP" 2>/dev/null &&
+    mv -f "$HOST_NETWORK_TMP" "$HOST_NETWORK" 2>/dev/null || rm -f "$HOST_NETWORK_TMP" 2>/dev/null
+}
+host_network_record || true
+
 # Host folders the collector's container reads. A container sees this install's
 # config directory and nothing else of the machine, so a folder a source reads
 # — an Obsidian vault, a mail archive — is shared with it read-only, at the same
@@ -8519,6 +8565,8 @@ docker_install() {
   docker_tls_renewal_install
   docker_fetch_images
   docker_probe_socket_group
+  # Like every command, this records the host's network for the gateway
+  # (host-network), before the gateway first starts.
   INSTALLED_VERSION="$("$OMNESIS_BIN" --version 2>/dev/null || true)"
   info "Installed: ${INSTALLED_VERSION:-(version unavailable)}"
   # The catalog answers from the image, so the question can be asked — and

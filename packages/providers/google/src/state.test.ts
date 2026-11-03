@@ -75,6 +75,43 @@ describe("gmailStateSpec via the host decorator", () => {
   });
 });
 
+describe("gmailStateSpec with a walk an earlier release paused", () => {
+  // The cursor such a walk left behind: the pinned historyId, no start time.
+  const paused = {
+    phase: "bootstrap",
+    pageToken: "page-2",
+    bootstrapHistoryId: "history-pinned",
+    totalMessages: 100,
+    processedDocs: 50,
+  };
+
+  it.each([
+    ["an envelope", { e: 1, v: 1, s: "gmail:tester", state: paused }],
+    ["a bare cursor", paused],
+  ])("resumes %s and ends the walk on the pinned historyId", async (_shape, installed) => {
+    const gmail = createMockGmail();
+    gmail.users.messages.list = vi.fn(() =>
+      Promise.resolve({ data: { messages: [], nextPageToken: undefined } }),
+    );
+    const source = createGmailSource(gmail);
+    const outcomes: StateOutcome[] = [];
+    const versioned = withVersionedState(
+      { sync: (cursor) => source.sync(cursor) },
+      gmailStateSpec,
+      { sourceId: "gmail:tester", onResolve: (outcome) => outcomes.push(outcome) },
+    );
+
+    const result = await versioned.sync(installed);
+    expect(["resume", "migrated"]).toContain(outcomes[0]?.kind);
+    expect(gmail.users.messages.list).toHaveBeenCalledWith(
+      expect.objectContaining({ pageToken: "page-2" }),
+    );
+    const envelope = result.cursor as { state: Record<string, unknown> };
+    expect(envelope.state).toMatchObject({ phase: "incremental", historyId: "history-pinned" });
+    expect(envelope.state.lastSyncAt).toBeUndefined();
+  });
+});
+
 describe("googleDriveStateSpec via the host decorator", () => {
   it("first run resolves fresh and writes back an envelope, then resumes from it", async () => {
     const outcomes: StateOutcome[] = [];

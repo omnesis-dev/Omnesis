@@ -154,12 +154,18 @@ producing an empty green plan.
 
 CI runs this affected selection on pull requests: the `scope` job of
 `.github/workflows/full-validation.yml` (`scripts/nx/ci-scope.mjs`) plans the
-pull request's merge commit and runs only the lanes it selects, widening to the
-whole suite on the same conservative fallbacks. Every push to `main` runs the
-whole suite on GitHub-hosted runners. A newer push to a pull request cancels its older run; on
-`main` one run executes at a time and a newer push replaces a waiting one; the
-README badge reads `ci-status.yml`, which reports the newest run that finished. The release workflow accepts a tag only when a push or manual run of
-that workflow passed at the exact tagged commit.
+pull request's merge commit and runs the selected lanes, including macOS when
+selected. Conservative fallbacks widen Linux coverage; native coverage follows
+the planner's path and bundle rules. Every push to `main` runs all Linux lanes
+on GitHub-hosted runners and keeps its own commit-keyed run. A newer push to a
+pull request cancels that pull request's older run; main pushes do not replace
+older runs. Full sweeps include macOS at 01:17 and 13:17 UTC. Manual dispatch
+defaults to `lanes=all`; `lanes=linux` runs Linux only and is used by Dependabot
+after its merges. The README badge reads `ci-status.yml`: the newest completed
+full sweep must pass, along with the newest completed Linux-only run if it is
+newer; cancelled and skipped runs are ignored. The release workflow accepts a
+tag only when a scheduled or all-lanes manual validation passed at the exact
+tagged commit. A Linux-only run cannot authorize a release.
 
 A scheduler is optional: without one, these commands run locally with bounded
 unit workers and the E2E lane lock. To integrate a host scheduler, put a JSON

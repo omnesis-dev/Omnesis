@@ -4,7 +4,8 @@
 /**
  * The ranked observations chosen for one morning brief. The morning recheck
  * replaces a day's list; sending the brief stamps it with the conversation
- * message that carried it and ships its observations in the same transaction.
+ * message that carried it, ships its observations and records independently
+ * selected document references in the same transaction.
  */
 
 import { knowledgeOwnerReadPredicate } from "../knowledge/storage-fence.js";
@@ -105,7 +106,13 @@ export type MarkMorningBriefSentResult =
  */
 export function markMorningBriefSent(
   db: Db,
-  input: { day: string; runId: string; conversationId: string; messageId: string },
+  input: {
+    day: string;
+    runId: string;
+    conversationId: string;
+    messageId: string;
+    referenceDocumentIds?: readonly string[];
+  },
   now: number,
 ): MarkMorningBriefSentResult {
   return db.transaction((): MarkMorningBriefSentResult => {
@@ -122,6 +129,12 @@ export function markMorningBriefSent(
     db.prepare<[string, string, string]>(
       "UPDATE morning_brief_items SET conversation_id = ?, message_id = ? WHERE day = ?",
     ).run(input.conversationId, input.messageId, input.day);
+    const insertReference = db.prepare<[string, number, string]>(
+      "INSERT INTO morning_brief_references (message_id, rank, document_id) VALUES (?, ?, ?)",
+    );
+    [...new Set(input.referenceDocumentIds ?? [])].forEach((id, index) =>
+      insertReference.run(input.messageId, index + 1, id),
+    );
     const shippedObservationIds: string[] = [];
     for (const row of items) {
       if (
@@ -139,6 +152,21 @@ export function markMorningBriefSent(
     }
     return { ok: true, shippedObservationIds };
   })();
+}
+
+/** Original document references recorded for this exact sent brief, in selection order. */
+export function listMorningBriefReferences(
+  db: Db,
+  brief: { day: string; messageId: string },
+): string[] {
+  return db
+    .prepare<[string, string], { document_id: string }>(
+      `SELECT r.document_id FROM morning_brief_references r
+       JOIN morning_briefs b ON b.message_id = r.message_id
+       WHERE b.day = ? AND b.message_id = ? ORDER BY r.rank`,
+    )
+    .all(brief.day, brief.messageId)
+    .map((row) => row.document_id);
 }
 
 /** Whether `day`'s brief has already been sent. */
@@ -203,8 +231,15 @@ export function listTaintedMorningBriefs(
     .map((r) => ({ conversationId: r.conversation_id, messageId: r.message_id }));
 }
 
-/** Forget a redacted brief's items, so it is redacted once and lists nothing. */
+/** Forget a redacted brief's observations and references, so it lists nothing. */
 export function clearMorningBriefMessageItems(db: Db, messageId: string): number {
-  return db.prepare<[string]>("DELETE FROM morning_brief_items WHERE message_id = ?").run(messageId)
-    .changes;
+  return db.transaction(() => {
+    const items = db
+      .prepare<[string]>("DELETE FROM morning_brief_items WHERE message_id = ?")
+      .run(messageId).changes;
+    const references = db
+      .prepare<[string]>("DELETE FROM morning_brief_references WHERE message_id = ?")
+      .run(messageId).changes;
+    return items + references;
+  })();
 }

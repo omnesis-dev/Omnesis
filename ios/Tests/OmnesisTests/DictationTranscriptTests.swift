@@ -9,6 +9,18 @@ import XCTest
 /// committed before the restart — stopping and resuming the mic must
 /// never wipe what was already captured.
 final class DictationTranscriptTests: XCTestCase {
+    func testAutomaticListeningAcceptsTaskPrefillButNotExistingInstructions() {
+        let task = TaskNoteContext(id: "task_example", title: "Repair the telescope")
+        XCTAssertTrue(DictationTranscript.canStartAutomatically(text: "", taskContext: nil))
+        XCTAssertTrue(DictationTranscript.canStartAutomatically(text: task.initialText, taskContext: task))
+        XCTAssertTrue(DictationTranscript.canStartAutomatically(text: "", taskContext: task))
+        XCTAssertFalse(DictationTranscript.canStartAutomatically(text: "Keep this typed note", taskContext: nil))
+        let dictated = DictationTranscript.compose(base: task.initialText, partial: "Mark it done")
+        XCTAssertEqual(dictated, "About this task… Mark it done")
+        XCTAssertTrue(task.hasInstruction(dictated))
+        XCTAssertFalse(DictationTranscript.canStartAutomatically(text: dictated, taskContext: task))
+    }
+
     func testFirstRunPassesPartialThrough() {
         XCTAssertEqual(DictationTranscript.compose(base: "", partial: "buy oat milk"), "buy oat milk")
     }

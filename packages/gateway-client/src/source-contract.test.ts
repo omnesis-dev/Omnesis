@@ -88,6 +88,80 @@ describe("collector request compatibility", () => {
     },
   );
 
+  test("a health deadline retries the compatibility read before sending the cursor once", async () => {
+    vi.useFakeTimers();
+    const fetcher = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+      )
+      .mockResolvedValueOnce(Response.json(supported))
+      .mockResolvedValueOnce(Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetcher);
+    const client = new HttpGatewayClient(url, "fictional-token", {
+      beforeRequest: () => requireGatewaySourceContract(url),
+    });
+    const pending = client.setSyncState(sourceId, { bookmark: 5 });
+    const result = pending.catch((error: unknown) => error);
+    await vi.runAllTimersAsync();
+    await expect(result).resolves.toBeUndefined();
+    expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
+      `${url}/health`,
+      `${url}/health`,
+      `${url}/sync-state/fictional%3Aaccount`,
+    ]);
+    expect(JSON.parse(fetcher.mock.calls[2]![1].body)).toEqual({ cursor: { bookmark: 5 } });
+  });
+
+  test("health deadlines exhaust the existing retry budget without sending a cursor", async () => {
+    vi.useFakeTimers();
+    const timeout = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    const fetcher = vi.fn().mockRejectedValue(timeout);
+    vi.stubGlobal("fetch", fetcher);
+    const client = new HttpGatewayClient(url, "fictional-token", {
+      beforeRequest: () => requireGatewaySourceContract(url),
+    });
+    const result = client.setSyncState(sourceId, { bookmark: 5 }).catch((error: unknown) => error);
+    await vi.runAllTimersAsync();
+    await expect(result).resolves.toMatchObject({
+      message: "Gateway source-contract check (GET /health) failed",
+      cause: timeout,
+    });
+    expect(fetcher.mock.calls.map(([path]) => path)).toEqual(Array(4).fill(`${url}/health`));
+  });
+
+  test("a deadline after submitting the guarded write does not replay the mutation", async () => {
+    const timeout = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(supported))
+      .mockRejectedValueOnce(timeout);
+    vi.stubGlobal("fetch", fetcher);
+    const client = new HttpGatewayClient(url, "fictional-token", {
+      beforeRequest: () => requireGatewaySourceContract(url),
+    });
+    await expect(client.setSyncState(sourceId, { bookmark: 5 })).rejects.toMatchObject({
+      cause: timeout,
+    });
+    expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
+      `${url}/health`,
+      `${url}/sync-state/fictional%3Aaccount`,
+    ]);
+  });
+
+  test("an explicit abort is not retried", async () => {
+    const abort = new DOMException("The operation was aborted", "AbortError");
+    const fetcher = vi.fn().mockRejectedValue(abort);
+    vi.stubGlobal("fetch", fetcher);
+    const client = new HttpGatewayClient(url, "fictional-token", {
+      beforeRequest: () => requireGatewaySourceContract(url),
+    });
+    await expect(client.setSyncState(sourceId, { bookmark: 5 })).rejects.toMatchObject({
+      cause: abort,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   test("failed health probe refuses the request and sends no credential to health", async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 }));
     vi.stubGlobal("fetch", fetcher);

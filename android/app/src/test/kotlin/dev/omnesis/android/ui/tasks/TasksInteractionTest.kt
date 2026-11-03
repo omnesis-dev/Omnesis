@@ -15,6 +15,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
@@ -71,7 +72,7 @@ class TasksInteractionTest {
 
     private fun start(tasks: List<TaskDto> = listOf(deposit, tuner, permit), experimental: Boolean = false) {
         gateway = StatefulTasksGateway(tasks, resolvedNow = "2026-10-14T09:30:00.000Z")
-        vm = TasksViewModel(gateway) { today }
+        vm = TasksViewModel(gateway, tellAvailable = kotlinx.coroutines.flow.MutableStateFlow(true)) { today }
         compose.setContent { Harness(vm, experimental) }
         compose.waitForIdle()
     }
@@ -98,6 +99,28 @@ class TasksInteractionTest {
     }
 
     private fun node(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true)
+
+    @Test
+    fun a_resolved_tasks_context_menu_opens_tell_without_reopening() {
+        val done = deposit.copy(state = "done", resolvedAt = "2026-10-14T09:30:00Z")
+        start(listOf(done))
+        node("tasks.text.${done.id}").performTouchInput { longClick() }
+        compose.onNodeWithText("Tell Omnesis").assertIsDisplayed().performClick()
+        compose.runOnIdle {
+            assertEquals(done.id, vm.state.value.telling?.id)
+            assertEquals("done", vm.state.value.telling?.state)
+        }
+    }
+
+    @Test
+    fun the_tell_fan_target_opens_a_capture_without_completing() {
+        start()
+        fan(deposit.id, "tell")
+        compose.runOnIdle {
+            assertEquals(deposit.id, vm.state.value.telling?.id)
+            assertEquals("open", vm.state.value.telling?.state)
+        }
+    }
 
     private fun assertOpen(id: String) = node("tasks.open.$id").assertExists()
     private fun assertDone(id: String) = node("tasks.done.$id").assertIsDisplayed()

@@ -8,7 +8,7 @@ const sha = "a".repeat(40);
 const run = (overrides = {}) => ({
   id: 42,
   head_sha: sha,
-  event: "push",
+  event: "schedule",
   status: "completed",
   conclusion: "success",
   created_at: "2026-09-08T04:00:00Z",
@@ -16,16 +16,26 @@ const run = (overrides = {}) => ({
   ...overrides,
 });
 
-test("accepts a green push run for the exact commit", () => {
+test("accepts a green scheduled run for the exact commit", () => {
   expect(fullCiVerdict([run()], sha)).toMatchObject({ ok: true, state: "green", runId: 42 });
 });
 
 test("accepts a green manual run for the exact commit", () => {
-  expect(fullCiVerdict([run({ event: "workflow_dispatch" })], sha).ok).toBe(true);
+  expect(
+    fullCiVerdict(
+      [
+        run({
+          event: "workflow_dispatch",
+          display_title: "full-validation (workflow_dispatch, lanes: all)",
+        }),
+      ],
+      sha,
+    ).ok,
+  ).toBe(true);
 });
 
-test("a pull-request run cannot bless a release commit", () => {
-  expect(fullCiVerdict([run({ event: "pull_request" })], sha)).toEqual({
+test.each(["push", "pull_request"])("a %s run cannot bless a release commit", (event) => {
+  expect(fullCiVerdict([run({ event })], sha)).toEqual({
     ok: false,
     state: "missing",
   });
@@ -62,3 +72,24 @@ test("formats the run link", () => {
     "✔ full-validation: green — https://github.com/example/repo/actions/runs/42",
   );
 });
+
+// Linux-only push success cannot substitute for the release's macOS checks.
+test("a green push does not mask a failed full run", () => {
+  const failed = run({ conclusion: "failure" });
+  const push = run({ id: 43, event: "push", created_at: "2026-09-09T04:00:00Z" });
+  expect(fullCiVerdict([push, failed], sha)).toMatchObject({
+    ok: false,
+    state: "failure",
+    runId: 42,
+  });
+});
+
+test.each([undefined, "full-validation", "full-validation (workflow_dispatch, lanes: linux)"])(
+  "a manual run without all-lanes evidence cannot bless a release commit: %s",
+  (display_title) => {
+    expect(fullCiVerdict([run({ event: "workflow_dispatch", display_title })], sha)).toEqual({
+      ok: false,
+      state: "missing",
+    });
+  },
+);

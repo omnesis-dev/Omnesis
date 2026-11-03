@@ -140,12 +140,12 @@ assert_not "no fetch or staging directory is left behind" \
 assert "the gateway still answers" healthy
 
 echo "== update to lane-b through sudo =="
-maya_sudo "$ADMIN update --ref lane-b"
+maya_sudo "$ADMIN update --ref lane-b --backup"
 assert "current names lane-b" bash -c "[[ $(release_of current) == lane-b-* ]]"
 assert "lane-a is kept as the previous release" bash -c "[[ $(release_of previous) == lane-a-* ]]"
 assert "the gateway answers" wait_healthy
 assert "it serves lane-b" serving_release lane-b
-assert "the update took a backup first" bash -c "ls -A '$STATE/backups' | grep -q ."
+assert "the update took the requested backup" bash -c "ls -A '$STATE/backups' | grep -q ."
 
 echo "== an update whose gateway will not start switches back =="
 assert_not "the update to lane-c fails" maya_sudo "$ADMIN update --ref lane-c"

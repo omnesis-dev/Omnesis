@@ -124,9 +124,9 @@ struct DailyBriefHeader: View {
 }
 
 /// Under a brief: "Based on N things", which opens to the ranked items it was
-/// written from, each with its documents, tasks and the owner's reaction.
-/// Quiet while loading, a Retry line when the read failed, and nothing at
-/// all with no items.
+/// written from, plus the documents it used directly. Reactions belong to
+/// observations. Quiet while loading, a Retry line when the read failed,
+/// and nothing at all when no supporting items were recorded.
 @available(iOS 17.0, *)
 struct DailyBriefFooter: View {
     let day: String
@@ -171,18 +171,18 @@ struct DailyBriefFooter: View {
                     .accessibilityIdentifier("dailyBrief.retry.\(day)")
             }
             .font(.footnote)
-        case .loaded(let page) where !page.items.isEmpty:
-            loaded(page.items.sorted { $0.rank < $1.rank })
+        case .loaded(let page) where page.basedOnCount > 0:
+            loaded(page)
         default:
             EmptyView()
         }
     }
 
-    private func loaded(_ items: [DailyBriefItem]) -> some View {
+    private func loaded(_ page: DailyBriefItems) -> some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             Button(action: onToggle) {
                 HStack(spacing: 4) {
-                    Text(DailyBriefCopy.basedOn(items.count))
+                    Text(DailyBriefCopy.basedOn(page.basedOnCount))
                     Image(systemName: "chevron.down")
                         .font(.caption2.weight(.semibold))
                         .rotationEffect(.degrees(isOpen ? 180 : 0))
@@ -193,19 +193,26 @@ struct DailyBriefFooter: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(DailyBriefCopy.basedOn(items.count))
+            .accessibilityLabel(DailyBriefCopy.basedOn(page.basedOnCount))
             .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
             .accessibilityHint(isOpen ? "Hides the list" : "Lists what this brief was based on")
             .accessibilityIdentifier("dailyBrief.footer.\(day)")
             if isOpen {
                 VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                    ForEach(items) { item in
+                    ForEach(page.items.sorted { $0.rank < $1.rank }) { item in
                         DailyBriefItemRow(
                             item: item,
                             reactionFailure: reactionFailure(item.observationId),
                             onOpenDocument: { pushedDocument = $0 },
                             onReact: onReact
                         )
+                    }
+                    if !page.references.isEmpty {
+                        DailyBriefChipFlow(spacing: 6) {
+                            ForEach(page.references) { source in
+                                DailyBriefSourceChip(source: source) { pushedDocument = $0 }
+                            }
+                        }
                     }
                 }
                 .padding(Theme.Spacing.md)
@@ -233,7 +240,6 @@ private struct DailyBriefItemRow: View {
     let onOpenDocument: (DailyBriefDocumentPush) -> Void
     let onReact: DailyBriefReactionHandler
     @Environment(NotificationRouter.self) private var router: NotificationRouter?
-    @Environment(AppStore.self) private var store: AppStore?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -250,7 +256,7 @@ private struct DailyBriefItemRow: View {
                 if !item.sources.isEmpty || !item.tasks.isEmpty {
                     DailyBriefChipFlow(spacing: 6) {
                         ForEach(item.sources) { source in
-                            sourceChip(source)
+                            DailyBriefSourceChip(source: source, onOpenDocument: onOpenDocument)
                         }
                         ForEach(item.tasks) { task in
                             taskChip(task)
@@ -260,25 +266,6 @@ private struct DailyBriefItemRow: View {
                 DailyBriefReactionBar(item: item, failure: reactionFailure, onReact: onReact)
             }
         }
-    }
-
-    private func sourceChip(_ source: DailyBriefSource) -> some View {
-        let title = source.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled document"
-        return Button {
-            onOpenDocument(DailyBriefDocumentPush(id: source.id, title: title))
-        } label: {
-            DailyBriefChip(title: title) {
-                if let store {
-                    SourceIconView(sourceId: source.sourceType, store: store, size: 13)
-                } else {
-                    Image(systemName: "doc.text")
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(title), document")
-        .accessibilityHint("Opens the document")
-        .accessibilityIdentifier("dailyBrief.source.\(source.id)")
     }
 
     private func taskChip(_ task: DailyBriefTask) -> some View {
@@ -294,6 +281,33 @@ private struct DailyBriefItemRow: View {
         .accessibilityLabel("\(task.title), task, \(task.isResolved ? "done" : "open")")
         .accessibilityHint("Opens the task in Tasks")
         .accessibilityIdentifier("dailyBrief.task.\(task.id)")
+    }
+}
+
+/// A document reference, shared by observations and the brief's direct sources.
+@available(iOS 17.0, *)
+private struct DailyBriefSourceChip: View {
+    let source: DailyBriefSource
+    let onOpenDocument: (DailyBriefDocumentPush) -> Void
+    @Environment(AppStore.self) private var store: AppStore?
+
+    var body: some View {
+        let title = source.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled document"
+        Button {
+            onOpenDocument(DailyBriefDocumentPush(id: source.id, title: title))
+        } label: {
+            DailyBriefChip(title: title) {
+                if let store {
+                    SourceIconView(sourceId: source.sourceType, store: store, size: 13)
+                } else {
+                    Image(systemName: "doc.text")
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), document")
+        .accessibilityHint("Opens the document")
+        .accessibilityIdentifier("dailyBrief.source.\(source.id)")
     }
 }
 
@@ -390,6 +404,20 @@ private struct DailyBriefChip<Icon: View>: View {
             onRetry: {}
         )
     }
+    .padding()
+    .background(Theme.bgPrimary)
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Morning brief direct references") {
+    DailyBriefFooter(
+        day: "2026-10-14",
+        state: .loaded(PreviewMocks.dailyBriefReferences),
+        isOpen: true,
+        onToggle: {},
+        onRetry: {}
+    )
     .padding()
     .background(Theme.bgPrimary)
     .environment(AppStore.preview())

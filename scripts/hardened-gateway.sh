@@ -30,8 +30,8 @@
 #      and unwritable by anyone else, and switches the `current` link to it.
 #
 # Root still runs that release's own CLI (and so its dependencies) for `cli`,
-# for the backup an update takes, and to write the unit; it runs it with a
-# private temporary directory and no compile cache.
+# for an explicitly requested update backup, and to write the unit; it runs
+# it with a private temporary directory and no compile cache.
 #
 # Environment:
 #   OMNESIS_GIT_TOKEN                a read token for a private repository
@@ -107,7 +107,8 @@ Commands:
 Options for install and update:
   --version X.Y.Z                Release to install (default: the newest stable release)
   --ref REF                      A tag, branch or commit instead of a release version
-  --no-backup                    update only: switch without a backup first
+  --backup                       update only: take a backup before switching (default: off)
+  --no-backup                    Accepted for compatibility; has no effect
   --force                        update only: switch to a release older than the running one
 
 Options for install:
@@ -132,7 +133,7 @@ OPT_NO_KEYRING=0
 OPT_PASS_FILE=""
 OPT_REPO_URL=""
 OPT_FROM_CHECKOUT=""
-OPT_NO_BACKUP=0
+OPT_BACKUP=0
 OPT_FORCE=0
 OPT_PURGE=0
 
@@ -150,7 +151,8 @@ parse_options() {
       --keyring-passphrase-file) need_value "$@"; OPT_PASS_FILE="$2"; shift 2 ;;
       --repo-url) need_value "$@"; OPT_REPO_URL="$2"; shift 2 ;;
       --from-checkout) need_value "$@"; OPT_FROM_CHECKOUT="$2"; shift 2 ;;
-      --no-backup) OPT_NO_BACKUP=1; shift ;;
+      --backup) OPT_BACKUP=1; shift ;;
+      --no-backup) shift ;;
       --force) OPT_FORCE=1; shift ;;
       --purge) OPT_PURGE=1; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -741,7 +743,7 @@ fetch_and_hand_over() {
   require_git
   read_install_env || true
   # An install whose gateway never came up can be run again; one that is
-  # serving is moved with update, which takes a backup and can switch back.
+  # serving is moved with update, which can switch back.
   if [ "$handover_command" = install ] && [ -L "$CURRENT" ] && [ -f "$INSTALL_ENV" ] &&
     systemctl is-active --quiet "$UNIT_NAME"; then
     fail "A dedicated gateway is already installed and running $(basename "$(readlink -f "$CURRENT")"). Move it to another release with: sudo omnesis-gateway-admin update --version X.Y.Z"
@@ -770,7 +772,16 @@ fetch_and_hand_over() {
   [ -z "$OPT_PORT" ] || set -- "$@" --port "$OPT_PORT"
   [ "$OPT_NO_KEYRING" = 0 ] || set -- "$@" --no-keyring
   [ -z "$OPT_PASS_FILE" ] || set -- "$@" --keyring-passphrase-file "$OPT_PASS_FILE"
-  [ "$OPT_NO_BACKUP" = 0 ] || set -- "$@" --no-backup
+  if [ "$OPT_BACKUP" = 1 ]; then
+    # Releases with an opt-in flag need it; older scripts back up by default.
+    if grep -q -- '--backup)' "$CHECKOUT/$SCRIPT_REL"; then
+      set -- "$@" --backup
+    fi
+  else
+    # Older releases back up by default; this flag also works as a no-op on
+    # releases where backups are opt-in.
+    set -- "$@" --no-backup
+  fi
   [ "$OPT_FORCE" = 0 ] || set -- "$@" --force
   trap - EXIT INT TERM HUP
   [ -z "$GIT_HELPER_DIR" ] || rm -rf "$GIT_HELPER_DIR"
@@ -950,14 +961,12 @@ cmd_update() {
   if [ "$OPT_FORCE" = 0 ] && version_older "$RELEASE_VERSION" "$running_version"; then
     fail "$REF is $RELEASE_VERSION, older than the running $running_version, whose migrations it may not read. Switch back with rollback, or pass --force to update to it anyway."
   fi
-  if [ "$OPT_NO_BACKUP" = 1 ]; then
-    warn "--no-backup: switching without a backup."
-  elif [ -n "$(served_version)" ]; then
+  if [ "$OPT_BACKUP" = 1 ]; then
+    [ -n "$(served_version)" ] ||
+      fail "The running gateway does not answer, so the requested backup cannot be taken. Nothing was changed."
     step "Backing up the gateway's databases through its API"
     run_cli "$update_current" backup --note "before update to $REF" ||
-      fail "The backup failed, and nothing was changed. Run the update again with --no-backup to switch without one."
-  else
-    warn "The running gateway does not answer, so no backup is taken before switching."
+      fail "The backup failed, and nothing was changed. Run the update again without --backup to switch without one."
   fi
   update_previous="$(link_target "$PREVIOUS")"
   trap 'roll_back_after_failure "$update_current" "$update_previous" "The update was interrupted."' INT TERM HUP

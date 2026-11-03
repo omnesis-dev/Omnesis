@@ -358,6 +358,15 @@ export class SubagentService {
     }
   }
 
+  /** Retire a root's children immediately, then wait for their cancelled runs to settle. */
+  async disposeTree(rootSessionId: string): Promise<void> {
+    const settlements = [...this.children.values()]
+      .filter((record) => record.rootSessionId === rootSessionId)
+      .map((record) => record.done);
+    this.forgetTree(rootSessionId);
+    await Promise.allSettled(settlements);
+  }
+
   /**
    * Run one child to completion behind the per-parent concurrency gate, wrapping
    * its event stream into the parent's `agent.subagent.*` events and rolling its

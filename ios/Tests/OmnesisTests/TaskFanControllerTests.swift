@@ -65,6 +65,31 @@ final class TaskFanControllerTests: XCTestCase {
         XCTAssertEqual(performed(), [])
     }
 
+    func testShrinkingViewportDismissesClippedFanWithoutActing() throws {
+        let (fan, performed) = controller()
+        fan.offersChat = true
+        fan.offersTell = true
+        fan.updateBounds(CGRect(x: 0, y: 0, width: 402, height: 716))
+        fan.open(task, at: CGPoint(x: 289, y: 349), today: "2026-10-14")
+        let chat = try XCTUnwrap(fan.session?.targets.first { $0.action == .chat })
+        XCTAssertGreaterThan(chat.frame.maxY, 674)
+        fan.move(chat.center)
+        fan.updateBounds(CGRect(x: 0, y: 0, width: 402, height: 674))
+        fan.end(chat.center)
+        XCTAssertNil(fan.session)
+        XCTAssertNil(fan.task)
+        XCTAssertEqual(performed(), [])
+    }
+
+    func testViewportChangeKeepsTargetsStillWhenTheyRemainVisible() throws {
+        let (fan, performed) = controller()
+        fan.open(task, at: press, today: "2026-10-14")
+        let original = try XCTUnwrap(fan.session)
+        fan.updateBounds(CGRect(x: 0, y: 0, width: 393, height: 690))
+        XCTAssertEqual(fan.session?.targets, original.targets)
+        XCTAssertEqual(performed(), [])
+    }
+
     /// A fan VoiceOver opened is not the finger's to close.
     func testAFanOpenedForVoiceOverIgnoresAFingerLifting() {
         let (fan, _) = controller()

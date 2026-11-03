@@ -54,8 +54,17 @@ export function toListedDocument(
       people: meta.people as PersonMention[] | undefined,
       tags: meta.tags as string[] | undefined,
       relevanceScore: meta.relevanceScore,
-      ...(meta.extra?.conversationTurns !== undefined
-        ? { extra: { conversationTurns: meta.extra.conversationTurns } }
+      ...(meta.extra?.conversationTurns !== undefined || meta.extra?.chunkBoundaries !== undefined
+        ? {
+            extra: {
+              ...(meta.extra.conversationTurns !== undefined
+                ? { conversationTurns: meta.extra.conversationTurns }
+                : {}),
+              ...(meta.extra.chunkBoundaries !== undefined
+                ? { chunkBoundaries: meta.extra.chunkBoundaries }
+                : {}),
+            },
+          }
         : {}),
     },
     updatedAt: doc.updatedAt,

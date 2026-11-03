@@ -21,6 +21,13 @@ final class TaskConversationTests: XCTestCase {
         )
     }
 
+    func testTaskNoteCaptureRequiresSupportedProtocol() throws {
+        XCTAssertFalse(try status(nil).capabilities.supportsTaskNoteCapture)
+        XCTAssertFalse(try status(#"{"taskNoteCapture":true}"#).capabilities.supportsTaskNoteCapture)
+        XCTAssertFalse(try status(#"{"taskNoteCapture":{"min":2,"max":3}}"#).capabilities.supportsTaskNoteCapture)
+        XCTAssertTrue(try status(#"{"taskNoteCapture":{"min":1,"max":3}}"#).capabilities.supportsTaskNoteCapture)
+    }
+
     func testAdvertisedCapabilityOffersTheChat() throws {
         let snapshot = try status(#"{"taskConversations":{"min":1,"max":1},"sourceContract":{"min":1,"max":3}}"#)
         XCTAssertEqual(snapshot.capabilities.taskConversations, GatewayCapabilityRange(min: 1, max: 1))

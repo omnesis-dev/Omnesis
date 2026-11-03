@@ -8,6 +8,7 @@
 
 import { deriveAuthor, readConversationTurns, renderConversationTurn } from "@omnesis/core";
 import { normalizeContent } from "./normalize.js";
+import { readChunkBoundaries } from "./chunk-boundaries.js";
 import { buildEmbeddingInput, buildEmbeddingPreamble } from "./embedding-input.js";
 import type { ConversationTurn } from "@omnesis/core";
 import type { Chunker, Chunk, IndexableDocument } from "./types.js";
@@ -46,38 +47,40 @@ export class DocumentChunker implements Chunker {
       }));
     }
 
-    // Short documents: single chunk
-    if (doc.content.length <= this.chunkSize) {
-      return [
-        {
-          index: 0,
-          text: doc.content,
-          embeddingInput: buildEmbeddingInput(preamble, doc.content),
-        },
-      ];
-    }
+    const boundaries = readChunkBoundaries(doc.content, doc.metadata.extra?.chunkBoundaries);
+    // Slice the literal stored text before normalization can move its offsets.
+    // Each source-declared section is independent, even when several would fit.
+    const texts = boundaries
+      ? boundaries.flatMap((start, index) =>
+          this.splitText(normalizeContent(doc.content.slice(start, boundaries[index + 1])), type),
+        )
+      : this.splitText(
+          doc.metadata.extra?.chunkBoundaries === undefined
+            ? doc.content
+            : normalizeContent(doc.content),
+          type,
+        );
 
-    let texts: string[];
+    return texts.map((text, index) => ({
+      index,
+      text,
+      embeddingInput: buildEmbeddingInput(preamble, text),
+    }));
+  }
+
+  private splitText(content: string, type: string): string[] {
+    if (content.length <= this.chunkSize) return [content];
     switch (type) {
       case "conversation":
-        texts = this.splitConversation(doc.content);
-        break;
+        return this.splitConversation(content);
       case "note":
       case "file":
       case "webpage":
       case "browsing-history":
-        texts = this.splitMarkdown(doc.content);
-        break;
+        return this.splitMarkdown(content);
       default:
-        texts = this.splitParagraphs(doc.content);
-        break;
+        return this.splitParagraphs(content);
     }
-
-    return texts.map((text, i) => ({
-      index: i,
-      text,
-      embeddingInput: buildEmbeddingInput(preamble, text),
-    }));
   }
 
   /** Every retrieval slice carries its own author and an unbreakable literal body. */

@@ -9,6 +9,7 @@ import { directWriteGate } from "../../write-gate.js";
 import { createOpenLoop, getOpenLoop, listOpenLoopLedger } from "../storage/open-loops.js";
 import { createObservation, getObservation } from "../storage/observations.js";
 import { applyTaskCommand, proposeTaskChange } from "../storage/tasks.js";
+import { recordKnowledgeSourceDeletion } from "../knowledge/storage-invalidation.js";
 import { buildTaskTools } from "./tools.js";
 import { TaskService } from "./service.js";
 import { placeTask } from "./views.js";
@@ -34,7 +35,7 @@ afterEach(() => {
 let n = 0;
 function tools(
   opts: {
-    ownedOnly?: boolean;
+    creationReference?: () => Promise<string | null>;
     observations?: boolean;
     interest?: Pick<InterestEngine, "record">;
   } = {},
@@ -72,6 +73,34 @@ describe("task tools", () => {
       ["task_undo", true],
     ]);
     expect(tools({ observations: true }).handles.at(-1)?.name).toBe("observation_suppress");
+  });
+
+  test("query is a literal substring across supported journal views and ignores view", async () => {
+    const { handles, call } = tools();
+    expect(
+      applyTaskCommand(
+        db,
+        {
+          kind: "create",
+          surface: "tasks",
+          runId: "user:fixture",
+          id: "loop_literal_query",
+          origin: "user",
+          title: "Archive the astronomy club poster",
+          scheduledFor: "2026-05-18",
+        },
+        NOW,
+      ).ok,
+    ).toBe(true);
+    const exact = data(await call("task_list", { query: "I archived the astronomy club poster" }));
+    expect(exact.tasks).toEqual([]);
+    const global = data(await call("task_list", { query: "ASTRONOMY" }));
+    expect(global.tasks).toHaveLength(1);
+    expect(data(await call("task_list", { query: "ASTRONOMY", view: "done" }))).toEqual(global);
+    expect(data(await call("task_list", { view: "done" })).tasks).toEqual([]);
+    expect(handles.find((handle) => handle.name === "task_list")?.description).toContain(
+      "view is ignored when query is present",
+    );
   });
 
   test("interest_record is offered only where the engine is, and it mutates", () => {
@@ -192,6 +221,46 @@ describe("task tools", () => {
     expect(getOpenLoop(db, "loop_t1")?.scheduledFor).toBe("2026-03-10");
   });
 
+  test.each([
+    { action: "migrate", to: "2026-03-13", deadline: { type: "by", date: "2026-03-20" } },
+    { action: "complete", docs: ["not-a-document"] },
+    { action: "accept", title: "A different task" },
+    { action: "edit", reason: "ignored reason" },
+    { action: "delete", note: "ignored note" },
+  ])("rejects fields an action would ignore before any write: %j", async (args) => {
+    const { call } = tools();
+    const created = data(await call("task_create", { title: "Inspect the greenhouse labels" }));
+    const before = getOpenLoop(db, created.task.id);
+    const history = listOpenLoopLedger(db, created.task.id);
+    expect(await call("task_update", { id: created.task.id, ...args })).toMatchObject({
+      kind: "error",
+      code: "invalid_args",
+      message: expect.stringContaining("Nothing was changed"),
+    });
+    expect(getOpenLoop(db, created.task.id)).toEqual(before);
+    expect(listOpenLoopLedger(db, created.task.id)).toEqual(history);
+  });
+
+  test("migration and deadline edits return and list the actual saved deadline", async () => {
+    const { call } = tools();
+    const created = data(await call("task_create", { title: "Inspect the greenhouse labels" }));
+    await call("task_update", { id: created.task.id, action: "migrate", to: "2026-03-13" });
+    const edited = data(
+      await call("task_update", {
+        id: created.task.id,
+        action: "edit",
+        deadline: { type: "by", date: "2026-03-20" },
+      }),
+    );
+    expect(edited.task).toMatchObject({
+      scheduledFor: "2026-03-13",
+      deadline: { type: "by", date: "2026-03-20" },
+    });
+    expect(data(await call("task_list", { query: "greenhouse labels" })).tasks).toEqual([
+      expect.objectContaining({ deadline: { type: "by", date: "2026-03-20" } }),
+    ]);
+  });
+
   test("a conversation can only undo its own changes", async () => {
     const { call } = tools();
     const mine = data(await call("task_create", { title: "Book the vet" }));
@@ -272,30 +341,172 @@ describe("task tools", () => {
     expect(getOpenLoop(db, "loop_s")?.state).toBe("done");
   });
 
-  test("owned-only tools cannot see or change suggestions", async () => {
-    createOpenLoop(
-      db,
-      {
-        id: "loop_s",
-        createdByRun: "run_1",
-        title: "Reply to Sarah Mendez",
-        confidence: 0.7,
-        importance: 0.5,
-      },
-      NOW,
+  test("creation attaches the published origin without dropping explicit documents or duplicating it", async () => {
+    for (const id of ["doc_chat", "doc_blueprint"]) {
+      db.prepare(
+        `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+        source_created_at, source_updated_at, ingested_at, updated_at)
+        VALUES (?, 'p', 's', ?, 'Observatory reference', 'body', 'h', ?, ?, ?, ?)`,
+      ).run(id, id, ...Array(4).fill(new Date(NOW).toISOString()));
+    }
+    const resolve = vi.fn(() => Promise.resolve("doc_chat"));
+    const { call } = tools({ creationReference: resolve });
+    const first = data(
+      await call("task_create", { title: "Check the telescope", docs: ["doc_blueprint"] }),
     );
-    const { call } = tools({ ownedOnly: true });
-    expect(await call("task_list", { view: "suggested" })).toMatchObject({ kind: "error" });
-    expect(data(await call("task_list", { query: "Sarah" })).tasks).toEqual([]);
-    expect(await call("task_update", { id: "loop_s", action: "complete" })).toMatchObject({
+    expect(getOpenLoop(db, first.task.id as string)?.docs).toEqual(["doc_blueprint", "doc_chat"]);
+    const second = data(
+      await call("task_create", { title: "Store the lenses", docs: ["doc_chat", "doc_chat"] }),
+    );
+    expect(getOpenLoop(db, second.task.id as string)?.docs).toEqual(["doc_chat"]);
+    expect(resolve).toHaveBeenCalledTimes(2);
+  });
+
+  test("the 100-document boundary counts a repeated origin only once", async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => `doc_ref_${i}`);
+    const insert =
+      db.prepare(`INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+      source_created_at, source_updated_at, ingested_at, updated_at)
+      VALUES (?, 'p', 's', ?, 'Observatory reference', 'body', 'h', ?, ?, ?, ?)`);
+    for (const id of ids) insert.run(id, id, ...Array(4).fill(new Date(NOW).toISOString()));
+    const { call } = tools({ creationReference: () => Promise.resolve(ids[99]!) });
+    const first = data(
+      await call("task_create", { title: "Catalog the star maps", docs: ids.slice(0, 99) }),
+    );
+    expect(getOpenLoop(db, first.task.id as string)?.docs).toEqual([...ids].sort());
+    const second = data(await call("task_create", { title: "Review the catalog", docs: ids }));
+    expect(getOpenLoop(db, second.task.id as string)?.docs).toEqual([...ids].sort());
+    const third = data(await call("task_create", { title: "Check the observatory" }));
+    expect(getOpenLoop(db, third.task.id as string)?.docs).toEqual([ids[99]]);
+  });
+
+  test("creation refuses an unavailable origin and an overflowing merged reference list without writing", async () => {
+    const before = db.prepare("SELECT COUNT(*) AS n FROM open_loops").get();
+    expect(
+      await tools({ creationReference: () => Promise.resolve(null) }).call("task_create", {
+        title: "Missing origin",
+      }),
+    ).toMatchObject({ kind: "error", message: expect.stringContaining("No task was created") });
+    expect(
+      await tools({ creationReference: () => Promise.resolve("doc_chat") }).call("task_create", {
+        title: "Too many references",
+        docs: Array.from({ length: 100 }, (_, i) => `doc_${i}`),
+      }),
+    ).toMatchObject({
       kind: "error",
-      code: "not_owned",
+      message: expect.stringContaining("including its originating conversation"),
     });
-    expect(await call("task_update", { id: "loop_s", action: "accept" })).toMatchObject({
+    expect(db.prepare("SELECT COUNT(*) AS n FROM open_loops").get()).toEqual(before);
+  });
+
+  test("cancellation while publishing the origin cannot create a task", async () => {
+    const abort = new AbortController();
+    const { handles } = tools({
+      creationReference: () => {
+        abort.abort();
+        return Promise.resolve("doc_chat");
+      },
+    });
+    const result = await handles
+      .find((tool) => tool.name === "task_create")!
+      .invoke({ title: "Canceled publication" }, {
+        sessionId: "s",
+        messageId: "m",
+        abortSignal: abort.signal,
+      } as never);
+    expect(result).toMatchObject({ kind: "error", code: "canceled" });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM open_loops").get()).toEqual({ n: 0 });
+  });
+
+  test("tasks link found documents, expose them to later edits, and undo attachment changes", async () => {
+    const seed = (id: string) => {
+      db.prepare(
+        `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+          source_created_at, source_updated_at, ingested_at, updated_at)
+         VALUES (?, 'p', 's', ?, 'Garden planning reference', 'body', 'h', ?, ?, ?, ?)`,
+      ).run(id, id, ...Array(4).fill(new Date(NOW).toISOString()));
+    };
+    seed("doc_plan");
+    seed("doc_quote");
+    const { call } = tools();
+    const created = data(
+      await call("task_create", {
+        title: "Prepare the garden plan",
+        docs: ["doc_plan", "doc_plan"],
+      }),
+    );
+    const id = created.task.id;
+    expect(getOpenLoop(db, id)?.docs).toEqual(["doc_plan"]);
+    expect(data(await call("task_list", { query: "garden" })).tasks[0].documents).toEqual([
+      { id: "doc_plan", title: "Garden planning reference", sourceId: "s" },
+    ]);
+    const edited = data(
+      await call("task_update", {
+        id,
+        action: "edit",
+        docs: ["doc_plan", "doc_quote"],
+      }),
+    );
+    expect(getOpenLoop(db, id)?.docs).toEqual(["doc_plan", "doc_quote"]);
+    await call("task_undo", { undoSeq: edited.undoSeq });
+    expect(getOpenLoop(db, id)?.docs).toEqual(["doc_plan"]);
+    expect(
+      await call("task_create", { title: "Missing document", docs: ["absent"] }),
+    ).toMatchObject({ kind: "error", code: "invalid" });
+    expect(await call("task_update", { id, action: "edit", docs: ["absent"] })).toMatchObject({
       kind: "error",
-      code: "invalid_args",
+      code: "invalid",
     });
-    expect(getOpenLoop(db, "loop_s")?.state).toBe("open");
+    expect(getOpenLoop(db, id)?.docs).toEqual(["doc_plan"]);
+    const cleared = data(await call("task_update", { id, action: "edit", docs: [] }));
+    expect(getOpenLoop(db, id)?.docs).toEqual([]);
+    await call("task_undo", { undoSeq: cleared.undoSeq });
+    expect(getOpenLoop(db, id)?.docs).toEqual(["doc_plan"]);
+  });
+
+  test("hidden document links cannot be exposed, newly attached or restored by undo", async () => {
+    for (const id of ["doc_visible", "doc_hidden"])
+      db.prepare(
+        `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+          source_created_at, source_updated_at, ingested_at, updated_at)
+         VALUES (?, 'p', 's', ?, 'Greenhouse reference', 'body', 'h', ?, ?, ?, ?)`,
+      ).run(id, id, ...Array(4).fill(new Date(NOW).toISOString()));
+    const { call } = tools();
+    const created = data(
+      await call("task_create", {
+        title: "Plan the greenhouse",
+        docs: ["doc_visible", "doc_hidden"],
+      }),
+    );
+    const id = created.task.id;
+    const edited = data(
+      await call("task_update", { id, action: "edit", title: "Plan the greenhouse planting" }),
+    );
+    recordKnowledgeSourceDeletion(db, "doc_hidden", NOW + 1);
+    // The source is fenced before its physical document row is removed.
+    expect(db.prepare("SELECT id FROM documents WHERE id = 'doc_hidden'").get()).toBeDefined();
+    expect(data(await call("task_list", { query: "greenhouse" })).tasks[0].documents).toEqual([
+      { id: "doc_visible", title: "Greenhouse reference", sourceId: "s" },
+    ]);
+    expect(
+      await call("task_create", { title: "Read the greenhouse reference", docs: ["doc_hidden"] }),
+    ).toMatchObject({ kind: "error", code: "invalid" });
+    expect(
+      await call("task_update", {
+        id,
+        action: "edit",
+        title: "An unavailable reference must not change this task",
+        docs: ["doc_hidden"],
+      }),
+    ).toMatchObject({ kind: "error", code: "invalid" });
+    expect(getOpenLoop(db, id)?.title).toBe("Plan the greenhouse planting");
+
+    const undone = await call("task_undo", { undoSeq: edited.undoSeq });
+    expect(undone).toMatchObject({ kind: "structured", resultType: "task.changed" });
+    expect(getOpenLoop(db, id)).toMatchObject({
+      title: "Plan the greenhouse",
+      docs: ["doc_visible"],
+    });
   });
 
   test("observation_suppress drops an open observation and records the user's action", async () => {

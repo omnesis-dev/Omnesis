@@ -222,6 +222,12 @@ export interface BriefDetailDto {
   day: string;
   messageId: string;
   sentAt?: string;
+  references?: Array<{
+    id: string;
+    title: string | null;
+    sourceType: string | null;
+    createdAt: string | null;
+  }>;
   items: Array<{
     rank: number;
     observationId: string;

@@ -142,7 +142,7 @@ export interface UpdateAssessment {
   /**
    * True when the transition is unsafe-by-default and the command must refuse
    * without `--force` — currently a downgrade, which an older binary handles
-   * only by resetting sources whose cursors a newer schema wrote.
+   * by resetting any source whose cursor needs a newer schema to read.
    */
   readonly requiresForce: boolean;
 }
@@ -168,26 +168,15 @@ export function assessUpdate(currentVersion: string, targetVersion: string): Upd
   if (direction === "downgrade") {
     requiresForce = true;
     notes.push(
-      `Downgrade ${current} → ${target}: the older binary cannot read a newer schema. ` +
-        "It resets any source whose cursor a newer build wrote (they resync automatically); " +
-        "restore a pre-upgrade backup if you need the exact prior state.",
+      `Downgrade ${current} → ${target}: there are no down-migrations. ` +
+        "Sources keep their sync positions unless the older build predates a change in how " +
+        "the gateway reads them; those sources resync automatically. " +
+        "Restore a pre-upgrade backup if you need the exact prior state.",
     );
   }
   return { direction, current, target, notes, requiresForce };
 }
 
-/** The command an operator backs up with before an update that takes no backup of its own. */
-export const MANUAL_BACKUP_COMMAND = "omnesis backup --note pre-upgrade";
-
-/**
- * The warning an update prints about the gateway's forward-only migrations,
- * read off the plan it is about to run: a plan with its own backup says that
- * the backup runs before them, and where it goes; only a plan without one —
- * `--no-backup`, or a host whose gateway is another machine's — tells the
- * operator to back up first. `unreleased` is an edge build or an exact commit,
- * which can carry migrations no release has. Null for a change that migrates
- * nothing forward.
- */
 /** Whether a plan step acts on, or waits for, a gateway on this host. */
 function involvesGateway(step: UpdateStep): boolean {
   switch (step.kind) {
@@ -205,6 +194,7 @@ function involvesGateway(step: UpdateStep): boolean {
   }
 }
 
+/** Describe forward-only migrations and any explicitly requested backup. */
 export function migrationBackupNote(
   change: UpdateDirection | "unreleased",
   steps: readonly UpdateStep[],
@@ -219,11 +209,7 @@ export function migrationBackupNote(
     change === "upgrade"
       ? "This upgrade runs forward-only schema migrations on the gateway's next boot, and there are no down-migrations."
       : "Edge can contain unreleased changes, including migrations no release has.";
-  if (!backedUp) {
-    return change === "upgrade"
-      ? `${lead} Back up first: ${MANUAL_BACKUP_COMMAND}`
-      : `${lead} Back up before running it: ${MANUAL_BACKUP_COMMAND}`;
-  }
+  if (!backedUp) return lead;
   return (
     `${lead} The update backs up the gateway's databases before they run, into ` +
     `${backupsDir ?? "the gateway's backups folder"}.`
@@ -1454,7 +1440,7 @@ export type UpdateStep =
   | { kind: "remove-previous-images"; previous: string };
 
 export interface HostPlanOptions {
-  /** False for `--no-backup`, which the operator takes responsibility for. */
+  /** True only when the operator explicitly requests a pre-update backup. */
   backup: boolean;
   /**
    * False when the caller restarts the daemons itself. Every restart becomes

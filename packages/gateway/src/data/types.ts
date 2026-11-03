@@ -73,11 +73,13 @@ export interface StoredSyncState {
    */
   last_document_at: string | null;
   /**
-   * The schema version (PRAGMA user_version) at which this source's cursor was
-   * last written. 0 means "written before version tracking was introduced"
-   * (compatible with any binary). Used by `runDowngradeCompatCheck` on startup
-   * to detect and reset sources whose data was written by a newer binary than
-   * the one currently running.
+   * The oldest schema version (PRAGMA user_version) whose gateway can
+   * interpret this row's cursor: `CURSOR_COMPAT_SCHEMA_VERSION` of the build
+   * that last wrote it, which moves only when a migration changes how cursors
+   * are interpreted. 0 means no recorded requirement (compatible with any
+   * binary), as on a row that was reset. Used by `runDowngradeCompatCheck` on
+   * startup to reset only the sources whose cursors an older running binary
+   * cannot read.
    */
   minimum_gateway_version: number;
 }

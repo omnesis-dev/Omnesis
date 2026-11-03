@@ -119,6 +119,91 @@ function seedPrivacyApproval(expiresAt = BASE_TIME + 60_000): void {
   });
 }
 
+describe("durable producer retries", () => {
+  test("retains one notification, its original expiry and its pending deliveries", () => {
+    const device = createDevice(db, { name: "Fictional handoff phone", kind: "ios" });
+    const input = {
+      message: message("handoff"),
+      deviceIds: [device.id],
+      createdAt: BASE_TIME,
+      expiresAt: BASE_TIME + 60_000,
+      idempotencyKey: "note-handoff:fictional-revision",
+    };
+    const first = enqueueNotification(db, input)!;
+    const retried = enqueueNotification(db, {
+      ...input,
+      createdAt: BASE_TIME + 1_000,
+      expiresAt: BASE_TIME + 120_000,
+    });
+    expect(retried).toEqual(first);
+    expect(state(first.deliveryIds[0]!)).toBe("pending");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM notifications").get()).toEqual({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM notification_deliveries").get()).toEqual({
+      count: 1,
+    });
+    expect(db.prepare("SELECT expires_at FROM notifications").get()).toEqual({
+      expires_at: input.expiresAt,
+    });
+  });
+
+  test("never re-arms a delivery the phone already confirmed", () => {
+    const device = createDevice(db, { name: "Fictional retry phone", kind: "ios" });
+    const input = {
+      message: message("confirmed-handoff"),
+      deviceIds: [device.id],
+      createdAt: BASE_TIME,
+      expiresAt: BASE_TIME + 60_000,
+      idempotencyKey: "note-handoff:confirmed-revision",
+    };
+    const first = enqueueNotification(db, input)!;
+    const claimed = claimNotification(db, { deviceId: device.id, now: BASE_TIME + 1 })!;
+    expect(
+      confirmNotification(db, { deviceId: device.id, deliveryId: claimed.id, now: BASE_TIME + 2 }),
+    ).toBe(true);
+    expect(enqueueNotification(db, { ...input, createdAt: BASE_TIME + 3 })).toEqual(first);
+    expect(state(first.deliveryIds[0]!)).toBe("delivered");
+    expect(claimNotification(db, { deviceId: device.id, now: BASE_TIME + 4 })).toBeNull();
+    expect(leaseNotificationWakes(db, { now: BASE_TIME + 4, limit: 10, maxAttempts: 3 })).toEqual(
+      [],
+    );
+  });
+
+  test("refuses reusing a producer key for different private content", () => {
+    const device = createDevice(db, { name: "Fictional content phone", kind: "ios" });
+    const input = {
+      message: message("original"),
+      deviceIds: [device.id],
+      createdAt: BASE_TIME,
+      expiresAt: BASE_TIME + 60_000,
+      idempotencyKey: "note-handoff:immutable-revision",
+    };
+    enqueueNotification(db, input);
+    expect(() => enqueueNotification(db, { ...input, message: message("different") })).toThrow(
+      "reused for different content",
+    );
+    expect(db.prepare("SELECT body FROM notifications").get()).toEqual({
+      body: input.message.body,
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM notification_deliveries").get()).toEqual({
+      count: 1,
+    });
+  });
+
+  test.each(["", "   ", "k".repeat(201)])("rejects an invalid producer key", (idempotencyKey) => {
+    const device = createDevice(db, { name: "Fictional key phone", kind: "ios" });
+    expect(() =>
+      enqueueNotification(db, {
+        message: message("invalid"),
+        deviceIds: [device.id],
+        createdAt: BASE_TIME,
+        expiresAt: BASE_TIME + 60_000,
+        idempotencyKey,
+      }),
+    ).toThrow("idempotency key");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM notifications").get()).toEqual({ count: 0 });
+  });
+});
+
 describe("privacy notification eligibility", () => {
   test.each(["approve", "deny"] as const)("suppresses queued prompts after %s", (action) => {
     seedPrivacyApproval();

@@ -421,10 +421,11 @@ export class Indexer {
         for (const doc of fullDocs) {
           if (this.stopping) break;
           // Structured offsets refer to the literal stored content. The chunker
-          // normalizes each extracted body before constructing its new fence.
+          // normalizes each extracted section or conversation turn.
           if (
-            doc.metadata.documentType !== "conversation" ||
-            doc.metadata.extra?.conversationTurns === undefined
+            (doc.metadata.documentType !== "conversation" ||
+              doc.metadata.extra?.conversationTurns === undefined) &&
+            doc.metadata.extra?.chunkBoundaries === undefined
           ) {
             doc.content = normalizeContent(doc.content);
           }
@@ -712,10 +713,11 @@ export class Indexer {
           continue;
 
         // Structured offsets refer to the literal stored content. The chunker
-        // normalizes each extracted body before constructing its new fence.
+        // normalizes each extracted section or conversation turn.
         if (
-          doc.metadata.documentType !== "conversation" ||
-          doc.metadata.extra?.conversationTurns === undefined
+          (doc.metadata.documentType !== "conversation" ||
+            doc.metadata.extra?.conversationTurns === undefined) &&
+          doc.metadata.extra?.chunkBoundaries === undefined
         ) {
           doc.content = normalizeContent(doc.content);
         }
