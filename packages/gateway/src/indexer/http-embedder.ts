@@ -17,39 +17,32 @@ const log = createLogger("indexer:http-embedder");
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 /**
- * Inputs per embedding request from the bulk indexing path. Kept small on
- * purpose: a shared, latency-sensitive embedding server (e.g. a local vLLM
- * serving both indexing and interactive search) continuously-batches at fine
- * granularity, so small bulk requests let an interactive query-embed
- * interleave within ~one small batch instead of queuing behind a
- * multi-second mega-batch. Measured against a local vLLM under sustained
- * bulk load: batch 256 → query 0.65s; batch 32 → 0.09s, at only ~13% lower
- * bulk throughput (≈1 min over a full re-index). The interactive search
- * embedder issues single-input requests, so this only shapes bulk traffic.
- * This is what keeps search prioritized under embedding contention WITHOUT
- * any operator tuning. Override with OMNESIS_EMBED_BATCH_SIZE (e.g. raise it
- * for a scalable remote API where per-request overhead outweighs interleaving).
+ * How an embedding server is shared between search and indexing. A server
+ * such as vLLM queues every input of a request as its own sequence and serves
+ * them first come, first served, so a query embed waits for every background
+ * input already sent to it. The gateway cannot reorder that queue; it keeps it
+ * short. Query embeds (`embedQuery`) are interactive and go out at once,
+ * never waiting behind queued background requests. Document batches (`embed`)
+ * are background: at most `maxBackgroundRequests` are in flight, the rest wait
+ * in the gateway, in order, and are sent as slots free.
+ *
+ * The defaults are the shallowest queue that keeps the server busy. Measured
+ * against a local vLLM serving a 0.6B embedding model with inputs of about a
+ * thousand tokens: 4 requests of 32 inputs in flight served 41 inputs/s while
+ * a query waited 2.7 s; 2 requests of 16 served 39–42 inputs/s while a query
+ * waited 0.5 s. Override with OMNESIS_EMBED_BATCH_SIZE and
+ * OMNESIS_EMBED_BULK_CONCURRENCY, e.g. raise both for a remote API that serves
+ * requests concurrently and whose round trip dominates.
  */
 const DEFAULT_BATCH_SIZE = (() => {
   const env = Number(process.env.OMNESIS_EMBED_BATCH_SIZE);
-  return Number.isFinite(env) && env > 0 ? Math.floor(env) : 32;
+  return Number.isFinite(env) && env > 0 ? Math.floor(env) : 16;
+})();
+const DEFAULT_MAX_BACKGROUND_REQUESTS = (() => {
+  const env = Number(process.env.OMNESIS_EMBED_BULK_CONCURRENCY);
+  return Number.isFinite(env) && env > 0 ? env : 2;
 })();
 const DEFAULT_MAX_INPUT_CHARS = 2048 * 2;
-
-/**
- * Default cap on concurrent HTTP requests a bulk embedder fires at the
- * embedding server. The bulk indexing path (`embed()`) fans a page of
- * chunks into many batches; without a cap it floods a shared embedding
- * server (e.g. a local vLLM) and an interactive search query-embed —
- * which runs through a SEPARATE, unbounded HttpEmbedder instance — queues
- * behind that flood at the server. Bounding bulk concurrency leaves the
- * server responsive for queries. Override with OMNESIS_EMBED_BULK_CONCURRENCY.
- * The interactive search embedder passes maxConcurrentRequests=Infinity.
- */
-const DEFAULT_MAX_CONCURRENT_REQUESTS = (() => {
-  const env = Number(process.env.OMNESIS_EMBED_BULK_CONCURRENCY);
-  return Number.isFinite(env) && env > 0 ? env : 4;
-})();
 
 interface EmbeddingResponse {
   data: Array<{ embedding: number[]; index: number }>;
@@ -70,10 +63,10 @@ export class HttpEmbedder implements Embedder {
   private apiKey?: string;
   private allowRemoteInference: boolean;
 
-  /** Max concurrent in-flight requests to the server (Infinity = unbounded). */
-  private readonly maxConcurrentRequests: number;
-  private activeRequests = 0;
-  private readonly requestWaiters: Array<() => void> = [];
+  /** Background requests allowed in flight at once (Infinity = unbounded). */
+  private readonly maxBackgroundRequests: number;
+  private backgroundInFlight = 0;
+  private readonly backgroundWaiters: Array<() => void> = [];
 
   constructor(opts: {
     baseUrl: string;
@@ -98,11 +91,10 @@ export class HttpEmbedder implements Embedder {
     /** Permit non-loopback HTTP inference. Defaults off. */
     allowRemoteInference?: boolean;
     /**
-     * Cap on concurrent requests to the embedding server. Defaults to a
-     * bounded value (so the bulk indexing path can't flood a shared
-     * server); pass Infinity for the interactive search embedder.
+     * Cap on background (`embed`) requests in flight at the embedding server.
+     * Query embeds are never counted or held.
      */
-    maxConcurrentRequests?: number;
+    maxBackgroundRequests?: number;
   }) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.apiPathPrefix = normalizeApiPathPrefix(opts.apiPathPrefix);
@@ -118,26 +110,26 @@ export class HttpEmbedder implements Embedder {
         : NO_ENCODING);
     this.apiKey = opts.apiKey;
     this.allowRemoteInference = opts.allowRemoteInference === true;
-    this.maxConcurrentRequests = opts.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
+    this.maxBackgroundRequests = opts.maxBackgroundRequests ?? DEFAULT_MAX_BACKGROUND_REQUESTS;
   }
 
-  /** Counting semaphore over `request()`. Bounds server load per instance. */
-  private acquireSlot(): Promise<void> {
-    if (this.activeRequests < this.maxConcurrentRequests) {
-      this.activeRequests++;
+  /** A background slot, waiting in order behind earlier background requests when none is free. */
+  private acquireBackgroundSlot(): Promise<void> {
+    if (this.backgroundInFlight < this.maxBackgroundRequests) {
+      this.backgroundInFlight++;
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
-      this.requestWaiters.push(() => {
-        this.activeRequests++;
+      this.backgroundWaiters.push(() => {
+        this.backgroundInFlight++;
         resolve();
       });
     });
   }
 
-  private releaseSlot(): void {
-    this.activeRequests--;
-    this.requestWaiters.shift()?.();
+  private releaseBackgroundSlot(): void {
+    this.backgroundInFlight--;
+    this.backgroundWaiters.shift()?.();
   }
 
   async embed(texts: string[]): Promise<Float32Array[]> {
@@ -202,7 +194,8 @@ export class HttpEmbedder implements Embedder {
   }
 
   private async request(input: string[], kind: "query" | "document"): Promise<Float32Array[]> {
-    await this.acquireSlot();
+    const background = kind === "document";
+    if (background) await this.acquireBackgroundSlot();
     try {
       const url = `${this.baseUrl}${this.apiPathPrefix}/embeddings`;
       const body: Record<string, unknown> = { model: this.model, input };
@@ -263,7 +256,7 @@ export class HttpEmbedder implements Embedder {
       const sorted = json.data.sort((a, b) => a.index - b.index);
       return sorted.map((d) => new Float32Array(d.embedding));
     } finally {
-      this.releaseSlot();
+      if (background) this.releaseBackgroundSlot();
     }
   }
 }
