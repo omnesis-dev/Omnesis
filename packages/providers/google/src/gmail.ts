@@ -69,10 +69,16 @@ export interface GmailSyncCursor extends SyncCursor {
   pageToken?: string;
   totalMessages?: number;
   phase: "bootstrap" | "incremental";
-  /** historyId captured at bootstrap start. Used as the incremental starting point
-   *  when bootstrap transitions early (processed >= total) so we never get stuck
-   *  re-walking pagination forever. */
+  /** historyId captured when the bootstrap walk starts, and the incremental
+   *  starting point however the walk ends. The walk lists mail older than its
+   *  start, so the history from here is what fetches the mail that arrives,
+   *  and the changes made, while it runs. */
   bootstrapHistoryId?: string;
+  /** When the bootstrap walk started (ISO), taken with `bootstrapHistoryId`.
+   *  Becomes `lastSyncAt` when the walk ends, because the walk vouches for the
+   *  mailbox up to its start and no later. Absent on a walk that started
+   *  before this field existed. */
+  bootstrapStartedAt?: string;
   /** Cumulative docs ingested across bootstrap pages. Compared with totalMessages
    *  to detect "we have enough, transition to incremental even if pagination keeps
    *  serving more". Reset to undefined post-transition. */
@@ -87,10 +93,11 @@ export interface GmailSyncCursor extends SyncCursor {
    *  mailbox. Carried across bootstrap pages, cleared on the transition to
    *  incremental. */
   recoverAfter?: string;
-  /** ISO timestamp of the last sync that left us in the incremental phase.
-   *  The watermark a 404 recovery backfills from (minus a safety overlap).
-   *  Absent on cursors written before this field existed → recovery uses a
-   *  bounded fallback look-back instead. */
+  /** The instant up to which the corpus is known to hold the mailbox (ISO):
+   *  the start of the walk that ended the bootstrap, then the time of each
+   *  incremental sync that drained the history. The watermark a 404 recovery
+   *  backfills from (minus a safety overlap). Absent when nothing has
+   *  established one → recovery uses a bounded fallback look-back instead. */
   lastSyncAt?: string;
   /**
    * What the completed walk reached, settled when bootstrap ends.
@@ -444,11 +451,17 @@ export class GmailSource {
 
   private async bootstrapSync(state: GmailSyncCursor): Promise<SyncResult> {
     // Fetch totalMessages + pin a starting historyId on the first bootstrap page.
-    // The pinned historyId is what we transition to "incremental" with — even if
-    // a long bootstrap is interrupted and the cursor walks past Gmail's reported
-    // messagesTotal, we still have a stable point to switch from.
+    // The pinned historyId is what we transition to "incremental" with, however
+    // the walk ends and however many syncs it spans.
     let totalMessages = state.totalMessages;
     let bootstrapHistoryId = state.bootstrapHistoryId;
+    // The walk's start, recorded only when the page that starts the walk pins
+    // its historyId, and taken before the profile is read so it is no later
+    // than the pin. A walk that pins later than its first page — resumed from
+    // a cursor that never pinned — has no honest start time: a later instant
+    // would vouch for mail the walk may not have listed.
+    let bootstrapStartedAt = state.bootstrapStartedAt;
+    const pageStartedAt = new Date().toISOString();
     // Use mailbox-wide messagesTotal as the progress denominator. When a
     // cutoff is in effect the bar will plateau short of 100% (we only walk
     // the post-cutoff slice), but it's a true upper bound and stable across
@@ -456,7 +469,10 @@ export class GmailSource {
     // wildly between calls.
     if (!state.pageToken || bootstrapHistoryId === undefined || totalMessages === undefined) {
       const profile = await this.gmail.users.getProfile({ userId: "me" });
-      bootstrapHistoryId = bootstrapHistoryId ?? profile.data.historyId ?? undefined;
+      if (bootstrapHistoryId === undefined && profile.data.historyId) {
+        bootstrapHistoryId = profile.data.historyId;
+        if (!state.pageToken) bootstrapStartedAt = pageStartedAt;
+      }
       totalMessages = profile.data.messagesTotal ?? totalMessages;
     }
 
@@ -536,22 +552,25 @@ export class GmailSource {
     const settledReach: HistoryCoverage =
       hasMore || exhausted || reach !== "complete" ? reach : "unknown";
 
-    // On natural exhaustion we capture a fresh historyId (cheaper first
-    // incremental). On early transition (reachedTotal / cutoff) we use the
-    // historyId we pinned at bootstrap start — the first incremental run will
-    // paginate via history.list to catch up.
+    // However the walk ends, incremental sync starts from the historyId pinned
+    // when it began. The walk lists mail older than its start, page by page
+    // across as many syncs as it takes, so mail that arrives while it runs —
+    // and every label change or deletion made meanwhile — reaches the corpus
+    // only through the history since then. Replaying it costs what arrived
+    // during the walk, not the mailbox, and a message the walk also listed
+    // lands on the same document again. Only a walk that never pinned one
+    // (Gmail returned no historyId when it started) takes the current one.
     let historyId = state.historyId;
     if (!hasMore) {
-      if (exhausted) {
-        const profile = await this.gmail.users.getProfile({ userId: "me" });
-        historyId = profile.data.historyId ?? bootstrapHistoryId ?? historyId;
-        log.info(`Bootstrap complete (exhausted), captured fresh historyId: ${historyId}`);
+      if (bootstrapHistoryId !== undefined) {
+        historyId = bootstrapHistoryId;
       } else {
-        historyId = bootstrapHistoryId ?? historyId;
-        log.info(
-          `Bootstrap complete (processed ${processedDocs}/${totalMessages ?? "?"}), using pinned historyId: ${historyId}`,
-        );
+        const profile = await this.gmail.users.getProfile({ userId: "me" });
+        historyId = profile.data.historyId ?? historyId;
       }
+      log.info(
+        `Bootstrap complete (${exhausted ? "exhausted" : `processed ${processedDocs}/${totalMessages ?? "?"}`}), incremental sync starts from historyId ${historyId}`,
+      );
     }
 
     return {
@@ -563,6 +582,7 @@ export class GmailSource {
         totalMessages: hasMore ? totalMessages : undefined,
         phase: hasMore ? "bootstrap" : "incremental",
         bootstrapHistoryId: hasMore ? bootstrapHistoryId : undefined,
+        bootstrapStartedAt: hasMore ? bootstrapStartedAt : undefined,
         processedDocs: hasMore ? processedDocs : undefined,
         recoverAfter: hasMore ? state.recoverAfter : undefined,
         // Carried for as long as the floor it qualifies. Dropping it left page
@@ -572,7 +592,12 @@ export class GmailSource {
         recoveryVouched: hasMore ? state.recoveryVouched : undefined,
         oldestListedAt: hasMore ? oldestListedAt : undefined,
         listBefore: hasMore ? listBefore : undefined,
-        lastSyncAt: hasMore ? state.lastSyncAt : new Date().toISOString(),
+        // The walk vouches for the mailbox up to its start; the history from
+        // the pinned id covers the rest. Should that history expire before it
+        // is read, the recovery backfills from the walk's start. A walk with
+        // no recorded start keeps the watermark it began with: a recovery
+        // walk's own, which is earlier still, or none.
+        lastSyncAt: hasMore ? state.lastSyncAt : (bootstrapStartedAt ?? state.lastSyncAt),
         // Settled when the walk ends: from here on the incremental pages
         // restate it, because a history delta cannot re-derive how far back
         // the mailbox was read.
@@ -718,7 +743,9 @@ export class GmailSource {
         historyId: advancedHistoryId,
         phase: "incremental",
         historyPageToken: nextHistoryPageToken,
-        lastSyncAt: new Date().toISOString(),
+        // Advanced with the historyId: until the last page lands, the corpus
+        // is only known to hold the mailbox up to the watermark it had.
+        lastSyncAt: nextHistoryPageToken ? state.lastSyncAt : new Date().toISOString(),
         coverage: state.coverage,
       } satisfies GmailSyncCursor,
       hasMore: !!nextHistoryPageToken,
