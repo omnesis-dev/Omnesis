@@ -43,6 +43,10 @@ import {
   readTemporalStoreWindow,
   type TemporalStoreWindowRequest,
 } from "../enrichment/temporal/temporal-store-window.js";
+import {
+  knowledgeDocumentsReadable,
+  type KnowledgeDocumentRef,
+} from "../brain/knowledge/retrieval-fence.js";
 import { computeSeedFromContacts } from "../domain/ContactCardBootstrap.js";
 import {
   computeInteractionScores,
@@ -273,6 +277,12 @@ export const ioHandlers = {
   // be the event loop.
   "io.temporalStoreWindow": (db: Db, request: TemporalStoreWindowRequest) =>
     readTemporalStoreWindow(db, request),
+
+  // Whether each of a search's hits may be shown. A knowledge mirror's verdict
+  // walks its node's ancestors, which on a large page takes a second or more;
+  // search fences its whole candidate pool, twice, on every query.
+  "io.knowledgeDocumentsReadable": (db: Db, refs: KnowledgeDocumentRef[]) =>
+    knowledgeDocumentsReadable(db, refs),
 
   // ── people compute (read halves of compute/upsert splits) ─────────
   "io.peopleCounts": (db: Db) => computePeopleCounts(db),

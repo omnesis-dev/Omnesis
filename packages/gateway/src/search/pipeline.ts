@@ -25,7 +25,10 @@
  */
 
 import { readRetrievalCoverage } from "./retrieval-coverage.js";
-import { isKnowledgeDocumentReadable } from "../brain/knowledge/retrieval-fence.js";
+import {
+  knowledgeDocumentsReadable,
+  type KnowledgeReadabilityReads,
+} from "../brain/knowledge/retrieval-fence.js";
 type Db = Database.Database;
 import {
   createLogger,
@@ -155,6 +158,8 @@ export class SearchPipeline {
   private vectorUnavailableReason: string | null = null;
   private searchConfig?: SearchConfig;
   private gatewayDb?: Db;
+  /** Where hits are fenced; without it, on {@link gatewayDb} on this thread. */
+  private knowledgeReadability?: KnowledgeReadabilityReads;
   private embeddingModelId?: string;
   private queryEnricher?: QueryEnricher;
   private linkRefSource?: LinkRefSource;
@@ -228,6 +233,42 @@ export class SearchPipeline {
   /** Attach the gateway database for ref count lookups in search results. */
   setGatewayDb(db: Db): void {
     this.gatewayDb = db;
+  }
+
+  /**
+   * Fence hits on a read worker instead of the gateway database's own thread.
+   * A knowledge mirror's verdict walks its node's ancestors, and search fences
+   * its whole candidate pool on every query.
+   */
+  setKnowledgeReadability(reads: KnowledgeReadabilityReads): void {
+    this.knowledgeReadability = reads;
+  }
+
+  /**
+   * The hits whose documents may be shown now, in order. A failed read on the
+   * worker is retried on this thread rather than failing the search.
+   */
+  private async readableHits<T extends { documentId: string; sourceId: string }>(
+    db: Db,
+    hits: readonly T[],
+  ): Promise<T[]> {
+    if (hits.length === 0) return [];
+    const refs = hits.map((hit) => ({ documentId: hit.documentId, sourceId: hit.sourceId }));
+    let verdicts: boolean[];
+    try {
+      verdicts = this.knowledgeReadability
+        ? await this.knowledgeReadability.knowledgeDocumentsReadable(refs)
+        : knowledgeDocumentsReadable(db, refs);
+    } catch (err) {
+      if (!this.knowledgeReadability) throw err;
+      log.warn(
+        `Search readability read failed, fencing on main: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      verdicts = knowledgeDocumentsReadable(db, refs);
+    }
+    return hits.filter((_, i) => verdicts[i]);
   }
 
   /**
@@ -634,11 +675,7 @@ export class SearchPipeline {
     // Merge the core's outputs back onto the shared context so the downstream
     // main-thread stages and the response mapping see them as if the stages had
     // run inline.
-    ctx.results = this.gatewayDb
-      ? cg.results.filter((hit) =>
-          isKnowledgeDocumentReadable(this.gatewayDb!, hit.documentId, hit.sourceId),
-        )
-      : cg.results;
+    ctx.results = this.gatewayDb ? await this.readableHits(this.gatewayDb, cg.results) : cg.results;
     Object.assign(ctx.stageReports, cg.stageReports);
     if (ctx.stageReports.temporal) ctx.stageReports.temporal.eventMs = eventMs;
     if (cg.timing.bm25Ms !== undefined) ctx.timing.bm25Ms = cg.timing.bm25Ms;
@@ -665,16 +702,14 @@ export class SearchPipeline {
     // hydrated chunk text and fetched hashes, so neither path rereads index.db.
     // See #269 — retire the disabled-v2 agent fallback after the rollout proves reliable.
     const v2 = resolveSearchV2Config(this.searchConfig);
-    const finalizeVisibleResults = () => {
+    const finalizeVisibleResults = async () => {
       // Rebuild graph context from authoritative rows after the last asynchronous
       // enrichment. Never carry pre-await copies, paths or summaries forward.
-      ctx.results = ctx.results
-        .filter(
-          (hit) =>
-            !this.gatewayDb ||
-            isKnowledgeDocumentReadable(this.gatewayDb, hit.documentId, hit.sourceId),
-        )
-        .map(({ provenance: _provenance, ...hit }) => hit);
+      ctx.results = (
+        this.gatewayDb ? await this.readableHits(this.gatewayDb, ctx.results) : ctx.results
+      ).map(({ provenance: _provenance, ...hit }) => hit);
+      // Graph enrichment takes these verdicts instead of fencing each hit again.
+      const readableDocumentIds = new Set(ctx.results.map((hit) => hit.documentId));
       if (
         options?.agentContext &&
         v2.enabled &&
@@ -688,6 +723,7 @@ export class SearchPipeline {
           limit: ctx.limit,
           excludeDocumentIds: options.excludeDocumentIds,
           indexedContentHashes: cg.contentHashByDoc,
+          readableDocumentIds,
         });
       } else {
         ctx.results = dedupeByContentHashWith(cg.contentHashByDoc, ctx.results, ctx.limit);
@@ -714,15 +750,16 @@ export class SearchPipeline {
               limit: 1,
               excludeDocumentIds: options.excludeDocumentIds,
               indexedContentHashes: cg.contentHashByDoc,
+              readableDocumentIds,
             });
           });
         }
       }
     };
-    finalizeVisibleResults();
+    await finalizeVisibleResults();
     if (query.includeBoundRow) {
       await this.hydrateBoundRows(ctx.results);
-      finalizeVisibleResults();
+      await finalizeVisibleResults();
     }
 
     const facets = buildFacets(ctx.results);
