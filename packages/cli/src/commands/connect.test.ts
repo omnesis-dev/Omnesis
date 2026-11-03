@@ -3441,13 +3441,21 @@ describe("connect loads the plugin it installed", () => {
     expect(captured()).toHaveLength(1);
   });
 
+  /** The install record OpenClaw keeps for an archive install of `path`. */
+  function installRecord(path: string, installedAt: string): Record<string, unknown> {
+    const bytes = readFileSync(path);
+    return {
+      integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+      installedAt,
+    };
+  }
+
   /**
-   * An OpenClaw whose running gateway saved the plugin but could not swap it
-   * in: the install exits non-zero, and the inspection that follows reports
-   * the install record of `recorded` — the archive just installed unless a
-   * path is given.
+   * An OpenClaw whose install exits non-zero the way a running gateway's
+   * failed swap does, and whose `plugins inspect` then answers with the
+   * record `recorded` returns for the archive the install was given.
    */
-  function openClawSavedWithoutSwap(recorded?: string): void {
+  function openClawInstallFails(recorded: (archive: string) => Record<string, unknown>): void {
     let archive = "";
     onTestFinished(() => {
       (spawnSync as Mock).mockImplementation(() => ({ status: 0, stdout: "", stderr: "" }));
@@ -3459,19 +3467,16 @@ describe("connect loads the plugin it installed", () => {
           status: 1,
           stdout: "",
           stderr:
-            "Plugin operation failed during drain: an invented timeout | UNAVAILABLE\n" +
+            "\u001b[31mPlugin operation failed during drain: an invented timeout | UNAVAILABLE\u001b[39m\n" +
             'Plugin "omnesis-integration" installation is saved.',
         };
       }
       if (args[1] === "inspect") {
-        const bytes = readFileSync(recorded ?? archive);
         return {
           status: 0,
           stdout: JSON.stringify({
             plugin: { id: "omnesis-integration" },
-            install: {
-              integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
-            },
+            install: recorded(archive),
           }),
           stderr: "",
         };
@@ -3483,7 +3488,7 @@ describe("connect loads the plugin it installed", () => {
   it("a plugin OpenClaw saved but could not swap in is installed, and the restart loads it", async () => {
     const home = refreshableHome("openclaw");
     const output = captureLog();
-    openClawSavedWithoutSwap();
+    openClawInstallFails((archive) => installRecord(archive, new Date().toISOString()));
 
     await run({ harness: "openclaw", dir: home, refresh: true, yes: true });
 
@@ -3491,9 +3496,9 @@ describe("connect loads the plugin it installed", () => {
     expect(inspect?.[1]).toEqual(["plugins", "inspect", "omnesis-integration", "--json"]);
     expect(inspect?.[2].env).toMatchObject({ OPENCLAW_STATE_DIR: home });
     expect(output()).toContain(
-      "OpenClaw saved the plugin but could not load it into the running harness " +
+      "OpenClaw saved the plugin but reported a failure loading it " +
         "(Plugin operation failed during drain: an invented timeout | UNAVAILABLE). " +
-        "Restarting OpenClaw loads it.",
+        "Restarting OpenClaw loads the saved plugin.",
     );
     // The rest of the install still runs, and so does the restart.
     expect(
@@ -3509,10 +3514,23 @@ describe("connect loads the plugin it installed", () => {
     captureLog();
     const previous = join(home, "previous.tgz");
     writeFileSync(previous, "an invented earlier archive");
-    openClawSavedWithoutSwap(previous);
+    openClawInstallFails(() => installRecord(previous, new Date().toISOString()));
 
     await expect(run({ harness: "openclaw", dir: home, refresh: true, yes: true })).rejects.toThrow(
-      /Could not install the Omnesis integration plugin: Plugin operation failed/u,
+      /Could not install the Omnesis integration plugin: .*Plugin operation failed/u,
+    );
+    expect(streamed()).toEqual([]);
+  });
+
+  it("a record an earlier install of the same archive left is not this install", async () => {
+    // The same build packs a byte-identical archive, so its digests match a
+    // record an earlier refresh wrote even when this install saved nothing.
+    const home = refreshableHome("openclaw");
+    captureLog();
+    openClawInstallFails((archive) => installRecord(archive, "2020-01-01T00:00:00.000Z"));
+
+    await expect(run({ harness: "openclaw", dir: home, refresh: true, yes: true })).rejects.toThrow(
+      /Could not install the Omnesis integration plugin/u,
     );
     expect(streamed()).toEqual([]);
   });

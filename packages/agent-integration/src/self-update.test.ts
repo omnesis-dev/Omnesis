@@ -240,7 +240,13 @@ describe("the harness plugin's device.update handler", () => {
 
   test("an install still restarts the harness after the plugin was stopped meanwhile", async () => {
     let release: (attempt: HarnessUpdateAttempt) => void = () => {};
-    const restart: HarnessRestart = { command: "openclaw gateway restart", start: vi.fn() };
+    let onFailure: (detail: string) => void = () => {};
+    const restart: HarnessRestart = {
+      command: "openclaw gateway restart",
+      start: vi.fn((fail: (detail: string) => void) => {
+        onFailure = fail;
+      }),
+    };
     const { socket, client } = setup({
       run: () => new Promise((resolve) => (release = resolve)),
     });
@@ -251,22 +257,10 @@ describe("the harness plugin's device.update handler", () => {
     await flush();
     await flush();
     expect(restart.start).toHaveBeenCalledTimes(1);
-    // The connection the command came on is gone, so nothing is sent on it:
-    // the harness's reconnect on the installed plugin is the report.
-    expect(frames(socket)).toHaveLength(1);
-  });
-
-  test("a failed update restarts nothing after the plugin was stopped meanwhile", async () => {
-    let release: (attempt: HarnessUpdateAttempt) => void = () => {};
-    const { socket, client } = setup({
-      run: () => new Promise((resolve) => (release = resolve)),
-    });
-    sendUpdate(socket, "0.5.0");
-    await flush();
-    await client.stop();
-    release({ state: "failed", detail: "`omnesis update` exited 1." });
-    await flush();
-    await flush();
+    // The connection the command came on is gone, so nothing is sent on it,
+    // not even a restart that failed: the harness's reconnect on the
+    // installed plugin is the report.
+    onFailure("Installed 0.5.0. Restarting openclaw failed: `openclaw gateway restart` exited 1.");
     expect(frames(socket)).toHaveLength(1);
   });
 

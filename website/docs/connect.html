@@ -1255,9 +1255,10 @@
           interrupts any run the agent is in the middle of; <code>--yes</code> restarts without
           asking, and <code>--no-restart</code> prints the command instead. Without a terminal and
           without <code>--yes</code>, it prints the command; the installer roles, which run it for
-          you, pass <code>--yes</code> when they have no terminal to ask on. It then asks the agent
-          whether the Omnesis skill is ready and says so, naming what to run when it is not. A new
-          session picks the skill up.
+          you, pass <code>--yes</code> when they have no terminal to ask on. When a running OpenClaw
+          saves the plugin but cannot load it, <code>connect</code> says so, and the restart loads
+          it. It then asks the agent whether the Omnesis skill is ready and says so, naming what to
+          run when it is not. A new session picks the skill up.
         </p>
         <p>
           OpenClaw releases that ask for consent before installing a plugin that declares

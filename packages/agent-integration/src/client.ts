@@ -401,10 +401,10 @@ export class AgentIntegrationClient {
    * before the restart is launched, because the restart ends this process.
    *
    * The update is a separate process this plugin only waits on, and `stop()`
-   * does not wait for it. Installing the plugin is what stops this instance:
-   * a harness that loads plugins while it runs (OpenClaw) replaces the
-   * running plugin as part of the install, and gives its `stop()` seconds,
-   * not the minutes the update has left. A `stop()` held by the update would
+   * does not wait for it. Installing the plugin can be what stops this
+   * instance: a harness that loads plugins while it runs (OpenClaw) replaces
+   * the running plugin as part of the install, and gives its `stop()`
+   * seconds, not the minutes the update has left. A `stop()` held by the update would
    * hold up the very install the update is waiting for, and leave the
    * harness unable to load either plugin.
    *

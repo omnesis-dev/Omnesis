@@ -18,6 +18,7 @@ import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { defineCommand } from "citty";
 import { isScalar, isSeq, parse as parseYaml, parseDocument } from "yaml";
 import {
@@ -77,7 +78,7 @@ import {
   OPENCLAW_ACCEPT_CAPABILITIES_FLAG,
   openClawCapabilityConsentSupport,
 } from "./openclaw-capability-consent.js";
-import { openClawRecordsArchive } from "./openclaw-install-record.js";
+import { openClawSavedArchive, readOpenClawInstallRecord } from "./openclaw-install-record.js";
 
 /** `~/`-expansion for user-supplied paths (flags are never shell-expanded). */
 function expandHome(path: string): string {
@@ -824,14 +825,11 @@ function runInstaller(command: string, args: string[], environment: NodeJS.Proce
   if (failure !== null) throw installerFailure(failure);
 }
 
-/**
- * The longest part of OpenClaw's own explanation repeated when it saved the
- * plugin but could not load it: its first line, which names the failure.
- */
+/** How much of the first line of OpenClaw's failure the saved-plugin warning repeats. */
 const SAVED_INSTALL_REASON_CHARS = 300;
 
 function firstLine(text: string, max: number): string {
-  const line = text.split(/\r?\n/u, 1)[0]?.trim() ?? "";
+  const line = stripVTControlCharacters(text).split(/\r?\n/u, 1)[0]?.trim() ?? "";
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
@@ -945,6 +943,7 @@ function prepareHarnessPlugin(
             );
           }
           const acceptCapabilities = consent === "supported";
+          const installStartedAt = Date.now();
           const installFailure = attemptInstaller(
             "openclaw",
             [
@@ -958,15 +957,16 @@ function prepareHarnessPlugin(
           );
           if (installFailure !== null) {
             // A running OpenClaw that saved the plugin but could not swap it
-            // in exits non-zero. That plugin is installed: the harness loads
-            // it on the restart that follows every plugin change.
-            if (!openClawRecordsArchive(artifact.archivePath, migrationEnvironment)) {
+            // in exits non-zero. That plugin is installed: OpenClaw loads it
+            // when it next starts, which this command then does or names.
+            const record = readOpenClawInstallRecord(normalEnvironment);
+            if (!openClawSavedArchive(record, artifact.archivePath, installStartedAt)) {
               throw installerFailure(installFailure);
             }
             console.log(
-              `${c.yellow}! OpenClaw saved the plugin but could not load it into the running ` +
-                `harness (${firstLine(installFailure, SAVED_INSTALL_REASON_CHARS)}). Restarting ` +
-                `OpenClaw loads it.${c.reset}`,
+              `${c.yellow}! OpenClaw saved the plugin but reported a failure loading it ` +
+                `(${firstLine(installFailure, SAVED_INSTALL_REASON_CHARS)}). Restarting OpenClaw ` +
+                `loads the saved plugin.${c.reset}`,
             );
           }
           if (acceptCapabilities) {
