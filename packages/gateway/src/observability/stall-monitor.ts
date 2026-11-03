@@ -100,7 +100,11 @@ export function formatStallLine(
   r: StallRecord,
   mem: { heapUsed: number; rss: number } = process.memoryUsage(),
 ): string {
-  const at = r.code ? ` at ${formatFrame(r.code)}` : "";
+  // A snapshot taken in another activity than the one the stall is named
+  // for says where it was sampled, so the code is not read as that activity's.
+  const sampledIn =
+    r.codeActivity !== r.activity ? ` (sampled in ${r.codeActivity ?? "no marked activity"})` : "";
+  const at = r.code ? ` at ${formatFrame(r.code)}${sampledIn}` : "";
   let where: string;
   if (r.attribution === "running") {
     where = ` in ${r.activity}${r.outer && r.outer !== r.activity ? ` (outer: ${r.outer})` : ""}${at}`;

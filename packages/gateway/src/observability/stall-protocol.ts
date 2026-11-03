@@ -176,6 +176,13 @@ export interface StallEvent {
    * one is) or none of the hot stack was our code.
    */
   code: ProfileFrame | null;
+  /**
+   * The innermost marked activity the main thread was in while the snapshot
+   * behind `code` sampled it; null without a snapshot or when none was marked.
+   * Callbacks that fall due together run back to back within one gap, so this
+   * can differ from `activity`, which is the one seen for most of the stall.
+   */
+  codeActivity: string | null;
   /** The snapshot's hottest stack, innermost frame first; empty without one. */
   stack: ProfileFrame[];
   /** The flight-recorder capture this stall fell inside, if one was running. */

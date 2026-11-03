@@ -105,6 +105,8 @@ let capture: { id: string; stalls: StallEvent[] } | null = null;
 interface Snapshot {
   code: ProfileFrame | null;
   stack: ProfileFrame[];
+  /** The innermost activity the main thread was in while the snapshot sampled it (0 = none). */
+  activity: number;
 }
 /** The snapshot of the stall in progress, keyed by the heartbeat it went stale after. */
 let snapshot: { beat: number; done: Promise<Snapshot | null> } | null = null;
@@ -125,13 +127,23 @@ async function takeSnapshot(forBeat: number): Promise<Snapshot | null> {
     // A stall in native code delays the profiler's start until it returns, by
     // which time the samples would be of whatever ran next: a slow answer, or
     // a heartbeat since `forBeat` (the stall is over), abandons the profile.
+    let activity = 0;
     const profile = await captureMainThreadProfile(
       SNAPSHOT_SAMPLE_MS,
       SNAPSHOT_SAMPLING_INTERVAL_US,
-      (answerWaitMs) =>
-        answerWaitMs <= SNAPSHOT_MAX_ANSWER_WAIT_MS && Number(Atomics.load(beat, 0)) === forBeat,
+      (answerWaitMs) => {
+        activity = sampleActivity(slots).inner;
+        return (
+          answerWaitMs <= SNAPSHOT_MAX_ANSWER_WAIT_MS && Number(Atomics.load(beat, 0)) === forBeat
+        );
+      },
     );
     if (!profile) return null;
+    // One gap can hold several callbacks back to back, so the activity the
+    // stall is named for need not be the one sampled here. The snapshot says
+    // which one it sampled, and is abandoned if the main thread moved to
+    // another activity while it sampled: its code would belong to neither.
+    if (sampleActivity(slots).inner !== activity) return null;
     const body = summarizeProfile(profile, {
       minRunMs: SNAPSHOT_SAMPLE_MS / 4,
       codeRoot: init.codeRoot,
@@ -140,6 +152,7 @@ async function takeSnapshot(forBeat: number): Promise<Snapshot | null> {
     return {
       code: body.hottestCode,
       stack: body.topStacks[0]?.frames.slice(0, SNAPSHOT_STACK_FRAMES) ?? [],
+      activity,
     };
   } catch {
     // A snapshot is a refinement: the stall is still reported without one.
@@ -192,6 +205,7 @@ function report(found: DetectedStall, snap: Snapshot | null, profileId: string |
     outer: nameOf(found.outer),
     inFlight: found.inFlight.map((id) => nameOf(id)!),
     code: snap?.code ?? null,
+    codeActivity: snap?.code ? nameOf(snap.activity) : null,
     stack: snap?.stack ?? [],
     profileId,
   };

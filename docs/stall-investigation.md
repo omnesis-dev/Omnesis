@@ -43,6 +43,14 @@ Any of the three can carry `at <function> (<file>:<line>)`, which comes from a s
 event loop stalled 1557ms at compileSafeUrlPattern (packages/gateway/src/known-url-pattern-safety.ts:75) outside any marked activity (in flight: enrichment.extractDates, backfill.linkBatch)
 ```
 
+One gap can hold several pieces of work back to back: timers that fall due together run in one turn of the loop, so a gap can be one timer's callback followed by another's. The stall is named for the activity seen for most of it, and the snapshot is of whatever ran when it was taken, half a second or more in. When the two differ, the line says where the snapshot was taken, and `codeActivity` in `/admin/stalls` carries the same name:
+
+```
+event loop stalled 27543ms in backgroundJobs.refresh at listSources (packages/gateway/src/data/repositories/SourceRepository.ts:15) (sampled in statusCache.refreshDb)
+```
+
+A snapshot during which the main thread moved from one activity to another is discarded, since its code belongs to neither.
+
 A snapshot has three limits:
 
 - It is taken at most once every 10 seconds and never during a flight-recorder capture, so a burst of stalls gets one snapshot, not one each.

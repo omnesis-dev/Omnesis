@@ -51,6 +51,11 @@ function unmarkedStallForTest(ms: number): number {
   return spin(ms);
 }
 
+/** The first of two back-to-back activities, for a snapshot to land in. */
+function firstOfTwoForStallTest(ms: number): number {
+  return spin(ms);
+}
+
 async function eventually<T>(read: () => Promise<T | undefined>, timeoutMs = 30_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -134,10 +139,27 @@ describe("StallMonitor", () => {
     const stall = await eventually(async () =>
       (await read(monitor)).recent.find((s) => s.durationMs >= 1_000),
     );
-    expect(stall).toMatchObject({ activity: null, attribution: "code" });
+    expect(stall).toMatchObject({ activity: null, codeActivity: null, attribution: "code" });
     expect(stall.stack.map((f) => f.functionName)).toContain("unmarkedStallForTest");
     expect(stall.code?.file).toMatch(/stall-monitor\.test\.ts$/);
     expect(stall.culprit).toMatch(/stall-monitor\.test\.ts:\d+\)$/);
+  });
+
+  test("says which activity a snapshot sampled when the stall is named for another", async () => {
+    const { monitor } = await startMonitor();
+    // One gap, two activities back to back, as timers that fall due together
+    // run: the snapshot lands in the first, the second holds most of the gap.
+    withActivity("test.first", () => firstOfTwoForStallTest(2_000));
+    withActivity("test.second", () => spin(5_000));
+
+    const stall = await eventually(async () =>
+      (await read(monitor)).recent.find((s) => s.durationMs >= 3_000),
+    );
+    expect(stall).toMatchObject({ activity: "test.second", attribution: "running" });
+    // The code is the first activity's, and the record says so rather than
+    // presenting it as where the second one was.
+    expect(stall.stack.map((f) => f.functionName)).toContain("firstOfTwoForStallTest");
+    expect(stall.codeActivity).toBe("test.first");
   });
 
   test("does not pin a stall in native code on the code that ran after it", async () => {

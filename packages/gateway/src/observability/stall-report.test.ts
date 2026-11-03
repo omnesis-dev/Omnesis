@@ -15,6 +15,7 @@ function stall(overrides: Partial<StallEvent>): StallEvent {
     outer: null,
     inFlight: [],
     code: null,
+    codeActivity: null,
     stack: [],
     profileId: null,
     ...overrides,
@@ -135,7 +136,47 @@ describe("formatStallLine", () => {
       "stalled 1000ms at runQuery (packages/gateway/src/sql.ts:42) outside any marked activity (in flight: a, b);",
     );
     expect(
-      formatStallLine(attributeStall(stall({ activity: "POST /sql", code }), null), mem),
+      formatStallLine(
+        attributeStall(stall({ activity: "POST /sql", code, codeActivity: "POST /sql" }), null),
+        mem,
+      ),
     ).toContain("in POST /sql at runQuery (packages/gateway/src/sql.ts:42);");
+  });
+
+  test("says where a snapshot taken outside the stall's activity was sampled", () => {
+    // Two timers that fall due together run back to back in one gap: most of
+    // it in the second, with the snapshot taken while the first still ran.
+    const code = { functionName: "listSources", file: "packages/gateway/src/s.ts", line: 15 };
+    expect(
+      formatStallLine(
+        attributeStall(
+          stall({
+            activity: "backgroundJobs.refresh",
+            code,
+            codeActivity: "statusCache.refreshDb",
+          }),
+          null,
+        ),
+        mem,
+      ),
+    ).toContain(
+      "in backgroundJobs.refresh at listSources (packages/gateway/src/s.ts:15) (sampled in statusCache.refreshDb);",
+    );
+    expect(
+      formatStallLine(
+        attributeStall(stall({ activity: "a", code, codeActivity: null }), null),
+        mem,
+      ),
+    ).toContain(
+      "in a at listSources (packages/gateway/src/s.ts:15) (sampled in no marked activity);",
+    );
+    expect(
+      formatStallLine(
+        attributeStall(stall({ inFlight: ["x", "y"], code, codeActivity: "ws.message" }), null),
+        mem,
+      ),
+    ).toContain(
+      "at listSources (packages/gateway/src/s.ts:15) (sampled in ws.message) outside any marked activity",
+    );
   });
 });

@@ -49,6 +49,8 @@ export interface StallsResponse {
     attribution: "running" | "in-flight" | "code" | "none";
     culprit: string | null;
     code: Frame | null;
+    /** Where the snapshot behind `code` was taken; absent from older gateways. */
+    codeActivity?: string | null;
   }>;
   capturing: string | null;
   profiles: Array<{
@@ -95,7 +97,11 @@ export function renderStalls(r: StallsResponse): string {
     out.push("", `${c.bold}Most recent${c.reset}`);
     for (const s of r.recent) {
       let what: string;
-      const at = s.code ? ` ${c.dim}at${c.reset} ${where(s.code)}` : "";
+      const sampledIn =
+        s.codeActivity !== undefined && s.codeActivity !== s.activity
+          ? ` ${c.dim}(sampled in ${s.codeActivity ?? "no marked activity"})${c.reset}`
+          : "";
+      const at = s.code ? ` ${c.dim}at${c.reset} ${where(s.code)}${sampledIn}` : "";
       if (s.attribution === "running") {
         what = `${s.activity}${s.outer && s.outer !== s.activity ? ` ${c.dim}(in ${s.outer})${c.reset}` : ""}${at}`;
       } else if (s.attribution === "in-flight") {
