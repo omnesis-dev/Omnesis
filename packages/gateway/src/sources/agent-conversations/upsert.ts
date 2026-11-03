@@ -67,6 +67,7 @@ export class AgentConversationsUpserter {
   constructor(deps: AgentConversationsUpserterDeps) {
     this.deps = deps;
     this.runner = new KeyedDebouncedRunner({
+      activity: "agentConversations.upsert",
       debounceMs: deps.debounceMs ?? DEFAULT_DEBOUNCE_MS,
       scheduler: deps.scheduler,
       run: (key) => this.runUpsert(key),

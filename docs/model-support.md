@@ -84,13 +84,20 @@ Two shared building blocks apply to every purpose:
 `packages/gateway/src/indexer/http-embedder.ts`
 
 - `POST <base><apiPathPrefix>/embeddings`, body `{ model, input: string[] }`. Bulk
-  inputs are batched (default 32, `OMNESIS_EMBED_BATCH_SIZE`) and each input is
+  inputs are batched (default 16, `OMNESIS_EMBED_BATCH_SIZE`) and each input is
   capped at ~4096 chars (surrogate-safe) as a transport backstop; genuine token
   overflow surfaces as a 400 handled by the resilient orchestrator.
-- Bulk indexing bounds its in-flight requests (default 4,
-  `OMNESIS_EMBED_BULK_CONCURRENCY`) so it can't flood a shared embedding server;
-  the interactive search embedder runs unbounded and single-input, so a query
-  embed interleaves instead of queuing behind a bulk flood.
+- Requests travel in two lanes. Query embeds (`embedQuery`) are interactive:
+  single-input and sent at once, never behind queued bulk work. Document batches
+  (`embed`) are background: at most 2 per embedder are in flight
+  (`OMNESIS_EMBED_BULK_CONCURRENCY`), the rest wait in the gateway in order. A
+  server such as vLLM serves each input first come, first served, so a query
+  waits for every background input already sent; keeping that queue to about
+  32 inputs keeps a local server busy while a query waits about half a second
+  instead of several. Raise both knobs for a remote API that serves requests
+  concurrently. The embedder that rebuilds the index for a reindex or a model
+  swap caps its background requests with `indexer.embedConcurrency`
+  (`OMNESIS_EMBED_CONCURRENCY`, default 2) instead.
 - **Does not send `dimensions`.** A configured smaller output dimension is
   truncated **client-side by slicing** (no re-normalization). The vector index
   uses cosine distance (`MetricKind.Cos`), so magnitude loss from slicing is

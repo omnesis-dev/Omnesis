@@ -18,6 +18,7 @@ import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { defineCommand } from "citty";
 import { isScalar, isSeq, parse as parseYaml, parseDocument } from "yaml";
 import {
@@ -77,6 +78,7 @@ import {
   OPENCLAW_ACCEPT_CAPABILITIES_FLAG,
   openClawCapabilityConsentSupport,
 } from "./openclaw-capability-consent.js";
+import { openClawSavedArchive, readOpenClawInstallRecord } from "./openclaw-install-record.js";
 
 /** `~/`-expansion for user-supplied paths (flags are never shell-expanded). */
 function expandHome(path: string): string {
@@ -792,22 +794,43 @@ export function prepareOpenClawInstallArchive(
   }
 }
 
-function runInstaller(command: string, args: string[], environment: NodeJS.ProcessEnv): void {
+/** Run one installer command; null when it succeeded, otherwise why it did not. */
+function attemptInstaller(
+  command: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+): string | null {
   const result = spawnSync(command, args, {
     env: environment,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (result.error || result.status !== 0) {
-    const detail =
-      result.error?.message ||
-      result.stderr.trim() ||
-      `${command} exited with status ${result.status ?? "unknown"}`;
-    throw new CliError(
-      `${c.red}Could not install the Omnesis integration plugin: ${detail}${c.reset}`,
-      EXIT_USER_ERROR,
-    );
-  }
+  if (!result.error && result.status === 0) return null;
+  return (
+    result.error?.message ||
+    result.stderr.trim() ||
+    `${command} exited with status ${result.status ?? "unknown"}`
+  );
+}
+
+function installerFailure(detail: string): CliError {
+  return new CliError(
+    `${c.red}Could not install the Omnesis integration plugin: ${detail}${c.reset}`,
+    EXIT_USER_ERROR,
+  );
+}
+
+function runInstaller(command: string, args: string[], environment: NodeJS.ProcessEnv): void {
+  const failure = attemptInstaller(command, args, environment);
+  if (failure !== null) throw installerFailure(failure);
+}
+
+/** How much of the first line of OpenClaw's failure the saved-plugin warning repeats. */
+const SAVED_INSTALL_REASON_CHARS = 300;
+
+function firstLine(text: string, max: number): string {
+  const line = stripVTControlCharacters(text).split(/\r?\n/u, 1)[0]?.trim() ?? "";
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
 /**
@@ -920,7 +943,8 @@ function prepareHarnessPlugin(
             );
           }
           const acceptCapabilities = consent === "supported";
-          runInstaller(
+          const installStartedAt = Date.now();
+          const installFailure = attemptInstaller(
             "openclaw",
             [
               "plugins",
@@ -931,6 +955,20 @@ function prepareHarnessPlugin(
             ],
             migrationEnvironment,
           );
+          if (installFailure !== null) {
+            // A running OpenClaw that saved the plugin but could not swap it
+            // in exits non-zero. That plugin is installed: OpenClaw loads it
+            // when it next starts, which this command then does or names.
+            const record = readOpenClawInstallRecord(normalEnvironment);
+            if (!openClawSavedArchive(record, artifact.archivePath, installStartedAt)) {
+              throw installerFailure(installFailure);
+            }
+            console.log(
+              `${c.yellow}! OpenClaw saved the plugin but reported a failure loading it ` +
+                `(${firstLine(installFailure, SAVED_INSTALL_REASON_CHARS)}). Restarting OpenClaw ` +
+                `loads the saved plugin.${c.reset}`,
+            );
+          }
           if (acceptCapabilities) {
             console.log(
               "Accepted the capabilities the Omnesis integration plugin declares to OpenClaw.",

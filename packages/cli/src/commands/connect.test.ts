@@ -17,7 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
 import { createServer } from "node:http";
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi, type Mock } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 type OAuthAuthorizationResult = "AUTHORIZED" | "REDIRECT";
@@ -3439,6 +3439,100 @@ describe("connect loads the plugin it installed", () => {
     expect(output()).toMatch(/Restart openclaw to load the refreshed plugin .*gateway restart/u);
     // The skill is still checked: whether it is ready does not wait on the restart.
     expect(captured()).toHaveLength(1);
+  });
+
+  /** The install record OpenClaw keeps for an archive install of `path`. */
+  function installRecord(path: string, installedAt: string): Record<string, unknown> {
+    const bytes = readFileSync(path);
+    return {
+      integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+      installedAt,
+    };
+  }
+
+  /**
+   * An OpenClaw whose install exits non-zero the way a running gateway's
+   * failed swap does, and whose `plugins inspect` then answers with the
+   * record `recorded` returns for the archive the install was given.
+   */
+  function openClawInstallFails(recorded: (archive: string) => Record<string, unknown>): void {
+    let archive = "";
+    onTestFinished(() => {
+      (spawnSync as Mock).mockImplementation(() => ({ status: 0, stdout: "", stderr: "" }));
+    });
+    (spawnSync as Mock).mockImplementation((_command: string, args: string[]) => {
+      if (args[1] === "install") {
+        archive = (args.at(-1) ?? "").replace(/^npm-pack:/u, "");
+        return {
+          status: 1,
+          stdout: "",
+          stderr:
+            "\u001b[31mPlugin operation failed during drain: an invented timeout | UNAVAILABLE\u001b[39m\n" +
+            'Plugin "omnesis-integration" installation is saved.',
+        };
+      }
+      if (args[1] === "inspect") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            plugin: { id: "omnesis-integration" },
+            install: recorded(archive),
+          }),
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    });
+  }
+
+  it("a plugin OpenClaw saved but could not swap in is installed, and the restart loads it", async () => {
+    const home = refreshableHome("openclaw");
+    const output = captureLog();
+    openClawInstallFails((archive) => installRecord(archive, new Date().toISOString()));
+
+    await run({ harness: "openclaw", dir: home, refresh: true, yes: true });
+
+    const inspect = (spawnSync as Mock).mock.calls.find(([, args]) => args[1] === "inspect");
+    expect(inspect?.[1]).toEqual(["plugins", "inspect", "omnesis-integration", "--json"]);
+    expect(inspect?.[2].env).toMatchObject({ OPENCLAW_STATE_DIR: home });
+    expect(output()).toContain(
+      "OpenClaw saved the plugin but reported a failure loading it " +
+        "(Plugin operation failed during drain: an invented timeout | UNAVAILABLE). " +
+        "Restarting OpenClaw loads the saved plugin.",
+    );
+    // The rest of the install still runs, and so does the restart.
+    expect(
+      (spawnSync as Mock).mock.calls.some(
+        ([, args]) => args.join(" ") === "plugins registry --refresh --json",
+      ),
+    ).toBe(true);
+    expect(streamed().map((spec) => spec.args)).toEqual([["gateway", "restart"]]);
+  });
+
+  it("a failed OpenClaw install that recorded a different archive is a failed refresh", async () => {
+    const home = refreshableHome("openclaw");
+    captureLog();
+    const previous = join(home, "previous.tgz");
+    writeFileSync(previous, "an invented earlier archive");
+    openClawInstallFails(() => installRecord(previous, new Date().toISOString()));
+
+    await expect(run({ harness: "openclaw", dir: home, refresh: true, yes: true })).rejects.toThrow(
+      /Could not install the Omnesis integration plugin: .*Plugin operation failed/u,
+    );
+    expect(streamed()).toEqual([]);
+  });
+
+  it("a record an earlier install of the same archive left is not this install", async () => {
+    // The same build packs a byte-identical archive, so its digests match a
+    // record an earlier refresh wrote even when this install saved nothing.
+    const home = refreshableHome("openclaw");
+    captureLog();
+    openClawInstallFails((archive) => installRecord(archive, "2020-01-01T00:00:00.000Z"));
+
+    await expect(run({ harness: "openclaw", dir: home, refresh: true, yes: true })).rejects.toThrow(
+      /Could not install the Omnesis integration plugin/u,
+    );
+    expect(streamed()).toEqual([]);
   });
 
   it("--no-restart names the restart even under --yes", async () => {

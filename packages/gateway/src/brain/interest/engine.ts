@@ -29,6 +29,7 @@ import {
   type InterestSupersedeScope,
   type NewInterestSignal,
 } from "../storage/interest.js";
+import { withActivity } from "../../observability/main-activity.js";
 import {
   DEFAULT_LOOKUP_OPTIONS,
   lookupOwnerInterest,
@@ -204,11 +205,13 @@ export class InterestEngine {
 
   /** Start a backlog pass without waiting for it. */
   kick(): void {
-    void this.embedBacklog().catch((error: unknown) => {
-      this.deps.log.warn(
-        `Interest embedding pass failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+    void withActivity("interest.embedBacklog", () => this.embedBacklog()).catch(
+      (error: unknown) => {
+        this.deps.log.warn(
+          `Interest embedding pass failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      },
+    );
   }
 
   private liveSignals(): InterestSignal[] {

@@ -34,6 +34,7 @@ import {
 
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE, OUTPUT_TRUNCATED_MESSAGE } from "./turn-outcome.js";
 import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
+import { markActivity } from "./activity.js";
 import type {
   AssistantPart,
   ChatBackend,
@@ -64,6 +65,22 @@ function withStoredTimesInArguments(handle: ToolHandle): ToolHandle {
     },
   );
   return wrapped;
+}
+
+/**
+ * Every tool call runs marked with its tool's name, so a host can tell which
+ * tool held its event loop. The names are the host's own registrations.
+ */
+function withActivityMark(handle: ToolHandle): ToolHandle {
+  const name = `agent.tool ${handle.name}`;
+  return Object.assign(
+    Object.create(Object.getPrototypeOf(handle) as object) as ToolHandle,
+    handle,
+    {
+      invoke: (args: unknown, ctx: Parameters<ToolHandle["invoke"]>[1]) =>
+        markActivity(name, () => handle.invoke(args, ctx)),
+    },
+  );
 }
 
 /**
@@ -193,9 +210,9 @@ export class AgentSession {
   constructor(opts: SessionOptions) {
     this.sessionId = opts.sessionId;
     this.backend = opts.backend;
-    this.tools = normalizeTimeZone(opts.timeZone)
-      ? opts.tools.map(withStoredTimesInArguments)
-      : opts.tools;
+    this.tools = (
+      normalizeTimeZone(opts.timeZone) ? opts.tools.map(withStoredTimesInArguments) : opts.tools
+    ).map(withActivityMark);
     this.systemPrompt = opts.systemPrompt;
     this.idGen = opts.idGen ?? defaultIdGen;
     this.zone = opts.timeZone;
@@ -514,7 +531,9 @@ export class AgentSession {
       },
     });
 
-    const completion = this.runTurnLoop(turn, userTurn, text, opts, onExternalAbort);
+    const completion = markActivity("agent.turn", () =>
+      this.runTurnLoop(turn, userTurn, text, opts, onExternalAbort),
+    );
     return { messageId, userMessageId, completion };
   }
 
@@ -1138,13 +1157,15 @@ export class AgentSession {
     // can call `subscribe()`/`unsubscribe()` synchronously (the portal
     // event-router does), which would otherwise produce undefined ordering
     // on the in-flight broadcast.
-    for (const sub of [...this.subscribers]) {
-      try {
-        sub(event);
-      } catch {
-        // A misbehaving subscriber must not break the session loop.
+    markActivity("agent.event", () => {
+      for (const sub of [...this.subscribers]) {
+        try {
+          sub(event);
+        } catch {
+          // A misbehaving subscriber must not break the session loop.
+        }
       }
-    }
+    });
   }
 }
 

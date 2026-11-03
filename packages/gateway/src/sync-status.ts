@@ -12,7 +12,7 @@ import {
 } from "@omnesis/types";
 import { syncErrorRemediationCodec } from "./data/json-columns.js";
 import type { MobilePermissionHealth } from "@omnesis/types/mobile-permission-health";
-import type { StoredSyncState } from "./db.js";
+import type { SyncStateSummary } from "./data/repositories/SyncStateRepository.js";
 
 /**
  * In-memory snapshot of per-source sync status. Updated by collector events
@@ -523,7 +523,7 @@ export function isSourceFeedStale(
 export function deriveDisplayStatus(
   sourceId: SourceId,
   inMem: SourceSyncStatus | undefined,
-  persisted: StoredSyncState | undefined,
+  persisted: SyncStateSummary | undefined,
   registered: { enabled: boolean } | undefined,
   /** Injectable clock for deterministic consent-expiry derivation in tests. */
   now: number = Date.now(),

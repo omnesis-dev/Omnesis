@@ -24,11 +24,11 @@
 
 import { createHash } from "node:crypto";
 
-import { conversationEvidenceProjection } from "./evidence-projection.js";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput, type PersonMention } from "@omnesis/types";
 
 import { KeyedDebouncedRunner } from "../../keyed-debounced-runner.js";
+import { conversationEvidenceProjection } from "./evidence-projection.js";
 import { renderConversation, type RenderedCitation } from "./render.js";
 import { findConversationDocId, type ConversationCitationInput } from "./citation-writer.js";
 import { OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID } from "./source-meta.js";
@@ -65,6 +65,7 @@ export class ConversationUpserter {
   constructor(deps: ConversationUpserterDeps) {
     this.writeGate = deps.writeGate;
     this.runner = new KeyedDebouncedRunner({
+      activity: "omnesisChat.upsert",
       debounceMs: deps.debounceMs ?? DEFAULT_DEBOUNCE_MS,
       scheduler: deps.scheduler,
       run: (sessionId) => {

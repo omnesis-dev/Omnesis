@@ -13,11 +13,13 @@
  * still names the work when a later continuation of it is the one that
  * stalls.
  *
- * It is wired at a few choke points — the scheduler's main-thread runner
- * (the task name), the HTTP layer (`METHOD route-pattern`), WebSocket
- * message dispatch, and the periodic refreshes that are not scheduler tasks
- * — rather than around every call. Names are code-chosen labels, never data:
- * a route pattern, not the URL it matched.
+ * It is wired at choke points — the scheduler's main-thread runner (the
+ * task name), the HTTP layer (`METHOD route-pattern`), WebSocket message
+ * dispatch, the event bus, agent sessions (through `@omnesis/agent`'s
+ * `setActivityMarker`), and the detached and periodic work that is not a
+ * scheduler task; `docs/stall-investigation.md` lists them — rather than
+ * around every call. Names are code-chosen labels, never data: a route
+ * pattern, not the URL it matched.
  *
  * The cost is a map lookup and a few stores into shared memory per call, plus
  * one extra promise reaction for asynchronous work; there is no

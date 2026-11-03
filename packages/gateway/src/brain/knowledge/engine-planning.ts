@@ -15,11 +15,6 @@ import { knowledgeSelectionReads } from "./selection-reads.js";
 import { judgeKnowledge, knowledgeUrgencyState } from "./decision.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
 import {
-  listKnowledgePlanningWork,
-  type KnowledgeFrontierInput,
-  type KnowledgeWork,
-} from "./work.js";
-import {
   scheduleKnowledgeChange,
   planMaintenanceGroups,
   MaintenancePlanLimitError,
@@ -28,6 +23,7 @@ import {
   type MaintenanceSeed,
 } from "./planner.js";
 import { KnowledgeStorageError } from "./types.js";
+import type { KnowledgeFrontierInput, KnowledgeWork } from "./work.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
 
 interface PlanningContext {
@@ -49,17 +45,16 @@ export class KnowledgeBatchPlanner {
   constructor(private readonly context: PlanningContext) {}
   async plan(): Promise<number> {
     const cfg = this.context.deps.getSettings().knowledge;
-    let work = listKnowledgePlanningWork(
-      this.context.deps.db,
-      cfg.maxSeeds * cfg.maxVisitedPerSeed,
-    );
+    const reads = knowledgeSelectionReads(this.context.deps);
+    const workWindow = cfg.maxSeeds * cfg.maxVisitedPerSeed;
+    let work = await reads.knowledgePlanningWork(workWindow);
     if (!work.length) return 0;
     // Refresh only stale/missing subjects. Healthy older work cannot monopolize
     // the reconciliation window when there is a large backlog.
-    const stale = await knowledgeSelectionReads(this.context.deps).knowledgeStaleWork(512);
+    const stale = await reads.knowledgeStaleWork(512);
     if (stale.length) {
       await this.context.deps.writeGate["knowledge.refreshWork"](stale, this.context.deps.clock());
-      work = listKnowledgePlanningWork(this.context.deps.db, cfg.maxSeeds * cfg.maxVisitedPerSeed);
+      work = await reads.knowledgePlanningWork(workWindow);
     }
     // Classify only settled evidence, before deciding whether its tier is due.
     // Held work starts in the latest tier so an urgency verdict can promote it.
@@ -139,7 +134,7 @@ export class KnowledgeBatchPlanner {
           throw error;
       }
     }
-    work = listKnowledgePlanningWork(this.context.deps.db, cfg.maxSeeds * cfg.maxVisitedPerSeed);
+    work = await reads.knowledgePlanningWork(workWindow);
     const byId = new Map(work.map((item) => [item.id, item]));
     const arcs = await this.context.adjacency(work.map(target));
     const roots = this.context.roots();
@@ -310,9 +305,10 @@ export class KnowledgeBatchPlanner {
       )
       .all(batchId)
       .map((row) => row.node_id);
-    const work = listKnowledgePlanningWork(
-      this.context.deps.db,
-      cfg.maxSeeds * cfg.maxVisitedPerSeed,
+    const work = (
+      await knowledgeSelectionReads(this.context.deps).knowledgePlanningWork(
+        cfg.maxSeeds * cfg.maxVisitedPerSeed,
+      )
     ).filter((item) => item.failures === 0);
     if (!work.length) return;
     const arcs = await this.context.adjacency([...owned, ...work.map(target)]);

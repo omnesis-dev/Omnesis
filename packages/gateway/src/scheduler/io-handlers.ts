@@ -43,6 +43,10 @@ import {
   readTemporalStoreWindow,
   type TemporalStoreWindowRequest,
 } from "../enrichment/temporal/temporal-store-window.js";
+import {
+  knowledgeDocumentsReadable,
+  type KnowledgeDocumentRef,
+} from "../brain/knowledge/retrieval-fence.js";
 import { computeSeedFromContacts } from "../domain/ContactCardBootstrap.js";
 import {
   computeInteractionScores,
@@ -131,12 +135,17 @@ import {
   fetchTranscriptionVocabularyBatch,
   getTranscriptionVocabulary,
 } from "../transcribe/vocabulary/storage.js";
+import { ioReadHandlers } from "./read-port.js";
+import { IO_READS } from "./io-read-ports.js";
+import type { IoJournalHandlers } from "./io-journal-handlers.js";
 import type { UrlCanonicalizerSpec, TranscriptionContext } from "@omnesis/core";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { ConversationRetentionFile } from "../agent/conversation-retention.js";
 import type { VocabularySettings } from "../transcribe/vocabulary/types.js";
 
 export const ioHandlers = {
+  // Every read port in `io-read-ports.ts`: one `io.<name>` handler per read.
+  ...ioReadHandlers(IO_READS),
   "io.fetchTranscriptionVocabularyBatch": (db: Db, settings: VocabularySettings) =>
     fetchTranscriptionVocabularyBatch(db, settings),
   "io.getTranscriptionVocabulary": (
@@ -273,6 +282,12 @@ export const ioHandlers = {
   // be the event loop.
   "io.temporalStoreWindow": (db: Db, request: TemporalStoreWindowRequest) =>
     readTemporalStoreWindow(db, request),
+
+  // Whether each of a search's hits may be shown. A knowledge mirror's verdict
+  // walks its node's ancestors, which on a large page takes a second or more;
+  // search fences its whole candidate pool, twice, on every query.
+  "io.knowledgeDocumentsReadable": (db: Db, refs: KnowledgeDocumentRef[]) =>
+    knowledgeDocumentsReadable(db, refs),
 
   // ── people compute (read halves of compute/upsert splits) ─────────
   "io.peopleCounts": (db: Db) => computePeopleCounts(db),
@@ -426,7 +441,7 @@ export const ioHandlers = {
     nearDupFileLikeDocsSince(db, builtAtSec, fileLikeDocTypes),
 } as const;
 
-export type IoHandlers = typeof ioHandlers;
+export type IoHandlers = typeof ioHandlers & IoJournalHandlers;
 export type IoOpName = keyof IoHandlers;
 
 export type IoArgs<K extends IoOpName> = IoHandlers[K] extends (db: Db, ...rest: infer A) => unknown

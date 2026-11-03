@@ -26,9 +26,11 @@ import Database from "better-sqlite3";
 
 import { Ontology, type AnalyticsPort } from "@omnesis/watch";
 import { runSchemaSetup } from "../data/schema.js";
+import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { buildOntologySnapshot } from "./ontology.js";
 import { preflight } from "./preflight.js";
 import { WatchJournalStore } from "./store.js";
+import { journalDocumentHistories } from "./journal-document.js";
 import type { Db } from "../data/types.js";
 import type { NewJournalEvent } from "./store.js";
 
@@ -460,5 +462,60 @@ describe("replaying over a span rather than over recent traffic", () => {
     expect(journal.head()).toBe(head);
     // And no runtime state was left for a watch that was never installed.
     expect(journal.getState("watch:preflight")).toBeNull();
+  });
+});
+
+describe("a replay with a journal history reader", () => {
+  it("reads the window's documents ahead and reports what the main-thread lookups report", async () => {
+    const indexed = (day: number, docId: string): NewJournalEvent => ({
+      kind: "doc.indexed",
+      occurredAt: at(day),
+      observedAt: at(day),
+      payload: { docId, eventIndexedAt: at(day) },
+    });
+    const first = "d0000000-0000-4000-8000-000000000001";
+    const second = "d0000000-0000-4000-8000-000000000002";
+    journal.commit({
+      events: [
+        mail(1, first, "one"),
+        indexed(1, first),
+        mail(2, second, "two"),
+        indexed(2, second),
+      ],
+    });
+    const dsl = fromAlice(await fingerprint()) as { nodes: Record<string, unknown>[] };
+    dsl.nodes[0]!.recall = { semantic: { query: "anything", threshold: 0.1 } };
+    dsl.nodes[0]!.judge = {
+      proposition: "it is about anything",
+      output_schema: { because: "string" },
+    };
+
+    const onMain = await preflight(deps(), dsl as never);
+    expect(onMain.outcome).toBe("probed");
+
+    const asked: string[] = [];
+    const reader = openEncryptedSqlite(join(dir, "watch.db"), { readonly: true });
+    try {
+      const readAhead = await preflight(
+        {
+          ...deps(),
+          journal: {
+            ...deps().journal,
+            documentAt: () => {
+              throw new Error("the replay read the journal for a document on the main thread");
+            },
+          },
+          journalHistories: (requests) => {
+            asked.push(...requests.map(({ docId, atSeq }) => `${docId}@${atSeq}`));
+            return Promise.resolve(journalDocumentHistories(reader, requests));
+          },
+        },
+        dsl as never,
+      );
+      expect(readAhead).toEqual(onMain);
+      expect(asked).toEqual([`${first}@2`, `${second}@4`]);
+    } finally {
+      reader.close();
+    }
   });
 });

@@ -107,8 +107,9 @@ beforeEach(async () => {
   });
   ledger = {
     cursorRows: () => ["", owner, restorer],
-    omissionCandidates: (s, t, d) => listAnalyticsOmissionCandidates(db, s, t, d),
-    claimedKeys: (s, t, keys) => listClaimedExternalIds(db, analyticsClaimNamespace(t), s, keys),
+    omissionCandidates: async (s, t, d) => listAnalyticsOmissionCandidates(db, s, t, d),
+    claimedKeys: async (s, t, keys) =>
+      listClaimedExternalIds(db, analyticsClaimNamespace(t), s, keys),
     recordPresence: async (args) => recordAnalyticsPresence(db, args),
     recordRestorerOmissions: async (args) => recordAnalyticsRestorerOmissions(db, args),
     judgeTombstones: async (args) => {

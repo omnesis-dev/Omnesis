@@ -11,6 +11,7 @@ import {
   speechToSpeechAssignment,
 } from "@omnesis/core";
 import { AgentError, type AgentService, type RealtimeAgentSession } from "../agent/service.js";
+import { withActivity } from "../observability/main-activity.js";
 import { realtimeFailureCode, realtimeFailureDetails } from "./provider-failure.js";
 import { REALTIME_MODEL, RealtimeBackend } from "./backend.js";
 import { readHandshakeError } from "./handshake-error.js";
@@ -481,185 +482,188 @@ export class RealtimeService {
         });
       })().catch((error: unknown) => fail("session_open_failed", error));
     });
-    upstream.on("message", (raw) => {
-      if (closed || ending) return;
-      try {
-        if (!requireAuthority()) return;
-        if (Buffer.byteLength(raw.toString()) > MAX_UPSTREAM_EVENT_BYTES)
-          throw new Error("Upstream voice event too large");
-        const event = upstreamEvent.parse(JSON.parse(raw.toString()));
-        if (event.type === "input_audio_buffer.speech_started") {
-          interruptTurn();
-          speechStarts += 1;
-          this.log.info(
-            `Call ${diagnosticId} speech started count=${speechStarts} audioFrames=${audioFrames} audioBytes=${audioBytes}`,
-          );
-        }
-        if (event.type === "input_audio_buffer.speech_stopped") {
-          speechStops += 1;
-          this.log.info(`Call ${diagnosticId} speech stopped count=${speechStops}`);
-        }
-        if (event.type === "response.output_audio.delta" && typeof event.delta === "string") {
-          outputFrames += 1;
-          outputBytes += Buffer.byteLength(event.delta, "base64");
-          if (outputFrames === 1)
-            this.log.info(`Call ${diagnosticId} first output audio bytes=${outputBytes}`);
-        }
-        if (event.type === "conversation.item.input_audio_transcription.completed") {
-          const sample = transcriptionUsage.safeParse(event);
-          if (sample.success && !accountedResponses.has(`transcript:${sample.data.item_id}`)) {
-            accountedResponses.add(`transcript:${sample.data.item_id}`);
-            try {
-              this.deps.recordUsage?.(
-                {
-                  promptTokens: sample.data.usage.input_tokens,
-                  completionTokens: sample.data.usage.output_tokens,
-                },
-                "gpt-4o-mini-transcribe",
-              );
-            } catch {
-              /* Accounting must not interrupt the call. */
-            }
-          }
-        }
-        if (event.type === "response.done") {
-          const usage = z
-            .object({
-              response: z.object({
-                id: z.string(),
-                usage: z
-                  .object({
-                    input_tokens: z.number().nonnegative(),
-                    output_tokens: z.number().nonnegative(),
-                    input_token_details: z
-                      .object({ cached_tokens: z.number().nonnegative().optional() })
-                      .optional(),
-                  })
-                  .nullable()
-                  .optional(),
-              }),
-            })
-            .safeParse(event);
-          if (
-            usage.success &&
-            usage.data.response.usage &&
-            !accountedResponses.has(usage.data.response.id)
-          ) {
-            accountedResponses.add(usage.data.response.id);
-            const sample = usage.data.response.usage;
-            try {
-              this.deps.recordUsage?.(
-                {
-                  promptTokens: sample.input_tokens,
-                  completionTokens: sample.output_tokens,
-                  cacheReadTokens: sample.input_token_details?.cached_tokens,
-                },
-                MODEL,
-              );
-            } catch {
-              // Accounting failure must not interrupt an otherwise valid voice call.
-            }
-          }
-        }
-        if (event.type === "input_audio_buffer.committed") {
-          const input = z.object({ item_id: z.string().min(1).max(256) }).parse(event);
-          inputSequencer.commit(input.item_id);
-        }
-        if (event.type === "conversation.item.input_audio_transcription.failed") {
-          fail("transcription_failed", undefined, providerCallError({ error: event.error }));
-          return;
-        }
-        if (event.type === "conversation.item.input_audio_transcription.completed") {
-          const input = z
-            .object({
-              item_id: z.string().min(1).max(256),
-              transcript: z.string().trim().max(100_000),
-            })
-            .parse(event);
-          inputSequencer.transcribe(input.item_id, input.transcript);
-        }
-        const accepted = backendAdapter.receive(event);
-        if (event.type.startsWith("response.") && !accepted) return;
-        if (event.type === "response.done" && !modelCallFinished) {
-          const response = z
-            .object({
-              response: z.object({ status: z.string(), status_details: z.unknown().optional() }),
-            })
-            .safeParse(event);
-          if (response.success && response.data.response.status === "completed") {
-            modelCallFinished = true;
-            modelCall?.success();
-          } else if (response.success && response.data.response.status === "failed") {
-            modelFailure(providerCallError(response.data.response.status_details));
-          }
-        }
-        diagnostics.upstream(event);
-        if (event.type === "session.updated") {
-          if (!agentSession) {
-            fail("session_not_open");
-            return;
-          }
-          if (ready) return;
-          ready = true;
-          clearTimeout(startup);
-          this.log.info(`Call ${diagnosticId} session ready`);
-          if (!inputWatchdog) {
-            inputWatchdog = setTimeout(() => {
-              if (!closed && audioFrames === 0)
-                this.log.warn(`Call ${diagnosticId} no input audio received after 10 seconds`);
-            }, 10_000);
-            inputWatchdog.unref();
-          }
-          send({
-            type: "session.ready",
-            protocolVersion: options.version ?? 1,
-            conversationId: sessionId,
-            model: MODEL,
-            clientAudioDiagnostics: true,
-          });
-        } else if (event.type === "error") {
-          const error = z
-            .object({
-              error: z.object({
-                code: z.string().optional(),
-                param: z.string().nullable().optional(),
-              }),
-            })
-            .safeParse(event);
-          const safeCode = realtimeFailureDetails({ error: event.error }).code ?? "unknown";
-          this.log.warn(`Call ${diagnosticId} upstream error code=${safeCode}`);
-          if (error.success && error.data.error.code === "response_cancel_not_active") return;
-          if (error.success && error.data.error.param === "audio_end_ms") return;
-          if (running) {
-            closeAfterTurn = true;
-            providerFatalError ??= providerCallError({ error: event.error });
-            modelFailure(providerFatalError);
-            report(providerFatalError);
-            backendAdapter.fail(
-              realtimeFailureCode(realtimeFailureDetails({ error: event.error })),
+    // Every provider event, audio deltas included, is parsed and validated here.
+    upstream.on("message", (raw) =>
+      withActivity("realtime.upstream", () => {
+        if (closed || ending) return;
+        try {
+          if (!requireAuthority()) return;
+          if (Buffer.byteLength(raw.toString()) > MAX_UPSTREAM_EVENT_BYTES)
+            throw new Error("Upstream voice event too large");
+          const event = upstreamEvent.parse(JSON.parse(raw.toString()));
+          if (event.type === "input_audio_buffer.speech_started") {
+            interruptTurn();
+            speechStarts += 1;
+            this.log.info(
+              `Call ${diagnosticId} speech started count=${speechStarts} audioFrames=${audioFrames} audioBytes=${audioBytes}`,
             );
+          }
+          if (event.type === "input_audio_buffer.speech_stopped") {
+            speechStops += 1;
+            this.log.info(`Call ${diagnosticId} speech stopped count=${speechStops}`);
+          }
+          if (event.type === "response.output_audio.delta" && typeof event.delta === "string") {
+            outputFrames += 1;
+            outputBytes += Buffer.byteLength(event.delta, "base64");
+            if (outputFrames === 1)
+              this.log.info(`Call ${diagnosticId} first output audio bytes=${outputBytes}`);
+          }
+          if (event.type === "conversation.item.input_audio_transcription.completed") {
+            const sample = transcriptionUsage.safeParse(event);
+            if (sample.success && !accountedResponses.has(`transcript:${sample.data.item_id}`)) {
+              accountedResponses.add(`transcript:${sample.data.item_id}`);
+              try {
+                this.deps.recordUsage?.(
+                  {
+                    promptTokens: sample.data.usage.input_tokens,
+                    completionTokens: sample.data.usage.output_tokens,
+                  },
+                  "gpt-4o-mini-transcribe",
+                );
+              } catch {
+                /* Accounting must not interrupt the call. */
+              }
+            }
+          }
+          if (event.type === "response.done") {
+            const usage = z
+              .object({
+                response: z.object({
+                  id: z.string(),
+                  usage: z
+                    .object({
+                      input_tokens: z.number().nonnegative(),
+                      output_tokens: z.number().nonnegative(),
+                      input_token_details: z
+                        .object({ cached_tokens: z.number().nonnegative().optional() })
+                        .optional(),
+                    })
+                    .nullable()
+                    .optional(),
+                }),
+              })
+              .safeParse(event);
+            if (
+              usage.success &&
+              usage.data.response.usage &&
+              !accountedResponses.has(usage.data.response.id)
+            ) {
+              accountedResponses.add(usage.data.response.id);
+              const sample = usage.data.response.usage;
+              try {
+                this.deps.recordUsage?.(
+                  {
+                    promptTokens: sample.input_tokens,
+                    completionTokens: sample.output_tokens,
+                    cacheReadTokens: sample.input_token_details?.cached_tokens,
+                  },
+                  MODEL,
+                );
+              } catch {
+                // Accounting failure must not interrupt an otherwise valid voice call.
+              }
+            }
+          }
+          if (event.type === "input_audio_buffer.committed") {
+            const input = z.object({ item_id: z.string().min(1).max(256) }).parse(event);
+            inputSequencer.commit(input.item_id);
+          }
+          if (event.type === "conversation.item.input_audio_transcription.failed") {
+            fail("transcription_failed", undefined, providerCallError({ error: event.error }));
             return;
           }
-          fail("provider_error", undefined, providerCallError({ error: event.error }));
-        } else if (
-          [
-            "input_audio_buffer.speech_started",
-            "input_audio_buffer.speech_stopped",
-            "response.output_audio.delta",
-            "response.output_audio.done",
-            "response.output_audio_transcript.delta",
-            "response.output_audio_transcript.done",
-            "conversation.item.input_audio_transcription.completed",
-            "conversation.item.created",
-            "response.created",
-            "response.done",
-          ].includes(event.type)
-        )
-          send(event);
-      } catch {
-        fail("invalid_upstream_event");
-      }
-    });
+          if (event.type === "conversation.item.input_audio_transcription.completed") {
+            const input = z
+              .object({
+                item_id: z.string().min(1).max(256),
+                transcript: z.string().trim().max(100_000),
+              })
+              .parse(event);
+            inputSequencer.transcribe(input.item_id, input.transcript);
+          }
+          const accepted = backendAdapter.receive(event);
+          if (event.type.startsWith("response.") && !accepted) return;
+          if (event.type === "response.done" && !modelCallFinished) {
+            const response = z
+              .object({
+                response: z.object({ status: z.string(), status_details: z.unknown().optional() }),
+              })
+              .safeParse(event);
+            if (response.success && response.data.response.status === "completed") {
+              modelCallFinished = true;
+              modelCall?.success();
+            } else if (response.success && response.data.response.status === "failed") {
+              modelFailure(providerCallError(response.data.response.status_details));
+            }
+          }
+          diagnostics.upstream(event);
+          if (event.type === "session.updated") {
+            if (!agentSession) {
+              fail("session_not_open");
+              return;
+            }
+            if (ready) return;
+            ready = true;
+            clearTimeout(startup);
+            this.log.info(`Call ${diagnosticId} session ready`);
+            if (!inputWatchdog) {
+              inputWatchdog = setTimeout(() => {
+                if (!closed && audioFrames === 0)
+                  this.log.warn(`Call ${diagnosticId} no input audio received after 10 seconds`);
+              }, 10_000);
+              inputWatchdog.unref();
+            }
+            send({
+              type: "session.ready",
+              protocolVersion: options.version ?? 1,
+              conversationId: sessionId,
+              model: MODEL,
+              clientAudioDiagnostics: true,
+            });
+          } else if (event.type === "error") {
+            const error = z
+              .object({
+                error: z.object({
+                  code: z.string().optional(),
+                  param: z.string().nullable().optional(),
+                }),
+              })
+              .safeParse(event);
+            const safeCode = realtimeFailureDetails({ error: event.error }).code ?? "unknown";
+            this.log.warn(`Call ${diagnosticId} upstream error code=${safeCode}`);
+            if (error.success && error.data.error.code === "response_cancel_not_active") return;
+            if (error.success && error.data.error.param === "audio_end_ms") return;
+            if (running) {
+              closeAfterTurn = true;
+              providerFatalError ??= providerCallError({ error: event.error });
+              modelFailure(providerFatalError);
+              report(providerFatalError);
+              backendAdapter.fail(
+                realtimeFailureCode(realtimeFailureDetails({ error: event.error })),
+              );
+              return;
+            }
+            fail("provider_error", undefined, providerCallError({ error: event.error }));
+          } else if (
+            [
+              "input_audio_buffer.speech_started",
+              "input_audio_buffer.speech_stopped",
+              "response.output_audio.delta",
+              "response.output_audio.done",
+              "response.output_audio_transcript.delta",
+              "response.output_audio_transcript.done",
+              "conversation.item.input_audio_transcription.completed",
+              "conversation.item.created",
+              "response.created",
+              "response.done",
+            ].includes(event.type)
+          )
+            send(event);
+        } catch {
+          fail("invalid_upstream_event");
+        }
+      }),
+    );
     upstream.on("unexpected-response", (_request, response) => {
       rejectedHandshake = true;
       void readHandshakeError(response, abort.signal).then((detail) => {

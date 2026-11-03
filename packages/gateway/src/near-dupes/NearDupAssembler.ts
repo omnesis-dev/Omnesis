@@ -3,41 +3,90 @@
 
 /**
  * Main-thread assembly helpers for the three-phase near-dup pipeline.
- * These combine results from the fetch, sign, and verify phases into
- * the `NearDupApplyBatch` that the writer applies.
+ * These combine results from the fetch, sign, prepare and verify phases
+ * into the `NearDupApplyBatch` that the writer applies. Nothing here
+ * normalizes or shingles text: that runs on the CPU pool
+ * (`signDocBatch`, `prepareCandidateBatch`), so what is left is
+ * bookkeeping proportional to the number of pairs.
  */
 
-import { normalizeText, shingles, type NearDupeConfig } from "@omnesis/near-dupes";
-import { isEligibleForNearDup } from "./eligibility.js";
-import { parseDocMeta } from "./cpu-signing.js";
 import type {
-  NearDupDocForSigning,
-  SignedDoc,
   CandidateDocData,
+  PreparedCandidate,
+  SignedDoc,
   VerifyPairInput,
   VerifyDocMeta,
   VerifiedPair,
 } from "./cpu-signing.js";
 import type { NearDupFetchResult, NearDupCandidateFetchResult } from "./NearDupComputeService.js";
-import type {
-  NearDupApplyBatch,
-  NearDupEdgeDelete,
-  NearDupEdgeUpsert,
-  NearDupSignatureUpsert,
-} from "./types.js";
+import type { NearDupApplyBatch } from "./types.js";
+
+/** Most candidates one `prepareCandidateBatch` call prepares. */
+const PREPARE_CHUNK_MAX_CANDIDATES = 128;
 
 /**
- * Assemble verify-pair inputs from signed docs, persisted candidates,
- * and in-batch candidates. Runs on the main thread.
+ * Most content characters one `prepareCandidateBatch` call prepares. The
+ * shingles come back to the main thread as one structured-clone message per
+ * call, and a reply holds several times its input text (each shingle is a
+ * window of words), so bounding the text bounds how long one reply takes to
+ * deserialize. A candidate longer than this is a call of its own.
+ */
+const PREPARE_CHUNK_MAX_CHARS = 200_000;
+
+/**
+ * Split the fetched candidates into `prepareCandidateBatch` calls, so the
+ * CPU pool prepares them in parallel and each reply stays small.
+ */
+export function chunkCandidatesForPreparation(
+  candidates: Record<string, CandidateDocData>,
+): CandidateDocData[][] {
+  const chunks: CandidateDocData[][] = [];
+  let current: CandidateDocData[] = [];
+  let chars = 0;
+  for (const candidate of Object.values(candidates)) {
+    const length = candidate.content.length;
+    if (
+      current.length > 0 &&
+      (current.length >= PREPARE_CHUNK_MAX_CANDIDATES || chars + length > PREPARE_CHUNK_MAX_CHARS)
+    ) {
+      chunks.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(candidate);
+    chars += length;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+/**
+ * Prepare every fetched persisted candidate through `prepare` (the CPU
+ * pool's `nearDupPrepareCandidates` in the gateway), one call per chunk, and
+ * index the results by candidate id for {@link assembleVerifyPairs}.
+ */
+export async function preparePersistedCandidates(
+  candidates: Record<string, CandidateDocData>,
+  prepare: (chunk: CandidateDocData[]) => Promise<PreparedCandidate[]>,
+): Promise<Map<string, PreparedCandidate>> {
+  const prepared = await Promise.all(chunkCandidatesForPreparation(candidates).map(prepare));
+  return new Map(prepared.flat().map((candidate) => [candidate.candidateId, candidate] as const));
+}
+
+/**
+ * Assemble verify-pair inputs from signed docs, the persisted candidates
+ * each one was matched to, and in-batch candidates.
+ *
+ * `prepared` holds the persisted candidates the CPU pool prepared; a
+ * candidate missing from it was ineligible or yielded no shingle, and is
+ * skipped.
  */
 export function assembleVerifyPairs(
   signedDocs: SignedDoc[],
-  candidateResult: NearDupCandidateFetchResult,
-  algoConfig: NearDupeConfig,
-  eligibleDocTypes: string[],
+  candidateResult: Pick<NearDupCandidateFetchResult, "candidateIdsByDoc">,
+  prepared: ReadonlyMap<string, PreparedCandidate>,
   maxCandidatesPerDoc: number,
 ): VerifyPairInput[] {
-  const eligible = new Set(eligibleDocTypes);
   const signedByDocId = new Map<string, SignedDoc>();
   for (const s of signedDocs) {
     if (!s.shouldDelete && s.bands) signedByDocId.set(s.docId, s);
@@ -57,43 +106,6 @@ export function assembleVerifyPairs(
 
   const pairs: VerifyPairInput[] = [];
   const emittedPairs = new Set<string>();
-
-  // A persisted candidate is typically proposed by several documents in the
-  // same batch, and normalizing + shingling it costs time proportional to
-  // its length. This runs on the gateway's main thread, where that cost is
-  // charged to every in-flight HTTP request, so each candidate is prepared
-  // once per batch rather than once per pair. `null` records a candidate
-  // that yields no usable shingle set, so it is not re-examined either.
-  const preparedCandidates = new Map<string, { shingles: string[]; meta: VerifyDocMeta } | null>();
-  const prepareCandidate = (candId: string): { shingles: string[]; meta: VerifyDocMeta } | null => {
-    const cached = preparedCandidates.get(candId);
-    if (cached !== undefined) return cached;
-    let prepared: { shingles: string[]; meta: VerifyDocMeta } | null = null;
-    const candData = candidateResult.candidates[candId];
-    if (candData) {
-      const parsed = parseDocMeta(candData.metadata);
-      if (isEligibleForNearDup(parsed.docType, eligible)) {
-        const sh = shingles(
-          normalizeText(candData.content, { stripQuotes: algoConfig.stripQuotes }),
-          algoConfig.shingleSize,
-        );
-        if (sh.size > 0) {
-          prepared = {
-            shingles: [...sh],
-            meta: {
-              contentHash: candData.contentHash,
-              extractedContentHash: candData.extractedContentHash,
-              docType: parsed.docType,
-              threadId: parsed.threadId,
-              senderAddress: parsed.senderAddress,
-            },
-          };
-        }
-      }
-    }
-    preparedCandidates.set(candId, prepared);
-    return prepared;
-  };
 
   for (const signed of signedByDocId.values()) {
     if (!signed.bands || !signed.shingles) continue;
@@ -122,7 +134,7 @@ export function assembleVerifyPairs(
       if (emittedPairs.has(pairKey)) continue;
       emittedPairs.add(pairKey);
 
-      // Get candidate shingles — either from in-batch signed docs or from fetched candidates
+      // Get candidate shingles — either from in-batch signed docs or from prepared candidates
       const inBatch = signedByDocId.get(candId);
       let candidateShingles: string[] | null;
       let candidateMeta: VerifyDocMeta;
@@ -137,10 +149,10 @@ export function assembleVerifyPairs(
           senderAddress: inBatch.senderAddress,
         };
       } else {
-        const prepared = prepareCandidate(candId);
-        if (!prepared) continue;
-        candidateShingles = prepared.shingles;
-        candidateMeta = prepared.meta;
+        const persisted = prepared.get(candId);
+        if (!persisted) continue;
+        candidateShingles = persisted.shingles;
+        candidateMeta = persisted.meta;
       }
 
       if (!candidateShingles) continue;

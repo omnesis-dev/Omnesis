@@ -38,6 +38,7 @@ const log: Logger = createLogger("gateway:events");
 export type { DocumentProjection } from "./data/document-projection.js";
 export { extractPeopleFromMetadata, computeChangedFields } from "./data/document-projection.js";
 
+import { withActivity } from "./observability/main-activity.js";
 import type { DocumentProjection } from "./data/document-projection.js";
 
 /**
@@ -119,6 +120,18 @@ export type EventName = keyof EventMap;
 
 type Handler<E extends EventName> = (payload: EventMap[E]) => void;
 
+const busActivityNames = new Map<EventName, string>();
+
+/** `bus <event>`, built once per event name: emit runs once per document. */
+function busActivityName(event: EventName): string {
+  let name = busActivityNames.get(event);
+  if (name === undefined) {
+    name = `bus ${event}`;
+    busActivityNames.set(event, name);
+  }
+  return name;
+}
+
 export class EventBus {
   private handlers: { [E in EventName]?: Set<Handler<E>> } = {};
 
@@ -142,15 +155,19 @@ export class EventBus {
     // mutate subscriptions inside their own handlers (re-entrant
     // subscribe/unsubscribe is a real pattern).
     const handlers = [...set];
-    for (const h of handlers) {
-      try {
-        h(payload);
-      } catch (err) {
-        log.warn(
-          `event bus handler for ${event} threw: ${err instanceof Error ? err.message : String(err)}`,
-        );
+    // Named by the event, which is one of `EventName`: the handlers run
+    // synchronously and some read the database per document.
+    withActivity(busActivityName(event), () => {
+      for (const h of handlers) {
+        try {
+          h(payload);
+        } catch (err) {
+          log.warn(
+            `event bus handler for ${event} threw: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
-    }
+    });
   }
 
   /** Test/teardown helper — drops all handlers. */

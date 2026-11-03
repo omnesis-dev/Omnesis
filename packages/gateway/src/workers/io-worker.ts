@@ -20,8 +20,10 @@
  * (id, op, args, enqueueMs → result) so the runner code is uniform
  * across writer + compute.
  *
- * Dispatch table lives in `scheduler/io-handlers.ts`. This file
- * just owns init, message loop, and shutdown.
+ * Dispatch tables live in `scheduler/io-handlers.ts` (ops on
+ * `omnesis.db`) and `scheduler/io-journal-handlers.ts` (ops on a second
+ * read-only handle, on the watch journal). This file just owns init,
+ * message loop, and shutdown.
  */
 
 import Database from "better-sqlite3";
@@ -30,6 +32,7 @@ import { parentPort } from "node:worker_threads";
 
 import { assertNever } from "@omnesis/core";
 import { ioHandlers } from "../scheduler/io-handlers.js";
+import { ioJournalHandlers } from "../scheduler/io-journal-handlers.js";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { deprioritizeBackgroundWorker } from "./worker-priority.js";
 
@@ -47,18 +50,24 @@ function log(level: LogLevel, component: string, message: string): void {
   post({ type: "log", level, component, message });
 }
 
-function openReadConn(path: string, gatewayDbKeyHex?: string, cacheSizeBytes?: number): Db {
+function openReadConn(
+  path: string,
+  gatewayDbKeyHex?: string,
+  cacheSizeBytes?: number,
+  options: { cipherBuild?: boolean } = {},
+): Db {
   // Read-only on a WAL DB opens a snapshot — never touches -shm writes.
   // fileMustExist:true catches mis-configured paths early instead of
   // silently creating an empty DB the rest of the gateway doesn't see.
-  const db = gatewayDbKeyHex
-    ? (openEncryptedSqlite(path, {
-        key: Buffer.from(gatewayDbKeyHex, "hex"),
-        readonly: true,
-        fileMustExist: true,
-        migratePlaintext: false,
-      }) as unknown as Db)
-    : new Database(path, { readonly: true, fileMustExist: true });
+  const db =
+    gatewayDbKeyHex || options.cipherBuild
+      ? (openEncryptedSqlite(path, {
+          ...(gatewayDbKeyHex ? { key: Buffer.from(gatewayDbKeyHex, "hex") } : {}),
+          readonly: true,
+          fileMustExist: true,
+          migratePlaintext: false,
+        }) as unknown as Db)
+      : new Database(path, { readonly: true, fileMustExist: true });
   // query_only is belt-and-suspenders on top of the readonly flag —
   // SQLite refuses any statement that would mutate state. Cheap.
   db.exec("PRAGMA query_only = ON");
@@ -76,12 +85,43 @@ function openReadConn(path: string, gatewayDbKeyHex?: string, cacheSizeBytes?: n
 }
 
 const dispatch = ioHandlers as Record<string, (db: Db, ...args: unknown[]) => unknown>;
+const journalDispatch = ioJournalHandlers as Record<
+  string,
+  (journal: Db, ...args: unknown[]) => unknown
+>;
+
+/** Page cache for the watch journal handle: its reads are single index seeks. */
+const JOURNAL_CACHE_SIZE_BYTES = 8 * 1024 * 1024;
 
 let state: {
   db: Db;
   heartbeatInterval: ReturnType<typeof setInterval>;
   shuttingDown: boolean;
+  watchJournal: IoInit["watchJournal"];
+  journalDb: Db | null;
 } | null = null;
+
+/**
+ * The read-only connection to the watch journal, opened on first use: the
+ * gateway settles and creates the journal after its workers have started.
+ */
+function journalConn(): Db {
+  if (!state) throw new Error("io-worker not initialized");
+  if (state.journalDb) return state.journalDb;
+  if (!state.watchJournal) throw new Error("io-worker has no watch journal configured");
+  // Through the cipher build of SQLite even when the journal is not keyed,
+  // because that is how the gateway's own connections to it are opened. Two
+  // SQLite libraries in one process do not see each other's POSIX locks, and
+  // closing a connection in one releases the locks the other holds — enough
+  // for one to delete a write-ahead log the other is still writing.
+  state.journalDb = openReadConn(
+    state.watchJournal.path,
+    state.watchJournal.keyHex,
+    JOURNAL_CACHE_SIZE_BYTES,
+    { cipherBuild: true },
+  );
+  return state.journalDb;
+}
 
 async function handleInit(init: IoInit): Promise<void> {
   if (state) {
@@ -95,7 +135,13 @@ async function handleInit(init: IoInit): Promise<void> {
       post({ type: "heartbeat", ts: Date.now() });
     }, init.heartbeatIntervalMs);
 
-    state = { db, heartbeatInterval, shuttingDown: false };
+    state = {
+      db,
+      heartbeatInterval,
+      shuttingDown: false,
+      watchJournal: init.watchJournal,
+      journalDb: null,
+    };
 
     // Yield CPU to real-time work under contention — this worker mostly runs
     // the background compute-halves of splits, plus a few user-priority
@@ -151,7 +197,12 @@ function handleCall(id: number, op: string, args: unknown[], enqueueMs: number):
     });
     return;
   }
-  const handler = dispatch[op];
+  const journalHandler = journalDispatch[op];
+  const handler: ((...args: unknown[]) => unknown) | undefined = journalHandler
+    ? (...rest) => journalHandler(journalConn(), ...rest)
+    : dispatch[op]
+      ? (...rest) => dispatch[op]!(state!.db, ...rest)
+      : undefined;
   if (!handler) {
     post({
       type: "result",
@@ -167,7 +218,7 @@ function handleCall(id: number, op: string, args: unknown[], enqueueMs: number):
   }
   const cpuBefore = process.cpuUsage();
   try {
-    const value = handler(state.db, ...args);
+    const value = handler(...args);
     const execMs = Date.now() - dequeueMs;
     const cpuDelta = process.cpuUsage(cpuBefore);
     post({
@@ -208,6 +259,11 @@ async function handleShutdown(): Promise<void> {
   clearInterval(state.heartbeatInterval);
   try {
     state.db.close();
+  } catch {
+    /* best-effort */
+  }
+  try {
+    state.journalDb?.close();
   } catch {
     /* best-effort */
   }

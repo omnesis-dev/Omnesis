@@ -55,6 +55,7 @@ function makeHarness(
   const runs: string[] = [];
   const errors: Array<{ key: string; err: unknown }> = [];
   const runner = new KeyedDebouncedRunner({
+    activity: "test.debouncedRun",
     debounceMs: opts.debounceMs ?? 3_000,
     scheduler: { setTimeout: sched.setTimeout, clearTimeout: sched.clearTimeout },
     run:

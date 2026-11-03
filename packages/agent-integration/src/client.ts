@@ -225,6 +225,7 @@ export class AgentIntegrationClient {
   private stopped = true;
   private helloId: string | null = null;
   private activeStarts = 0;
+  /** Work `stop()` waits for; a self-update is deliberately not part of it. */
   private readonly activeTasks = new Set<Promise<unknown>>();
   private state: IntegrationConnectionState = "stopped";
   private updating = false;
@@ -398,6 +399,22 @@ export class AgentIntegrationClient {
    * event. An install then restarts the harness at once, interrupting any
    * run in progress: the result goes out first and is written to the socket
    * before the restart is launched, because the restart ends this process.
+   *
+   * The update is a separate process this plugin only waits on, and `stop()`
+   * does not wait for it. Installing the plugin can be what stops this
+   * instance: a harness that loads plugins while it runs (OpenClaw) replaces
+   * the running plugin as part of the install, and gives its `stop()`
+   * seconds, not the minutes the update has left. A `stop()` held by the update would
+   * hold up the very install the update is waiting for, and leave the
+   * harness unable to load either plugin.
+   *
+   * So the restart follows an install even when this instance was stopped
+   * meanwhile. A stopped plugin in a live process cannot tell whether the
+   * harness went on to load the installed build or failed to load anything,
+   * and the restart settles it either way: the harness comes back on the
+   * plugin on disk, whose reconnect on the target is what marks the device
+   * updated. A stopped instance has no connection left to report on, so that
+   * reconnect is the only report it makes.
    */
   private startSelfUpdate(
     socket: SocketLike,
@@ -422,31 +439,28 @@ export class AgentIntegrationClient {
     }
     this.updating = true;
     const updater = this.opts.selfUpdater;
-    this.track(
-      (async () => {
-        let attempt;
-        try {
-          attempt = await updater.run(target);
-        } catch (error) {
-          attempt = {
-            state: "failed" as const,
-            detail: error instanceof Error ? error.message : String(error),
-          };
-        }
-        this.updating = false;
-        // Sent on the socket the command arrived on: a result that outlived
-        // its connection belongs to a plugin the gateway will ask again.
-        if (this.socket === socket) {
-          await sendWritten(socket, updateResultEvent(target, attempt.state, attempt.detail));
-        }
-        // A plugin being stopped belongs to a harness already on its way
-        // down; the plugin on disk loads when it starts again.
-        if (attempt.restart && !this.stopped) {
-          this.restartHarness(socket, label, target, attempt.restart);
-        }
-      })(),
-      "self-update failed",
-    );
+    void (async () => {
+      let attempt;
+      try {
+        attempt = await updater.run(target);
+      } catch (error) {
+        attempt = {
+          state: "failed" as const,
+          detail: error instanceof Error ? error.message : String(error),
+        };
+      }
+      this.updating = false;
+      // Sent on the socket the command arrived on: a result that outlived
+      // its connection belongs to a plugin the gateway will ask again.
+      if (this.socket === socket) {
+        await sendWritten(socket, updateResultEvent(target, attempt.state, attempt.detail));
+      }
+      if (attempt.restart) this.restartHarness(socket, label, target, attempt.restart);
+    })().catch((error: unknown) => {
+      this.log.warn(
+        `self-update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
     return responseOk(correlationId, { accepted: true });
   }
 

@@ -33,6 +33,7 @@ import {
   resolveClaudeCodeCommand,
 } from "./claude-code-backend.js";
 import { agentFailureScope } from "./http-error.js";
+import { setActivityMarker } from "./activity.js";
 import type { ToolHandle, TurnInput } from "./backend.js";
 import type { AgentEvent, ToolResult } from "@omnesis/core";
 
@@ -391,6 +392,26 @@ describe("Claude Code runtime against a scripted CLI", () => {
         JSON.stringify(frame).includes('"tools":[{"name":"search"'),
     );
     expect(listed).toBeDefined();
+  });
+
+  it("handles every CLI message under the host's activity mark", async () => {
+    const { runtime } = setup({
+      OMNESIS_FAKE_CLAUDE_SCENARIO: "tool",
+      OMNESIS_FAKE_CLAUDE_TOOL_ARGS: JSON.stringify({ query: "budget" }),
+    });
+    const marked = new Set<string>();
+    setActivityMarker((name, fn) => {
+      marked.add(name);
+      return fn();
+    });
+    try {
+      const search = tool("search", () => ({ kind: "error", code: "synthetic", message: "none" }));
+      const backend = new ClaudeCodeBackend({ model: "sonnet", runtime });
+      await collect(backend.runTurn(input({ tools: [search] })));
+      expect(marked).toEqual(new Set(["agent.claudeCode.message"]));
+    } finally {
+      setActivityMarker(null);
+    }
   });
 
   it("counts one request once in live usage however many messages carry it", async () => {

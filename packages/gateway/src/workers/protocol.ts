@@ -396,6 +396,12 @@ export type IoInit = {
   backgroundWorkerNice: number;
   /** Page-cache budget in bytes for the read handle (defaults to 64 MiB). */
   cacheSizeBytes?: number;
+  /**
+   * The watch journal, which the `ioJournalHandlers` ops read. Opened
+   * read-only on the first such call, since the gateway creates the file after
+   * the workers start.
+   */
+  watchJournal?: { path: string; keyHex?: string };
 };
 
 // Compute call/result reuse the writer's shapes: same dispatch envelope

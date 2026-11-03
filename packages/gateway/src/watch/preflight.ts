@@ -60,6 +60,7 @@ import {
   type WatchDefinition,
   type WatchNode,
 } from "@omnesis/watch";
+import { PrefetchedJournalDocuments, type JournalHistoryReader } from "./journal-document.js";
 
 const log: Logger = createLogger("gateway").child("watch-v2:preflight");
 
@@ -147,6 +148,11 @@ export interface PreflightDeps {
     /** Where a span-bounded window starts. A read, like everything here. */
     firstSeqAtOrAfter(observedAtIso: string): number;
   };
+  /**
+   * Reads the revision histories the window's index events ask about off the
+   * main thread, before the replay. Absent, every lookup is a `documentAt`.
+   */
+  readonly journalHistories?: JournalHistoryReader;
   /**
    * The host's clock, so a span-bounded window is a fact a test can state
    * rather than one it has to wait for.
@@ -417,6 +423,18 @@ export async function preflight(
     };
   }
 
+  const documents = new PrefetchedJournalDocuments((docId, atSeq) =>
+    deps.journal.documentAt(docId, atSeq),
+  );
+  if (deps.journalHistories) {
+    await documents.prefetch(
+      deps.journalHistories,
+      journal.flatMap((event) =>
+        event.kind === "doc.indexed" ? [{ docId: event.payload.docId, atSeq: event.seq }] : [],
+      ),
+    );
+  }
+
   const judge = new CountingJudge();
   const engine = new WatchEngine({
     watch,
@@ -426,11 +444,11 @@ export async function preflight(
     ...(checked.types ? { valueTypes: checked.types } : {}),
     judge,
     recall: deps.recall,
-    // The same bounded lookup the host gives the engine. Without it a
-    // `doc.indexed` event for a document written before the window opened
-    // resolves to nothing, and the node decides on an absence the live
-    // runtime would not have seen.
-    lookupDocument: (docId, atSeq) => deps.journal.documentAt(docId, atSeq),
+    // The same bounded lookup the host gives the engine, read ahead the same
+    // way. Without it a `doc.indexed` event for a document written before the
+    // window opened resolves to nothing, and the node decides on an absence
+    // the live runtime would not have seen.
+    lookupDocument: (docId, atSeq) => documents.lookup(docId, atSeq),
     // A span-bounded replay is tens of thousands of events and would otherwise
     // starve the process it runs in — including the live watch engine on the
     // same host. The count-bounded probe is small enough not to need it.

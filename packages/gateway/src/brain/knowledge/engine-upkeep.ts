@@ -7,10 +7,7 @@ import {
   COGNITION_RUN_STALE_MS,
   DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
 } from "../storage/run-queue.js";
-import {
-  captureDecisionPayloadSubjects,
-  decisionPayloadErasureGeneration,
-} from "../decision-payload.js";
+import { decisionPayloadErasureGeneration } from "../decision-payload.js";
 import { getKnowledgeNode } from "./storage.js";
 import { knowledgeSelectionReads } from "./selection-reads.js";
 import { knowledgeReviewSignals, decideKnowledgeReview } from "./review-policy.js";
@@ -55,19 +52,11 @@ export class KnowledgeUpkeep {
   async recover(): Promise<void> {
     const cfg = this.deps.getSettings().knowledge;
     const claimedBefore = this.deps.clock() - COGNITION_RUN_STALE_MS;
-    const rows = this.deps.db
-      .prepare<
-        [number, number, number],
-        { id: string; runId: string; failed: number; dead: number }
-      >(
-        `SELECT b.id,b.run_id AS runId,COALESCE(r.status='failed',0) AS failed,COALESCE(r.status='pending',0) AS dead
-      FROM knowledge_batches b
-      LEFT JOIN cognition_runs r ON r.id=b.run_id WHERE b.status IN ('pending','running','deferred')
-      AND (r.id IS NULL OR r.status IN ('completed','failed')
-        OR (r.status='pending' AND r.attempts>=? AND r.last_attempt_at<=?))
-      ORDER BY b.created_at LIMIT ?`,
-      )
-      .all(DEFAULT_COGNITION_RUN_MAX_ATTEMPTS, claimedBefore, cfg.maxSeeds);
+    const rows = await knowledgeSelectionReads(this.deps).knowledgeRecoverableBatches({
+      maxAttempts: DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
+      claimedBefore,
+      limit: cfg.maxSeeds,
+    });
     for (const row of rows) {
       if (row.dead && this.deps.isRunActive?.(row.runId)) continue;
       await this.deps.writeGate["knowledge.abandonBatch"](
@@ -230,11 +219,10 @@ export class KnowledgeUpkeep {
         : await judgeKnowledge(this.deps.decisions, "review", signals, {
             nodeId: node.id,
             payloadCapture:
-              captureDecisionPayloadSubjects(
-                this.deps.db,
+              (await knowledgeSelectionReads(this.deps).knowledgeDecisionPayloadSubjects(
                 { nodeIds: [node.id], nodeRevisions: { [node.id]: node.revision } },
                 payloadGeneration,
-              ) ?? undefined,
+              )) ?? undefined,
           });
       const schedule = policyReview
         ? {

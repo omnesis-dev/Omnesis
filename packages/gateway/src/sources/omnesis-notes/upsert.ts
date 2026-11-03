@@ -74,6 +74,7 @@ export class NotesDayUpserter {
   constructor(deps: NotesDayUpserterDeps) {
     this.deps = deps;
     this.runner = new KeyedDebouncedRunner({
+      activity: "omnesisNotes.upsert",
       debounceMs: deps.debounceMs ?? DEFAULT_DEBOUNCE_MS,
       scheduler: deps.scheduler,
       run: (day) => this.runUpsert(day),

@@ -31,7 +31,7 @@ import {
   AnalyticsConnectionPool,
   type AnalyticsConnectionPoolOptions,
 } from "./analytics/connection-pool.js";
-import { AnalyticsCatalogStore } from "./analytics/catalog-store.js";
+import { AnalyticsCatalogStore, type AnalyticsCatalogActivity } from "./analytics/catalog-store.js";
 import {
   AnalyticsTableManager,
   type AnalyticsReplicaHooks,
@@ -481,6 +481,11 @@ export class AnalyticsDb {
 
   async getCatalog(): Promise<AnalyticsCatalogEntry[]> {
     return this.catalog.getCatalog();
+  }
+
+  /** Each table's owner, size and newest date; see `AnalyticsCatalogStore.getCatalogActivity`. */
+  async getCatalogActivity(): Promise<AnalyticsCatalogActivity[]> {
+    return this.catalog.getCatalogActivity();
   }
 
   /**

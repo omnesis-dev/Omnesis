@@ -88,15 +88,16 @@ export interface AnalyticsIngestResult {
 
 /**
  * The replica deletion ledger as the analytics plane reaches it: the SQLite
- * writer for the verdicts, plus the two reads a page needs before it starts.
+ * writer for the verdicts, plus the two reads a page needs, which the gateway
+ * runs on a read worker.
  */
 export interface AnalyticsReplicaLedger {
   /** Every cursor row of the source, so a page that may reset siblings is fenced against all of them. */
   cursorRows(sourceId: string): string[];
   /** Restored rows and durable deletion verdicts whose DuckDB write may need retrying. */
-  omissionCandidates(sourceId: string, tableName: string, deviceId: string): string[];
+  omissionCandidates(sourceId: string, tableName: string, deviceId: string): Promise<string[]>;
   /** Of `keyValues`, the rows of one table that have a history in the ledger. */
-  claimedKeys(sourceId: string, tableName: string, keyValues: readonly string[]): string[];
+  claimedKeys(sourceId: string, tableName: string, keyValues: readonly string[]): Promise<string[]>;
   judgeTombstones(args: AnalyticsTombstoneArgs): Promise<AnalyticsTombstoneVerdict>;
   recordPresence(args: AnalyticsPresenceArgs): Promise<void>;
   recordRestorerOmissions(args: AnalyticsRestorerSnapshotArgs): Promise<string[]>;
@@ -281,7 +282,7 @@ export class AnalyticsService {
     if (vouches && policy) {
       // Resolved off the writer: restorations and settled verdicts cross to it.
       // The latter survive a failed DuckDB commit after SQLite settled a key.
-      const restored = ledger.omissionCandidates(sourceId, tableName, deviceId);
+      const restored = await ledger.omissionCandidates(sourceId, tableName, deviceId);
       {
         // The ledger speaks in canonical keys, so a page that named its rows
         // as records has to be encoded before it can be compared with one —
@@ -314,7 +315,7 @@ export class AnalyticsService {
         // off the writer: a history that appears while this page is in flight
         // comes with a reset of this member, whose bootstrap then re-states
         // its presence, so nothing this read can miss is lost.
-        const claimed = ledger.claimedKeys(sourceId, tableName, keyValues);
+        const claimed = await ledger.claimedKeys(sourceId, tableName, keyValues);
         if (claimed.length > 0) {
           await ledger.recordPresence({ sourceId, tableName, deviceId, keyValues: claimed, now });
         }

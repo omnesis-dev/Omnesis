@@ -18,6 +18,9 @@
  * via `runWithPriority`.
  */
 
+import { IO_READS } from "./io-read-ports.js";
+import { ioReadOpNames, ioReadPort, type ReadPort } from "./read-port.js";
+import type { KnowledgeSelectionReads } from "../brain/knowledge/selection-reads.js";
 import type {
   AutoDetectedRule,
   AutoMergePair,
@@ -47,8 +50,8 @@ import type { LinkReconcileBatch, LinkStatsAggregation } from "../links.js";
 import type { LinkStats } from "../data/repositories/LinkStatsRepository.js";
 import type { SqliteTableStatsRow } from "../sqlite-catalog.js";
 import type { Scheduler } from "./scheduler.js";
-import type { KnowledgeSelectionReads } from "../brain/knowledge/selection-reads.js";
 import type { PeopleDirectoryReader } from "../watch/people-directory.js";
+import type { JournalHistoryReader } from "../watch/journal-document.js";
 import type { MessageCountsQuery } from "../domain/message-counts.js";
 import type { MessageCountsBody } from "@omnesis/agent";
 import type { Priority, Task } from "./types.js";
@@ -70,6 +73,7 @@ import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { DateExtractionDocRow } from "../enrichment/dates/extractor.js";
 import type { LikeSearchArgs, LikeSearchRow } from "../search/like-search.js";
 import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
+import type { KnowledgeReadabilityReads } from "../brain/knowledge/retrieval-fence.js";
 import type {
   PersonSummary as LookupPersonSummary,
   UrlCanonicalizerSpec,
@@ -88,7 +92,7 @@ import type {
 
 import type { VocabularySettings, VocabularyDocument } from "../transcribe/vocabulary/types.js";
 
-export interface IoGate {
+export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionReads {
   fetchTranscriptionVocabularyBatch(settings: VocabularySettings): Promise<VocabularyDocument[]>;
   getTranscriptionVocabulary(
     context: TranscriptionContext,
@@ -113,14 +117,9 @@ export interface IoGate {
     notBefore: string,
     excludedSources?: readonly string[],
   ): Promise<import("../brain/knowledge/discovery-timeline.js").KnowledgeDiscoveryMonth[]>;
-  knowledgeOrganizationAdmissions: KnowledgeSelectionReads["knowledgeOrganizationAdmissions"];
-  knowledgeOrganizationCohort: KnowledgeSelectionReads["knowledgeOrganizationCohort"];
-  knowledgeDueReviews: KnowledgeSelectionReads["knowledgeDueReviews"];
-  knowledgeStaleWork: KnowledgeSelectionReads["knowledgeStaleWork"];
-  knowledgeHasExcludedWork: KnowledgeSelectionReads["knowledgeHasExcludedWork"];
-  knowledgeArcs: KnowledgeSelectionReads["knowledgeArcs"];
-  knowledgeDiscoveryBacklog: KnowledgeSelectionReads["knowledgeDiscoveryBacklog"];
   watchPeopleDirectory: PeopleDirectoryReader;
+  /** Recent revisions of documents in the watch journal, on the worker's journal handle. */
+  watchDocumentHistories: JournalHistoryReader;
   /** One catalog table's statistics, or null when it does not exist; see `computeSqliteTableStats`. */
   sqliteTableStats(tableName: string): Promise<SqliteTableStatsRow | null>;
   bootstrapCorpusByMonth(
@@ -209,6 +208,8 @@ export interface IoGate {
   likeSearchDocuments(args: LikeSearchArgs): Promise<LikeSearchRow[]>;
   /** A temporal window's `omnesis.db` half; see `readTemporalStoreWindow`. */
   temporalStoreWindow: TemporalStoreReads["temporalStoreWindow"];
+  /** Search's knowledge readability fence over its hits; see `knowledgeDocumentsReadable`. */
+  knowledgeDocumentsReadable: KnowledgeReadabilityReads["knowledgeDocumentsReadable"];
   /**
    * Compute `(personId, docCount, aliasCount)` for every unmerged person in
    * one read. Heavy — a full scan of `document_people` — which is why it
@@ -470,6 +471,14 @@ const DEFAULT_BUDGET_MS = 200;
 const HEAVY_BUDGET_MS = 2_000;
 
 const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
+  // Every read port in `io-read-ports.ts`: the status cache's refresh, the
+  // knowledge engine's planning window, batch recovery and payload capture,
+  // and an analytics page's replica ledger reads.
+  ...ioReadOpNames(IO_READS).map((name): IoOpDef => ({
+    name,
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  })),
   { name: "io.fetchTranscriptionVocabularyBatch", priority: "background" },
   { name: "io.getTranscriptionVocabulary", priority: "user" },
   { name: "io.echo", priority: "background" },
@@ -509,6 +518,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   },
   // The Watch ontology reads the whole people table on every evaluation pass.
   { name: "io.watchPeopleDirectory", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.watchDocumentHistories", priority: "background" },
   // A catalog table's row count and MIN/MAX: one table walk per call.
   { name: "io.sqliteTableStats", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.bootstrapBacklog", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -530,6 +540,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // User by default for search and the interactive agent; background runs
   // enqueue it under their own priority.
   { name: "io.temporalStoreWindow", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.knowledgeDocumentsReadable", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCounts", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCountsChunk", priority: "background" },
   { name: "io.mergeCandidates", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -610,6 +621,9 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
 export const IoOps: ReadonlyMap<string, Task<unknown[], unknown>> = (() => {
   const map = new Map<string, Task<unknown[], unknown>>();
   for (const def of COMPUTE_OP_DEFS) {
+    // A second definition would silently replace the first one's priority and
+    // budget, a read port's included.
+    if (map.has(def.name)) throw new Error(`io op defined twice: ${def.name}`);
     map.set(def.name, {
       name: def.name,
       runner: "io",
@@ -632,6 +646,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     return scheduler.enqueue(task, args) as Promise<T>;
   };
   return {
+    ...ioReadPort(IO_READS, call),
     echo: (value) => call("io.echo", [value]),
     fetchTranscriptionVocabularyBatch: (settings) =>
       call("io.fetchTranscriptionVocabularyBatch", [settings]),
@@ -654,6 +669,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     knowledgeArcs: (inputs, bound) => call("io.knowledgeArcs", [[...inputs], bound]),
     knowledgeDiscoveryBacklog: (options) => call("io.knowledgeDiscoveryBacklog", [options]),
     watchPeopleDirectory: (knownHash) => call("io.watchPeopleDirectory", [knownHash]),
+    watchDocumentHistories: (requests) => call("io.watchDocumentHistories", [[...requests]]),
     sqliteTableStats: (tableName) => call("io.sqliteTableStats", [tableName]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),
@@ -666,6 +682,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     mergeCandidateVisibility: (opts) => call("io.mergeCandidateVisibility", [opts]),
     likeSearchDocuments: (args) => call("io.likeSearchDocuments", [args]),
     temporalStoreWindow: (request) => call("io.temporalStoreWindow", [request]),
+    knowledgeDocumentsReadable: (refs) => call("io.knowledgeDocumentsReadable", [[...refs]]),
     peopleCounts: () => call("io.peopleCounts", []),
     peopleCountsChunk: (cursor, batchSize) => call("io.peopleCountsChunk", [cursor, batchSize]),
     mergeCandidates: (perStepLimit) => call("io.mergeCandidates", [perStepLimit]),
