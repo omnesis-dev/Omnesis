@@ -4,6 +4,7 @@
 import { mkdtempSync, rmSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { MessageStore } from "../message-store.js";
 import { importWhatsAppHistory } from "./importer.js";
@@ -62,6 +63,7 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
   let store: MessageStore | null = null;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     for (const path of scratches.splice(0)) expect(existsSync(path)).toBe(false);
     store?.close();
     store = null;
@@ -221,6 +223,7 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
   });
 
   it("removes decrypted files after cancellation during parsing", async () => {
+    const terminate = vi.spyOn(Worker.prototype, "terminate");
     const backup = makeEncryptedBackup({
       chatStorageBytes: buildChatStorageDb(CORPUS),
       password: "pw",
@@ -249,6 +252,9 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
       }),
     ).rejects.toThrow(/cancelled/i);
     expect(observedPlaintext).toBe(true);
+    // The worker stopped on its own, its database closed; it was not killed
+    // inside a native SQLite call, which can abort the process.
+    expect(terminate).not.toHaveBeenCalled();
   });
 
   it("removes scratch after a worker decrypt error", async () => {
@@ -326,6 +332,7 @@ describe("importWhatsAppHistory — Android backup", () => {
   let store: MessageStore | null = null;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     for (const path of scratches.splice(0)) expect(existsSync(path)).toBe(false);
     store?.close();
     store = null;
@@ -436,6 +443,7 @@ describe("importWhatsAppHistory — Android backup", () => {
   });
 
   it("removes decrypted files after cancellation during parsing", async () => {
+    const terminate = vi.spyOn(Worker.prototype, "terminate");
     const { filePath, keyHex } = androidBackup();
     store = freshStore();
     const controller = new AbortController();
@@ -460,6 +468,9 @@ describe("importWhatsAppHistory — Android backup", () => {
       }),
     ).rejects.toThrow(/cancelled/i);
     expect(observedPlaintext).toBe(true);
+    // The worker stopped on its own, its database closed; it was not killed
+    // inside a native SQLite call, which can abort the process.
+    expect(terminate).not.toHaveBeenCalled();
   });
 
   it("removes scratch after a worker decrypt error", async () => {

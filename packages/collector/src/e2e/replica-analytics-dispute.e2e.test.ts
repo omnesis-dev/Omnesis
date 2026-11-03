@@ -41,10 +41,9 @@ const TABLE = "replica_counters";
 const NAMESPACE = `analytics:${TABLE}`;
 const MIN_OBSERVATIONS = 3;
 /**
- * The policy spaces counted omissions `MIN_AGE_MS / MIN_OBSERVATIONS` apart
- * (500 ms here). That spacing must hold a whole multi-request tick (begin,
- * page, cursor, snapshot) on a loaded CI runner, so a back-to-back snapshot is
- * reliably "too soon" to count.
+ * The policy spaces counted omissions `MIN_AGE_MS / MIN_OBSERVATIONS` apart.
+ * This suite waits past that lower bound; exact within-window counting is
+ * covered with explicit timestamps in ReplicaDeletionClaimRepository.test.ts.
  */
 const MIN_AGE_MS = 1_500;
 /**
@@ -370,13 +369,11 @@ describe("replicated analytics dispute across collectors", () => {
     expect(await isReset(beta)).toBe(false);
     expect(await disputedOnSource()).toBe(2);
 
-    // The restorer's replica loses c-4. One omission is not a verdict; a
-    // second too soon does not count; naming it again starts over.
+    // The restorer's replica loses c-4. One omission is not a verdict;
+    // naming it again starts over.
     viewB.delete("c-4");
     const once = await tick(beta, { presentIds: [...viewB] });
     expect(once.snapshot).toMatchObject({ deleted: 0 });
-    expect(verdicts("c-4")).toEqual(["alpha:deleted:0", "beta:restored:1"]);
-    await tick(beta, { presentIds: [...viewB] });
     expect(verdicts("c-4")).toEqual(["alpha:deleted:0", "beta:restored:1"]);
     viewB.add("c-4");
     await tick(beta, { presentIds: [...viewB] });

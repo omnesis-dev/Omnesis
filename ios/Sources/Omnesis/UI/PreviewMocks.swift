@@ -1216,6 +1216,16 @@ enum PreviewMocks {
         tasks: TasksStatus(available: true, noteAgent: true)
     )
 
+    static let noteProcessingMissingAgent = NoteAgentStatus(enabled: true, modelAssigned: false, active: false)
+    static let noteProcessingOff = NoteAgentStatus(enabled: false, modelAssigned: true, active: false)
+    static let statusSnapshotMissingAgent = StatusSnapshot(
+        documents: statusSnapshotTasks.documents,
+        dbSizeBytes: statusSnapshotTasks.dbSizeBytes,
+        latestActivityBySource: nil,
+        tasks: statusSnapshotTasks.tasks,
+        noteAgent: noteProcessingMissingAgent
+    )
+
     // MARK: - Tasks
 
     /// The fixed "now" every Tasks preview reads its day from, so relative
@@ -7391,6 +7401,22 @@ extension PreviewMocks {
                 summary: "The dental practice confirmed the cleaning for Friday at 09:30.",
                 sources: [DailyBriefSource(id: "doc_dentist", title: "Appointment confirmed", sourceType: "gmail")]
             ),
+        ]
+    )
+
+    static let dailyBriefReferences = DailyBriefItems(
+        day: "2026-10-14",
+        messageId: "mb_references",
+        items: [],
+        references: [
+            DailyBriefSource(id: "doc_schedule", title: "Thursday workshop schedule", sourceType: "gmail"),
+            DailyBriefSource(id: "doc_chat", title: "Workshop conversation", sourceType: "whatsapp"),
+            DailyBriefSource(
+                id: "doc_notes",
+                title: "Workshop preparation notes and equipment checklist for the community studio",
+                sourceType: "notion"
+            ),
+            DailyBriefSource(id: "doc_untitled", title: nil, sourceType: ""),
         ]
     )
 

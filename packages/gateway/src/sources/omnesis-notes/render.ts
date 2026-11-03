@@ -22,6 +22,8 @@ import type { NoteCaptureContext } from "@omnesis/types";
 export interface RenderedNotesDay {
   title: string;
   body: string;
+  /** UTF-16 start offsets of the rendered entries, including their headings. */
+  chunkBoundaries: number[];
 }
 
 /**
@@ -35,16 +37,22 @@ export function principalDisplayName(context: NoteCaptureContext): string {
 
 /** Render a day's entries. Callers pass them in capture order. */
 export function renderNotesDay(day: string, entries: readonly NoteEntry[]): RenderedNotesDay {
+  const chunkBoundaries: number[] = [];
+  let offset = 0;
   const sections = entries.map((entry) => {
     const surfaceSuffix = entry.surface ? ` · ${entry.surface}` : "";
     const principalSuffix = entry.captureContext
       ? ` · ${principalDisplayName(entry.captureContext)}`
       : "";
     const placeSuffix = entry.placeName ? ` · ${entry.placeName}` : "";
-    return `## ${localHourMinute(entry.capturedAt, entry.capturedUtcOffsetSeconds)}${surfaceSuffix}${principalSuffix}${placeSuffix}\n\n${entry.text}`;
+    const section = `## ${localHourMinute(entry.capturedAt, entry.capturedUtcOffsetSeconds)}${surfaceSuffix}${principalSuffix}${placeSuffix}\n\n${entry.text}`;
+    chunkBoundaries.push(offset);
+    offset += section.length + 2;
+    return section;
   });
   return {
     title: `Notes — ${day}`,
     body: sections.join("\n\n"),
+    chunkBoundaries,
   };
 }

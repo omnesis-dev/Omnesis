@@ -149,6 +149,8 @@ final class DailyBriefTranscriptTests: XCTestCase {
         """.utf8))
         XCTAssertNil(page.sentAt)
         XCTAssertTrue(page.items.isEmpty)
+        XCTAssertTrue(page.references.isEmpty)
+        XCTAssertEqual(page.basedOnCount, 0)
     }
 
     func testClientRequestsTheDayAndMapsNotFound() async throws {
@@ -466,6 +468,37 @@ final class DailyBriefTranscriptTests: XCTestCase {
         XCTAssertEqual(model.itemCount(day: "2026-10-14"), 3)
         await model.load(day: "2026-10-13")
         XCTAssertNil(model.items["2026-10-13"], "with no loader nothing is fetched")
+    }
+}
+
+@available(iOS 17.0, *)
+extension DailyBriefTranscriptTests {
+    @MainActor
+    func testDirectReferencesDecodeWithoutObservationsAndCountInTheTranscript() throws {
+        let page = try JSONDecoder().decode(DailyBriefItems.self, from: Data("""
+        {"day":"2026-10-14","messageId":"mb_direct","items":[],"references":[
+          {"id":"doc_email","title":"Workshop schedule","sourceType":"gmail"},
+          {"title":"An unreadable reference"},
+          {"id":"doc_chat","title":null,"sourceType":"whatsapp"}
+        ]}
+        """.utf8))
+        XCTAssertEqual(page.references.map(\.id), ["doc_email", "doc_chat"])
+        XCTAssertEqual(page.references[1].sourceType, "whatsapp")
+        XCTAssertNil(page.references[1].title)
+        XCTAssertTrue(page.items.isEmpty)
+        let model = DailyBriefModel(conversationId: "s1", loader: nil, preloaded: [page])
+        XCTAssertEqual(model.itemCount(day: page.day), 2)
+        XCTAssertEqual(DailyBriefCopy.basedOn(page.basedOnCount), "Based on 2 things")
+    }
+
+    func testDirectReferencesCountAlongsideObservations() {
+        let page = DailyBriefItems(
+            day: "2026-10-14",
+            messageId: "mb_mixed",
+            items: [DailyBriefItem(rank: 1, observationId: "obs_workshop", summary: "The workshop moved.")],
+            references: [DailyBriefSource(id: "doc_agenda", title: "Studio agenda", sourceType: "notion")]
+        )
+        XCTAssertEqual(page.basedOnCount, 2)
     }
 }
 

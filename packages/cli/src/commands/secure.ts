@@ -928,7 +928,7 @@ export const secureCommand = defineCommand({
     },
     "skip-backup": {
       type: "boolean",
-      description: "Skip the pre-migration backup (not recommended)",
+      description: "Skip the pre-migration backup",
     },
     rollback: {
       type: "boolean",

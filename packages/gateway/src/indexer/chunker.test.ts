@@ -309,3 +309,108 @@ describe("structured conversation retrieval boundaries", () => {
     );
   });
 });
+
+describe("source-declared chunk boundaries", () => {
+  function sectionDoc(sections: string[]): IndexableDocument {
+    let offset = 0;
+    const boundaries = sections.map((section) => {
+      const start = offset;
+      offset += section.length;
+      return start;
+    });
+    return makeDoc({
+      content: sections.join(""),
+      metadata: {
+        documentType: "note",
+        sourceCreatedAt: "2026-03-10T00:00:00Z",
+        extra: { chunkBoundaries: boundaries },
+      },
+    });
+  }
+
+  test("keeps short independent sections separate even when the entire document fits", () => {
+    const sections = [
+      "## 09:00\n\nReview the telescope manual.\n\n",
+      "## 10:00\n\nOrder blue fabric.",
+    ];
+    const chunks = new DocumentChunker().chunk(sectionDoc(sections));
+    expect(chunks.map((chunk) => chunk.text)).toEqual(sections);
+    expect(chunks.map((chunk) => chunk.index)).toEqual([0, 1]);
+    expect(chunks[0].embeddingInput).not.toContain("blue fabric");
+    expect(chunks[1].embeddingInput).not.toContain("telescope");
+  });
+
+  test("headings inside a short section do not create extra section boundaries", () => {
+    const sections = [
+      "## 09:00\n\n# Draft\n\n## Details\n\nBuild a model ship.\n\n",
+      "## 10:00\n\nBuy a notebook.",
+    ];
+    const chunks = new DocumentChunker().chunk(sectionDoc(sections));
+    expect(chunks.map((chunk) => chunk.text)).toEqual(sections);
+  });
+
+  test("normalizes sections after slicing their raw UTF-16 offsets", () => {
+    const doc = sectionDoc([
+      "## 09:00\n\nOrbit\u200b map.    🌙\n\n\n\n",
+      "## 10:00\n\nSecond\u0000 note.",
+    ]);
+    const chunks = new DocumentChunker().chunk(doc);
+    expect(chunks.map((chunk) => chunk.text)).toEqual([
+      "## 09:00\n\nOrbit map.  🌙\n\n\n",
+      "## 10:00\n\nSecond note.",
+    ]);
+  });
+
+  test("splits long sections into bounded overlapping chunks without mixing sections", () => {
+    const first = `## 09:00\n\n${"a".repeat(600)}\n\n`;
+    const second = `## 10:00\n\n${"b".repeat(600)}`;
+    const chunker = new DocumentChunker(200, 50);
+    const chunks = chunker.chunk(sectionDoc([first, second]));
+    const firstChunks = chunker.chunk(sectionDoc([first]));
+    const secondChunks = chunker.chunk(sectionDoc([second]));
+    expect(chunks.map((chunk) => chunk.text)).toEqual([
+      ...firstChunks.map((chunk) => chunk.text),
+      ...secondChunks.map((chunk) => chunk.text),
+    ]);
+    expect(firstChunks.length).toBeGreaterThan(1);
+    expect(secondChunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.text.length).toBeLessThanOrEqual(200);
+      expect(chunk.text.includes("a") && chunk.text.includes("b")).toBe(false);
+    }
+    expect(firstChunks[0].text.slice(-50)).toBe(firstChunks[1].text.slice(0, 50));
+  });
+
+  test.each(
+    [
+      null,
+      "0,5",
+      [],
+      [1],
+      [0, 0],
+      [0, -1],
+      [0, 1.5],
+      [0, 1000],
+      [0, "5"],
+      [0, Number.NaN],
+      [0, Number.POSITIVE_INFINITY],
+      [0, 5, 3],
+      [0, 2], // Inside the surrogate pair in the literal body.
+    ].map((boundaries) => ({ boundaries })),
+  )(
+    "malformed boundaries $boundaries fall back to normalized ordinary chunking",
+    ({ boundaries }) => {
+      const chunks = new DocumentChunker().chunk(
+        makeDoc({
+          content: "x🌙\u200b note",
+          metadata: {
+            documentType: "note",
+            sourceCreatedAt: "2026-03-10T00:00:00Z",
+            extra: { chunkBoundaries: boundaries },
+          },
+        }),
+      );
+      expect(chunks.map((chunk) => chunk.text)).toEqual(["x🌙 note"]);
+    },
+  );
+});

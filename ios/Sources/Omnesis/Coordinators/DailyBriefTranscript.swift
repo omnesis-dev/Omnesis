@@ -245,7 +245,7 @@ final class DailyBriefModel {
 
     /// How many things a day's brief was based on, once known.
     func itemCount(day: String) -> Int? {
-        if case .loaded(let page) = items[day] { return page.items.count }
+        if case .loaded(let page) = items[day] { return page.basedOnCount }
         return nil
     }
 

@@ -53,6 +53,11 @@ const notionCursor = {
   emittedSummary: true,
   lastSyncTime: timestamp,
 };
+const notionPagesLegacy = {
+  lastEditedTime: timestamp,
+  startCursor: "page-2",
+  snapshotIds: ["page-1"],
+};
 const calendarLegacy = {
   calendarSyncTokens: { primary: "sync-token" },
   pendingCalendars: ["primary"],
@@ -143,7 +148,11 @@ const current: Record<string, unknown> = {
     lastDates: { account: "2026-01-02" },
     currencies: { account: "USD" },
   },
-  "notion-pages": { lastEditedTime: timestamp, startCursor: "page-2", snapshotIds: ["page-1"] },
+  "notion-pages": {
+    ...notionPagesLegacy,
+    passStartedAt: timestamp,
+    pendingEditedTime: timestamp,
+  },
   "notion-databases": notionCursor,
   "obsidian-notes": {
     version: 2,
@@ -227,6 +236,7 @@ const historical: Record<string, unknown> = {
   "granola-meetings": { phase: "incremental", pageCursor: "page-2", syncedUpTo: timestamp },
   "google-calendar": calendarLegacy,
   "notion-databases": notionCursor,
+  "notion-pages": notionPagesLegacy,
   "obsidian-notes": { fileMap: { "note.md": { mtime: 10, contentHash: "hash" } } },
   "outlook-calendar": outlookLegacy,
   "screen-time": screenLegacy,
@@ -296,6 +306,16 @@ const expectations: Record<string, (state: Record<string, unknown>) => void> = {
   "google-calendar": (state) =>
     expect(state).toEqual({ ...calendarLegacy, occurrenceExpansion: false }),
   "notion-databases": (state) => expect(state).toEqual(notionCursor),
+  "notion-pages": (state) =>
+    expect(state).toEqual({
+      ...notionPagesLegacy,
+      startCursor: undefined,
+      pageCursors: undefined,
+      lastEditedTime: undefined,
+      snapshotMode: true,
+      snapshotIds: undefined,
+      snapshotDirty: undefined,
+    }),
   "screen-time": (state) => expect(state).toEqual({ ...screenLegacy, lastPk: 0 }),
   github: (state) => expect(state).toMatchObject(githubCursor),
   "github-commits": (state) => expect(state).toMatchObject(githubCursor),

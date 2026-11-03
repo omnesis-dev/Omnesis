@@ -77,7 +77,8 @@ describe("Loop scorecard instrument validation", () => {
     expect(result.counts.mutatingToolCallsFailed).toBe(
       result.counts.verifiedConcurrentCreateRetries +
         result.counts.verifiedFrontierRetries +
-        result.counts.verifiedCollectionCreateRetries,
+        result.counts.verifiedCollectionCreateRetries +
+        result.counts.verifiedMaintenanceHandoffs,
     );
     expect(result.metrics.malformedToolCallRateRaw).toBe(
       result.counts.mutatingToolCallsFailed / result.counts.mutatingToolCalls,
@@ -162,7 +163,8 @@ describe("Loop scorecard instrument validation", () => {
       result.counts.malformedToolCallsFailed +
         result.counts.verifiedConcurrentCreateRetries +
         result.counts.verifiedFrontierRetries +
-        result.counts.verifiedCollectionCreateRetries,
+        result.counts.verifiedCollectionCreateRetries +
+        result.counts.verifiedMaintenanceHandoffs,
     );
     expect(result.metrics.malformedToolCallRateRaw).toBe(
       result.counts.mutatingToolCallsFailed / result.counts.mutatingToolCalls,

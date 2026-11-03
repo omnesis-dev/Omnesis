@@ -160,6 +160,96 @@ describe("morning brief detail", () => {
     );
   });
 
+  function sendReferences(referenceDocumentIds: string[], observations: string[] = []) {
+    replaceMorningBriefItems(db, DAY, "run_morning", observations);
+    markMorningBriefSent(
+      db,
+      {
+        day: DAY,
+        runId: "run_morning",
+        conversationId: "conv_brief",
+        messageId: "msg_references",
+        referenceDocumentIds,
+      },
+      NOW,
+    );
+  }
+
+  test("a brief without observations exposes the original documents it used", () => {
+    insertDoc("doc_chat", "whatsapp:personal", "Workshop arrangements", "2026-07-01T12:00:00.000Z");
+    sendReferences(["doc_chat", "doc_offer", "doc_chat"]);
+    expect(readDailyBriefDetail(db, { day: DAY, messageId: "msg_references" })).toEqual({
+      sentAt: "2026-07-02T06:02:40.055Z",
+      items: [],
+      references: [
+        {
+          id: "doc_chat",
+          title: "Workshop arrangements",
+          sourceType: "whatsapp",
+          createdAt: "2026-07-01T12:00:00.000Z",
+        },
+        {
+          id: "doc_offer",
+          title: "Loan offer letter",
+          sourceType: "gmail",
+          createdAt: "2026-06-28T09:00:00.000Z",
+        },
+      ],
+    });
+    db.prepare("UPDATE documents SET title = 'Updated arrangements' WHERE id = 'doc_chat'").run();
+    expect(
+      readDailyBriefDetail(db, { day: DAY, messageId: "msg_references" }).references?.[0]?.title,
+    ).toBe("Updated arrangements");
+  });
+
+  test("references already attached to a shipped observation are listed only on the observation", () => {
+    insertDoc("doc_calendar", "google-calendar:work", "Workshop", "2026-07-01T10:00:00.000Z");
+    sendReferences(["doc_offer", "doc_calendar"], ["obs_offer"]);
+    const detail = readDailyBriefDetail(db, { day: DAY, messageId: "msg_references" });
+    expect(detail.items).toHaveLength(1);
+    expect(detail.items[0]?.sources.map((source) => source.id)).toContain("doc_offer");
+    expect(detail.references?.map((source) => source.id)).toEqual(["doc_calendar"]);
+  });
+
+  test("deleted and privacy-unavailable document references are hidden without retaining metadata", () => {
+    insertDoc("doc_erased", "notion:private", "Temporary agenda", "2026-07-01T10:00:00.000Z");
+    sendReferences(["doc_missing", "doc_erased", "doc_offer", "doc_untitled"]);
+    db.prepare("DELETE FROM documents WHERE id = 'doc_erased'").run();
+    db.prepare("INSERT INTO removed_sources (id, removed_at) VALUES ('gmail:work', ?)").run(NOW);
+    const detail = readDailyBriefDetail(db, { day: DAY, messageId: "msg_references" });
+    expect(detail.references).toEqual([
+      {
+        id: "doc_untitled",
+        title: null,
+        sourceType: "notion",
+        createdAt: "2026-06-29T10:30:00.000Z",
+      },
+    ]);
+    expect(JSON.stringify(detail)).not.toContain("Temporary agenda");
+  });
+
+  test("a tombstoned source document is hidden before its physical deletion", () => {
+    sendReferences(["doc_offer", "doc_untitled"]);
+    db.prepare(
+      "UPDATE knowledge_source_revisions SET deleted = 1, updated_at = ? WHERE document_id = 'doc_offer'",
+    ).run(NOW);
+    expect(
+      readDailyBriefDetail(db, { day: DAY, messageId: "msg_references" }).references?.map(
+        (source) => source.id,
+      ),
+    ).toEqual(["doc_untitled"]);
+  });
+
+  test("references require the recorded send's day and message to match", () => {
+    sendReferences(["doc_offer"]);
+    expect(
+      readDailyBriefDetail(db, { day: "2026-07-01", messageId: "msg_references" }),
+    ).not.toHaveProperty("references");
+    expect(readDailyBriefDetail(db, { day: DAY, messageId: "msg_other" })).not.toHaveProperty(
+      "references",
+    );
+  });
+
   test("a task reads its current title and state", () => {
     send(["obs_offer"]);
     db.prepare(

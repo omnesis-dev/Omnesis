@@ -352,7 +352,7 @@ describe("a downgrade across migrations that leave cursors alone", () => {
  */
 describe("the cursor-compatibility version", () => {
   /** Every migration through this version has been decided on. */
-  const REVIEWED_THROUGH = 209;
+  const REVIEWED_THROUGH = 211;
   const FLAGGED = [131, 133, 134, 139, 141, 146, 178];
 
   test("every migration has been decided on", () => {
@@ -377,20 +377,20 @@ describe("the cursor-compatibility version", () => {
   });
 });
 
-describe("migration 209", () => {
-  /** Put the database back to the step before 209, as an install at 208 holds it. */
-  function atSchema208(): void {
-    db.prepare("DELETE FROM schema_migrations WHERE version >= 209").run();
-    setDbVersion(db, 208);
+describe("migration 211", () => {
+  /** Put the database back to the step before 211, as an install at 210 holds it. */
+  function atSchema210(): void {
+    db.prepare("DELETE FROM schema_migrations WHERE version >= 211").run();
+    setDbVersion(db, 210);
   }
 
   test("lowers head stamps to the cursor-compatibility version and leaves everything else", () => {
-    atSchema208();
+    atSchema210();
     const plant = db.prepare(
       `INSERT INTO sync_state (source_id, device_id, cursor, last_synced_at, minimum_gateway_version)
        VALUES (?, ?, ?, '2026-01-01T00:00:00.000Z', ?)`,
     );
-    plant.run("gmail:alice@example.com", "", '{"historyId":"981"}', 208);
+    plant.run("gmail:alice@example.com", "", '{"historyId":"981"}', 210);
     plant.run("example-notes:shared", "", "{}", 0);
     plant.run("example-notes:shared", "device-a", '{"page":4}', 206);
     plant.run("example-notes:shared", "device-b", '{"page":9}', 181);
@@ -436,7 +436,7 @@ describe("migration 209", () => {
     expect(epochs()).toEqual(epochsBefore);
 
     // A second open finds nothing left to lower.
-    atSchema208();
+    atSchema210();
     const snapshot = db.prepare("SELECT * FROM sync_state ORDER BY 1, 2").all();
     runMigrations(db);
     expect(db.prepare("SELECT * FROM sync_state ORDER BY 1, 2").all()).toEqual(snapshot);

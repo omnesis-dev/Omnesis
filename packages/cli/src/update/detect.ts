@@ -177,18 +177,6 @@ export function assessUpdate(currentVersion: string, targetVersion: string): Upd
   return { direction, current, target, notes, requiresForce };
 }
 
-/** The command an operator backs up with before an update that takes no backup of its own. */
-export const MANUAL_BACKUP_COMMAND = "omnesis backup --note pre-upgrade";
-
-/**
- * The warning an update prints about the gateway's forward-only migrations,
- * read off the plan it is about to run: a plan with its own backup says that
- * the backup runs before them, and where it goes; only a plan without one —
- * `--no-backup`, or a host whose gateway is another machine's — tells the
- * operator to back up first. `unreleased` is an edge build or an exact commit,
- * which can carry migrations no release has. Null for a change that migrates
- * nothing forward.
- */
 /** Whether a plan step acts on, or waits for, a gateway on this host. */
 function involvesGateway(step: UpdateStep): boolean {
   switch (step.kind) {
@@ -206,6 +194,7 @@ function involvesGateway(step: UpdateStep): boolean {
   }
 }
 
+/** Describe forward-only migrations and any explicitly requested backup. */
 export function migrationBackupNote(
   change: UpdateDirection | "unreleased",
   steps: readonly UpdateStep[],
@@ -220,11 +209,7 @@ export function migrationBackupNote(
     change === "upgrade"
       ? "This upgrade runs forward-only schema migrations on the gateway's next boot, and there are no down-migrations."
       : "Edge can contain unreleased changes, including migrations no release has.";
-  if (!backedUp) {
-    return change === "upgrade"
-      ? `${lead} Back up first: ${MANUAL_BACKUP_COMMAND}`
-      : `${lead} Back up before running it: ${MANUAL_BACKUP_COMMAND}`;
-  }
+  if (!backedUp) return lead;
   return (
     `${lead} The update backs up the gateway's databases before they run, into ` +
     `${backupsDir ?? "the gateway's backups folder"}.`
@@ -1455,7 +1440,7 @@ export type UpdateStep =
   | { kind: "remove-previous-images"; previous: string };
 
 export interface HostPlanOptions {
-  /** False for `--no-backup`, which the operator takes responsibility for. */
+  /** True only when the operator explicitly requests a pre-update backup. */
   backup: boolean;
   /**
    * False when the caller restarts the daemons itself. Every restart becomes

@@ -16,6 +16,8 @@ import {
   latestSentMorningBrief,
   listMorningBriefItems,
   listMorningBriefItemsForMessage,
+  listMorningBriefReferences,
+  clearMorningBriefMessageItems,
   markMorningBriefSent,
   morningBriefSent,
   replaceMorningBriefItems,
@@ -170,6 +172,91 @@ describe("morning brief items", () => {
     expect(send(DAY1, "msg_empty")).toEqual({ ok: true, shippedObservationIds: [] });
     expect(getSentMorningBrief(db, DAY1)?.itemCount).toBe(0);
     expect(replaceMorningBriefItems(db, DAY1, "run_late", ["obs_1"])).toBe(false);
+  });
+
+  test("standalone references preserve selection order, deduplicate and belong to the exact sent brief", () => {
+    markMorningBriefSent(
+      db,
+      {
+        day: DAY1,
+        runId: "run_morning",
+        conversationId: "conv_brief",
+        messageId: "msg_references",
+        referenceDocumentIds: ["doc_message", "doc_email", "doc_message"],
+      },
+      T0,
+    );
+    expect(listMorningBriefReferences(db, { day: DAY1, messageId: "msg_references" })).toEqual([
+      "doc_message",
+      "doc_email",
+    ]);
+    expect(listMorningBriefReferences(db, { day: DAY2, messageId: "msg_references" })).toEqual([]);
+    expect(listMorningBriefReferences(db, { day: DAY1, messageId: "msg_other" })).toEqual([]);
+    expect(
+      markMorningBriefSent(
+        db,
+        {
+          day: DAY1,
+          runId: "retry",
+          conversationId: "conv_brief",
+          messageId: "msg_retry",
+          referenceDocumentIds: ["doc_unrelated"],
+        },
+        T0 + 1,
+      ),
+    ).toEqual({ ok: false, reason: "already_sent" });
+    expect(listMorningBriefReferences(db, { day: DAY1, messageId: "msg_references" })).toEqual([
+      "doc_message",
+      "doc_email",
+    ]);
+    db.close();
+    db = createDatabase(path);
+    expect(listMorningBriefReferences(db, { day: DAY1, messageId: "msg_references" })).toEqual([
+      "doc_message",
+      "doc_email",
+    ]);
+  });
+
+  test("references and the send record commit atomically", () => {
+    replaceMorningBriefItems(db, DAY1, "run_a", ["obs_1"]);
+    db.exec(`CREATE TRIGGER refuse_brief_reference BEFORE INSERT ON morning_brief_references
+      BEGIN SELECT RAISE(ABORT, 'reference refused'); END`);
+    expect(() =>
+      markMorningBriefSent(
+        db,
+        {
+          day: DAY1,
+          runId: "run_a",
+          conversationId: "conv_brief",
+          messageId: "msg_failed",
+          referenceDocumentIds: ["doc_email"],
+        },
+        T0,
+      ),
+    ).toThrow("reference refused");
+    expect(getSentMorningBrief(db, DAY1)).toBeNull();
+    expect(getObservation(db, "obs_1")?.state).toBe("live");
+    expect(listMorningBriefItems(db, DAY1)[0]?.messageId).toBeNull();
+    expect(listMorningBriefReferences(db, { day: DAY1, messageId: "msg_failed" })).toEqual([]);
+  });
+
+  test("redacting a brief clears both observation items and standalone references", () => {
+    replaceMorningBriefItems(db, DAY1, "run_a", ["obs_1"]);
+    markMorningBriefSent(
+      db,
+      {
+        day: DAY1,
+        runId: "run_a",
+        conversationId: "conv_brief",
+        messageId: "msg_redacted",
+        referenceDocumentIds: ["doc_email"],
+      },
+      T0,
+    );
+    expect(clearMorningBriefMessageItems(db, "msg_redacted")).toBe(2);
+    expect(listMorningBriefItemsForMessage(db, "msg_redacted")).toEqual([]);
+    expect(listMorningBriefReferences(db, { day: DAY1, messageId: "msg_redacted" })).toEqual([]);
+    expect(clearMorningBriefMessageItems(db, "msg_redacted")).toBe(0);
   });
 
   test("latestSentMorningBrief returns the newest sent day", () => {

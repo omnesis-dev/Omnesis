@@ -364,13 +364,15 @@ final class NotesCoordinatorTests: XCTestCase {
         XCTAssertEqual(postedTexts, ["fresh note", "queued earlier offline"])
         XCTAssertTrue(coordinator.pending.isEmpty)
     }
+}
 
+extension NotesCoordinatorTests {
     // MARK: - Drain
 
     func testDrainPostsOriginalCapturedAtAndIdempotencyKeyAndClearsQueue() async throws {
         let store = PendingNoteStore(directory: directory)
         let capturedAt = try XCTUnwrap(NotesTime.date(fromISO: "2026-03-08T22:15:00.000Z"))
-        let note = PendingNote(text: "spoken yesterday offline", capturedAt: capturedAt, surface: "ios-siri")
+        let note = PendingNote(text: "spoken yesterday offline", capturedAt: capturedAt, surface: "ios-siri", taskId: "task_example")
         try await store.enqueue(note)
 
         let session = MockSession()
@@ -387,6 +389,7 @@ final class NotesCoordinatorTests: XCTestCase {
         let sent = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any]
         XCTAssertEqual(sent?["capturedAt"] as? String, "2026-03-08T22:15:00.000Z")
         XCTAssertEqual(sent?["surface"] as? String, "ios-siri")
+        XCTAssertEqual(sent?["taskId"] as? String, "task_example")
         XCTAssertEqual(sent?["deviceId"] as? String, "dev_1")
         // The persisted idempotency key rides along so a drain retry of
         // a landed-but-unacknowledged POST can't duplicate the note.

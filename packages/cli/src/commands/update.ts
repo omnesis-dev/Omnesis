@@ -12,8 +12,8 @@
  *   docker           newest published release as an image tag, then compose pull
  *
  * It then does whatever this host's roles need, in an order that matters.
- * On a gateway host the backup is taken through the gateway API before
- * anything irreversible happens; the gateway restarts and has to answer
+ * On a gateway host an explicitly requested backup is taken through the gateway
+ * API before anything irreversible happens; the gateway restarts and has to answer
  * `/health` — proving its forward-only migrations finished — before the
  * collector it serves is restarted. A host that only collects just restarts
  * its collector. A host with an agent-harness integration refreshes the
@@ -40,8 +40,8 @@
  * checkout, the `main` image tag for a container install — and is refused on
  * a package install, since a branch has no published package. `--dry-run`
  * prints the plan without mutating anything, `--yes` skips every prompt
- * (required when stdin/stdout aren't TTYs), and `--no-backup` skips the
- * pre-update backup on a gateway host.
+ * (required when stdin/stdout aren't TTYs), and `--backup` opts into a
+ * pre-update backup on a gateway host. `--no-backup` is a compatibility no-op.
  *
  * Pure logic (detection, channel mapping, version compare, host roles, the
  * ordered plan and its rollback) lives in `../update/detect.ts`; this file
@@ -58,7 +58,7 @@ import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { defineCommand } from "citty";
+import { defineCommand, parseArgs } from "citty";
 import { resolveHarnessBinary } from "@omnesis/agent-integration";
 import {
   acquireUpdateLock,
@@ -824,7 +824,7 @@ function describeStep(step: UpdateStep, targetLabel: string): string {
  * it did, its forward-only migrations may already have run, and the restored
  * build meets a schema ahead of it — which it survives by clearing the sync
  * cursors that schema wrote, so those sources resync. The operator is told
- * that, and told that the backup taken minutes earlier is the exact way back.
+ * that, and told how an existing backup can restore the exact prior state.
  */
 async function rollBackAndFail(
   applyPlan: ApplyPlan,
@@ -991,7 +991,7 @@ async function rollBackAndFail(
     console.log(
       `${c.yellow}! The new build had already opened the store, so its forward-only migrations ` +
         `may have run. The restored build clears the sync cursors that newer schema wrote and ` +
-        `those sources resync; restore the backup taken at the start of this run if you need ` +
+        `those sources resync; if you have a pre-update backup, restore it for ` +
         `the exact prior state (${c.bold}omnesis backup --list${c.reset}${c.yellow}, then ` +
         `${c.bold}omnesis restore <backup-dir> --force${c.reset}${c.yellow}).${c.reset}`,
     );
@@ -1360,8 +1360,7 @@ async function executeHostPlan(
               const detail = err instanceof Error ? err.message : String(err);
               throw await backupFailure(
                 `Could not copy the stopped gateway's databases into a backup ${when}: ${detail}\n` +
-                  `This upgrade runs forward-only schema migrations, so the backup is the only way ` +
-                  `back. Fix the cause and run the update again, or pass --no-backup to accept that risk.`,
+                  `Run the update again without --backup to continue without one.`,
               );
             }
             if (outcome.kind === "copied") {
@@ -1392,9 +1391,8 @@ async function executeHostPlan(
               const detail = err instanceof Error ? err.message : String(err);
               throw await backupFailure(
                 `Could not take a backup through ${GATEWAY_REQUEST_URL} ${when}: ${detail}\n` +
-                  `This upgrade runs forward-only schema migrations, so the backup is the only way ` +
-                  `back. Check that the gateway is running and that OMNESIS_GATEWAY_URL names it, ` +
-                  `or pass --no-backup to accept that risk.`,
+                  `Check that the gateway is running and that OMNESIS_GATEWAY_URL names it. ` +
+                  `Run the update again without --backup to continue without one.`,
               );
             }
           }
@@ -2006,7 +2004,7 @@ export async function updateNpmGlobal(
   );
   console.log(`Will run: ${c.cyan}${formatCommandSpec(applyPlan.apply[0]!)}${c.reset}`);
   const planned = planHostUpdate(deps.roles, {
-    backup: opts.backup !== false,
+    backup: opts.backup === true,
     restart: deps.restart,
     serviceDefinitions: deps.serviceDefinitions !== undefined,
   });
@@ -2286,7 +2284,7 @@ export async function updateSourceCheckout(
   // build is skipped and whether each daemon already runs it.
   if (opts.dryRun) {
     const planned = planHostUpdate(deps.roles, {
-      backup: opts.backup !== false,
+      backup: opts.backup === true,
       restart: deps.restart,
       serviceDefinitions: deps.serviceDefinitions !== undefined,
       pauseDaemonsForBuild: deps.buildMemoryTight?.() === true,
@@ -2480,7 +2478,7 @@ export async function updateSourceCheckout(
   // backup goes with it because nothing irreversible follows an empty apply.
   const alreadyOnTarget = evidence.complete;
   const planned = planHostUpdate(deps.roles, {
-    backup: opts.backup !== false && !alreadyOnTarget,
+    backup: opts.backup === true && !alreadyOnTarget,
     pauseDaemonsForBuild: !alreadyOnTarget && deps.buildMemoryTight?.() === true,
     restart: deps.restart,
     serviceDefinitions: deps.serviceDefinitions !== undefined,
@@ -2781,7 +2779,7 @@ export async function updateDocker(
   );
   console.log(`Will run: ${c.cyan}${formatCommandSpec(applyPlan.apply[0]!)}${c.reset}`);
   const planned = planHostUpdate(roles, {
-    backup: opts.backup !== false,
+    backup: opts.backup === true,
     restart: flowDeps.restart,
     ...(baseline !== target ? { previousImages: baseline } : {}),
   });
@@ -3652,6 +3650,17 @@ export const continueAfterApplyCommand = defineCommand({
   },
 });
 
+/** Parse opt-in backups while ignoring the compatibility --no-backup flag. */
+export function parseUpdateBackup(rawArgs: string[]): boolean {
+  // Citty treats --no-backup as a negation even when --backup is also present.
+  return (
+    parseArgs(
+      rawArgs.filter((arg) => arg !== "--no-backup"),
+      { backup: { type: "boolean", default: false } },
+    ).backup === true
+  );
+}
+
 export const updateCommand = defineCommand({
   meta: {
     name: "update",
@@ -3700,8 +3709,9 @@ export const updateCommand = defineCommand({
     },
     backup: {
       type: "boolean",
-      default: true,
-      description: "Back up before updating a gateway host (pass --no-backup to skip)",
+      default: false,
+      description: "Take a pre-update backup on a gateway host (opt-in)",
+      negativeDescription: "Accepted for compatibility; has no effect",
     },
     "health-timeout": {
       type: "string",
@@ -3748,7 +3758,7 @@ export const updateCommand = defineCommand({
     const yes = Boolean(ctx.args.yes);
     const force = Boolean(ctx.args.force);
     const allowRewind = force || Boolean(ctx.args["allow-rewind"]);
-    const backup = ctx.args.backup !== false;
+    const backup = parseUpdateBackup(ctx.rawArgs);
     const healthTimeoutSec = parseHealthTimeoutSeconds(ctx.args["health-timeout"]);
     if (healthTimeoutSec === null) {
       throw new CliError(

@@ -23,7 +23,7 @@ import {
   type TaskCommandResult,
 } from "../storage/tasks.js";
 import { isOwnedTask } from "../storage/types.js";
-import { TASK_VIEWS, TaskQueryService, type TaskItem } from "./views.js";
+import { TASK_VIEWS, TaskQueryService, type TaskItem, type TaskDocument } from "./views.js";
 import type { ToolResult } from "@omnesis/core";
 import type { TaskService } from "./service.js";
 import type { InterestEngine } from "../interest/engine.js";
@@ -36,13 +36,10 @@ export interface TaskToolDeps {
   tasks: Pick<TaskService, "apply">;
   writeGate: Pick<WriteGate, "transitionObservation" | "setObservationUserAction">;
   origin: TaskCommandOrigin;
+  /** Resolve and publish the originating conversation before creating a task. */
+  creationReference?: () => Promise<string | null>;
   clock?: () => number;
   idGen?: () => string;
-  /**
-   * Limit the tools to the user's own tasks: no suggestions listed, accepted
-   * or ignored. The note turn runs this way.
-   */
-  ownedOnly?: boolean;
   /** Offer `observation_suppress` (the Morning brief is running). */
   observations?: boolean;
   /**
@@ -56,6 +53,12 @@ const schedule = z
   .string()
   .refine(isTaskSchedule, "must be YYYY-MM-DD, YYYY-MM or someday")
   .describe("When the user plans to do it: a day YYYY-MM-DD, a month YYYY-MM, or someday.");
+const docs = z
+  .array(z.string().min(1))
+  .max(100)
+  .describe(
+    "Relevant document ids found with the read tools. On edit, replaces the linked documents: preserve existing links unless the user asks to remove them; [] clears them.",
+  );
 const deadline = z
   .object({
     type: z.enum(["any_time", "by", "approximate", "on_day"]),
@@ -72,14 +75,19 @@ function invalid(message: string): ToolResult {
   return { kind: "error", code: "invalid_args", message };
 }
 
-function compact(item: TaskItem) {
+function compact(item: TaskItem, documents: ReadonlyMap<string, TaskDocument>) {
   const loop = item.row;
   return {
     id: loop.id,
     title: loop.title,
     ...(loop.description ? { description: loop.description } : {}),
+    ...(loop.deadline ? { deadline: loop.deadline } : {}),
     state: loop.state,
     yours: isOwnedTask(loop),
+    documents: loop.docs.flatMap((id) => {
+      const document = documents.get(id);
+      return document ? [document] : [];
+    }),
     ...(loop.scheduledFor ? { scheduledFor: loop.scheduledFor } : {}),
     ...(item.dueDay ? { due: item.dueDay } : {}),
     ...(item.carried ? { carried: true } : {}),
@@ -110,6 +118,7 @@ function receipt(result: TaskCommandResult): ToolResult {
             title: result.loop.title,
             state: result.loop.state,
             scheduledFor: result.loop.scheduledFor,
+            deadline: result.loop.deadline,
           }
         : null,
     },
@@ -120,20 +129,15 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
   const clock = deps.clock ?? Date.now;
   const idGen = deps.idGen ?? (() => randomUUID().replace(/-/g, "").slice(0, 16));
   const tasks = new TaskQueryService(deps.db);
-  const views = deps.ownedOnly ? TASK_VIEWS.filter((v) => v !== "suggested") : TASK_VIEWS;
   const apply = async (command: TaskCommand) => receipt(await deps.tasks.apply(command));
 
   const listSchema = z
     .object({
       view: z
-        .enum(views as unknown as [string, ...string[]])
+        .enum(TASK_VIEWS)
         .optional()
         .describe(
-          "today (planned for today, carried over, or due), month, future (later or someday), anytime (unscheduled), waiting (on someone else), done" +
-            (deps.ownedOnly
-              ? ""
-              : ", suggested (the Brain's suggestions the user has not accepted)") +
-            ". Default today.",
+          "today (planned for today, carried over, or due), month, future (later or someday), anytime (unscheduled), waiting (on someone else), done, suggested (the Brain's suggestions the user has not accepted). Default today.",
         ),
       query: z
         .string()
@@ -141,14 +145,14 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
         .max(100)
         .optional()
         .describe(
-          "Find open tasks whose title or description contains this text, across every view.",
+          "Case-insensitive literal substring of title or description, not semantic search. Searches today, month, future, anytime and suggested together; view is ignored when query is present. Omit query to inspect waiting or done.",
         ),
     })
     .strict();
   const taskList: ToolHandle = {
     name: "task_list",
     description:
-      "List the user's tasks, or find one by text. Read this before changing a task so you use its id.",
+      "List the user's tasks, or find one by a short case-insensitive literal substring. query searches today, month, future, anytime and suggested together; view is ignored when query is present. Omit query to inspect a specific view, such as waiting or done. Read before changing a task so you use its id.",
     schema: listSchema,
     summarize: (args) => {
       const a = (args ?? {}) as { query?: unknown; view?: unknown };
@@ -161,9 +165,7 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       let items: TaskItem[];
       if (parsed.data.query) {
         const needle = parsed.data.query.toLowerCase();
-        items = (
-          ["today", "month", "future", "anytime", ...(deps.ownedOnly ? [] : ["suggested"])] as const
-        )
+        items = (["today", "month", "future", "anytime", "suggested"] as const)
           .flatMap((view) => tasks.view(view as (typeof TASK_VIEWS)[number], day).tasks)
           .filter(
             (item, index, all) => all.findIndex((other) => other.row.id === item.row.id) === index,
@@ -174,10 +176,16 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       } else {
         items = tasks.view((parsed.data.view ?? "today") as (typeof TASK_VIEWS)[number], day).tasks;
       }
+      const visible = items.slice(0, 60);
+      const documents = tasks.documents(visible);
       return {
         kind: "structured",
         resultType: "task.list",
-        data: { today: day, tasks: items.slice(0, 60).map(compact), truncated: items.length > 60 },
+        data: {
+          today: day,
+          tasks: visible.map((item) => compact(item, documents)),
+          truncated: items.length > 60,
+        },
       };
     },
   };
@@ -193,27 +201,46 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       description: z.string().max(2000).optional(),
       scheduledFor: schedule.optional(),
       deadline: deadline.optional(),
+      docs: docs.optional(),
     })
     .strict();
   const taskCreate: ToolHandle = {
     name: "task_create",
     description:
-      "Add a task to the user's tasks because they asked for it. Check task_list first so you never add a task that already exists.",
+      "Add a task to the user's tasks because they asked for it. Check task_list first so you never add a task that already exists. Search for relevant documents and link their ids with docs when useful.",
     schema: createSchema,
     mutates: true,
     summarize: (args) => {
       const title = (args as { title?: unknown } | null)?.title;
       return typeof title === "string" ? title : "";
     },
-    async invoke(raw): Promise<ToolResult> {
+    async invoke(raw, ctx): Promise<ToolResult> {
       const parsed = createSchema.safeParse(raw);
       if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");
+      let linkedDocs = parsed.data.docs;
+      if (deps.creationReference) {
+        const reference = await deps.creationReference();
+        if (ctx.abortSignal?.aborted)
+          return {
+            kind: "error",
+            code: "canceled",
+            message: "The request was canceled before the task was created.",
+          };
+        if (!reference)
+          return invalid("The conversation reference is unavailable. No task was created.");
+        linkedDocs = [...new Set([...(linkedDocs ?? []), reference])];
+        if (linkedDocs.length > 100)
+          return invalid(
+            "A task can link at most 100 documents including its originating conversation. Remove one explicit reference and retry; no task was created.",
+          );
+      }
       return apply({
         ...deps.origin,
         kind: "create",
         id: `loop_${idGen()}`,
         origin: deps.origin.surface === "note" ? "note" : "user",
         title: parsed.data.title,
+        ...(linkedDocs !== undefined ? { docs: linkedDocs } : {}),
         ...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
         ...(parsed.data.scheduledFor !== undefined
           ? { scheduledFor: parsed.data.scheduledFor }
@@ -223,32 +250,39 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
     },
   };
 
-  const actions = deps.ownedOnly
-    ? (["complete", "migrate", "strike", "edit", "confirm", "keep", "reopen"] as const)
-    : ([
-        "complete",
-        "migrate",
-        "strike",
-        "edit",
-        "accept",
-        "ignore",
-        "confirm",
-        "keep",
-        "reopen",
-        "delete",
-      ] as const);
+  const actions = [
+    "complete",
+    "migrate",
+    "strike",
+    "edit",
+    "accept",
+    "ignore",
+    "confirm",
+    "keep",
+    "reopen",
+    "delete",
+  ] as const;
+  const actionFields: Record<(typeof actions)[number], readonly string[]> = {
+    complete: ["note"],
+    migrate: ["to"],
+    strike: ["reason"],
+    edit: ["title", "description", "scheduledFor", "deadline", "docs"],
+    accept: ["scheduledFor"],
+    ignore: ["reason"],
+    confirm: [],
+    keep: [],
+    reopen: [],
+    delete: [],
+  };
   const updateSchema = z
     .object({
       id: z.string().min(1),
       action: z
-        .enum(actions as unknown as [string, ...string[]])
+        .enum(actions)
         .describe(
-          "complete (done; optional note on how), migrate (move to `to`), strike (not worth doing; optional reason), edit (change title, description, scheduledFor or deadline), " +
-            (deps.ownedOnly
-              ? ""
-              : "accept / ignore (a Brain suggestion; ignore only takes it out of the user's tasks, the Brain keeps tracking it), ") +
-            "confirm / keep (accept or refuse the Brain's proposed change), reopen" +
-            (deps.ownedOnly ? "." : ", delete (only for a task that should never have existed)."),
+          "complete (done; optional note on how), migrate (move to `to`), strike (not worth doing; optional reason), edit (change title, description, scheduledFor, deadline or linked docs), " +
+            "accept / ignore (a Brain suggestion; ignore only takes it out of the user's tasks, the Brain keeps tracking it), " +
+            "confirm / keep (accept or refuse the Brain's proposed change), reopen, delete (permanently removes the task and its history; cannot be undone; only for a task that should never have existed).",
         ),
       note: z.string().max(500).optional(),
       reason: z.string().max(500).optional(),
@@ -257,12 +291,13 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       description: z.string().max(2000).optional(),
       scheduledFor: schedule.nullable().optional(),
       deadline: deadline.nullable().optional(),
+      docs: docs.optional(),
     })
     .strict();
   const taskUpdate: ToolHandle = {
     name: "task_update",
     description:
-      "Change one of the user's tasks because they said so. The change applies at once; tell the user what changed in one short line, which they can undo.",
+      "Change one of the user's tasks because they said so. Use only the fields defined for the selected action; deadline and docs belong to edit. Use strike for an undoable cancellation. Delete is permanent: never recreate a deleted task as an undo; explain that deletion cannot be undone. The change applies at once; tell the user what changed in one short line, which they can undo.",
     schema: updateSchema,
     mutates: true,
     summarize: (args) => {
@@ -274,15 +309,13 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
       const parsed = updateSchema.safeParse(raw);
       if (!parsed.success) return invalid(parsed.error.issues[0]?.message ?? "invalid arguments");
       const { id, action, note, reason, to } = parsed.data;
-      if (deps.ownedOnly) {
-        const loop = getOpenLoop(deps.db, id);
-        if (loop && !isOwnedTask(loop))
-          return {
-            kind: "error",
-            code: "not_owned",
-            message: "That is a suggestion, not one of the user's tasks.",
-          };
-      }
+      const unused = Object.keys(parsed.data).filter(
+        (key) => key !== "id" && key !== "action" && !actionFields[action].includes(key),
+      );
+      if (unused.length > 0)
+        return invalid(
+          `${action} does not accept ${unused.join(", ")}. Use edit for title, description, scheduledFor, deadline or docs; issue separate actions for other changes. Nothing was changed.`,
+        );
       const base = { ...deps.origin, id };
       switch (action) {
         case "complete":
@@ -297,6 +330,7 @@ export function buildTaskTools(deps: TaskToolDeps): ToolHandle[] {
             ...base,
             kind: "edit",
             fields: {
+              ...(parsed.data.docs !== undefined ? { docs: parsed.data.docs } : {}),
               ...(parsed.data.title !== undefined ? { title: parsed.data.title } : {}),
               ...(parsed.data.description !== undefined
                 ? { description: parsed.data.description }

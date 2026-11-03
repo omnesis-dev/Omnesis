@@ -17,6 +17,7 @@ import {
 } from "@omnesis/types";
 import { AccountId, SourceId, SourceType } from "@omnesis/types";
 import {
+  hostNetworkFromText,
   PROTOCOL_VERSION,
   PAIRING_PROTOCOL_VERSION,
   SOURCE_CONTRACT_WIRE_RANGE,
@@ -395,6 +396,7 @@ describe("health endpoint", () => {
         subscriptions: false,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         taskConversations: { min: 1, max: 1 },
+        taskNoteCapture: { min: 1, max: 1 },
       });
 
       process.env.OMNESIS_SYNTHETIC = "1";
@@ -410,6 +412,7 @@ describe("health endpoint", () => {
         subscriptions: true,
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         taskConversations: { min: 1, max: 1 },
+        taskNoteCapture: { min: 1, max: 1 },
         browserNotes: { min: 1, max: 1 },
         browserFind: { min: 1, max: 2 },
         browserFindSuggest: { min: 1, max: 1 },
@@ -3826,6 +3829,58 @@ describe("device management endpoints", () => {
     expect(plan.platform).toBe("ios");
     expect(Array.isArray(plan.addresses)).toBe(true);
     expect(plan.recommendedUrl).toBe(plan.addresses.find((a) => a.usable)?.gatewayUrl ?? null);
+  });
+
+  test("/admin/devices/pair-addresses offers a bridged container's host addresses, never its own", async () => {
+    const pairingCode = await mintPairingCode("ios");
+    const customApp = createServer(db, undefined, {
+      tlsFingerprintSha256: "a".repeat(64),
+      inContainer: true,
+      port: 7600,
+      hostNetwork: () =>
+        hostNetworkFromText(
+          "port 8443\nlocal-name studio-northstar.local\ninterface en0 192.168.1.20\n",
+        ),
+    });
+    const post = (path: string, body: unknown) =>
+      customApp.request(path, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const res = await post("/admin/devices/pair-addresses", { pairingCode });
+    expect(res.status).toBe(200);
+    const plan = (await res.json()) as {
+      addresses: Array<{ gatewayUrl: string; usable: boolean; label: string }>;
+      recommendedUrl: string | null;
+    };
+    expect(plan.recommendedUrl).toBe("https://192.168.1.20:8443");
+    // Whatever this test host's own interfaces are, they stand for the
+    // container's network here: none is offered.
+    expect(plan.addresses.filter((a) => a.usable).map((a) => a.gatewayUrl)).toEqual([
+      "https://192.168.1.20:8443",
+      "https://studio-northstar.local:8443",
+    ]);
+    for (const refused of plan.addresses.filter((a) => a.label.startsWith("Docker container"))) {
+      expect(refused.usable).toBe(false);
+    }
+    const qr = await post("/admin/devices/pair-qr", {
+      pairingCode,
+      gatewayUrl: "https://192.168.1.20:8443",
+    });
+    expect(qr.status).toBe(200);
+    expect(JSON.parse(((await qr.json()) as { qrPayload: string }).qrPayload)).toMatchObject({
+      gatewayUrl: "https://192.168.1.20:8443",
+      fingerprint: "a".repeat(64),
+    });
+    const identities = await customApp.request("/admin/network-identities", {
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    expect(
+      ((await identities.json()) as { items: Array<{ address: string }> }).items.map(
+        (i) => i.address,
+      ),
+    ).toEqual(["192.168.1.20", "studio-northstar.local"]);
   });
 
   test("/admin/devices/pair-addresses refuses a code that is not pending", async () => {
@@ -8771,9 +8826,12 @@ describe("GET /status", () => {
     expect(body.watchCapture).toMatchObject({ supported: true, enabled: true, active: false });
   });
 
-  test("advertises task conversations to authenticated clients", async () => {
+  test("advertises task conversations and task capture context to authenticated clients", async () => {
     const body = await (await req("/status")).json();
-    expect(body.capabilities).toEqual({ taskConversations: { min: 1, max: 1 } });
+    expect(body.capabilities).toEqual({
+      taskConversations: { min: 1, max: 1 },
+      taskNoteCapture: { min: 1, max: 1 },
+    });
   });
 
   test("enables demo presentation only for OMNESIS_DEMO=1 and retains test identity", async () => {

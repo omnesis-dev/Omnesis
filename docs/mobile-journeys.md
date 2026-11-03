@@ -106,9 +106,10 @@ on Android, with the Compose semantics tree in `logcat.txt` under the
 
 ## In CI
 
-`.github/workflows/mobile-journeys.yml` runs both platforms' journeys on every
-push to `main` and on manual dispatch, and on pull requests that change the
-corresponding app or the shared machinery (the journey script,
+`.github/workflows/mobile-journeys.yml` runs Android journeys on every push to
+`main` and iOS journeys twice daily at 03:17 and 15:17 UTC. Manual dispatch
+selects either or both platforms. Pull requests run the corresponding platform
+when they change its app or the shared machinery (the journey script,
 `synth-gateway.sh`, the `e2e-minimal` universe, the replay scenarios, the
 workflow). The iOS lane uses one `macos-26` runner. The Android lane boots an
 API 34 emulator with KVM on `ubuntu-latest`, rendering through ANGLE

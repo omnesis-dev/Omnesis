@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync, unlinkSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 type Db = Database.Database;
 
@@ -208,7 +208,41 @@ describe("bootOmnesisNotes", () => {
     expect(last.externalId).toBe(a.day);
     expect(last.content).toContain("First");
     expect(last.content).toContain("Second");
-    expect(last.metadata.extra).toEqual({ entryCount: 2 });
+    expect(last.metadata.extra).toEqual({
+      entryCount: 2,
+      chunkBoundaries: [0, last.content.lastIndexOf("##")],
+    });
+  });
+
+  test("capture, edit and removal keep complete note boundaries in the daily document", async () => {
+    const first = await runtime.capture({
+      text: "Plant a tree 🌳\n\n## Keep this heading inside the note",
+      capturedAt: "2026-06-15T09:00:00.000Z",
+      capturedUtcOffsetSeconds: 0,
+    });
+    const second = await runtime.capture({
+      text: "Study the star chart",
+      capturedAt: "2026-06-15T10:00:00.000Z",
+      capturedUtcOffsetSeconds: 0,
+    });
+    await runtime.flushAll();
+    const captured = ingested.flat().at(-1)!;
+    const secondStart = captured.content.indexOf("## 10:00");
+    expect(captured.metadata.extra?.chunkBoundaries).toEqual([0, secondStart]);
+    expect(captured.content.slice(secondStart)).toBe("## 10:00\n\nStudy the star chart");
+
+    await runtime.edit(first.id, "A longer plan for the community garden");
+    await runtime.flushAll();
+    const edited = ingested.flat().at(-1)!;
+    expect(edited.metadata.extra?.chunkBoundaries).toEqual([0, edited.content.indexOf("## 10:00")]);
+    expect(edited.contentHash).not.toBe(captured.contentHash);
+
+    await runtime.remove(first.id);
+    await runtime.flushAll();
+    const remaining = ingested.flat().at(-1)!;
+    expect(remaining.metadata.extra?.chunkBoundaries).toEqual([0]);
+    expect(remaining.content).toBe("## 10:00\n\nStudy the star chart");
+    expect(runtime.listDay(second.day)).toHaveLength(1);
   });
 
   test("capture with a client id is idempotent — a retry returns the stored entry, no duplicate", async () => {
@@ -314,6 +348,37 @@ describe("bootOmnesisNotes", () => {
       )
       .get();
     expect(row?.label).toBe("Notes");
+  });
+
+  test("boot upgrades historical daily indexing once without changing captured notes", async () => {
+    const entry = await runtime.capture({
+      text: "Plan a community observatory",
+      capturedAt: "2026-02-03T09:00:00Z",
+    });
+    await runtime.flushAll();
+    runtime.dispose();
+    const legacy = buildNotesDayDocument(entry.day, [entry]);
+    delete legacy.metadata.extra!.chunkBoundaries;
+    legacy.contentHash = createHash("sha256").update(legacy.content).digest("hex");
+    await gate.upsertDocuments([legacy]);
+    ingested = [];
+
+    runtime = boot();
+    await runtime.flushAll();
+    runtime.dispose();
+    expect(ingested.flat()).toHaveLength(1);
+    const upgraded = ingested.flat()[0];
+    expect(upgraded.content).toBe(legacy.content);
+    expect(upgraded.contentHash).not.toBe(legacy.contentHash);
+    expect(upgraded.metadata.extra?.chunkBoundaries).toEqual([0]);
+    expect(runtime.listDay(entry.day)).toEqual([entry]);
+    await gate.upsertDocuments([upgraded]);
+    ingested = [];
+
+    runtime = boot();
+    await runtime.flushAll();
+    expect(ingested).toEqual([]);
+    expect(runtime.listDay(entry.day)).toEqual([entry]);
   });
 
   test("enrolls historical note projections once only when vocabulary is enabled", async () => {

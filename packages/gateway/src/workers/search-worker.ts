@@ -31,6 +31,13 @@
  * on this handle with no restart. better-sqlite3 autocommits per statement, so
  * no long-lived read transaction pins a stale generation across calls.
  *
+ * Temporal intent: the pipeline also sends each query here to read the time it
+ * names (`parseTemporalIntent`), so the date recognizer's models are built and
+ * run on this thread rather than on the main one. After reporting ready the worker
+ * warms them one culture per turn of its event loop, so a call that arrives
+ * meanwhile waits for at most one culture, and builds whichever model it needs
+ * that is not warm yet.
+ *
  * Protocol: see `search-protocol.ts`. Transport is structured-clone
  * `postMessage`, never JSON — the request's `queryVector` (Float32Array) and
  * the result's `Infinity`/`NaN` scores + `bigint` usearch keys depend on it.
@@ -40,6 +47,11 @@ import { parentPort } from "node:worker_threads";
 
 import { assertNever } from "@omnesis/core";
 import { runCandidateGen } from "../search/candidate-gen.js";
+import {
+  parseTemporalIntent,
+  TEMPORAL_INTENT_CULTURES,
+  warmTemporalIntent,
+} from "../search/temporal-intent.js";
 import { LexicalIndexFollower } from "../search/lexical-index-follower.js";
 import { openIndexDb } from "../indexer/db.js";
 import { UsearchReadRegistry } from "../indexer/usearch-read-registry.js";
@@ -48,7 +60,8 @@ import type { LexicalIndexData } from "../search/lexical-index-data.js";
 
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import type { CandidateGenRequest } from "../search/candidate-gen.js";
+import type { CandidateGenResult } from "../search/candidate-gen.js";
+import type { TemporalIntent } from "../search/temporal-intent.js";
 import type { LogLevel } from "./protocol.js";
 import type { MainToSearch, SearchInit, SearchToMain } from "./search-protocol.js";
 
@@ -143,6 +156,7 @@ async function handleInit(init: SearchInit): Promise<void> {
         (nice !== null ? ` (background nice ${nice})` : ""),
     );
     post({ type: "ready" });
+    if (init.warmTemporalIntent) void warmTemporalModels();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log("error", "search-worker", `init failed: ${msg}`);
@@ -150,31 +164,48 @@ async function handleInit(init: SearchInit): Promise<void> {
   }
 }
 
-function handleCall(id: number, request: CandidateGenRequest, enqueueMs: number): void {
+/**
+ * Build the date recognizer's models one culture per event-loop turn, so a
+ * search arriving meanwhile runs between two cultures rather than after all.
+ */
+async function warmTemporalModels(): Promise<void> {
+  const started = Date.now();
+  try {
+    for (const culture of TEMPORAL_INTENT_CULTURES) {
+      await new Promise((resolve) => setImmediate(resolve));
+      if (!state || state.shuttingDown) return;
+      warmTemporalIntent(culture);
+    }
+    log("info", "search-worker", `date recognizer ready in ${Date.now() - started}ms`);
+  } catch (err) {
+    log(
+      "warn",
+      "search-worker",
+      `date recognizer warm-up failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Run one operation and post its result, timed the same way for every
+ * operation: the FIFO wait since the pool posted it, then the run itself.
+ */
+function answer(
+  id: number,
+  enqueueMs: number,
+  run: (live: NonNullable<typeof state>) => CandidateGenResult | TemporalIntent | null,
+): void {
   // Stamp dequeue immediately so queueMs reflects the FIFO wait, computed even
   // on early-return failure paths. Mirrors io-worker.handleCall.
   const dequeueMs = Date.now();
   const queueMs = Math.max(0, dequeueMs - enqueueMs);
 
-  if (!state) {
+  if (!state || state.shuttingDown) {
     post({
       type: "result",
       id,
       ok: false,
-      error: "search-worker not initialized",
-      queueMs,
-      execMs: 0,
-      cpuUserUs: 0,
-      cpuSystemUs: 0,
-    });
-    return;
-  }
-  if (state.shuttingDown) {
-    post({
-      type: "result",
-      id,
-      ok: false,
-      error: "search-worker shutting down",
+      error: state ? "search-worker shutting down" : "search-worker not initialized",
       queueMs,
       execMs: 0,
       cpuUserUs: 0,
@@ -184,14 +215,7 @@ function handleCall(id: number, request: CandidateGenRequest, enqueueMs: number)
   }
   const cpuBefore = process.cpuUsage();
   try {
-    const value = runCandidateGen(
-      {
-        indexDb: state.indexDb,
-        usearchRead: state.usearchRead,
-        lexicalRanker: state.lexical.ranker,
-      },
-      request,
-    );
+    const value = run(state);
     const execMs = Date.now() - dequeueMs;
     const cpuDelta = process.cpuUsage(cpuBefore);
     post({
@@ -260,9 +284,25 @@ parentPort.on("message", (msg: MainToSearch) => {
     case "init":
       void handleInit(msg);
       break;
-    case "call":
-      handleCall(msg.id, msg.request, msg.enqueueMs);
+    case "call": {
+      const { request } = msg;
+      answer(msg.id, msg.enqueueMs, (live) =>
+        runCandidateGen(
+          {
+            indexDb: live.indexDb,
+            usearchRead: live.usearchRead,
+            lexicalRanker: live.lexical.ranker,
+          },
+          request,
+        ),
+      );
       break;
+    }
+    case "temporalIntent": {
+      const { text, options } = msg;
+      answer(msg.id, msg.enqueueMs, () => parseTemporalIntent(text, options));
+      break;
+    }
     case "lexicalIndex":
       attachLexicalIndex(msg.data);
       break;

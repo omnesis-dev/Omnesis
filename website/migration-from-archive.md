@@ -39,7 +39,6 @@ What to expect:
 
 - The installer prints an **Install plan** whose role reads **"update of this machine's existing install"**. That means it found your existing install and will update it rather than set up a new one. It then runs the machine's own `omnesis update`, which moves your checkout to the new history, rebuilds, restarts the Omnesis services, and rolls back if anything fails. It ends with **"Omnesis is up to date."**
 - On an **agent host** the plan's role names the agent instead, and the installer says the agent "is already connected — refreshing its plugin and skill, keeping its pairing". Afterwards, restart the agent so it loads the new plugin: `openclaw gateway restart` or `hermes gateway restart`.
-- The gateway machine's update also takes a backup of the gateway's data before it changes anything.
 
 Do not add `--reconfigure` or any setup flag (`--code`, `--port`, `--embedder`, `--mkcert` and so on). Those tell the installer to set the machine up again from scratch.
 

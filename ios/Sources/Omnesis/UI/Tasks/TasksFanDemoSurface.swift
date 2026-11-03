@@ -51,6 +51,7 @@ struct TasksFanDemoSurface: View {
                 TasksScreen(
                     model: model,
                     experimental: true,
+                    offersTell: true,
                     menuOpen: $menuOpen,
                     focus: focus,
                     openConversation: { id in Task { await openConversation(id) } }

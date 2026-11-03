@@ -158,7 +158,12 @@ export class NotionDatabasesSource {
     cursor: NotionDatabasesCursor | null,
   ): Promise<StructuredSyncResult<NotionDatabasesCursor>> {
     if (!cursor) {
-      return this.discoverPhase(null);
+      return this.discoverPhase({
+        phase: "discover",
+        databases: [],
+        currentDbIndex: 0,
+        passStartedAt: new Date(this.now()).toISOString(),
+      });
     }
     if (cursor.phase === "discover") {
       return this.discoverPhase(cursor);
@@ -178,6 +183,7 @@ export class NotionDatabasesSource {
       return this.syncDbPhase({
         ...cursor,
         phase: "sync-db",
+        passStartedAt: new Date(this.now()).toISOString(),
         currentDbIndex: 0,
         dbPageCursor: undefined,
         emittedSummary: false,
@@ -197,6 +203,7 @@ export class NotionDatabasesSource {
     return this.discoverPhase({
       ...cursor,
       phase: "discover",
+      passStartedAt: new Date(this.now()).toISOString(),
       previousDatabaseIds: [
         ...new Set([
           ...(cursor.previousDatabaseIds ?? []),
@@ -357,6 +364,7 @@ export class NotionDatabasesSource {
       previousDatabaseIds: discoveryHole ? currentCursor.previousDatabaseIds : undefined,
       currentDbIndex: 0,
       lastSyncTime: currentCursor.lastSyncTime,
+      passStartedAt: currentCursor.passStartedAt,
       discoveredAt,
       discoveryCursor: undefined,
       skippedDbs: trimmedSkippedDbs,
@@ -675,7 +683,8 @@ export class NotionDatabasesSource {
           currentDbIndex: nextIndex,
           dbPageCursor: undefined,
           emittedSummary: false,
-          lastSyncTime: new Date(this.now()).toISOString(),
+          lastSyncTime: cursor.passStartedAt ?? cursor.lastSyncTime,
+          passStartedAt: undefined,
           skippedDbs: nextSkippedDbs,
           summaryHashes: nextSummaryHashes,
           snapshot: snapshotAfterPage?.toLedger() ?? cursor.snapshot,
@@ -824,7 +833,8 @@ export class NotionDatabasesSource {
     const finished = this.finishRewalk({
       ...cursor,
       phase: "done",
-      lastSyncTime: new Date(this.now()).toISOString(),
+      lastSyncTime: cursor.passStartedAt ?? cursor.lastSyncTime,
+      passStartedAt: undefined,
     });
     return {
       cursor: finished.cursor,

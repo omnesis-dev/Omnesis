@@ -30,16 +30,19 @@ import { mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ReplayBackend,
   type ChatBackend,
   type DocumentPort,
   type SearchPort,
+  type ToolCaller,
+  type WatchPort,
   type TurnInput,
+  WatchPortError,
 } from "@omnesis/agent";
-import { type AgentEvent, type CapabilityRole, type WsEvent } from "@omnesis/core";
+import { type AgentEvent, type CapabilityRole, type ToolResult, type WsEvent } from "@omnesis/core";
 
 import { AgentService } from "./service.js";
 import { DEEP_RESEARCH_NO_EVIDENCE_MESSAGES } from "./deep-research.js";
@@ -221,6 +224,7 @@ class DirectAnswerBackend implements ChatBackend {
   readonly model = "direct";
   sawSpawnTool = false;
   finalizerTools: string[] | undefined;
+  onFinalizer?: (input: TurnInput) => Promise<void>;
   async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
     const { sessionId, messageId } = input;
     this.sawSpawnTool = input.tools.some((t) => t.name === "spawn_subagent");
@@ -230,6 +234,7 @@ class DirectAnswerBackend implements ChatBackend {
       this.finalizerTools = input.tools.map((tool) => tool.name);
       expect(input.userMessage).toContain(DOC_BUDGET);
       expect(input.userMessage).toContain(DOC_MARATHON);
+      await this.onFinalizer?.(input);
     }
     if (evidencePacket) {
       yield {
@@ -295,6 +300,7 @@ function makeService(
     blockReaders?: boolean;
     /** Overrides the default cassette, keyed by the task text of each child. */
     childBackend?: (task: string) => ChatBackend;
+    watch?: WatchPort;
   } = {},
 ) {
   const captured: WsEvent[] = [];
@@ -326,7 +332,11 @@ function makeService(
   const parent = new DirectAnswerBackend();
   const service = new AgentService({
     backendFactory: (role: CapabilityRole) => (role === "agent" ? parent : routingBackend()),
-    ports: { search: stubSearch, document: opts.document ?? fakeDocumentPort },
+    ports: {
+      search: stubSearch,
+      document: opts.document ?? fakeDocumentPort,
+      ...(opts.watch ? { watch: opts.watch } : {}),
+    },
     systemPrompt: "test",
     broadcastEvent: (e) => captured.push(e),
     sessionIdGen: () => "S_parent",
@@ -397,6 +407,81 @@ describe("Deep Research loop — deterministic replay", () => {
         );
       } finally {
         await service.dispose();
+      }
+    },
+  );
+
+  it.each([
+    { caller: { kind: "operator" } as ToolCaller, allowed: true },
+    { caller: { kind: "integration", slug: "fictional-helper" } as ToolCaller, allowed: false },
+    { caller: undefined, allowed: false },
+  ])(
+    "preserves the finalizer's caller and zone without granting owner authority ($allowed)",
+    async ({ caller, allowed }) => {
+      vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+      const seenCallers: ToolCaller[] = [];
+      const watch: WatchPort = {
+        async create(actor) {
+          seenCallers.push(actor);
+          if (actor.kind !== "operator")
+            throw new WatchPortError({
+              reason: "not_manageable",
+              watchId: "",
+              message: "Only the operator can create this watch.",
+            });
+          return {
+            action: "created",
+            watchId: "fictional-watch",
+            name: "budget-follow-up",
+            enabled: true,
+            interpretation: "Watch for a budget update.",
+            warnings: [],
+          };
+        },
+        async update() {
+          throw new Error("unexpected update");
+        },
+        async remove() {},
+        async list() {
+          return [];
+        },
+        async get() {
+          return null;
+        },
+        async probe() {
+          throw new Error("unexpected probe");
+        },
+      };
+      const { service, parent } = makeService({ watch });
+      let result: ToolResult | undefined;
+      parent.onFinalizer = async (input) => {
+        expect(input.caller).toEqual(caller);
+        expect(input.timeZone).toBe("Pacific/Auckland");
+        const tool = input.tools.find((entry) => entry.name === "watch_create")!;
+        result = await tool.invoke(
+          { request: "Watch for a budget update" },
+          {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            caller: input.caller,
+            timeZone: input.timeZone,
+          },
+        );
+      };
+      try {
+        const { sessionId } = await service.createSession("device:A", {
+          caller,
+          timeZone: "Pacific/Auckland",
+        });
+        service.sendMessage("device:A", sessionId, "Research the Q4 budget and marathon entry", {
+          deepResearch: true,
+        });
+        await waitFor(() => result !== undefined, "the finalizer's authorized tool call");
+        expect(result?.kind).toBe(allowed ? "watch.upserted" : "error");
+        expect(seenCallers).toEqual([caller ?? { kind: "integration", slug: "" }]);
+      } finally {
+        await service.dispose();
+        vi.unstubAllEnvs();
       }
     },
   );

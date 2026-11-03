@@ -12,8 +12,8 @@
 # 2. An invented Obsidian vault is added and synced, so there is data to keep.
 # 3. vN+1 (the same code, the next version) is published; re-running install.sh
 #    hands off to `omnesis update`, which must land it: both daemons restarted,
-#    same collector device, same documents, the known search hit, a pre-update
-#    backup, and no new doctor failures.
+#    same collector device, same documents, the known search hit, no pre-update
+#    backup by default, and no new doctor failures.
 # 4. vN+2, whose gateway exits during boot, is published; `omnesis update` must
 #    fail, roll back to vN+1, and leave both daemons serving it.
 #
@@ -82,7 +82,8 @@ wait_collector_live "$GATEWAY_URL" "$COLLECTOR"
 redacted "$OMNESIS" sources sync "$SOURCE_ID" --wait --timeout 300 || die "the vault did not sync after the update"
 snapshot_with_hit updated "$GATEWAY_URL"
 probe compare --before "$E2E_WORK/before.json" --after "$E2E_WORK/updated.json" \
-  --expect-version "$V_N1" --expect-restart gateway,collector --expect-backup --expect-title "$SEARCH_TITLE"
+  --expect-version "$V_N1" --expect-restart gateway,collector --expect-title "$SEARCH_TITLE"
+[ "$(json_get "$E2E_WORK/before.json" 'j.preUpdateBackups')" = "$(json_get "$E2E_WORK/updated.json" 'j.preUpdateBackups')" ] || die "the default update created a pre-update backup"
 endgroup
 
 group "A broken vN+2 must roll back"

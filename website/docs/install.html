@@ -1046,10 +1046,11 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           On Linux, add <code>--docker-network host</code> for Bonjour/mDNS discovery on the LAN.
           Host networking shares the host interfaces and ports, including UDP 5353; allow multicast
           on the trusted LAN in the host firewall. Port mappings are unnecessary in this mode.
-          Bridge mode is the default and needs an explicit gateway URL on other devices; with its
-          own certificate, the gateway offers phones the host addresses the installer wrote into it.
-          Publishing UDP 5353 alone does not bridge multicast discovery. Docker Desktop runs inside
-          a VM; use an explicit URL there. Only run one gateway on each chosen port.
+          Bridge mode is the default and needs an explicit gateway URL on other devices. Phones are
+          offered the host's own addresses at the published port, which the host's
+          <code>omnesis</code> command records on every run, never the container's. Publishing UDP
+          5353 alone does not bridge multicast discovery. Docker Desktop runs inside a VM; use an
+          explicit URL there. Only run one gateway on each chosen port.
         </p>
         <p>
           OAuth callback ports 3000–3003 are published on host loopback in bridge mode. A provider
@@ -1127,13 +1128,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           into the daemon.
         </p>
         <p>
-          Persist and back up the <em>entire</em> config directory: all databases and sidecars,
-          attachments, source caches, credentials, tokens, TLS keys/certificates, sealed keyring,
-          configuration and Compose metadata. Stop both daemons for a filesystem backup, or use the
-          documented backup command. Include separately mounted passphrase files and supplied TLS
-          material in your recovery plan. A passphrase stored beside encrypted data protects neither
-          against theft of that complete directory nor a host administrator. Keep an offline
-          recovery copy; losing both unlock and recovery material loses encrypted data.
+          Persist the <em>entire</em> config directory: all databases and sidecars, attachments,
+          source caches, credentials, tokens, TLS keys/certificates, sealed keyring, configuration
+          and Compose metadata. The optional
+          <a href="/docs/updating#backup">backup command</a> captures the gateway's data; filesystem
+          snapshots require both daemons to be stopped for consistency. Separately mounted
+          passphrase files and supplied TLS material live outside that directory. A passphrase
+          stored beside encrypted data protects neither against theft of that complete directory nor
+          a host administrator. Losing both unlock and recovery material loses encrypted data.
         </p>
         <p>
           Tailscale can run on the Docker host (including the Unraid host); no privileged VPN
@@ -1585,8 +1587,7 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
         <p>
           <code>omnesis uninstall</code> removes Omnesis from the machine it runs on: everything it
           finds, or only the parts you name. Your data stays in the config directory unless you add
-          <code>--purge</code>, so take a <a href="/docs/updating#backup">backup</a> first if you
-          may want it back.
+          <code>--purge</code>, which deletes it.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

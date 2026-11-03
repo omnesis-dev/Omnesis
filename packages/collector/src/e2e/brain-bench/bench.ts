@@ -126,16 +126,19 @@ export interface BrainBenchOptions {
    * Directory of `background-agent` replay cassettes to serve INSTEAD of
    * the puppet — a `.jsonl` + `.meta.json` pair per scenario, as built by
    * `scripts/record-brain-scenario.mjs`. Mutually exclusive with `behaviors`.
-   * The note agent runs on the same role, so its turns replay from here too.
+   * Owner-triggered notes use Agent; assign `agent: "replay"` explicitly for them.
    */
   cassetteDir?: string;
   /**
    * The interactive `agent` role. `"replay"` serves the `agent`-role
    * cassettes of `cassetteDir` (one fixture directory, scenarios split by
    * their `.meta.json` role); a behavior list starts the conversation
-   * puppet. Omitted → the role is unassigned and conversations cannot run.
+   * puppet. `"puppet"` shares the cognition puppet backend for owner-note turns.
+   * Omitted → the role is unassigned and owner conversations/notes cannot run.
    */
-  agent?: "replay" | { behaviors: readonly ConversationBehavior[] };
+  agent?: "replay" | "puppet" | { behaviors: readonly ConversationBehavior[] };
+  /** Retain the Brain assignment by default; false isolates owner-only model coverage. */
+  brainAgent?: false;
   /** Entailment-gate verdicts. Omitted → the role is intentionally unassigned. */
   entailment?: EntailmentPolicy;
   /**
@@ -289,11 +292,15 @@ export class BrainBench {
     let conversation: ConversationPuppetServer | null = null;
     if (opts.agent === "replay") {
       assignments.agent = "replay";
+    } else if (opts.agent === "puppet") {
+      assignments.agent = assignments["background-agent"]!;
     } else if (opts.agent) {
       conversation = await startConversationPuppet({ behaviors: opts.agent.behaviors });
       backends.conversation = { type: "http", url: conversation.url };
       assignments.agent = `conversation/${conversation.modelId}`;
     }
+
+    if (opts.brainAgent === false) delete assignments["background-agent"];
 
     let decision: DecisionServer | null = null;
     if (opts.decision) {

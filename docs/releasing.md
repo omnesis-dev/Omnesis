@@ -298,12 +298,12 @@ already exists for the branch.
 a commit on `origin/main` (main may have moved past the release commit while
 its CI ran; the later commits are not in the release, and the preflight says
 how many there are), rerun the version guard, refuse an existing local or
-remote tag, refuse a commit with no green `full-validation` run from a push to
-`main` or a manual dispatch (the local enforcement of step 7 below: an
+remote tag, refuse a commit with no green `full-validation` run from the
+twice-daily schedule or an all-lanes manual dispatch (the local enforcement of step 7 below: an
 unvalidated commit would fail release verification and burn the version
-number; a run a later push cancelled is restarted with
+number; a full run is started with
 `gh workflow run full-validation.yml --ref main`), and refuse while the
-install/update lanes on `main` are red (the newest nightly or full dispatch of
+install/update lanes on `main` are red (the newest scheduled or full dispatch of
 `install-e2e.yml`, or a push run newer than it; see `docs/install-e2e.md`
 § Release gate) — and then creates the annotated tag on the verified commit.
 `--allow-failed-install-e2e` overrides only the install/update refusal, for an
@@ -450,8 +450,8 @@ dispatch against an existing tag). In order:
 
 - **verify** — the tag equals the checked-in product version
   (`check-product-version.mjs`), the tagged commit is an ancestor of `main`, a
-  `full-validation` run started by a push or a manual dispatch succeeded at that
-  exact commit (`ci-verdict.mjs` over the workflow's runs; a pull-request run or
+  `full-validation` run started by the twice-daily schedule or an all-lanes manual dispatch
+  succeeded at that exact commit (`ci-verdict.mjs` over the workflow's runs; a pull-request run or
   a later descendant cannot bless the tag), and `website/install.sh` still
   mirrors `scripts/install.sh` byte for byte.
 - **packages** — build, then the local-registry round trip: publish the staged

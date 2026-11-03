@@ -33,12 +33,21 @@ export function noteAgentDisplay(agent) {
     case "done": {
       const text = (agent.receipt?.text ?? "").trim();
       const changes = (agent.receipt?.changes ?? []).filter((change) => change?.text);
-      if (!text && changes.length === 0) return null;
-      return { kind: "receipt", text, changes };
+      const conversationHref = noteConversationHref(agent.receipt);
+      if (!text && changes.length === 0 && !conversationHref) return null;
+      return { kind: "receipt", text, changes, ...(conversationHref ? { conversationHref } : {}) };
     }
     default:
       return null;
   }
+}
+
+/** Open only the conversation the gateway already saved for this receipt. */
+export function noteConversationHref(receipt) {
+  const id = receipt?.conversationId;
+  return typeof id === "string" && id.trim()
+    ? `/portal/agent/${encodeURIComponent(id)}`
+    : null;
 }
 
 /** Where a change's task opens; null for a change that names no task. */
@@ -60,6 +69,15 @@ export function noteAgentActive(status) {
   return status?.tasks?.noteAgent === true;
 }
 
+/** Missing or unreadable status is unknown, never an inactive verdict. */
+export function noteAgentNotice(status) {
+  const agent = status?.noteAgent;
+  if (agent?.enabled === false) return "Note processing is off. Notes are saved, but won't create or update tasks.";
+  if (agent?.enabled === true && agent?.modelAssigned === false)
+    return "The Agent model is missing or unavailable. Notes are saved, but won't create or update tasks.";
+  return null;
+}
+
 /** The config change that switches the note agent on or off. */
 export function noteAgentSettingPatch(on) {
   return { agent: { noteAgent: on === true } };
@@ -71,6 +89,7 @@ export function noteAgentSettingPatch(on) {
  */
 export function noteRefreshChanged(current, fresh) {
   if (!current || !fresh) return false;
+  if (current.updatedAt && fresh.updatedAt && fresh.updatedAt < current.updatedAt) return false;
   if ((current.transcription ?? null) !== (fresh.transcription ?? null)) return true;
   return JSON.stringify(current.agent ?? null) !== JSON.stringify(fresh.agent ?? null);
 }

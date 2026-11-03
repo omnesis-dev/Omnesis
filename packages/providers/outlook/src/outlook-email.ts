@@ -160,32 +160,19 @@ export class OutlookEmailSource {
     const newBackfillIds: string[] = [];
     for (const msg of res.value) {
       if (msg["@removed"]) continue;
-      const docs = await this.normalizeMessage(msg);
+      const docs = (await this.normalizeMessage(msg)).filter(
+        (doc) => !this.dataCutoff || new Date(doc.sourceCreatedAt) >= this.dataCutoff,
+      );
       if (docs.length > 0 && !msg.body) newBackfillIds.push(msg.id);
       documents.push(...docs);
     }
     const backfillIds = [...(state.backfillIds ?? []), ...newBackfillIds];
 
-    // Apply data cutoff post-fetch as safety net
-    let cutoffReached = false;
-    if (this.dataCutoff) {
-      const cutoffTime = this.dataCutoff.getTime();
-      const beforeCount = documents.length;
-      const filtered = documents.filter(
-        (doc) => new Date(doc.sourceCreatedAt).getTime() >= cutoffTime,
-      );
-      if (filtered.length < beforeCount) {
-        cutoffReached = true;
-        log.info(
-          `Data cutoff reached in folder ${folderId}, filtered ${beforeCount - filtered.length} old emails`,
-        );
-      }
-      documents.length = 0;
-      documents.push(...filtered);
-    }
-
     // Determine next state
-    if (res["@odata.nextLink"] && !cutoffReached) {
+    // Delta pages have no chronological ordering guarantee. Drain the
+    // continuation even when a page contains only out-of-window messages;
+    // the final deltaLink is the checkpoint for changes during this walk.
+    if (res["@odata.nextLink"]) {
       // More pages in this folder
       state.currentPageLink = res["@odata.nextLink"];
       return syncPage<OutlookEmailCursor>(

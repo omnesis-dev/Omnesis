@@ -127,7 +127,7 @@ function expectedRows(table: string): Row[] {
         observations_noted: briefs_created,
       }));
     case "sync_state":
-      // 209 lowers each cursor's stamp from the head that wrote it to the
+      // 211 lowers each cursor's stamp from the head that wrote it to the
       // oldest schema that can read it; the cursor itself is unchanged.
       return rows.map((row) => ({
         ...row,

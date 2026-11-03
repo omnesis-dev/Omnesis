@@ -17,6 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import { assertNever } from "@omnesis/core";
+import { getDocumentTitlesAndSources } from "../../db.js";
 import { recordTaskInterest, supersedeInterestSignals } from "./interest.js";
 import {
   appendOpenLoopLedger,
@@ -33,7 +34,6 @@ import {
   type TaskAuthoredField,
   type TaskEvent,
   type TaskSchedule,
-  type TaskSnapshot,
 } from "./types.js";
 import type Database from "better-sqlite3";
 
@@ -79,6 +79,7 @@ export type TaskCommand = TaskCommandOrigin &
           description?: string;
           deadline?: unknown | null;
           scheduledFor?: TaskSchedule | null;
+          docs?: string[];
         };
       }
     | { kind: "accept"; id: string; scheduledFor?: TaskSchedule | null }
@@ -197,6 +198,20 @@ function applyUnlocked(
       );
     return seq;
   };
+
+  // Check attachments in the same transaction as their write: a source deletion
+  // queued ahead of this command must not leave a dangling document reference.
+  const docs =
+    command.kind === "create"
+      ? command.docs
+      : command.kind === "edit"
+        ? command.fields.docs
+        : undefined;
+  if (docs && getDocumentTitlesAndSources(db, docs).size !== new Set(docs).size)
+    return fail(
+      "invalid",
+      "Some linked documents are unavailable. Search for relevant documents first.",
+    );
 
   if (command.kind === "create") {
     if (command.scheduledFor && !isTaskSchedule(command.scheduledFor))
@@ -317,6 +332,7 @@ function applyUnlocked(
           ...(fields.description !== undefined ? { description: fields.description } : {}),
           ...(fields.deadline !== undefined ? { deadline: fields.deadline } : {}),
           ...(fields.scheduledFor !== undefined ? { scheduledFor: fields.scheduledFor } : {}),
+          ...(fields.docs !== undefined ? { docs: [...new Set(fields.docs)] } : {}),
         },
         now,
       );
@@ -468,6 +484,9 @@ function undo(
       description: before.description,
       deadline: before.deadline,
       scheduledFor: before.scheduledFor,
+      ...(before.docs !== undefined
+        ? { docs: [...getDocumentTitlesAndSources(db, before.docs).keys()] }
+        : {}),
       accepted: before.accepted,
       ignored: before.ignored ?? loop.ignored,
       completionNote: before.completionNote,

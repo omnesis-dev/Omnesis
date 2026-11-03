@@ -89,6 +89,7 @@ import {
 import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/rebuild.js";
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
+import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -4930,6 +4931,27 @@ export const MIGRATIONS: readonly Migration[] = [
     up: indexDocumentsBySourceCreatedRevision,
   },
   {
+    version: 209,
+    description: "process owner note edits as fenced revisions",
+    up: createNoteAgentTables,
+  },
+  {
+    version: 210,
+    description: "durable Note clarification handoffs",
+    up(db) {
+      // An earlier Note schema used the history-compaction version. Repair
+      // that known lineage without repeating corpus work on ordinary upgrades.
+      const previous = db
+        .prepare<[], { description: string }>(
+          "SELECT description FROM schema_migrations WHERE version = 207",
+        )
+        .get();
+      if (previous?.description === "process owner note edits as fenced revisions")
+        compactKnowledgeHistoryTargets(db);
+      createNoteHandoffTables(db);
+    },
+  },
+  {
     // Cursor rows were stamped with the schema head they were written at,
     // which made any downgrade across an unrelated migration reset every
     // source. Lower those stamps to the cursor-compatibility version, 178 at
@@ -4937,7 +4959,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // so the step means the same thing on every install that replays it.
     // Rows already at or below it, including the 0 of a reset row, keep
     // theirs. Idempotent: a second run matches no row.
-    version: 209,
+    version: 211,
     description: "stamp each sync cursor with the oldest schema that can read it",
     up(db) {
       db.prepare(

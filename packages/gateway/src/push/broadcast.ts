@@ -67,7 +67,7 @@ export interface NotificationPublisher {
   publish(
     message: NotificationMessage,
     targetDeviceIds?: readonly DeviceId[],
-    options?: { expiresAt?: number },
+    options?: { expiresAt?: number; idempotencyKey?: string },
   ): Promise<PushDispatchResult[]>;
   isAvailable?(device: DeviceRecord): boolean;
 }
@@ -108,7 +108,7 @@ export class PushBroadcaster {
   async publish(
     message: NotificationMessage,
     targetDeviceIds?: readonly DeviceId[],
-    options?: { expiresAt?: number },
+    options?: { expiresAt?: number; idempotencyKey?: string },
   ): Promise<PushDispatchResult[]> {
     const targets = this.targets(targetDeviceIds);
     const createdAt = this.now();
@@ -117,6 +117,7 @@ export class PushBroadcaster {
       deviceIds: targets.map((device) => device.id),
       createdAt,
       expiresAt: Math.min(options?.expiresAt ?? Number.POSITIVE_INFINITY, createdAt + this.ttlMs),
+      ...(options?.idempotencyKey !== undefined ? { idempotencyKey: options.idempotencyKey } : {}),
     });
     const accepted = new Set(enqueued?.deviceIds ?? []);
     return await this.dispatchDueWakes([...accepted]);

@@ -78,6 +78,31 @@ afterEach(async () => {
 });
 
 describe("/notes availability", () => {
+  test("advertises task-linked capture independently of a configured Agent", async () => {
+    for (const path of ["/health", "/status"]) {
+      const response = await req(path);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { capabilities: Record<string, unknown> };
+      expect(body.capabilities.taskNoteCapture).toEqual({ min: 1, max: 1 });
+    }
+  });
+
+  test("preserves a task capture's context through save, retry and history", async () => {
+    const id = randomUUID();
+    const taskId = "loop_fictional_workshop_checklist";
+    const body = { id, text: "About this task: I need to confirm the day.", taskId };
+    expect((await capture(body)).status).toBe(201);
+    expect((await capture(body)).status).toBe(201);
+    const history = await req("/notes/history");
+    const { entries } = (await history.json()) as { entries: NoteEntry[] };
+    expect(entries.filter((entry) => entry.id === id)).toHaveLength(1);
+    expect(entries.find((entry) => entry.id === id)?.taskId).toBe(taskId);
+  });
+
+  test.each(["", " ", "t".repeat(201)])("rejects invalid task capture context", async (taskId) => {
+    expect((await capture({ text: "About this task.", taskId })).status).toBe(400);
+  });
+
   test("boots and captures without experimental mode", async () => {
     expect(notesRuntime).toBeDefined();
     const res = await capture({ text: "Remember the fictional studio booking", surface: "cli" });

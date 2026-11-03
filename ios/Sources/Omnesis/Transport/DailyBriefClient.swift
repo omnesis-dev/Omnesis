@@ -171,16 +171,29 @@ public struct DailyBriefItems: Decodable, Sendable, Equatable {
     /// When the brief was sent (ISO 8601, UTC).
     public let sentAt: String?
     public var items: [DailyBriefItem]
+    /// Documents used directly by the brief, without an observation.
+    public let references: [DailyBriefSource]
 
-    public init(day: String, messageId: String, sentAt: String? = nil, items: [DailyBriefItem]) {
+    public var basedOnCount: Int {
+        items.count + references.count
+    }
+
+    public init(
+        day: String,
+        messageId: String,
+        sentAt: String? = nil,
+        items: [DailyBriefItem],
+        references: [DailyBriefSource] = []
+    ) {
         self.day = day
         self.messageId = messageId
         self.sentAt = sentAt
         self.items = items
+        self.references = references
     }
 
     private enum CodingKeys: String, CodingKey {
-        case day, messageId, sentAt, items
+        case day, messageId, sentAt, items, references
     }
 
     public init(from decoder: Decoder) throws {
@@ -190,6 +203,8 @@ public struct DailyBriefItems: Decodable, Sendable, Equatable {
         sentAt = try? values.decodeIfPresent(String.self, forKey: .sentAt)
         // One item this build cannot read is dropped; the rest still show.
         items = (try? values.decodeIfPresent([Lossy<DailyBriefItem>].self, forKey: .items))?
+            .compactMap(\.value) ?? []
+        references = (try? values.decodeIfPresent([Lossy<DailyBriefSource>].self, forKey: .references))?
             .compactMap(\.value) ?? []
     }
 }

@@ -325,7 +325,8 @@ describe("computeScorecardMetrics", () => {
       SET,
       observations(perfectLoops(), {
         mutatingToolCalls: 25,
-        mutatingToolCallsFailed: 5,
+        mutatingToolCallsFailed: 6,
+        verifiedMaintenanceHandoffs: 1,
         verifiedCollectionCreateRetries: 1,
         verifiedConcurrentCreateRetries: 1,
         verifiedFrontierRetries: 1,
@@ -333,16 +334,17 @@ describe("computeScorecardMetrics", () => {
       }),
       1,
     );
-    expect(result.counts.mutatingToolCallsFailed).toBe(5);
+    expect(result.counts.mutatingToolCallsFailed).toBe(6);
     expect(result.counts.verifiedConcurrentCreateRetries).toBe(1);
     expect(result.counts.malformedToolCallsFailed).toBe(2);
     expect(result.counts.mutatingToolCallsFailed).toBe(
       result.counts.verifiedConcurrentCreateRetries +
         result.counts.verifiedFrontierRetries +
         result.counts.verifiedCollectionCreateRetries +
+        result.counts.verifiedMaintenanceHandoffs +
         result.counts.malformedToolCallsFailed,
     );
-    expect(result.metrics.malformedToolCallRateRaw).toBe(5 / 25);
+    expect(result.metrics.malformedToolCallRateRaw).toBe(6 / 25);
     expect(result.metrics.malformedToolCallRate).toBe(2 / 25);
   });
 
