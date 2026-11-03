@@ -14,6 +14,50 @@ plugins {
     alias(libs.plugins.roborazzi) apply false
 }
 
+// Robolectric's SDK jars are runtime dependencies its Maven downloader otherwise
+// fetches inside each test JVM, outside Gradle's cache and retry handling. Resolve
+// and stage them once before tests so parallel modules never depend on that path.
+// These are the SDKs our tests exercise, using Robolectric 4.14.1's instrumented
+// versions; RobolectricRuntimeDependenciesTest checks its actual SDK resolver
+// against the staged files so a library upgrade cannot leave stale coordinates.
+val robolectricSdkConfigurations = mapOf(
+    26 to "8.0.0_r4-robolectric-r1-i7", // Default target for unannotated library tests.
+    28 to "9-robolectric-4913185-2-i7",
+    32 to "12.1-robolectric-8229987-i7",
+    33 to "13-robolectric-9030017-i7",
+    34 to "14-robolectric-10818077-i7",
+    35 to "15-robolectric-12650502-i7",
+).map { (api, version) ->
+    // Separate configurations prevent Gradle's version conflict resolution from
+    // retaining only the newest SDK of this same Maven artifact.
+    val sdk = configurations.create("robolectricSdk$api") {
+        isCanBeConsumed = false
+        isCanBeResolved = true
+        isTransitive = false
+    }
+    dependencies.add(sdk.name, "org.robolectric:android-all-instrumented:$version")
+    sdk
+}
+val robolectricRuntimeJars = files(robolectricSdkConfigurations)
+val robolectricRuntimeDirectory = layout.buildDirectory.dir("robolectric-runtime")
+val prepareRobolectricRuntime = tasks.register<Sync>("prepareRobolectricRuntime") {
+    description = "Resolve and stage the Android SDK jars Robolectric uses without runtime network access."
+    from(robolectricRuntimeJars)
+    into(robolectricRuntimeDirectory)
+}
+subprojects {
+    tasks.withType<Test>().configureEach {
+        dependsOn(prepareRobolectricRuntime)
+        inputs.files(robolectricRuntimeJars)
+            .withPropertyName("robolectricRuntimeJars")
+            .withNormalizer(ClasspathNormalizer::class.java)
+        systemProperty("robolectric.dependency.dir", robolectricRuntimeDirectory.get().asFile.absolutePath)
+        systemProperty("robolectric.offline", "true")
+        systemProperty("robolectric.usePreinstrumentedJars", "true")
+        testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
+
 // ── One time zone and locale for every JVM test ─────────────────────────────
 // Screenshots render dates and times through the JVM defaults, so a golden
 // recorded on one machine would drift on a machine in another zone. Every unit
