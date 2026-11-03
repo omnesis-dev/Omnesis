@@ -19,6 +19,8 @@ Each of these has removed a real stall. Reach for the one that matches the shape
 - **CPU-bound pure computation goes to the cpu worker pool** (`scheduler/cpu-ops.ts`), with plain-data arguments and results. Text processing counts: the near-dup tick shingles its persisted candidates there (`cpu.nearDupPrepareCandidates`), in chunks bounded by text length so no single reply is slow to deserialize on the main thread.
 - **Computation a search waits for goes to the search worker pool** (`workers/search-pool.ts`), which the pipeline calls directly rather than through the scheduler, so an interactive query never queues behind background compute. Candidate generation runs there, and so does reading a query's temporal intent: the date recognizer takes a second or more to build its models and milliseconds per culture to parse, so each search worker builds them as it starts and the pipeline sends it the moment, zone and numeric-date order it resolved, everything the reading depends on.
 
+- **A check that runs on a cadence answers from state, not by building what it checks.** The note agent's status, idle and drain checks ask `chatRoleReadiness` (`models/chat-role-readiness.ts`), which mirrors the backend resolver condition for condition, whether an Agent model is runnable, and build a backend only for a turn: building one for a replay assignment reads the fixture directory. The replay factory keeps each parsed cassette until its file changes, and the background-jobs view observes its jobs only when it is requested.
+
 What does not count as a fix: wrapping the loop in `setImmediate` batches without bounding the batch, raising a timeout, or lowering the frequency of a periodic task that still stalls each time it runs.
 
 ## Reading a stall line

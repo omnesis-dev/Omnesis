@@ -229,23 +229,15 @@ export class MetricsCollector {
   /**
    * Latest-sample accessor used by the BackgroundJob registry to render
    * "last tick X seconds ago" without requiring a full snapshot pass.
-   * Returns undefined if the task has never run within the ring's
-   * memory window. Cheap O(PER_TASK_SAMPLES) — capacity 500 — so safe
-   * to call on every observe().
+   * Returns undefined if the task has never run. The newest sample is the
+   * one just behind the ring's head, so this is O(1).
    */
   getLastTickInfo(name: string): { ts: number; execMs: number } | undefined {
     const buf = this.taskSamples.get(name);
-    if (!buf) return undefined;
-    let bestTs = 0;
-    let bestExecMs = 0;
-    for (let i = 0; i < buf.length; i++) {
-      const s = buf[i];
-      if (s && s.ts > bestTs) {
-        bestTs = s.ts;
-        bestExecMs = s.execMs;
-      }
-    }
-    return bestTs > 0 ? { ts: bestTs, execMs: bestExecMs } : undefined;
+    const head = this.taskHeads.get(name);
+    if (!buf || head === undefined) return undefined;
+    const last = buf[(head + PER_TASK_SAMPLES - 1) % PER_TASK_SAMPLES];
+    return last ? { ts: last.ts, execMs: last.execMs } : undefined;
   }
 }
 

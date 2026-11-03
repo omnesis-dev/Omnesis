@@ -9,17 +9,17 @@
  *   - At boot, every background loop registers itself by calling
  *     `registry.register(job)`. The registry holds the BackgroundJob
  *     instance forever (jobs are long-lived).
- *   - The registry refreshes a cached snapshot on a 2s tick (matching
- *     the existing STATUS_REFRESH_INTERVAL_MS pattern in server.ts so
- *     N portal viewers don't multiply load).
- *   - HTTP handlers serve the cached snapshot directly — no DB hit.
+ *   - `snapshot()` observes every job when it is asked for and the last
+ *     snapshot is older than `maxAgeMs` (2 s by default), so N portal
+ *     viewers polling it cost one pass every two seconds, and a gateway
+ *     nobody is looking at spends nothing on it.
  *
- * Performance notes (carry-over from the design discussion):
- *   - The refresh tick calls `job.observe()` on every job. Each
- *     `observe()` is a pure read of in-memory state — never a DB query.
- *     If a future job needs DB-backed progress, the recommended pattern
- *     is a separate periodic reconciler that pushes ground truth into
- *     the tracker via `tracker.setRemaining(...)`.
+ * Performance notes:
+ *   - A pass calls `job.observe()` on every job, on the main thread. Each
+ *     `observe()` is a read of in-memory state — never a DB query, a file
+ *     read, or the construction of anything. A job needing DB-backed
+ *     progress has a separate periodic reconciler push ground truth into
+ *     its tracker via `tracker.setRemaining(...)`.
  *   - No persistence. Lost on restart, by design.
  */
 
@@ -29,12 +29,10 @@ import type { BackgroundJob, BackgroundJobsSnapshot, JobObservation } from "./ty
 
 export interface BackgroundJobsRegistryOptions {
   log: Logger;
-  /**
-   * Refresh cadence for the cached snapshot (ms). Default 2s, matching
-   * the existing STATUS_REFRESH_INTERVAL_MS used by other portal-facing
-   * caches in server.ts.
-   */
-  refreshIntervalMs?: number;
+  /** How stale a served snapshot may be before the next request observes again (ms). Default 2s. */
+  maxAgeMs?: number;
+  /** Clock for the snapshot's age. Default `Date.now`. */
+  now?: () => number;
 }
 
 /**
@@ -55,17 +53,14 @@ function fallbackObservation(): JobObservation {
 export class BackgroundJobsRegistry {
   private readonly jobs = new Map<string, BackgroundJob>();
   private readonly log: Logger;
-  private readonly refreshIntervalMs: number;
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private cachedSnapshot: BackgroundJobsSnapshot = {
-    generatedAt: new Date(0).toISOString(),
-    jobs: [],
-  };
-  private inflightRefresh = false;
+  private readonly maxAgeMs: number;
+  private readonly now: () => number;
+  private cached: { at: number; snapshot: BackgroundJobsSnapshot } | null = null;
 
   constructor(opts: BackgroundJobsRegistryOptions) {
     this.log = opts.log;
-    this.refreshIntervalMs = opts.refreshIntervalMs ?? 2_000;
+    this.maxAgeMs = opts.maxAgeMs ?? 2_000;
+    this.now = opts.now ?? Date.now;
   }
 
   /**
@@ -98,76 +93,43 @@ export class BackgroundJobsRegistry {
   }
 
   /**
-   * Start the periodic refresh timer. Idempotent — calling twice is a
-   * no-op. Refresh fires immediately so `snapshot()` is non-empty
-   * before the first interval elapses.
-   */
-  start(): void {
-    if (this.timer) return;
-    this.refresh();
-    this.timer = setInterval(
-      () => withActivity("backgroundJobs.refresh", () => this.refresh()),
-      this.refreshIntervalMs,
-    );
-    this.timer.unref?.();
-  }
-
-  /**
-   * Synchronous refresh. Iterates all jobs and rebuilds the cached
-   * snapshot. Errors from individual `observe()` calls are caught and
-   * the offending job gets a fallback observation — one bad job must
-   * not poison the whole snapshot.
-   *
-   * Marked `inflightRefresh` so a slow refresh can't pile up if the
-   * timer fires before the previous run finishes (defensive — observes
-   * are synchronous today, but better safe than sorry).
-   */
-  refresh(): void {
-    if (this.inflightRefresh) return;
-    this.inflightRefresh = true;
-    try {
-      const rows: BackgroundJobsSnapshot["jobs"] = [];
-      for (const job of this.jobs.values()) {
-        let obs: JobObservation;
-        try {
-          obs = job.observe();
-        } catch (err) {
-          this.log.warn(
-            `BackgroundJobsRegistry: observe() failed for "${job.id}": ${err instanceof Error ? err.message : String(err)}`,
-          );
-          obs = fallbackObservation();
-        }
-        rows.push({
-          id: job.id,
-          displayName: job.displayName,
-          description: job.description,
-          category: job.category,
-          cadence: job.cadence,
-          observation: obs,
-        });
-      }
-      this.cachedSnapshot = {
-        generatedAt: new Date().toISOString(),
-        jobs: rows,
-      };
-    } finally {
-      this.inflightRefresh = false;
-    }
-  }
-
-  /**
-   * Return the cached snapshot. Cheap; suitable for HTTP handlers.
-   * Snapshot is at most `refreshIntervalMs` stale.
+   * Every job's observation, at most `maxAgeMs` old: the previous snapshot
+   * while it is that fresh, otherwise a new pass over the jobs.
    */
   snapshot(): BackgroundJobsSnapshot {
-    return this.cachedSnapshot;
+    const now = this.now();
+    if (this.cached && now - this.cached.at < this.maxAgeMs) return this.cached.snapshot;
+    const snapshot = withActivity("backgroundJobs.refresh", () => this.observeAll());
+    this.cached = { at: now, snapshot };
+    return snapshot;
   }
 
-  /** Stop the refresh timer. Safe to call multiple times. */
-  dispose(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+  /**
+   * One pass over the jobs. Errors from individual `observe()` calls are
+   * caught and the offending job gets a fallback observation — one bad job
+   * must not poison the whole snapshot.
+   */
+  private observeAll(): BackgroundJobsSnapshot {
+    const rows: BackgroundJobsSnapshot["jobs"] = [];
+    for (const job of this.jobs.values()) {
+      let obs: JobObservation;
+      try {
+        obs = job.observe();
+      } catch (err) {
+        this.log.warn(
+          `BackgroundJobsRegistry: observe() failed for "${job.id}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+        obs = fallbackObservation();
+      }
+      rows.push({
+        id: job.id,
+        displayName: job.displayName,
+        description: job.description,
+        category: job.category,
+        cadence: job.cadence,
+        observation: obs,
+      });
     }
+    return { generatedAt: new Date(this.now()).toISOString(), jobs: rows };
   }
 }

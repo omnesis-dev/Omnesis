@@ -340,6 +340,7 @@ function agent(backend: ChatBackend | null, extra: Partial<NoteAgentDeps> = {}) 
     tasks: new TaskService(db, directWriteGate(db), () => now),
     writeGate: directWriteGate(db),
     resolveBackend: () => backend,
+    isBackendRunnable: () => backend !== null,
     getSetting: () => undefined,
     dayDocumentId: (day) => `doc_notes_${day}`,
     recordUsage: async (u, model) => {
@@ -2108,6 +2109,29 @@ describe("note agent turn", () => {
     expect(runner.active()).toBe(false);
     expect(await runner.drain()).toBe(0);
     expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "pending", attempts: 0 });
+  });
+
+  test("status, idle and empty drains ask readiness and build a backend only for a turn", async () => {
+    let built = 0;
+    const backend = toolCallingBackend(() => [], "Saved.");
+    const { runner } = agent(null, {
+      resolveBackend: () => {
+        built += 1;
+        return backend;
+      },
+      isBackendRunnable: () => true,
+    });
+    const id = queueNote("Buy stamps");
+    expect(runner.active()).toBe(true);
+    expect(runner.status()).toMatchObject({ modelAssigned: true, active: true });
+    expect(built).toBe(0);
+
+    expect(await runner.drain()).toBe(1);
+    expect(getNoteRuns(db, [id]).get(id)).toMatchObject({ state: "done" });
+    expect(built).toBe(1);
+    // Nothing left to read: the drain builds nothing.
+    expect(await runner.drain()).toBe(0);
+    expect(built).toBe(1);
   });
 
   test("start marks where reading begins, so a note captured before the first drain is read", async () => {

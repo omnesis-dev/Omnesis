@@ -197,3 +197,20 @@ test("a single task's stats equal its row in the full snapshot", () => {
     expect(collector.taskSnapshot(row.name, 3600, find)).toEqual(row);
   expect(collector.taskSnapshot("never-ran", 3600, find)).toBeNull();
 });
+
+test("the last tick is the newest sample, including after the ring wraps", () => {
+  vi.useFakeTimers();
+  try {
+    const t0 = new Date("2026-05-01T00:00:00.000Z").getTime();
+    const collector = new MetricsCollector(1_000);
+    expect(collector.getLastTickInfo("ticker")).toBeUndefined();
+    // More executions than the ring holds, so the newest lands mid-buffer.
+    for (let i = 0; i < 1_234; i++) {
+      vi.setSystemTime(t0 + i * 1_000);
+      collector.record("ticker", undefined, "main", 0, i, "background", "done");
+    }
+    expect(collector.getLastTickInfo("ticker")).toEqual({ ts: t0 + 1_233_000, execMs: 1_233 });
+  } finally {
+    vi.useRealTimers();
+  }
+});

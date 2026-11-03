@@ -296,8 +296,8 @@ import {
   getCognitionEngineState,
 } from "./brain/storage/engine-state.js";
 import { HostedProcessLauncher, setProcessLauncher } from "./process-launcher/index.js";
+import { chatRoleReadiness, type ChatRoleReadinessDeps } from "./models/chat-role-readiness.js";
 import type { WatchDefinition } from "@omnesis/watch";
-import type { ChatRoleReadinessDeps } from "./models/chat-role-readiness.js";
 import type { SourceDocCount } from "./search/source-isf-prior.js";
 import type { WriteGate } from "./write-gate.js";
 import type { AddressInfo } from "node:net";
@@ -1603,12 +1603,11 @@ const pushTransport = new PushTransport(pushBroadcaster);
 // Created up front so the HTTP /admin/background-jobs endpoint has a
 // reference at server construction time. Individual jobs are
 // registered into this same instance later as the Scheduler tasks
-// (and indexer worker proxy) come online — the cached snapshot
-// updates incrementally without further plumbing.
+// (and indexer worker proxy) come online; the endpoint observes
+// whatever is registered when it is asked.
 const backgroundJobs = new BackgroundJobsRegistry({
   log: log.child("background-jobs"),
 });
-backgroundJobs.start();
 
 // The mention worth gate judges the documents date extraction queues; each
 // extraction tick that stores documents kicks it.
@@ -2773,6 +2772,8 @@ const noteAgent = new NoteAgent({
   tasks: taskService,
   writeGate,
   resolveBackend: resolveOwnerAgentBackend,
+  isBackendRunnable: () =>
+    chatRoleReadiness(inferenceRegistry.resolve("agent"), chatRoleReadinessDeps).runnable,
   getSetting: () => configStore.get().agent?.noteAgent,
   knowledgeReads: () => configStore.get().agent?.useBrainKnowledgeMode !== "off",
   buildTools: (runId, taskTools, evidenceTools) =>

@@ -55,6 +55,12 @@ export interface NoteAgentDeps {
   >;
   /** The Agent capability model; null while none is runnable. */
   resolveBackend: () => ChatBackend | null;
+  /**
+   * Whether an Agent model is runnable, answered without building one. The
+   * status, idle and drain checks ask every few seconds, and building a
+   * backend can mean reading credentials or loading replay fixtures.
+   */
+  isBackendRunnable: () => boolean;
   /** The owner's `agent.noteAgent` setting, read live; undefined while unset. */
   getSetting: () => boolean | undefined;
   /** Explicit maintained-knowledge read preference; unset preserves ordinary owner tools. */
@@ -277,12 +283,12 @@ export class NoteAgent {
 
   /** True when the note agent is on and an Agent model is runnable. */
   active(): boolean {
-    return this.enabled() && this.deps.resolveBackend() !== null;
+    return this.enabled() && this.deps.isBackendRunnable();
   }
 
   status(): NoteAgentStatus {
     const enabled = this.enabled();
-    const modelAssigned = this.deps.resolveBackend() !== null;
+    const modelAssigned = this.deps.isBackendRunnable();
     return { enabled, modelAssigned, active: enabled && modelAssigned };
   }
 
@@ -305,7 +311,7 @@ export class NoteAgent {
   async drain(maxNotes = 5): Promise<number> {
     if (this.running) return 0;
     const enabled = this.enabled();
-    if (enabled && this.deps.resolveBackend() === null) return 0;
+    if (enabled && !this.deps.isBackendRunnable()) return 0;
     this.running = true;
     try {
       if (!enabled) {

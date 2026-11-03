@@ -12,15 +12,26 @@
  * falls back to the last known-good set if the reload throws.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+  unlinkSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createLogger, type AgentEvent } from "@omnesis/core";
+import { parseFixture, RoutingReplayBackend } from "@omnesis/agent";
 import { createDatabase } from "../db.js";
 import { makeReplayBackendFactory } from "./replay-factory.js";
-import type { ChatBackend, RoutingReplayBackend, TurnInput } from "@omnesis/agent";
+import type { ChatBackend, ReplayScenario, TurnInput } from "@omnesis/agent";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -302,6 +313,165 @@ describe("makeReplayBackendFactory — replay pacing", () => {
         "agent.text.delta",
       ]);
       expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+});
+
+describe("makeReplayBackendFactory — parsed fixtures are reused", () => {
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+  afterEach(() => {
+    h.cleanup();
+  });
+
+  function fixtureOf(backend: unknown, name: string): unknown {
+    const b = backend as { scenarios: ReadonlyArray<{ name: string; fixture: unknown }> };
+    return b.scenarios.find((s) => s.name === name)?.fixture;
+  }
+
+  function factory() {
+    return makeReplayBackendFactory({ fixturePath: h.dir, db: h.db, log: createLogger("test") });
+  }
+
+  it("parses an unchanged file once across backends and factories", () => {
+    const first = fixtureOf(factory()(), "alpha");
+    expect(first).toBeDefined();
+    // A backend resolved again, from the same factory or a new one, shares the parse.
+    expect(fixtureOf(factory()(), "alpha")).toBe(first);
+    const f = factory();
+    expect(fixtureOf(f(), "alpha")).toBe(first);
+    expect(fixtureOf(f(), "alpha")).toBe(first);
+  });
+
+  it("parses a file again once it changes, and only that file", () => {
+    writeScenario(h.dir, "beta", "beta greeting");
+    const f = factory();
+    const alpha = fixtureOf(f(), "alpha");
+    const beta = fixtureOf(f(), "beta");
+
+    writeScenario(h.dir, "beta", "beta greeting, edited");
+    const next = f();
+    expect(fixtureOf(next, "alpha")).toBe(alpha);
+    expect(fixtureOf(next, "beta")).not.toBe(beta);
+    expect(JSON.stringify(fixtureOf(next, "beta"))).toContain("beta greeting, edited");
+  });
+
+  it("logs the load only when files were parsed", () => {
+    const log = createLogger("test");
+    const info = vi.spyOn(log, "info");
+    makeReplayBackendFactory({ fixturePath: h.dir, db: h.db, log });
+    makeReplayBackendFactory({ fixturePath: h.dir, db: h.db, log })();
+    expect(info.mock.calls.filter(([line]) => String(line).startsWith("loaded "))).toHaveLength(1);
+  });
+});
+
+/**
+ * The in-tree universes' cassettes, replayed through the factory's parse cache,
+ * produce exactly the events a fresh parse of every file does.
+ */
+describe("makeReplayBackendFactory — in-tree scenarios replay identically from the cache", () => {
+  const universes = join(
+    fileURLToPath(new URL(".", import.meta.url)),
+    "../../../../evals/universes",
+  );
+  const dirs = readdirSync(universes)
+    .map((u) => join(universes, u, "agent-demos"))
+    .filter((d) => existsSync(d));
+
+  let h: Harness;
+  beforeEach(() => {
+    h = setup();
+  });
+  afterEach(() => {
+    h.cleanup();
+  });
+
+  /** The scenarios of `dir` for `role`, parsed from disk now, the way the factory reads them. */
+  function freshScenarios(dir: string, role: string): ReplayScenario[] {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .sort()
+      .flatMap((file) => {
+        const name = basename(file, ".jsonl");
+        const meta = JSON.parse(readFileSync(join(dir, `${name}.meta.json`), "utf8")) as {
+          triggers: string[];
+          role?: string;
+          speed?: number;
+        };
+        if ((meta.role ?? "agent") !== role) return [];
+        return [
+          {
+            name,
+            triggers: meta.triggers,
+            fixture: parseFixture(join(dir, file), readFileSync(join(dir, file), "utf8")),
+            speed: meta.speed,
+            substitutions: {},
+          },
+        ];
+      });
+  }
+
+  function rolesOf(dir: string): string[] {
+    return [
+      ...new Set(
+        readdirSync(dir)
+          .filter((f) => f.endsWith(".meta.json"))
+          .map((f) => {
+            const meta = JSON.parse(readFileSync(join(dir, f), "utf8")) as { role?: string };
+            return meta.role ?? "agent";
+          }),
+      ),
+    ].sort();
+  }
+
+  async function replay(backend: ChatBackend, userMessage: string): Promise<string> {
+    const events: AgentEvent[] = [];
+    for await (const event of backend.runTurn({
+      sessionId: "s_equivalence",
+      messageId: "m_equivalence",
+      history: [],
+      userMessage,
+      tools: [],
+      systemPrompt: "",
+    })) {
+      events.push(event);
+    }
+    // A live tool call's result carries its wall-clock duration.
+    return JSON.stringify(events, (key, value: unknown) => (key === "durationMs" ? 0 : value));
+  }
+
+  it("covers every universe that ships agent demos", () => {
+    expect(dirs.length).toBeGreaterThan(1);
+  });
+
+  it.each(dirs.flatMap((dir) => rolesOf(dir).map((role) => [dir, role] as const)))(
+    "%s (%s)",
+    async (dir, role) => {
+      const expected = freshScenarios(dir, role);
+      expect(expected.length).toBeGreaterThan(0);
+      const factory = makeReplayBackendFactory({
+        fixturePath: dir,
+        db: h.db,
+        role,
+        pacing: "immediate",
+        log: createLogger("test"),
+      });
+      for (const scenario of expected) {
+        const reference = new RoutingReplayBackend({
+          scenarios: expected,
+          clampMs: 0,
+          capMs: 0,
+          textStreamMs: 0,
+          textStreamChars: 4,
+        });
+        const want = await replay(reference, scenario.triggers[0]!);
+        // The first backend parses (or reuses another test's parse); the
+        // second is built entirely from the cache.
+        expect(await replay(factory(), scenario.triggers[0]!)).toBe(want);
+        expect(await replay(factory(), scenario.triggers[0]!)).toBe(want);
+      }
     },
   );
 });

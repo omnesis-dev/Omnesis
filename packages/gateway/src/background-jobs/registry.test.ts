@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Registry — verify register / refresh / snapshot / dispose behave as
- * advertised, including the "one bad observe() doesn't poison the
- * snapshot" property.
+ * Registry — verify register / snapshot behave as advertised, including
+ * the "one bad observe() doesn't poison the snapshot" property and that
+ * jobs are observed only when a snapshot is asked for.
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -41,18 +41,17 @@ describe("BackgroundJobsRegistry", () => {
     vi.useFakeTimers();
   });
 
-  it("starts with an empty snapshot before refresh", () => {
+  it("an empty registry has an empty snapshot", () => {
     const r = new BackgroundJobsRegistry({ log: createLogger("test") });
     const snap = r.snapshot();
     expect(snap.jobs).toEqual([]);
     expect(snap.generatedAt).toBeDefined();
   });
 
-  it("register + refresh produces a snapshot row per job", () => {
+  it("a snapshot has a row per registered job", () => {
     const r = new BackgroundJobsRegistry({ log: createLogger("test") });
     r.register(makeJob("a", () => goodObservation));
     r.register(makeJob("b", () => goodObservation, "graph"));
-    r.refresh();
     const snap = r.snapshot();
     expect(snap.jobs).toHaveLength(2);
     expect(snap.jobs[0].id).toBe("a");
@@ -68,7 +67,6 @@ describe("BackgroundJobsRegistry", () => {
       makeJob("b", () => goodObservation),
       makeJob("c", () => goodObservation),
     ]);
-    r.refresh();
     expect(r.snapshot().jobs).toHaveLength(3);
   });
 
@@ -86,7 +84,6 @@ describe("BackgroundJobsRegistry", () => {
         return { ...goodObservation, ticksLastHour: 99 };
       }),
     );
-    r.refresh();
     const snap = r.snapshot();
     expect(snap.jobs).toHaveLength(1);
     expect(snap.jobs[0].observation.ticksLastHour).toBe(99);
@@ -102,7 +99,6 @@ describe("BackgroundJobsRegistry", () => {
         throw new Error("boom");
       }),
     );
-    r.refresh();
     const snap = r.snapshot();
     expect(snap.jobs).toHaveLength(2);
     const bad = snap.jobs.find((j) => j.id === "bad");
@@ -112,11 +108,8 @@ describe("BackgroundJobsRegistry", () => {
     expect(good?.observation.state).toBe("running");
   });
 
-  it("start() refreshes immediately and on the configured interval", () => {
-    const r = new BackgroundJobsRegistry({
-      log: createLogger("test"),
-      refreshIntervalMs: 100,
-    });
+  it("observes nothing until a snapshot is asked for", () => {
+    const r = new BackgroundJobsRegistry({ log: createLogger("test") });
     let calls = 0;
     r.register(
       makeJob("x", () => {
@@ -124,32 +117,38 @@ describe("BackgroundJobsRegistry", () => {
         return goodObservation;
       }),
     );
-    r.start();
-    expect(calls).toBe(1); // refreshed on start
-    vi.advanceTimersByTime(100);
-    expect(calls).toBe(2);
-    vi.advanceTimersByTime(250);
-    expect(calls).toBe(4); // 200, 300 ticks
-    r.dispose();
+    vi.advanceTimersByTime(60_000);
+    expect(calls).toBe(0);
+    expect(r.snapshot().jobs).toHaveLength(1);
+    expect(calls).toBe(1);
   });
 
-  it("dispose() stops the timer", () => {
-    const r = new BackgroundJobsRegistry({
-      log: createLogger("test"),
-      refreshIntervalMs: 100,
-    });
-    let calls = 0;
+  it("serves one snapshot while it is fresh and observes again once it is older than maxAgeMs", () => {
+    const r = new BackgroundJobsRegistry({ log: createLogger("test"), maxAgeMs: 100 });
+    let ticks = 0;
     r.register(
       makeJob("x", () => {
-        calls += 1;
-        return goodObservation;
+        ticks += 1;
+        return { ...goodObservation, ticksLastHour: ticks };
       }),
     );
-    r.start();
-    expect(calls).toBe(1);
-    r.dispose();
-    vi.advanceTimersByTime(1000);
-    expect(calls).toBe(1); // no further ticks
+    const first = r.snapshot();
+    vi.advanceTimersByTime(99);
+    expect(r.snapshot()).toBe(first);
+    vi.advanceTimersByTime(1);
+    const second = r.snapshot();
+    expect(second).not.toBe(first);
+    expect(second.jobs[0].observation.ticksLastHour).toBe(2);
+    expect(Date.parse(second.generatedAt) - Date.parse(first.generatedAt)).toBe(100);
+  });
+
+  it("a job registered after a snapshot appears once the snapshot ages out", () => {
+    const r = new BackgroundJobsRegistry({ log: createLogger("test"), maxAgeMs: 100 });
+    r.register(makeJob("a", () => goodObservation));
+    expect(r.snapshot().jobs.map((j) => j.id)).toEqual(["a"]);
+    r.register(makeJob("b", () => goodObservation));
+    vi.advanceTimersByTime(100);
+    expect(r.snapshot().jobs.map((j) => j.id)).toEqual(["a", "b"]);
   });
 
   it("get(id) returns the registered job; unknown id is undefined", () => {
