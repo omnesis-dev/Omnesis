@@ -82,9 +82,11 @@ import {
 } from "./ontology.js";
 import { WATCH_JOURNAL_FILENAME } from "./journal-path.js";
 import { withFingerprint } from "./definitions.js";
+import { PrefetchedJournalDocuments, type JournalHistoryReader } from "./journal-document.js";
 import type { WatchDefinitionStore, StoredWatch, WatchStatus } from "./definitions.js";
 import type { WatchTraceStore } from "./traces.js";
 import type { WatchJournalStore } from "./store.js";
+import type { JournalEvent } from "@omnesis/watch/journal";
 import type { WatchNotificationWakeOutcome } from "../push/queue.js";
 import type { WriteLease } from "./write-lease.js";
 import type { EncryptedSqliteDatabase } from "../sqlite-encryption.js";
@@ -143,6 +145,13 @@ export interface EngineHostDeps {
   /** This host's own connection to the journal. Never the materializer's. */
   readonly db: EncryptedSqliteDatabase;
   readonly journal: WatchJournalStore;
+  /**
+   * Reads, off the main thread, the revision histories a run's index events
+   * will ask about (`io.watchDocumentHistories` in the gateway), before the
+   * run and outside the write lease. Without one, every lookup reads the
+   * journal store's own connection.
+   */
+  readonly journalHistories?: JournalHistoryReader;
   readonly definitions: WatchDefinitionStore;
   /**
    * The cadence the scheduler evaluates at when nothing is arriving. The host
@@ -1086,6 +1095,7 @@ export class WatchEngineHost {
 
     const from = this.state.cursor(watchId);
     const events = this.deps.journal.read(from, this.eventsPerWatch);
+    const documents = await this.documentsFor(events);
 
     // Run even with nothing new to read. A watch whose outstanding work is a
     // deadline — a recurring digest, a wait that has run out — has no event to
@@ -1108,7 +1118,7 @@ export class WatchEngineHost {
       // The store owns its own rows, the journal can be asked rather than
       // remembered, and the state lives on a connection this host opened.
       analytics: this.deps.analytics,
-      lookupDocument: (docId, atSeq) => this.lookupDocument(docId, atSeq),
+      lookupDocument: (docId, atSeq) => documents.lookup(docId, atSeq),
       store: this.state,
       judge: this.deps.judge,
       recall: this.deps.recall,
@@ -1511,13 +1521,31 @@ export class WatchEngineHost {
   }
 
   /**
-   * The most recent `doc.event` for a document at or before `atSeq`.
+   * The document lookups for one run over `events`: the most recent
+   * `doc.event` for a document at or before a sequence, bounded so that a host
+   * catching up after a restart never reads a revision that had not happened
+   * yet at the event it is evaluating.
    *
-   * The bound is what keeps a host catching up after a restart from reading a
-   * revision that had not happened yet at the event it is evaluating.
+   * The engine asks inside the write transaction it holds for an event, where
+   * nothing may wait on another thread. So the histories its index events
+   * will ask about are read here first, off the main thread, and the run's
+   * lookups are answered from them.
    */
-  private lookupDocument(docId: string, atSeq: number): JournalDocument | null {
-    return this.deps.journal.documentAt(docId, atSeq);
+  private async documentsFor(events: readonly JournalEvent[]): Promise<PrefetchedJournalDocuments> {
+    const documents = new PrefetchedJournalDocuments((docId, atSeq) =>
+      this.deps.journal.documentAt(docId, atSeq),
+    );
+    const reader = this.deps.journalHistories;
+    if (!reader) return documents;
+    const wanted = events.flatMap((event) =>
+      event.kind === "doc.indexed" ? [{ docId: event.payload.docId, atSeq: event.seq }] : [],
+    );
+    await documents.prefetch(reader, wanted, (err) =>
+      log.warn(
+        `watch journal history read failed, reading on the main thread: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    );
+    return documents;
   }
 
   /**

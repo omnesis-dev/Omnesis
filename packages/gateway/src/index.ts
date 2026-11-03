@@ -555,6 +555,12 @@ scheduler.registerRunner(
     concurrency: runtime.ioConcurrency,
     backgroundWorkerNice: runtime.backgroundWorkerNice,
     cacheSizeBytes: runtime.ioReadCacheSizeBytes,
+    // The canonical path: the workers start before boot settles the journal,
+    // and open it only when the Watch engine first asks.
+    watchJournal: {
+      path: watchJournalPath(configDir),
+      ...(storageEncryption.watchDbKeyHex ? { keyHex: storageEncryption.watchDbKeyHex } : {}),
+    },
     workerUrl: ioWorker.url,
     workerExecArgv: ioWorker.execArgv,
   }),
@@ -2082,6 +2088,7 @@ if (watchV2 && watchStores?.ok) {
   const watchV2Engine = startWatchV2Engine({
     stores: watchStores.stores,
     journal: watchV2.store,
+    journalHistories: (requests) => ioGate.watchDocumentHistories(requests),
     // Shared with the materializer: both write the journal from the main
     // runner, and a synchronous driver makes the loser block the event loop
     // rather than wait.
@@ -2332,6 +2339,7 @@ if (watchV2 && watchStores?.ok) {
             Ontology.parse(
               await buildOntologySnapshot({ db, analyticsDb, semanticallyIndexed: () => true }),
             ),
+          journalHistories: (requests) => ioGate.watchDocumentHistories(requests),
           analytics: () => analyticsPortFor(analyticsDb),
           recall: new LiveRecall({ indexDb, embedder: () => getSemanticEmbedder() }),
           canScore: () => indexDb !== null && getSemanticEmbedder() !== null,

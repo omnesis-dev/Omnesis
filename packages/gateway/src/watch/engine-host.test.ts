@@ -23,11 +23,13 @@ import Database from "better-sqlite3";
 
 import { WatchStateStore } from "@omnesis/watch";
 import { runSchemaSetup } from "../data/schema.js";
+import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { WatchDefinitionStore } from "./definitions.js";
 import { nodeFailedNote } from "./health.js";
 import { WatchEngineHost } from "./engine-host.js";
 import { buildOntologySnapshot } from "./ontology.js";
 import { WatchJournalStore } from "./store.js";
+import { journalDocumentHistories, type JournalHistoryReader } from "./journal-document.js";
 import { WatchTraceStore } from "./traces.js";
 import { WriteLease } from "./write-lease.js";
 import type { DeliveryCaps, WatchNotification, WatchThreadDegrade } from "./engine-host.js";
@@ -2140,5 +2142,90 @@ describe("a node that throws inside the write turn", () => {
     // containing the failure to the watch that caused it.
     const next = await within(running.evaluate(), null);
     expect(next, "the tick after the pause never completed").not.toBeNull();
+  });
+});
+
+/**
+ * The engine's per-document revision lookups are read ahead on an io worker in
+ * the gateway, behind `journalHistories`, before each run and outside the
+ * write lease. With a reader wired, the journal store's own connection — the
+ * main thread's — is not asked; when the reader fails, it is, and the watch
+ * decides exactly as it would have.
+ */
+describe("a host with a journal history reader", () => {
+  const FIRST = "d1111111-0000-4000-8000-000000000001";
+  const SECOND = "d1111111-0000-4000-8000-000000000002";
+
+  async function twoIndexedMails(): Promise<void> {
+    const indexed = (day: number, docId: string): NewJournalEvent => ({
+      kind: "doc.indexed",
+      occurredAt: at(day),
+      observedAt: at(day),
+      payload: { docId, eventIndexedAt: at(day) },
+    });
+    journal.commit({
+      events: [
+        mail(1, FIRST, "one"),
+        indexed(1, FIRST),
+        mail(2, SECOND, "two"),
+        indexed(2, SECOND),
+      ],
+    });
+    const dsl = fromAlice(await fingerprint()) as { watch: { nodes: Record<string, unknown>[] } };
+    dsl.watch.nodes[0]!.recall = { semantic: { query: "anything", threshold: 0.1 } };
+    dsl.watch.nodes[0]!.judge = {
+      proposition: "it is about anything",
+      output_schema: { because: "string" },
+    };
+    addWatch(dsl, 0);
+  }
+
+  function hostWith(journalHistories: JournalHistoryReader): WatchEngineHost {
+    return new WatchEngineHost({
+      db: hostDb,
+      journal,
+      journalHistories,
+      definitions,
+      analytics: NO_ANALYTICS,
+      judge: { judge: () => ({ fired: true, output: { because: "it is" } }) },
+      recall: { score: () => 1 },
+      traces: new WatchTraceStore(hostDb),
+      writes: new WriteLease(),
+      ontology: { db, analyticsDb: null, semanticallyIndexed: () => true },
+    });
+  }
+
+  it("answers every lookup from the histories it read ahead", async () => {
+    await twoIndexedMails();
+    const asked: string[] = [];
+    const reader = openEncryptedSqlite(join(dir, "watch.db"), { readonly: true });
+    const direct = journal.documentAt.bind(journal);
+    journal.documentAt = () => {
+      throw new Error("the main thread read the journal for a document");
+    };
+    try {
+      const result = await hostWith((requests) => {
+        asked.push(...requests.map(({ docId, atSeq }) => `${docId}@${atSeq}`));
+        return Promise.resolve(journalDocumentHistories(reader, requests));
+      }).evaluate();
+
+      expect(result.firings).toBe(2);
+      // One read for the run, naming each indexed document at its index event.
+      expect(asked).toEqual([`${FIRST}@2`, `${SECOND}@4`]);
+    } finally {
+      journal.documentAt = direct;
+      reader.close();
+    }
+  });
+
+  it("reads on the main thread when the reader fails, and decides the same", async () => {
+    await twoIndexedMails();
+    const result = await hostWith(() =>
+      Promise.reject(new Error("io workers shut down")),
+    ).evaluate();
+
+    expect(result.firings).toBe(2);
+    expect(result.paused).toBe(0);
+    expect(definitions.get("w-1")?.status).toBe("active");
   });
 });
