@@ -122,7 +122,7 @@ import type { IndexWriteGate } from "../../indexer/index-write-gate.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { DeviceWsServer } from "../../ws.js";
 import type { DisplaySyncStatus, SyncStatusRegistry, SourceSyncStatus } from "../../sync-status.js";
-import type { StoredSyncState } from "../../data/types.js";
+import type { SyncStateSummary } from "../../data/repositories/SyncStateRepository.js";
 import type { SourceDataRemovalService } from "./SourceDataRemovalService.js";
 import type { StatusCache } from "./StatusCache.js";
 
@@ -2687,7 +2687,7 @@ export class SourceService {
     const registered = this.deps.statusCache.listSources;
 
     const inMemBy = new Map(inMem.map((s) => [s.sourceId, s]));
-    const persistedBy = new Map<string, StoredSyncState[]>();
+    const persistedBy = new Map<string, SyncStateSummary[]>();
     for (const p of persisted) {
       const rows = persistedBy.get(p.source_id);
       if (rows) rows.push(p);
@@ -2766,16 +2766,16 @@ export class SourceService {
   private deriveSourceStatus(
     sourceId: SourceId,
     inMem: SourceSyncStatus | undefined,
-    rows: readonly StoredSyncState[],
+    rows: readonly SyncStateSummary[],
     registered: SourceRecord | undefined,
     permissions: readonly MobilePermissionReportRow[],
     now: number,
   ): DisplaySyncStatus {
     // A row's stamp is its latest sync or error, so a member whose first
     // sync failed still stands for the source over a metadata-only shared row.
-    const stampOf = (p: StoredSyncState | undefined): string =>
+    const stampOf = (p: SyncStateSummary | undefined): string =>
       p ? [p.last_synced_at ?? "", p.errored_at ?? ""].sort().at(-1)! : "";
-    let persisted: StoredSyncState | undefined;
+    let persisted: SyncStateSummary | undefined;
     for (const p of rows) {
       const stamp = stampOf(p);
       const prevStamp = stampOf(persisted);

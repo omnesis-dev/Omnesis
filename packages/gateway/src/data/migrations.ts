@@ -3656,10 +3656,10 @@ export const MIGRATIONS: readonly Migration[] = [
       // already pruned cannot be recovered and stay counted as reviewed —
       // stated here rather than papered over.
       // Set-based on purpose. The obvious shape — two correlated EXISTS
-      // subqueries per document — cannot use the only index on `dedupe_key`,
-      // which is partial (`WHERE status = 'pending'`) and so covers neither
-      // `failed` nor `completed`. That makes it one full scan of the run
-      // ledger per marked document: on a corpus of a few hundred thousand
+      // subqueries per document — cannot use the pending dedupe index, which
+      // is partial (`WHERE status = 'pending'`) and so covers neither `failed`
+      // nor `completed`. Without an index over every status that is one full
+      // scan of the run ledger per marked document: on a corpus of a few hundred thousand
       // documents it turns a migration into a startup the operator watches.
       //
       // Instead: one grouped pass over the bootstrap runs to decide which

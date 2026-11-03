@@ -3,10 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
-import {
-  captureDecisionPayloadSubjects,
-  decisionPayloadErasureGeneration,
-} from "../decision-payload.js";
+import { decisionPayloadErasureGeneration } from "../decision-payload.js";
 import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { unreadablePendingClaimIds } from "./unreadable-support.js";
 import { knowledgeNodeView, type KnowledgeNodeView } from "./node-view.js";
@@ -652,8 +649,7 @@ export class KnowledgeEngine {
                     nodeId: item.nodeId,
                     threshold: 0.25,
                     payloadCapture:
-                      captureDecisionPayloadSubjects(
-                        this.deps.db,
+                      (await knowledgeSelectionReads(this.deps).knowledgeDecisionPayloadSubjects(
                         {
                           sourceIds: source ? [source.id] : changedInputs.map((input) => input.id),
                           nodeIds: source
@@ -669,7 +665,7 @@ export class KnowledgeEngine {
                             : undefined,
                         },
                         payloadGeneration,
-                      ) ?? undefined,
+                      )) ?? undefined,
                   },
                 );
           if (

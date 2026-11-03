@@ -35,10 +35,10 @@ import {
 import { getSource } from "./data/repositories/SourceRepository.js";
 import { getWipeEpoch, listCursorRows } from "./data/repositories/SyncStateRepository.js";
 import {
-  analyticsClaimNamespace,
-  listAnalyticsOmissionCandidates,
-} from "./data/repositories/AnalyticsReplicaClaimRepository.js";
-import { listClaimedExternalIds } from "./data/repositories/ReplicaDeletionClaimRepository.js";
+  ANALYTICS_REPLICA_READS,
+  type AnalyticsReplicaReads,
+} from "./http/services/analytics-replica-reads.js";
+import { directReadPort } from "./scheduler/read-port.js";
 import { SyncLeaseRegistry } from "./sync-lease.js";
 import { SourceWriteEpochFence } from "./source-write-epoch-fence.js";
 import { type WriteGate, directWriteGate } from "./write-gate.js";
@@ -188,6 +188,7 @@ import type { AuthFlowRegistry } from "./auth-flows.js";
 import type { ImportFlowRegistry } from "./import-flows.js";
 import type { DeviceWsServer } from "./ws.js";
 import type { IComputeScheduler } from "./http/services/ports.js";
+import type { StatusCacheReads } from "./http/services/status-cache-reads.js";
 import type { ConfigStore } from "./config-store.js";
 import type { AppEnv, AuthContext } from "./http/routes/types.js";
 import type { CognitionBudgetSettings } from "./brain/cognition/budget.js";
@@ -223,6 +224,11 @@ export function createServer(
      * writer-queue cost.
      */
     ioGate?: IComputeScheduler;
+    /**
+     * Read worker for the status cache's periodic refresh and for the replica
+     * ledger reads of an analytics page. Absent, they read on the main handle.
+     */
+    readPorts?: StatusCacheReads & AnalyticsReplicaReads;
     /**
      * Optional metrics sink. When provided, every authenticated
      * request is recorded into the registry keyed by
@@ -838,6 +844,7 @@ export function createServer(
     getFcmProjectId: opts?.pushPlan?.getFcmProjectId ?? (() => Promise.resolve(undefined)),
     onDeviceChanged: () => statusCache.bump(),
   });
+  const analyticsReplicaReads = opts?.readPorts ?? directReadPort(ANALYTICS_REPLICA_READS, db);
   const analyticsService = opts?.analyticsDb
     ? new AnalyticsService(
         opts.analyticsDb,
@@ -856,9 +863,9 @@ export function createServer(
         {
           cursorRows: (sourceId) => listCursorRows(db, sourceId),
           omissionCandidates: (sourceId, tableName, deviceId) =>
-            listAnalyticsOmissionCandidates(db, sourceId, tableName, deviceId),
+            analyticsReplicaReads.analyticsOmissionCandidates(sourceId, tableName, deviceId),
           claimedKeys: (sourceId, tableName, keyValues) =>
-            listClaimedExternalIds(db, analyticsClaimNamespace(tableName), sourceId, keyValues),
+            analyticsReplicaReads.analyticsClaimedKeys(sourceId, tableName, keyValues),
           judgeTombstones: (args) => w.judgeAnalyticsTombstones(args),
           recordPresence: (args) => w.recordAnalyticsPresence(args),
           recordRestorerOmissions: (args) => w.recordAnalyticsRestorerOmissions(args),
@@ -871,7 +878,7 @@ export function createServer(
             },
       )
     : null;
-  const statusCache = new StatusCache(db, opts?.analyticsDb);
+  const statusCache = new StatusCache(db, opts?.analyticsDb, opts?.readPorts);
   // SourceService + AuthService are instantiated below, after the closure
   // helpers (notifySourceChange, syncSourceSettingsToConfig,
   // createOrReplaceDeviceForPair) are defined.

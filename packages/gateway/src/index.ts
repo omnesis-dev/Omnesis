@@ -2428,6 +2428,9 @@ const app = createServer(db, DB_PATH, {
   port: PORT,
   writeGate,
   ioGate,
+  // The status cache's refresh and an analytics page's replica ledger reads,
+  // off the main event loop.
+  readPorts: ioGate,
   metrics,
   processVitals,
   stalls: stallMonitor,

@@ -131,12 +131,16 @@ import {
   fetchTranscriptionVocabularyBatch,
   getTranscriptionVocabulary,
 } from "../transcribe/vocabulary/storage.js";
+import { ioReadHandlers } from "./read-port.js";
+import { IO_READS } from "./io-read-ports.js";
 import type { UrlCanonicalizerSpec, TranscriptionContext } from "@omnesis/core";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { ConversationRetentionFile } from "../agent/conversation-retention.js";
 import type { VocabularySettings } from "../transcribe/vocabulary/types.js";
 
 export const ioHandlers = {
+  // Every read port in `io-read-ports.ts`: one `io.<name>` handler per read.
+  ...ioReadHandlers(IO_READS),
   "io.fetchTranscriptionVocabularyBatch": (db: Db, settings: VocabularySettings) =>
     fetchTranscriptionVocabularyBatch(db, settings),
   "io.getTranscriptionVocabulary": (
