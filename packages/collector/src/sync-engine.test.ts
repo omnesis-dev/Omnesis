@@ -1451,40 +1451,40 @@ describe("SyncEngine file watching", () => {
   });
 
   test("multiple rapid changes debounce to single sync", async () => {
-    const watchFile = join(tmpDir, "test.db");
-    writeFileSync(watchFile, "initial");
-
-    let syncCount = 0;
-    const source = makeSource(
-      "watched-source",
-      "test",
-      async () => {
+    vi.useFakeTimers();
+    try {
+      let syncCount = 0;
+      // Drive change notifications directly: real filesystem delivery and its
+      // independent mtime fallback are covered by the adjacent integration tests.
+      const source = makeSource("watched-source", "test", async () => {
         syncCount++;
         return { documents: [], deletedExternalIds: [], cursor: {}, hasMore: false };
-      },
-      { watchPaths: [watchFile] },
-    );
+      });
+      engine.registerProvider(makeProvider("test", true, [source]));
+      await engine.startSyncLoop({}, { skipInitialSync: true });
+      await engine.syncSource(source);
+      const afterInitial = syncCount;
+      const watchers = (
+        engine as unknown as { fileWatchers: { onFileChange(sourceId: string): void } }
+      ).fileWatchers;
 
-    engine.registerProvider(makeProvider("test", true, [source]));
-    await engine.startSyncLoop();
+      watchers.onFileChange(source.id);
+      await vi.advanceTimersByTimeAsync(60);
+      watchers.onFileChange(source.id);
+      await vi.advanceTimersByTimeAsync(60);
+      watchers.onFileChange(source.id);
+      // Both earlier deadlines pass, but the final event restarts the quiet period.
+      await vi.advanceTimersByTimeAsync(99);
+      expect(syncCount).toBe(afterInitial);
 
-    const afterInitial = syncCount;
-
-    // Rapid writes within the debounce window (must be shorter than debounce)
-    writeFileSync(watchFile, "change1");
-    await new Promise((r) => setTimeout(r, 10));
-    writeFileSync(watchFile, "change2");
-    await new Promise((r) => setTimeout(r, 10));
-    writeFileSync(watchFile, "change3");
-
-    // Wait for the debounced sync to complete
-    await waitForCondition(() => syncCount > afterInitial, 3000);
-
-    // Small extra wait to ensure no additional syncs fire
-    await new Promise((r) => setTimeout(r, 300));
-
-    // Should have triggered only one additional sync (debounced)
-    expect(syncCount).toBe(afterInitial + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(syncCount).toBe(afterInitial + 1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(syncCount).toBe(afterInitial + 1);
+    } finally {
+      engine.stopSyncLoop();
+      vi.useRealTimers();
+    }
   });
 
   test("stopSyncLoop cleans up watchers", async () => {
