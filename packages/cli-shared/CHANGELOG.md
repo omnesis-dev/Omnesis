@@ -1,5 +1,12 @@
 # @omnesis/cli-shared
 
+## 0.7.5
+
+### Patch Changes
+
+- @omnesis/core@0.7.5
+  - @omnesis/source-sdk@0.7.5
+
 ## 0.7.4
 
 ### Patch Changes

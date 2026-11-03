@@ -1,5 +1,14 @@
 # @omnesis/provider-claude-code-synth
 
+## 0.7.5
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.7.5
+  - @omnesis/provider-claude-code@0.7.5
+  - @omnesis/source-sdk@0.7.5
+  - @omnesis/types@0.7.5
+
 ## 0.7.4
 
 ### Patch Changes

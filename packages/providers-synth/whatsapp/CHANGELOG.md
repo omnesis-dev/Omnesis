@@ -1,5 +1,15 @@
 # @omnesis/provider-whatsapp-synth
 
+## 0.7.5
+
+### Patch Changes
+
+- @omnesis/core@0.7.5
+  - @omnesis/providers-synth-common@0.7.5
+  - @omnesis/provider-whatsapp@0.7.5
+  - @omnesis/source-sdk@0.7.5
+  - @omnesis/types@0.7.5
+
 ## 0.7.4
 
 ### Patch Changes

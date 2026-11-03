@@ -1,5 +1,14 @@
 # @omnesis/provider-browser-history-synth
 
+## 0.7.5
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.7.5
+  - @omnesis/provider-browser-history@0.7.5
+  - @omnesis/source-sdk@0.7.5
+  - @omnesis/types@0.7.5
+
 ## 0.7.4
 
 ### Patch Changes
