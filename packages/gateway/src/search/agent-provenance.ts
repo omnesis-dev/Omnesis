@@ -46,9 +46,10 @@ export interface AgentSearchProvenanceOptions {
   /** Index snapshot hashes prevent stale chunks from claiming current identity. */
   indexedContentHashes?: Readonly<Record<string, string>>;
   /**
-   * Documents the caller passed through the knowledge readability fence just
-   * before, whose verdicts stand in for fencing them again here. Every other
-   * document is fenced in the graph read snapshot.
+   * Hits the caller passed through the knowledge readability fence after its
+   * last asynchronous stage, on another connection just before this read.
+   * Their verdicts stand in for fencing them again here; every other document
+   * is fenced in the graph read snapshot.
    */
   readableDocumentIds?: ReadonlySet<string>;
 }

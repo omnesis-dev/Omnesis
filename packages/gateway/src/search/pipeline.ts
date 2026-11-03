@@ -708,7 +708,8 @@ export class SearchPipeline {
       ctx.results = (
         this.gatewayDb ? await this.readableHits(this.gatewayDb, ctx.results) : ctx.results
       ).map(({ provenance: _provenance, ...hit }) => hit);
-      // Graph enrichment takes these verdicts instead of fencing each hit again.
+      // Graph enrichment takes these verdicts, read after the last asynchronous
+      // stage, instead of fencing each hit again.
       const readableDocumentIds = new Set(ctx.results.map((hit) => hit.documentId));
       if (
         options?.agentContext &&

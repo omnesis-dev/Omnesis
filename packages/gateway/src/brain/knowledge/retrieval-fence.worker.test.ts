@@ -5,8 +5,7 @@
  * Search fences its hits through one batched read on the real io worker. Over a
  * store holding every kind of knowledge document search can meet, each verdict
  * equals the per-hit rule applied through the full node fence on a direct
- * handle, so moving the fence off the main event loop hides exactly the same
- * documents.
+ * handle, so the worker hides exactly the documents a main-thread fence hides.
  */
 
 import { randomUUID } from "node:crypto";
@@ -42,8 +41,8 @@ let scheduler: Scheduler;
 let worker: KnowledgeReadabilityReads;
 
 /**
- * The per-hit rule as written before verdicts were batched, reading each
- * knowledge node through `getKnowledgeNode` and so through the full fence.
+ * The readability rule judged one hit at a time, reading each knowledge node
+ * through `getKnowledgeNode` and so always through the full fence.
  */
 function perHitReadable(documentId: string, sourceId?: string): boolean {
   const source =
@@ -167,6 +166,19 @@ function seed(): KnowledgeDocumentRef[] {
   db.prepare("UPDATE knowledge_nodes SET validity='stale' WHERE id='stored-stale'").run();
   mirror("mirror-stored-stale", { ...stored, validity: "stale" });
   mirror("mirror-stored-stale-as-current", stored);
+  // Stored stale and hidden.
+  const hiddenStale = page("stored-stale-tombstoned", "evidence", 100);
+  db.prepare(
+    "UPDATE knowledge_nodes SET validity='stale' WHERE id='stored-stale-tombstoned'",
+  ).run();
+  mirror("mirror-stored-stale-tombstoned", { ...hiddenStale, validity: "stale" });
+  db.prepare(
+    "INSERT INTO knowledge_node_tombstones(id,deleted_at) VALUES('stored-stale-tombstoned',120)",
+  ).run();
+  // Stale where the node is current and nothing it read changed.
+  mirror("mirror-current-as-stale", page("current-node", "evidence", 100), {
+    knowledgeValidity: "stale",
+  });
   // Hidden: tombstoned, and being purged.
   mirror("mirror-tombstoned", page("tombstoned", "evidence", 100));
   db.prepare("INSERT INTO knowledge_node_tombstones(id,deleted_at) VALUES('tombstoned',120)").run();
@@ -273,6 +285,8 @@ it("fences every hit on the worker exactly as the per-hit rule does on a direct 
   expect(verdict("mirror-drifted-stale", KNOWLEDGE_SOURCE_ID)).toBe(true);
   expect(verdict("mirror-stored-stale", KNOWLEDGE_SOURCE_ID)).toBe(true);
   expect(verdict("mirror-stored-stale-as-current", KNOWLEDGE_SOURCE_ID)).toBe(false);
+  expect(verdict("mirror-stored-stale-tombstoned", KNOWLEDGE_SOURCE_ID)).toBe(false);
+  expect(verdict("mirror-current-as-stale", KNOWLEDGE_SOURCE_ID)).toBe(false);
   expect(verdict("mirror-tombstoned", KNOWLEDGE_SOURCE_ID)).toBe(false);
   expect(verdict("mirror-purging", KNOWLEDGE_SOURCE_ID)).toBe(false);
   expect(verdict("mirror-retiring", KNOWLEDGE_SOURCE_ID)).toBe(false);
