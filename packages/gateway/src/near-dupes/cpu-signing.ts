@@ -107,7 +107,7 @@ export interface VerifiedPair {
   accepted: boolean;
 }
 
-// ── Metadata parsing (extracted from NearDupComputeService) ───────────
+// ── Metadata parsing ──────────────────────────────────────────────────
 
 interface DocMetaParsed {
   docType: string;
@@ -228,6 +228,55 @@ export function signDocBatch(
   return results;
 }
 
+// ── Phase 2c: Prepare persisted candidates (CPU pool) ────────────────
+
+/** A persisted candidate's shingle set and the metadata its verify pairs carry. */
+export interface PreparedCandidate {
+  candidateId: string;
+  shingles: string[];
+  meta: VerifyDocMeta;
+}
+
+/**
+ * Normalize and shingle persisted candidates for verification, exactly as a
+ * signed document is shingled. Normalizing costs time proportional to a
+ * document's length and a batch can fetch thousands of candidates, so this
+ * runs on the CPU pool rather than on the main thread between the pool's
+ * phases.
+ *
+ * A candidate that is not eligible, or that yields no shingle, is left out:
+ * it can be part of no pair.
+ */
+export function prepareCandidateBatch(
+  candidates: CandidateDocData[],
+  algoConfig: NearDupeConfig,
+  eligibleDocTypes: string[],
+): PreparedCandidate[] {
+  const eligible = new Set(eligibleDocTypes);
+  const prepared: PreparedCandidate[] = [];
+  for (const candidate of candidates) {
+    const parsed = parseDocMeta(candidate.metadata);
+    if (!isEligibleForNearDup(parsed.docType, eligible)) continue;
+    const sh = shingles(
+      normalizeText(candidate.content, { stripQuotes: algoConfig.stripQuotes }),
+      algoConfig.shingleSize,
+    );
+    if (sh.size === 0) continue;
+    prepared.push({
+      candidateId: candidate.candidateId,
+      shingles: [...sh],
+      meta: {
+        contentHash: candidate.contentHash,
+        extractedContentHash: candidate.extractedContentHash,
+        docType: parsed.docType,
+        threadId: parsed.threadId,
+        senderAddress: parsed.senderAddress,
+      },
+    });
+  }
+  return prepared;
+}
+
 // ── Phase 2d: Verify candidate pairs (CPU pool) ──────────────────────
 
 export function verifyPairBatch(
@@ -319,5 +368,3 @@ export function verifyPairBatch(
   }
   return results;
 }
-
-export { parseDocMeta };

@@ -16,7 +16,7 @@ Each of these has removed a real stall. Reach for the one that matches the shape
 - **External programs start through `processLauncher()`** (`process-launcher/`, #669). Starting a program forks the process that asks for it, and the fork copies that process's memory mappings synchronously on its event loop, which for a gateway with a large heap is a stall of its own. The launcher is a small long-lived child that does the spawning for the gateway, so `pdftoppm`, `ffmpeg` and the rest cost a message, not a fork.
 - **Writer work is sliced.** A writer op that iterates commits in sub-batches with a preempt check between them, so its callers' awaits resolve in bounded time and the main thread never handles one enormous result.
 - **A shared serialized resource gets priority lanes.** When interactive and background work queue for the same one-at-a-time resource, the interactive request should not wait behind a backlog: one queue, an ordered set of lanes, interactive first. The transcription queue is the case that called for it (#674): someone dictating should not wait behind queued source audio.
-- **CPU-bound pure computation goes to the cpu worker pool** (`scheduler/cpu-ops.ts`), with plain-data arguments and results.
+- **CPU-bound pure computation goes to the cpu worker pool** (`scheduler/cpu-ops.ts`), with plain-data arguments and results. Text processing counts: the near-dup tick shingles its persisted candidates there (`cpu.nearDupPrepareCandidates`), in chunks bounded by text length so no single reply is slow to deserialize on the main thread.
 
 What does not count as a fix: wrapping the loop in `setImmediate` batches without bounding the batch, raising a timeout, or lowering the frequency of a periodic task that still stalls each time it runs.
 
