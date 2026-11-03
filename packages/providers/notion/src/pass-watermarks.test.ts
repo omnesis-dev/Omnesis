@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { emptySync, withVersionedState } from "@omnesis/source-sdk";
+import { emptySync, withVersionedState, type SourceState } from "@omnesis/source-sdk";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { NotionDatabasesSource } from "./databases.js";
 import { NotionPagesSource } from "./pages.js";
@@ -46,7 +46,7 @@ function database(id: string) {
 function listing(results: unknown[], next_cursor: string | null = null) {
   return { results, next_cursor, has_more: next_cursor !== null };
 }
-function stored(state: object, version: number, enveloped: boolean) {
+function stored(state: SourceState, version: number, enveloped: boolean) {
   return enveloped ? { e: 1, v: version, state } : state;
 }
 
