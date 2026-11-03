@@ -20,16 +20,29 @@ final class TaskFanControllerTests: XCTestCase {
     private actor PreviewService: TasksService {
         let task: TaskRecord
 
-        init(task: TaskRecord) { self.task = task }
+        init(task: TaskRecord) {
+            self.task = task
+        }
 
         func view(_ view: TaskViewKind, day: String, limit: Int?, before: String?) async throws -> TaskViewPage {
             TaskViewPage(view: view, day: day, tasks: [task])
         }
 
-        func detail(id: String) async throws -> TaskDetail { throw GatewayClient.Error.notFound }
-        func perform(_ action: TaskAction, on id: String) async throws -> TaskMutation { throw GatewayClient.Error.notFound }
-        func undo(seq: Int) async throws -> TaskMutation { throw GatewayClient.Error.notFound }
-        func startConversation(about id: String) async throws -> ConversationSummary { throw GatewayClient.Error.notFound }
+        func detail(id: String) async throws -> TaskDetail {
+            throw GatewayClient.Error.notFound
+        }
+
+        func perform(_ action: TaskAction, on id: String) async throws -> TaskMutation {
+            throw GatewayClient.Error.notFound
+        }
+
+        func undo(seq: Int) async throws -> TaskMutation {
+            throw GatewayClient.Error.notFound
+        }
+
+        func startConversation(about id: String) async throws -> ConversationSummary {
+            throw GatewayClient.Error.notFound
+        }
     }
 
     private final class PreviewObservation {
