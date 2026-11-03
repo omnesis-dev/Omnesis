@@ -657,7 +657,10 @@
                   Notion Pages<br /><span class="pill">any collector</span>
                   <span class="pill">OAuth</span>
                 </td>
-                <td>Notion pages as documents.</td>
+                <td>
+                  Notion pages as documents. Changes made during a paginated sync are replayed by
+                  the next incremental pass.
+                </td>
               </tr>
               <tr>
                 <td>
@@ -666,6 +669,8 @@
                 </td>
                 <td>
                   Each shared Notion database as its own typed analytics table, queryable with SQL.
+                  A pass over several databases retains its starting watermark so edits made while
+                  it runs are fetched on the next pass.
                 </td>
               </tr>
               <tr>

@@ -37,8 +37,12 @@ export interface NotionCredentials {
 // ── Pages Source Cursor ─────────────────────────────────────────────
 
 export interface NotionPagesCursor extends SyncCursor {
-  /** ISO 8601 timestamp of the most recently seen page edit */
+  /** Committed edit watermark, bounded by the completed search pass start */
   lastEditedTime?: string;
+  /** Start of the current search pass; bounds its completed watermark. */
+  passStartedAt?: string;
+  /** Newest edit observed in the current pass, committed only when it ends. */
+  pendingEditedTime?: string;
   /** Notion pagination cursor for search */
   startCursor?: string;
   /** Continuation tokens in the current search, to reject loops across restarts. */
@@ -82,6 +86,8 @@ export function isNotionPagesCursor(v: unknown): v is NotionPagesCursor {
   if (!v || typeof v !== "object") return false;
   const c = v as Record<string, unknown>;
   if (c.lastEditedTime !== undefined && typeof c.lastEditedTime !== "string") return false;
+  if (c.passStartedAt !== undefined && typeof c.passStartedAt !== "string") return false;
+  if (c.pendingEditedTime !== undefined && typeof c.pendingEditedTime !== "string") return false;
   if (c.startCursor !== undefined && typeof c.startCursor !== "string") return false;
   if (
     c.pageCursors !== undefined &&
@@ -128,7 +134,9 @@ export interface NotionDatabasesCursor extends SyncCursor {
   dbPageCursor?: string;
   /** Whether we've emitted the summary doc for the current database */
   emittedSummary?: boolean;
-  /** ISO 8601 timestamp of last successful sync */
+  /** Start of the database pass; becomes the next incremental watermark. */
+  passStartedAt?: string;
+  /** ISO 8601 timestamp covered by the last completed pass */
   lastSyncTime?: string;
   /** Notion pagination cursor for database discovery search */
   discoveryCursor?: string;
@@ -227,6 +235,7 @@ export interface NotionDatabasesCursor extends SyncCursor {
 export function isNotionDatabasesCursor(v: unknown): v is NotionDatabasesCursor {
   if (!v || typeof v !== "object") return false;
   const c = v as Record<string, unknown>;
+  if (c.passStartedAt !== undefined && typeof c.passStartedAt !== "string") return false;
   if (c.phase !== "discover" && c.phase !== "sync-db" && c.phase !== "done") {
     return false;
   }
