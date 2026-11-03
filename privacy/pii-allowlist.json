@@ -5983,7 +5983,8 @@
       "value": "Bad Request",
       "paths": [
         "packages/providers/google/src/api-error.test.ts",
-        "packages/providers/google/src/contacts.test.ts"
+        "packages/providers/google/src/contacts.test.ts",
+        "packages/providers/google/src/drive.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -12519,6 +12520,21 @@
       "value": "Main Camera",
       "paths": ["packages/providers/immich/src/normalizer.test.ts"],
       "reason": "Invented Immich fixture name (person, album, place or camera), not corpus data."
+    },
+    {
+      "value": "Invalid Value",
+      "paths": ["packages/providers/google/src/drive.test.ts"],
+      "reason": "The message Google APIs return for a rejected request parameter, not a name."
+    },
+    {
+      "value": "Rate Limit Exceeded",
+      "paths": ["packages/providers/google/src/drive.test.ts"],
+      "reason": "Google API error message text."
+    },
+    {
+      "value": "User Rate Limit",
+      "paths": ["packages/providers/google/src/drive.test.ts"],
+      "reason": "Google API error message text (\"User Rate Limit Exceeded\")."
     }
   ],
   "secretFixtures": [

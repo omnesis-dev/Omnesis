@@ -126,6 +126,37 @@ describe("reconcileConfig", () => {
     expect(row?.config.extractAttachments).toBeUndefined();
   });
 
+  test("removing a source-type maxAge lifts the limit on every instance it reached", async () => {
+    const dev = mkDevice("macbook");
+    mkSource(dev, "gmail", "maya@example.com");
+    mkSource(dev, "gmail", "jamie@example.org");
+
+    await reconcileConfig(db, w, { sources: { gmail: { maxAge: "2y" } } });
+    expect(getSource(db, "gmail:maya@example.com" as never)?.config.maxAge).toBe("2y");
+
+    const report = await reconcileConfig(db, w, { sources: {} });
+
+    expect(getSource(db, "gmail:maya@example.com" as never)?.config).not.toHaveProperty("maxAge");
+    expect(getSource(db, "gmail:jamie@example.org" as never)?.config).not.toHaveProperty("maxAge");
+    expect([...report.updatedSourceIds].sort()).toEqual([
+      "gmail:jamie@example.org",
+      "gmail:maya@example.com",
+    ]);
+  });
+
+  test("an unlimited maxAge on a source overrides a default limit on its row", async () => {
+    const dev = mkDevice("macbook");
+    mkSource(dev, "google-drive", "maya@example.com");
+
+    await reconcileConfig(db, w, {
+      sources: { default: { maxAge: "1y" }, "google-drive": { maxAge: "unlimited" } },
+    });
+
+    expect(getSource(db, "google-drive:maya@example.com" as never)?.config.maxAge).toBe(
+      "unlimited",
+    );
+  });
+
   test("non-schema-owned keys on the DB row pass through untouched", async () => {
     const dev = mkDevice("macbook");
     mkSource(dev, "gmail", "x@y.com", { syncInterval: "5m", legacyField: "keep-me" });

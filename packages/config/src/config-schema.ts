@@ -87,14 +87,35 @@ const duration = z
     durationRegex,
     'expected a duration like "30s", "5m", "1h", "30d", "6M", "1y", "500ms", or a plain number (ms)',
   );
+
+/**
+ * The data-retention `maxAge` that sets no age limit. Removing a `maxAge` key
+ * inherits the next broader setting (the source type, then `sources.default`,
+ * then `dataRetention`); this value instead lifts the limit at that level
+ * whatever a broader one says.
+ */
+export const UNLIMITED_MAX_AGE = "unlimited";
+
+/** A data-retention age: a duration, or {@link UNLIMITED_MAX_AGE}. */
+export const maxAgeRegex = new RegExp(`^${UNLIMITED_MAX_AGE}$|${durationRegex.source}`);
+
+const maxAge = z
+  .string()
+  .regex(
+    maxAgeRegex,
+    `expected a duration like "30d", "6M", "2y", or "${UNLIMITED_MAX_AGE}" for no age limit`,
+  );
+
 const positiveDuration = duration.refine((value) => Number.parseFloat(value) > 0, {
   message: "duration must be greater than zero",
 });
 
 const dataRetention = z
   .object({
-    maxAge: duration
-      .describe("Oldest allowed timestamp for ingested + indexed data, e.g. 30d, 6M, 1y.")
+    maxAge: maxAge
+      .describe(
+        'Oldest allowed timestamp for ingested + indexed data, e.g. 30d, 6M, 1y; "unlimited" or omitted for no limit.',
+      )
       .optional(),
   })
   .strict();
@@ -2122,11 +2143,12 @@ const sourceSettings = z
      * Per-source override of `dataRetention.maxAge`. Documents older than this
      * are rejected at ingest and skipped during indexing for this specific
      * source. Falls back to `sources.default.maxAge`, then to the global
-     * `dataRetention.maxAge` when unset. Resolved via getSourceCutoffDate().
+     * `dataRetention.maxAge` when unset; `"unlimited"` lifts the limit for this
+     * source whatever those say. Resolved via getSourceCutoffDate().
      */
-    maxAge: duration
+    maxAge: maxAge
       .describe(
-        "Per-source retention cutoff. Falls back to sources.default.maxAge, then dataRetention.maxAge.",
+        'Per-source retention cutoff. Falls back to sources.default.maxAge, then dataRetention.maxAge; "unlimited" sets no limit.',
       )
       .optional(),
   })
@@ -4056,6 +4078,40 @@ export function pickSourceSettings(input: Record<string, unknown>): SourceSettin
   const out: Record<string, unknown> = {};
   for (const key of SOURCE_SETTINGS_KEYS) {
     if (key in input) out[key] = input[key];
+  }
+  return out as SourceSettings;
+}
+
+/**
+ * The settings a source's own `sources.<id>` block holds so that it resolves
+ * to `effective` — the source row's settings, which carry what that source
+ * inherits from `sources.default` and its source-type block as well as its
+ * own. A field the block already sets stays; any other field is kept only
+ * where it differs from what the broader blocks give.
+ *
+ * Writing the row back whole would copy every inherited value into the
+ * source's own block, where it outranks the block it came from: the source
+ * would keep a `maxAge` the operator later removes from `sources.gmail`, and
+ * the limit would never lift.
+ */
+export function ownSourceSettings(
+  config: OmnesisConfig,
+  sourceId: string,
+  effective: SourceSettings,
+): SourceSettings {
+  const own = (config.sources?.[sourceId] ?? {}) as Record<string, unknown>;
+  const { [sourceId]: _own, ...broader } = config.sources ?? {};
+  const inherited = resolveSourceSettings({ ...config, sources: broader }, sourceId) as Record<
+    string,
+    unknown
+  >;
+  const values = effective as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of SOURCE_SETTINGS_KEYS) {
+    if (!(key in values)) continue;
+    if (key in own || JSON.stringify(values[key]) !== JSON.stringify(inherited[key])) {
+      out[key] = values[key];
+    }
   }
   return out as SourceSettings;
 }

@@ -15,6 +15,7 @@
 
 import { Worker } from "node:worker_threads";
 import { createLogger, resolveWorkerEntry } from "@omnesis/core";
+import { UNLIMITED_MAX_AGE } from "@omnesis/config";
 import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { PendingRequest } from "./pending-request.js";
 import type { BackgroundJob, JobObservation, JobState } from "../background-jobs/types.js";
@@ -40,21 +41,21 @@ const log = createLogger("gateway:indexer-worker");
  * writes them — a descriptor id or an account-qualified instance id — since
  * the map is built without knowing which sources exist. Which of them applies
  * to a given document is decided by `resolveIndexerCutoffMaxAge`. A `null`
- * value means "explicitly disabled" (currently the schema doesn't allow null,
- * so this stays in sync with absence-as-fallback semantics — only present keys
- * override).
+ * value means "explicitly disabled": a key set to `"unlimited"`, which lifts
+ * the limit there instead of falling back. Absent keys fall back.
  */
 export function buildIndexerCutoffMap(config: {
   dataRetention?: { maxAge?: string };
   sources?: Record<string, { maxAge?: string }>;
 }): IndexerCutoffMap {
-  const fallback = config.sources?.default?.maxAge ?? config.dataRetention?.maxAge ?? null;
+  const limit = (maxAge: string) => (maxAge === UNLIMITED_MAX_AGE ? null : maxAge);
+  const fallback = config.sources?.default?.maxAge || config.dataRetention?.maxAge;
   const perSource: Record<string, string | null> = {};
   for (const [key, val] of Object.entries(config.sources ?? {})) {
     if (key === "default") continue;
-    if (val?.maxAge) perSource[key] = val.maxAge;
+    if (val?.maxAge) perSource[key] = limit(val.maxAge);
   }
-  return { default: fallback, perSource };
+  return { default: fallback ? limit(fallback) : null, perSource };
 }
 
 export interface IndexerWorkerOptions {

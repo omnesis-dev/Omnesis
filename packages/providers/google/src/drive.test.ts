@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect, beforeEach, vi } from "vitest";
-import { resolveAttachmentConfig } from "@omnesis/core";
+import { getSourceCutoffDate, resolveAttachmentConfig } from "@omnesis/core";
 import { SourceId, ProviderId, SyncError } from "@omnesis/types";
-import { GoogleDriveSource } from "./drive.js";
+import { GoogleDriveSource, isRejectedPageTokenError } from "./drive.js";
 import {
   createMockDrive,
   createDriveSource,
@@ -180,32 +180,30 @@ describe("GoogleDriveSource", () => {
       expect(result.deletedExternalIds).toContain("trashed-file");
     });
 
-    test("falls back to bootstrap on expired page token (404)", async () => {
-      const error: any = new Error("Not Found");
-      error.code = 404;
-      drive.changes.list = vi.fn(() => Promise.reject(error));
+    test("falls back to bootstrap when Drive refuses the changes token", async () => {
+      drive.changes.list = vi.fn(() => Promise.reject(driveInvalidValue("pageToken")));
 
       drive.files.list = vi.fn(() => Promise.resolve({ data: { files: [] } }));
 
-      const cursor = { phase: "incremental", startPageToken: "expired" };
+      const cursor = { phase: "incremental", startPageToken: "unusable" };
       const result = await source.sync(cursor);
 
       expect(drive.files.list).toHaveBeenCalled();
       expect(result.hasMore).toBe(false);
     });
 
-    test("falls back to bootstrap on 403 error", async () => {
-      const error: any = new Error("Forbidden");
-      error.code = 403;
-      drive.changes.list = vi.fn(() => Promise.reject(error));
+    test("a bare 403 or 404 surfaces instead of re-listing every file", async () => {
+      for (const code of [403, 404]) {
+        const error: any = new Error(code === 403 ? "Forbidden" : "Not Found");
+        error.code = code;
+        drive.changes.list = vi.fn(() => Promise.reject(error));
+        drive.files.list = vi.fn(() => Promise.resolve({ data: { files: [] } }));
 
-      drive.files.list = vi.fn(() => Promise.resolve({ data: { files: [] } }));
-
-      const cursor = { phase: "incremental", startPageToken: "expired" };
-      const result = await source.sync(cursor);
-
-      expect(drive.files.list).toHaveBeenCalled();
-      expect(result.hasMore).toBe(false);
+        await expect(
+          source.sync({ phase: "incremental", startPageToken: "changes-7" }),
+        ).rejects.toBeInstanceOf(SyncError);
+        expect(drive.files.list).not.toHaveBeenCalled();
+      }
     });
 
     test("updates startPageToken after sync", async () => {
@@ -983,5 +981,477 @@ describe("GoogleDriveSource", () => {
 
       expect(result.documents).toHaveLength(0);
     });
+  });
+});
+
+/**
+ * A Google API error in the shape googleapis throws: the envelope's fields
+ * copied onto the error, and the body kept on its response.
+ */
+function driveError(
+  status: number,
+  detail: { domain: string; reason: string; message: string; location?: string },
+): Error {
+  const errors = [{ ...detail, ...(detail.location ? { locationType: "parameter" } : {}) }];
+  return Object.assign(new Error(detail.message), {
+    code: status,
+    status,
+    errors,
+    response: { status, data: { error: { code: status, message: detail.message, errors } } },
+  });
+}
+
+/** Drive's 400 for a request parameter it will not accept. */
+function driveInvalidValue(location: string): Error {
+  return driveError(400, {
+    domain: "global",
+    reason: "invalid",
+    message: "Invalid Value",
+    location,
+  });
+}
+
+/** Drive's 403 for a rate limit, as its error guide gives it. */
+function driveRateLimit(reason: "userRateLimitExceeded" | "rateLimitExceeded"): Error {
+  const message =
+    reason === "userRateLimitExceeded" ? "User Rate Limit Exceeded" : "Rate Limit Exceeded";
+  return driveError(403, { domain: "usageLimits", reason, message });
+}
+
+/**
+ * A Drive double that pages `files.list` the way Drive does: files in
+ * ascending `modifiedTime`, filtered by the query's `createdTime >= '…'` and
+ * `modifiedTime >= '…'` terms, and each page token bound to the query it was
+ * issued for — one presented with another query, or one it never issued, is
+ * refused as `Invalid Value` on `pageToken`.
+ */
+function createPagingDrive(
+  files: ReturnType<typeof makeDriveFile>[],
+  pageSize: number,
+  { honoursOrder = true }: { honoursOrder?: boolean } = {},
+) {
+  const drive = createMockDrive();
+  const issued = new Map<string, { q: string; offset: number }>();
+  let tokens = 0;
+  drive.files.list = vi.fn(({ q, pageToken }: { q: string; pageToken?: string }) => {
+    let offset = 0;
+    if (pageToken) {
+      const token = issued.get(pageToken);
+      if (!token || token.q !== q) return Promise.reject(driveInvalidValue("pageToken"));
+      offset = token.offset;
+    }
+    const createdFloor = /createdTime >= '([^']+)'/.exec(q)?.[1];
+    const modifiedFloor = /modifiedTime >= '([^']+)'/.exec(q)?.[1];
+    const matching = files
+      .filter((f) => !createdFloor || Date.parse(f.createdTime) >= Date.parse(createdFloor))
+      .filter((f) => !modifiedFloor || Date.parse(f.modifiedTime) >= Date.parse(modifiedFloor))
+      .sort((a, b) => (honoursOrder ? Date.parse(a.modifiedTime) - Date.parse(b.modifiedTime) : 0));
+    const next = offset + pageSize < matching.length ? `drive-page-${++tokens}` : undefined;
+    if (next) issued.set(next, { q, offset: offset + pageSize });
+    return Promise.resolve({
+      data: { files: matching.slice(offset, offset + pageSize), nextPageToken: next },
+    });
+  });
+  drive.files.export = vi.fn(({ fileId }: { fileId: string }) =>
+    Promise.resolve({ data: `Planning notes for ${fileId}` }),
+  );
+  return drive;
+}
+
+async function walk(source: GoogleDriveSource, cursor: any) {
+  const ids: string[] = [];
+  let next = cursor;
+  for (let page = 0; page < 20; page += 1) {
+    const result = await source.sync(next);
+    ids.push(...result.documents.map((d) => d.externalId));
+    next = result.cursor;
+    if (!result.hasMore) break;
+  }
+  return { ids, cursor: next };
+}
+
+const listCalls = (drive: ReturnType<typeof createMockDrive>) =>
+  drive.files.list.mock.calls.map(([call]: any[]) => call as { q: string; pageToken?: string });
+
+describe("GoogleDriveSource bootstrap page tokens", () => {
+  const CUTOFF = "2024-11-02T00:00:00.000Z";
+  const file = (id: string, createdTime: string, modifiedTime: string) =>
+    makeDriveFile({ id, name: id, createdTime, modifiedTime });
+  const library = [
+    file("budget-2019", "2019-03-01T00:00:00Z", "2024-01-10T00:00:00Z"),
+    file("roadmap-2021", "2021-05-01T00:00:00Z", "2024-03-01T00:00:00Z"),
+    file("offsite-2025", "2025-02-01T00:00:00Z", "2025-02-02T00:00:00Z"),
+    file("review-2025", "2025-06-01T00:00:00Z", "2025-06-02T00:00:00Z"),
+    file("plan-2026", "2026-01-15T00:00:00Z", "2026-01-16T00:00:00Z"),
+    file("notes-2018", "2018-07-01T00:00:00Z", "2026-02-01T00:00:00Z"),
+  ];
+
+  test("records the query its page token belongs to and how far the walk has listed", async () => {
+    const drive = createPagingDrive(library, 2);
+    const result = await createDriveSource(drive).sync(null);
+    expect(result.cursor).toMatchObject({
+      phase: "bootstrap",
+      listQuery: "trashed=false",
+      listedThrough: "2024-03-01T00:00:00.000Z",
+    });
+    const second = await createDriveSource(drive).sync(result.cursor);
+    expect((second.cursor as any).listedThrough).toBe("2025-06-02T00:00:00.000Z");
+
+    const done = await walk(createDriveSource(drive), second.cursor);
+    expect(done.cursor).toMatchObject({ phase: "incremental", startPageToken: "start-token-1" });
+    expect((done.cursor as any).listQuery).toBeUndefined();
+    expect((done.cursor as any).listedThrough).toBeUndefined();
+  });
+
+  test("ordered pages keep advancing the mark, floored to the whole second", async () => {
+    const drive = createPagingDrive(
+      [
+        file("brief-a", "2025-01-01T00:00:00Z", "2025-03-01T09:00:00.250Z"),
+        file("brief-b", "2025-01-01T00:00:00Z", "2025-03-01T09:00:00.750Z"),
+        file("brief-c", "2025-01-01T00:00:00Z", "2025-03-04T10:30:15.999Z"),
+        file("brief-d", "2025-01-01T00:00:00Z", "2025-03-09T11:00:00.000Z"),
+        file("brief-e", "2025-01-01T00:00:00Z", "2025-03-12T12:00:00.000Z"),
+      ],
+      1,
+    );
+    const source = createDriveSource(drive);
+    const marks: string[] = [];
+    let cursor: any = null;
+    for (let page = 0; page < 4; page += 1) {
+      cursor = (await source.sync(cursor)).cursor;
+      marks.push(cursor.listedThrough);
+      expect(cursor.unordered).toBeUndefined();
+    }
+    expect(marks).toEqual([
+      "2025-03-01T09:00:00.000Z",
+      "2025-03-01T09:00:00.000Z",
+      "2025-03-04T10:30:15.000Z",
+      "2025-03-09T11:00:00.000Z",
+    ]);
+
+    drive.files.list.mockClear();
+    const restarted = await source.sync({ ...cursor, pageToken: "drive-page-expired" });
+    expect(listCalls(drive)[1]!.q).toBe(
+      "trashed=false and modifiedTime >= '2025-03-09T11:00:00.000Z'",
+    );
+    expect(restarted.documents.map((d) => d.externalId)).toEqual(["brief-d"]);
+  });
+
+  test("a page out of modifiedTime order drops the mark for the rest of the walk", async () => {
+    const shuffled = [
+      file("ledger-a", "2025-01-01T00:00:00Z", "2025-05-01T00:00:00Z"),
+      file("ledger-b", "2025-01-01T00:00:00Z", "2025-02-01T00:00:00Z"),
+      file("ledger-c", "2025-01-01T00:00:00Z", "2025-06-01T00:00:00Z"),
+      file("ledger-d", "2025-01-01T00:00:00Z", "2025-07-01T00:00:00Z"),
+      file("ledger-e", "2025-01-01T00:00:00Z", "2025-08-01T00:00:00Z"),
+    ];
+    const drive = createPagingDrive(shuffled, 2, { honoursOrder: false });
+    const source = createDriveSource(drive);
+
+    const first = await source.sync(null);
+    expect(first.cursor).toMatchObject({ phase: "bootstrap", unordered: true });
+    expect((first.cursor as any).listedThrough).toBeUndefined();
+
+    const second = await source.sync(first.cursor);
+    expect(second.cursor).toMatchObject({ phase: "bootstrap", unordered: true });
+    expect((second.cursor as any).listedThrough).toBeUndefined();
+
+    drive.files.list.mockClear();
+    const restarted = await source.sync({
+      ...(second.cursor as any),
+      pageToken: "drive-page-expired",
+    });
+    expect(listCalls(drive)[1]!.q).toBe("trashed=false");
+    expect(restarted.documents.map((d) => d.externalId)).toEqual(["ledger-a", "ledger-b"]);
+    expect(restarted.cursor).toMatchObject({ unordered: true, startPageToken: "start-token-1" });
+
+    const { cursor } = await walk(source, restarted.cursor);
+    expect(cursor.unordered).toBeUndefined();
+    expect(cursor.phase).toBe("incremental");
+  });
+
+  test("a page that starts below the mark drops it", async () => {
+    const drive = createPagingDrive(
+      [
+        file("memo-a", "2025-01-01T00:00:00Z", "2025-04-01T00:00:00Z"),
+        file("memo-b", "2025-01-01T00:00:00Z", "2025-03-01T00:00:00Z"),
+        file("memo-c", "2025-01-01T00:00:00Z", "2025-09-01T00:00:00Z"),
+      ],
+      1,
+      { honoursOrder: false },
+    );
+    const source = createDriveSource(drive);
+    const first = await source.sync(null);
+    expect((first.cursor as any).listedThrough).toBe("2025-04-01T00:00:00.000Z");
+
+    const second = await source.sync(first.cursor);
+
+    expect(second.cursor).toMatchObject({ unordered: true });
+    expect((second.cursor as any).listedThrough).toBeUndefined();
+  });
+
+  test("a rolling maxAge resolved at two different times keeps the walk's page token", async () => {
+    const config = { sources: { "google-drive": { maxAge: "2y" } } };
+    const sourceId = "google-drive:test@example.com";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-02T08:00:00.000Z"));
+      const drive = createPagingDrive(library, 2);
+      const firstCutoff = getSourceCutoffDate(config, sourceId)!;
+      const first = await createDriveSource(drive, { dataCutoff: firstCutoff }).sync(null);
+      expect(first.hasMore).toBe(true);
+
+      vi.setSystemTime(new Date("2026-11-02T08:00:00.025Z"));
+      const rebuiltCutoff = getSourceCutoffDate(config, sourceId)!;
+      expect(rebuiltCutoff).not.toBe(firstCutoff);
+      drive.files.list.mockClear();
+      const resumed = await createDriveSource(drive, { dataCutoff: rebuiltCutoff }).sync(
+        first.cursor,
+      );
+
+      const [call] = listCalls(drive);
+      expect(listCalls(drive)).toHaveLength(1);
+      expect(call!.pageToken).toBe((first.cursor as any).pageToken);
+      expect(call!.q).toBe((first.cursor as any).listQuery);
+      expect(resumed.cursor).toMatchObject({
+        phase: "incremental",
+        startPageToken: "start-token-1",
+      });
+      expect(drive.changes.getStartPageToken).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a narrowed cutoff resumes under the saved query and filters the older files itself", async () => {
+    const drive = createPagingDrive(library, 2);
+    const first = await createDriveSource(drive).sync(null);
+    expect(first.documents.map((d) => d.externalId)).toEqual(["budget-2019", "roadmap-2021"]);
+
+    drive.files.list.mockClear();
+    const { ids, cursor } = await walk(
+      createDriveSource(drive, { dataCutoff: CUTOFF }),
+      first.cursor,
+    );
+
+    for (const call of listCalls(drive)) expect(call.q).toBe("trashed=false");
+    expect(ids).toEqual(["offsite-2025", "review-2025", "plan-2026"]);
+    expect(cursor).toMatchObject({ phase: "incremental", startPageToken: "start-token-1" });
+  });
+
+  test("a refused token restarts from the latest modifiedTime the walk listed", async () => {
+    const drive = createPagingDrive(library, 2);
+    const source = createDriveSource(drive);
+    const first = await source.sync(null);
+    const second = await source.sync(first.cursor);
+    const refused = { ...(second.cursor as any), pageToken: "drive-page-expired" };
+
+    drive.files.list.mockClear();
+    const restarted = await source.sync(refused);
+
+    const calls = listCalls(drive);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.pageToken).toBe("drive-page-expired");
+    expect(calls[1]!.pageToken).toBeUndefined();
+    expect(calls[1]!.q).toBe("trashed=false and modifiedTime >= '2025-06-02T00:00:00.000Z'");
+    expect(restarted.documents.map((d) => d.externalId)).toEqual(["review-2025", "plan-2026"]);
+    expect(restarted.cursor).toMatchObject({
+      phase: "bootstrap",
+      listQuery: calls[1]!.q,
+      listedThrough: "2026-01-16T00:00:00.000Z",
+      startPageToken: "start-token-1",
+    });
+    expect(drive.changes.getStartPageToken).toHaveBeenCalledTimes(1);
+
+    const { ids, cursor } = await walk(source, restarted.cursor);
+    expect(ids).toEqual(["notes-2018"]);
+    expect(cursor).toMatchObject({ phase: "incremental", startPageToken: "start-token-1" });
+  });
+
+  test("a refused token restarts under the current cutoff, from the mark", async () => {
+    const drive = createPagingDrive(library, 2);
+    const first = await createDriveSource(drive).sync(null);
+    const refused = { ...(first.cursor as any), pageToken: "drive-page-expired" };
+
+    drive.files.list.mockClear();
+    const restarted = await createDriveSource(drive, { dataCutoff: CUTOFF }).sync(refused);
+
+    expect(listCalls(drive)[1]!.q).toBe(
+      `trashed=false and createdTime >= '${CUTOFF}' and modifiedTime >= '2024-03-01T00:00:00.000Z'`,
+    );
+    expect(restarted.documents.map((d) => d.externalId)).toEqual(["offsite-2025", "review-2025"]);
+  });
+
+  test("a cursor from before the mark was recorded lists again from the first file, once", async () => {
+    const drive = createPagingDrive(library, 2);
+    const first = await createDriveSource(drive).sync(null);
+    const { listQuery: _query, listedThrough: _mark, ...savedBeforeEither } = first.cursor as any;
+
+    const narrowed = createDriveSource(drive, { dataCutoff: CUTOFF });
+    drive.files.list.mockClear();
+    const resumed = await narrowed.sync(savedBeforeEither);
+
+    const calls = listCalls(drive);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.pageToken).toBe(savedBeforeEither.pageToken);
+    expect(calls[1]!.pageToken).toBeUndefined();
+    expect(calls[1]!.q).toBe(`trashed=false and createdTime >= '${CUTOFF}'`);
+    expect(resumed.documents.map((d) => d.externalId)).toEqual(["offsite-2025", "review-2025"]);
+    expect(resumed.cursor).toMatchObject({
+      phase: "bootstrap",
+      listQuery: calls[1]!.q,
+      startPageToken: "start-token-1",
+    });
+
+    drive.files.list.mockClear();
+    const { ids } = await walk(narrowed, resumed.cursor);
+    expect(ids).toEqual(["plan-2026"]);
+    for (const call of listCalls(drive)) expect(call.q).toBe(calls[1]!.q);
+  });
+
+  test("a 400 about another parameter still surfaces", async () => {
+    const drive = createMockDrive();
+    drive.files.list = vi.fn(() => Promise.reject(driveInvalidValue("q")));
+    const source = createDriveSource(drive);
+
+    await expect(
+      source.sync({ phase: "bootstrap", pageToken: "drive-page-3", startPageToken: "changes-9" }),
+    ).rejects.toBeInstanceOf(SyncError);
+    expect(drive.files.list).toHaveBeenCalledTimes(1);
+  });
+
+  test("a rate limit on a resumed page surfaces and keeps the walk", async () => {
+    const drive = createMockDrive();
+    drive.files.list = vi.fn(() => Promise.reject(driveRateLimit("userRateLimitExceeded")));
+
+    const error = await createDriveSource(drive)
+      .sync({ phase: "bootstrap", pageToken: "drive-page-3", startPageToken: "changes-9" })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SyncError);
+    expect((error as SyncError).kind).toBe("rate-limit");
+    expect(drive.files.list).toHaveBeenCalledTimes(1);
+  });
+
+  test("a rejected token on the first page has nothing to drop and surfaces", async () => {
+    const drive = createMockDrive();
+    drive.files.list = vi.fn(() => Promise.reject(driveInvalidValue("pageToken")));
+
+    await expect(createDriveSource(drive).sync(null)).rejects.toBeInstanceOf(SyncError);
+    expect(drive.files.list).toHaveBeenCalledTimes(1);
+  });
+
+  test("a restarted listing that fails again surfaces instead of looping", async () => {
+    const drive = createMockDrive();
+    drive.files.list = vi
+      .fn()
+      .mockRejectedValueOnce(driveInvalidValue("pageToken"))
+      .mockRejectedValueOnce(driveInvalidValue("q"));
+
+    await expect(
+      createDriveSource(drive).sync({ phase: "bootstrap", pageToken: "drive-page-3" }),
+    ).rejects.toBeInstanceOf(SyncError);
+    expect(drive.files.list).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("GoogleDriveSource changes token errors", () => {
+  const cursor = { phase: "incremental", startPageToken: "changes-41" };
+
+  test.each(["userRateLimitExceeded", "rateLimitExceeded"] as const)(
+    "a %s 403 surfaces as a rate limit and keeps the changes token",
+    async (reason) => {
+      const drive = createMockDrive();
+      drive.changes.list = vi.fn(() => Promise.reject(driveRateLimit(reason)));
+
+      const error = await createDriveSource(drive)
+        .sync(cursor)
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(SyncError);
+      expect((error as SyncError).kind).toBe("rate-limit");
+      expect(drive.files.list).not.toHaveBeenCalled();
+      expect(drive.changes.getStartPageToken).not.toHaveBeenCalled();
+    },
+  );
+
+  test("a permission 403 surfaces without listing every file again", async () => {
+    const drive = createMockDrive();
+    drive.changes.list = vi.fn(() =>
+      Promise.reject(
+        driveError(403, {
+          domain: "global",
+          reason: "insufficientFilePermissions",
+          message: "The user does not have sufficient permissions for this file.",
+        }),
+      ),
+    );
+
+    await expect(createDriveSource(drive).sync(cursor)).rejects.toBeInstanceOf(SyncError);
+    expect(drive.files.list).not.toHaveBeenCalled();
+  });
+
+  test("a changes token Drive refuses lists every file again from a fresh token", async () => {
+    const drive = createMockDrive();
+    drive.changes.list = vi.fn(() => Promise.reject(driveInvalidValue("pageToken")));
+    mockDriveFilesList(drive, [makeDriveFile()]);
+
+    const result = await createDriveSource(drive).sync(cursor);
+
+    expect(drive.changes.getStartPageToken).toHaveBeenCalledTimes(1);
+    expect(drive.files.list).toHaveBeenCalledTimes(1);
+    expect(listCalls(drive)[0]!.pageToken).toBeUndefined();
+    expect(result.cursor).toMatchObject({ phase: "incremental", startPageToken: "start-token-1" });
+  });
+});
+
+describe("isRejectedPageTokenError", () => {
+  test("matches a 400 naming pageToken, on the error or its response, whatever its reason", () => {
+    expect(isRejectedPageTokenError(driveInvalidValue("pageToken"))).toBe(true);
+    const bodyOnly = driveInvalidValue("pageToken") as any;
+    delete bodyOnly.errors;
+    expect(isRejectedPageTokenError(bodyOnly)).toBe(true);
+    expect(
+      isRejectedPageTokenError(
+        driveError(400, {
+          domain: "global",
+          reason: "badRequest",
+          message: "Bad Request",
+          location: "pageToken",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not match a 400 naming another parameter, a rate limit, or a non-400", () => {
+    expect(isRejectedPageTokenError(driveInvalidValue("q"))).toBe(false);
+    expect(isRejectedPageTokenError(Object.assign(new Error("Invalid Value"), { code: 400 }))).toBe(
+      false,
+    );
+    expect(isRejectedPageTokenError(driveRateLimit("userRateLimitExceeded"))).toBe(false);
+    expect(
+      isRejectedPageTokenError(
+        Object.assign(driveInvalidValue("pageToken"), { code: 500, status: 500 }),
+      ),
+    ).toBe(false);
+    expect(isRejectedPageTokenError(undefined)).toBe(false);
+  });
+});
+
+describe("GoogleDriveSource text that once stalled address extraction", () => {
+  test("normalizes a file of a megabyte of dots and hyphens promptly", async () => {
+    const drive = createMockDrive();
+    mockDriveFilesList(drive, [makeDriveFile({ id: "ledger-export" })]);
+    const filler = `${".".repeat(500_000)}${"-".repeat(500_000)}`;
+    drive.files.export = vi.fn(() =>
+      Promise.resolve({ data: `${filler}\nOwner: david.lin@example.org` }),
+    );
+
+    const start = performance.now();
+    const result = await createDriveSource(drive).sync(null);
+
+    expect(performance.now() - start).toBeLessThan(5_000);
+    const mentioned = result.documents[0]!.metadata.people?.filter((p) => p.role === "mentioned");
+    expect(mentioned?.flatMap((p) => p.emails ?? [])).toEqual(["david.lin@example.org"]);
   });
 });
