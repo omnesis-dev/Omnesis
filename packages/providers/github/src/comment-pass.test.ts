@@ -63,6 +63,7 @@ function setup(count = 2) {
   const source = new GithubThreadsSource({
     client: new GithubClient("fixture-token", { fetchImpl: fake.fetchImpl, sleep: async () => {} }),
     sourceId: SourceId("github:fixture"),
+    commitsSourceId: SourceId("github-commits:fixture"),
     providerId: ProviderId("github:fixture"),
     accountId: "fixture",
     now: () => Date.parse(now),
