@@ -457,6 +457,22 @@ async function perform(ctx: UninstallContext, action: Action): Promise<string | 
       }
       return undefined;
     }
+    case "docker-images": {
+      // Untagging only: an image another container still uses is refused, and stays.
+      for (const repo of action.repos) {
+        const list = await ctx.run(
+          "docker",
+          ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}", repo],
+          { timeoutMs: 60_000 },
+        );
+        if (list.code !== 0) continue;
+        for (const image of list.stdout.split("\n").map((l) => l.trim())) {
+          if (!image.startsWith(`${repo}:`) || image.endsWith(":<none>")) continue;
+          await ctx.run("docker", ["image", "rm", image], { timeoutMs: 120_000 });
+        }
+      }
+      return undefined;
+    }
     case "npm-uninstall":
       return uninstallPackage(ctx, action);
     case "remove-checkout":

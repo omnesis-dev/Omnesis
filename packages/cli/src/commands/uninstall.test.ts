@@ -942,6 +942,75 @@ describe("Docker", () => {
     expect(existsSync(join(m.configDir, "omnesis.db"))).toBe(true);
   });
 
+  test("removes every local tag of its images and the certificate renewal job", async () => {
+    const m = new Machine("linux").config();
+    const compose = m.write(
+      join(m.configDir, "docker-compose.yml"),
+      [
+        "name: omnesis",
+        "services:",
+        "  gateway:",
+        '    image: "ghcr.io/omnesis-dev/omnesis-gateway:0.7.4"',
+        "  updater:",
+        '    image: "ghcr.io/omnesis-dev/omnesis-updater:0.7.4"',
+        "  other:",
+        '    image: "postgres:16"',
+        "",
+      ].join("\n"),
+    );
+    m.write(join(m.configDir, "install-method"), "docker\n");
+    const renew = m.write(
+      m.path(".local", "share", "omnesis", "omnesis-tls-renew.sh"),
+      `#!/bin/sh\nCONFIG_DIR='${m.configDir}'\n`,
+      0o700,
+    );
+    m.on(["docker", "image", "ls"], (argv) => ({
+      code: 0,
+      stdout: `${argv.at(-1)}:0.7.3\n${argv.at(-1)}:0.7.4\n${argv.at(-1)}:<none>\n`,
+      stderr: "",
+    }));
+    const { code, text } = await uninstall(m);
+    expect(code).toBe(0);
+    expect(text()).toContain("older releases included");
+    expect(m.ran("docker", "image", "ls").map((c) => c.argv.at(-1))).toEqual([
+      "ghcr.io/omnesis-dev/omnesis-gateway",
+      "ghcr.io/omnesis-dev/omnesis-updater",
+    ]);
+    expect(m.ran("docker", "image", "rm").map((c) => c.argv.at(-1))).toEqual([
+      "ghcr.io/omnesis-dev/omnesis-gateway:0.7.3",
+      "ghcr.io/omnesis-dev/omnesis-gateway:0.7.4",
+      "ghcr.io/omnesis-dev/omnesis-updater:0.7.3",
+      "ghcr.io/omnesis-dev/omnesis-updater:0.7.4",
+    ]);
+    expect(m.ran("sh", renew, "--remove")).toHaveLength(1);
+    expect(existsSync(compose)).toBe(false);
+  });
+
+  test("finds the renewal job by its config directory once the compose file is gone", async () => {
+    const m = new Machine("linux").config();
+    m.write(join(m.configDir, "install-method"), "docker\n");
+    const compose = join(m.configDir, "docker-compose.yml");
+    m.write(
+      m.path(".local", "bin", "omnesis"),
+      `#!/bin/sh\n${DOCKER_WRAPPER_MARKER}\nCOMPOSE_FILE='${compose}'\nSERVICE='gateway'\nset -eu\n`,
+      0o755,
+    );
+    const other = m.write(
+      m.path(".local", "share", "omnesis", "omnesis-a-tls-renew.sh"),
+      `#!/bin/sh\nCONFIG_DIR='${m.path(".config", "omnesis-a")}'\n`,
+      0o700,
+    );
+    const renew = m.write(
+      m.path(".local", "share", "omnesis", "omnesis-b-tls-renew.sh"),
+      `#!/bin/sh\nCONFIG_DIR='${m.configDir}'\n`,
+      0o700,
+    );
+    const { code } = await uninstall(m);
+    expect(code).toBe(0);
+    expect(m.ran("sh", renew, "--remove")).toHaveLength(1);
+    expect(m.ran("sh", other)).toHaveLength(0);
+  });
+
   test("refuses to take only part of it", async () => {
     const m = new Machine("linux").config();
     docker(m);
