@@ -1355,7 +1355,11 @@ const mentionWorthGateActive = (): boolean => {
 // The search pipeline's temporal lane reads event time through the same
 // temporal query the agents' `temporal_query` tool uses.
 searchPipeline.setTemporalIndex(
-  new TemporalQueryService(db, analyticsDb, { hideUnworthyMentions: mentionWorthGateActive }),
+  new TemporalQueryService(db, analyticsDb, {
+    hideUnworthyMentions: mentionWorthGateActive,
+    // The store half of each window is read on the io worker.
+    storeReads: ioGate,
+  }),
   resolveDateEnrichmentSettings(config.enrichment).numericDateOrder,
 );
 
@@ -1401,6 +1405,8 @@ const agentLifecycle = new AgentLifecycle({
   // `count_messages` walks every message document in its window off the main loop.
   messageCountGate: ioGate,
   mentionWorthGateActive,
+  // `temporal_query` reads its window's store half off the main loop.
+  temporalStoreReads: ioGate,
   deleteDocumentIndexBatch: async (documentId, limit, sourceDeleted) => {
     return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);
   },
@@ -2451,6 +2457,7 @@ const app = createServer(db, DB_PATH, {
   searchPipeline,
   personLookupGate: ioGate,
   mentionWorthGateActive,
+  temporalStoreReads: ioGate,
   searchSnapshot,
   agentRouteDeps: agentLifecycle.routeDeps,
   getDecision: () => decisionService.get(),
@@ -2912,6 +2919,8 @@ await bootBriefs({
       personLookupGate: ioGate,
       // The knowledge engine's per-tick ledger scans, off the main event loop.
       knowledgeSelectionReads: ioGate,
+      // The background agent's temporal window reads, off the main event loop.
+      temporalStoreReads: ioGate,
       getEntailmentVerifier: (signal) => entailmentService.get(signal),
       validateAnnotationEvidence,
       policyStore: subscriptionsPolicyStore,
