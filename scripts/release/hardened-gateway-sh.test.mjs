@@ -128,6 +128,90 @@ describe("hardened-gateway.sh options", () => {
   });
 });
 
+describe("hardened gateway update backups", () => {
+  function update(flags, { reachable = true, backupSucceeds = true } = {}) {
+    const root = mkdtempSync(join(scratch, "update-backup-"));
+    return sourced(`
+      require_linux_systemd() { :; }
+      require_node() { :; }
+      require_git() { :; }
+      read_install_env() { CONF_REPO_URL=https://example.org/omnesis.git; }
+      arm_cleanup() { :; }
+      build_release() { RELEASE_DIR="${root}"; RELEASE_VERSION=0.5.0; }
+      link_target() { printf '%s\\n' /fictional/current; }
+      release_version() { printf '%s\\n' 0.4.9; }
+      served_version() { ${reachable ? "printf '%s\\n' 0.4.9" : ":"}; }
+      run_cli() { printf 'cli:%s\\n' "$*"; ${backupSucceeds ? ":" : "return 1"}; }
+      switch_current() { echo switched; exit 0; }
+      REF=v0.5.0
+      parse_options ${flags.join(" ")}
+      cmd_update
+    `);
+  }
+
+  test.each([[[]], [["--no-backup"]]])("%j switches without requesting a backup", (flags) => {
+    const res = update(flags);
+    expect(res.status, res.output).toBe(0);
+    expect(res.stdout).toContain("switched");
+    expect(res.output).not.toContain("cli:");
+    expect(res.output).not.toContain("Backing up");
+    expect(res.output).not.toContain("switching without a backup");
+  });
+
+  test.each([[["--backup"]], [["--backup", "--no-backup"]], [["--no-backup", "--backup"]]])(
+    "%j requests a backup before switching",
+    (flags) => {
+      const res = update(flags);
+      expect(res.status, res.output).toBe(0);
+      expect(res.stdout).toContain("cli:/fictional/current backup --note before update to v0.5.0");
+      expect(res.stdout.indexOf("cli:")).toBeLessThan(res.stdout.indexOf("switched"));
+    },
+  );
+
+  test.each([
+    [{ reachable: false }, "requested backup cannot be taken"],
+    [{ backupSucceeds: false }, "The backup failed"],
+  ])("an explicit backup failure prevents switching: %j", (options, message) => {
+    const res = update(["--backup"], options);
+    expect(res.status).not.toBe(0);
+    expect(res.output).toContain(message);
+    expect(res.output).not.toContain("switched");
+  });
+
+  test.each([
+    [false, [], "--no-backup"],
+    [true, [], "--no-backup"],
+    [false, ["--backup"], ""],
+    [true, ["--backup"], "--backup"],
+    [true, ["--backup", "--no-backup"], "--backup"],
+  ])(
+    "handover preserves the requested policy with opt-in support %s and flags %j",
+    (supportsBackup, flags, forwarded) => {
+      const root = mkdtempSync(join(scratch, "handover-backup-"));
+      const res = sourced(`
+      require_linux_systemd() { :; }
+      require_git() { :; }
+      read_install_env() { CONF_REPO_URL=https://example.org/omnesis.git; }
+      resolve_ref() { REF=v0.5.0; }
+      arm_cleanup() { :; }
+      fetch_checkout() {
+        mkdir -p "$1/$(dirname "$SCRIPT_REL")"
+        printf '%s\\n' '#!/bin/sh' '${supportsBackup ? "# --backup)" : "# legacy options"}' 'printf "forwarded:%s\\n" "$*"' > "$1/$SCRIPT_REL"
+      }
+      RELEASE_ROOT="${root}"
+      INSTALL_ENV="${root}/install.env"
+      touch "$INSTALL_ENV"
+      parse_options ${flags.join(" ")}
+      fetch_and_hand_over update
+    `);
+      expect(res.status, res.output).toBe(0);
+      const args = res.stdout.split("forwarded:")[1].trim().split(" ");
+      expect(args.includes("--backup")).toBe(forwarded === "--backup");
+      expect(args.includes("--no-backup")).toBe(forwarded === "--no-backup");
+    },
+  );
+});
+
 describe("hardened gateway uninstall", () => {
   /** Lay out the root-owned tree in a fixture and run cmd_uninstall against it. */
   function uninstall(flags) {

@@ -6,7 +6,7 @@
  *
  * Neither cursor carries a `version` field of its own, and no branch in `sync`
  * recognises an older layout — the envelope's version is what routes a stored
- * value, and the databases cursor is the only one that has needed a migration.
+ * value. Pending searches and database snapshot ledgers have migrations.
  *
  * `DatabaseMeta.dataSourceId` (the Notion API v5 data-source id) looks like
  * the kind of field that would need one: it was added after the id-only
@@ -29,7 +29,25 @@ import type { NotionPagesCursor, NotionDatabasesCursor } from "./types.js";
  * count rather than one page of results.
  */
 export const notionPagesStateSpec: SourceStateSpec<NotionPagesCursor> = {
-  version: 1,
+  version: 2,
+
+  migrate: {
+    1: (prior: unknown): unknown | null => {
+      if (!isNotionPagesCursor(prior)) return null;
+      if (!prior.startCursor) return prior;
+      // A pending search has no separate committed watermark. Re-list it
+      // without a cutoff so unread pages cannot be excluded by that watermark.
+      return {
+        ...prior,
+        startCursor: undefined,
+        pageCursors: undefined,
+        lastEditedTime: undefined,
+        snapshotMode: true,
+        snapshotIds: undefined,
+        snapshotDirty: undefined,
+      };
+    },
+  },
 
   decode(value: unknown): NotionPagesCursor | null {
     return isNotionPagesCursor(value) ? value : null;

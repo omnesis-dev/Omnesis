@@ -399,11 +399,17 @@ export class GithubThreadsSource {
   }
 
   private startLane(cur: GithubThreadsCursor, repo: string, kind: LaneKind): void {
+    const newRepo = cur.repos?.[repo] === undefined;
     const state = this.repoState(cur, repo);
-    const snapshot = cur.snapshotMode === true;
     const nowIso = new Date(this.now()).toISOString();
     switch (kind) {
       case "issues":
+        // Discovery may pause to materialize a full pending queue before the
+        // comment lanes run. Pin their replay floor before any such drain.
+        if (newRepo) {
+          state.commentsWm = nowIso;
+          state.reviewCommentsWm = nowIso;
+        }
         cur.lane = { repo, kind, cutoff: state.issuesWm, cutoffIds: state.issuesAtWm };
         return;
       case "pulls":
@@ -411,10 +417,10 @@ export class GithubThreadsSource {
         return;
       case "comments":
       case "reviewComments": {
-        // First pass over a repo puts every thread in pending already — start
-        // the comment-edit lanes at "now" instead of walking all history.
-        if (!state.commentsWm) state.commentsWm = nowIso;
-        if (!state.reviewCommentsWm) state.reviewCommentsWm = nowIso;
+        // An installed pending walk may have no pin. Its already-materialized
+        // threads can have changed at any time, so replay all comment edits.
+        if (!state.commentsWm) state.commentsWm = "1970-01-01T00:00:00.000Z";
+        if (!state.reviewCommentsWm) state.reviewCommentsWm = "1970-01-01T00:00:00.000Z";
         const wm = kind === "comments" ? state.commentsWm : state.reviewCommentsWm;
         const at = kind === "comments" ? state.commentsAtWm : state.reviewCommentsAtWm;
         cur.lane = { repo, kind, page: 1, since: marginBefore(wm), cutoff: wm, cutoffIds: at };

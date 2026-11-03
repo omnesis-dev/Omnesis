@@ -1,17 +1,11 @@
 name: full-validation
 
-# The validation suite, on GitHub-hosted runners, for every push to `main`,
-# every pull request into `main`, and any manual run
-# (`gh workflow run full-validation.yml --ref <branch-or-tag>`). Pushes to `main`
-# and manual runs execute every lane. A pull request executes the lanes its
-# change affects (see the `scope` job), so its cost scales with the change;
-# `main` then runs everything once the change lands, and a red `main` is fixed
-# forward.
-#
-# On a pull request, a newer push cancels the unfinished run before it. On
-# `main` at most one run executes at a time and only the newest waiting push
-# is kept: GitHub cancels a waiting run that a newer push replaces. The README
-# badge therefore reads `ci-status.yml`, which reports only completed verdicts.
+run-name: "full-validation (${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && format(', lanes: {0}', inputs.lanes) || '' }})"
+
+# Main pushes run every Linux lane. Scheduled runs sweep every lane twice daily;
+# manual runs default to the same full sweep. Pull requests run the affected
+# lanes, including macOS whenever the scope planner selects it. Every main push
+# keeps its own run; the README badge combines completed Linux and full verdicts.
 #
 # Pull requests — fork pull requests included, once a maintainer approves the
 # run — execute with the plain `pull_request` trigger: a read-only token and no
@@ -22,7 +16,15 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "17 1,13 * * *"
   workflow_dispatch:
+    inputs:
+      lanes:
+        description: Which validation lanes to run
+        type: choice
+        options: [all, linux]
+        default: all
 
 # A newer push to a pull request replaces its run: only the newest revision
 # can merge. Every push to `main` keeps its own run, keyed by commit, so a burst
@@ -32,16 +34,15 @@ concurrency:
   group: >-
     full-validation-${{ github.event_name == 'pull_request'
     && format('pr-{0}', github.event.pull_request.number)
-    || format('{0}-{1}-{2}', github.event_name, github.ref, github.sha) }}
+    || format('{0}-{1}-{2}-{3}', github.event_name, github.ref, github.sha, inputs.lanes || 'all') }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  # Which lanes this run executes (scripts/nx/ci-scope.mjs). A push to main or
-  # a manual run executes every lane, so nothing reaches main's verdict
-  # untested. A pull request runs the Node lanes the Nx affected plan selects
+  # Which lanes this run executes (scripts/nx/ci-scope.mjs). Main pushes run
+  # every Linux lane; schedules and full manual runs execute every lane. A pull request runs the Node lanes the Nx affected plan selects
   # for its merge commit — the same plan as `npm run checks:plan` — the Android
   # lane when that plan selects an Android bundle, and the native, install,
   # Docker, harness and security lanes whose paths it touches. A shared input
@@ -50,7 +51,7 @@ jobs:
   # The macOS lanes (the macOS Node lane, the Swift linters, iOS, the Android
   # screenshots, the Mac installer) run on a pull request only for the paths
   # they cover, never for a shared input: GitHub gives the repository only a
-  # few macOS runners at a time, and main runs them on every push. The one
+  # few macOS runners at a time, and main sweeps them twice daily. The one
   # exception is iOS, which also runs when the plan selects an iOS bundle for
   # a gateway wire path the app decodes.
   scope:
@@ -102,6 +103,7 @@ jobs:
       - id: scope
         env:
           EVENT: ${{ github.event_name }}
+          LANES: ${{ inputs.lanes || 'all' }}
         run: node scripts/nx/ci-scope.mjs
 
   node:
@@ -213,8 +215,8 @@ jobs:
       target_sha: ${{ github.sha }}
 
   # One result for the whole suite: green only when every lane succeeded. On a
-  # pull request, a lane whose scope switch is off may be skipped by design;
-  # anywhere else, and for any lane the scope selected, a skip is a failure.
+  # lane whose scope switch is explicitly off may be skipped by design;
+  # for any lane the scope selected, a skip is a failure.
   verdict:
     if: ${{ !cancelled() }}
     needs:
@@ -239,11 +241,9 @@ jobs:
       - name: Aggregate lanes
         env:
           RESULTS_JSON: ${{ toJSON(needs) }}
-          EVENT: ${{ github.event_name }}
         run: |
           node -e '
             const results = JSON.parse(process.env.RESULTS_JSON);
-            const pr = process.env.EVENT === "pull_request";
             const switches = {
               knip: "knip",
               swift: "swift_lint",
@@ -259,7 +259,7 @@ jobs:
               "docker-image": "docker_image",
               "security-static": "security_static",
             };
-            const scopedOut = (id) => pr && id in switches && results.scope.outputs[switches[id]] === "false";
+            const scopedOut = (id) => id in switches && results.scope.outputs[switches[id]] === "false";
             const failed = Object.entries(results).filter(([id, {result}]) =>
               result !== "success" && !(result === "skipped" && scopedOut(id)));
             const lines = Object.entries(results).map(([id, value]) => `| ${id} | ${value.result} |`);

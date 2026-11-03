@@ -91,9 +91,28 @@ struct NotesHistoryDemoSurface: View {
 private actor NotesHistoryDemoSession: URLSessionLike {
     private var entries: [NoteEntry]
     private var undone = false
+    private var editedReceiptReads: [String: Int] = [:]
 
     init(entries: [NoteEntry]) {
         self.entries = entries
+    }
+
+    private func advanceEditedReceipts() throws {
+        for (id, reads) in editedReceiptReads {
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { continue }
+            if reads == 0 {
+                editedReceiptReads[id] = 1
+                continue
+            }
+            guard var fields = try JSONSerialization.jsonObject(with: JSONEncoder().encode(entries[index])) as? [String: Any]
+            else { throw GatewayClient.Error.invalidResponse }
+            fields["agent"] = ["state": "done", "receipt": [
+                "text": "I updated the workshop task with the projector.",
+                "changes": [["text": "Updated the workshop task", "taskId": "loop_workshop", "undoSeq": 43]],
+            ]]
+            entries[index] = try JSONDecoder().decode(NoteEntry.self, from: JSONSerialization.data(withJSONObject: fields))
+            editedReceiptReads.removeValue(forKey: id)
+        }
     }
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
@@ -108,6 +127,7 @@ private actor NotesHistoryDemoSession: URLSessionLike {
             }
             data = try JSONEncoder().encode(Page(entries: entries))
         } else if request.httpMethod == "GET", path == "/notes" {
+            try advanceEditedReceipts()
             struct Day: Encodable { let entries: [NoteEntry] }
             let day = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "day" }?.value
             data = try JSONEncoder().encode(Day(entries: entries.filter { $0.day == day }))
@@ -120,9 +140,9 @@ private actor NotesHistoryDemoSession: URLSessionLike {
             fields["updatedAt"] = "2026-06-12T11:00:00.000Z"
             fields.removeValue(forKey: "transcription")
             fields.removeValue(forKey: "transcribedAt")
+            fields["agent"] = ["state": "pending", "receipt": NSNull()]
             entries[index] = try JSONDecoder().decode(NoteEntry.self, from: JSONSerialization.data(withJSONObject: fields))
-            // The real PATCH is a bare entry; the model retains its historical agent receipt.
-            fields.removeValue(forKey: "agent")
+            editedReceiptReads[entries[index].id] = 0
             data = try JSONSerialization.data(withJSONObject: fields)
         } else if request.httpMethod == "DELETE", let index = entries.firstIndex(where: { path == "/notes/\($0.id)" }) {
             entries.remove(at: index)
@@ -131,7 +151,7 @@ private actor NotesHistoryDemoSession: URLSessionLike {
         } else if request.httpMethod == "POST", path == "/tasks/undo", !undone {
             struct Undo: Decodable { let seq: Int }
             let body = try JSONDecoder().decode(Undo.self, from: request.httpBody ?? Data())
-            guard body.seq == 42 else { throw GatewayClient.Error.invalidResponse }
+            guard body.seq == 42 || body.seq == 43 else { throw GatewayClient.Error.invalidResponse }
             undone = true
             data = Data(#"{"task":null,"receipt":{"text":"Reversed the workshop task change","undoSeq":null}}"#.utf8)
         } else {

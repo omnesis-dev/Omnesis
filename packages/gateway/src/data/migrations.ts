@@ -89,6 +89,7 @@ import {
 import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/rebuild.js";
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
+import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -178,6 +179,20 @@ export interface Migration {
    * stamps `user_version` only after `up` returns.
    */
   readonly ownTransaction?: boolean;
+  /**
+   * The migration changes how the gateway interprets a stored sync cursor, so
+   * a gateway built before it cannot safely resume from a cursor written after
+   * it. That is a migration that changes which `sync_state` row holds a
+   * device's cursor, what part of a source a cursor row covers, or what other
+   * stored state must accompany a cursor for it to be valid.
+   *
+   * {@link CURSOR_COMPAT_SCHEMA_VERSION} is the highest flagged version, and
+   * every cursor write is stamped with it, so a downgrade resets exactly the
+   * sources whose cursors the older gateway cannot read. Most migrations
+   * leave cursors alone and are not flagged; a new one that is flagged and
+   * also rewrites existing cursors restamps the rows it rewrites.
+   */
+  readonly invalidatesSourceCursors?: boolean;
   /**
    * Imperative migration body. Runs inside a transaction unless
    * `ownTransaction` is set; the runner commits and bumps `user_version`
@@ -899,12 +914,13 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Downgrade compatibility: each source now records the schema version
-    // that wrote its cursor. On boot the gateway checks whether the running
-    // binary is older than any source's recorded version; if so it resets
-    // only those sources (cursor cleared, wipe epoch bumped) so they resync
-    // cleanly. Upgrade path is unchanged — forward migrations always run and
-    // sources always keep their data. See runDowngradeCompatCheck.
+    // Downgrade compatibility: each cursor row records the oldest schema
+    // version that can interpret its cursor (CURSOR_COMPAT_SCHEMA_VERSION at
+    // the time it was written). On boot the gateway checks whether the
+    // running binary is older than any row's recorded version; if so it
+    // resets only those sources (cursor cleared, wipe epoch bumped) so they
+    // resync cleanly. Upgrade path is unchanged — forward migrations always
+    // run and sources always keep their data. See runDowngradeCompatCheck.
     version: 29,
     description:
       "add minimum_gateway_version to sync_state for downgrade-safe per-source cursor reset",
@@ -3713,6 +3729,8 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 131,
     description: "source membership: source_devices, per-device sync_state, revocable devices",
+    // A member's cursor can live on its own row rather than the shared one.
+    invalidatesSourceCursors: true,
     // Rebuilds `sources` — a table other tables reference — so FK
     // enforcement must be off for the rebuild (SQLite's 12-step ALTER):
     // with it on, RENAME rewrites every child FK to point at the old name.
@@ -3805,6 +3823,8 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 133,
     description:
       "source_wipe_epoch keyed by (source_id, device_id): one write-epoch fence per cursor row",
+    // Which writes a cursor row accepts is decided by that row's own epoch.
+    invalidatesSourceCursors: true,
     up(db) {
       // Nothing references this table, so it is rebuilt in place: every
       // existing epoch becomes the shared row's (`device_id = ''`), which is
@@ -3834,6 +3854,8 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 134,
     description:
       "documents.stream_id: the contributing device's stream of a partitioned source; uniqueness and tombstones keyed per stream",
+    // A partitioned member's cursor covers its own stream, not the source.
+    invalidatesSourceCursors: true,
     // Rebuilds `documents` and `removed_documents` — tables other tables
     // reference — so FK enforcement must be off for the rebuild (SQLite's
     // 12-step ALTER), exactly as migration 131 rebuilt `sources`. The
@@ -4096,6 +4118,9 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 139,
     description: "persist each source's authoritative multi-device mode",
+    // The stored mode, not the devices' announcements, decides which row
+    // holds a device's cursor.
+    invalidatesSourceCursors: true,
     up(db) {
       const sourceColumns = db
         .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('sources')")
@@ -4158,6 +4183,9 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 141,
     description: "journal authoritative source mode transitions",
+    // A completed transition moves a source's cursor between its shared row
+    // and its owner's row.
+    invalidatesSourceCursors: true,
     up: (db) => {
       createSourceModeTransitionTable(db);
       createSourceModeTransitionIndexes(db);
@@ -4240,6 +4268,9 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 146,
     description: "store member-local source configuration overrides",
+    // A member's cursor was produced under its own configuration, which an
+    // older gateway would replace with the source's.
+    invalidatesSourceCursors: true,
     up: (db) => {
       const columns = db
         .prepare<[string], { name: string }>("SELECT name FROM pragma_table_info(?)")
@@ -4609,6 +4640,9 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 178,
     description: "Retain structured source pages across partial writes",
+    // A cursor can be committed while the rest of its page waits in
+    // pending_source_pages; the cursor is only valid together with that page.
+    invalidatesSourceCursors: true,
     up: addPendingSourcePages,
   },
   {
@@ -4896,7 +4930,61 @@ export const MIGRATIONS: readonly Migration[] = [
     description: "index documents by source and date with their id and revision",
     up: indexDocumentsBySourceCreatedRevision,
   },
+  {
+    version: 209,
+    description: "process owner note edits as fenced revisions",
+    up: createNoteAgentTables,
+  },
+  {
+    version: 210,
+    description: "durable Note clarification handoffs",
+    up(db) {
+      // An earlier Note schema used the history-compaction version. Repair
+      // that known lineage without repeating corpus work on ordinary upgrades.
+      const previous = db
+        .prepare<[], { description: string }>(
+          "SELECT description FROM schema_migrations WHERE version = 207",
+        )
+        .get();
+      if (previous?.description === "process owner note edits as fenced revisions")
+        compactKnowledgeHistoryTargets(db);
+      createNoteHandoffTables(db);
+    },
+  },
+  {
+    // Cursor rows were stamped with the schema head they were written at,
+    // which made any downgrade across an unrelated migration reset every
+    // source. Lower those stamps to the cursor-compatibility version, 178 at
+    // this point in the chain: the literal rather than the derived constant,
+    // so the step means the same thing on every install that replays it.
+    // Rows already at or below it, including the 0 of a reset row, keep
+    // theirs. Idempotent: a second run matches no row.
+    version: 211,
+    description: "stamp each sync cursor with the oldest schema that can read it",
+    up(db) {
+      db.prepare(
+        "UPDATE sync_state SET minimum_gateway_version = ? WHERE minimum_gateway_version > ?",
+      ).run(178, 178);
+    },
+  },
 ];
+
+/**
+ * The oldest schema version whose gateway can interpret a sync cursor written
+ * by this build: the highest migration flagged
+ * {@link Migration.invalidatesSourceCursors}. Every cursor write stamps it on
+ * `sync_state.minimum_gateway_version`, and {@link runDowngradeCompatCheck}
+ * in any older build resets only the sources stamped above its own head.
+ *
+ * Deliberately not {@link LATEST_SCHEMA_VERSION}: most migrations leave
+ * cursors alone, and stamping the head would make a downgrade across any of
+ * them discard every source's sync position and resync each source from the
+ * start.
+ */
+export const CURSOR_COMPAT_SCHEMA_VERSION: number = Math.max(
+  0,
+  ...MIGRATIONS.filter((m) => m.invalidatesSourceCursors === true).map((m) => m.version),
+);
 
 /**
  * Body of migration 131. Devices become members of sources rather than
@@ -5071,14 +5159,18 @@ function rebuildForSourceMembership(db: Db): void {
  *
  * When `PRAGMA user_version` (the DB's schema version) is greater than
  * `LATEST_SCHEMA_VERSION` (this binary's highest known migration), the binary
- * is older than the DB. Any source whose cursor was written at a version
- * higher than this binary's is considered incompatible: its cursor is cleared
- * and its wipe epoch bumped so in-flight syncs from the previous binary are
- * rejected. Documents already in the index are NOT bulk-deleted; they
- * are tombstoned as the fresh resync comes in.
+ * is older than the DB. Each cursor row carries
+ * `minimum_gateway_version`, the oldest schema version that can interpret its
+ * cursor ({@link CURSOR_COMPAT_SCHEMA_VERSION} of the build that wrote it).
+ * A source with any row stamped above this binary's head is incompatible: its
+ * cursors are cleared and its wipe epochs bumped so in-flight syncs from the
+ * previous binary are rejected. Documents already in the index are NOT
+ * bulk-deleted; they are tombstoned as the fresh resync comes in.
  *
- * Sources written at or below `LATEST_SCHEMA_VERSION` are untouched — their
- * data is still interpretable by the running binary.
+ * Sources whose rows are stamped at or below `LATEST_SCHEMA_VERSION` are
+ * untouched — the running binary can still resume from their cursors. Because
+ * the stamp moves only when a migration changes how cursors are interpreted,
+ * a downgrade across migrations that do not keeps every source's position.
  *
  * Protection scope: activates for binaries at schema v29+ (the release
  * that added both this check and the `minimum_gateway_version` column). A
@@ -5146,7 +5238,7 @@ export function runDowngradeCompatCheck(db: Db, opts?: { log?: Logger }): void {
       seedEpoch.run(source_id);
       bumpEpoch.run(source_id);
       logger.warn(
-        `downgrade: reset source ${source_id} (cursor written at schema v${minimum_gateway_version}, ` +
+        `downgrade: reset source ${source_id} (its cursor needs schema v${minimum_gateway_version}, ` +
           `binary supports up to v${LATEST_SCHEMA_VERSION}) — it will resync automatically`,
       );
     }

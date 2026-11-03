@@ -493,7 +493,8 @@ describe("GmailSource", () => {
         }),
       );
 
-      const cursor = { phase: "incremental", historyId: "history-1" };
+      const watermark = "2026-06-01T00:00:00.000Z";
+      const cursor = { phase: "incremental", historyId: "history-1", lastSyncAt: watermark };
       const result = await source.sync(cursor);
 
       expect(result.documents).toHaveLength(1);
@@ -505,6 +506,9 @@ describe("GmailSource", () => {
       // and historyPageToken persists so the next call resumes.
       expect(out.historyId).toBe("history-1");
       expect(out.historyPageToken).toBe("history-page-2");
+      // So does the watermark: a recovery from here must still reach back to
+      // the events on the pages not yet read.
+      expect(out.lastSyncAt).toBe(watermark);
 
       // Next call resumes with the saved historyPageToken.
       gmail.users.history.list = vi.fn((opts: any) => {
@@ -526,6 +530,7 @@ describe("GmailSource", () => {
       // Only on the last page does historyId advance and the page token clear.
       expect(out2.historyId).toBe("history-final");
       expect(out2.historyPageToken).toBeUndefined();
+      expect(Date.parse(out2.lastSyncAt)).toBeGreaterThan(Date.parse(watermark));
     });
 
     test("non-TRASH/SPAM label additions trigger re-fetch (e.g. STARRED, IMPORTANT, custom labels)", async () => {

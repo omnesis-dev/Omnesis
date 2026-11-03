@@ -214,7 +214,8 @@ struct NoteHistoryDetail: View {
             Button("Delete note", role: .destructive) { Task { await remove() } }
         } message: { Text("This cannot be undone. Existing task and memory changes remain.") }
         .refreshable { await refresh() }
-        .task {
+        .task(id: note.updatedAt) {
+            // Editing a settled note starts a fresh receipt poll for its revision.
             // Receipts and gateway transcripts can arrive while this note is open.
             while !Task.isCancelled {
                 await refresh()
@@ -238,7 +239,7 @@ struct NoteHistoryDetail: View {
                 }
                 .disabled(busy)
                 .accessibilityIdentifier("notes.editor")
-            Text("Edits update your saved note; they do not ask Omnesis to process it again.")
+            Text("Edits update your saved note. When Tell Omnesis processing is enabled, Omnesis acts on the changes.")
                 .font(.footnote).foregroundStyle(Theme.textSecondary)
             if draft.utf16.count > 8192 {
                 Text("Shorten this note to 8,192 characters to save.")
@@ -292,12 +293,13 @@ struct NoteHistoryDetail: View {
 
     private func refresh() async {
         guard !editing, !busy else { return }
+        let revision = note.updatedAt
         do {
             if let updated = try await model.refresh(note) {
-                guard !editing, !busy else { return }
+                guard !Task.isCancelled, !editing, !busy, note.updatedAt == revision else { return }
                 note = updated
                 error = nil
-            } else { dismiss() }
+            } else if !Task.isCancelled, note.updatedAt == revision { dismiss() }
         } catch { if !Task.isCancelled { self.error = error } }
     }
 

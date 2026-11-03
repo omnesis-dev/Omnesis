@@ -11,6 +11,8 @@ export interface ConversationNotification {
   conversationId: string;
   title: string;
   body: string;
+  /** One durable producer operation; retries must not create another banner. */
+  idempotencyKey?: string;
 }
 
 export function conversationCollapseId(conversationId: string): string {
@@ -30,13 +32,18 @@ export class ConversationNotifier {
   constructor(private readonly publisher: NotificationPublisher) {}
 
   async notify(notification: ConversationNotification): Promise<void> {
-    const results = await this.publisher.publish({
+    const message = {
       kind: "conversation",
       title: notification.title || "Omnesis",
       body: clipNotificationBody(notification.body),
       data: { conversationId: notification.conversationId },
       collapseId: conversationCollapseId(notification.conversationId),
-    });
+    } as const;
+    const results = notification.idempotencyKey
+      ? await this.publisher.publish(message, undefined, {
+          idempotencyKey: notification.idempotencyKey,
+        })
+      : await this.publisher.publish(message);
     log.info(
       `conversation ${notification.conversationId}: wake accepted by ${results.filter((result) => result.ok).length}/${results.length} device(s)`,
     );

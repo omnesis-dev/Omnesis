@@ -1,22 +1,9 @@
 name: ci-status
 
-# The README badge's source: the verdict of the newest full-validation run on
-# `main` that actually finished.
-#
-# full-validation gives every push to `main` its own run, so runs of `main`
-# finish in any order, and a manually cancelled run would make GitHub's own
-# badge report a failure. This workflow runs after every full-validation
-# run completes and passes or fails exactly as the newest completed,
-# non-cancelled run of `main` did — a push, or a manual run: the Dependabot
-# auto-merge validates the main it merged with a dispatch, because a push made
-# with a workflow's token starts no workflow. It checks out no code and reads the
-# Actions API only. It has no concurrency group on purpose: a queued run that
-# a group replaced would itself be cancelled, and the badge would show that.
-#
-# It reacts only to full-validation runs of `main` that actually finished:
-# pull-request runs and cancelled runs of `main` never change the
-# verdict, and re-reporting an unchanged red verdict on each of them would
-# send the pusher a failure email every time.
+# The README badge combines the newest completed full sweep on main with any
+# newer Linux-only result. A green push must not hide a red macOS sweep.
+# Cancelled/skipped runs and pull requests do not change the verdict. This
+# workflow checks out no code and reads only the Actions API.
 on:
   workflow_run:
     workflows: [full-validation]
@@ -41,11 +28,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # `branch=main` also matches a pull request whose head branch is
-          # named main, so the event is filtered too.
-          latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/full-validation.yml/runs?branch=main&status=completed&per_page=100" \
-            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch") | select(.conclusion != "cancelled" and .conclusion != "skipped" and .conclusion != "stale")] | sort_by(.created_at) | last | "\(.conclusion) \(.head_sha) \(.html_url)"')"
-          read -r conclusion sha url <<<"$latest"
-          [ "$conclusion" != null ] || { echo "::error::No finished run of main was found."; exit 1; }
-          echo "Newest finished run on main: ${conclusion} at ${sha} — ${url}"
-          [ "$conclusion" = success ]
+          # Fetch each event separately: frequent pushes cannot crowd full
+          # sweeps off the first API page.
+          runs="$(
+            for event in push schedule workflow_dispatch; do
+              gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/full-validation.yml/runs?branch=main&status=completed&event=${event}&per_page=100" --jq '[.workflow_runs[] | {event,status,conclusion,created_at,id,head_sha,html_url,display_title}]' || exit
+            done | jq -s add
+          )"
+          node -e '
+            const runs = JSON.parse(require("fs").readFileSync(0, "utf8"))
+              .filter(run => run.status === "completed" && !["cancelled", "skipped", "stale"].includes(run.conclusion))
+              .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
+            const full = runs.find(run => run.event === "schedule" ||
+              (run.event === "workflow_dispatch" && run.display_title === "full-validation (workflow_dispatch, lanes: all)"));
+            const linux = runs.find(run => run.event === "push" ||
+              (run.event === "workflow_dispatch" && run.display_title === "full-validation (workflow_dispatch, lanes: linux)"));
+            if (!full) {
+              console.error("No completed full sweep on main; dispatch full-validation with lanes=all.");
+              process.exit(1);
+            }
+            const verdicts = [full];
+            if (linux && (linux.created_at > full.created_at || (linux.created_at === full.created_at && linux.id > full.id))) verdicts.push(linux);
+            for (const run of verdicts) console.log(`${run.event}: ${run.conclusion} at ${run.head_sha} — ${run.html_url}`);
+            process.exit(verdicts.every(run => run.conclusion === "success") ? 0 : 1);
+          ' <<<"$runs"

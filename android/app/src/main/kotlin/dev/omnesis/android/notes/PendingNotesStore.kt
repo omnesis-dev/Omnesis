@@ -40,6 +40,7 @@ data class PendingNote(
     val audio: VoiceNoteAudio? = null,
     /** The device language tag recorded with a voice note, for the transcriber's hint. */
     val language: String? = null,
+    val taskId: String? = null,
 )
 
 /** A queued note warrants operator attention after one failed retry or five minutes. */
@@ -64,7 +65,7 @@ internal val PENDING_WARNING_AGE: Duration = Duration.ofMillis(PENDING_WARNING_A
  */
 class PendingNotesStore(context: Context) {
 
-    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 4) {
+    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 5) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """CREATE TABLE $TABLE (
@@ -78,7 +79,8 @@ class PendingNotesStore(context: Context) {
                     $COL_RETRY_COUNT INTEGER NOT NULL DEFAULT 0,
                     $COL_AUDIO_PATH TEXT,
                     $COL_AUDIO_MIME TEXT,
-                    $COL_LANGUAGE TEXT
+                    $COL_LANGUAGE TEXT,
+                    $COL_TASK_ID TEXT
                 )""",
             )
         }
@@ -108,6 +110,9 @@ class PendingNotesStore(context: Context) {
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_AUDIO_MIME TEXT")
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_LANGUAGE TEXT")
             }
+            if (oldVersion < 5) {
+                db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_TASK_ID TEXT")
+            }
         }
     }
 
@@ -120,6 +125,7 @@ class PendingNotesStore(context: Context) {
         lastFailure: String? = null,
         audio: VoiceNoteAudio? = null,
         language: String? = null,
+        taskId: String? = null,
     ): Unit =
         withContext(Dispatchers.IO) {
             val values = ContentValues().apply {
@@ -132,6 +138,7 @@ class PendingNotesStore(context: Context) {
                 put(COL_AUDIO_PATH, audio?.file?.absolutePath)
                 put(COL_AUDIO_MIME, audio?.mimeType)
                 put(COL_LANGUAGE, language)
+                put(COL_TASK_ID, taskId)
             }
             helper.writableDatabase.insertOrThrow(TABLE, null, values)
             Unit
@@ -154,6 +161,7 @@ class PendingNotesStore(context: Context) {
                 COL_AUDIO_PATH,
                 COL_AUDIO_MIME,
                 COL_LANGUAGE,
+                COL_TASK_ID,
             ),
             null,
             null,
@@ -161,6 +169,7 @@ class PendingNotesStore(context: Context) {
             null,
             "$COL_ID ASC",
         ).use { cursor ->
+            val taskIdx = cursor.getColumnIndexOrThrow(COL_TASK_ID)
             val idIdx = cursor.getColumnIndexOrThrow(COL_ID)
             val noteIdIdx = cursor.getColumnIndexOrThrow(COL_NOTE_ID)
             val textIdx = cursor.getColumnIndexOrThrow(COL_TEXT)
@@ -188,6 +197,7 @@ class PendingNotesStore(context: Context) {
                         VoiceNoteAudio(File(cursor.getString(audioIdx)), cursor.getString(mimeIdx))
                     },
                     language = if (cursor.isNull(languageIdx)) null else cursor.getString(languageIdx),
+                    taskId = if (cursor.isNull(taskIdx)) null else cursor.getString(taskIdx),
                 )
             }
         }
@@ -237,5 +247,6 @@ class PendingNotesStore(context: Context) {
         const val COL_AUDIO_PATH = "audio_path"
         const val COL_AUDIO_MIME = "audio_mime"
         const val COL_LANGUAGE = "language"
+        const val COL_TASK_ID = "task_id"
     }
 }

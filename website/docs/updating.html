@@ -209,11 +209,11 @@
           </li>
         </ul>
         <p>
-          <code>omnesis update</code> takes a backup of its own before it changes anything. After
-          each successful one, Omnesis keeps the newest two such pre-update backups and deletes
-          older ones; backups you took yourself are never deleted. Set
-          <code>backupRetention.preUpdateCount</code> to keep a different number, or
-          <code>0</code> to keep them all.
+          <code>omnesis update</code> takes no backup by default. Add <code>--backup</code> to
+          request a pre-update backup on the gateway host. After each successful backup, Omnesis
+          keeps the newest two such pre-update backups and deletes older ones; backups you took
+          yourself are never deleted. Set <code>backupRetention.preUpdateCount</code> to keep a
+          different number, or <code>0</code> to keep them all.
         </p>
 
         <h2 id="restore">Restore and export</h2>
@@ -294,10 +294,6 @@
         <figure class="diagram diagram-flat diagram-compact diagram-branches diagram-nested">
           <ol class="flow">
             <li class="flow-step">
-              <span class="flow-title">Back up</span
-              ><span class="flow-desc">through the gateway, skipping the index</span>
-            </li>
-            <li class="flow-step">
               <span class="flow-title">Install</span
               ><span class="flow-desc">build the release, or pull the images</span>
             </li>
@@ -330,7 +326,7 @@
               <p class="lane-note">Code returns; migrations that already ran do not.</p>
             </section>
             <section class="lane">
-              <p class="lane-title">To get the exact data back</p>
+              <p class="lane-title">Restoring an existing backup</p>
               <ol class="flow">
                 <li class="flow-step">
                   <span class="flow-title">Stop</span
@@ -338,7 +334,7 @@
                 </li>
                 <li class="flow-step">
                   <span class="flow-title">Restore</span
-                  ><span class="flow-desc">the backup from step one</span>
+                  ><span class="flow-desc">a backup you previously created</span>
                 </li>
                 <li class="flow-step">
                   <span class="flow-title">Start</span
@@ -351,10 +347,10 @@
             </section>
           </div>
           <figcaption>
-            An update backs up, installs, and restarts the gateway before anything that depends on
-            it; a failure before the gateway is healthy puts the previous release back, and the
-            pre-update backup undoes data changes. A Docker or hardened gateway takes its backup
-            after the install step, as described under How the updater works.
+            An update installs and restarts the gateway before anything that depends on it. A
+            failure before the gateway is healthy puts the previous release back. Backups are
+            optional: <code>--backup</code> adds one before any irreversible changes, as described
+            under How the updater works.
           </figcaption>
         </figure>
         <p>
@@ -384,10 +380,11 @@
         </p>
         <p>
           Rolling back the code does not roll back the data. If the new gateway got far enough to
-          run its migrations, the previous release clears the sync positions the newer version wrote
-          and those sources sync again from the start. For the exact state before the update,
-          restore the backup from step one with the commands under <a href="#restore">Restore</a>.
-          Skip that backup with <code>--no-backup</code> only when you have taken one yourself.
+          run its migrations, the previous release keeps running on the migrated database. Sources
+          keep their sync positions and continue where they left off, unless the newer version
+          changed how the gateway reads them; only those sources sync again from the start. An
+          existing backup can restore the data state it captured; see
+          <a href="#restore">Restore</a>.
         </p>
         <p>
           An older release does not know the settings a newer one added, and drops them from
@@ -473,8 +470,12 @@
                 <td>Installs, then reports which daemons still run the previous release.</td>
               </tr>
               <tr>
+                <td><code>--backup</code></td>
+                <td>Takes a pre-update backup on the gateway host. Off by default.</td>
+              </tr>
+              <tr>
                 <td><code>--no-backup</code></td>
-                <td>Skips the pre-update backup.</td>
+                <td>Accepted for compatibility; has no effect.</td>
               </tr>
               <tr>
                 <td><code>--health-timeout &lt;seconds&gt;</code></td>
@@ -499,11 +500,12 @@
                 <td><code>--force</code></td>
                 <td>
                   Allows moving to an older release, and implies <code>--allow-rewind</code>. There
-                  are no down-migrations, and an older release clears the sync positions the newer
-                  one wrote. Settings it does not know are saved for the next upgrade, as described
-                  under <a href="#update-failures">If it fails</a>. An OpenClaw or Hermes plugin
-                  that has followed a certificate renewal stops connecting when moved back to a
-                  release whose plugin pins the certificate; afterwards, run
+                  are no down-migrations. Sources keep their sync positions, except where the older
+                  release predates a change in how the gateway reads them; those sources sync again
+                  from the start. Settings it does not know are saved for the next upgrade, as
+                  described under <a href="#update-failures">If it fails</a>. An OpenClaw or Hermes
+                  plugin that has followed a certificate renewal stops connecting when moved back to
+                  a release whose plugin pins the certificate; afterwards, run
                   <code
                     >omnesis connect &lt;harness&gt; --refresh --trust-fingerprint
                     sha256:&lt;served&gt;</code
@@ -595,19 +597,19 @@
           <summary>How the updater works</summary>
           <p>
             The update runs in two halves. The release already installed finds the target and puts
-            it in place. Everything after that (the backup when it can wait, the restarts, the
-            health wait, the harness refresh and any rollback) is run by the newly installed
+            it in place. Everything after that (an optional backup when it can wait, the restarts,
+            the health wait, the harness refresh and any rollback) is run by the newly installed
             release, so a fix to those steps applies to the update that delivers it. Only one update
             runs on a machine at a time; a second is refused with the running process and its
             current step, or waits with <code>--wait-for-lock</code>. The lock of a killed update is
             recovered automatically after a short interval.
           </p>
           <p>
-            Where the gateway runs from the installation being updated, it is backed up before the
-            install. A gateway in a container or on a hardened release keeps serving its current
-            build during the install and is backed up after it, before anything restarts. A gateway
-            that is not running is backed up by copying its closed databases into the same backups
-            folder.
+            With <code>--backup</code>, a gateway that runs from the installation being updated is
+            backed up before the install. A gateway in a container or on a hardened release keeps
+            serving its current build during the install and is backed up after it, before anything
+            restarts. A gateway that is not running is backed up by copying its closed databases
+            into the same backups folder.
           </p>
           <p>
             Before restarting a daemon, the update rewrites its launchd plist or systemd unit to
@@ -728,18 +730,18 @@
           A machine installed with <code>install.sh --docker</code> updates with the same
           <code>omnesis update</code> and the same steps. Installing means bumping the image tag
           recorded beside the Compose file and pulling the new images, the updater's included,
-          quietly: one line for the pull, and Docker's own errors if it fails. The backup runs after
-          the pull, while the gateway still serves the previous image. Rolling back is quick: the
-          previous tag is written back, and its image is still on the machine. Once the gateway
-          answers on the new release and the collector has restarted onto it, the update removes the
-          previous release's images of this install, about a gigabyte each; it never removes another
-          image. One that a container still uses, such as the updater image the update itself
-          started from, is kept and removed by the next update. An image it cannot remove is
-          reported with the <code>docker image rm</code> command that does, and never fails the
-          update. Re-running the installer onto another release does the same once its gateway
-          serves: the previous release's images of this install go, and one a container still uses
-          stays. <code>--target-version</code> pins a release tag. A Docker install follows releases
-          only, so it refuses <code>--edge</code> before anything changes.
+          quietly: one line for the pull, and Docker's own errors if it fails. With
+          <code>--backup</code>, the backup runs after the pull, while the gateway still serves the
+          previous image. Rolling back is quick: the previous tag is written back, and its image is
+          still on the machine. Once the gateway answers on the new release and the collector has
+          restarted onto it, the update removes the previous release's images of this install, about
+          a gigabyte each; it never removes another image. One that a container still uses, such as
+          the updater image the update itself started from, is kept and removed by the next update.
+          An image it cannot remove is reported with the <code>docker image rm</code> command that
+          does, and never fails the update. Re-running the installer onto another release does the
+          same once its gateway serves: the previous release's images of this install go, and one a
+          container still uses stays. <code>--target-version</code> pins a release tag. A Docker
+          install follows releases only, so it refuses <code>--edge</code> before anything changes.
         </p>
         <p>
           To run an exact commit in Docker, a maintainer publishes its gateway, collector and
@@ -772,10 +774,7 @@
             </p>
           </div>
         </div>
-        <p>
-          Back up first, with <code>omnesis backup --note pre-upgrade</code>: a commit image can
-          carry migrations no release has.
-        </p>
+        <p>A commit image can carry migrations no release has.</p>
         <p>
           The update runs in a short-lived updater container that holds the Docker socket for that
           one run. The socket gives root-equivalent control of the host, which is why the
@@ -828,7 +827,7 @@
           explicit target version; bridge-network registry discovery reaches the updater container’s
           loopback, rather than the host’s. Standalone Compose installations update with a pinned
           <code>OMNESIS_IMAGE_TAG</code>, <code>docker compose pull</code>, then
-          <code>docker compose up -d</code>, after a backup.
+          <code>docker compose up -d</code>.
         </p>
 
         <h2 id="adopt-source">Adopting a hand-made source install</h2>

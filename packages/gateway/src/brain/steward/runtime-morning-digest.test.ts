@@ -20,6 +20,7 @@ import {
   type ToolResult,
 } from "@omnesis/core";
 import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
+import { readDailyBriefDetail } from "../observations/brief-detail.js";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { resolveBrainSettings } from "../config.js";
@@ -108,7 +109,11 @@ const sourceDailyRun = () =>
   claimed({ id: "run_source", payload: { sourceId: "gmail-test", fromMs: 1, toMs: 2 } });
 
 function runtime(
-  opts: { observations?: boolean; port?: MorningBriefConversationPort | null } = {},
+  opts: {
+    observations?: boolean;
+    port?: MorningBriefConversationPort | null;
+    excludedSources?: string[];
+  } = {},
 ) {
   const writeGate = directWriteGate(db);
   const decision: DecisionCapability = {
@@ -145,9 +150,9 @@ function runtime(
     db,
     writeGate,
     searchPipeline: {} as unknown as CognitionRuntimeDeps["searchPipeline"],
-    syncStatus: {} as unknown as CognitionRuntimeDeps["syncStatus"],
+    syncStatus: { get: () => undefined } as unknown as CognitionRuntimeDeps["syncStatus"],
     analyticsDb: {} as unknown as CognitionRuntimeDeps["analyticsDb"],
-    getSettings: () => resolveBrainSettings(),
+    getSettings: () => resolveBrainSettings({ excludedSources: opts.excludedSources ?? [] }),
     ...(opts.observations === false ? {} : { observations }),
     clock: () => NOW,
     log,
@@ -337,5 +342,94 @@ describe("morning_brief_send in the toolset", () => {
     const result = await send(rt, { text: "Hello." });
     expect(result).toMatchObject({ kind: "error", code: "conversation_unavailable" });
     expect(morningBriefSent(db, TODAY)).toBe(false);
+  });
+});
+
+describe("morning brief reference authority", () => {
+  function insertReference(id: string, sourceId = "files:fiction") {
+    db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash,
+      source_created_at, source_updated_at, ingested_at, updated_at)
+      VALUES (?, 'p', ?, ?, 'Project schedule', 'The workshop starts tomorrow.', 'h', '2026-07-01', '2026-07-01', '2026-07-01', '2026-07-01')`,
+    ).run(id, sourceId, id);
+  }
+
+  test("source-owned horizon documents can be attached even with no observations", async () => {
+    insertReference("calendar_doc", "calendar:fiction");
+    query.mockResolvedValue(
+      temporalResult([
+        {
+          ...calendarItem,
+          projection: {
+            ...calendarItem.projection!,
+            sourceId: "calendar:fiction",
+            documentId: "calendar_doc",
+          },
+        },
+      ]) as never,
+    );
+    const rt = await runtime();
+    const run = digestRun();
+    const tool = sendTool(rt, run)!;
+    expect(await rt.promptBuilder(run)).toContain("referenceDocumentIds");
+    expect(
+      await tool.invoke(
+        { text: "A workshop tomorrow.", referenceDocumentIds: ["calendar_doc"] },
+        { sessionId: "S", messageId: "M" },
+      ),
+    ).toMatchObject({ kind: "structured" });
+    expect(
+      readDailyBriefDetail(db, { day: TODAY, messageId: "msg_1" }).references?.map((r) => r.id),
+    ).toEqual(["calendar_doc"]);
+  });
+
+  test("a successful fetch permits an email reference but an unread record does not", async () => {
+    insertReference("email_doc", "gmail:fiction");
+    const rt = await runtime();
+    const run = digestRun();
+    const tools = rt.buildTools(run);
+    const sender = tools.find((t) => t.name === "morning_brief_send")!;
+    const args = { text: "The workshop starts tomorrow.", referenceDocumentIds: ["email_doc"] };
+    const context = { sessionId: "S", messageId: "M" };
+    expect(await sender.invoke(args, context)).toMatchObject({
+      kind: "error",
+      code: "invalid_references",
+    });
+    expect(
+      await tools
+        .find((t) => t.name === "fetch_many")!
+        .invoke({ documents: [{ documentId: "email_doc" }] }, context),
+    ).toMatchObject({ kind: "document.batch", items: [{ kind: "document" }] });
+    expect(await sender.invoke(args, context)).toMatchObject({ kind: "structured" });
+    expect(
+      readDailyBriefDetail(db, { day: TODAY, messageId: "msg_1" }).references?.[0]?.sourceType,
+    ).toBe("gmail");
+  });
+
+  test("excluded horizon evidence cannot be attached", async () => {
+    insertReference("excluded_doc", "files:fiction");
+    query.mockResolvedValue(
+      temporalResult([
+        {
+          ...calendarItem,
+          projection: {
+            ...calendarItem.projection!,
+            sourceId: "files:fiction",
+            documentId: "excluded_doc",
+          },
+        },
+      ]) as never,
+    );
+    const rt = await runtime({ excludedSources: ["files"] });
+    const run = digestRun();
+    const tool = sendTool(rt, run)!;
+    await rt.promptBuilder(run);
+    expect(
+      await tool.invoke(
+        { text: "Brief.", referenceDocumentIds: ["excluded_doc"] },
+        { sessionId: "S", messageId: "M" },
+      ),
+    ).toMatchObject({ kind: "error", code: "excluded_source" });
+    expect(appended).toEqual([]);
   });
 });

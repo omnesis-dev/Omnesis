@@ -40,12 +40,31 @@ class DailyBriefItemsDecodeTest {
     }
 
     @Test
+    fun direct_references_decode_without_observations_and_skip_only_invalid_entries() {
+        val page = OmnesisJson.decodeFromString<DailyBriefItemsDto>(
+            """{"day":"2026-10-14","messageId":"mb_direct","items":[],"references":[
+                {"id":"doc_email","title":"Workshop schedule","sourceType":"gmail"},
+                {"title":"No id"},7,
+                {"id":"doc_chat","title":null,"sourceType":"whatsapp"}]}""",
+        )
+        assertTrue(page.items.isEmpty())
+        assertEquals(listOf("doc_email", "doc_chat"), page.references.map { it.id })
+        assertEquals("whatsapp", page.references[1].sourceType)
+        assertNull(page.references[1].title)
+        assertEquals(2, page.basedOnCount)
+        val mixed = page.copy(items = listOf(DailyBriefItemDto(observationId = "obs_workshop", summary = "The workshop moved.")))
+        assertEquals(3, mixed.basedOnCount)
+    }
+
+    @Test
     fun the_send_time_is_optional() {
         val page = OmnesisJson.decodeFromString<DailyBriefItemsDto>(
             """{"day":"2026-10-13","messageId":"mb_old","items":[]}""",
         )
         assertNull(page.sentAt)
         assertTrue(page.items.isEmpty())
+        assertTrue(page.references.isEmpty())
+        assertEquals(0, page.basedOnCount)
     }
 
     /** One entry this build cannot read costs only itself; the rest of the brief still shows. */

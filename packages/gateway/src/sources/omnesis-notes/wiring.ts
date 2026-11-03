@@ -122,7 +122,7 @@ export interface OmnesisNotesRuntime {
   /** Append one note to the ledger and schedule its day's re-render. */
   capture(input: CaptureNoteInput, audit?: McpToolInvocationAuditInput): Promise<NoteEntry>;
   /** Replace an entry's text; null when the id is unknown. */
-  edit(id: string, text: string): Promise<NoteEntry | null>;
+  edit(id: string, text: string, owner?: boolean): Promise<NoteEntry | null>;
   editBrowser(input: BrowserNoteEditInput): Promise<BrowserNoteEditResult>;
   listBrowser(deviceId: BrowserNoteAuthority["deviceId"], url: string): BrowserPageNote[];
   /**
@@ -263,7 +263,7 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       log.info(`Captured note ${entry.id} for ${entry.day} (${text.length} chars)`);
       return entry;
     },
-    edit: async (id, text) => {
+    edit: async (id, text, owner = false) => {
       const existing = getNoteEntry(deps.readDb, id);
       if (!existing) return null;
       const trimmed = text.trim();
@@ -273,10 +273,13 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
       const now = new Date().toISOString();
       // The row can vanish between the read above and this write (a
       // concurrent delete) — a false result is the same 404 as unknown.
-      const updated = await deps.writeGate.updateNoteEntry(id, trimmed, now);
+      const updated = await deps.writeGate.updateNoteEntry(id, trimmed, now, {
+        owner,
+        enabled: deps.isNoteAgentEnabled?.() !== false,
+      });
       if (!updated) return null;
       upserter.enqueue(existing.day);
-      return { ...existing, text: trimmed, updatedAt: now };
+      return getNoteEntry(deps.readDb, id);
     },
     editBrowser: async (input) => {
       const result = await deps.writeGate.updateBrowserNoteEntry(input);
@@ -323,8 +326,9 @@ export function bootOmnesisNotes(deps: OmnesisNotesBootDeps): OmnesisNotesRuntim
 
 /**
  * Days whose ledger and projection disagree: ledger days with no
- * projected document, plus projected documents whose ledger days are
- * empty. Both converge through one `runUpsert` per day.
+ * projected document, projected documents whose ledger days are empty,
+ * and projections missing the entry boundaries used for indexing.
+ * Each converges through one `runUpsert` per day.
  */
 function daysToReconcile(db: Database.Database, vocabularyEnabled = false): string[] {
   const unprojected = db
@@ -342,6 +346,16 @@ function daysToReconcile(db: Database.Database, vocabularyEnabled = false): stri
          AND external_id NOT IN (SELECT DISTINCT day FROM note_entries)`,
     )
     .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID);
+  // Persist explicit entry boundaries through the acknowledged projection path.
+  // The boundary-aware content hash makes the indexer refresh these documents;
+  // failed writes remain eligible at the next boot.
+  const unbounded = db
+    .prepare<[string, string], { day: string }>(
+      `SELECT external_id AS day FROM documents
+       WHERE provider_id = ? AND source_id = ?
+         AND json_extract(metadata, '$.extra.chunkBoundaries') IS NULL`,
+    )
+    .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID);
   // Source-owned metadata-only enrollment: old day projections had no safe
   // written-text view. Persist it once through the normal acknowledged write
   // path; failed writes remain eligible at the next boot. Enabling mid-run
@@ -355,5 +369,5 @@ function daysToReconcile(db: Database.Database, vocabularyEnabled = false): stri
         )
         .all(OMNESIS_NOTES_PROVIDER_ID, OMNESIS_NOTES_SOURCE_ID)
     : [];
-  return [...new Set([...unprojected, ...stale, ...unmarked].map((row) => row.day))];
+  return [...new Set([...unprojected, ...stale, ...unbounded, ...unmarked].map((row) => row.day))];
 }

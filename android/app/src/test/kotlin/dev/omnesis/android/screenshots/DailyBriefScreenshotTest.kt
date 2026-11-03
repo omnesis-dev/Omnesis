@@ -10,6 +10,7 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.DailyBriefItemsDto
+import dev.omnesis.android.transport.dto.DailyBriefSourceDto
 import dev.omnesis.android.transport.dto.DailyBriefReactionKind
 import dev.omnesis.android.ui.agent.AgentContent
 import dev.omnesis.android.ui.agent.AgentCoordinator
@@ -75,6 +76,26 @@ class DailyBriefScreenshotTest {
 
     @Test
     fun daily_brief_today_light() = capture("daily_brief_today_light", dark = false) { Conversation(days = 2) }
+
+    @Test
+    fun daily_brief_direct_references_light() = capture("daily_brief_direct_references_light", dark = false) { DirectReferences() }
+
+    @Test
+    fun daily_brief_direct_references_dark() = capture("daily_brief_direct_references_dark", dark = true) { DirectReferences() }
+
+    @Composable
+    private fun DirectReferences() = Conversation(
+        days = 2,
+        pages = listOf(DailyBriefFixtures.today.copy(
+            items = emptyList(),
+            references = listOf(
+                DailyBriefSourceDto("doc_schedule", "Thursday workshop schedule", "gmail"),
+                DailyBriefSourceDto("doc_chat", "Workshop conversation", "whatsapp"),
+                DailyBriefSourceDto("doc_notes", "Workshop preparation notes and equipment checklist for the community studio", "notion"),
+                DailyBriefSourceDto("doc_untitled"),
+            ),
+        )),
+    )
 
     /** Scrolled to the earlier days: each folded to its separator and one line. */
     @Test

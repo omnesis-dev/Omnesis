@@ -149,7 +149,7 @@ class NotesHistoryViewModel internal constructor(private val gateway: NotesHisto
                 return@mutate
             }
             mutableState.update { it.copy(entries = it.entries.map { entry ->
-                if (entry.id == note.id) edited.copy(agent = entry.agent) else entry
+                if (entry.id == note.id) edited else entry
             }) }
         }
     }

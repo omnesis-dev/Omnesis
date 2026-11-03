@@ -196,7 +196,10 @@ describe("formatLedgerRow / assembleScorecard", () => {
         mutatingToolCalls: 25,
         mutatingToolCallsFailed: 2,
         verifiedConcurrentCreateRetries: 0,
-        malformedToolCallsFailed: 2,
+        verifiedFrontierRetries: 0,
+        verifiedCollectionCreateRetries: 0,
+        verifiedMaintenanceHandoffs: 1,
+        malformedToolCallsFailed: 1,
         mutatingToolCallsUncorrected: 1,
         scheduledRuns: 3,
         promptTokens: 99_000,
@@ -210,6 +213,9 @@ describe("formatLedgerRow / assembleScorecard", () => {
     const clean = assembleScorecard({ ...input, thresholds: { metrics: {} } });
     expect(clean.exitCode).toBe(0);
     expect(clean.report.verdict).toBe("uncalibrated");
+    expect(clean.report.counts.verifiedMaintenanceHandoffs).toBe(1);
+    expect(clean.report.counts.mutatingToolCallsFailed).toBe(2);
+    expect(clean.report.counts.malformedToolCallsFailed).toBe(1);
     // 99k prompt at cache-miss $0.1/M + 1k output at $0.2/M.
     expect(clean.report.estimatedUsdPerDay).toBeCloseTo(0.0101, 10);
     expect(clean.report.ledgerRow).toBe(clean.ledgerRow);

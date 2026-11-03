@@ -97,6 +97,25 @@ describe("renderNotesDay", () => {
     );
   });
 
+  test("records entry offsets independently of headings and UTF-16 text inside notes", () => {
+    const first = entry({
+      capturedAt: localIso(2026, 6, 15, 9, 15),
+      text: "Plant a tree 🌳\n\n## A heading inside the note\n\nKeep these thoughts together",
+    });
+    const second = entry({
+      id: "b",
+      capturedAt: localIso(2026, 6, 15, 14, 2),
+      text: "Review the telescope manual",
+    });
+    const rendered = renderNotesDay("2026-06-15", [first, second]);
+    const firstBody = renderNotesDay("2026-06-15", [first]).body;
+    expect(rendered.chunkBoundaries).toEqual([0, firstBody.length + 2]);
+    expect(rendered.body.slice(rendered.chunkBoundaries[1])).toBe(
+      renderNotesDay("2026-06-15", [second]).body,
+    );
+    expect(rendered.body.slice(0, rendered.chunkBoundaries[1])).toBe(`${firstBody}\n\n`);
+  });
+
   test("appends the surface suffix when the capture surface is known", () => {
     const rendered = renderNotesDay("2026-06-15", [
       entry({ capturedAt: localIso(2026, 6, 15, 9, 15), surface: "ios-siri", text: "Note" }),
@@ -158,6 +177,7 @@ describe("renderNotesDay", () => {
   test("zero entries render an empty body (the upserter deletes instead)", () => {
     const rendered = renderNotesDay("2026-06-15", []);
     expect(rendered.body).toBe("");
+    expect(rendered.chunkBoundaries).toEqual([]);
     expect(rendered.title).toBe("Notes — 2026-06-15");
   });
 });

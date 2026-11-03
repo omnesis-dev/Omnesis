@@ -22,6 +22,7 @@ import kotlinx.serialization.json.JsonObject
  *
  * ```ts
  * { day: string; messageId: string; sentAt?: string;
+ *   references?: { id: string; title: string | null; sourceType: string | null; createdAt: string | null }[];
  *   items: { rank: number; observationId: string; summary: string;
  *            sources: { id: string; title: string | null; sourceType: string | null;
  *                       createdAt: string | null }[];
@@ -40,7 +41,12 @@ data class DailyBriefItemsDto(
     val sentAt: String? = null,
     @Serializable(with = LenientBriefItemListSerializer::class)
     val items: List<DailyBriefItemDto> = emptyList(),
-)
+    /** Documents the brief uses directly, without an observation or reaction. */
+    @Serializable(with = LenientBriefSourceListSerializer::class)
+    val references: List<DailyBriefSourceDto> = emptyList(),
+) {
+    val basedOnCount: Int get() = items.size + references.size
+}
 
 /** One thing a brief was based on: a plain sentence, the documents behind it, the tasks it touches. */
 @Serializable

@@ -121,6 +121,18 @@ describe("GET /agent/conversations/:id/briefs/:day", () => {
     expect(detail).toHaveBeenCalledWith({ day: "2026-10-14", messageId: "mb_new" });
   });
 
+  test("serves standalone supporting documents without observation items", async () => {
+    const references = [
+      { id: "doc_schedule", title: "Workshop schedule", sourceType: "files", createdAt: null },
+    ];
+    const detail: DailyBriefDetailReader = () => ({ sentAt: null, items: [], references });
+    const response = await buildApp(detail).request(
+      "/agent/conversations/conv_brief/briefs/2026-10-14",
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ items: [], references });
+  });
+
   test("falls back to the reference's send time, and omits one neither records", async () => {
     const detail: DailyBriefDetailReader = () => ({ sentAt: null, items: [] });
     const app = buildApp(detail);

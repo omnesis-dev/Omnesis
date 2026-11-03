@@ -7,7 +7,7 @@ import { preflightTag } from "./preflight-tag.mjs";
 const run = (overrides = {}) => ({
   id: 42,
   head_sha: "abc123",
-  event: "push",
+  event: "schedule",
   status: "completed",
   conclusion: "success",
   created_at: "2026-09-08T04:00:00Z",
@@ -112,10 +112,8 @@ test("refuses a commit with no full-validation run, naming how to start one", ()
   );
 });
 
-test("a pull-request run does not count for the release commit", () => {
-  expect(() => preflight(ghWith([run({ event: "pull_request" })]))).toThrow(
-    /No full-validation run/u,
-  );
+test.each(["push", "pull_request"])("a %s run does not count for the release commit", (event) => {
+  expect(() => preflight(ghWith([run({ event })]))).toThrow(/No full-validation run/u);
 });
 
 test("refuses a commit whose validation failed, naming the run", () => {
@@ -205,4 +203,20 @@ test("the override never excuses a missing or red full validation", () => {
   expect(() => preflight(ghWith([]), { allowFailedInstallE2e: true })).toThrow(
     /No full-validation run/u,
   );
+});
+
+test("accepts an explicit all-lanes manual validation", () => {
+  const full = run({
+    event: "workflow_dispatch",
+    display_title: "full-validation (workflow_dispatch, lanes: all)",
+  });
+  expect(preflight(ghWith([full])).sha).toBe("abc123");
+});
+
+test("refuses a Linux-only manual validation", () => {
+  const linux = run({
+    event: "workflow_dispatch",
+    display_title: "full-validation (workflow_dispatch, lanes: linux)",
+  });
+  expect(() => preflight(ghWith([linux]))).toThrow(/No full-validation run/u);
 });

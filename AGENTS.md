@@ -84,7 +84,7 @@ A daily Claude Code routine audits the previous day's commits and opens one GitH
 
 ## Experimental features
 
-Ship not-yet-battle-tested work in the tree but gate it so it can't surprise an operator. `OMNESIS_EXPERIMENTAL` is a single on/off switch — unset/`0` = off (default), `1` = everything experimental on (there is no per-feature granularity). A source marks itself `experimental: true` in its `defineSource`/`defineProvider` descriptor (the collector then hides it from the "Add source" picker); any other code path gates on `experimentalEnabled()` from `@omnesis/core`. The gateway advertises the mode to clients as `experimental` on `GET /status`, and the portal / iOS / Android / CLI all read it to hide experimental surfaces (currently: experimental sources, Watches, the Brain's Tasks → Suggested view and proposed task changes, Debug → Cognition, the portal's Sweeps tab) — nothing experimental is discoverable on any client unless the gateway was started with `OMNESIS_EXPERIMENTAL=1`. The gateway Privacy APIs, portal Privacy control surface, standard MCP Answer/Direct endpoints, the standalone read-only `/answer` adapter (`omnesis answer`), mobile voice ask (including slow-answer push), quick capture, gateway dictation for Tell Omnesis voice notes (enabled by default with a runnable transcriber), grounded interactive memory on people/self/documents, Tasks (the journal and the agent's task tools), the note agent (a `background-agent` turn per Tell Omnesis note the owner captures from the portal, apps or CLI — never notes from external agents or the browser extension), and the agents' `temporal_query` over source projections and date mentions are generally available. Memory reads and evidence invalidation stay active without the Brain; autonomous annotation generation remains experimental. Use `experimentalVisible()` (= `experimentalEnabled()` OR synthetic mode) where a code path should also light up under `OMNESIS_SYNTHETIC=1` for tests/demos. Public discovery is confined to `website/docs/experimental.html`; detailed operator references stay in `docs/` — [`docs/brain.md`](docs/brain.md) is the Brain's (the gate, the two lanes, and how to bound the spend), [`docs/watch-runtime.md`](docs/watch-runtime.md) is the Watch V2 shadow runtime's, and [`docs/sweeps.md`](docs/sweeps.md) is the scheduled sweeps'.
+Ship not-yet-battle-tested work in the tree but gate it so it can't surprise an operator. `OMNESIS_EXPERIMENTAL` is a single on/off switch — unset/`0` = off (default), `1` = everything experimental on (there is no per-feature granularity). A source marks itself `experimental: true` in its `defineSource`/`defineProvider` descriptor (the collector then hides it from the "Add source" picker); any other code path gates on `experimentalEnabled()` from `@omnesis/core`. The gateway advertises the mode to clients as `experimental` on `GET /status`, and the portal / iOS / Android / CLI all read it to hide experimental surfaces (currently: experimental sources, Watches, the Brain's Tasks → Suggested view and proposed task changes, Debug → Cognition, the portal's Sweeps tab) — nothing experimental is discoverable on any client unless the gateway was started with `OMNESIS_EXPERIMENTAL=1`. The gateway Privacy APIs, portal Privacy control surface, standard MCP Answer/Direct endpoints, the standalone read-only `/answer` adapter (`omnesis answer`), mobile voice ask (including slow-answer push), quick capture, gateway dictation for Tell Omnesis voice notes (enabled by default with a runnable transcriber), grounded interactive memory on people/self/documents, Tasks (the journal and the agent's task tools), the note agent (a bounded `agent` turn per Tell Omnesis note the owner captures from the portal, apps or CLI — never notes from external agents or the browser extension), and the agents' `temporal_query` over source projections and date mentions are generally available. Owner-authorized edits to owner-captured Tell Omnesis notes queue bounded correction turns with previous/current text and the prior result; unchanged instructions do not grant permission to repeat work, and uncertain prior writes require review before a fresh request. A Note turn never waits for an inline answer: when clarification is genuinely needed, its Note-only `continue_in_chat` tool saves a normal conversation and question, returns its ID in the receipt, and triggers a notification; the owner's next reply uses normal chat tools. Note turns omit chat-only citation/choice presentation tools and prompts. Chat and Tell Omnesis share the `agent` model assignment, with separate sessions; the experimental Brain agent keeps the internal `background-agent` role and no assignment is copied between them. Memory reads and evidence invalidation stay active without the Brain; autonomous annotation generation remains experimental. Use `experimentalVisible()` (= `experimentalEnabled()` OR synthetic mode) where a code path should also light up under `OMNESIS_SYNTHETIC=1` for tests/demos. Public discovery is confined to `website/docs/experimental.html`; detailed operator references stay in `docs/` — [`docs/brain.md`](docs/brain.md) is the Brain's (the gate, the two lanes, and how to bound the spend), [`docs/watch-runtime.md`](docs/watch-runtime.md) is the Watch V2 shadow runtime's, and [`docs/sweeps.md`](docs/sweeps.md) is the scheduled sweeps'.
 
 ## Developer annotations — a feedback channel from the operator to you
 
@@ -124,8 +124,8 @@ This rule applies to every part of the repo: iOS previews, snapshot tests, gatew
 
 ## Tests are mandatory
 
-- **CI runs the lanes a pull request affects, and the full suite on every push to
-  `main`**, on GitHub-hosted runners (`.github/workflows/full-validation.yml`);
+- **CI runs the lanes a pull request affects, all Linux lanes on every push to
+  `main`, and the full suite twice daily or on manual dispatch**, on GitHub-hosted runners (`.github/workflows/full-validation.yml`);
   a newer push to a pull request cancels its older run. A pull request's `scope`
   job (`scripts/nx/ci-scope.mjs`) plans its merge commit with the same Nx affected
   plan as `checks:plan`: the privacy scan, format and lint of the changed files,
@@ -141,15 +141,21 @@ This rule applies to every part of the repo: iOS previews, snapshot tests, gatew
   for the paths they cover, never for a shared input: GitHub lends the
   repository a few macOS runners at a time. The one exception is iOS, which also
   runs when the plan selects an iOS bundle for a gateway wire path the app
-  decodes. `main` always runs everything, in its own run per push, so a lane a
-  pull request skipped still reddens `main` if the change broke it. Before
+  decodes. Every push to `main` keeps its own Linux run. Full sweeps at
+  01:17 and 13:17 UTC include macOS; manual runs default to every lane. A lane a
+  pull request skipped can redden the next full sweep if the change broke it. Before
   handoff, run the affected gate for the actual branch and working tree:
   `npm run checks:plan -- --base origin/main`, then
   `npm run checks:affected -- --base origin/main`. Nx selects package work
   through the dependency graph and adds declared behavioral E2E/native bundles.
-  **A red `main` stops merging.** Whoever notices it fixes it forward or reverts
-  the merge that reddened it before any other pull request merges; a pull
-  request whose skipped macOS lane failed on `main` is the first suspect. Do not
+  **A confirmed unresolved regression on `main` stops unrelated merges.** Fix
+  it forward or revert the responsible merge; a pull request whose skipped
+  macOS lane failed on `main` is the first suspect. Inspect the failing job
+  before treating a red verdict as current: an older commit's failure can be
+  stale after a relevant fix, and a suspected flake needs supporting evidence.
+  Record the failed test, the relevant fix or transient cause, and current
+  validation before allowing unrelated merges. Queued runs are not failures,
+  but green pull-request checks alone do not dismiss a confirmed regression. Do not
   re-push a green pull request only to rebase it: `main` does not require a
   rebased branch to merge, and a new push cancels its finished run.
 - Establish a focused baseline before editing, then rerun the affected tests while iterating. Re-run `checks:affected` after relevant edits because queued evidence is bound to the planned tree and rejects changed inputs. Use `npm run checks:bundle -- <name>` to add a diagnosed bundle; a narrower manual bundle does not replace the affected gate. `npm run checks:full` remains available for CI, migration validation and manual diagnosis. `npm run test:unit` excludes the spawned-gateway suite; use `npm run test:e2e -- <path/to/file.e2e.test.ts>` for a focused gateway check.

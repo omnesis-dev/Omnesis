@@ -46,6 +46,7 @@ extension EnvironmentValues {
 struct CaptureView: View {
     @Environment(AppStore.self) var store
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openAgentConversation) private var openConversation
 
     /// Attribution slug for the entry point that opened the surface.
     let surface: NoteSurface
@@ -59,6 +60,7 @@ struct CaptureView: View {
     var onClose: (() -> Void)?
 
     /// Set when the words are about something rather than a note on their own.
+    let taskContext: TaskNoteContext?
     let completion: NoteCaptureCompletion?
     /// Only system controls and shortcuts opt into Ask/Tell routing.
     let unified: Bool
@@ -118,16 +120,18 @@ struct CaptureView: View {
         previewPhase: Phase = .capturing,
         previewSaveError: String? = nil,
         previewRoutingFailed: Bool = false,
-        previewVoiceNote: VoiceNoteCaptureState? = nil
+        previewVoiceNote: VoiceNoteCaptureState? = nil,
+        taskContext: TaskNoteContext? = nil
     ) {
         self.surface = surface
         self.onClose = onClose
         self.completion = completion
+        self.taskContext = taskContext
         self.unified = unified
         self.suspended = suspended
         self.onAsk = onAsk
         self._speech = State(initialValue: speech)
-        self._text = State(initialValue: previewText)
+        self._text = State(initialValue: taskContext?.initialText ?? previewText)
         self._phase = State(initialValue: previewPhase)
         self._saveError = State(initialValue: previewSaveError)
         self._routingFailed = State(initialValue: previewRoutingFailed)
@@ -144,8 +148,10 @@ struct CaptureView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            if let completion {
-                Text(completion.subject)
+            if completion == nil { NoteProcessingNotice() }
+            if let subject = completion?.subject ?? taskContext?.title {
+                Text(subject)
+                    .accessibilityLabel(taskContext == nil ? subject : "Task context: \(subject)")
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -208,11 +214,20 @@ struct CaptureView: View {
                 onClose: { showNoteHistory = false },
                 historyRevision: store.notes.historyRevision
             )
+            .environment(\.openAgentConversation, openConversation.map { open in
+                { id in
+                    showNoteHistory = false
+                    close()
+                    open(id)
+                }
+            })
         }
         .onAppear {
-            if voiceNoteLimit == nil, completion == nil { voiceNoteLimit = store.voiceNoteAudioLimit }
+            if voiceNoteLimit == nil, completion == nil, taskContext == nil { voiceNoteLimit = store.voiceNoteAudioLimit }
             // Listen immediately, requesting permission on the first capture.
-            if !suspended, phase == .capturing, speech.state == .idle, text.isEmpty, !voiceNote.hasRecording {
+            if !suspended, phase == .capturing, speech.state == .idle, !voiceNote.hasRecording,
+               DictationTranscript.canStartAutomatically(text: text, taskContext: taskContext) {
+                dictationBase = text
                 prepareRecording()
                 speech.requestPermissionsAndStart()
             }
@@ -319,7 +334,7 @@ struct CaptureView: View {
     static let transcriptShape = RoundedRectangle(cornerRadius: 20, style: .continuous)
 
     private var placeholder: String {
-        unified ? "Ask a question or share a thought" : (completion?.placeholder ?? "What should the brain remember?")
+        unified ? "Ask a question or share a thought" : (completion?.placeholder ?? "What should Omnesis remember?")
     }
 
     /// Live transcript / manual entry. Editable whenever speech is
@@ -388,7 +403,7 @@ struct CaptureView: View {
     var canSave: Bool {
         guard phase == .capturing else { return false }
         if isVoiceNote, voiceNote.hasRecording { return true }
-        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return taskContext?.hasInstruction(text) ?? !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func confirmationOverlay(_ outcome: NoteCaptureService.Outcome) -> some View {
@@ -414,28 +429,6 @@ struct CaptureView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
         .transition(.scale(scale: 0.9).combined(with: .opacity))
-    }
-
-    private func confirmationTitle(_ outcome: NoteCaptureService.Outcome) -> String {
-        switch outcome {
-        case .saved: "Saved"
-        case .queued(.unreachable): "Queued"
-        case .queued(.featureOff), .queued(.unauthorized): "Saved on device"
-        case .rejected, .failed: "Not saved"
-        }
-    }
-
-    /// Honest per-cause copy for the queued confirmations, so the user
-    /// knows whether waiting will fix it or whether the gateway needs
-    /// their attention.
-    private func confirmationSubtitle(_ outcome: NoteCaptureService.Outcome) -> String? {
-        switch outcome {
-        case .saved: nil
-        case .queued(.unreachable): "Delivers when your gateway is reachable"
-        case .queued(.featureOff): "Update your gateway to sync quick captures"
-        case .queued(.unauthorized): "Re-pair with your gateway to sync"
-        case .rejected, .failed: nil
-        }
     }
 
     // MARK: - Actions
@@ -508,7 +501,7 @@ struct CaptureView: View {
             }
             return
         }
-        let outcome = await store.notes.save(text: noteText, surface: surface, captureTime: captureTime)
+        let outcome = await store.notes.save(text: noteText, surface: surface, captureTime: captureTime, taskId: taskContext?.id)
         await settle(outcome)
     }
 
@@ -668,7 +661,13 @@ extension CaptureView {
         recording = nil
         speech.audioSink = nil
         withAnimation(.easeInOut(duration: 0.15)) { phase = .saving }
-        let outcome = await store.notes.save(text: noteText, surface: surface, captureTime: captureTime, audio: audio)
+        let outcome = await store.notes.save(
+            text: noteText,
+            surface: surface,
+            captureTime: captureTime,
+            audio: audio,
+            taskId: taskContext?.id
+        )
         if case .saved = outcome {} else if case .queued = outcome {} else {
             // The recording is gone either way; what remains is a typed note.
             voiceNote.discard()

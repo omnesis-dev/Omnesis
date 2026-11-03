@@ -31,8 +31,8 @@ const shardFiles = (scope) =>
   JSON.parse(scope.e2e_matrix).flatMap((shard) => shard.files.split(" "));
 
 describe("CI lane scope", { timeout: 30_000 }, () => {
-  test("a push to main and a manual run execute every lane", async () => {
-    for (const event of ["push", "workflow_dispatch"]) {
+  test("a scheduled sweep and a full manual run execute every lane", async () => {
+    for (const event of ["schedule", "workflow_dispatch"]) {
       const scope = await planScope(event);
       expect(scope.scope).toBe("full");
       expect(lanesOf(scope)).toEqual([...LANES].sort());
@@ -44,6 +44,17 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
         })),
       );
     }
+  });
+
+  test.each([
+    ["push", "all"],
+    ["workflow_dispatch", "linux"],
+  ])("%s with %s lanes keeps every Linux check and reserves no Mac", async (event, lanes) => {
+    const scope = await planScope(event, lanes);
+    expect(scope.scope).toBe("full");
+    expect(lanesOf(scope)).toEqual(linuxLanes);
+    expect(scope.e2e_matrix).toBe(fullScope("test").e2e_matrix);
+    for (const lane of MACOS_LANES) expect(scope[lane]).toBe("false");
   });
 
   test("a docs-only pull request runs the floor: no E2E, no native, install or Docker lane", () => {

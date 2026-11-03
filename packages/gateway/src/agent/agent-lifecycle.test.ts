@@ -137,6 +137,34 @@ describe("AgentLifecycle", () => {
     };
   }
 
+  test("a captured note has its own complete tool runtime without an interactive assignment", async () => {
+    const { lifecycle, attach } = makeLifecycle();
+    const backend: ChatBackend = {
+      name: "scripted",
+      model: "note-model",
+      async *runTurn() {},
+    };
+    const runtime = lifecycle.buildNoteTools(() => backend, "note:example", [], []);
+    try {
+      const names = runtime.tools.map((tool) => tool.name);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          "search_many",
+          "fetch_many",
+          "spawn_subagent",
+          "join_subagents",
+          "plan",
+        ]),
+      );
+      expect(lifecycle.routeDeps.agentService).toBeUndefined();
+      expect(lifecycle.routeDeps.agentConfig.enabled).toBe(false);
+      expect(attach).not.toHaveBeenCalled();
+    } finally {
+      await runtime.dispose("note-agent-example");
+      await lifecycle.shutdown();
+    }
+  });
+
   test("boot then swap (no assignment): distinct disabled reasons, no service, stable routeDeps", async () => {
     const conversationStore = new FsConversationStore(join(configDir, "conversations"));
     const { lifecycle, attach } = makeLifecycle(disabledConfig(), { conversationStore });

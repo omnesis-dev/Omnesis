@@ -26,7 +26,8 @@ import {
   call,
   compressCognitionCadences,
   email,
-  preserveCurrentOwner,
+  keepReviewedOwner,
+  refreshCurrentOwner,
   ref,
   salienceDecisionPolicy,
   sourceInterpretations,
@@ -70,6 +71,12 @@ let SPENT_K = 0;
 // ── stimuli ─────────────────────────────────────────────────────────────────
 
 const DUE_TASK_TITLE = "Return the library books";
+const DUE_TASK_EMAIL = {
+  externalId: "mb-library-return",
+  title: "Library return reminder",
+  content:
+    "Please return your borrowed library books. The return deadline is listed in your library account.",
+};
 const BOILER_TASK_TITLE = "Book the boiler engineer";
 
 interface Noted {
@@ -177,10 +184,12 @@ function briefItems(
 const REPLY_DONE = "The first one is done, I booked it this morning.";
 const REPLY_SUPPRESS = "Stop telling me about the boiler, and add a task to buy a boiler filter.";
 const ORDINARY = "Put buying stamps on my list for this Saturday.";
+const ORDINARY_TASK_TITLE = "Buy stamps";
 
 describe("brain bench: the morning brief", () => {
   let bench: BrainBench;
   let briefConversationId = "";
+  let dueTaskDocumentId = "";
 
   const digestRun = async (day: string) => {
     const runs = await bench.obs.runs({ kind: "daily" });
@@ -254,7 +263,13 @@ describe("brain bench: the morning brief", () => {
       },
       behaviors: {
         dynamic: sourceInterpretations({
-          maintainNode: preserveCurrentOwner,
+          // Deleting the ordinary chat removes the new task's originating
+          // reference. The scripted review keeps the user's task after that
+          // evidence is gone; other stale owners still need their own repair.
+          maintainNode: (item, ctx, steps) =>
+            item.node?.kind === "loop" && item.node.title === ORDINARY_TASK_TITLE
+              ? keepReviewedOwner(item, ctx, steps)
+              : refreshCurrentOwner(item, ctx, steps),
           sources: [
             noteOne(RANKED.high),
             noteOne(RANKED.omit),
@@ -304,8 +319,14 @@ describe("brain bench: the morning brief", () => {
               ].join("\n");
               return {
                 calls: [
+                  ...(day === DAYS.dueTask
+                    ? [call("fetch_many", { documents: [{ documentId: dueTaskDocumentId }] })]
+                    : []),
                   call("morning_brief_send", {
                     text,
+                    ...(day === DAYS.dueTask
+                      ? { referenceDocumentIds: [dueTaskDocumentId, dueTaskDocumentId] }
+                      : {}),
                     ...(omitted.length ? { omittedObservationIds: omitted } : {}),
                   }),
                   // A second send the same morning is refused.
@@ -353,7 +374,7 @@ describe("brain bench: the morning brief", () => {
             plan: () => ({
               calls: [
                 call("task_list", { query: "stamps" }),
-                call("task_create", { title: "Buy stamps", scheduledFor: DAYS.saturday }),
+                call("task_create", { title: ORDINARY_TASK_TITLE, scheduledFor: DAYS.saturday }),
               ],
               finalText: "Added: Buy stamps.",
             }),
@@ -393,8 +414,11 @@ describe("brain bench: the morning brief", () => {
 
   test("a task coming due is enough for a brief: one message in the pinned Morning brief conversation", async () => {
     await bench.clock.set(noon(1));
+    await bench.pushAndSettle([email({ ...DUE_TASK_EMAIL, at: noon(1) })]);
+    dueTaskDocumentId = await bench.docId(DUE_TASK_EMAIL.externalId);
     const created = await bench.obs.createTask({
       title: DUE_TASK_TITLE,
+      description: "The library sent a reminder to return the borrowed books.",
       deadline: { type: "by", date: DAYS.dueTask },
     });
     expect(created.task).toMatchObject({ origin: "user", state: "open" });
@@ -411,6 +435,24 @@ describe("brain bench: the morning brief", () => {
     expect(brief.sent).toMatchObject({ day: DAYS.dueTask, runId: run.id, itemCount: 0 });
     expect(brief.items).toEqual([]);
     briefConversationId = brief.sent!.conversationId;
+    const detail = await bench.obs.briefDetail(briefConversationId, DAYS.dueTask);
+    expect(detail.items).toEqual([]);
+    expect(detail.references).toEqual([
+      {
+        id: dueTaskDocumentId,
+        title: DUE_TASK_EMAIL.title,
+        sourceType: expect.any(String),
+        createdAt: new Date(noon(1)).toISOString(),
+      },
+    ]);
+    const executed = await bench.obs.executedTools(run.id);
+    expect(executed.find((step) => step.tool === "fetch_many")?.result).toMatchObject({
+      kind: "document.batch",
+    });
+    expect(executed.find((step) => step.tool === "morning_brief_send")?.result).toMatchObject({
+      kind: "structured",
+      resultType: "morning_brief.sent",
+    });
 
     const listed = (await bench.obs.conversations()).conversations.filter(
       (c) => c.origin?.kind === "daily_brief",
@@ -602,8 +644,12 @@ describe("brain bench: the morning brief", () => {
       }),
     ]);
 
-    // A brief with no ranked items is based on nothing.
-    expect((await bench.obs.briefDetail(briefConversationId, DAYS.dueTask)).items).toEqual([]);
+    // Its source remains visible after the task is completed, without an observation.
+    const dueTask = await bench.obs.briefDetail(briefConversationId, DAYS.dueTask);
+    expect(dueTask.items).toEqual([]);
+    expect(dueTask.references).toEqual([
+      expect.objectContaining({ id: dueTaskDocumentId, title: DUE_TASK_EMAIL.title }),
+    ]);
 
     // A day with no brief in the thread, and a malformed day, are refused.
     const path = (day: string) => `/agent/conversations/${briefConversationId}/briefs/${day}`;
@@ -667,8 +713,13 @@ describe("brain bench: the morning brief", () => {
     const id = await reply("", ORDINARY, "Added: Buy stamps.");
     expect(id).not.toBe(briefConversationId);
     const month = await bench.obs.tasks("today", { date: DAYS.saturday });
-    const stamps = month.tasks.find((t) => t.title === "Buy stamps");
+    const stamps = month.tasks.find((t) => t.title === ORDINARY_TASK_TITLE);
     expect(stamps).toMatchObject({ origin: "user", scheduledFor: DAYS.saturday });
+    expect(stamps!.documents).toHaveLength(1);
+    const referenceId = stamps!.documents[0]!.id;
+    expect(
+      bench.sql.prepare("SELECT external_id FROM documents WHERE id = ?").get(referenceId),
+    ).toEqual({ external_id: id });
     expect((await bench.obs.task(stamps!.id)).history[0]).toMatchObject({
       surface: "conversation",
       conversationId: id,
@@ -690,6 +741,25 @@ describe("brain bench: the morning brief", () => {
       30_000,
     );
     expect(deleted.status).toBe(200);
+    // This is real evidence deletion, not merely removing a conversation
+    // from the list. Review its retained task before moving the virtual day.
+    await bench.drainUntilQuiet();
+    expect((await bench.obs.task(stamps!.id)).task).toMatchObject({
+      state: "open",
+      accepted: true,
+      documents: [],
+    });
+    expect(
+      bench.sql.prepare("SELECT 1 FROM documents WHERE id = ?").get(referenceId),
+    ).toBeUndefined();
+    expect(
+      bench.sql.prepare("SELECT validity FROM knowledge_nodes WHERE id = ?").get(stamps!.id),
+    ).toEqual({ validity: "current" });
+    expect(
+      bench.sql
+        .prepare("SELECT 1 FROM open_loop_ledger WHERE loop_id = ? AND run_id = 'source-deletion'")
+        .get(stamps!.id),
+    ).toBeDefined();
   }, 180_000);
 
   test("a morning whose budget is already spent still sends the brief, and nothing else runs", async () => {

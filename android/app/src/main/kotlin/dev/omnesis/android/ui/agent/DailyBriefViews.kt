@@ -313,9 +313,9 @@ fun DailyBriefHeader(time: String?) {
 }
 
 /**
- * Under a brief: "Based on N things", which opens to the ranked items it was written from, each
- * with its documents and tasks. Quiet while loading, a Retry line when the read failed, and
- * nothing at all with no items.
+ * Under a brief: "Based on N things", which opens to its observations and direct document
+ * references. Reactions belong to observations. Quiet while loading, a Retry line when the read
+ * failed, and nothing at all when no supporting items were recorded.
  */
 @Composable
 fun DailyBriefFooter(
@@ -362,10 +362,11 @@ fun DailyBriefFooter(
         }
         is DailyBriefItemsState.Loaded -> {
             val items = state.page.items.sortedBy { it.rank }
-            if (items.isNotEmpty()) {
+            if (state.page.basedOnCount > 0) {
                 LoadedFooter(
                     day = day,
                     items = items,
+                    references = state.page.references,
                     open = open,
                     catalog = catalog,
                     onToggle = onToggle,
@@ -386,6 +387,7 @@ fun DailyBriefFooter(
 private fun LoadedFooter(
     day: String,
     items: List<DailyBriefItemDto>,
+    references: List<DailyBriefSourceDto>,
     open: Boolean,
     catalog: SourceCatalog,
     onToggle: () -> Unit,
@@ -448,7 +450,7 @@ private fun LoadedFooter(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                DailyBriefCopy.basedOn(items.size),
+                DailyBriefCopy.basedOn(items.size + references.size),
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
                 color = c.accent,
@@ -481,6 +483,9 @@ private fun LoadedFooter(
                         onThumbsUp = { send(item, if (item.reaction?.kindOrNull == DailyBriefReactionKind.UP) null else DailyBriefReactionKind.UP) },
                         onThumbsDown = { choosing = item },
                     )
+                }
+                references.forEach { source ->
+                    SourceChip(source = source, catalog = catalog, onOpen = onOpenDocument)
                 }
             }
         }
