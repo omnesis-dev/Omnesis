@@ -72,7 +72,8 @@ public enum NoteCaptureService {
         captureTime: NoteCaptureTime = .now(),
         location: NoteLocation? = nil,
         noteId: String? = nil,
-        audio: NoteAudio? = nil
+        audio: NoteAudio? = nil,
+        taskId: String? = nil
     ) async
         -> Outcome {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -100,7 +101,8 @@ public enum NoteCaptureService {
                         surface: surface.rawValue,
                         deviceId: deviceId,
                         location: location,
-                        language: audio?.locale
+                        language: audio?.locale,
+                        taskId: taskId
                     ),
                     audio: audio?.file,
                     client: client,
@@ -136,7 +138,8 @@ public enum NoteCaptureService {
                     surface: surface.rawValue,
                     location: location,
                     deliveryDiagnostics: diagnostics,
-                    voice: audio.map { PendingNoteVoice(locale: $0.locale) }
+                    voice: audio.map { PendingNoteVoice(locale: $0.locale) },
+                    taskId: taskId
                 ),
                 audio: audio?.file
             )

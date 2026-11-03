@@ -89,6 +89,7 @@ import {
 import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/rebuild.js";
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
+import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -4895,6 +4896,27 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 208,
     description: "index documents by source and date with their id and revision",
     up: indexDocumentsBySourceCreatedRevision,
+  },
+  {
+    version: 209,
+    description: "process owner note edits as fenced revisions",
+    up: createNoteAgentTables,
+  },
+  {
+    version: 210,
+    description: "durable Note clarification handoffs",
+    up(db) {
+      // An earlier Note schema used the history-compaction version. Repair
+      // that known lineage without repeating corpus work on ordinary upgrades.
+      const previous = db
+        .prepare<[], { description: string }>(
+          "SELECT description FROM schema_migrations WHERE version = 207",
+        )
+        .get();
+      if (previous?.description === "process owner note edits as fenced revisions")
+        compactKnowledgeHistoryTargets(db);
+      createNoteHandoffTables(db);
+    },
   },
 ];
 

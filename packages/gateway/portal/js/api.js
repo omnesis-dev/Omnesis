@@ -306,6 +306,9 @@ export const createNote = (body) => request("POST", "/notes", { body });
 export const getNotesHistory = ({ limit = NOTES_HISTORY_PAGE_SIZE, cursor, day } = {}) =>
   request("GET", "/notes/history", { query: { limit, cursor, day } });
 
+// Refresh pending entries from a known day, including older loaded history pages.
+export const getNotesForDay = (day) => request("GET", "/notes", { query: { day } });
+
 // References backed by one day's combined note document. Dates recognised in
 // the text are always available; the gateway gates Brain artifacts.
 export const getNotesProvenance = (day, timeZone) =>

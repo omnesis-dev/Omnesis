@@ -44,6 +44,7 @@ data class NoteEntryDto(
     val receivedAt: String? = null,
     val agent: NoteAgentDto? = null,
     val placeName: String? = null,
+    val taskId: String? = null,
 )
 
 /**
@@ -60,6 +61,7 @@ data class VoiceNoteBody(
     val surface: String,
     val deviceId: String? = null,
     val language: String? = null,
+    val taskId: String? = null,
 )
 
 /** `POST /notes/voice` 202: the note is saved and its transcription queued. */
@@ -78,13 +80,18 @@ data class CreateNoteBody(
     val capturedAt: String? = null,
     val surface: String? = null,
     val deviceId: String? = null,
+    val taskId: String? = null,
 )
 
 @Serializable
 data class NoteAgentDto(val state: String, val receipt: NoteReceiptDto? = null)
 
 @Serializable
-data class NoteReceiptDto(val text: String = "", val changes: List<NoteChangeDto> = emptyList())
+data class NoteReceiptDto(
+    val text: String = "",
+    val changes: List<NoteChangeDto> = emptyList(),
+    val conversationId: String? = null,
+)
 
 @Serializable
 data class NoteChangeDto(val text: String, val taskId: String? = null, val undoSeq: Long? = null)

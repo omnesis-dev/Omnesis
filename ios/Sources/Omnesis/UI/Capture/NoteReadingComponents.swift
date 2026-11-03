@@ -92,6 +92,7 @@ struct NoteReadingHeader: View {
 
 @available(iOS 17.0, *)
 struct NoteResponseCard: View {
+    @Environment(\.openAgentConversation) private var openConversation
     let note: NoteEntry
     let undone: Set<Int>
     let busy: Bool
@@ -115,6 +116,12 @@ struct NoteResponseCard: View {
                     .lineSpacing(4)
                     .foregroundStyle(Theme.textPrimary)
                     .textSelection(.enabled)
+                if let conversationId = receipt.conversationId, let openConversation {
+                    Button { openConversation(conversationId) } label: {
+                        Label("Open chat", systemImage: "bubble.left.and.bubble.right")
+                            .frame(minHeight: Theme.tapTarget)
+                    }
+                }
                 ForEach(Array(receipt.changes.enumerated()), id: \.offset) { _, change in
                     VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                         Label(change.text, systemImage: "checkmark.circle")

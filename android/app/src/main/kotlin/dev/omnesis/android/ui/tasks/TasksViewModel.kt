@@ -67,6 +67,7 @@ class TasksViewModel internal constructor(
     private val focusBus: TaskFocusBus? = null,
     /** Whether the gateway opens conversations about tasks; absent reads as never. */
     private val chatAvailable: Flow<Boolean>? = null,
+    private val tellAvailable: Flow<Boolean>? = null,
     private val onTasksChanged: () -> Unit = {},
     private val today: () -> LocalDate,
 ) : ViewModel() {
@@ -82,6 +83,7 @@ class TasksViewModel internal constructor(
         countsStore,
         focusBus,
         session.taskConversationsAvailable,
+        session.taskNoteCaptureAvailable,
         { TaskWidgetUpdates.refresh(context) },
         { LocalDate.now() },
     )
@@ -103,6 +105,9 @@ class TasksViewModel internal constructor(
 
     init {
         load()
+        tellAvailable?.let { available ->
+            viewModelScope.launch { available.collect { on -> _state.update { it.copy(tellAvailable = on) } } }
+        }
         chatAvailable?.let { available ->
             viewModelScope.launch { available.collect { on -> _state.update { it.copy(chatAvailable = on) } } }
         }
@@ -213,10 +218,13 @@ class TasksViewModel internal constructor(
      * the moves and Cancel task are ordinary commands, each with a receipt and Undo. On a
      * suggestion, the time targets accept it planned for that time.
      */
+    fun closeTell() { _state.update { it.copy(telling = null) } }
+
     fun perform(task: TaskDto, action: TaskFanAction) {
         if (task.isSuggestion) return performOnSuggestion(task, action)
         when (action) {
             TaskFanAction.Done -> tapBullet(task)
+            TaskFanAction.Tell -> if (_state.value.tellAvailable) _state.update { it.copy(telling = task) }
             TaskFanAction.DoneWithNote -> openNote(task)
             TaskFanAction.Tomorrow -> mutate(task, TaskAction.Migrate(TaskDates.tomorrow(localDay)))
             TaskFanAction.NextMonth -> mutate(task, TaskAction.Migrate(TaskDates.nextMonth(localDay)))
@@ -232,6 +240,7 @@ class TasksViewModel internal constructor(
 
     private fun performOnSuggestion(task: TaskDto, action: TaskFanAction) {
         when (action) {
+            TaskFanAction.Tell -> if (_state.value.tellAvailable) _state.update { it.copy(telling = task) }
             TaskFanAction.Accept -> accept(task, null)
             TaskFanAction.AcceptWithNote -> openNote(task)
             TaskFanAction.Done -> tapBullet(task)

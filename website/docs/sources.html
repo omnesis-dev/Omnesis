@@ -228,6 +228,8 @@
                 </td>
                 <td>
                   Emails and their attachments as documents; correspondents feed the people graph.
+                  Folder walks drain every delta page before starting incremental tracking, even
+                  when a page contains messages outside the retention window.
                 </td>
               </tr>
               <tr>
@@ -432,11 +434,10 @@
           A folder whose name is too long or has characters the disk does not allow appears under
           the name Thunderbird gave it on disk, which can be a hash of the original. By default
           Thunderbird stores an account as one mbox file per folder, which this source does not
-          read; a sync over such a folder says so. To switch an account, back up the profile, then
-          in Thunderbird right-click the account, open <em>Settings</em>, and under
-          <em>Server Settings</em> set <em>Message Store Type</em> to
-          <em>File per message (maildir)</em>. For an IMAP account, Thunderbird has local copies
-          only of the folders it keeps for offline use.
+          read; a sync over such a folder says so. To switch an account, in Thunderbird right-click
+          the account, open <em>Settings</em>, and under <em>Server Settings</em> set
+          <em>Message Store Type</em> to <em>File per message (maildir)</em>. For an IMAP account,
+          Thunderbird has local copies only of the folders it keeps for offline use.
         </p>
         <ul>
           <li>
@@ -655,7 +656,10 @@
                   Notion Pages<br /><span class="pill">any collector</span>
                   <span class="pill">OAuth</span>
                 </td>
-                <td>Notion pages as documents.</td>
+                <td>
+                  Notion pages as documents. Changes made during a paginated sync are replayed by
+                  the next incremental pass.
+                </td>
               </tr>
               <tr>
                 <td>
@@ -664,6 +668,8 @@
                 </td>
                 <td>
                   Each shared Notion database as its own typed analytics table, queryable with SQL.
+                  A pass over several databases retains its starting watermark so edits made while
+                  it runs are fetched on the next pass.
                 </td>
               </tr>
               <tr>
@@ -829,7 +835,8 @@
                 <td>
                   Issues, pull requests, and discussions as documents — each with its comments,
                   review verdicts, and inline review remarks, plus labels, state, and assignees.
-                  Authors and participants feed the people graph.
+                  Authors and participants feed the people graph. Comment edits made during a long
+                  initial walk are replayed from its starting checkpoint.
                 </td>
               </tr>
               <tr>

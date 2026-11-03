@@ -10,8 +10,8 @@
 # The gateway host is pointed at `omnesis-broken.git`, whose newest tag
 # (v9.9.3) carries a deliberate type error. That repository is a superset of
 # the working one — same base commit, same v9.9.0 through v9.9.2 — so the
-# update resolves v9.9.3 as a genuine forward target, takes its backup, and
-# gets as far as the build before it fails. What is asserted afterwards is that the
+# update resolves v9.9.3 as a genuine forward target and gets as far as the
+# build before it fails. What is asserted afterwards is that the
 # host is exactly where it started: the same commit, the same reported
 # version, a clean tree, and a gateway that never stopped serving.
 source "$(dirname "$0")/../lib.sh"

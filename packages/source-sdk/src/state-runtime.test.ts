@@ -283,7 +283,8 @@ describe("refusal", () => {
     expect(err).toBeInstanceOf(RefusedSourceStateError);
     expect((err as RefusedSourceStateError).sourceId).toBe("fieldnotes:local");
     const steps = (err as RefusedSourceStateError).remediation?.steps.join(" ");
-    expect(steps).toContain("take a backup");
+    expect(steps).toContain("Keep the saved state intact during recovery");
+    expect(steps).not.toContain("backup");
     expect(steps).toContain("verified that the source can recover its history");
     expect(steps).not.toContain("omnesis sources resync");
   });

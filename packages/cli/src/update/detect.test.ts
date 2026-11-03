@@ -1316,7 +1316,7 @@ describe("planHostUpdate", () => {
     ).toEqual(["backup", "apply", "restart:gateway", "await-health", "restart:collector"]);
   });
 
-  test("--no-backup drops only the backup, keeping the order of the rest", () => {
+  test("omitting the backup keeps the order of the rest", () => {
     expect(
       kinds(
         planHostUpdate(roles({ gateway: supervised, collector: supervised }), { backup: false }),
@@ -1973,7 +1973,7 @@ describe("assessUpdate", () => {
 
 describe("migrationBackupNote", () => {
   const withBackup: UpdateStep[] = [{ kind: "backup" }, { kind: "apply" }];
-  // A gateway host updated with --no-backup.
+  // A gateway host updated without --backup.
   const withoutBackup: UpdateStep[] = [
     { kind: "apply" },
     { kind: "restart", component: "gateway" },
@@ -2000,16 +2000,16 @@ describe("migrationBackupNote", () => {
     );
   });
 
-  test("a plan without a backup still tells the operator to take one", () => {
+  test("a plan without a backup describes migrations without recommending a backup", () => {
     expect(migrationBackupNote("upgrade", withoutBackup, "/somewhere/backups")).toBe(
       "This upgrade runs forward-only schema migrations on the gateway's next boot, and there " +
-        "are no down-migrations. Back up first: omnesis backup --note pre-upgrade",
+        "are no down-migrations.",
     );
   });
 
-  test("an unreleased build is warned about either way, and the advice follows the plan", () => {
+  test("an unreleased build describes migrations and any requested backup", () => {
     expect(migrationBackupNote("unreleased", withoutBackup)).toMatch(
-      /^Edge can contain unreleased changes.*Back up before running it: omnesis backup --note pre-upgrade$/u,
+      /^Edge can contain unreleased changes, including migrations no release has\.$/u,
     );
     const planned = migrationBackupNote("unreleased", withBackup, "/srv/omnesis/backups");
     expect(planned).toContain("into /srv/omnesis/backups.");
@@ -2028,7 +2028,9 @@ describe("migrationBackupNote", () => {
       { kind: "apply" },
       { kind: "restart-hint", component: "gateway", command: null },
     ];
-    expect(migrationBackupNote("upgrade", hinted)).toContain("Back up first");
+    expect(migrationBackupNote("upgrade", hinted)).toBe(
+      "This upgrade runs forward-only schema migrations on the gateway's next boot, and there are no down-migrations.",
+    );
   });
 
   test("nothing migrates forward on a downgrade or a same-version run", () => {

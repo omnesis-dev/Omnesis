@@ -12,7 +12,8 @@
  *   duplicate_rate, resolution_recall, loop_precision, loop_recall,
  *   update_recall, silent_close_violations, observations_per_day,
  *   tokens_per_day, infra_failure_rate, malformed_tool_call_rate
- *   (uncorrected failures only; the raw all-failures rate is reported
+ *   (uncorrected failures excluding verified completed maintenance handoffs;
+ *   the raw all-failures rate is reported
  *   as malformed_tool_call_rate_raw, informational), scheduled_runs
  *
  * Gold matching is fuzzy and NEVER keys on exact title strings: a loop is
@@ -34,6 +35,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
+import { verifiedMaintenanceHandoffs } from "./briefs-maintenance-handoffs.js";
 import { verifiedFrontierRetries } from "./briefs-frontier-retries.js";
 import {
   verifiedConcurrentCreateRetries,
@@ -673,6 +675,8 @@ export interface ScorecardObservations {
   verifiedFrontierRetries?: number;
   /** Fresh same-query collection-CAS recovery ending in an identical successful create. */
   verifiedCollectionCreateRetries?: number;
+  /** Durable ownership handoffs whose original work completed in a successor batch. */
+  verifiedMaintenanceHandoffs?: number;
   /** Errored mutating calls never followed by a successful same-tool call
    * in the same run (see `countUncorrectedFailures`) — the gated slice. */
   mutatingToolCallsUncorrected: number;
@@ -740,6 +744,7 @@ async function collectScorecardObservations(
   let verifiedCreateRetries = 0;
   let verifiedFrontierRetryCount = 0;
   let verifiedCollectionRetryCount = 0;
+  let verifiedHandoffCount = 0;
   const obs = new BrainObs(harness);
   let scheduledRuns = 0;
   for (const decision of decisions.items) {
@@ -779,10 +784,9 @@ async function collectScorecardObservations(
     const failedSaves = decision.actions.filter(
       (action) => !action.ok && action.tool === "knowledge_save",
     );
-    const steps =
-      failedCreates.length || failedSaves.length
-        ? await obs.executedTools(decision.runId, decision.attempt)
-        : [];
+    const steps = decision.actions.some((action) => !action.ok)
+      ? await obs.executedTools(decision.runId, decision.attempt)
+      : [];
     // A missing/truncated attempt cannot establish a correspondence with the
     // decision summary: keep all its refusals in the malformed partition.
     const verified =
@@ -800,9 +804,19 @@ async function collectScorecardObservations(
         .length === failedSaves.length
         ? verifiedFrontierRetries(steps)
         : new Set<number>();
+    const handoffs = verifiedMaintenanceHandoffs(db, decision, steps);
+    let failedOrdinal = 0;
     let failedSaveOrdinal = 0;
     let failedCreateOrdinal = 0;
     const malformedActions = decision.actions.filter((action) => {
+      const handoff = !action.ok && handoffs.has(failedOrdinal++);
+      // Advance tool-specific ordinals even when a handoff is removed.
+      if (handoff) {
+        if (action.tool === "knowledge_save") failedSaveOrdinal++;
+        if (action.tool === "open_loop_create") failedCreateOrdinal++;
+        verifiedHandoffCount++;
+        return false;
+      }
       if (
         action.tool === "knowledge_save" &&
         !action.ok &&
@@ -915,6 +929,7 @@ async function collectScorecardObservations(
     verifiedConcurrentCreateRetries: verifiedCreateRetries,
     verifiedFrontierRetries: verifiedFrontierRetryCount,
     verifiedCollectionCreateRetries: verifiedCollectionRetryCount,
+    verifiedMaintenanceHandoffs: verifiedHandoffCount,
     mutatingToolCallsUncorrected,
     scheduledRuns,
   };
@@ -975,6 +990,7 @@ export interface ScorecardCounts {
   verifiedConcurrentCreateRetries: number;
   verifiedFrontierRetries: number;
   verifiedCollectionCreateRetries: number;
+  verifiedMaintenanceHandoffs: number;
   malformedToolCallsFailed: number;
   mutatingToolCallsUncorrected: number;
   scheduledRuns: number;
@@ -1154,11 +1170,13 @@ export function computeScorecardMetrics(
     verifiedConcurrentCreateRetries: observations.verifiedConcurrentCreateRetries ?? 0,
     verifiedFrontierRetries: observations.verifiedFrontierRetries ?? 0,
     verifiedCollectionCreateRetries: observations.verifiedCollectionCreateRetries ?? 0,
+    verifiedMaintenanceHandoffs: observations.verifiedMaintenanceHandoffs ?? 0,
     malformedToolCallsFailed:
       observations.mutatingToolCallsFailed -
       (observations.verifiedConcurrentCreateRetries ?? 0) -
       (observations.verifiedFrontierRetries ?? 0) -
-      (observations.verifiedCollectionCreateRetries ?? 0),
+      (observations.verifiedCollectionCreateRetries ?? 0) -
+      (observations.verifiedMaintenanceHandoffs ?? 0),
     mutatingToolCallsUncorrected: observations.mutatingToolCallsUncorrected,
     scheduledRuns: observations.scheduledRuns,
     promptTokens: observations.promptTokens,

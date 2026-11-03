@@ -25,6 +25,7 @@ import { PushBroadcaster } from "./broadcast.js";
 import { NeedsAuthNotifier } from "./producers/needs-auth.js";
 import {
   claimNotification,
+  confirmNotification,
   createNotificationQueueTables,
   enqueueNotification,
   leaseNotificationWakes,
@@ -99,6 +100,43 @@ function device(deviceId: DeviceId, patch: Partial<DeviceRecord>): DeviceRecord 
 }
 
 describe("PushBroadcaster", () => {
+  test("a retried conversation producer never creates another delivery or wake", async () => {
+    const phoneId = id(9);
+    const db = makeDb([phoneId]);
+    const sendEventToDevice = vi.fn(() => true);
+    const broadcaster = new PushBroadcaster({
+      queue: notificationQueue(db),
+      listDevices: () => [device(phoneId, { pushTransport: "socket" })],
+      apnsClient: null,
+      fcmClient: null,
+      relayClient: { wake: vi.fn() },
+      socket: { isConnected: () => true, sendEventToDevice },
+      now: () => 1_000,
+    });
+    const notification = {
+      conversationId: "conversation-handoff-retry",
+      title: "Omnesis needs your input",
+      body: "Which fictional crate should I use?",
+      idempotencyKey: "note-handoff:fictional-retry",
+    };
+    const notifier = new ConversationNotifier(broadcaster);
+    await notifier.notify(notification);
+    await notifier.notify(notification);
+    expect(sendEventToDevice).toHaveBeenCalledTimes(1);
+    const delivery = claimNotification(db, { deviceId: phoneId, now: 1_001 })!;
+    expect(delivery).toMatchObject({ kind: "conversation", targetId: notification.conversationId });
+    expect(
+      confirmNotification(db, { deviceId: phoneId, deliveryId: delivery.id, now: 1_002 }),
+    ).toBe(true);
+    await notifier.notify(notification);
+    expect(sendEventToDevice).toHaveBeenCalledTimes(1);
+    expect(claimNotification(db, { deviceId: phoneId, now: 1_003 })).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS count FROM notifications").get()).toEqual({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM notification_deliveries").get()).toEqual({
+      count: 1,
+    });
+  });
+
   test("caps a notification row at a producer-specific expiry", async () => {
     const enqueueNotification = vi.fn(async () => ({
       notificationId: "notification-1",

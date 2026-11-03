@@ -45,6 +45,24 @@ final class TasksClientTests: XCTestCase {
      "lastUpdate":"2026-10-14T07:10:00.000Z","resolvedAt":null}
     """
 
+    func testNoteProcessingStatusDistinguishesInactiveFromUnknown() throws {
+        let decoder = JSONDecoder()
+        let base = #"{"documents":{"total":0,"bySource":{}}}"#
+        XCTAssertNil(try decoder.decode(StatusSnapshot.self, from: Data(base.utf8)).noteAgent)
+        for (enabled, assigned, expected) in [
+            (false, true, "Note processing is off"),
+            (true, false, "Agent model is missing or unavailable"),
+        ] {
+            let body = #"""
+            {"documents":{"total":0,"bySource":{}},
+             "noteAgent":{"enabled":\#(enabled),"modelAssigned":\#(assigned),"active":false}}
+            """#
+            let status = try decoder.decode(StatusSnapshot.self, from: Data(body.utf8))
+            XCTAssertTrue(status.noteAgent?.notice?.contains(expected) == true)
+        }
+        XCTAssertNil(NoteAgentStatus(enabled: true, modelAssigned: true, active: true).notice)
+    }
+
     // MARK: - Reads
 
     func testViewRequestAndDecode() async throws {

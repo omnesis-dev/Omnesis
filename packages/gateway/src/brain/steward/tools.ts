@@ -403,6 +403,7 @@ const isoDateTime = z
   .string()
   .refine((s) => !Number.isNaN(Date.parse(s)), "must be an ISO 8601 date-time");
 
+const MAX_OWNER_TASK_DOCUMENTS = 100;
 const idList = z.array(z.string().min(1)).max(100);
 
 const annotationDependenciesField = z
@@ -1618,7 +1619,11 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         .describe(
           "REPLACES the involved list — person ids or emails, resolved like open_loop_create.",
         ),
-      docs: idList.optional().describe("REPLACES the doc list when present."),
+      docs: idList
+        .optional()
+        .describe(
+          "Relevant source document ids. On the user's own task, preserves every existing link and adds new references only while fewer than 100 are linked; omitted new references are returned in droppedDocIds. Replaces the list on an unaccepted suggestion.",
+        ),
       blockedBy: idList.optional(),
       decayCheckPassed: z
         .boolean()
@@ -1679,7 +1684,8 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
     name: "open_loop_update",
     description:
       "Partially update an existing open loop — pass only the fields to " +
-      "change (`docs`/`actors`/etc. replace the whole list). Bumps the " +
+      "change (list fields replace the whole list, except docs add references " +
+      "on the user's own task and preserve existing links). Bumps the " +
       "loop's last_update. Prefer this (plus open_loop_ledger_append) over " +
       "creating a new loop when the datum concerns the SAME obligation an " +
       "existing loop tracks. Clarify title/description only for the same " +
@@ -1720,6 +1726,22 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       })();
       if (!existing) return notFound("open loop", id);
       const userTask = isOwnedTask(existing);
+      const existingDocs = new Set(existing.docs);
+      const newDocs = [...new Set(docsPart?.known ?? [])].filter(
+        (docId) => !existingDocs.has(docId),
+      );
+      const capacity = Math.max(0, MAX_OWNER_TASK_DOCUMENTS - existingDocs.size);
+      const omittedDocs = userTask ? newDocs.slice(capacity) : [];
+      // Owner edits accept at most 100 links. Keep legacy excess links intact,
+      // and avoid rewriting that whole collection when no new link can fit.
+      const docsUpdate = !docsPart
+        ? undefined
+        : !userTask
+          ? docsPart.known
+          : newDocs.length && capacity > 0
+            ? [...existingDocs, ...newDocs.slice(0, capacity)]
+            : undefined;
+      const droppedDocs = [...new Set([...(docsPart?.dropped ?? []), ...omittedDocs])];
       const proposal = userTask
         ? taskProposalFor(existing, {
             ...(rest.state !== undefined ? { state: rest.state as OpenLoopState } : {}),
@@ -1787,7 +1809,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
           ...(appliesTaskFields && deadline !== undefined ? { deadline } : {}),
           ...(actorsPart ? { actors: actorsPart.known } : {}),
           ...(involvedPart ? { involved: involvedPart.known } : {}),
-          ...(docsPart ? { docs: docsPart.known } : {}),
+          ...(docsUpdate !== undefined ? { docs: docsUpdate } : {}),
           ...(blockedPart ? { blockedBy: blockedPart.known } : {}),
           ...(rest.decayCheckPassed === true ? { lastDecayCheck: clock() } : {}),
         },
@@ -1924,7 +1946,13 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
                   notAppliedBecause: notApplied,
                 }
               : {}),
-          ...(docsPart && docsPart.dropped.length > 0 ? { droppedDocIds: docsPart.dropped } : {}),
+          ...(droppedDocs.length > 0 ? { droppedDocIds: droppedDocs } : {}),
+          ...(omittedDocs.length > 0
+            ? {
+                documentLinkWarning:
+                  "Existing task links were preserved. New references beyond the 100-link limit were not attached; see droppedDocIds.",
+              }
+            : {}),
           ...(blockedPart && blockedPart.dropped.length > 0
             ? { droppedBlockedByIds: blockedPart.dropped }
             : {}),

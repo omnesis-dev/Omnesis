@@ -57,9 +57,11 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
       own,
       batchSize,
       scratchPath: scratch.path,
+      cancel: new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
     };
     const entry = resolveWorkerEntry("./import-worker.ts", import.meta.url, "./register-tsx.mjs");
     const worker = new Worker(entry.url, { execArgv: entry.execArgv, workerData });
+    const exited = new Promise<void>((resolve) => worker.once("exit", () => resolve()));
 
     let imported = 0;
     let merged = 0;
@@ -69,7 +71,10 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
 
     try {
       await new Promise<void>((resolve, reject) => {
-        onAbort = () => reject(new Error("Import cancelled"));
+        onAbort = () => {
+          Atomics.store(workerData.cancel, 0, 1);
+          reject(new Error("Import cancelled"));
+        };
         if (signal) signal.addEventListener("abort", onAbort, { once: true });
 
         worker.on("message", (msg: WorkerMessage) => {
@@ -87,6 +92,8 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
               resolve();
             } else if (msg.type === "error") {
               reject(new Error(msg.message));
+            } else if (msg.type === "cancelled") {
+              reject(new Error("Import cancelled"));
             }
           } catch (err) {
             reject(err instanceof Error ? err : new Error(String(err)));
@@ -99,7 +106,7 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
       });
     } finally {
       if (signal && onAbort) signal.removeEventListener("abort", onAbort);
-      await worker.terminate();
+      await stopWorker(worker, workerData.cancel, exited);
     }
 
     log.info(
@@ -110,4 +117,30 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
     // Worker termination must complete before deleting its plaintext files.
     scratch.cleanup();
   }
+}
+
+/** How long a worker asked to stop has to end on its own before it is terminated. */
+const WORKER_STOP_MS = 10_000;
+
+/**
+ * End the worker: ask it to stop and wait for it to exit, which it does
+ * between batches with its database closed. Only a worker that does not stop
+ * in time is terminated, since terminating one inside a native SQLite call can
+ * abort the process.
+ */
+async function stopWorker(
+  worker: Worker,
+  cancel: Int32Array,
+  exited: Promise<void>,
+): Promise<void> {
+  Atomics.store(cancel, 0, 1);
+  let timer: NodeJS.Timeout | undefined;
+  const stopped = await Promise.race([
+    exited.then(() => true),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), WORKER_STOP_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+  if (!stopped) await worker.terminate();
 }
