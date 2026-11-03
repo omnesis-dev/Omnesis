@@ -1,5 +1,14 @@
 # @omnesis/gateway-client
 
+## 0.7.5
+
+### Patch Changes
+
+- @omnesis/config@0.7.5
+  - @omnesis/core@0.7.5
+  - @omnesis/source-sdk@0.7.5
+  - @omnesis/types@0.7.5
+
 ## 0.7.4
 
 ### Patch Changes
