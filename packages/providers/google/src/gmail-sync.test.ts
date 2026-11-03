@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, test, expect, beforeEach, vi } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { createMockGmail, createGmailSource, makeGmailMessage } from "./testing/mock-google.js";
 import type { AttachmentExtractFn } from "@omnesis/core";
 import type { GmailSyncCursor } from "./gmail.js";
@@ -266,6 +266,259 @@ describe("Gmail bootstrap after a refused page token", () => {
       source.sync({ phase: "bootstrap", pageToken: "2@top", bootstrapHistoryId: "h-1" }),
     ).rejects.toThrow();
     expect(gmail.users.messages.list).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Gmail mail that arrives while the bootstrap walk runs", () => {
+  const HOUR_MS = 60 * 60 * 1000;
+  const DAY_MS = 24 * HOUR_MS;
+  const walkStart = Date.UTC(2026, 5, 10, 9);
+  const older = ["o1", "o2", "o3", "o4", "o5"];
+
+  /**
+   * A mailbox whose history moves on while it is walked. The listing serves
+   * the mail that was there when the walk began, two to a page, newest first,
+   * as a resumed Gmail listing does; what arrives later is only in the history.
+   */
+  function liveMailbox(messagesTotal = older.length, listed = older) {
+    let historyId = 100;
+    let expiredBelow = 0;
+    const events: Array<{ id: number; added?: string; deleted?: string }> = [];
+    const gmail = createMockGmail();
+    gmail.users.getProfile = vi.fn(() =>
+      Promise.resolve({ data: { messagesTotal, historyId: String(historyId) } }),
+    );
+    gmail.users.messages.list = pagedMailbox(listed, 2);
+    gmail.users.messages.get = vi.fn((params: { id: string }) =>
+      Promise.resolve({ data: makeGmailMessage(params.id) }),
+    );
+    gmail.users.history.list = vi.fn((params: { startHistoryId: string }) => {
+      const start = Number(params.startHistoryId);
+      if (start < expiredBelow) return Promise.reject(apiError(404));
+      const history = events
+        .filter((e) => e.id > start)
+        .map((e) =>
+          e.added
+            ? { messagesAdded: [{ message: { id: e.added } }] }
+            : { messagesDeleted: [{ message: { id: e.deleted } }] },
+        );
+      return Promise.resolve({ data: { history, historyId: String(historyId) } });
+    });
+    return {
+      gmail,
+      receive(id: string) {
+        events.push({ id: ++historyId, added: id });
+      },
+      remove(id: string) {
+        events.push({ id: ++historyId, deleted: id });
+      },
+      expireHistory() {
+        expiredBelow = historyId;
+      },
+    };
+  }
+
+  /**
+   * Walks to the incremental phase an hour per page, so every page pauses on
+   * the sync budget and the walk spans as many syncs as it has pages, calling
+   * `between(page)` after each one.
+   */
+  async function walkToIncremental(
+    source: ReturnType<typeof createGmailSource>,
+    cursor: GmailSyncCursor | null,
+    between: (page: number) => void = () => {},
+  ): Promise<{ seen: string[]; cursor: GmailSyncCursor }> {
+    const seen: string[] = [];
+    for (let page = 0; page < 10; page++) {
+      const result = await source.sync(cursor);
+      seen.push(...result.documents.map((d) => d.externalId));
+      cursor = result.cursor as GmailSyncCursor;
+      if (cursor.phase === "incremental") break;
+      between(page);
+      vi.setSystemTime(walkStart + (page + 1) * HOUR_MS);
+    }
+    return { seen, cursor: cursor! };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(walkStart);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Both walks take three pages: five messages listed to the end, and seven
+  // listed until twice the three Gmail reports.
+  const churned = [...older, "o6", "o7"];
+  test.each([
+    ["runs out of pages", older.length, older, older, "complete"],
+    ["reaches twice the reported count", 3, churned, churned.slice(0, 6), "unknown"],
+  ] as const)(
+    "a walk that %s hands incremental sync the history since it began",
+    async (_ending, messagesTotal, listed, expected, coverage) => {
+      const box = liveMailbox(messagesTotal, [...listed]);
+      const source = createGmailSource(box.gmail);
+
+      const { seen, cursor } = await walkToIncremental(source, null, (page) => {
+        if (page === 0) {
+          box.receive("n1");
+          box.remove("o1");
+        }
+        if (page === 1) box.receive("n2");
+      });
+      // The walk lists the mailbox as it was when it began.
+      expect(seen).toEqual(expected);
+      expect(cursor.historyId).toBe("100");
+      expect(cursor.lastSyncAt).toBe(new Date(walkStart).toISOString());
+      expect(cursor.coverage).toBe(coverage);
+      expect(cursor.bootstrapHistoryId).toBeUndefined();
+      expect(cursor.bootstrapStartedAt).toBeUndefined();
+      // The walk's end needs no fresh historyId of its own.
+      expect(box.gmail.users.getProfile).toHaveBeenCalledTimes(1);
+
+      const next = await source.sync(cursor);
+      expect(box.gmail.users.history.list.mock.calls[0]![0]).toMatchObject({
+        startHistoryId: "100",
+      });
+      expect(next.documents.map((d) => d.externalId).sort()).toEqual(["n1", "n2"]);
+      expect(next.deletedExternalIds).toEqual(["o1"]);
+      expect((next.cursor as GmailSyncCursor).historyId).toBe("103");
+    },
+  );
+
+  test("a recovery walk hands incremental sync the history since it began", async () => {
+    const box = liveMailbox();
+    const source = createGmailSource(box.gmail);
+    const { cursor } = await walkToIncremental(
+      source,
+      {
+        phase: "bootstrap",
+        recoverAfter: new Date(walkStart - 3 * DAY_MS).toISOString(),
+        lastSyncAt: new Date(walkStart - DAY_MS).toISOString(),
+        recoveryVouched: true,
+        coverage: "complete",
+      },
+      (page) => {
+        if (page === 1) box.receive("n1");
+      },
+    );
+    const listed = box.gmail.users.messages.list.mock.calls.map(
+      ([params]: [{ q?: string }]) => params.q,
+    );
+    expect(listed.every((q: string | undefined) => q?.includes("after:2026/06/07"))).toBe(true);
+    expect(cursor.historyId).toBe("100");
+    expect(cursor.lastSyncAt).toBe(new Date(walkStart).toISOString());
+    expect(cursor.coverage).toBe("complete");
+    expect(cursor.recoverAfter).toBeUndefined();
+
+    const next = await source.sync(cursor);
+    expect(next.documents.map((d) => d.externalId)).toEqual(["n1"]);
+  });
+
+  test("history that expired before it was read is recovered from the walk's start", async () => {
+    const box = liveMailbox();
+    const source = createGmailSource(box.gmail);
+    const { cursor } = await walkToIncremental(source, null, (page) => {
+      if (page === 0) box.receive("n1");
+    });
+    box.expireHistory();
+    vi.setSystemTime(walkStart + 10 * DAY_MS);
+
+    const handoff = await source.sync(cursor);
+    const recovery = handoff.cursor as GmailSyncCursor;
+    expect(recovery.phase).toBe("bootstrap");
+    expect(recovery.recoverAfter).toBe(new Date(walkStart - 2 * DAY_MS).toISOString());
+    expect(recovery.recoveryVouched).toBe(true);
+    expect(handoff.progress?.coverage).toBeUndefined();
+
+    // The recovery lists mail after its floor, which is where the walk's
+    // newcomer is.
+    box.gmail.users.messages.list = vi.fn((params: { q?: string }) =>
+      Promise.resolve({
+        data: { messages: params.q?.includes("after:2026/06/08") ? [{ id: "n1" }] : [] },
+      }),
+    );
+    const recovered = await source.sync(recovery);
+    expect(recovered.documents.map((d) => d.externalId)).toEqual(["n1"]);
+    expect((recovered.cursor as GmailSyncCursor).phase).toBe("incremental");
+    expect((recovered.cursor as GmailSyncCursor).coverage).toBe("complete");
+  });
+
+  test("a walk that could not pin a historyId records no start for it", async () => {
+    const box = liveMailbox();
+    let pinned = false;
+    box.gmail.users.getProfile = vi.fn(() => {
+      // Gmail names no historyId when the walk starts, and does later.
+      const data = pinned ? { messagesTotal: 5, historyId: "100" } : { messagesTotal: 5 };
+      pinned = true;
+      return Promise.resolve({ data });
+    });
+    const source = createGmailSource(box.gmail);
+    const first = await source.sync(null);
+    expect((first.cursor as GmailSyncCursor).bootstrapStartedAt).toBeUndefined();
+    const { cursor } = await walkToIncremental(source, first.cursor as GmailSyncCursor);
+    expect(cursor.historyId).toBe("100");
+    expect(cursor.lastSyncAt).toBeUndefined();
+  });
+
+  describe("a walk resumed from a cursor that recorded no start time", () => {
+    // What a walk paused by an earlier release carries: the pinned historyId,
+    // but not when it was taken.
+    const paused: GmailSyncCursor = {
+      phase: "bootstrap",
+      pageToken: "2",
+      bootstrapHistoryId: "100",
+      totalMessages: older.length,
+      processedDocs: 2,
+    };
+
+    test("still starts incremental sync from the pinned historyId", async () => {
+      const box = liveMailbox();
+      box.receive("n1");
+      const source = createGmailSource(box.gmail);
+      const { seen, cursor } = await walkToIncremental(source, paused);
+      expect(seen).toEqual(["o3", "o4", "o5"]);
+      expect(cursor.historyId).toBe("100");
+      expect(cursor.bootstrapStartedAt).toBeUndefined();
+      // No instant the walk can vouch for: a later one would claim mail it
+      // may never have listed.
+      expect(cursor.lastSyncAt).toBeUndefined();
+
+      const next = await source.sync(cursor);
+      expect(next.documents.map((d) => d.externalId)).toEqual(["n1"]);
+    });
+
+    test("falls back to the bounded look-back it cannot vouch for when that history expired", async () => {
+      const box = liveMailbox();
+      box.receive("n1");
+      const source = createGmailSource(box.gmail);
+      const { cursor } = await walkToIncremental(source, paused);
+      box.expireHistory();
+
+      const handoff = await source.sync(cursor);
+      const recovery = handoff.cursor as GmailSyncCursor;
+      expect(recovery.recoveryVouched).toBe(false);
+      expect(Date.parse(recovery.recoverAfter!)).toBe(Date.now() - 30 * DAY_MS);
+      expect(handoff.progress?.coverage).toBe("unknown");
+    });
+
+    test("a recovery walk keeps the watermark it began with", async () => {
+      const box = liveMailbox();
+      const source = createGmailSource(box.gmail);
+      const watermark = new Date(walkStart - DAY_MS).toISOString();
+      const { cursor } = await walkToIncremental(source, {
+        ...paused,
+        recoverAfter: new Date(walkStart - 3 * DAY_MS).toISOString(),
+        lastSyncAt: watermark,
+        recoveryVouched: true,
+        coverage: "complete",
+      });
+      expect(cursor.historyId).toBe("100");
+      expect(cursor.lastSyncAt).toBe(watermark);
+      expect(cursor.coverage).toBe("complete");
+    });
   });
 });
 
