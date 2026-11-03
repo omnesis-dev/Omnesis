@@ -33,6 +33,7 @@ import {
 } from "@omnesis/core";
 
 import { readJsonRpcLines, encodeJsonRpcLine } from "./json-rpc-lines.js";
+import { markActivity } from "./activity.js";
 import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
@@ -1344,7 +1345,9 @@ class CodexJsonRpcClient {
       windowsHide: true,
     });
 
-    readJsonRpcLines(this.proc.stdout, (line) => this.handleLine(line));
+    readJsonRpcLines(this.proc.stdout, (line) =>
+      markActivity("agent.codex.message", () => this.handleLine(line)),
+    );
     const stderr = createInterface({ input: this.proc.stderr });
     stderr.on("line", (line) => {
       const trimmed = line.trim();

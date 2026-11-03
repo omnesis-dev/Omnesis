@@ -12,6 +12,7 @@ import { z } from "zod";
 import { toolInputJsonSchema, type ChatBackend, type ToolContext } from "@omnesis/agent";
 import { AgentError, AgentService } from "../agent/service.js";
 import { FsConversationStore } from "../agent/conversation-store.js";
+import { captureActivity, nameStall } from "../observability/stall-test-utils.js";
 import { RealtimeService, realtimeBackend } from "./service.js";
 import { RealtimeAdmissionError } from "./call-error.js";
 import type WebSocket from "ws";
@@ -345,6 +346,20 @@ describe("direct realtime Omnesis runtime", () => {
       expect.objectContaining({ type: "session.ready", protocolVersion: 1 }),
     );
     expect(f.peer.close).not.toHaveBeenCalled();
+  });
+  it("handles each upstream event under its own activity, so a stall in one is named", async () => {
+    const f = await fixture();
+    await ready(f);
+    const seen: ReturnType<typeof captureActivity>[] = [];
+    f.peer.close.mockImplementation(() => {
+      seen.push(captureActivity());
+    });
+    f.socket.event({
+      type: "session.updated",
+      session: { instructions: "x".repeat(2 * 1024 * 1024) },
+    });
+    expect(seen).toHaveLength(1);
+    expect(nameStall(seen[0]!).inner).toBe("realtime.upstream");
   });
   it("retains distinct bounded limits for incoming client frames and upstream events", async () => {
     const client = await fixture();

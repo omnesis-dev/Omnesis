@@ -29,6 +29,7 @@ import {
 } from "@omnesis/core";
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
+import { setActivityMarker } from "@omnesis/agent";
 import { dotEnvKeysAtBoot } from "./load-env.js";
 import {
   resolveAnthropicApiKey,
@@ -277,6 +278,7 @@ import { getSelfPersonId } from "./data/repositories/DocumentPeopleRepository.js
 import { getInboundRefCounts } from "./data/repositories/DocumentLinksRepository.js";
 import { ProcessVitalsCollector } from "./process-vitals.js";
 import { StallMonitor } from "./observability/stall-monitor.js";
+import { withActivity } from "./observability/main-activity.js";
 import { resolveStallSettings } from "./observability/stall-settings.js";
 import {
   UsearchReadRegistry,
@@ -1165,6 +1167,9 @@ const stallMonitor = new StallMonitor({
   gcBetween: (startMs, endMs) => processVitals.gcBetween(startMs, endMs),
 });
 stallMonitor.start();
+// Agent sessions mark their own entry points — child-process output, tool
+// calls, event fan-out — through this, so their stalls are named too.
+setActivityMarker(withActivity);
 const analyticsDbPath = process.env.OMNESIS_ANALYTICS_DB_PATH ?? join(configDir, "analytics.db");
 const backupsDir = join(configDir, "backups");
 const exportsDir = join(configDir, "exports");
@@ -2334,12 +2339,12 @@ if (watchV2 && watchStores?.ok) {
       preflight(
         {
           journal: watchV2.store,
+          journalHistories: (requests) => ioGate.watchDocumentHistories(requests),
           now: () => Date.now(),
           ontology: async () =>
             Ontology.parse(
               await buildOntologySnapshot({ db, analyticsDb, semanticallyIndexed: () => true }),
             ),
-          journalHistories: (requests) => ioGate.watchDocumentHistories(requests),
           analytics: () => analyticsPortFor(analyticsDb),
           recall: new LiveRecall({ indexDb, embedder: () => getSemanticEmbedder() }),
           canScore: () => indexDb !== null && getSemanticEmbedder() !== null,
@@ -2809,7 +2814,7 @@ const noteAgentDrainTask: PeriodicTask<undefined, undefined> = {
   isIdle: () => !noteAgent.active() || !hasPendingNotes(db),
   async run() {
     // A note turn takes seconds to minutes: run it off the scheduler's runner.
-    void noteAgent.drain().catch((err: unknown) => {
+    void withActivity("noteAgent.drain", () => noteAgent.drain()).catch((err: unknown) => {
       log
         .child("note-agent")
         .warn(`note agent drain failed: ${err instanceof Error ? err.message : String(err)}`);

@@ -50,8 +50,15 @@ An activity is a code-chosen label set with `withActivity(name, fn)` from `obser
 
 - scheduler tasks on the main runner carry their task name;
 - HTTP requests carry `METHOD route-pattern`, the pattern of the route that handles them, never the URL;
-- device WebSocket frames carry `ws.message`, and `ws <type>` for a type the message registry knows (`ws (unknown)` otherwise);
-- the status cache and background-jobs refreshes carry their own names.
+- device WebSocket frames carry `ws.message`, and `ws <type>` for a type the message registry knows (`ws (unknown)` otherwise); the device heartbeat and a closing connection carry `ws.heartbeat` and `ws.close`;
+- the status cache and background-jobs refreshes carry their own names;
+- a periodic task's `isIdle` and `nextDelayMs`, which run after its run has settled, carry the task's name;
+- event bus handlers carry `bus <event>`, and debounced write-backs carry their upserter's name (`omnesisChat.upsert`, `omnesisNotes.upsert`, `agentConversations.upsert`);
+- agent sessions mark their own entry points through a hook the gateway installs at boot (`setActivityMarker` in `@omnesis/agent`): a turn is in flight as `agent.turn`, a tool call runs as `agent.tool <tool name>`, the fan-out of each session event as `agent.event`, and each message from a Codex app-server or Claude Code child as `agent.codex.message` or `agent.claudeCode.message`. Writing a conversation's transcript is `agent.persistConversation`;
+- a Brain run executes as `brain.run <kind>`, the detached note-agent drain and interest embedding pass as `noteAgent.drain` and `interest.embedBacklog`;
+- push wake dispatch, a removed source's sweep and realtime voice events carry `push.dispatch`, `sources.sweepRemoved`, `realtime.upstream` and `realtime.client`.
+
+Code after an `await` runs under no synchronous mark, whoever started it: an `async` entry point is named by its in-flight slot from then on. A stretch of work that matters on its own after an `await` can be wrapped where it runs. Some of these hold their in-flight slot for minutes — an agent turn, a Brain run, a source sweep — so while the agent is busy they appear among the in-flight candidates of most stalls; that makes them leads, not verdicts. There are 64 slots, and work started while all are taken goes untracked.
 
 When a stall keeps coming back unattributed, wrap the suspect entry point in `withActivity`: a synchronous mark costs a map lookup and a few shared-memory stores, cheap enough for any path that is not a tight inner loop.
 

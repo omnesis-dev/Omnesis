@@ -28,6 +28,7 @@ import { QueueTracker } from "../background-jobs/trackers.js";
 import { periodicJob } from "../background-jobs/scheduler-job.js";
 import { runWithPriority } from "../priority.js";
 import { documentDerivationState, derivationStageLabels } from "../domain/DocumentDerivation.js";
+import { withActivity } from "../observability/main-activity.js";
 import { knowledgeContinuationProgress } from "./knowledge/continuation.js";
 import {
   countPendingCognitionRuns,
@@ -59,7 +60,12 @@ import {
   parseCognitionDataRunPayload,
   parseCognitionSweepRunPayload,
 } from "./run-payloads.js";
-import { systemClock, type Clock, type ClaimedCognitionRun } from "./storage/types.js";
+import {
+  COGNITION_RUN_KINDS,
+  systemClock,
+  type Clock,
+  type ClaimedCognitionRun,
+} from "./storage/types.js";
 import type { CognitionBudgetVerdict } from "./cognition/budget.js";
 import type { Logger } from "@omnesis/core";
 import type Database from "better-sqlite3";
@@ -95,6 +101,17 @@ function runDocId(run: ClaimedCognitionRun): string | null {
   if (run.kind === "bootstrap")
     return parseCognitionBootstrapRunPayload(run.payload)?.docId ?? null;
   return null;
+}
+
+const KNOWN_RUN_KINDS: ReadonlySet<string> = new Set(COGNITION_RUN_KINDS);
+
+/**
+ * The activity a run executes under: its kind, one of the code-defined run
+ * kinds. A kind read back from the queue that is not one of them is named
+ * generically rather than registered as a name of its own.
+ */
+export function runActivityName(kind: string): string {
+  return KNOWN_RUN_KINDS.has(kind) ? `brain.run ${kind}` : "brain.run (other)";
 }
 
 /** Exponential backoff for attempt N (1-based): base·2^(N-1), capped. */
@@ -390,7 +407,9 @@ export function createCognitionDrainerTasks(
     const progress = knowledgeContinuationProgress(opts.db, run);
     opts.activity?.start(run.id, clock());
     try {
-      outcome = await opts.driver.execute(run, { signal });
+      outcome = await withActivity(runActivityName(run.kind), () =>
+        opts.driver.execute(run, { signal }),
+      );
     } catch (err) {
       // The driver contract is never-throw; this is a second net.
       outcome = {

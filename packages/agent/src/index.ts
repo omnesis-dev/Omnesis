@@ -349,3 +349,4 @@ export type {
 export { CitationReads } from "./tools/citation-reads.js";
 
 export { invokeToolHandle } from "./invoke-tool.js";
+export { markActivity, setActivityMarker, type ActivityMarker } from "./activity.js";

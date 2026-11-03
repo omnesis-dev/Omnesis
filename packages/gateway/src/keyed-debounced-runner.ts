@@ -31,9 +31,16 @@
  * enqueue for the same key still runs.
  */
 
+import { withActivity } from "./observability/main-activity.js";
+
 export interface KeyedDebouncedRunnerDeps {
   /** Idle window between the last `enqueue(key)` and its run. */
   debounceMs: number;
+  /**
+   * The activity each run is marked with on the main thread: a code-chosen
+   * label, never the key, which is data.
+   */
+  activity: string;
   /** Pluggable timer for unit tests. Defaults to unref'd setTimeout. */
   scheduler?: {
     setTimeout: (fn: () => void, ms: number) => unknown;
@@ -164,7 +171,7 @@ export class KeyedDebouncedRunner {
       .catch(() => {
         /* prior failure already reported; this chain continues */
       })
-      .then(() => this.deps.run(key))
+      .then(() => withActivity(this.deps.activity, () => this.deps.run(key)))
       .catch((err) => {
         this.deps.onError?.(key, err);
       })

@@ -102,6 +102,7 @@ import {
 } from "../../data/repositories/PendingSourcePageRepository.js";
 import { epochScope } from "../../source-write-epoch-fence.js";
 import { listSourceSyncIssues } from "../../data/repositories/SourceSyncIssueRepository.js";
+import { withActivity } from "../../observability/main-activity.js";
 import { assertSourceJoinDiscoverable } from "./source-join-preflight.js";
 import { SourceStreamCleanupCoordinator } from "./SourceStreamCleanupCoordinator.js";
 import {
@@ -2553,6 +2554,9 @@ export class SourceService {
    * Written to be safe to run twice. Resumption cannot tell an interrupted
    * sweep from a running one, and each step is a delete of rows selected at the
    * time it runs, so a second pass over a drained source is a series of no-ops.
+   *
+   * Marked as its own activity, since it runs detached from the request that
+   * removed the source and starts by listing the source's documents.
    */
   private async sweepRemovedSource(id: SourceId): Promise<void> {
     if (this.sweeping.has(id)) return;
@@ -2561,7 +2565,9 @@ export class SourceService {
     // it would inherit that request's `user` priority through AsyncLocalStorage
     // and keep it for the whole multi-minute purge — starving the interactive
     // work the priority is meant to protect.
-    return runWithPriority("background", () => this.runSweep(id));
+    return withActivity("sources.sweepRemoved", () =>
+      runWithPriority("background", () => this.runSweep(id)),
+    );
   }
 
   private async runSweep(id: SourceId): Promise<void> {

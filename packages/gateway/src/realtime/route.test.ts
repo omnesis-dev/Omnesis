@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DeviceId, Scope, TokenId } from "@omnesis/types";
 import { AgentError } from "../agent/service.js";
 import { HttpError, errorResponse } from "../http/errors.js";
+import { captureActivity, nameStall } from "../observability/stall-test-utils.js";
 import { RealtimeAdmissionError, callError } from "./call-error.js";
 import { mountRealtimeRoutes } from "./route.js";
 import type WebSocket from "ws";
@@ -138,5 +139,39 @@ describe("realtime route authority", () => {
     expect(
       (await fixture(owner).request("/agent/realtime/ws?conversationId=existing")).status,
     ).toBe(200);
+  });
+});
+
+describe("realtime client frames", () => {
+  it("are handed to the connection under their own activity, so a stall in one is named", async () => {
+    const app = new Hono<AppEnv>();
+    app.use("*", async (c, next) => {
+      c.set("auth", owner);
+      await next();
+    });
+    let handlers: WSEvents<WebSocket> | undefined;
+    const upgrade = defineWebSocketHelper<WebSocket>((c, events) => {
+      handlers = events;
+      return c.json({ upgraded: true });
+    });
+    const seen: ReturnType<typeof captureActivity>[] = [];
+    const service = {
+      capability: () => ({ available: true }),
+      open: () => ({
+        receive: () => {
+          seen.push(captureActivity());
+        },
+        close: vi.fn(),
+        fail: vi.fn(),
+      }),
+    } as unknown as RealtimeService;
+    mountRealtimeRoutes(app, service, upgrade);
+    await app.request("/agent/realtime/ws");
+    const ws = new WSContext<WebSocket>({ readyState: 1, send: vi.fn(), close: vi.fn() });
+    handlers?.onOpen?.(new Event("open"), ws);
+    handlers?.onMessage?.(new MessageEvent("message", { data: "{}" }), ws);
+
+    expect(seen).toHaveLength(1);
+    expect(nameStall(seen[0]!).inner).toBe("realtime.client");
   });
 });
