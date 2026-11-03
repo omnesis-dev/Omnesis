@@ -890,9 +890,15 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           source, device, model, TLS, query and update commands on this site work unchanged. A
           machine that only collects holds its collector's token, not the gateway's admin token, so
           there its <code>omnesis</code> runs <code>update</code> and <code>uninstall</code>;
-          source, device and status commands run on the gateway host or in the portal. The daemons
-          are containers rather than services, so manage them with
-          <code>docker compose</code> instead of <code>omnesis service</code>:
+          source, device and status commands run on the gateway host or in the portal. A few
+          commands act on the containers themselves, which no container can do, so the wrapper runs
+          them on the host: <code>update</code>, <code>uninstall</code>, <code>folders share</code>,
+          the restart <code>secure</code> needs,
+          <a href="/docs/updating#docker-restore"><code>restore</code></a
+          >, which stops the containers around the restore and starts them again, and
+          <code>service</code>, whose <code>start</code>, <code>stop</code>, <code>restart</code>,
+          <code>status</code> and <code>logs</code> run their
+          <code>docker compose</code> equivalents:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -901,19 +907,22 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
               <span class="t-prompt">❯</span> <span class="t-cmd">omnesis sources add gmail</span>
             </p>
             <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis status</span></p>
-            <p class="t-dim"># the containers themselves: ps, logs -f, restart</p>
+            <p class="t-dim"># the containers themselves</p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis service status</span></p>
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd">docker compose -f ~/.config/omnesis/docker-compose.yml ps</span>
+              <span class="t-cmd">omnesis service logs gateway --follow</span>
             </p>
             <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >docker compose -f ~/.config/omnesis/docker-compose.yml logs -f</span
-              >
+              <span class="t-prompt">❯</span> <span class="t-cmd">omnesis service restart</span>
             </p>
           </div>
         </div>
+        <p>
+          In an install that runs the gateway and the collector in one container,
+          <code>omnesis service logs collector</code> shows that container, and the collector stops
+          and starts with it.
+        </p>
         <p>
           With no version flag, the installer asks the image registry for its tags, picks the
           highest stable release available for every image the stack needs, and records that tag so

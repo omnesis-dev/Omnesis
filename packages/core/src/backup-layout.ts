@@ -95,13 +95,54 @@ export interface BackupLog {
   warn(message: string): void;
 }
 
-/** Plain config material copied verbatim when present in the config dir. */
+// ── What a backup owns ──────────────────────────────────────────────────
+//
+// A config directory holds two kinds of thing. Some of it is the corpus and
+// the settings that go with it: the stores, the config material below, the
+// TLS identity and the escrow. That is what a backup carries, and what a
+// restore replaces — including removing an entry of that kind the backup does
+// not carry, so nothing from the epoch being replaced sits beside the restored
+// one. The rest belongs to the machine: other backups, downloaded models,
+// exports and logs, the keyring passphrase and the secret store's own entries,
+// the lock, and a Docker install's compose file and install marker. A restore
+// carries all of that across untouched. This section is the one definition of
+// the line between them; `writeOfflineBackup`, the gateway's `BackupService`
+// and `omnesis restore` all read it.
+
+/** The stores a backup holds, by the name each has in a config dir and in a backup. */
+export const BACKUP_STORE_NAMES = [
+  GATEWAY_STORE_FILE,
+  GATEWAY_INDEX_STORE_FILE,
+  WATCH_JOURNAL_FILENAME,
+  GATEWAY_ANALYTICS_STORE_FILE,
+] as const;
+
+/**
+ * The files a closed store may still keep committed data in: SQLite's
+ * write-ahead log, its shared-memory index and rollback journal, and DuckDB's
+ * write-ahead log. A copy of the main file without them can lose the last
+ * transactions or not open at all, so each one present travels with its store.
+ */
+export const STORE_COMPANION_SUFFIXES = ["-wal", "-shm", "-journal", ".wal"] as const;
+
+/**
+ * Every file the vector graph leaves in a config dir: each index generation's
+ * usearch file, its encrypted persistence, and temp or quarantined copies of
+ * either. Derived from the index store, so a backup never carries one and a
+ * restore removes them all: the gateway rebuilds the graph from the index it
+ * restored, or from nothing when the backup was taken without the index.
+ */
+export const DERIVED_INDEX_FILE_PATTERN = /^index(?:-\d+)?\.usearch(?:\..+)?$/;
+
+/**
+ * Config material copied verbatim when present: a file, or a directory taken
+ * whole. Unlike the privacy policy — a mirror of a row the database restore
+ * brings back — the operator's standing instructions to the agent are the only
+ * copy, so a restore that skipped them would silently un-tell the agent
+ * everything its owner had told it.
+ */
 const CONFIG_COPY_NAMES = [
   "omnesis.json",
-  // The operator's standing instructions to the agent. Unlike the privacy
-  // policy — a mirror of a row the database restore brings back — this file is
-  // the only copy, so a restore that skipped it would silently un-tell the
-  // agent everything its owner had told it.
   OPERATOR_INSTRUCTIONS_FILENAME,
   ".env",
   "token",
@@ -113,16 +154,104 @@ const CONFIG_COPY_NAMES = [
 ];
 
 /**
+ * Directories taken whole, after the per-account credentials. `sweeps` is
+ * user-authored sweep prose that exists nowhere else: a restore that skipped
+ * it would silently revert every sweep the operator wrote or forked.
+ */
+const CONFIG_COPY_TREES = ["tls", "config-secrets", "sweeps"];
+
+/**
+ * Per-provider OAuth token directories stay out because a token is
+ * re-obtainable: re-authenticating mints a new one. A pasted credential is
+ * not — an api key a platform shows once at creation cannot be recovered from
+ * a restore that skipped it — so those are carried, matched by shape
+ * (`<provider>-credentials.json`, `<provider>/<account>/credentials.json`),
+ * never by provider name.
+ */
+const TOP_LEVEL_CREDENTIAL_FILE = /^[^/]+-credentials\.json$/;
+const ACCOUNT_CREDENTIAL_FILE = /^[^/]+\/[^/]+\/credentials\.json$/;
+
+/**
+ * The `.env` keys that say how this machine runs the install, not what the
+ * corpus is: the image a Docker install runs, the secret-store backend and how
+ * it reaches its passphrase, and the port the host's own service arrangement
+ * listens on. A restored `.env` keeps the target's lines for these and drops
+ * the backup's, so restoring a backup from another release, or from a native
+ * install onto a Docker one, cannot point the machine at an image or a keyring
+ * it does not have.
+ */
+export const MACHINE_ENV_KEYS = [
+  "OMNESIS_IMAGE_TAG",
+  "OMNESIS_SECRET_STORE",
+  "OMNESIS_KEYRING_PASSPHRASE",
+  "OMNESIS_KEYRING_PASSPHRASE_FILE",
+  "OMNESIS_GATEWAY_PORT",
+] as const;
+
+/** How an entry of a config dir relates to a backup. */
+export type BackupScopeKind =
+  /** A store or a store's companion file: carried, replaced by a restore. */
+  | "store"
+  /** Config material: carried, replaced by a restore. */
+  | "config"
+  /** Rebuilt from a store: never carried, always removed by a restore. */
+  | "derived";
+
+export interface BackupScopeEntry {
+  /** Path relative to the config dir: a file, or a directory taken whole. */
+  name: string;
+  kind: BackupScopeKind;
+}
+
+const STORE_FILE_NAMES = new Set<string>(
+  BACKUP_STORE_NAMES.flatMap((store) => [
+    store,
+    ...STORE_COMPANION_SUFFIXES.map((suffix) => `${store}${suffix}`),
+  ]),
+);
+
+/**
+ * The backup-owned entry `rel` (a path relative to a config dir or a backup,
+ * `/`-separated) is or lies inside, or null when it belongs to the machine.
+ */
+export function backupScopeEntryFor(rel: string): BackupScopeEntry | null {
+  if (STORE_FILE_NAMES.has(rel)) return { name: rel, kind: "store" };
+  if (DERIVED_INDEX_FILE_PATTERN.test(rel)) return { name: rel, kind: "derived" };
+  for (const name of [...CONFIG_COPY_NAMES, ...CONFIG_COPY_TREES]) {
+    if (rel === name || rel.startsWith(`${name}/`)) return { name, kind: "config" };
+  }
+  if (TOP_LEVEL_CREDENTIAL_FILE.test(rel) || ACCOUNT_CREDENTIAL_FILE.test(rel)) {
+    return { name: rel, kind: "config" };
+  }
+  return null;
+}
+
+/**
+ * Every backup-owned entry that exists in `dir` right now, of every kind.
+ * Store paths are the config dir's own; a store an environment override puts
+ * elsewhere is not in it.
+ */
+export function backupScopeEntries(dir: string): BackupScopeEntry[] {
+  const entries: BackupScopeEntry[] = [];
+  for (const name of STORE_FILE_NAMES) {
+    if (existsSync(join(dir, name))) entries.push({ name, kind: "store" });
+  }
+  try {
+    for (const name of readdirSync(dir)) {
+      if (DERIVED_INDEX_FILE_PATTERN.test(name)) entries.push({ name, kind: "derived" });
+    }
+  } catch {
+    // A missing or unreadable dir holds nothing derived.
+  }
+  for (const name of backupConfigCopyNames(dir)) entries.push({ name, kind: "config" });
+  return entries;
+}
+
+/**
  * The config material a backup mirrors, as paths relative to `configDir` that
- * exist right now. The list is an allowlist: `models/` (re-downloadable),
- * `backups/` (no recursion), `index.usearch` (rebuilds from index.db) and
- * anything not named here stay out.
- *
- * Per-provider OAuth token directories stay excluded because a token is
- * re-obtainable: re-authenticating mints a new one. A per-account pasted
- * credential is not — an api key a platform shows once at creation cannot be
- * recovered from a restore that skipped it — so those ARE included. Matched
- * by shape (`<provider>/<account>/credentials.json`), never by provider name.
+ * exist right now. Anything {@link backupScopeEntryFor} does not name — among
+ * them `models/` (re-downloadable), `backups/` (no recursion) and the derived
+ * index files — stays out.
  */
 export function backupConfigCopyNames(configDir: string): string[] {
   const names: string[] = [];
@@ -132,23 +261,39 @@ export function backupConfigCopyNames(configDir: string): string[] {
   for (const name of CONFIG_COPY_NAMES) add(name);
   try {
     for (const entry of readdirSync(configDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith("-credentials.json")) add(entry.name);
+      if (entry.isFile() && TOP_LEVEL_CREDENTIAL_FILE.test(entry.name)) add(entry.name);
       if (!entry.isDirectory()) continue;
       for (const account of readdirSync(join(configDir, entry.name), { withFileTypes: true })) {
         if (!account.isDirectory()) continue;
-        add(join(entry.name, account.name, "credentials.json"));
+        add(`${entry.name}/${account.name}/credentials.json`);
       }
     }
   } catch {
     // An unreadable config dir has nothing extra to copy.
   }
-  add("tls");
-  add("config-secrets");
-  // User-authored sweep prose. Not re-obtainable from anywhere else: a restore
-  // that skipped it would silently revert every sweep the operator wrote or
-  // forked back to the shipped set.
-  add("sweeps");
+  for (const name of CONFIG_COPY_TREES) add(name);
   return names;
+}
+
+/**
+ * The `.env` a restore leaves: the backup's lines, except that every
+ * {@link MACHINE_ENV_KEYS} line comes from the target's own `.env` instead.
+ * Null when neither side leaves anything to write.
+ */
+export function restoredDotEnv(
+  fromBackup: string | null,
+  fromTarget: string | null,
+): string | null {
+  const machineKey = (line: string): boolean => {
+    const key = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line)?.[1];
+    return key !== undefined && (MACHINE_ENV_KEYS as readonly string[]).includes(key);
+  };
+  const lines = (text: string | null): string[] =>
+    text === null ? [] : text.split(/\r?\n/).filter((line, i, all) => i < all.length - 1 || line);
+  const kept = lines(fromBackup).filter((line) => !machineKey(line));
+  const machine = lines(fromTarget).filter(machineKey);
+  const merged = [...kept, ...machine];
+  return merged.length === 0 ? null : `${merged.join("\n")}\n`;
 }
 
 /** Timestamped directory for a new backup; colon-free, suffixed on collision. */
@@ -270,14 +415,6 @@ export function gatewayStoreFiles(
     },
   ];
 }
-
-/**
- * The files a closed store may still keep committed data in: SQLite's
- * write-ahead log, its shared-memory index and rollback journal, and DuckDB's
- * write-ahead log. A copy of the main file without them can lose the last
- * transactions or not open at all, so each one present travels with its store.
- */
-const STORE_COMPANION_SUFFIXES = ["-wal", "-shm", "-journal", ".wal"] as const;
 
 /** Free space demanded over the summed size of what is copied. */
 const DISK_HEADROOM_FACTOR = 1.1;

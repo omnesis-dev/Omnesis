@@ -10,7 +10,7 @@ import { readdirSync, rmSync, unlinkSync, type Dirent } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 type Db = Database.Database;
-import { createLogger } from "@omnesis/core";
+import { DERIVED_INDEX_FILE_PATTERN, createLogger } from "@omnesis/core";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { useImmediateTransactions } from "../sqlite-transactions.js";
 import { buildEmbeddingPreamble } from "./embedding-input.js";
@@ -585,7 +585,7 @@ export function usearchPathForVersion(configDir: string, version: number | null)
  * plaintext graph from {@link usearchPathForVersion}, its encrypted `.enc`
  * persistence, and temp or quarantined copies of either.
  */
-export const USEARCH_FILE_NAME = /^index(?:-\d+)?\.usearch(?:\..+)?$/;
+export const USEARCH_FILE_NAME = DERIVED_INDEX_FILE_PATTERN;
 
 /**
  * Secure-storage mode treats USEARCH sidecars as rebuildable cache, not durable

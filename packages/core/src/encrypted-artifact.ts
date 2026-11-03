@@ -71,6 +71,11 @@ export interface EncryptArtifactFileResult {
 
 export interface DecryptArtifactFileToFileOptions extends CreateSecretStoreOptions {
   force?: boolean;
+  /**
+   * The root key to decrypt with, instead of the one in the secret store: a
+   * restore holds the key a backup was sealed under before any store has it.
+   */
+  rootKey?: string;
 }
 
 export interface DecryptArtifactFileToFileResult {
@@ -219,7 +224,7 @@ export async function decryptArtifactFileToFile(
   opts: DecryptArtifactFileToFileOptions = {},
 ): Promise<DecryptArtifactFileToFileResult> {
   const envelope = await parseArtifactEnvelopeFromFile(inputPath);
-  const rootKey = await readInstallRootKey(opts);
+  const rootKey = opts.rootKey ?? (await readInstallRootKey(opts));
   if (!rootKey)
     throw new Error(`Cannot decrypt encrypted artifact ${inputPath}: root key unavailable`);
   if (existsSync(outputPath) && !opts.force) {

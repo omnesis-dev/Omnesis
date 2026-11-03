@@ -23,6 +23,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -4045,5 +4046,345 @@ describe("install.sh --docker: the keyring steps without a terminal", () => {
     for (const leak of ['"keyName"', '"candidates"', "RCVR-FIXT-CODE-0001"]) {
       expect(run.output).not.toContain(leak);
     }
+  });
+});
+
+describe("the wrapper's restore and service, on the host", () => {
+  /**
+   * A `docker` that plays the host's side of a restore: `stop` and `up -d`
+   * exit with SHIM_STOP_STATUS / SHIM_UP_STATUS, the CLI's restore in the
+   * one-off container with SHIM_RESTORE_STATUS, and the gateway's health is
+   * read from SHIM_HEALTH — a space-separated sequence, one value per check,
+   * the last repeating. Every call is logged one per line, with whether the
+   * restore's stdin was a terminal.
+   */
+  const RESTORE_SHIM = `#!/bin/sh
+printf '%s\\n' "$*" >> "$SHIM_LOG"
+case " $* " in
+  *" omnesis restore "*)
+    if [ -t 0 ]; then printf 'restore stdin is a terminal\\n' >> "$SHIM_LOG"; fi
+    exit "\${SHIM_RESTORE_STATUS:-0}" ;;
+  *" ps -q gateway "*) printf 'c0ffee\\n'; exit 0 ;;
+  *" stop "*) exit "\${SHIM_STOP_STATUS:-0}" ;;
+  *" up -d "*) exit "\${SHIM_UP_STATUS:-0}" ;;
+esac
+if [ "$1" = inspect ]; then
+  COUNT_FILE="$SHIM_LOG.health"
+  N=$(( $(cat "$COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+  printf '%s' "$N" > "$COUNT_FILE"
+  set -- \${SHIM_HEALTH:-healthy}
+  while [ "$N" -gt 1 ] && [ "$#" -gt 1 ]; do shift; N=$((N - 1)); done
+  printf '%s\\n' "$1"
+fi
+exit 0
+`;
+
+  function installed(name, args = QUIET) {
+    const run = runInstaller(name, args);
+    expect(run.status, run.output).toBe(0);
+    writeExecutable(fixturePath("fake-bin", "docker"), RESTORE_SHIM);
+    writeFileSync(dockerLog(run.home), "");
+    return run;
+  }
+
+  function shimEnv(run, extraEnv) {
+    return {
+      PATH: `${fixturePath("fake-bin")}:/usr/bin:/bin`,
+      HOME: run.home,
+      SHIM_LOG: dockerLog(run.home),
+      OMNESIS_RESTORE_HEALTH_POLL: "0",
+      ...extraEnv,
+    };
+  }
+
+  /** The wrapper run as automation runs it: no terminal anywhere. */
+  function wrapper(run, args, extraEnv = {}) {
+    const proc = spawnSync(run.wrapper, args, {
+      cwd: run.home,
+      env: shimEnv(run, extraEnv),
+      input: "",
+      encoding: "utf8",
+    });
+    return { ...proc, docker: readDockerCalls(run.home) };
+  }
+
+  /** The wrapper run by a person at a terminal, answering its prompts. */
+  function wrapperOnTty(run, args, answers, extraEnv = {}) {
+    const quote = (word) => `'${word.replaceAll("'", `'\\''`)}'`;
+    const proc = spawnSync(
+      "script",
+      ["-qec", [run.wrapper, ...args].map(quote).join(" "), "/dev/null"],
+      {
+        cwd: run.home,
+        env: { ...shimEnv(run, extraEnv), SHELL: "/bin/sh" },
+        input: answers.map((a) => `${a}\n`).join(""),
+        encoding: "utf8",
+        timeout: 60_000,
+      },
+    );
+    return { ...proc, docker: readDockerCalls(run.home) };
+  }
+
+  /** A backup directory where `omnesis backup --list` puts one. */
+  function backupIn(run, name = "2026-03-04T05-06-07") {
+    const dir = join(run.configDir, "backups", name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "backup-manifest.json"), "{}");
+    return dir;
+  }
+
+  test("without a terminal: stops the services, restores in a one-off container, starts them and waits for health", () => {
+    const run = installed("restore-flow");
+    const compose = join(run.configDir, "docker-compose.yml");
+    writeFileSync(join(run.configDir, "omnesis.db"), "fictional corpus");
+    const backup = backupIn(run);
+
+    const proc = wrapper(run, ["restore", backup, "--force", "--json"], {
+      SHIM_HEALTH: "starting starting healthy",
+    });
+
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(proc.docker.filter((call) => !call.startsWith("inspect"))).toEqual([
+      `compose -f ${compose} stop gateway collector`,
+      `compose -f ${compose} --progress quiet run --rm --no-deps -T --env OMNESIS_DOCKER_HOST_RESTART=1 gateway omnesis restore ${backup} --json --force`,
+      `compose -f ${compose} up -d gateway collector`,
+      `compose -f ${compose} ps -q gateway`,
+      `compose -f ${compose} ps -q gateway`,
+      `compose -f ${compose} ps -q gateway`,
+    ]);
+    expect(proc.docker.filter((call) => call.startsWith("inspect"))).toHaveLength(3);
+    // Progress is stderr's; stdout carries the CLI's own result alone.
+    expect(proc.stdout).toBe("");
+    expect(proc.stderr).toContain("the gateway is up and healthy");
+  });
+
+  test("without a terminal and without --force, a corpus is never replaced and nothing stops", () => {
+    const run = installed("restore-unconfirmed");
+    writeFileSync(join(run.configDir, "omnesis.db"), "fictional corpus");
+    const proc = wrapper(run, ["restore", backupIn(run)]);
+    expect(proc.status).toBe(2);
+    expect(proc.stderr).toContain("Re-run with --force");
+    expect(proc.docker).toEqual([]);
+  });
+
+  test("a config dir with no corpus yet needs no confirmation", () => {
+    const run = installed("restore-fresh");
+    const proc = wrapper(run, ["restore", backupIn(run), "--code", "RCVR-FIXT-CODE-0001"]);
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(
+      proc.docker.some((call) =>
+        call.endsWith(
+          `omnesis restore ${join(run.configDir, "backups", "2026-03-04T05-06-07")} --code RCVR-FIXT-CODE-0001 --force`,
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test.runIf(HAS_PTY)("at a terminal it asks first, and a no stops nothing", () => {
+    const run = installed("restore-ask-no");
+    writeFileSync(join(run.configDir, "omnesis.db"), "fictional corpus");
+    const proc = wrapperOnTty(run, ["restore", backupIn(run)], ["n"]);
+    expect(proc.status).toBe(130);
+    expect(proc.stdout).toContain("Replace the corpus? [y/N]");
+    expect(proc.stdout).toContain(
+      "other backups, models, exports, logs and this install's own files stay",
+    );
+    expect(proc.docker).toEqual([]);
+  });
+
+  test.runIf(HAS_PTY)("at a terminal a yes restores with a terminal in the container", () => {
+    const run = installed("restore-ask-yes");
+    const compose = join(run.configDir, "docker-compose.yml");
+    writeFileSync(join(run.configDir, "omnesis.db"), "fictional corpus");
+    const backup = backupIn(run);
+    const proc = wrapperOnTty(run, ["restore", backup], ["y"]);
+    expect(proc.status, proc.stdout).toBe(0);
+    expect(proc.docker).toContain(
+      `compose -f ${compose} --progress quiet run --rm --no-deps --env OMNESIS_DOCKER_HOST_RESTART=1 gateway omnesis restore ${backup} --force`,
+    );
+    expect(proc.docker).toContain("restore stdin is a terminal");
+    expect(proc.docker).toContain(`compose -f ${compose} up -d gateway collector`);
+  });
+
+  test("a relative path and a backup copied from elsewhere are mounted read-only at the same path", () => {
+    const run = installed("restore-elsewhere");
+    mkdirSync(join(run.home, "Downloads", "old-machine-backup"), { recursive: true });
+    writeFileSync(join(run.home, "Downloads", "old-machine-backup", "backup-manifest.json"), "{}");
+    writeFileSync(join(run.home, "Downloads", "recovery-envelope.json"), "{}");
+    // A relative path is read from the working directory, which the shell
+    // names by its physical path: on macOS the temp dir is under /private.
+    const copied = join(realpathSync(run.home), "Downloads", "old-machine-backup");
+    const envelope = join(realpathSync(run.home), "Downloads", "recovery-envelope.json");
+
+    const proc = wrapper(run, [
+      "restore",
+      "Downloads/old-machine-backup/",
+      "--envelope=Downloads/recovery-envelope.json",
+      "--code",
+      "RCVR-FIXT-CODE-0001",
+    ]);
+
+    expect(proc.status, proc.stderr).toBe(0);
+    const restoreCall = proc.docker.find((call) => call.includes(" omnesis restore "));
+    expect(restoreCall).toContain(
+      `--volume ${copied}:${copied}:ro --volume ${envelope}:${envelope}:ro gateway`,
+    );
+    expect(
+      restoreCall?.endsWith(
+        `omnesis restore ${copied} --code RCVR-FIXT-CODE-0001 --envelope ${envelope} --force`,
+      ),
+    ).toBe(true);
+  });
+
+  test("a failed restore starts the services again and keeps its exit status", () => {
+    const run = installed("restore-fails");
+    const compose = join(run.configDir, "docker-compose.yml");
+    const proc = wrapper(run, ["restore", backupIn(run), "--force"], { SHIM_RESTORE_STATUS: "2" });
+    expect(proc.status).toBe(2);
+    expect(proc.stderr).toContain("is as it was");
+    expect(proc.docker).toContain(`compose -f ${compose} up -d gateway collector`);
+    expect(proc.docker.some((call) => call.startsWith("inspect"))).toBe(false);
+  });
+
+  test("services that do not stop are started again and nothing is restored", () => {
+    const run = installed("restore-stop-fails");
+    const proc = wrapper(run, ["restore", backupIn(run), "--force"], { SHIM_STOP_STATUS: "1" });
+    expect(proc.status).toBe(1);
+    expect(proc.docker.some((call) => call.includes(" omnesis restore "))).toBe(false);
+    expect(proc.docker.some((call) => call.includes(" up -d "))).toBe(true);
+  });
+
+  test("a gateway that does not come back healthy is a failure that names its log", () => {
+    const run = installed("restore-unhealthy");
+    const proc = wrapper(run, ["restore", backupIn(run), "--force"], {
+      SHIM_HEALTH: "starting unhealthy",
+    });
+    expect(proc.status).toBe(1);
+    expect(proc.stderr).toContain("the gateway is unhealthy");
+    expect(proc.stderr).toContain("omnesis service logs gateway");
+
+    const late = wrapper(run, ["restore", backupIn(run), "--force"], {
+      SHIM_HEALTH: "starting",
+      OMNESIS_RESTORE_HEALTH_TIMEOUT: "0",
+    });
+    expect(late.status).toBe(1);
+    expect(late.stderr).toContain("did not report healthy within 0s");
+  });
+
+  test("refuses what a Docker restore cannot do before touching anything", () => {
+    const run = installed("restore-refusals");
+    const backup = backupIn(run);
+    for (const [args, message] of [
+      [["restore"], "name the backup directory"],
+      [["restore", join(run.home, "nowhere")], "is not an Omnesis backup"],
+      [["restore", backup, "--target", "/srv/example"], "--target does not apply"],
+      [["restore", backup, "--instance", "two"], "unknown option --instance"],
+    ]) {
+      const proc = wrapper(run, args);
+      expect(proc.status, args.join(" ")).toBe(2);
+      expect(proc.stderr).toContain(message);
+    }
+    expect(readDockerCalls(run.home)).toEqual([]);
+  });
+
+  test("a host that only collects has no corpus to restore", () => {
+    const run = installed("restore-collector", [
+      "--docker",
+      "--collector",
+      "--no-keyring",
+      "--gateway-url",
+      GATEWAY_URL,
+      "--code",
+      PAIRING_CODE,
+      "--version",
+      "9.9.0",
+    ]);
+    const backup = join(run.configDir, "backups", "b");
+    mkdirSync(backup, { recursive: true });
+    writeFileSync(join(backup, "backup-manifest.json"), "{}");
+    const proc = wrapper(run, ["restore", backup, "--force"]);
+    expect(proc.status).toBe(2);
+    expect(proc.stderr).toContain("A backup is restored on the gateway's host");
+    expect(proc.docker).toEqual([]);
+  });
+
+  test("service verbs run their compose equivalents", () => {
+    const run = installed("service-map");
+    const compose = join(run.configDir, "docker-compose.yml");
+    const cases = [
+      [["service", "stop", "collector"], `compose -f ${compose} stop collector`],
+      [["service", "stop"], `compose -f ${compose} stop gateway collector`],
+      [["service", "start", "gateway"], `compose -f ${compose} up -d --no-deps gateway`],
+      [["service", "restart", "all"], `compose -f ${compose} restart gateway collector`],
+      [["service", "status"], `compose -f ${compose} ps --all gateway collector`],
+      [["service"], `compose -f ${compose} ps --all gateway collector`],
+      [
+        ["service", "status", "--json"],
+        `compose -f ${compose} ps --all --format json gateway collector`,
+      ],
+      [["service", "logs", "gateway", "-n", "20"], `compose -f ${compose} logs --tail 20 gateway`],
+      [
+        ["service", "logs", "--follow", "--lines=5"],
+        `compose -f ${compose} logs --follow --tail 5 gateway collector`,
+      ],
+    ];
+    for (const [args, call] of cases) {
+      writeFileSync(dockerLog(run.home), "");
+      const proc = wrapper(run, args);
+      expect(proc.status, `${args.join(" ")}: ${proc.stderr}`).toBe(0);
+      expect(proc.docker).toEqual([call]);
+    }
+    expect(wrapper(run, ["service", "stop", "collector"]).stdout).toBe("Stopped collector\n");
+  });
+
+  test("service refuses what a Docker install has no equivalent for, without a stack trace", () => {
+    const run = installed("service-refusals");
+    for (const [args, message] of [
+      [["service", "install"], "re-run the installer"],
+      [["service", "uninstall", "gateway"], "omnesis uninstall"],
+      [["service", "stop", "--instance", "two"], "does not apply to a Docker install"],
+      [["service", "reload"], "unknown command reload"],
+      [["service", "logs", "-n", "lots"], "--lines takes a whole number"],
+    ]) {
+      const proc = wrapper(run, args);
+      expect(proc.status, args.join(" ")).toBe(2);
+      expect(proc.stderr).toContain(message);
+      expect(proc.stderr).not.toMatch(/\bat \S+ \(/);
+    }
+    expect(readDockerCalls(run.home)).toEqual([]);
+  });
+
+  test("a failing compose command is the service command's failure", () => {
+    const run = installed("service-fails");
+    const proc = wrapper(run, ["service", "stop", "gateway"], { SHIM_STOP_STATUS: "1" });
+    expect(proc.status).toBe(1);
+    expect(proc.stderr).toContain("stop gateway failed");
+  });
+
+  test("a combined install reads the collector in the gateway's container but will not stop it alone", () => {
+    const run = installed("service-combined", [...QUIET, "--combined"]);
+    const compose = join(run.configDir, "docker-compose.yml");
+    const logs = wrapper(run, ["service", "logs", "collector"]);
+    expect(logs.status, logs.stderr).toBe(0);
+    expect(logs.docker).toEqual([`compose -f ${compose} logs --tail 100 gateway`]);
+    expect(logs.stderr).toContain("runs in the gateway's container");
+    const stop = wrapper(run, ["service", "stop", "collector"]);
+    expect(stop.status).toBe(2);
+    expect(stop.stderr).toContain("omnesis service stop");
+    const restore = wrapper(run, ["restore", backupIn(run), "--force"]);
+    expect(restore.status, restore.stderr).toBe(0);
+    expect(restore.docker[1]).toBe(`compose -f ${compose} stop gateway`);
+  });
+
+  test("a launcher an update renders carries the restore and service handling", () => {
+    const run = installed("restore-rendered");
+    const compose = join(run.configDir, "docker-compose.yml");
+    const proc = spawnSync("sh", [installer, "--print-docker-launcher", compose, "gateway"], {
+      encoding: "utf8",
+    });
+    expect(proc.status).toBe(0);
+    expect(proc.stdout).toBe(readFileSync(run.wrapper, "utf8"));
+    expect(proc.stdout).toContain('if [ "${1:-}" = restore ]; then');
+    expect(proc.stdout).toContain('if [ "${1:-}" = service ]; then');
   });
 });

@@ -548,6 +548,72 @@ grep -q "encryption at rest is already in effect" "$WORK/secure-again.out" || di
 grep -q "Restarting" "$WORK/secure-again.out" && die "a second run restarted the containers again"
 ok "the collector re-authenticated, the CLI reads its sealed token, and a re-run changes nothing"
 
+# ── omnesis service and omnesis restore, from the host ─────────────────────
+
+# The service verbs are compose run here, never a service manager the
+# container does not have. Then the encrypted install restores a backup of
+# itself from the host: the launcher stops the containers, restores in a
+# one-off container that reaches the passphrase keyring the way the gateway
+# does, and starts them again. What the backup owns comes back as it was;
+# what the machine owns — the other backups, models, exports, the compose file,
+# the install marker and the keyring passphrase — stays.
+step "omnesis service and omnesis restore on the host"
+"${omnesis_env[@]}" "$OMNESIS" service status < /dev/null > "$WORK/service-status.out" 2>&1 \
+  || { cat "$WORK/service-status.out" >&2; die "omnesis service status failed"; }
+grep -q "gateway" "$WORK/service-status.out" || { cat "$WORK/service-status.out" >&2; die "service status did not list the gateway"; }
+"${omnesis_env[@]}" "$OMNESIS" service stop collector < /dev/null || die "omnesis service stop collector failed"
+docker compose -f "$COMPOSE_FILE" ps --status running --services | grep -qx collector && die "the collector is still running"
+"${omnesis_env[@]}" "$OMNESIS" service start collector < /dev/null || die "omnesis service start collector failed"
+docker compose -f "$COMPOSE_FILE" ps --status running --services | grep -qx collector || die "the collector is not running after omnesis service start"
+ok "service status, stop and start map to the compose project"
+
+printf 'Standing instructions at backup time.\n' > "$CONFIG_DIR/OMNESIS.md"
+"${omnesis_env[@]}" "$OMNESIS" backup < /dev/null > "$WORK/backup.out" 2>&1 \
+  || { cat "$WORK/backup.out" >&2; die "omnesis backup failed"; }
+BACKUP_PATH="$(tail -n 1 "$WORK/backup.out" | node -e '
+let s = ""; process.stdin.on("data", (d) => (s += d));
+process.stdin.on("end", () => { try { process.stdout.write(JSON.parse(s).path ?? ""); } catch {} });')"
+[[ -f "$BACKUP_PATH/backup-manifest.json" ]] || { cat "$WORK/backup.out" >&2; die "the backup left no manifest"; }
+ok "took a backup at $BACKUP_PATH"
+
+# State that changes after the backup, and the machine's own files.
+printf 'Standing instructions written after the backup.\n' > "$CONFIG_DIR/OMNESIS.md"
+mkdir -p "$CONFIG_DIR/models" "$CONFIG_DIR/exports" "$CONFIG_DIR/backups/older-sentinel"
+printf 'weights\n' > "$CONFIG_DIR/models/sentinel.bin"
+printf 'export\n' > "$CONFIG_DIR/exports/sentinel.jsonl"
+printf '{}\n' > "$CONFIG_DIR/backups/older-sentinel/backup-manifest.json"
+machine_before="$(cd "$CONFIG_DIR" && sha256sum docker-compose.yml install-method keyring.pass models/sentinel.bin exports/sentinel.jsonl backups/older-sentinel/backup-manifest.json)"
+
+if "${omnesis_env[@]}" "$OMNESIS" restore "$BACKUP_PATH" < /dev/null > "$WORK/restore-refused.out" 2>&1; then
+  die "a restore without --force and without a terminal replaced the corpus"
+fi
+grep -q "Re-run with --force" "$WORK/restore-refused.out" || { cat "$WORK/restore-refused.out" >&2; die "the refusal did not name --force"; }
+docker compose -f "$COMPOSE_FILE" ps --status running --services | grep -qx gateway || die "a refused restore stopped the gateway"
+ok "without a terminal, a restore without --force refuses and stops nothing"
+
+authenticated_before="$(docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null | grep -c "WebSocket authenticated with gateway" || true)"
+"${omnesis_env[@]}" OMNESIS_RESTORE_HEALTH_TIMEOUT=300 "$OMNESIS" restore "$BACKUP_PATH" --force < /dev/null > "$WORK/restore.out" 2>&1 \
+  || { cat "$WORK/restore.out" >&2; die "omnesis restore failed"; }
+grep -q "the gateway is up and healthy" "$WORK/restore.out" || { cat "$WORK/restore.out" >&2; die "the restore did not report a healthy gateway"; }
+grep -qx "Standing instructions at backup time." "$CONFIG_DIR/OMNESIS.md" || die "the backup's instructions were not restored"
+[[ "$(cd "$CONFIG_DIR" && sha256sum docker-compose.yml install-method keyring.pass models/sentinel.bin exports/sentinel.jsonl backups/older-sentinel/backup-manifest.json)" == "$machine_before" ]] \
+  || die "the restore changed what the machine owns"
+[[ -f "$BACKUP_PATH/backup-manifest.json" ]] || die "the restore removed the backup it restored"
+compgen -G "$CONFIG_DIR/.omnesis-restore-*" >/dev/null && die "the restore left its work directory"
+grep -qx "OMNESIS_SECRET_STORE=passphrase" "$CONFIG_DIR/.env" || die "the restore dropped the secret store from .env"
+grep -q "OMNESIS_IMAGE_TAG=" "$CONFIG_DIR/.env" || die "the restore dropped the image tag from .env"
+"${omnesis_env[@]}" "$OMNESIS" tokens list >/dev/null || die "the CLI could not use the restored, sealed admin token"
+"${omnesis_env[@]}" "$OMNESIS" secure --verify >/dev/null || die "secure --verify failed after the restore"
+for _ in $(seq 1 80); do
+  [[ "$(docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null | grep -c "WebSocket authenticated with gateway" || true)" -gt "$authenticated_before" ]] && break
+  sleep 3
+done
+[[ "$(docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/null | grep -c "WebSocket authenticated with gateway" || true)" -gt "$authenticated_before" ]] \
+  || die "the collector never re-authenticated after the restore"
+rm -f "$CONFIG_DIR/models/sentinel.bin" "$CONFIG_DIR/exports/sentinel.jsonl"
+rm -rf "$CONFIG_DIR/backups/older-sentinel"
+ok "restored the backup's state, kept the machine's files, and the install came back encrypted and paired"
+
 # ── a certificate the operator supplies ─────────────────────────────────────
 
 # The second topology this lane proves: a certificate issued on the host,

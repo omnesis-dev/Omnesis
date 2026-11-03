@@ -43,6 +43,7 @@ import {
 } from "../service/units.js";
 import { stableNodeBinDir } from "../service/node-bin-dir.js";
 import { createSupervisor, defaultExecRunner, type ExecRunner } from "../service/supervisor.js";
+import { dockerServiceRefusal } from "../service/docker-refusal.js";
 import { defaultExecResolveDeps, resolveServiceExec } from "../service/exec-resolver.js";
 import {
   assertRootControlledCode,
@@ -162,6 +163,20 @@ export function parseLinesFlag(raw: unknown): number {
 function parseConfigDirFlag(raw: unknown): string {
   const dir = typeof raw === "string" && raw !== "" ? raw : DEFAULT_CONFIG_DIR;
   return resolve(dir);
+}
+
+/**
+ * Inside a Docker install the services are containers this command cannot
+ * reach: say the host command instead of asking a service manager that is not
+ * there (see `service/docker-refusal.ts`).
+ */
+function refuseInsideDocker(
+  configDirFlag: unknown,
+  verb: Parameters<typeof dockerServiceRefusal>[1],
+  component: unknown,
+): void {
+  const refusal = dockerServiceRefusal(parseConfigDirFlag(configDirFlag), verb, component);
+  if (refusal) throw refusal;
 }
 
 // ── Keyring wiring ─────────────────────────────────────────────────────
@@ -796,6 +811,7 @@ const serviceInstallCommand = defineCommand({
     },
   },
   async run(ctx) {
+    refuseInsideDocker(ctx.args["config-dir"], "install", ctx.args.component);
     if (ctx.args.hardened) {
       await runHardenedInstall(ctx);
       return;
@@ -988,6 +1004,7 @@ function lifecycleCommand(verb: LifecycleVerb, description: string) {
         : {}),
     },
     async run(ctx) {
+      refuseInsideDocker(ctx.args["config-dir"], verb, ctx.args.component);
       if (verb === "uninstall" && ctx.args.hardened) {
         await runHardenedUninstall(ctx);
         return;
@@ -1131,6 +1148,7 @@ const serviceStatusCommand = defineCommand({
     json: { type: "boolean", description: "Machine-readable JSON output" },
   },
   async run(ctx) {
+    refuseInsideDocker(ctx.args["config-dir"], "status", ctx.args.component);
     const components = parseComponentSelection(ctx.args.component, [...SERVICE_COMPONENTS]);
     const instance = parseInstanceFlag(ctx.args.instance);
     const configDir = parseConfigDirFlag(ctx.args["config-dir"]);
@@ -1180,6 +1198,7 @@ const serviceLogsCommand = defineCommand({
     lines: { type: "string", alias: "n", description: "Number of lines to show (default: 100)" },
   },
   async run(ctx) {
+    refuseInsideDocker(ctx.args["config-dir"], "logs", ctx.args.component);
     const components = parseComponentSelection(ctx.args.component, [...SERVICE_COMPONENTS]);
     const instance = parseInstanceFlag(ctx.args.instance);
     const lines = parseLinesFlag(ctx.args.lines);
