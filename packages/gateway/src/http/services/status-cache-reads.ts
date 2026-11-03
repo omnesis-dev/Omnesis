@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { getLatestActivityBySource } from "../../data/repositories/DocumentRepository.js";
-import { listSyncStates } from "../../data/repositories/SyncStateRepository.js";
+import { listSyncStateSummaries } from "../../data/repositories/SyncStateRepository.js";
 import { listDevices } from "../../data/repositories/DeviceRepository.js";
 import {
   listDeviceIdsHostingSources,
@@ -15,9 +15,10 @@ import type Database from "better-sqlite3";
 export interface StatusCacheSnapshot {
   latestActivity: ReturnType<typeof getLatestActivityBySource>;
   sources: ReturnType<typeof listSources>;
-  syncStates: ReturnType<typeof listSyncStates>;
+  /** Sync-state rows without their cursors. */
+  syncStates: ReturnType<typeof listSyncStateSummaries>;
   devices: ReturnType<typeof listDevices>;
-  /** Devices that still own or are members of a source; an array so it crosses a worker. */
+  /** Devices that still own or are members of a source. */
   sourceHostingDeviceIds: ReturnType<typeof listDeviceIdsHostingSources>;
 }
 
@@ -25,17 +26,16 @@ export function readStatusCacheSnapshot(db: Database.Database): StatusCacheSnaps
   return db.transaction(() => ({
     latestActivity: getLatestActivityBySource(db),
     sources: listSources(db),
-    syncStates: listSyncStates(db),
+    syncStates: listSyncStateSummaries(db),
     devices: listDevices(db),
     sourceHostingDeviceIds: listDeviceIdsHostingSources(db),
   }))();
 }
 
 /**
- * The status cache's periodic read. Every sync-state row carries its source's
- * cursor, which for a mail or message source can be large, so on an encrypted
- * store reading them all is a walk over many decrypted pages; the gateway runs
- * it on a read worker so the two-second refresh never holds the event loop.
+ * The status cache's periodic read: every source, device and sync-state row,
+ * and each source's latest document. The gateway runs it on a read worker so
+ * the two-second refresh never holds the event loop for it.
  */
 export const STATUS_CACHE_READS = { statusCacheSnapshot: readStatusCacheSnapshot };
 

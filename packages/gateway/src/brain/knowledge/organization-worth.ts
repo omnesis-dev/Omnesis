@@ -62,6 +62,8 @@ export async function lowWorthOrganizationSources(
 ): Promise<Record<string, string>> {
   const low: Record<string, string> = {};
   for (const [id, revision] of Object.entries(sourceVersions)) {
+    // Taken before the content is read, so an erasure in between voids the capture.
+    const erasureGeneration = decisionPayloadErasureGeneration(deps.db);
     const current = source(id);
     if (!current || current.sourceRevision !== revision) continue;
     let score: number | null | undefined = currentDiscoveryVerdict(deps.db, id, current);
@@ -74,7 +76,7 @@ export async function lowWorthOrganizationSources(
         payloadCapture:
           (await knowledgeSelectionReads(deps).knowledgeDecisionPayloadSubjects(
             { sourceIds: [id], nodeIds: [] },
-            decisionPayloadErasureGeneration(deps.db),
+            erasureGeneration,
           )) ?? undefined,
       });
     }

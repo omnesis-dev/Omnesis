@@ -10,9 +10,12 @@
  * any-typed handlers that could in theory slip through.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { IoOps } from "./io-ops.js";
 import { ioHandlers } from "./io-handlers.js";
+import { ioReadOpNames } from "./read-port.js";
+import { IO_READS } from "./io-read-ports.js";
 
 describe("IoOps registry coverage", () => {
   test("every IoOps entry has a matching handler in ioHandlers", () => {
@@ -29,6 +32,14 @@ describe("IoOps registry coverage", () => {
       expect(opNames, `ioHandlers "${name}" missing from IO_OP_DEFS`).toContain(name);
     }
   });
+});
+
+test("no written-out io op shares a name with a read port's op", () => {
+  // A written-out op of the same name would silently replace the port's.
+  const portOps = ioReadOpNames(IO_READS);
+  expect(portOps.length).toBeGreaterThan(0);
+  const ioHandlersSource = readFileSync(new URL("./io-handlers.ts", import.meta.url), "utf8");
+  for (const op of portOps) expect(ioHandlersSource, op).not.toContain(`"${op}"`);
 });
 
 test("discovery monthly scan is a background IO task with a matching reader", () => {

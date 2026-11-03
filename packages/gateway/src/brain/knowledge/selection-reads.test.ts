@@ -7,6 +7,13 @@ import { createLogger } from "@omnesis/core";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { resolveBrainSettings } from "../config.js";
 import { outcomeRecordPolicyKey } from "../record-check/rubric.js";
+import {
+  COGNITION_RUN_STALE_MS,
+  DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
+} from "../storage/run-queue.js";
+import { decisionPayloadErasureGeneration } from "../decision-payload.js";
+import { lowWorthOrganizationSources } from "./organization-worth.js";
+import { createKnowledgeDecisionTable } from "./decision-storage.js";
 import { createKnowledgeTables, saveKnowledgeNode } from "./storage.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { KnowledgeService } from "./service.js";
@@ -158,8 +165,8 @@ it("recovers only the batches the selection port returns", async () => {
   // The batch's run is missing, which the handle would recover; the port says nothing is.
   await upkeep.recover();
   expect(reads.knowledgeRecoverableBatches).toHaveBeenCalledWith({
-    maxAttempts: 5,
-    claimedBefore: now - 60 * 60_000,
+    maxAttempts: DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
+    claimedBefore: now - COGNITION_RUN_STALE_MS,
     limit: cfg.maxSeeds,
   });
   expect(status()).toBe("pending");
@@ -169,4 +176,52 @@ it("recovers only the batches the selection port returns", async () => {
   ]);
   await upkeep.recover();
   expect(status()).toBe("abandoned");
+});
+
+/** A decision model that scores every question low, so a judged source is set aside. */
+function scoringDeps(): KnowledgeEngineDeps {
+  const decision = {
+    modelId: "scripted",
+    dispose() {},
+    decide: vi.fn(async (request: { questions: Record<string, unknown> }) => ({
+      model: "scripted",
+      answers: Object.fromEntries(
+        Object.keys(request.questions).map((key) => [key, { type: "score", score: 0.1 }]),
+      ),
+    })),
+  };
+  return {
+    ...deps,
+    decisions: { ...deps.decisions, getDecision: () => decision },
+  } as unknown as KnowledgeEngineDeps;
+}
+
+it("captures a review decision's payload subjects through the selection port", async () => {
+  reads.knowledgeDueReviews.mockResolvedValueOnce([
+    { id: "page", policy_review: 0, proof_policy_review: 0 },
+  ]);
+  const revision = db
+    .prepare<[], { revision: number }>("SELECT revision FROM knowledge_nodes WHERE id='page'")
+    .get()!.revision;
+  await new KnowledgeUpkeep(scoringDeps(), () => "kw").reviews();
+  expect(reads.knowledgeDecisionPayloadSubjects).toHaveBeenCalledWith(
+    { nodeIds: ["page"], nodeRevisions: { page: revision } },
+    decisionPayloadErasureGeneration(db),
+  );
+});
+
+it("captures an organization worth decision's payload subjects through the selection port", async () => {
+  createKnowledgeDecisionTable(db);
+  const low = await lowWorthOrganizationSources(scoringDeps(), { roster: "r1" }, () => ({
+    title: "Field roster",
+    content: "Six places on the observation team.",
+    sourceRevision: "r1",
+    sourceCreatedAt: null,
+    sourceUpdatedAt: null,
+  }));
+  expect(low).toEqual({ roster: "r1" });
+  expect(reads.knowledgeDecisionPayloadSubjects).toHaveBeenCalledWith(
+    { sourceIds: ["roster"], nodeIds: [] },
+    decisionPayloadErasureGeneration(db),
+  );
 });

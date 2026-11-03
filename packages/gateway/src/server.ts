@@ -865,7 +865,7 @@ export function createServer(
           omissionCandidates: (sourceId, tableName, deviceId) =>
             analyticsReplicaReads.analyticsOmissionCandidates(sourceId, tableName, deviceId),
           claimedKeys: (sourceId, tableName, keyValues) =>
-            analyticsReplicaReads.analyticsClaimedKeys(sourceId, tableName, [...keyValues]),
+            analyticsReplicaReads.analyticsClaimedKeys(sourceId, tableName, keyValues),
           judgeTombstones: (args) => w.judgeAnalyticsTombstones(args),
           recordPresence: (args) => w.recordAnalyticsPresence(args),
           recordRestorerOmissions: (args) => w.recordAnalyticsRestorerOmissions(args),

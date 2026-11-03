@@ -35,10 +35,27 @@ function run(
   ).run(id, JSON.stringify({ note: "x".repeat(4096) }), dedupeKey, status, attempts, nextAttemptAt);
 }
 
-function plan(sql: string, ...params: unknown[]): string[] {
+/** The query plan of the one statement `read` prepares, with the parameters it ran with. */
+function planOf(read: () => unknown): string[] {
+  const prepare = db.prepare.bind(db);
+  let ran: { sql: string; params: unknown[] } | undefined;
+  db.prepare = ((sql: string) => {
+    const statement = prepare(sql);
+    const get = statement.get.bind(statement);
+    statement.get = ((...params: unknown[]) => {
+      ran = { sql, params };
+      return get(...params);
+    }) as typeof statement.get;
+    return statement;
+  }) as typeof db.prepare;
+  try {
+    read();
+  } finally {
+    db.prepare = prepare;
+  }
   return db
-    .prepare<unknown[], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
-    .all(...params)
+    .prepare<unknown[], { detail: string }>(`EXPLAIN QUERY PLAN ${ran!.sql}`)
+    .all(...ran!.params)
     .map((row) => row.detail);
 }
 
@@ -51,9 +68,7 @@ it("finds an occurrence's run whatever its status, through the dedupe index", ()
   expect(hasCognitionRunWithDedupeKey(db, "sweep:themes:2027-03-09")).toBe(true);
   expect(hasCognitionRunWithDedupeKey(db, "sweep:themes:2027-03-08")).toBe(true);
   expect(hasCognitionRunWithDedupeKey(db, "digest:2027-03-11")).toBe(false);
-  expect(
-    plan("SELECT 1 FROM cognition_runs WHERE dedupe_key = ? LIMIT 1", "digest:2027-03-11"),
-  ).toEqual([
+  expect(planOf(() => hasCognitionRunWithDedupeKey(db, "digest:2027-03-11"))).toEqual([
     "SEARCH cognition_runs USING COVERING INDEX idx_cognition_runs_dedupe (dedupe_key=?)",
   ]);
 });
@@ -67,12 +82,7 @@ it("answers whether a run is due from the due index, counting only claimable run
   expect(hasDuePendingCognitionRun(db, now)).toBe(false);
   run("due", "pending", null, now - 1);
   expect(hasDuePendingCognitionRun(db, now)).toBe(true);
-  const steps = plan(
-    `SELECT 1 FROM cognition_runs
-      WHERE status = 'pending' AND next_attempt_at <= ? AND attempts < ? LIMIT 1`,
-    now,
-    5,
-  );
+  const steps = planOf(() => hasDuePendingCognitionRun(db, now));
   expect(steps).toHaveLength(1);
   expect(steps[0]).toMatch(/^SEARCH cognition_runs USING INDEX idx_cognition_runs_due /);
 });

@@ -73,6 +73,8 @@ export class StatusCache {
   private inflight = false;
   /** Advances on every synchronous read, so an older tick read can tell it lost. */
   private dbGeneration = 0;
+  /** Set by `stop()`: a tick read still in flight then settles unseen. */
+  private stopped = false;
 
   constructor(
     private readonly db: Db,
@@ -119,10 +121,12 @@ export class StatusCache {
     try {
       snapshot = await this.reads.statusCacheSnapshot();
     } catch (err) {
+      // The read worker goes away with the scheduler during shutdown.
+      if (this.stopped) return;
       StatusCache.keepOnTransientLock(err);
       return;
     }
-    if (generation === this.dbGeneration) this.apply(snapshot);
+    if (!this.stopped && generation === this.dbGeneration) this.apply(snapshot);
   }
 
   private apply(snapshot: StatusCacheSnapshot): void {
@@ -217,6 +221,7 @@ export class StatusCache {
    * and start the background refresh tick.
    */
   start(): void {
+    this.stopped = false;
     this.refreshDb();
     void this.refreshAnalytics();
     this.timer = setInterval(() => {
@@ -236,6 +241,7 @@ export class StatusCache {
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;

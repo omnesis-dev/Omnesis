@@ -19,10 +19,6 @@ import type Database from "better-sqlite3";
 import { readOccMeta } from "../data/occ-materialized.js";
 import { collectorRosterSnapshot } from "../collector-declaration-roster.js";
 import { computeSqliteTableStats } from "../sqlite-catalog.js";
-import { ioReadHandlers } from "./read-port.js";
-import { STATUS_CACHE_READS } from "../http/services/status-cache-reads.js";
-import { KNOWLEDGE_ENGINE_READS } from "../brain/knowledge/selection-reads.js";
-import { ANALYTICS_REPLICA_READS } from "../http/services/analytics-replica-reads.js";
 type Db = Database.Database;
 
 // Handlers import from canonical homes, not the
@@ -135,16 +131,16 @@ import {
   fetchTranscriptionVocabularyBatch,
   getTranscriptionVocabulary,
 } from "../transcribe/vocabulary/storage.js";
+import { ioReadHandlers } from "./read-port.js";
+import { IO_READS } from "./io-read-ports.js";
 import type { UrlCanonicalizerSpec, TranscriptionContext } from "@omnesis/core";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { ConversationRetentionFile } from "../agent/conversation-retention.js";
 import type { VocabularySettings } from "../transcribe/vocabulary/types.js";
 
 export const ioHandlers = {
-  // Read ports declared with `read-port.ts`: one `io.<name>` handler per read.
-  ...ioReadHandlers(STATUS_CACHE_READS),
-  ...ioReadHandlers(KNOWLEDGE_ENGINE_READS),
-  ...ioReadHandlers(ANALYTICS_REPLICA_READS),
+  // Every read port in `io-read-ports.ts`: one `io.<name>` handler per read.
+  ...ioReadHandlers(IO_READS),
   "io.fetchTranscriptionVocabularyBatch": (db: Db, settings: VocabularySettings) =>
     fetchTranscriptionVocabularyBatch(db, settings),
   "io.getTranscriptionVocabulary": (

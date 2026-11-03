@@ -3,7 +3,13 @@
 
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { directReadPort, ioReadHandlers, ioReadOpNames, ioReadPort } from "./read-port.js";
+import {
+  directReadPort,
+  ioReadHandlers,
+  ioReadOpNames,
+  ioReadPort,
+  mergeReadPorts,
+} from "./read-port.js";
 
 const READS = {
   fixtureCount: (db: Database.Database, kind: string) =>
@@ -12,6 +18,7 @@ const READS = {
   fixtureFails: (_db: Database.Database): number => {
     throw new Error("fixture read failed");
   },
+  fixtureMissing: (_db: Database.Database): string | undefined => undefined,
 };
 
 let db: Database.Database;
@@ -29,8 +36,25 @@ it("runs each read on the caller's handle, and turns a throw into a rejection", 
   await expect(pending).rejects.toThrow("fixture read failed");
 });
 
+it("delivers a read that finds nothing as null, as the worker does", async () => {
+  expect(await directReadPort(READS, db).fixtureMissing()).toBeNull();
+});
+
+it("merges ports, and refuses a read name two ports declare", () => {
+  const other = { fixtureKinds: (_db: Database.Database) => ["note", "task"] };
+  expect(Object.keys(mergeReadPorts(READS, other))).toEqual([
+    "fixtureCount",
+    "fixtureFails",
+    "fixtureMissing",
+    "fixtureKinds",
+  ]);
+  expect(() => mergeReadPorts(READS, { fixtureCount: READS.fixtureCount })).toThrow(
+    "Read port name declared twice: fixtureCount",
+  );
+});
+
 it("names each read's io op and hands the worker the same function", () => {
-  expect(ioReadOpNames(READS)).toEqual(["io.fixtureCount", "io.fixtureFails"]);
+  expect(ioReadOpNames(READS)).toEqual(["io.fixtureCount", "io.fixtureFails", "io.fixtureMissing"]);
   const handlers = ioReadHandlers(READS);
   expect(handlers["io.fixtureCount"]).toBe(READS.fixtureCount);
   expect(handlers["io.fixtureCount"](db, "task")).toBe(1);

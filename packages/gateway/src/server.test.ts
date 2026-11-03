@@ -25,6 +25,10 @@ import {
 import { computeSnapshotAbsencePlan, createDatabase, getSyncState, getWipeEpoch } from "./db.js";
 import { LATEST_SCHEMA_VERSION } from "./data/migrations.js";
 import { createServer } from "./server.js";
+import { StatusCache } from "./http/services/StatusCache.js";
+import { STATUS_CACHE_READS } from "./http/services/status-cache-reads.js";
+import { ANALYTICS_REPLICA_READS } from "./http/services/analytics-replica-reads.js";
+import { directReadPort } from "./scheduler/read-port.js";
 import {
   addSourceMember,
   createSource,
@@ -151,6 +155,24 @@ afterEach(() => {
   resetConnectedCollectorDeclarations();
   db.close();
   cleanupDb(dbPath);
+});
+
+test("the status cache's periodic refresh reads through the server's read ports", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  try {
+    const direct = directReadPort(STATUS_CACHE_READS, db);
+    const statusCacheSnapshot = vi.fn(() => direct.statusCacheSnapshot());
+    const readPorts = {
+      ...directReadPort(ANALYTICS_REPLICA_READS, db),
+      statusCacheSnapshot,
+    };
+    createServer(db, undefined, { readPorts });
+    expect(statusCacheSnapshot).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(StatusCache.REFRESH_INTERVAL_MS);
+    expect(statusCacheSnapshot).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("transport admission rejects requests before route services run", async () => {

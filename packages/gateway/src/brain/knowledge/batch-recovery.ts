@@ -3,7 +3,7 @@
 
 import type Database from "better-sqlite3";
 
-export interface RecoverableKnowledgeBatchOptions {
+interface RecoverableKnowledgeBatchOptions {
   /** A pending run at this many attempts is never claimed again. */
   maxAttempts: number;
   /** A run last claimed before this instant is presumed lost. */
@@ -11,7 +11,7 @@ export interface RecoverableKnowledgeBatchOptions {
   limit: number;
 }
 
-export interface RecoverableKnowledgeBatch {
+interface RecoverableKnowledgeBatch {
   id: string;
   runId: string;
   /** The batch's run failed. */

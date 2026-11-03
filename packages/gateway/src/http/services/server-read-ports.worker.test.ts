@@ -107,6 +107,8 @@ it("reads the same status cache snapshot on the worker as on the handle", async 
   expect(expected.devices).toHaveLength(3);
   expect(expected.syncStates.map((s) => s.source_id).sort()).toEqual([health.id, notes.id].sort());
   expect(Object.keys(expected.latestActivity)).toEqual([notes.id]);
+  // The cursor, which can be large, is never part of the cache.
+  expect(expected.syncStates.every((row) => !("cursor" in row))).toBe(true);
   expect([...expected.sourceHostingDeviceIds].sort()).toEqual([collector.id, phone.id].sort());
   expect(await worker.statusCacheSnapshot()).toStrictEqual(expected);
 });

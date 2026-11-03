@@ -1361,6 +1361,40 @@ describe("AnalyticsDb", () => {
     expect(recent.rows.map((row) => row[0])).toEqual(["1", "2"]);
   });
 
+  test("getCatalogActivity reads each table's identity and statistics as getCatalog does", async () => {
+    await db.ensureTable(testSchema, "test-source:local");
+    await db.ensureTable({ ...testSchema, tableName: "test_empty" }, "test-source:other");
+    await db.insertRecords(
+      "test_metrics",
+      [
+        { id: "1", date: "2024-01-01", metric_type: "steps", value: 10000, unit: "count" },
+        { id: "2", date: "2024-01-02", metric_type: "steps", value: 8500, unit: "count" },
+      ],
+      ["id"],
+    );
+    await db.updateCatalogStats("test_metrics");
+
+    const activity = await db.getCatalogActivity();
+    expect(activity).toStrictEqual(
+      (await db.getCatalog()).map((entry) => ({
+        tableName: entry.tableName,
+        displayName: entry.displayName,
+        sourceId: entry.sourceId,
+        recordCount: entry.recordCount,
+        latestDate: entry.latestDate,
+      })),
+    );
+    expect(activity.find((t) => t.tableName === "test_metrics")).toMatchObject({
+      recordCount: 2,
+      latestDate: expect.stringContaining("2024-01-02"),
+    });
+    // A table with no rows has no newest date.
+    expect(activity.find((t) => t.tableName === "test_empty")).toMatchObject({
+      recordCount: 0,
+      latestDate: null,
+    });
+  });
+
   test("updateCatalogStats updates record count", async () => {
     await db.ensureTable(testSchema, "test-source:local");
     await db.insertRecords(
@@ -2680,6 +2714,8 @@ describe("AnalyticsDb", () => {
         // The corrupt row was skipped (and warn-logged); other rows
         // would have been included if we'd seeded any.
         expect(catalog.find((c) => c.tableName === "good_row")).toBeUndefined();
+        // Its rows still exist, so the status view's activity read lists it.
+        expect((await reopened.getCatalogActivity()).map((t) => t.tableName)).toContain("good_row");
         // getPrimaryKey returns [] (existing fallback contract preserved).
         expect(await reopened.getPrimaryKey("good_row")).toEqual([]);
       } finally {

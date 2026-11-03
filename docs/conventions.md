@@ -530,18 +530,19 @@ that have worked, and how to find the culprit when the gateway reports a stall.
 
 **A read that leaves the main thread is declared once, as a read port.** A
 port is an object of plain functions that take a database handle first
-(`scheduler/read-port.ts`). `ioReadHandlers` registers each as an `io.<name>`
-worker op in `scheduler/io-handlers.ts`, `ioReadPort` gives the gateway its
-async form in `ioGateFromScheduler`, and `directReadPort` runs the same
-functions on the caller's handle where there is no read worker, as in
-storage-only tests. Both forms run the same code, so a test on the real io
-worker can assert that each returns exactly what the direct read returns
-(`toStrictEqual`), which also catches a result that does not survive the
-structured clone. Arguments and results are plain data: arrays rather than
-sets, no class instances. A read the caller must see in the same snapshot as
-its other reads, or one that belongs inside a writer transaction, stays where
-it is. `http/services/status-cache-reads.ts` and
-`brain/knowledge/selection-reads.ts` are examples.
+(`scheduler/read-port.ts`), registered by adding it to `IO_READS` in
+`scheduler/io-read-ports.ts`. That set gives the io worker one `io.<name>` op
+per read and the gateway's `IoGate` the async form that enqueues it.
+`directReadPort` runs the same functions on the caller's handle
+where there is no read worker, as in storage-only tests. Both forms run the
+same code, so a test on the real io worker can assert that each returns exactly
+what the direct read returns (`toStrictEqual`), which also catches a result
+that does not survive the structured clone: a clone keeps sets, maps and dates
+but drops functions, symbol keys and prototypes, so a read returns plain data.
+A read the caller must see in the same snapshot as its other reads, or one that
+belongs inside a writer transaction, stays where it is.
+`http/services/status-cache-reads.ts` and `brain/knowledge/selection-reads.ts`
+are examples.
 
 ### A DuckDB store is opened once per process, and once per machine
 

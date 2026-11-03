@@ -35,7 +35,7 @@ import { listRecoverableKnowledgeBatches } from "./batch-recovery.js";
 import type Database from "better-sqlite3";
 
 /**
- * Reads of the knowledge engine's tick and `next` declared as a read port
+ * Reads of `KnowledgeEngine.tick` and `KnowledgeEngine.next` declared as a read port
  * (`scheduler/read-port.ts`), so each is one `io.<name>` op with no further
  * wiring. The planning window reads each pending work row in due order and
  * batch recovery visits every open batch, so on a large backlog each takes a
