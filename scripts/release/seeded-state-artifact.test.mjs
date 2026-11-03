@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
+import { createBriefsStorageTables } from "../../packages/gateway/src/brain/storage/schema.js";
 import { runSchemaSetup } from "../../packages/gateway/src/data/schema.js";
 import { createDatabase } from "../../packages/gateway/src/db.js";
 import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
@@ -233,6 +234,59 @@ describe("seeded-state artifacts", () => {
     const original = new Database(paths.sourcePath, { readonly: true });
     expect(original.prepare("SELECT seconds FROM live_voice_usage").pluck().get()).toBe(42);
     original.close();
+  });
+
+  it("preserves standalone morning brief references with their documents and sent messages", () => {
+    const paths = fixture();
+    const source = new Database(paths.sourcePath);
+    createBriefsStorageTables(source);
+    source.exec(`
+      INSERT INTO morning_briefs(day,run_id,conversation_id,message_id,item_count,sent_at)
+        VALUES ('2026-01-02','run-1','conversation-1','message-1',0,100),
+               ('2026-01-03','run-2','conversation-1','message-2',0,200);
+      INSERT INTO morning_brief_references(message_id,rank,document_id)
+        VALUES ('message-1',1,'doc-1'), ('message-2',1,'doc-1');
+    `);
+    source.close();
+    const tables = [
+      "documents",
+      "morning_briefs",
+      "morning_brief_items",
+      "morning_brief_references",
+    ];
+    createSeededStateArtifact(
+      {
+        ...spec(paths, tables),
+        expected: {
+          rowCounts: {
+            "omnesis.db": {
+              documents: 1,
+              morning_briefs: 2,
+              morning_brief_items: 0,
+              morning_brief_references: 2,
+            },
+          },
+        },
+      },
+      paths.artifact,
+    );
+    installSeededStateArtifact(paths.artifact, paths.state, installOptions(paths));
+    const installed = new Database(join(paths.state, "omnesis.db"), { readonly: true });
+    expect(
+      installed
+        .prepare(
+          `
+      SELECT b.day, b.item_count, r.rank, d.id, d.title
+      FROM morning_briefs b JOIN morning_brief_references r ON r.message_id=b.message_id
+      JOIN documents d ON d.id=r.document_id ORDER BY b.day,r.rank
+    `,
+        )
+        .all(),
+    ).toEqual([
+      { day: "2026-01-02", item_count: 0, rank: 1, id: "doc-1", title: "Riverside planning notes" },
+      { day: "2026-01-03", item_count: 0, rank: 1, id: "doc-1", title: "Riverside planning notes" },
+    ]);
+    installed.close();
   });
 
   it("classifies every table in the current gateway and index schemas", () => {

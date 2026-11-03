@@ -224,6 +224,7 @@ const SAFE_TABLES = new Set([
   "merge_candidates",
   "merge_rules",
   "morning_brief_items",
+  "morning_brief_references",
   "morning_briefs",
   "mutable_list_revisions",
   "near_dup_df",
