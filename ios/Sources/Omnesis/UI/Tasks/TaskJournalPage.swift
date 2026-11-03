@@ -67,6 +67,13 @@ struct TaskJournalPage: View {
 
     private var journal: some View {
         GeometryReader { viewport in
+            #if DEBUG
+            let previewLayout = PreviewLayout(
+                viewport: viewport.size,
+                row: initialFan.flatMap { fan.rowFrames[$0.taskId] },
+                task: initialFan.flatMap { preview in page.tasks.first { $0.id == preview.taskId } }
+            )
+            #endif
             ZStack(alignment: .topLeading) {
                 ScrollView {
                     // Eager, not lazy: a journal page is short (Done pages in
@@ -91,25 +98,35 @@ struct TaskJournalPage: View {
             // `/status` can report the chat capability after the page appeared.
             .onChange(of: onChat != nil) { _, _ in configureFan(size: viewport.size) }
             .onChange(of: offersTell) { _, _ in configureFan(size: viewport.size) }
-            .task(id: viewport.size) {
-                #if DEBUG
-                if let initialFan, let task = page.tasks.first(where: { $0.id == initialFan.taskId }) {
-                    do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
-                    fan.previewOpen(
-                        task,
-                        pressedAt: initialFan.pressedAt,
-                        today: model.today,
-                        mode: initialFan.mode,
-                        highlighting: initialFan.highlight
-                    )
-                    initialFan.onLayout?(fan.session, CGRect(origin: .zero, size: viewport.size))
+            #if DEBUG
+                // Row preferences and the viewport settle independently. Stage the
+                // preview again when its task or either measured geometry changes.
+                .task(id: previewLayout) {
+                    if !Task.isCancelled, let initialFan, let task = previewLayout.task {
+                        configureFan(size: previewLayout.viewport)
+                        fan.previewOpen(
+                            task,
+                            pressedAt: initialFan.pressedAt,
+                            today: model.today,
+                            mode: initialFan.mode,
+                            highlighting: initialFan.highlight
+                        )
+                        initialFan.onLayout?(fan.session, CGRect(origin: .zero, size: viewport.size))
+                    }
                 }
-                #endif
-            }
+            #endif
         }
         .coordinateSpace(.named(TaskFanOverlay.space))
         .onPreferenceChange(TaskRowFrameKey.self) { frames in fan.rowFrames = frames }
     }
+
+    #if DEBUG
+    private struct PreviewLayout: Equatable {
+        let viewport: CGSize
+        let row: CGRect?
+        let task: TaskRecord?
+    }
+    #endif
 
     private func configureFan(size: CGSize) {
         fan.updateBounds(CGRect(origin: .zero, size: size))

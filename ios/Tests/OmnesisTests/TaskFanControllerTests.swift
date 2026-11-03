@@ -4,6 +4,8 @@
 #if canImport(UIKit)
 import CoreGraphics
 @testable import Omnesis
+import SwiftUI
+import UIKit
 import XCTest
 
 /// The fan a finger drove always closes when the finger lifts — the device
@@ -14,6 +16,119 @@ import XCTest
 final class TaskFanControllerTests: XCTestCase {
     private let task = TaskRecord(id: "loop_1", title: "Book the venue tour", scheduledFor: "2026-10-20")
     private let press = CGPoint(x: 290, y: 420)
+
+    private actor PreviewService: TasksService {
+        let task: TaskRecord
+
+        init(task: TaskRecord) {
+            self.task = task
+        }
+
+        func view(_ view: TaskViewKind, day: String, limit: Int?, before: String?) async throws -> TaskViewPage {
+            TaskViewPage(view: view, day: day, tasks: [task])
+        }
+
+        func detail(id: String) async throws -> TaskDetail {
+            throw GatewayClient.Error.notFound
+        }
+
+        func perform(_ action: TaskAction, on id: String) async throws -> TaskMutation {
+            throw GatewayClient.Error.notFound
+        }
+
+        func undo(seq: Int) async throws -> TaskMutation {
+            throw GatewayClient.Error.notFound
+        }
+
+        func startConversation(about id: String) async throws -> ConversationSummary {
+            throw GatewayClient.Error.notFound
+        }
+    }
+
+    private final class PreviewObservation {
+        let emptyLayout = XCTestExpectation(description: "An empty journal has a viewport")
+        let opened = XCTestExpectation(description: "The arriving row opens its chat fan")
+        var initialViewport: CGRect?
+        var openedLayout: (TaskFanSession, CGRect)?
+        private var sawEmptyLayout = false
+
+        func observe(_ session: TaskFanSession?, viewport: CGRect, rowsReady: Bool) {
+            guard viewport.width > 0, viewport.height > 0 else { return }
+            if !rowsReady {
+                initialViewport = viewport
+                if !sawEmptyLayout {
+                    sawEmptyLayout = true
+                    emptyLayout.fulfill()
+                }
+            } else if let session, openedLayout == nil {
+                openedLayout = (session, viewport)
+                opened.fulfill()
+            }
+        }
+    }
+
+    func testPreviewOpensWhenRowsArriveAfterTheViewport() async throws {
+        for scheme in [ColorScheme.dark, .light] {
+            try await assertLatePreview(scheme: scheme)
+        }
+    }
+
+    private func assertLatePreview(scheme: ColorScheme) async throws {
+        let task = TaskRecord(id: "preview-late-row", title: "Fold the paper glider")
+        let model = TasksModel(service: PreviewService(task: task))
+        let observation = PreviewObservation()
+        var preview = TaskFanPreview(taskId: task.id, highlight: .chat)
+        preview.onLayout = { session, viewport in
+            observation.observe(session, viewport: viewport, rowsReady: !model.tasks.isEmpty)
+        }
+        let window = previewWindow(model: model, preview: preview, scheme: scheme)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        await fulfillment(of: [observation.emptyLayout], timeout: 5)
+        XCTAssertTrue(model.tasks.isEmpty)
+        await model.load()
+        await fulfillment(of: [observation.opened], timeout: 5)
+
+        let image = renderPreview(window)
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try XCTUnwrap(image.pngData()).write(to: directory.appendingPathComponent("task-fan-late-row-\(scheme).png"))
+        let (session, viewport) = try XCTUnwrap(observation.openedLayout)
+        XCTAssertEqual(viewport, observation.initialViewport, "The row must open the fan without a viewport resize")
+        XCTAssertEqual(session.highlighted, .chat)
+        XCTAssertTrue(session.targets.contains { $0.action == .chat })
+        for target in session.targets {
+            XCTAssertTrue(viewport.contains(target.frame), "\(target.label) is clipped by the visible viewport")
+        }
+    }
+
+    private func previewWindow(model: TasksModel, preview: TaskFanPreview, scheme: ColorScheme) -> UIWindow {
+        let view = NavigationStack {
+            TaskJournalPage(model: model, view: .today, offersTell: true, onChat: { _ in }, initialFan: preview)
+                .navigationTitle("Tasks")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { TasksToolbar(menuOpen: .constant(false)) }
+        }
+        .environment(AppStore.preview())
+        .preferredColorScheme(scheme)
+        .transaction { $0.animation = nil }
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        window.rootViewController = UIHostingController(rootView: view)
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        _ = renderPreview(window)
+        return window
+    }
+
+    private func renderPreview(_ window: UIWindow) -> UIImage {
+        window.rootViewController?.view.setNeedsLayout()
+        window.rootViewController?.view.layoutIfNeeded()
+        return UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+            window.rootViewController?.view.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+    }
 
     private func controller() -> (TaskFanController, () -> [TaskFanAction]) {
         let fan = TaskFanController()
