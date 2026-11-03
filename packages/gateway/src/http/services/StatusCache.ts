@@ -8,6 +8,7 @@ import {
   listDeviceIdsHostingSources,
   listSources,
 } from "../../data/repositories/SourceRepository.js";
+import { withActivity } from "../../observability/main-activity.js";
 import type Database from "better-sqlite3";
 import type { AnalyticsDb } from "../../analytics-db.js";
 
@@ -95,6 +96,10 @@ export class StatusCache {
    * uncontended.
    */
   refreshDb(): void {
+    withActivity("statusCache.refreshDb", () => this.readDb());
+  }
+
+  private readDb(): void {
     try {
       this.latestActivity = getLatestActivityBySource(this.db);
       this.listSources = listSources(this.db);

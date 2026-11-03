@@ -25,9 +25,9 @@ import { WhisperTranscriber, whisperDepsAvailable } from "./whisper-transcriber.
 import { SyntheticTranscriber } from "./synthetic-transcriber.js";
 import { HttpTranscriber } from "./http-transcriber.js";
 import { ChatAudioTranscriber } from "./chat-audio-transcriber.js";
+import { isUnreadableAudio, type AudioDecoder } from "./audio-decode.js";
 import type { ResolvedAssignment, TranscribeCapability } from "@omnesis/core";
 import type { WhisperModuleLoader, WhisperWorkerSpawner } from "./whisper-transcriber.js";
-import type { AudioDecoder } from "./audio-decode.js";
 
 import type { InferenceHealth } from "../inference/model-health.js";
 
@@ -57,8 +57,9 @@ export async function loadTranscriberFromResolved(
 ): Promise<TranscribeCapability | null> {
   const beginModelCall = deps.health?.callFactory(resolved.role);
   const provider = await loadProvider(resolved, deps);
+  // A recording that does not decode says nothing about the model.
   return provider && deps.health
-    ? deps.health.observe(resolved, provider, ["transcribe"], beginModelCall)
+    ? deps.health.observe(resolved, provider, ["transcribe"], beginModelCall, isUnreadableAudio)
     : provider;
 }
 

@@ -11,6 +11,8 @@ import {
   deriveAttachmentStableId,
   transcriptionSyncIssues,
   TRANSCRIBER_UNAVAILABLE,
+  AUDIO_UNREADABLE,
+  AudioUnreadableError,
 } from "@omnesis/core";
 import { makeCursorValidator } from "@omnesis/source-sdk";
 import { SourceId, ProviderId, SyncError, isTransientSyncError } from "@omnesis/types";
@@ -424,6 +426,7 @@ export class WhatsAppMessagesSource {
           awaiting: media.voiceNotes.pending,
           transcriberUnavailable: media.voiceNotes.transcriberUnavailable,
           unavailable: media.voiceNotes.unavailable,
+          unreadable: media.voiceNotes.unreadable,
         });
       }
     }
@@ -721,6 +724,13 @@ export class WhatsAppMessagesSource {
         msg.transcription = text === "" ? "no-speech" : undefined;
         this.advanceMediaLifecycle(msg, { kind: "transcribed", text });
       } catch (err) {
+        // The same bytes decode the same way, so the note is given up on
+        // until a resync.
+        if (err instanceof AudioUnreadableError) {
+          this.advanceMediaLifecycle(msg, { kind: "terminal", error: AUDIO_UNREADABLE });
+          msg.transcription = "audio-unreadable";
+          continue;
+        }
         // Durable media retries independently of the page cursor, so a
         // transient processor outage must not hold primary messages hostage.
         // Legacy rows lack that lifecycle and retain the old page retry.

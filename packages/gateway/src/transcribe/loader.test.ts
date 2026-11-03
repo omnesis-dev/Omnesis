@@ -6,6 +6,7 @@ import { InferenceHealth } from "../inference/model-health.js";
 import { loadTranscriberFromResolved } from "./loader.js";
 import { HttpTranscriber } from "./http-transcriber.js";
 import { ChatAudioTranscriber } from "./chat-audio-transcriber.js";
+import { AudioDecodeError } from "./audio-decode.js";
 import type { ResolvedAssignment } from "@omnesis/core";
 
 const http: ResolvedAssignment = {
@@ -144,6 +145,87 @@ describe("loadTranscriberFromResolved protocols", () => {
     expect(provider).not.toBeNull();
     for (let i = 0; i < 3; i++)
       await expect(provider!.transcribe(new Uint8Array([1]), "audio/ogg")).rejects.toThrow();
+    expect(health.snapshot().warnings).toEqual([]);
+  });
+});
+
+describe("transcriber model health", () => {
+  const backend: ResolvedAssignment = {
+    role: "transcriber",
+    kind: "http",
+    backendKey: "gpu",
+    model: "example-speech",
+    url: "http://127.0.0.1:8080",
+    available: true,
+    allowRemoteInference: false,
+  };
+  const healthFor = () =>
+    new InferenceHealth(() => ({ identity: "1", fingerprint: "1", assignment: "gpu/example" }));
+  const audio = new Uint8Array([1]);
+
+  test("recordings that do not decode are not model failures", async () => {
+    const health = healthFor();
+    let backendCalls = 0;
+    const provider = await loadTranscriberFromResolved(backend, {
+      health,
+      decodeAudio: async () => {
+        throw new AudioDecodeError("ffmpeg produced no audio samples", { unreadable: true });
+      },
+      fetchFn: (async () => {
+        backendCalls++;
+        return Response.json({ text: "words" });
+      }) as typeof fetch,
+    });
+    for (let i = 0; i < 5; i++)
+      await expect(provider!.transcribe(audio, "audio/ogg")).rejects.toThrow(AudioDecodeError);
+    expect(backendCalls).toBe(0);
+    expect(health.snapshot().warnings).toEqual([]);
+  });
+
+  test("a decoder that cannot run still counts toward the warning", async () => {
+    const health = healthFor();
+    const provider = await loadTranscriberFromResolved(backend, {
+      health,
+      decodeAudio: async () => {
+        throw new AudioDecodeError("ffmpeg timed out after 120000ms");
+      },
+      fetchFn: (async () => Response.json({ text: "words" })) as typeof fetch,
+    });
+    for (let i = 0; i < 3; i++)
+      await expect(provider!.transcribe(audio, "audio/ogg")).rejects.toThrow(AudioDecodeError);
+    expect(health.snapshot().warnings).toEqual([
+      expect.objectContaining({ role: "transcriber", consecutiveFailures: 3 }),
+    ]);
+  });
+
+  test("a failing backend raises the warning, and unreadable audio does not clear it", async () => {
+    const health = healthFor();
+    let unreadable = false;
+    let backendUp = false;
+    const provider = await loadTranscriberFromResolved(backend, {
+      health,
+      decodeAudio: async () => {
+        if (unreadable) throw new AudioDecodeError("ffmpeg exited 183", { unreadable: true });
+        return new Float32Array(16_000);
+      },
+      fetchFn: (async () =>
+        backendUp
+          ? Response.json({ text: "words" })
+          : new Response("overloaded", { status: 500 })) as typeof fetch,
+    });
+    for (let i = 0; i < 3; i++)
+      await expect(provider!.transcribe(audio, "audio/ogg")).rejects.toThrow();
+    expect(health.snapshot().warnings).toEqual([
+      expect.objectContaining({ role: "transcriber", consecutiveFailures: 3 }),
+    ]);
+    unreadable = true;
+    await expect(provider!.transcribe(audio, "audio/ogg")).rejects.toThrow(AudioDecodeError);
+    expect(health.snapshot().warnings).toHaveLength(1);
+    unreadable = false;
+    backendUp = true;
+    await expect(provider!.transcribe(audio, "audio/ogg")).resolves.toMatchObject({
+      text: "words",
+    });
     expect(health.snapshot().warnings).toEqual([]);
   });
 });

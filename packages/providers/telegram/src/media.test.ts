@@ -10,7 +10,12 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TRANSCRIBER_UNAVAILABLE, resolveAttachmentConfig } from "@omnesis/core";
+import {
+  AUDIO_UNREADABLE,
+  AudioUnreadableError,
+  TRANSCRIBER_UNAVAILABLE,
+  resolveAttachmentConfig,
+} from "@omnesis/core";
 import { TelegramError, type TgMediaRef, type TgMessage } from "./client/types.js";
 import {
   JAMIE,
@@ -192,6 +197,38 @@ describe("voice notes", () => {
     advance(86_400);
     await syncAll(r.source, boot.cursor);
     expect(downloads(r)).toBe(1);
+  });
+
+  it("gives up on audio that decodes to nothing until a resync, and reports it apart", async () => {
+    let decodable = false;
+    const transcribe = vi.fn((data: Uint8Array) =>
+      decodable
+        ? Promise.resolve({ text: decode(data) })
+        : Promise.reject(new AudioUnreadableError()),
+    );
+    const r = await mediaRig(
+      [from(1, T0, voice("v1"))],
+      { v1: "Marathon entry form" },
+      { transcribeAudio: transcribe },
+    );
+    const boot = await syncAll(r.source, null);
+    expect(dayDoc(boot.pages).content).toContain("[Voice note, 0:07 — audio could not be decoded]");
+    expect(boot.pages.at(-1)!.issues).toEqual([
+      expect.objectContaining({ code: "transcription-audio-unreadable", count: 1 }),
+    ]);
+    expect(r.provider.getArchive().getMessages(CHAT.id, [1]).get(1)).toMatchObject({
+      mediaState: "unavailable",
+      mediaLastError: AUDIO_UNREADABLE,
+    });
+    advance(86_400);
+    await syncAll(r.source, boot.cursor);
+    expect(transcribe).toHaveBeenCalledTimes(1);
+
+    decodable = true;
+    r.source.onResync();
+    const resynced = await syncAll(r.source, boot.cursor);
+    expect(dayDoc(resynced.pages).content).toContain("[Voice note, 0:07]: Marathon entry form");
+    expect(transcribe).toHaveBeenCalledTimes(2);
   });
 
   it("keeps audio, video, stickers and round videos as placeholders, never downloaded", async () => {

@@ -375,8 +375,13 @@ export function writeOfflineBackup(opts: OfflineBackupOptions): OfflineBackupRes
  * Copy a file or directory tree owner-only. Symbolic links and special files
  * are not followed: a backup mirrors what the config directory holds, never
  * what a link inside it points at.
+ *
+ * It copies entry by entry with plain calls rather than `fs.cpSync`: a
+ * container's bind mount of the config directory through a Mac VM's file
+ * share (colima's virtiofs) refuses `cpSync`'s directory copy with EACCES
+ * while accepting each mkdir, copy and chmod it is made of.
  */
-function copyPrivate(from: string, to: string): void {
+export function copyPrivate(from: string, to: string): void {
   const stat = lstatSync(from);
   if (stat.isDirectory()) {
     mkdirSync(to, { recursive: true, mode: 0o700 });

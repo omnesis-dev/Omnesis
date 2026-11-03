@@ -523,6 +523,11 @@ only the plan says what it cost.
 people or documents per item changes the arithmetic every consumer of that data
 assumed. Before enabling one, look at what it costs the writer.
 
+The main thread is held to the same discipline: it is the event loop every
+request waits on, so no synchronous segment on it should run past about 50 ms.
+[`stall-investigation.md`](stall-investigation.md) gives the rule, the fixes
+that have worked, and how to find the culprit when the gateway reports a stall.
+
 ### A DuckDB store is opened once per process, and once per machine
 
 DuckDB guards its database file with a POSIX record lock, and POSIX record

@@ -298,7 +298,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   const [queueHandoffs, setQueueHandoffs] = useState(queueHandoffsRef.current);
   const consumedQueueReceiptsRef = useRef(new Map());
   const [consumedQueueReceipts, setConsumedQueueReceipts] = useState(consumedQueueReceiptsRef.current);
-  const visibleControls = visibleQueueControls(controls, queueHandoffs.get(state.sessionId), consumedQueueReceipts.get(state.sessionId));
+  const visibleControls = visibleQueueControls(controls, queueHandoffs.get(state.sessionId), consumedQueueReceipts.get(state.sessionId), new Set(state.turns.filter((turn) => turn.role === "user").map((turn) => turn.id)));
   function dispatchConversationEvent(action) {
     const consumed = recordConsumedQueueReceipts(consumedQueueReceiptsRef.current, action);
     if (consumed !== consumedQueueReceiptsRef.current) {
@@ -311,9 +311,11 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   const [unconfirmed, setUnconfirmed] = useState(null);
   const composerDraftKey = convoId ?? (shouldReplaceLandingUrl(window.location.pathname) ? "new" : (state.sessionId ?? "new"));
   const controlsRequestRef = useRef(0);
+  const activeSubmissionsRef = useRef(new Map());
   async function refreshControls(sessionId = activeSessionIdRef.current) {
     if (!sessionId || !clientRef.current) return;
-    setUnconfirmed({ sessionId, submission: readPendingSubmission(sessionId) });
+    const pending = readPendingSubmission(sessionId);
+    setUnconfirmed({ sessionId, submission: pending && activeSubmissionsRef.current.get(sessionId) === pending.clientMessageId ? null : pending });
     const request = ++controlsRequestRef.current;
     try {
       const result = await clientRef.current.getControls(sessionId);
@@ -1061,6 +1063,10 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         ...(options.deepResearch ? { deepResearch: true } : {}),
         ...(options.clarificationId ? { clarificationId: options.clarificationId } : {}),
       });
+      // Pending storage also supports recovery after reload; an active request
+      // already owns its optimistic message and must not show a retry card.
+      activeSubmissionsRef.current.set(sessionId, submission.clientMessageId);
+      setUnconfirmed((prev) => prev?.sessionId === sessionId ? null : prev);
       if (!state.busy || submission.mode === "interrupt") {
         optimistic = "turn";
         dispatch({
@@ -1106,6 +1112,10 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
         setActionFailure({ sessionId, message: `Message not confirmed. Send again to retry. ${err.message ?? String(err)}` });
       }
       return false;
+    } finally {
+      if (activeSubmissionsRef.current.get(sessionId) === submission?.clientMessageId) {
+        activeSubmissionsRef.current.delete(sessionId);
+      }
     }
   }
 

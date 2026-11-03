@@ -18,9 +18,9 @@
  * speech was detected. Callers fall back to a plain placeholder.
  */
 
+import { SyncError, type PersonIdentifier, type SourceId, type SyncIssue } from "@omnesis/types";
 import { assertNever } from "./utils.js";
 import type { TranscriptionResult } from "./models/capabilities.js";
-import type { PersonIdentifier, SourceId, SyncIssue } from "@omnesis/types";
 
 /** A known canonical person or source-native identifiers resolved by the gateway. */
 export interface TranscriptionPerson {
@@ -64,6 +64,11 @@ export type { TranscriptionResult } from "./models/capabilities.js";
  */
 export const MAX_TRANSCRIPTION_MS = 6 * 60 * 60_000;
 
+/**
+ * Rejects with {@link AudioUnreadableError} when the gateway decoded the bytes
+ * and found no audio in them, and with a transient `SyncError` when the
+ * transcriber or the gateway could not be reached.
+ */
 export type AudioTranscribeFn = (
   data: Uint8Array,
   mimeType: string,
@@ -84,6 +89,44 @@ export type AudioTranscribeFn = (
 export const TRANSCRIBER_UNAVAILABLE = "transcriber-unavailable";
 
 /**
+ * The error a source records against an audio item whose bytes the gateway
+ * could not decode into audio. Sending the same bytes again gives the same
+ * answer, so a source stops sending the item until its audio changes or the
+ * source is resynced. A per-item note in a source's own store, like
+ * {@link TRANSCRIBER_UNAVAILABLE}.
+ */
+export const AUDIO_UNREADABLE = "audio-unreadable";
+
+/**
+ * The request header a client sends on `POST /inference/transcribe` to say it
+ * understands {@link TRANSCRIBE_AUDIO_UNREADABLE_CODE}. A gateway answers a
+ * client that does not send it with the retryable 503 it answers every other
+ * failed transcription with, which is what such a client knows how to handle.
+ */
+export const TRANSCRIBE_REPORT_UNREADABLE_HEADER = "x-omnesis-report-unreadable-audio";
+
+/**
+ * The error code of the 422 `POST /inference/transcribe` answers, to a client
+ * that sent {@link TRANSCRIBE_REPORT_UNREADABLE_HEADER}, when the audio bytes
+ * decode to no audio: the decoder rejected them as invalid data, found no
+ * audio stream in them, or decoded no samples from them.
+ */
+export const TRANSCRIBE_AUDIO_UNREADABLE_CODE = "AUDIO_UNREADABLE";
+
+/**
+ * Thrown by an {@link AudioTranscribeFn} when the gateway reported that the
+ * audio bytes decode to no audio. It concerns the one item, so its scope is
+ * `item`; it is never transient, because retrying the same bytes cannot
+ * succeed.
+ */
+export class AudioUnreadableError extends SyncError {
+  constructor(message = "the audio could not be decoded") {
+    super("unknown", message, { scope: "item" });
+    this.name = "AudioUnreadableError";
+  }
+}
+
+/**
  * Why an audio item renders as a placeholder instead of its spoken text. A
  * source works this out from its own lifecycle before rendering a
  * conversation, so a reader of the document can tell a note that is queued
@@ -95,9 +138,15 @@ export const TRANSCRIBER_UNAVAILABLE = "transcriber-unavailable";
  * - `no-speech`               — transcribed, and nothing was said.
  * - `audio-unavailable`       — the audio is gone from the source for good.
  * - `audio-missing`           — the audio was never downloaded to this device.
+ * - `audio-unreadable`        — the audio's bytes decode to no audio.
  */
 export type TranscriptionPlaceholderState =
-  "awaiting" | "transcriber-unavailable" | "no-speech" | "audio-unavailable" | "audio-missing";
+  | "awaiting"
+  | "transcriber-unavailable"
+  | "no-speech"
+  | "audio-unavailable"
+  | "audio-missing"
+  | "audio-unreadable";
 
 /** The words every conversation source puts after its audio placeholder. */
 export function transcriptionPlaceholderNote(state: TranscriptionPlaceholderState): string {
@@ -112,6 +161,8 @@ export function transcriptionPlaceholderNote(state: TranscriptionPlaceholderStat
       return "audio unavailable";
     case "audio-missing":
       return "audio not downloaded on this device";
+    case "audio-unreadable":
+      return "audio could not be decoded";
     default:
       return assertNever(state);
   }
@@ -125,6 +176,8 @@ export interface TranscriptionBacklog {
   transcriberUnavailable: number;
   /** Items whose audio is gone for good, so they will never be transcribed. */
   unavailable: number;
+  /** Items whose audio decodes to no audio, so they are not sent again until a resync. */
+  unreadable: number;
 }
 
 /**
@@ -132,7 +185,8 @@ export interface TranscriptionBacklog {
  * client shows the same count next to the source. A backlog a transcriber is
  * working through is information; one that waits for an unavailable transcriber
  * is a warning with troubleshooting steps attached. Audio that is gone is reported
- * once as a warning, since nothing will bring it back.
+ * once as a warning, since nothing will bring it back; so is audio that cannot
+ * be decoded, which is not sent again until the source is resynced.
  */
 export function transcriptionSyncIssues(
   backlog: TranscriptionBacklog,
@@ -172,6 +226,16 @@ export function transcriptionSyncIssues(
       count: backlog.unavailable,
       severity: "warning",
       message: `${countOf(backlog.unavailable, unit)} could not be transcribed: the audio is no longer available from the source`,
+    });
+  }
+  if (backlog.unreadable > 0) {
+    issues.push({
+      code: "transcription-audio-unreadable",
+      scope: "item",
+      kind: "unknown",
+      count: backlog.unreadable,
+      severity: "warning",
+      message: `${countOf(backlog.unreadable, unit)} could not be transcribed: the audio could not be decoded`,
     });
   }
   return issues;

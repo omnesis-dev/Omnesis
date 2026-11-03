@@ -72,13 +72,18 @@ export interface ScopedAnnotation {
   loopIds: readonly string[];
   projectionIds: readonly string[];
 }
-/** Same filter semantics for query results and prospective canonical annotations. */
+/**
+ * Same filter semantics for query results and prospective canonical annotations.
+ *
+ * `bounds` are the row's bounds normalized in `scope.timeZone`; a caller that
+ * has already computed them passes them in rather than paying for the
+ * resolution twice.
+ */
 export function annotationMatchesScope(
   row: ScopedAnnotation,
   scope: AnnotationScope,
   contained = false,
-): boolean {
-  const bounds = normalizedAnnotationBounds(
+  bounds: { startMs: number; endExclusiveMs: number } = normalizedAnnotationBounds(
     {
       precision: row.precision,
       canonical: row.canonical,
@@ -87,7 +92,8 @@ export function annotationMatchesScope(
         row.intervalEndMs < Number.MAX_SAFE_INTEGER ? row.intervalEndMs + 1 : row.intervalEndMs,
     },
     scope.timeZone,
-  );
+  ),
+): boolean {
   if (
     contained
       ? bounds.startMs < scope.fromMs || bounds.endExclusiveMs > scope.toExclusiveMs

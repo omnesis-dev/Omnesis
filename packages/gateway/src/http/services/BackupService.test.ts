@@ -205,6 +205,9 @@ describe("BackupService", () => {
     expect(readFileSync(join(dir, "keyring", "storage-keys", "main-db.json"), "utf8")).toBe(
       "fake-wrapped-key",
     );
+    // A copied tree is owner-only, directories and files alike.
+    expect(statSync(join(dir, "keyring", "storage-keys")).mode & 0o777).toBe(0o700);
+    expect(statSync(join(dir, "keyring", "storage-keys", "main-db.json")).mode & 0o777).toBe(0o600);
     // The root-key recovery envelope is bundled byte-identical to the source.
     expect(
       readFileSync(join(dir, "keyring", "recovery-envelope.json")).equals(

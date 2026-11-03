@@ -23,6 +23,14 @@ import {
   urlPatternRegexSchema,
 } from "./common.js";
 
+// GET /admin/stalls — main-thread stalls over the last `windowMinutes`, those
+// shorter than `minMs` left out, with the newest `limit` listed one by one.
+export const stallsQuery = z.object({
+  windowMinutes: z.coerce.number().int().min(1).max(1_440).default(60),
+  minMs: z.coerce.number().int().min(0).max(3_600_000).default(0),
+  limit: z.coerce.number().int().min(0).max(500).default(50),
+});
+
 // POST /admin/devices
 // DELETE /admin/devices/:id — revoke by default; `forget=true` hard-deletes.
 export const deleteDeviceQuery = z.object({

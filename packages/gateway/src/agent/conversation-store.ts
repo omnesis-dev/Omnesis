@@ -26,7 +26,6 @@
  */
 
 import {
-  appendFile,
   mkdir,
   opendir,
   readFile,
@@ -44,6 +43,7 @@ import {
   agentTerminalFailureSchema,
   assertNever,
   createLogger,
+  pMap,
   type AgentConversationTerminalFailure,
   type AgentTerminalFailure,
 } from "@omnesis/core";
@@ -312,8 +312,8 @@ export interface ConversationStore {
    */
   deferRetentionCandidates?(candidates: readonly ConversationRetentionCandidate[]): void;
   /**
-   * Retention deletion variant that journals the summary-index removal in
-   * O(1), leaving the next normal index write to compact it.
+   * Retention deletion variant that removes the summary-index entry in O(1),
+   * leaving the next normal index write to compact the persisted index.
    */
   deleteForRetention?(id: string): Promise<boolean>;
   /**
@@ -323,34 +323,73 @@ export interface ConversationStore {
   setPinned(id: string, pinned: boolean): Promise<boolean>;
 }
 
-interface IndexedConversationSummary extends ConversationSummary {
-  fileMtimeMs: number;
-  fileCtimeMs: number;
-  fileSizeBytes: number;
+/**
+ * One conversation file as the summary index knows it: the identity of the
+ * file the summary was read from, and that summary — null when the file
+ * exists but holds no valid record, so a corrupt file is not reread on every
+ * listing.
+ */
+interface SummaryIndexEntry {
+  fileIdentity: string;
+  summary: ConversationSummary | null;
+}
+
+interface PersistedSummaryIndexEntry extends SummaryIndexEntry {
+  id: string;
 }
 
 interface ConversationSummaryIndex {
-  version: 3;
-  conversations: IndexedConversationSummary[];
+  version: 4;
+  conversations: PersistedSummaryIndexEntry[];
 }
 
-const SUMMARY_INDEX_FILE = ".summary-index.v3";
-const SUMMARY_INDEX_TOMBSTONES_FILE = ".summary-index.deleted";
+const SUMMARY_INDEX_FILE = ".summary-index.v4";
 
-// Older index-cache filenames we best-effort remove on rebuild so the
-// conversations dir doesn't accumulate dead caches across upgrades. The
-// `version` field inside the file also gates staleness, but cleaning up
-// the renamed file keeps the directory tidy.
-const LEGACY_SUMMARY_INDEX_FILES = [".summary-index.v2"];
+// Earlier index-cache files, removed the first time the index is loaded so
+// the conversations dir doesn't accumulate dead caches across upgrades.
+const LEGACY_SUMMARY_INDEX_FILES = [
+  ".summary-index.v2",
+  ".summary-index.v3",
+  ".summary-index.deleted",
+];
+
+/** Stat calls in flight while checking every file against the index. */
+const FILE_SCAN_CONCURRENCY = 64;
+/** Transcript reads in flight while repairing stale index entries. */
+const FILE_READ_CONCURRENCY = 8;
+
+/** What reading one transcript for the summary index found. */
+type IndexRead =
+  | { kind: "record"; record: ConversationRecord }
+  /** The file was read but holds no valid record. */
+  | { kind: "invalid" }
+  /** The file could not be read; its entry is retried on the next listing. */
+  | { kind: "unreadable" };
 
 /**
  * Filesystem-backed implementation. Atomic writes via tmp+rename so a
  * mid-write crash never produces a malformed JSON.
+ *
+ * Listing reads a summary index rather than every transcript. The index is
+ * held in memory and persisted beside the transcripts for the next start.
+ * Every entry records the identity (inode, size, nanosecond mtime and ctime)
+ * of the file its summary was read from, and each listing compares it with
+ * the directory: a file this store did not write — added, edited or removed
+ * by hand — is reread or dropped on its own, so a stale entry never outlives
+ * one listing and never costs more than the files that changed.
+ *
+ * Every mutation of a transcript and its index entry, and every listing,
+ * runs under one lock. Inside it the in-memory index matches every file this
+ * store wrote, so a save never invalidates the index for the next listing,
+ * and an entry's identity is always taken no later than the content read for
+ * it — a file replaced mid-read is reread next time, never trusted stale.
  */
 export class FsConversationStore implements ConversationStore {
   private readonly dir: string;
   private retentionDir: Dir | null = null;
   private readonly retentionCandidateQueue: ConversationRetentionCandidate[] = [];
+  private index: Map<string, SummaryIndexEntry> | null = null;
+  private indexTail: Promise<void> = Promise.resolve();
 
   constructor(
     dir: string,
@@ -363,118 +402,90 @@ export class FsConversationStore implements ConversationStore {
   }
 
   async save(rec: ConversationRecord): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    const path = this.pathFor(rec.id);
-    const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
     const body = JSON.stringify(rec, null, 2);
-    await writeFile(tmp, body, "utf8");
-    await rename(tmp, path);
-    await this.tryUpdateSummaryIndex(() => this.upsertSummary(summaryForRecord(rec)));
+    const summary = summaryForRecord(rec);
+    await this.withIndexLock(async () => {
+      const index = await this.loadedIndex();
+      await mkdir(this.dir, { recursive: true });
+      const path = this.pathFor(rec.id);
+      const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+      await writeFile(tmp, body, "utf8");
+      await rename(tmp, path);
+      try {
+        index.set(rec.id, { fileIdentity: await this.fileIdentityOf(rec.id), summary });
+      } catch (err) {
+        // The next listing finds the file without an entry and reads it.
+        index.delete(rec.id);
+        log.warn(`failed to stat saved conversation ${rec.id}: ${errorMessage(err)}`);
+      }
+      await this.persistIndex(index);
+    });
   }
 
   async load(id: string): Promise<ConversationRecord | null> {
     if (!isSafeId(id)) return null;
+    let body: string;
     try {
-      const body = await readFile(this.pathFor(id), "utf8");
-      const parsed = JSON.parse(body) as ConversationRecord;
-      // Minimal validation — a malformed record is treated as "missing"
-      // rather than throwing, so a single corrupt file can't take down
-      // the listing flow.
-      if (!parsed.id || !parsed.callerId || !Array.isArray(parsed.messages)) {
-        log.warn(`conversation file ${id} missing required fields`);
-        return null;
-      }
-      // Records written before `pinned` existed omit the field; normalize
-      // so every loaded record carries a defined boolean.
-      parsed.pinned = parsed.pinned === true;
-      // Same for `origin` — anything malformed reads as a plain chat,
-      // EXCEPT an anchor-shaped origin of an unsupported kind (retired or
-      // written by another gateway version): that must refuse to resume rather
-      // than silently run the thread as a plain chat with its seed
-      // transcript exposed (and re-ingested as an omnesis-chat document by
-      // the first turn's corpus upsert).
-      const origin = parseOrigin(parsed.origin);
-      if (origin) parsed.origin = origin;
-      else {
-        if (isUnknownAnchorShape(parsed.origin)) {
-          parsed.originUnrecognized = true;
-          const seed = (parsed.origin as { seedMessageCount?: unknown }).seedMessageCount;
-          if (typeof seed === "number" && Number.isInteger(seed) && seed > 0)
-            parsed.unrecognizedSeedMessageCount = seed;
-        }
-        delete parsed.origin;
-      }
-      const terminalFailure = agentConversationTerminalFailureSchema.safeParse(
-        parsed.terminalFailure,
-      );
-      if (terminalFailure.success) parsed.terminalFailure = terminalFailure.data;
-      else delete parsed.terminalFailure;
-      const lastTurnFailure = agentTerminalFailureSchema.safeParse(parsed.lastTurnFailure);
-      if (lastTurnFailure.success) {
-        parsed.lastTurnFailure = lastTurnFailure.data;
-      } else {
-        delete parsed.lastTurnFailure;
-      }
-      return parsed;
+      body = await readFile(this.pathFor(id), "utf8");
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === "ENOENT") return null;
       log.warn(`failed to load conversation ${id}: ${e.message ?? e}`);
       return null;
     }
+    return parseConversationRecord(id, body);
   }
 
   async list(): Promise<ConversationSummary[]> {
-    const indexed = await this.readSummaryIndex();
-    if (indexed) return indexed;
-    return this.rebuildSummaryIndex();
-  }
-
-  private async rebuildSummaryIndex(): Promise<ConversationSummary[]> {
-    let names: string[];
-    try {
-      names = await readdir(this.dir);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw err;
-    }
-    const out: ConversationSummary[] = [];
-    for (const name of names) {
-      if (!name.endsWith(".json")) continue;
-      const id = name.slice(0, -".json".length);
-      const rec = await this.load(id);
-      if (!rec) continue;
-      out.push(summaryForRecord(rec));
-    }
-    sortSummaries(out);
-    await this.tryUpdateSummaryIndex(() => this.writeSummaryIndex(out));
-    await this.removeLegacyIndexes();
-    return out;
-  }
-
-  private async removeLegacyIndexes(): Promise<void> {
-    for (const name of LEGACY_SUMMARY_INDEX_FILES) {
-      try {
-        await unlink(join(this.dir, name));
-      } catch {
-        // Best-effort: absent (the common case) or unreadable — ignore.
+    return this.withIndexLock(async () => {
+      const index = await this.loadedIndex();
+      const files = await this.conversationFiles();
+      let changed = false;
+      for (const id of index.keys()) {
+        if (!files.has(id)) {
+          index.delete(id);
+          changed = true;
+        }
       }
-    }
+      const stale = [...files].filter(([id, identity]) => index.get(id)?.fileIdentity !== identity);
+      await pMap(
+        stale,
+        async ([id, identity]) => {
+          const read = await this.readForIndex(id);
+          if (read.kind === "unreadable") return;
+          index.set(id, {
+            fileIdentity: identity,
+            summary: read.kind === "record" ? summaryForRecord(read.record) : null,
+          });
+          changed = true;
+        },
+        { concurrency: FILE_READ_CONCURRENCY },
+      );
+      if (changed) await this.persistIndex(index);
+      const out: ConversationSummary[] = [];
+      for (const entry of index.values()) {
+        if (entry.summary) out.push(structuredClone(entry.summary));
+      }
+      sortSummaries(out);
+      return out;
+    });
   }
 
   async delete(id: string): Promise<boolean> {
     if (!isSafeId(id)) return false;
-    try {
-      await unlink(this.pathFor(id));
-      await this.tryUpdateSummaryIndex(() => this.removeSummary(id));
+    return this.withIndexLock(async () => {
+      const index = await this.loadedIndex();
+      try {
+        await unlink(this.pathFor(id));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw err;
+      }
+      index.delete(id);
+      await this.persistIndex(index);
       return true;
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException;
-      if (e.code === "ENOENT") return false;
-      throw err;
-    }
+    });
   }
-
   /**
    * Inspect at most a small fixed number of files from a rotating async
    * directory cursor. Conversation JSON can be large, so the scan budget is
@@ -552,29 +563,24 @@ export class FsConversationStore implements ConversationStore {
   }
 
   /**
-   * Retention runs often; rewriting and restatting an index containing every
-   * conversation for each single-file deletion would make each tick grow with
-   * archive size. Journal the deleted id instead. Normal index reads filter
-   * these tombstones, and the next rebuild/upsert compacts them away.
+   * Retention runs often; rewriting an index containing every conversation
+   * for each single-file deletion would make each tick grow with archive
+   * size. Drop the entry from the in-memory index only: the persisted index
+   * is compacted by the next write, and a start that reads it first finds
+   * the file gone and drops the entry without reading anything.
    */
   async deleteForRetention(id: string): Promise<boolean> {
     if (!isSafeId(id)) return false;
-    try {
-      await unlink(this.pathFor(id));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw err;
-    }
-    try {
-      await appendFile(join(this.dir, SUMMARY_INDEX_TOMBSTONES_FILE), `${id}\n`, "utf8");
-    } catch (err) {
-      log.warn(
-        `failed to journal retained conversation deletion ${id}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-    return true;
+    return this.withIndexLock(async () => {
+      try {
+        await unlink(this.pathFor(id));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw err;
+      }
+      this.index?.delete(id);
+      return true;
+    });
   }
 
   async setPinned(id: string, pinned: boolean): Promise<boolean> {
@@ -597,138 +603,116 @@ export class FsConversationStore implements ConversationStore {
     return join(this.dir, SUMMARY_INDEX_FILE);
   }
 
-  private async readSummaryIndex(): Promise<ConversationSummary[] | null> {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(await readFile(this.indexPath(), "utf8"));
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException;
-      if (e.code === "ENOENT") return null;
-      log.warn(`failed to load conversation summary index: ${e.message ?? e}`);
-      return null;
-    }
-    const index = parseSummaryIndex(parsed);
-    if (!index) return null;
-    const tombstones = await this.readSummaryIndexTombstones();
-    if (tombstones.size > 0) {
-      index.conversations = index.conversations.filter((summary) => !tombstones.has(summary.id));
-    }
-    const files = await this.conversationFiles();
-    if (!files) return null;
-    const indexedIds = new Set(index.conversations.map((s) => s.id));
-    if (files.length !== indexedIds.size || files.some(({ id }) => !indexedIds.has(id))) {
-      return null;
-    }
-    const fileStatsById = new Map(files.map((file) => [file.id, file]));
-    if (
-      index.conversations.some((summary) => {
-        const file = fileStatsById.get(summary.id);
-        return (
-          !file ||
-          Math.abs(file.mtimeMs - summary.fileMtimeMs) > 1 ||
-          Math.abs(file.ctimeMs - summary.fileCtimeMs) > 1 ||
-          file.size !== summary.fileSizeBytes
-        );
-      })
-    ) {
-      return null;
-    }
-    return index.conversations
-      .map(
-        ({
-          fileMtimeMs: _fileMtimeMs,
-          fileCtimeMs: _fileCtimeMs,
-          fileSizeBytes: _fileSizeBytes,
-          ...summary
-        }) => summary,
-      )
-      .sort(compareSummaryNewestFirst);
-  }
-
-  private async conversationFiles(): Promise<Array<{
-    id: string;
-    mtimeMs: number;
-    ctimeMs: number;
-    size: number;
-  }> | null> {
-    try {
-      const names = await readdir(this.dir);
-      const ids = names
-        .filter((name) => name.endsWith(".json"))
-        .map((name) => name.slice(0, -".json".length))
-        .filter(isSafeId);
-      const out: Array<{ id: string; mtimeMs: number; ctimeMs: number; size: number }> = [];
-      for (const id of ids) {
-        const file = await stat(this.pathFor(id));
-        out.push({ id, mtimeMs: file.mtimeMs, ctimeMs: file.ctimeMs, size: file.size });
-      }
-      return out;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw err;
-    }
-  }
-
-  private async upsertSummary(summary: ConversationSummary): Promise<void> {
-    const existing = (await this.readSummaryIndex()) ?? (await this.rebuildSummaryIndex());
-    const next = existing.filter((s) => s.id !== summary.id);
-    next.push(summary);
-    sortSummaries(next);
-    await this.writeSummaryIndex(next);
-  }
-
-  private async removeSummary(id: string): Promise<void> {
-    const existing = await this.readSummaryIndex();
-    if (!existing) return;
-    await this.writeSummaryIndex(existing.filter((s) => s.id !== id));
-  }
-
-  private async tryUpdateSummaryIndex(update: () => Promise<void>): Promise<void> {
-    try {
-      await update();
-    } catch (err) {
-      const e = err as NodeJS.ErrnoException;
-      log.warn(`failed to update conversation summary index: ${e.message ?? e}`);
-    }
-  }
-
-  private async writeSummaryIndex(conversations: ConversationSummary[]): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    const path = this.indexPath();
-    const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
-    const indexed: IndexedConversationSummary[] = [];
-    for (const summary of conversations) {
-      const file = await stat(this.pathFor(summary.id));
-      indexed.push({
-        ...summary,
-        fileMtimeMs: file.mtimeMs,
-        fileCtimeMs: file.ctimeMs,
-        fileSizeBytes: file.size,
-      });
-    }
-    const body = JSON.stringify(
-      { version: 3, conversations: indexed } satisfies ConversationSummaryIndex,
-      null,
-      2,
+  /** Run `fn` with the index lock held; one holder at a time, in call order. */
+  private withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.indexTail.then(fn);
+    this.indexTail = result.then(
+      () => undefined,
+      () => undefined,
     );
-    await writeFile(tmp, body, "utf8");
-    await rename(tmp, path);
-    await unlink(join(this.dir, SUMMARY_INDEX_TOMBSTONES_FILE)).catch((err) => {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    });
+    return result;
   }
 
-  private async readSummaryIndexTombstones(): Promise<Set<string>> {
+  /**
+   * The in-memory index, read from the persisted file on first use. A
+   * missing, unreadable or malformed file yields an empty index, which the
+   * next listing fills by reading every transcript once.
+   */
+  private async loadedIndex(): Promise<Map<string, SummaryIndexEntry>> {
+    if (this.index) return this.index;
+    let index = new Map<string, SummaryIndexEntry>();
     try {
-      return new Set(
-        (await readFile(join(this.dir, SUMMARY_INDEX_TOMBSTONES_FILE), "utf8"))
-          .split("\n")
-          .filter(isSafeId),
-      );
+      index = parseSummaryIndex(JSON.parse(await readFile(this.indexPath(), "utf8")));
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+      const e = err as NodeJS.ErrnoException;
+      if (e.code !== "ENOENT") {
+        log.warn(`failed to load conversation summary index: ${e.message ?? e}`);
+      }
+    }
+    this.index = index;
+    await this.removeLegacyIndexes();
+    return index;
+  }
+
+  private async removeLegacyIndexes(): Promise<void> {
+    for (const name of LEGACY_SUMMARY_INDEX_FILES) {
+      try {
+        await unlink(join(this.dir, name));
+      } catch {
+        // Best-effort: absent (the common case) or unreadable — ignore.
+      }
+    }
+  }
+
+  private async persistIndex(index: Map<string, SummaryIndexEntry>): Promise<void> {
+    try {
+      const conversations: PersistedSummaryIndexEntry[] = [];
+      for (const [id, entry] of index) conversations.push({ id, ...entry });
+      const body = JSON.stringify({ version: 4, conversations } satisfies ConversationSummaryIndex);
+      await mkdir(this.dir, { recursive: true });
+      const path = this.indexPath();
+      const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+      await writeFile(tmp, body, "utf8");
+      await rename(tmp, path);
+    } catch (err) {
+      // The in-memory index stays authoritative; a start that reads an older
+      // file repairs the entries that differ.
+      log.warn(`failed to update conversation summary index: ${errorMessage(err)}`);
+    }
+  }
+
+  /**
+   * Every transcript file in the directory with its identity. Stats run
+   * concurrently so a listing costs a few event-loop turns, not one per
+   * file. A file removed mid-scan is simply absent.
+   */
+  private async conversationFiles(): Promise<Map<string, string>> {
+    let names: string[];
+    try {
+      names = await readdir(this.dir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Map();
       throw err;
     }
+    const ids = names
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => name.slice(0, -".json".length))
+      .filter(isSafeId);
+    const identities = await pMap(
+      ids,
+      async (id) => {
+        try {
+          return await this.fileIdentityOf(id);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw err;
+        }
+      },
+      { concurrency: FILE_SCAN_CONCURRENCY },
+    );
+    const out = new Map<string, string>();
+    ids.forEach((id, i) => {
+      const identity = identities[i];
+      if (identity) out.set(id, identity);
+    });
+    return out;
+  }
+
+  private async fileIdentityOf(id: string): Promise<string> {
+    return fileIdentity(await stat(this.pathFor(id), { bigint: true }));
+  }
+
+  private async readForIndex(id: string): Promise<IndexRead> {
+    let body: string;
+    try {
+      body = await readFile(this.pathFor(id), "utf8");
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code !== "ENOENT") log.warn(`failed to load conversation ${id}: ${e.message ?? e}`);
+      return { kind: "unreadable" };
+    }
+    const record = parseConversationRecord(id, body);
+    return record ? { kind: "record", record } : { kind: "invalid" };
   }
 }
 
@@ -920,47 +904,112 @@ function parseTaskSnapshot(value: unknown): TaskConversationOriginSnapshot | und
   };
 }
 
-function parseSummaryIndex(value: unknown): ConversationSummaryIndex | null {
-  if (!value || typeof value !== "object") return null;
+/**
+ * Validate a persisted summary index. An entry that does not parse is left
+ * out, so the next listing rereads just that file; anything other than a
+ * version-4 index reads as empty.
+ */
+function parseSummaryIndex(value: unknown): Map<string, SummaryIndexEntry> {
+  const index = new Map<string, SummaryIndexEntry>();
+  if (!value || typeof value !== "object") return index;
   const raw = value as Partial<ConversationSummaryIndex>;
-  if (raw.version !== 3 || !Array.isArray(raw.conversations)) return null;
-  const conversations: IndexedConversationSummary[] = [];
-  for (const item of raw.conversations) {
-    if (!item || typeof item !== "object") return null;
-    const s = item as Partial<IndexedConversationSummary>;
-    if (
-      typeof s.id !== "string" ||
-      !isSafeId(s.id) ||
-      typeof s.title !== "string" ||
-      typeof s.model !== "string" ||
-      typeof s.backend !== "string" ||
-      typeof s.createdAt !== "string" ||
-      typeof s.updatedAt !== "string" ||
-      typeof s.messageCount !== "number" ||
-      typeof s.pinned !== "boolean" ||
-      typeof s.fileMtimeMs !== "number" ||
-      typeof s.fileCtimeMs !== "number" ||
-      typeof s.fileSizeBytes !== "number"
-    ) {
-      return null;
+  if (raw.version !== 4 || !Array.isArray(raw.conversations)) return index;
+  for (const item of raw.conversations as unknown[]) {
+    if (!item || typeof item !== "object") continue;
+    const e = item as Partial<PersistedSummaryIndexEntry>;
+    if (typeof e.id !== "string" || !isSafeId(e.id) || typeof e.fileIdentity !== "string") {
+      continue;
     }
-    const origin = parseOrigin(s.origin);
-    conversations.push({
-      id: s.id,
-      title: s.title,
-      model: s.model,
-      backend: s.backend,
-      createdAt: s.createdAt,
-      updatedAt: s.updatedAt,
-      messageCount: s.messageCount,
-      pinned: s.pinned,
-      ...(origin ? { origin } : {}),
-      fileMtimeMs: s.fileMtimeMs,
-      fileCtimeMs: s.fileCtimeMs,
-      fileSizeBytes: s.fileSizeBytes,
-    });
+    if (e.summary === null) {
+      index.set(e.id, { fileIdentity: e.fileIdentity, summary: null });
+      continue;
+    }
+    const summary = parseIndexedSummary(e.id, e.summary);
+    if (summary) index.set(e.id, { fileIdentity: e.fileIdentity, summary });
   }
-  return { version: 3, conversations };
+  return index;
+}
+
+function parseIndexedSummary(id: string, value: unknown): ConversationSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const s = value as Partial<ConversationSummary>;
+  if (
+    s.id !== id ||
+    typeof s.title !== "string" ||
+    typeof s.model !== "string" ||
+    typeof s.backend !== "string" ||
+    typeof s.createdAt !== "string" ||
+    typeof s.updatedAt !== "string" ||
+    typeof s.messageCount !== "number" ||
+    typeof s.pinned !== "boolean"
+  ) {
+    return null;
+  }
+  const origin = parseOrigin(s.origin);
+  return {
+    id,
+    title: s.title,
+    model: s.model,
+    backend: s.backend,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+    messageCount: s.messageCount,
+    pinned: s.pinned,
+    ...(origin ? { origin } : {}),
+  };
+}
+
+/**
+ * Parse one transcript file's body. A malformed record reads as missing
+ * rather than throwing, so a single corrupt file can't take down the
+ * listing flow.
+ */
+function parseConversationRecord(id: string, body: string): ConversationRecord | null {
+  let parsed: ConversationRecord;
+  try {
+    parsed = JSON.parse(body) as ConversationRecord;
+  } catch (err) {
+    log.warn(`failed to load conversation ${id}: ${errorMessage(err)}`);
+    return null;
+  }
+  if (!parsed || !parsed.id || !parsed.callerId || !Array.isArray(parsed.messages)) {
+    log.warn(`conversation file ${id} missing required fields`);
+    return null;
+  }
+  // Records written before `pinned` existed omit the field; normalize
+  // so every loaded record carries a defined boolean.
+  parsed.pinned = parsed.pinned === true;
+  // Same for `origin` — anything malformed reads as a plain chat,
+  // EXCEPT an anchor-shaped origin of an unsupported kind (retired or
+  // written by another gateway version): that must refuse to resume rather
+  // than silently run the thread as a plain chat with its seed
+  // transcript exposed (and re-ingested as an omnesis-chat document by
+  // the first turn's corpus upsert).
+  const origin = parseOrigin(parsed.origin);
+  if (origin) parsed.origin = origin;
+  else {
+    if (isUnknownAnchorShape(parsed.origin)) {
+      parsed.originUnrecognized = true;
+      const seed = (parsed.origin as { seedMessageCount?: unknown }).seedMessageCount;
+      if (typeof seed === "number" && Number.isInteger(seed) && seed > 0)
+        parsed.unrecognizedSeedMessageCount = seed;
+    }
+    delete parsed.origin;
+  }
+  const terminalFailure = agentConversationTerminalFailureSchema.safeParse(parsed.terminalFailure);
+  if (terminalFailure.success) parsed.terminalFailure = terminalFailure.data;
+  else delete parsed.terminalFailure;
+  const lastTurnFailure = agentTerminalFailureSchema.safeParse(parsed.lastTurnFailure);
+  if (lastTurnFailure.success) {
+    parsed.lastTurnFailure = lastTurnFailure.data;
+  } else {
+    delete parsed.lastTurnFailure;
+  }
+  return parsed;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**

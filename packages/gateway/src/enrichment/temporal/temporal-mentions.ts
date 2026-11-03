@@ -237,9 +237,14 @@ const SAME_SHAPE = `(y.resolved_start IS NOT NULL AND y.resolved_end IS NOT NULL
 /**
  * One document naming the same bounds twice, in the same shape, is one
  * mention: its lowest row stands for it.
+ *
+ * The probe walks the document's own dates. Left to choose, the planner seeks
+ * the day index instead, which visits every row naming that day across the
+ * corpus that sorts below this one — on a day the mailbox mentions a thousand
+ * times, a thousand steps for each candidate the window reads.
  */
 const FIRST_OF_ITS_BOUNDS = `NOT EXISTS (
-  SELECT 1 FROM document_extracted_dates y
+  SELECT 1 FROM document_extracted_dates y INDEXED BY idx_document_extracted_dates_doc
    WHERE y.document_id = x.document_id
      AND y.mention_start_day = x.mention_start_day
      AND y.mention_end_day = x.mention_end_day
@@ -324,7 +329,11 @@ export function readMentionPage(
   addIn("x.document_id", input.entityIds);
   addIn("d.source_id", input.sourceIds);
 
-  const from = `FROM document_extracted_dates x JOIN documents d ON d.id = x.document_id`;
+  // The dates drive every read, through their day indexes. Scoped to
+  // sources, the planner would otherwise start from the documents of those
+  // sources and read each one's dates — the whole corpus for a search that
+  // names every source it may return.
+  const from = `FROM document_extracted_dates x CROSS JOIN documents d ON d.id = x.document_id`;
   // Starting on the window's first day or later: anchored by its start, or —
   // when the window begins mid-day — a day or span that began earlier that
   // day and ends inside it.
@@ -340,7 +349,7 @@ export function readMentionPage(
     .prepare(
       `SELECT ${MENTION_COLUMNS}
          FROM document_extracted_dates x INDEXED BY idx_document_extracted_dates_mention_range
-         JOIN documents d ON d.id = x.document_id
+         CROSS JOIN documents d ON d.id = x.document_id
         WHERE x.mention_end_day BETWEEN ? AND ?
           AND x.mention_start_day >= ? AND x.mention_start_day < ?
           AND (x.resolved_start IS NOT NULL AND x.resolved_end IS NOT NULL)

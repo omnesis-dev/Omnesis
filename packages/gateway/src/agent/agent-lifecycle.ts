@@ -98,6 +98,7 @@ import type { CorpusAuthorization } from "../access/corpus-authorization.js";
 import type Database from "better-sqlite3";
 import type { OperatorInstructionsStore } from "../instructions/store.js";
 import type { ResolvedSpecialist } from "./subagent-service.js";
+import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
 
 export const PRIVACY_STATE_SWEEP_INTERVAL_MS = 60_000;
 
@@ -143,6 +144,8 @@ export interface AgentServiceDeps {
   messageCountGate?: MessageCountGate;
   /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
   mentionWorthGateActive?: () => boolean;
+  /** Read worker for `temporal_query`'s store reads; absent, they run synchronously. */
+  temporalStoreReads?: TemporalStoreReads;
   /**
    * The operator's `OMNESIS.md`, re-read per prompt build so an edit made in a
    * terminal editor reaches the next conversation without a restart. Absent on
@@ -638,6 +641,8 @@ export interface AgentLifecycleDeps {
   messageCountGate?: MessageCountGate;
   /** Whether the mention worth gate is active, so `temporal_query` hides unworthy mentions. */
   mentionWorthGateActive?: () => boolean;
+  /** Read worker forwarded to the temporal port for off-thread `temporal_query`. */
+  temporalStoreReads?: TemporalStoreReads;
   /** Worker-coordinated bounded index cleanup for activity retention. */
   deleteDocumentIndexBatch?: (
     documentId: string,
@@ -974,6 +979,9 @@ export class AgentLifecycle {
         ...(this.deps.messageCountGate ? { messageCountGate: this.deps.messageCountGate } : {}),
         ...(this.deps.mentionWorthGateActive
           ? { mentionWorthGateActive: this.deps.mentionWorthGateActive }
+          : {}),
+        ...(this.deps.temporalStoreReads
+          ? { temporalStoreReads: this.deps.temporalStoreReads }
           : {}),
       },
       roleAware,

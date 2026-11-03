@@ -13,6 +13,7 @@ All paths below are local files. Use `Read` (or `Grep` to find the right page), 
 | Engineering conventions (façade splits, defineSource, zod-at-boundary, …) — read first when establishing or imitating a pattern                        | `docs/conventions.md`               |
 | iOS-specific agent rules (XcodeGen, device deploy, SwiftUI preview + snapshot self-critique loop, TestFlight) — read before editing anything in `ios/` | `ios/AGENTS.md` (= `ios/CLAUDE.md`) |
 | Public docs — what users see; update alongside behavior changes (see § Documentation maintenance)                                                      | `website/docs/`                     |
+| Main-thread stalls — the 50 ms rule, the sanctioned fixes, and finding a culprit with the stall log, `/admin/stalls` and flight-recorder profiles      | `docs/stall-investigation.md`       |
 | Architecture, per-source detail, HTTP API, config knobs                                                                                                | the code (repo map below)           |
 
 The repo at a glance:

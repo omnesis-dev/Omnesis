@@ -2,52 +2,38 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
-import {
-  canonicalTemporalKind,
-  createLogger,
-  isTemporalModality,
-  isTemporalStatus,
-  intervalOverlapsWindow,
-  MAX_TIME_ZONE_SHIFT_MS,
-} from "@omnesis/core";
+import { intervalOverlapsWindow, MAX_TIME_ZONE_SHIFT_MS } from "@omnesis/core";
 import { TEMPORAL_STATUSES } from "@omnesis/types";
+import { raceAbort } from "../../brain/decision-call.js";
 import { countPendingDateExtraction } from "../dates/storage.js";
 import { projectionRevision } from "../temporal-projections/derive.js";
 import { MENTION_ORIGIN_RANK, readMentionPage } from "./temporal-mentions.js";
-import { annotationMatchesScope, normalizedAnnotationBounds } from "./annotation-scope.js";
+import {
+  compareKeys,
+  directTemporalStoreReads,
+  kind,
+  modality,
+  normalizedProjectionBounds,
+  status,
+  type RankedTemporalItem,
+  type TemporalSortKey as CursorKey,
+  type TemporalStoreReads,
+} from "./temporal-store-window.js";
 import { resolveTemporalRange } from "./temporal-range.js";
 import type Database from "better-sqlite3";
 import type {
   TemporalItem,
-  TemporalKind,
-  TemporalModality,
   TemporalOrigin,
-  TemporalPrecision,
   TemporalQueryInput,
   TemporalQueryResult,
-  TemporalStatus,
 } from "@omnesis/core";
 import type { AnalyticsDb } from "../../analytics-db.js";
 
-const log = createLogger("gateway:temporal-query");
-
 type Db = Database.Database;
-
-interface CursorKey {
-  startMs: number;
-  endExclusiveMs: number;
-  originRank: number;
-  id: string;
-}
 
 interface CursorEnvelope {
   v: 1;
   fingerprint: string;
-  key: CursorKey;
-}
-
-interface RankedTemporalItem {
-  item: TemporalItem;
   key: CursorKey;
 }
 
@@ -152,15 +138,6 @@ function decodeCursor(value: string | undefined, expectedFingerprint: string): C
   }
 }
 
-function compareKeys(left: CursorKey, right: CursorKey): number {
-  return (
-    left.startMs - right.startMs ||
-    left.endExclusiveMs - right.endExclusiveMs ||
-    left.originRank - right.originRank ||
-    left.id.localeCompare(right.id)
-  );
-}
-
 function parseJsonObject(
   raw: string | null,
 ): Record<string, string | number | boolean | null> | undefined {
@@ -173,43 +150,6 @@ function parseJsonObject(
   } catch {
     return undefined;
   }
-}
-
-/**
- * How an annotation that declares no kind reads.
- *
- * The annotation store accepts a null kind — an author may record what a time
- * means without classifying its nature. Both the SQL filter and the read below
- * resolve that null through this one constant, so a caller filtering on a kind
- * and the item it gets back can never disagree about which kind it is.
- */
-const UNCLASSIFIED_ANNOTATION_KIND: TemporalKind = "event";
-
-/**
- * Read a vocabulary value back out of our own storage.
- *
- * Retired spellings are accepted so a row written before a vocabulary change
- * still reads; anything else is corruption. Substituting a default here would
- * silently relabel the fact and make the constraint that produced it untestable.
- */
-function kind(value: string): TemporalKind {
-  const resolved = canonicalTemporalKind(value);
-  if (!resolved) throw new Error(`Stored temporal kind '${value}' is outside the vocabulary`);
-  return resolved;
-}
-
-function modality(value: string): TemporalModality {
-  if (!isTemporalModality(value)) {
-    throw new Error(`Stored temporal modality '${value}' is outside the vocabulary`);
-  }
-  return value;
-}
-
-function status(value: string): TemporalStatus {
-  if (!isTemporalStatus(value)) {
-    throw new Error(`Stored temporal status '${value}' is outside the vocabulary`);
-  }
-  return value;
 }
 
 function readDocumentIdentities(db: Db, documentIds: readonly string[]): DocumentIdentity[] {
@@ -239,47 +179,6 @@ function readDocumentIdsForExternalRefs(
   return new Map(rows.map((row) => [`${row.source_id}\0${row.external_id}`, row.id]));
 }
 
-function normalizedProjectionBounds(
-  row: {
-    precision: "instant" | "day";
-    startCanonical: string;
-    endCanonical: string;
-    startMs: number;
-    endExclusiveMs: number;
-  },
-  timeZone: string,
-): { startMs: number; endExclusiveMs: number } {
-  // The stored bounds were computed when the row was written and are always
-  // usable, so they are the floor this function degrades to rather than the
-  // value it improves on only when it can.
-  const stored = { startMs: row.startMs, endExclusiveMs: row.endExclusiveMs };
-  if (row.precision !== "day") return stored;
-  try {
-    const resolved = resolveTemporalRange({
-      from: row.startCanonical,
-      to: row.endCanonical,
-      timeZone,
-    });
-    return { startMs: resolved.fromMs, endExclusiveMs: resolved.toExclusiveMs };
-  } catch (error) {
-    // A day-precision row resolves through local midnight, which does not
-    // exist on a date whose zone springs forward at midnight (Chile, for
-    // one). Re-anchoring is a refinement; failing it must cost this row a
-    // little precision, never cost the caller the whole window — every call
-    // site maps over a result set, so a throw here loses every other row too.
-    // Logged rather than swallowed: a resolution that keeps failing for some
-    // other reason should still be discoverable.
-    log.warn(
-      `Temporal projection kept its stored bounds (${row.startCanonical}..${row.endCanonical} in ${timeZone}): ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return stored;
-  }
-}
-
-const overlaps = intervalOverlapsWindow;
-
 /** Layers read when a query names none. Mentions are asked for by name. */
 const DEFAULT_ORIGINS: readonly TemporalOrigin[] = ["projection", "annotation"];
 
@@ -289,14 +188,23 @@ export interface TemporalQueryOptions {
    * decision model judged not worth recording are left out.
    */
   hideUnworthyMentions?: () => boolean;
+  /**
+   * Where the `omnesis.db` half of a window is read — the gateway's read
+   * worker. Absent, it is read on this service's own handle.
+   */
+  storeReads?: TemporalStoreReads;
 }
 
 export class TemporalQueryService {
+  private readonly storeReads: TemporalStoreReads;
+
   constructor(
     private readonly db: Db,
     private readonly analyticsDb?: AnalyticsDb,
     private readonly options: TemporalQueryOptions = {},
-  ) {}
+  ) {
+    this.storeReads = options.storeReads ?? directTemporalStoreReads(db);
+  }
 
   /** Resolve a recognized date or annotation using the same live index rules as a window. */
   async itemById(id: string, timeZone: string): Promise<TemporalItem | null> {
@@ -449,6 +357,7 @@ export class TemporalQueryService {
     const { ranked, mentions, limit } = await this.readWindow(
       { ...input, cursor: undefined },
       execution,
+      { anchoredOnly: true },
     );
     const anchored = ranked.filter((entry) => entry.item.anchored);
     if (mentions) anchored.push(...mentions.items);
@@ -458,11 +367,14 @@ export class TemporalQueryService {
 
   /**
    * Every projection and annotation matching the window, ordered and marked
-   * anchored or spanning, and one page of its mentions past the cursor.
+   * anchored or spanning, and one page of its mentions past the cursor. With
+   * `anchoredOnly`, annotations that can only span the window are not read,
+   * which leaves the anchored ones exactly as a full read marks them.
    */
   private async readWindow(
     input: TemporalQueryInput,
     execution?: { maxWindowMs?: number; signal?: AbortSignal },
+    read: { anchoredOnly: boolean } = { anchoredOnly: false },
   ) {
     if (execution?.signal?.aborted) throw execution.signal.reason;
     const effectiveInput: TemporalQueryInput = {
@@ -489,27 +401,31 @@ export class TemporalQueryService {
             externalId: doc.externalId,
           }));
 
-    const ranked: RankedTemporalItem[] = [];
-    if (origins.has("projection")) {
-      if (this.analyticsDb) {
-        ranked.push(...(await this.readAnalyticsProjections(effectiveInput, range, documentRefs)));
-        if (execution?.signal?.aborted) throw execution.signal.reason;
-      }
-      ranked.push(...this.readDocumentProjections(effectiveInput, range));
-    }
-    if (origins.has("annotation")) {
-      ranked.push(...this.readAnnotations(effectiveInput, range));
-    }
     // Read once so the page and its coverage agree on whether the gate applied.
     const hideUnworthy = this.options.hideUnworthyMentions?.() ?? false;
-    // Mentions arrive already paged past the cursor and anchored, with their
+    // The analytics store and `omnesis.db` are read side by side. Mentions
+    // arrive already paged past the cursor and anchored, with their
     // whole-window count alongside: the layer is too large to read in full.
-    const mentions = origins.has("mention")
-      ? readMentionPage(this.db, effectiveInput, range, after, limit, compareKeys, {
+    const [analyticsProjections, store] = await raceAbort(
+      Promise.all([
+        origins.has("projection") && this.analyticsDb
+          ? this.readAnalyticsProjections(effectiveInput, range, documentRefs)
+          : Promise.resolve([]),
+        this.storeReads.temporalStoreWindow({
+          input: effectiveInput,
+          range,
+          after,
+          limit,
+          origins: [...origins],
           hideUnworthy,
-        })
-      : null;
+          anchoredOnly: read.anchoredOnly,
+        }),
+      ]),
+      execution?.signal,
+    );
     if (execution?.signal?.aborted) throw execution.signal.reason;
+    const ranked: RankedTemporalItem[] = [...analyticsProjections, ...store.ranked];
+    const mentions = store.mentions;
 
     // Every matching row is read and ordered here rather than paginated in the
     // stores, because a day-precision row's sort key is resolved in the
@@ -567,7 +483,7 @@ export class TemporalQueryService {
     );
     return rows.flatMap((row) => {
       const bounds = normalizedProjectionBounds(row, input.timeZone);
-      if (!overlaps(bounds, range)) return [];
+      if (!intervalOverlapsWindow(bounds, range)) return [];
       const documentId = row.documentExternalId
         ? documentIds.get(`${row.sourceId}\0${row.documentExternalId}`)
         : undefined;
@@ -597,248 +513,6 @@ export class TemporalQueryService {
         },
       };
       return [{ item, key: { ...bounds, originRank: 0, id: row.id } }];
-    });
-  }
-
-  private readDocumentProjections(
-    input: TemporalQueryInput,
-    range: { fromMs: number; toExclusiveMs: number },
-  ): RankedTemporalItem[] {
-    const where = ["start_ms < ?", "end_exclusive_ms > ?"];
-    const values: unknown[] = [
-      range.toExclusiveMs + MAX_TIME_ZONE_SHIFT_MS,
-      range.fromMs - MAX_TIME_ZONE_SHIFT_MS,
-    ];
-    const addIn = (column: string, selected: readonly string[] | undefined) => {
-      if (!selected?.length) return;
-      where.push(`${column} IN (${placeholders(selected)})`);
-      values.push(...selected);
-    };
-    addIn("source_id", input.sourceIds);
-    addIn("kind", input.kinds);
-    addIn("modality", input.modalities);
-    addIn("status", input.statuses);
-    addIn("document_id", input.documentIds);
-    if (input.documentIds && input.documentIds.length === 0) return [];
-    if (input.entityIds) {
-      if (input.entityIds.length === 0) return [];
-      const selected = placeholders(input.entityIds);
-      where.push(`(id IN (${selected}) OR document_id IN (${selected}))`);
-      values.push(...input.entityIds, ...input.entityIds);
-    }
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM document_temporal_projections
-         WHERE ${where.join(" AND ")}
-         ORDER BY start_ms, end_exclusive_ms, id`,
-      )
-      .all(...values) as Array<Record<string, unknown>>;
-    return rows.flatMap((row) => {
-      const stored = {
-        precision: String(row.precision) === "day" ? ("day" as const) : ("instant" as const),
-        startCanonical: String(row.start_canonical),
-        endCanonical: String(row.end_canonical),
-        startMs: Number(row.start_ms),
-        endExclusiveMs: Number(row.end_exclusive_ms),
-      };
-      const bounds = normalizedProjectionBounds(stored, input.timeZone);
-      if (!overlaps(bounds, range)) return [];
-      const id = String(row.id);
-      const item: TemporalItem = {
-        id,
-        origin: "projection",
-        start: new Date(bounds.startMs).toISOString(),
-        endExclusive: new Date(bounds.endExclusiveMs).toISOString(),
-        precision: stored.precision,
-        allDay: Number(row.all_day) === 1,
-        timeZone: row.time_zone == null ? input.timeZone : String(row.time_zone),
-        label: String(row.label),
-        kind: kind(String(row.kind)),
-        modality: modality(String(row.modality)),
-        status: status(String(row.status)),
-        projection: {
-          sourceId: String(row.source_id),
-          slot: String(row.slot),
-          documentId: String(row.document_id),
-          documentExternalId: String(row.document_external_id),
-          sourceUpdatedAt:
-            row.source_updated_at == null ? undefined : String(row.source_updated_at),
-          projectedAt: String(row.projected_at),
-          revision: projectionRevision({
-            startCanonical: stored.startCanonical,
-            endCanonical: stored.endCanonical,
-            label: String(row.label),
-            kind: String(row.kind),
-            modality: String(row.modality),
-            status: String(row.status),
-            sourceUpdatedAt: row.source_updated_at == null ? null : String(row.source_updated_at),
-          }),
-        },
-      };
-      return [{ item, key: { ...bounds, originRank: 0, id } }];
-    });
-  }
-
-  private readAnnotations(
-    input: TemporalQueryInput,
-    range: { fromMs: number; toExclusiveMs: number },
-  ): RankedTemporalItem[] {
-    const where = ["e.invalidated_at IS NULL", "e.interval_start_ms < ?", "e.interval_end_ms >= ?"];
-    // Coarse canonical periods are persisted on a UTC anchor and interpreted
-    // in the caller's zone. Widen the storage prefilter before normalizing.
-    const values: unknown[] = [
-      range.toExclusiveMs + MAX_TIME_ZONE_SHIFT_MS,
-      range.fromMs - MAX_TIME_ZONE_SHIFT_MS,
-    ];
-    if (input.kinds?.length) {
-      where.push(
-        `COALESCE(e.kind, '${UNCLASSIFIED_ANNOTATION_KIND}') IN (${placeholders(input.kinds)})`,
-      );
-      values.push(...input.kinds);
-    }
-    if (input.modalities?.length && !input.modalities.includes("inferred")) return [];
-    if (input.statuses?.length && !input.statuses.includes("active")) return [];
-    if (input.documentIds) {
-      if (input.documentIds.length === 0) return [];
-      where.push(
-        `e.id IN (
-          SELECT d.annotation_id FROM temporal_annotation_documents d
-          WHERE d.document_id IN (${placeholders(input.documentIds)})
-        )`,
-      );
-      values.push(...input.documentIds);
-    }
-    if (input.sourceIds?.length) {
-      where.push(
-        `EXISTS (
-          SELECT 1 FROM temporal_annotation_documents d
-          JOIN documents doc ON doc.id = d.document_id
-          WHERE d.annotation_id = e.id
-            AND doc.source_id IN (${placeholders(input.sourceIds)})
-        )`,
-      );
-      values.push(...input.sourceIds);
-    }
-    if (input.entityIds) {
-      if (input.entityIds.length === 0) return [];
-      const ids = input.entityIds;
-      const inIds = placeholders(ids);
-      where.push(
-        `(e.id IN (${inIds})
-          OR EXISTS (SELECT 1 FROM temporal_annotation_documents d
-                     WHERE d.annotation_id = e.id AND d.document_id IN (${inIds}))
-          OR EXISTS (SELECT 1 FROM temporal_annotation_people p
-                     WHERE p.annotation_id = e.id AND p.person_id IN (${inIds}))
-          OR EXISTS (SELECT 1 FROM temporal_annotation_loops l
-                     WHERE l.annotation_id = e.id AND l.loop_id IN (${inIds}))
-          OR EXISTS (SELECT 1 FROM temporal_annotation_projections p
-                     WHERE p.annotation_id = e.id AND p.projection_id IN (${inIds})))`,
-      );
-      values.push(...ids, ...ids, ...ids, ...ids, ...ids);
-    }
-    const rows = this.db
-      .prepare(
-        `SELECT e.*,
-           (SELECT json_group_array(doc.source_id) FROM temporal_annotation_documents ad JOIN documents doc ON doc.id=ad.document_id WHERE ad.annotation_id=e.id) AS source_ids,
-           (SELECT json_group_array(d.document_id)
-              FROM temporal_annotation_documents d WHERE d.annotation_id = e.id) AS document_ids,
-           (SELECT json_group_array(p.person_id)
-              FROM temporal_annotation_people p WHERE p.annotation_id = e.id) AS person_ids,
-           (SELECT json_group_array(l.loop_id)
-              FROM temporal_annotation_loops l WHERE l.annotation_id = e.id) AS loop_ids,
-           (SELECT json_group_array(p.projection_id)
-              FROM temporal_annotation_projections p WHERE p.annotation_id = e.id) AS projection_ids
-         FROM temporal_annotations e
-         WHERE ${where.join(" AND ")}
-         ORDER BY e.interval_start_ms, e.interval_end_ms, e.id`,
-      )
-      .all(...values) as Array<Record<string, unknown>>;
-    const parseIds = (value: unknown): string[] => {
-      try {
-        const parsed = JSON.parse(String(value ?? "[]"));
-        return Array.isArray(parsed)
-          ? parsed.filter((entry): entry is string => typeof entry === "string").sort()
-          : [];
-      } catch {
-        return [];
-      }
-    };
-    return rows.flatMap((row) => {
-      const id = String(row.id);
-      const storedStartMs = Number(row.interval_start_ms);
-      const inclusiveEnd = Number(row.interval_end_ms);
-      const storedEndExclusiveMs =
-        inclusiveEnd < Number.MAX_SAFE_INTEGER ? inclusiveEnd + 1 : inclusiveEnd;
-      const storedPrecision = String(row.precision);
-      const bounds = normalizedAnnotationBounds(
-        {
-          precision: storedPrecision,
-          canonical: row.canonical == null ? null : String(row.canonical),
-          startMs: storedStartMs,
-          endExclusiveMs: storedEndExclusiveMs,
-        },
-        input.timeZone,
-      );
-      if (
-        !annotationMatchesScope(
-          {
-            id,
-            intervalStartMs: storedStartMs,
-            intervalEndMs: inclusiveEnd,
-            precision: storedPrecision,
-            canonical: row.canonical == null ? null : String(row.canonical),
-            kind: row.kind == null ? null : String(row.kind),
-            documentIds: parseIds(row.document_ids),
-            sourceIds: parseIds(row.source_ids),
-            personIds: parseIds(row.person_ids),
-            loopIds: parseIds(row.loop_ids),
-            projectionIds: parseIds(row.projection_ids),
-          },
-          { ...input, ...range },
-        )
-      )
-        return [];
-      const precision: TemporalPrecision =
-        storedPrecision === "year" ||
-        storedPrecision === "month" ||
-        storedPrecision === "day" ||
-        storedPrecision === "range"
-          ? storedPrecision
-          : "instant";
-      const item: TemporalItem = {
-        id,
-        origin: "annotation",
-        start: new Date(bounds.startMs).toISOString(),
-        endExclusive: new Date(bounds.endExclusiveMs).toISOString(),
-        precision,
-        allDay: bounds.allDay,
-        timeZone: input.timeZone,
-        label: String(row.sentence),
-        kind: kind(row.kind == null ? UNCLASSIFIED_ANNOTATION_KIND : String(row.kind)),
-        modality: "inferred",
-        status: "active",
-        annotation: {
-          documentIds: parseIds(row.document_ids),
-          personIds: parseIds(row.person_ids),
-          loopIds: parseIds(row.loop_ids),
-          projectionIds: parseIds(row.projection_ids),
-          createdByRun: String(row.created_by_run),
-          revision: Number(row.revision),
-          createdAt: new Date(Number(row.created_at)).toISOString(),
-          updatedAt: new Date(Number(row.updated_at)).toISOString(),
-        },
-      };
-      return [
-        {
-          item,
-          key: {
-            startMs: bounds.startMs,
-            endExclusiveMs: bounds.endExclusiveMs,
-            originRank: 1,
-            id,
-          },
-        },
-      ];
     });
   }
 

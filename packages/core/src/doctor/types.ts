@@ -403,6 +403,19 @@ export interface ProcessVitalsResult {
 }
 
 /**
+ * `GET /admin/stalls` (subset): main-thread stalls of at least `minMs` over
+ * the last `windowMinutes`, grouped by culprit (an activity name or a code
+ * location), most blocked time first. A null `culprit` gathers the stalls
+ * nothing could be named for.
+ */
+export interface StallsResult {
+  windowMinutes: number;
+  minMs: number;
+  summary: { count: number; totalMs: number; maxMs: number };
+  ranking: Array<{ culprit: string | null; count: number; totalMs: number; maxMs: number }>;
+}
+
+/**
  * `GET /admin/brain/sweeps` (subset) — what is wrong with the operator's
  * sweep files, and which sweeps are anchored where the morning digest needs
  * quiet. Null when sweeps could not be read (the briefs feature is inactive,
@@ -467,6 +480,13 @@ export interface DoctorData {
   indexStats: IndexStatsResult | null;
   overall: OverallStatusResult | null;
   processVitals: ProcessVitalsResult | null;
+  /**
+   * The gateway's recorded main-thread stalls. Absent on a collector report,
+   * and null when the gateway records none (it predates the stall monitor,
+   * runs with detection off, or its watchdog has stopped); either way the
+   * check is left out rather than passing on an empty record.
+   */
+  stalls?: StallsResult | null;
   sweeps: SweepsResult | null;
   security: SecurityData | null;
   /**

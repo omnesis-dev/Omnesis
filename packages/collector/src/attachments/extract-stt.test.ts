@@ -10,8 +10,8 @@
 
 import { describe, test, expect, vi } from "vitest";
 import { SyncError } from "@omnesis/types";
+import { AudioUnreadableError, type AudioTranscribeFn } from "@omnesis/core";
 import { createAttachmentExtractor } from "./extract.js";
-import type { AudioTranscribeFn } from "@omnesis/core";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -57,6 +57,14 @@ describe("createAttachmentExtractor — STT", () => {
     });
     const extract = createAttachmentExtractor({ transcribe });
     await expect(extract(enc("clip"), "audio/ogg")).rejects.toThrow(/transcriber unavailable/);
+  });
+
+  test("audio that decodes to nothing has no text, so the source does not retry it", async () => {
+    const transcribe: AudioTranscribeFn = async () => {
+      throw new AudioUnreadableError();
+    };
+    const extract = createAttachmentExtractor({ transcribe });
+    expect(await extract(enc("not audio"), "audio/ogg")).toBeNull();
   });
 
   test("an audio fn does not interfere with text extraction", async () => {

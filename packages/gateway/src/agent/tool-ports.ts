@@ -34,6 +34,7 @@ export type GatewayAgentPortsDeps = Pick<
   | "isApnsConfigured"
   | "watchPreflight"
   | "mentionWorthGateActive"
+  | "temporalStoreReads"
 >;
 
 /** Gateway tools share the same data access and gates across agent model roles. */
@@ -93,6 +94,7 @@ export function createGatewayAgentPorts(deps: GatewayAgentPortsDeps): ToolPorts 
     // No write surface.
     temporal: createGatewayTemporalPort(db, analyticsDb, undefined, {
       ...(deps.mentionWorthGateActive ? { hideUnworthyMentions: deps.mentionWorthGateActive } : {}),
+      ...(deps.temporalStoreReads ? { storeReads: deps.temporalStoreReads } : {}),
     }),
     // Read-only cognitive-context (reap) port (experimental): lets the
     // interactive agent pull the whole neighbourhood the background agent

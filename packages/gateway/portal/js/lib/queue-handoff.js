@@ -6,12 +6,12 @@ export function newQueueHandoffIds(hiddenIds, requestedIds, consumedIds) {
 }
 
 /** Presentation-only handoff: retain durable receipts, including failures. */
-export function visibleQueueControls(controls, hiddenIds, consumedIds) {
-  if (!controls || (!hiddenIds?.size && !consumedIds?.size)) return controls;
+export function visibleQueueControls(controls, hiddenIds, consumedIds, presentedIds) {
+  if (!controls || (!hiddenIds?.size && !consumedIds?.size && !presentedIds?.size)) return controls;
   return {
     ...controls,
     queuedMessages: controls.queuedMessages?.filter(
-      (message) => message.status !== "queued" || (!hiddenIds?.has(message.id) && !consumedIds?.has(message.id)),
+      (message) => message.status !== "queued" || (!hiddenIds?.has(message.id) && !consumedIds?.has(message.id) && !presentedIds?.has(message.id)),
     ),
   };
 }

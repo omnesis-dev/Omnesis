@@ -4,7 +4,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import {
+  AudioUnreadableError,
   MAX_TRANSCRIPTION_MS,
+  TRANSCRIBE_AUDIO_UNREADABLE_CODE,
+  TRANSCRIBE_REPORT_UNREADABLE_HEADER,
   createLogger,
   fetchAllowingSlowResponse,
   toErrorMessage,
@@ -84,6 +87,9 @@ function isRetryable(status: number): boolean {
  * so it must survive unchanged.
  */
 class GatewayResponseError extends Error {}
+
+/** The status `/inference/transcribe` answers for audio that decodes to no audio. */
+const UNPROCESSABLE_CONTENT = 422;
 
 /** A transient `/inference/*` failure, with the HTTP status that reported it. */
 class InferenceBackendError extends SyncError {
@@ -350,6 +356,10 @@ export class HttpGatewayClient implements GatewayClient {
     // cursor un-advanced so the page retries next tick — a flaky transcriber
     // doesn't silently drop audio attachments from a durable index.
     //
+    // Audio the gateway decoded to nothing (a 422 with the unreadable-audio
+    // code, which it sends only because this request asks for it) throws an
+    // `AudioUnreadableError`, so the source can stop sending those bytes.
+    //
     // Sends raw bytes (no base64 inflation) with the audio MIME type as
     // Content-Type; the gateway holds them only for the request. The gateway
     // owns the transcription deadline, which for a long recording on a slow
@@ -379,9 +389,18 @@ export class HttpGatewayClient implements GatewayClient {
         mimeType,
         "transcribe",
         controller.signal,
-        contextHeader ? { "x-omnesis-transcription-context": contextHeader } : undefined,
+        {
+          [TRANSCRIBE_REPORT_UNREADABLE_HEADER]: "1",
+          ...(contextHeader ? { "x-omnesis-transcription-context": contextHeader } : {}),
+        },
+        UNPROCESSABLE_CONTENT,
       );
       if (res === null) return null;
+      if (res.status === UNPROCESSABLE_CONTENT) {
+        const refusal = (await res.json().catch(() => ({}))) as { code?: unknown };
+        if (refusal.code === TRANSCRIBE_AUDIO_UNREADABLE_CODE) throw new AudioUnreadableError();
+        return null;
+      }
       const data = (await res.json()) as {
         available?: boolean;
         text?: unknown;
@@ -520,6 +539,8 @@ export class HttpGatewayClient implements GatewayClient {
    * - 4xx (e.g. 404 = backend not enabled, 415 = unsupported type) → returns
    *   `null`. The gateway permanently cannot process this input; successful
    *   extraction with no content is represented by a non-null empty result.
+   *   `passStatus` is a 4xx returned to the caller instead, for one whose body
+   *   the caller reads.
    * - 5xx, or `fetch` rejecting (gateway unreachable, connection reset,
    *   timeout) → throws `SyncError("transient")`; the caller decides whether
    *   its operation is durable/retryable or optional enrichment.
@@ -536,6 +557,7 @@ export class HttpGatewayClient implements GatewayClient {
     label: string,
     signal?: AbortSignal,
     extraHeaders?: Record<string, string>,
+    passStatus?: number,
   ): Promise<Response | null> {
     let res: Response;
     try {
@@ -557,7 +579,7 @@ export class HttpGatewayClient implements GatewayClient {
       const msg = err instanceof Error ? err.message : String(err);
       throw new SyncError("transient", `${label} backend unreachable: ${msg}`, { cause: err });
     }
-    if (res.ok) return res;
+    if (res.ok || res.status === passStatus) return res;
     // 5xx, 429 (rate limited) and 408 (request timeout) are transient — the
     // backend is momentarily overloaded or stalled, not permanently unable to
     // extract this input. Surface them so the caller applies its durability

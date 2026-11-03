@@ -3,7 +3,9 @@
 
 import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { matchedRoutes } from "hono/route";
 import { strictRoute } from "./http/scope.js";
+import { httpActivityName, withActivity } from "./observability/main-activity.js";
 type Db = Database.Database;
 import { join } from "node:path";
 import {
@@ -184,6 +186,7 @@ import type { IComputeScheduler } from "./http/services/ports.js";
 import type { ConfigStore } from "./config-store.js";
 import type { AppEnv, AuthContext } from "./http/routes/types.js";
 import type { CognitionBudgetSettings } from "./brain/cognition/budget.js";
+import type { TemporalStoreReads } from "./enrichment/temporal/temporal-store-window.js";
 
 const log = createLogger("gateway:http");
 
@@ -224,6 +227,8 @@ export function createServer(
     processVitals?: {
       snapshot(windowSeconds: number): import("./process-vitals.js").ProcessVitalsSnapshot;
     };
+    /** Recorded main-thread stalls, for GET /admin/stalls and the doctor. */
+    stalls?: import("./observability/stall-monitor.js").StallReportPort;
     /**
      * Optional Scheduler — only the `snapshot(windowSec)` surface is used,
      * so tests can pass a minimal stub.
@@ -311,6 +316,8 @@ export function createServer(
     personLookupGate?: PersonLookupGate;
     /** Whether the mention worth gate is active, so Direct `temporal_query` hides unworthy mentions. */
     mentionWorthGateActive?: () => boolean;
+    /** Read worker for the store half of temporal reads (Direct `temporal_query`, `/temporal/*`). */
+    temporalStoreReads?: TemporalStoreReads;
     /** Test/embedding override for the fixed Direct MCP façade. */
     directMcpService?: import("./agent/direct-mcp.js").DirectMcpService;
     /** Receives the stateless MCP HTTP runtime for graceful shutdown. */
@@ -888,6 +895,17 @@ export function createServer(
       runWithPriority("background", () => w.recordReportedDeviceVersion(id, version)),
   });
 
+  // Mark each request with its method and the pattern of the route that
+  // handles it (`GET /documents/:id`, never the URL), so a stall it causes on
+  // the main thread is reported under that name. The handler is the first
+  // matched route that is not middleware: matches are in registration order,
+  // and a catch-all registered later (`/portal/*`) matches too. Its `next()`
+  // runs every later middleware and the handler, auth included.
+  app.use("*", (c, next) => {
+    const handler = matchedRoutes(c).find((r) => r.method !== "ALL");
+    return withActivity(httpActivityName(c.req.method, handler?.path ?? ""), next);
+  });
+
   app.use("*", async (c, next) => {
     const startMs = Date.now();
     const timing = newRequestTiming();
@@ -1444,6 +1462,7 @@ export function createServer(
     getReleaseCheck: opts?.getReleaseCheck,
     getTlsLifecycle: opts?.tlsLifecycle ? () => opts.tlsLifecycle!.snapshot() : undefined,
     processVitals: opts?.processVitals,
+    stalls: opts?.stalls,
     agentAuthorizations: () => accessService.agentDeviceAuthorizations(),
     pushPlanForDevice: planForPhone,
     ...(opts?.sweeps
@@ -1495,6 +1514,7 @@ export function createServer(
     importFlows: opts?.importFlows,
     metrics: opts?.metrics,
     processVitals: opts?.processVitals,
+    stalls: opts?.stalls,
     scheduler: opts?.scheduler,
     backgroundJobs: opts?.backgroundJobs,
     pairingTtlMs: opts?.timings?.pairingTtlMs,
@@ -1580,6 +1600,7 @@ export function createServer(
           ...(opts.mentionWorthGateActive
             ? { mentionWorthGateActive: opts.mentionWorthGateActive }
             : {}),
+          ...(opts.temporalStoreReads ? { temporalStoreReads: opts.temporalStoreReads } : {}),
         })
       : undefined);
   const directMcpBoundary = directMcpService
@@ -1844,6 +1865,7 @@ export function createServer(
     db,
     analyticsDb: opts?.analyticsDb,
     hideUnworthyMentions: opts?.mentionWorthGateActive,
+    storeReads: opts?.temporalStoreReads,
     clock: opts?.briefsClock,
   });
 

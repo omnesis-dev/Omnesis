@@ -157,12 +157,17 @@ export class InferenceHealth {
     return { warnings };
   }
 
-  /** Capture the model configuration when the provider is constructed. */
+  /**
+   * Capture the model configuration when the provider is constructed.
+   * `isInputFault` marks errors caused by the request's input rather than the
+   * model; those count as neither a success nor a failure.
+   */
   observe<T extends object>(
     resolved: ResolvedAssignment,
     provider: T,
     methods: readonly string[],
     beginCall = this.callFactory(resolved.role),
+    isInputFault: (error: unknown) => boolean = () => false,
   ): T {
     return new Proxy(provider, {
       get: (target, key) => {
@@ -177,7 +182,9 @@ export class InferenceHealth {
             if (!signal?.aborted) call.success();
             return result;
           } catch (error) {
-            if (!signal?.aborted && !isCancellation(error)) call.failure(error);
+            if (!signal?.aborted && !isCancellation(error) && !isInputFault(error)) {
+              call.failure(error);
+            }
             throw error;
           }
         };

@@ -17,6 +17,7 @@ import {
   computeContentHash,
   transcriptionSyncIssues,
   TRANSCRIBER_UNAVAILABLE,
+  AudioUnreadableError,
 } from "@omnesis/core";
 import { SourceId, ProviderId, isTransientSyncError } from "@omnesis/types";
 import { unavailableStorePage } from "./store-unavailable.js";
@@ -229,6 +230,11 @@ export class AppleIMessageSource {
     }
     const lastRowId = state?.lastRowId ?? 0;
     const isBootstrap = lastRowId === 0;
+    // A sync from no cursor is a bootstrap or a resync: clips found unreadable
+    // before are sent again, in case the gateway's decoder now reads them.
+    if (state === null && this.transcribeAudio && this.hasTranscriptSidecar()) {
+      this.getTranscriptCache().forgetUnreadable();
+    }
 
     // Convert dataCutoff to iMessage nanosecond timestamp for filtering
     const cutoffNs = this.dataCutoff ? isoToImessageNs(this.dataCutoff) : null;
@@ -1031,7 +1037,9 @@ export class AppleIMessageSource {
    * re-running Whisper. A clip the transcriber could not handle — no
    * transcriber assigned, the backend down, a read that failed — is recorded
    * there as pending with a backoff, is left alone until it is due, and has
-   * its day re-rendered then; the page it is on completes either way.
+   * its day re-rendered then; the page it is on completes either way. A clip
+   * whose bytes decode to no audio is recorded there as unreadable and is not
+   * sent again while the file is unchanged.
    */
   private async transcribeDayAudio(
     dayParsed: ParsedIMessage[],
@@ -1053,6 +1061,8 @@ export class AppleIMessageSource {
     const now = Date.now();
     /** Clips this pass left pending; the rest of the day's pending rows are stale. */
     const stillPending: string[] = [];
+    /** Clips this pass found unreadable; the rest of the day's unreadable rows are stale. */
+    const stillUnreadable: string[] = [];
     let sawAudio = false;
 
     for (const msg of dayParsed) {
@@ -1098,6 +1108,14 @@ export class AppleIMessageSource {
           continue;
         }
 
+        // The same bytes decode the same way: not sent again until the file
+        // changes or the source is resynced.
+        if (cache.isUnreadable(cacheKey, att.totalBytes, mtimeMs)) {
+          att.transcription = "audio-unreadable";
+          stillUnreadable.push(cacheKey);
+          continue;
+        }
+
         const pending = cache.pending(cacheKey);
         if (pending && pending.nextAttemptMs > now) {
           att.transcription =
@@ -1138,9 +1156,16 @@ export class AppleIMessageSource {
             durationSec: result.durationSec,
           });
         } catch (err) {
-          // A transcription-backend blip (gateway unreachable / 5xx) or an
-          // unreadable file: the page goes on with the placeholder, and the
-          // clip is retried on its own schedule.
+          if (err instanceof AudioUnreadableError) {
+            log.debug(`Audio ${att.filename} could not be decoded; not sending it again`);
+            cache.recordUnreadable(cacheKey, dayKey, att.totalBytes, mtimeMs);
+            att.transcription = "audio-unreadable";
+            stillUnreadable.push(cacheKey);
+            continue;
+          }
+          // A transcription-backend blip (gateway unreachable / 5xx) or a
+          // file that could not be read: the page goes on with the
+          // placeholder, and the clip is retried on its own schedule.
           const message = err instanceof Error ? err.message : String(err);
           log.debug(`Failed to transcribe audio ${att.filename}: ${message}`);
           cache.recordFailure(cacheKey, dayKey, message, now);
@@ -1151,10 +1176,11 @@ export class AppleIMessageSource {
 
     // Only the clips this pass saw and left pending keep the day due: a clip
     // that left the chat, or was transcribed through its other key, must not
-    // hold it. A day with audio opened the sidecar; a due day without any
-    // audio left is cleared through the sidecar the sweep already opened.
+    // hold it, nor stay reported as unreadable. A day with audio opened the
+    // sidecar; a due day without any audio left is cleared through the
+    // sidecar the sweep already opened.
     const sidecar = sawAudio ? this.getTranscriptCache() : this.transcriptCache;
-    sidecar?.retainPendingForDay(dayKey, stillPending);
+    sidecar?.retainForDay(dayKey, stillPending, stillUnreadable);
   }
 
   /** Lazily open the transcript sidecar on first use. */

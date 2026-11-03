@@ -23,6 +23,11 @@
  * source re-renders a day once a clip in it is due again, so a clip that
  * found no transcriber or a backend that was down is retried on a schedule
  * instead of whenever its day happens to change.
+ *
+ * A clip whose bytes the gateway reported as decoding to no audio is kept
+ * apart, with the size and mtime it had: it is not sent again while the file
+ * is unchanged, since the same bytes decode the same way. A resync forgets
+ * these, so a decoder that has since improved is given another try.
  */
 
 import { chmodSync, mkdirSync } from "node:fs";
@@ -48,10 +53,14 @@ export interface PendingTranscription {
   lastError: string;
 }
 
-/** The clips with no transcript yet, and how many of them found no transcriber. */
+/**
+ * The clips with no transcript yet, how many of them found no transcriber, and
+ * the clips whose audio could not be decoded.
+ */
 export interface TranscriptionBacklogCounts {
   awaiting: number;
   transcriberUnavailable: number;
+  unreadable: number;
 }
 
 /**
@@ -79,6 +88,12 @@ export class IMessageTranscriptCache {
   private retainDayStmt: Database.Statement;
   private forgetDayStmt: Database.Statement;
   private backlogStmt: Database.Statement;
+  private unreadableStmt: Database.Statement;
+  private recordUnreadableStmt: Database.Statement;
+  private clearUnreadableStmt: Database.Statement;
+  private retainUnreadableDayStmt: Database.Statement;
+  private forgetUnreadableDayStmt: Database.Statement;
+  private forgetAllUnreadableStmt: Database.Statement;
 
   constructor(configDir?: string) {
     this.db = this.openDb(configDir);
@@ -108,6 +123,13 @@ export class IMessageTranscriptCache {
       );
       CREATE INDEX IF NOT EXISTS pending_transcriptions_due
         ON pending_transcriptions(next_attempt_ms);
+      CREATE TABLE IF NOT EXISTS unreadable_clips (
+        attachment_guid TEXT PRIMARY KEY,
+        day_key TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime_ms REAL
+      );
+      CREATE INDEX IF NOT EXISTS unreadable_clips_day ON unreadable_clips(day_key);
     `);
       this.getStmt = this.db.prepare(
         "SELECT transcript, duration_sec as durationSec, size, mtime_ms as mtimeMs FROM transcripts WHERE attachment_guid = ?",
@@ -147,9 +169,32 @@ export class IMessageTranscriptCache {
       this.forgetDayStmt = this.db.prepare("DELETE FROM pending_transcriptions WHERE day_key = ?");
       this.backlogStmt = this.db.prepare(
         `SELECT COUNT(*) AS awaiting,
-                COALESCE(SUM(last_error = ?), 0) AS transcriberUnavailable
+                COALESCE(SUM(last_error = ?), 0) AS transcriberUnavailable,
+                (SELECT COUNT(*) FROM unreadable_clips) AS unreadable
          FROM pending_transcriptions`,
       );
+      this.unreadableStmt = this.db.prepare(
+        "SELECT size, mtime_ms AS mtimeMs FROM unreadable_clips WHERE attachment_guid = ?",
+      );
+      this.recordUnreadableStmt = this.db.prepare(
+        `INSERT INTO unreadable_clips (attachment_guid, day_key, size, mtime_ms)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(attachment_guid) DO UPDATE SET
+           day_key = excluded.day_key,
+           size = excluded.size,
+           mtime_ms = excluded.mtime_ms`,
+      );
+      this.clearUnreadableStmt = this.db.prepare(
+        "DELETE FROM unreadable_clips WHERE attachment_guid = ?",
+      );
+      this.retainUnreadableDayStmt = this.db.prepare(
+        `DELETE FROM unreadable_clips
+         WHERE day_key = ? AND attachment_guid NOT IN (SELECT value FROM json_each(?))`,
+      );
+      this.forgetUnreadableDayStmt = this.db.prepare(
+        "DELETE FROM unreadable_clips WHERE day_key = ?",
+      );
+      this.forgetAllUnreadableStmt = this.db.prepare("DELETE FROM unreadable_clips");
     } catch (error) {
       this.close();
       throw error;
@@ -195,7 +240,8 @@ export class IMessageTranscriptCache {
 
   /**
    * Persist a transcript for an attachment guid. `""` is a valid value. A
-   * transcript settles the clip, so any pending attempt for it is dropped.
+   * transcript settles the clip, so any pending attempt or unreadable verdict
+   * for it is dropped.
    */
   set(
     attachmentGuid: string,
@@ -211,6 +257,7 @@ export class IMessageTranscriptCache {
       value.durationSec ?? null,
     );
     this.settleStmt.run(attachmentGuid);
+    this.clearUnreadableStmt.run(attachmentGuid);
   }
 
   /** The pending attempt for a clip, if a previous attempt failed. */
@@ -227,7 +274,42 @@ export class IMessageTranscriptCache {
     const attempts = (prior?.attempts ?? 0) + 1;
     const delaySec = RETRY_BACKOFF_SEC[Math.min(attempts - 1, RETRY_BACKOFF_SEC.length - 1)];
     const next = nowMs + delaySec * 1000;
-    this.recordFailureStmt.run(attachmentGuid, dayKey, next, error, next);
+    this.db.transaction(() => {
+      this.recordFailureStmt.run(attachmentGuid, dayKey, next, error, next);
+      this.clearUnreadableStmt.run(attachmentGuid);
+    })();
+  }
+
+  /**
+   * Whether the clip was found to decode to no audio while it had this size
+   * and mtime. A changed file is a different clip, so it is tried again.
+   */
+  isUnreadable(attachmentGuid: string, size: number, mtimeMs?: number): boolean {
+    const row = this.unreadableStmt.get(attachmentGuid) as
+      { size: number; mtimeMs: number | null } | undefined;
+    if (!row || row.size !== size) return false;
+    return mtimeMs === undefined || row.mtimeMs === mtimeMs;
+  }
+
+  /**
+   * Record that the clip, at this size and mtime, decodes to no audio. It
+   * leaves the pending clips: nothing is due for it any more.
+   */
+  recordUnreadable(
+    attachmentGuid: string,
+    dayKey: string,
+    size: number,
+    mtimeMs: number | undefined,
+  ): void {
+    this.db.transaction(() => {
+      this.recordUnreadableStmt.run(attachmentGuid, dayKey, size, mtimeMs ?? null);
+      this.settleStmt.run(attachmentGuid);
+    })();
+  }
+
+  /** Forget every unreadable verdict, so a resync sends those clips again. */
+  forgetUnreadable(): void {
+    this.forgetAllUnreadableStmt.run();
   }
 
   /** The day-chats holding a clip whose next attempt is due, earliest-named first, at most `limit`. */
@@ -236,19 +318,33 @@ export class IMessageTranscriptCache {
   }
 
   /**
-   * Keep only the named clips pending for a day, so a clip that left the
-   * chat, or was transcribed through another key, stops holding the day due.
+   * Keep only the named clips pending, and the named clips unreadable, for a
+   * day, so a clip that left the chat, or was transcribed through another
+   * key, stops holding the day due and stops being reported.
    */
-  retainPendingForDay(dayKey: string, attachmentGuids: readonly string[]): void {
-    this.retainDayStmt.run(dayKey, JSON.stringify(attachmentGuids));
+  retainForDay(
+    dayKey: string,
+    pendingGuids: readonly string[],
+    unreadableGuids: readonly string[],
+  ): void {
+    this.db.transaction(() => {
+      this.retainDayStmt.run(dayKey, JSON.stringify(pendingGuids));
+      this.retainUnreadableDayStmt.run(dayKey, JSON.stringify(unreadableGuids));
+    })();
   }
 
-  /** Drop every pending attempt of a day-chat that no longer exists. */
+  /** Drop every pending attempt and unreadable verdict of a day-chat that no longer exists. */
   forgetDay(dayKey: string): void {
-    this.forgetDayStmt.run(dayKey);
+    this.db.transaction(() => {
+      this.forgetDayStmt.run(dayKey);
+      this.forgetUnreadableDayStmt.run(dayKey);
+    })();
   }
 
-  /** How many clips still await a transcript, and how many of them found no transcriber. */
+  /**
+   * How many clips still await a transcript, how many of them found no
+   * transcriber, and how many could not be decoded.
+   */
   backlog(): TranscriptionBacklogCounts {
     return this.backlogStmt.get(TRANSCRIBER_UNAVAILABLE) as TranscriptionBacklogCounts;
   }
