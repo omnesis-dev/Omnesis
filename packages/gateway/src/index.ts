@@ -1083,7 +1083,8 @@ if (runtime.searchWorkerConcurrency > 0) {
     workerUrl: searchWorker.url,
     workerExecArgv: searchWorker.execArgv,
     // The workers read each query's temporal intent, so they, not the main
-    // thread, build the date recognizer's models.
+    // thread, build the date recognizer's models: one worker at a time, once
+    // the gateway is serving (see `warmDateRecognizers` after `listen`).
     warmTemporalIntent: resolveTemporalConfig(searchConfig).enabled,
   });
   searchWorkerPool = pool;
@@ -1756,7 +1757,7 @@ modelHistory.load();
 // SHA-256 fingerprint baked into the V3 QR pairing payload (TOFU); CLIs and
 // the desktop collector get the cert via standard OS trust (operator can
 // trust the cached cert manually) or the env-override path.
-const tlsBundle = resolveTlsBundle({
+const tlsBundle = await resolveTlsBundle({
   configDir,
   envCertPath: process.env.OMNESIS_TLS_CERT,
   envKeyPath: process.env.OMNESIS_TLS_KEY,
@@ -1805,7 +1806,8 @@ const tlsLifecycle = new TlsLifecycleService({
   requiredHosts: () => addressedHosts().required,
   proxiedHosts: () => addressedHosts().proxied,
   minter: createHostMinter({
-    selfSigned: () => generateSelfSigned({ extraNames: process.env.OMNESIS_TLS_EXTRA_NAMES }),
+    selfSigned: (signal) =>
+      generateSelfSigned({ extraNames: process.env.OMNESIS_TLS_EXTRA_NAMES, signal }),
   }),
   settings: () => ({
     autoRenew: configStore.get().gateway?.tls?.autoRenew ?? CONFIG_DEFAULTS.gateway.tls.autoRenew,
@@ -3132,6 +3134,9 @@ const listenPort =
     : PORT;
 log.info(`Listening on https://localhost:${listenPort}, db=${DB_PATH}`);
 scheduleSearchCachePrewarm();
+// Warm-ups wait for the listening server: before it, they compete for the
+// cores the rest of boot needs, and nothing can search yet.
+searchWorkerPool?.warmDateRecognizers();
 
 // Advertise the gateway on the LAN via mDNS so same-LAN collectors with
 // no OMNESIS_GATEWAY_URL auto-discover it, and the portal is reachable at

@@ -89,7 +89,7 @@ test("bounds a stuck HTTPS handler and signals request cancellation", async () =
   const aborted = deferred();
   const configDir = mkdtempSync(join(tmpdir(), "omnesis-test-http-shutdown-"));
   const server = createHttpsServer(
-    resolveTlsBundle({ configDir }),
+    await resolveTlsBundle({ configDir }),
     getRequestListener(async (req) => {
       const cancellation = new Promise<void>((resolve) => {
         req.signal.addEventListener(

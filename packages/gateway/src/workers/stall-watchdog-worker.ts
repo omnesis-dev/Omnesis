@@ -105,6 +105,8 @@ let capture: { id: string; stalls: StallEvent[] } | null = null;
 interface Snapshot {
   code: ProfileFrame | null;
   stack: ProfileFrame[];
+  /** How long the stall had lasted when this snapshot was started. */
+  afterMs: number;
 }
 /** The snapshot of the stall in progress, keyed by the heartbeat it went stale after. */
 let snapshot: { beat: number; done: Promise<Snapshot | null> } | null = null;
@@ -112,15 +114,15 @@ let snapshot: { beat: number; done: Promise<Snapshot | null> } | null = null;
 let snapshotRunning: Promise<unknown> | null = null;
 let lastSnapshotAt = Number.NEGATIVE_INFINITY;
 
-function startSnapshot(forBeat: number): void {
-  const done = takeSnapshot(forBeat);
+function startSnapshot(forBeat: number, stalledMs: number): void {
+  const done = takeSnapshot(forBeat, stalledMs);
   snapshot = { beat: forBeat, done };
   snapshotRunning = done.finally(() => {
     snapshotRunning = null;
   });
 }
 
-async function takeSnapshot(forBeat: number): Promise<Snapshot | null> {
+async function takeSnapshot(forBeat: number, afterMs: number): Promise<Snapshot | null> {
   try {
     // A stall in native code delays the profiler's start until it returns, by
     // which time the samples would be of whatever ran next: a slow answer, or
@@ -140,6 +142,7 @@ async function takeSnapshot(forBeat: number): Promise<Snapshot | null> {
     return {
       code: body.hottestCode,
       stack: body.topStacks[0]?.frames.slice(0, SNAPSHOT_STACK_FRAMES) ?? [],
+      afterMs,
     };
   } catch {
     // A snapshot is a refinement: the stall is still reported without one.
@@ -192,6 +195,7 @@ function report(found: DetectedStall, snap: Snapshot | null, profileId: string |
     outer: nameOf(found.outer),
     inFlight: found.inFlight.map((id) => nameOf(id)!),
     code: snap?.code ?? null,
+    codeSampledAfterMs: snap?.code ? snap.afterMs : null,
     stack: snap?.stack ?? [],
     profileId,
   };
@@ -224,7 +228,7 @@ setInterval(() => {
       now - lastSnapshotAt >= SNAPSHOT_MIN_GAP_MS
     ) {
       lastSnapshotAt = now;
-      startSnapshot(lastBeat);
+      startSnapshot(lastBeat, stalledMs);
     }
     return;
   }

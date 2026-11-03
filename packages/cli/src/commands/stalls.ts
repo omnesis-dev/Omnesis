@@ -49,6 +49,8 @@ export interface StallsResponse {
     attribution: "running" | "in-flight" | "code" | "none";
     culprit: string | null;
     code: Frame | null;
+    /** How far into the stall the snapshot behind `code` began; absent from older gateways. */
+    codeSampledAfterMs?: number | null;
   }>;
   capturing: string | null;
   profiles: Array<{
@@ -62,6 +64,8 @@ export interface StallsResponse {
 }
 
 const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
+/** From this far into a stall, its snapshot is called out as late, as on the gateway's stall line. */
+const LATE_SNAPSHOT_MS = 1_000;
 const clock = (iso: string): string => new Date(iso).toLocaleString();
 const where = (f: Frame): string =>
   `${f.functionName}${f.file ? ` (${f.file}${f.line ? `:${f.line}` : ""})` : ""}`;
@@ -95,13 +99,17 @@ export function renderStalls(r: StallsResponse): string {
     out.push("", `${c.bold}Most recent${c.reset}`);
     for (const s of r.recent) {
       let what: string;
-      const at = s.code ? ` ${c.dim}at${c.reset} ${where(s.code)}` : "";
+      const late =
+        s.codeSampledAfterMs != null && s.codeSampledAfterMs >= LATE_SNAPSHOT_MS
+          ? ` ${c.dim}(sampled ${seconds(s.codeSampledAfterMs)} in)${c.reset}`
+          : "";
+      const at = s.code ? ` ${c.dim}at${c.reset} ${where(s.code)}${late}` : "";
       if (s.attribution === "running") {
         what = `${s.activity}${s.outer && s.outer !== s.activity ? ` ${c.dim}(in ${s.outer})${c.reset}` : ""}${at}`;
       } else if (s.attribution === "in-flight") {
         what = `${s.culprit} ${c.dim}(in flight)${c.reset}${at}`;
       } else if (s.attribution === "code") {
-        what = `${where(s.code!)}${s.inFlight.length > 0 ? ` ${c.dim}(in flight: ${s.inFlight.join(", ")})${c.reset}` : ""}`;
+        what = `${where(s.code!)}${late}${s.inFlight.length > 0 ? ` ${c.dim}(in flight: ${s.inFlight.join(", ")})${c.reset}` : ""}`;
       } else {
         what = `${c.dim}not attributed${s.inFlight.length > 0 ? `; in flight: ${s.inFlight.join(", ")}` : ""}${c.reset}`;
       }

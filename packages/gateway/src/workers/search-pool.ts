@@ -45,7 +45,7 @@
  */
 
 import { Worker } from "node:worker_threads";
-import { createLogger } from "@omnesis/core";
+import { assertNever, createLogger } from "@omnesis/core";
 import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { DEFAULT_BACKGROUND_WORKER_NICE } from "./worker-priority.js";
 import type { LexicalIndexData } from "../search/lexical-index-data.js";
@@ -81,7 +81,10 @@ export interface SearchWorkerPoolOptions {
   respawnStableMs?: number;
   /** Respawns allowed in one streak before the slot is abandoned. */
   maxRespawnStreak?: number;
-  /** Have each worker build the date recognizer's models once it is ready. */
+  /**
+   * Whether `warmDateRecognizers()` builds the date recognizer's models on the
+   * workers. Off when the temporal lane is.
+   */
   warmTemporalIntent?: boolean;
   /** How long a temporal-intent reading waits for a starting pool's first worker. */
   startWaitMs?: number;
@@ -122,6 +125,8 @@ interface WorkerSlot {
   heartbeatCheck: ReturnType<typeof setInterval> | null;
   shutdownResolve: (() => void) | null;
   unresponsiveSince: number | null;
+  /** Where the current worker's date recognizer models stand; a new worker starts cold. */
+  temporal: "cold" | "warming" | "warm";
 }
 
 /**
@@ -159,6 +164,8 @@ export class SearchWorkerPool {
   private inflight = new Map<number, Pending>();
   /** The lexical index every worker ranks with; re-sent to respawned workers. */
   private lexicalIndex: LexicalIndexData | undefined;
+  /** `warmDateRecognizers()` was called: every worker, respawned ones too, is to be warmed. */
+  private temporalWarmRequested = false;
   private readonly opts: Required<
     Omit<SearchWorkerPoolOptions, "indexDbKeyHex" | "cacheSizeBytes">
   > & {
@@ -239,6 +246,7 @@ export class SearchWorkerPool {
         heartbeatCheck: null,
         shutdownResolve: null,
         unresponsiveSince: null,
+        temporal: "cold",
       };
       this.slots.push(slot);
       this.spawn(slot);
@@ -289,13 +297,44 @@ export class SearchWorkerPool {
     options: TemporalIntentOptions,
   ): Promise<TemporalIntent | null> {
     if (this.isStarting) await this.firstReady();
-    return (await this.dispatch("search-worker:temporal-intent", (id, enqueueMs) => ({
-      type: "temporalIntent",
-      id,
-      text,
-      options,
-      enqueueMs,
-    }))) as TemporalIntent | null;
+    return (await this.dispatch(
+      "search-worker:temporal-intent",
+      (id, enqueueMs) => ({
+        type: "temporalIntent",
+        id,
+        text,
+        options,
+        enqueueMs,
+      }),
+      // A warm worker answers at once; a cold one would build models first.
+      (slot) => slot.temporal === "warm",
+    )) as TemporalIntent | null;
+  }
+
+  /**
+   * Build the date recognizer's models on every worker, one worker at a time,
+   * and on each worker that replaces a dead one. Building them takes a second
+   * or more of CPU per worker, so all workers at once would occupy as many
+   * cores just as the gateway starts serving; one at a time occupies one, and
+   * readings go to the warm workers meanwhile, even when a cold one has fewer
+   * calls in flight: a cold worker would spend a second or more building the
+   * models first. With no warm worker, a reading goes to the least-loaded one,
+   * which builds the models it needs itself.
+   */
+  warmDateRecognizers(): void {
+    if (!this.opts.warmTemporalIntent || this.disposed) return;
+    this.temporalWarmRequested = true;
+    this.warmNextWorker();
+  }
+
+  /** Ask the next ready, cold worker to warm, unless one is warming already. */
+  private warmNextWorker(): void {
+    if (!this.temporalWarmRequested || this.disposed) return;
+    if (this.slots.some((s) => s.temporal === "warming")) return;
+    const next = this.slots.find((s) => s.ready && s.worker !== null && s.temporal === "cold");
+    if (!next) return;
+    next.temporal = "warming";
+    next.worker!.postMessage({ type: "warmTemporalIntent" } satisfies MainToSearch);
   }
 
   /**
@@ -321,19 +360,22 @@ export class SearchWorkerPool {
 
   /**
    * Post one operation to the ready worker with the fewest calls in flight
-   * (ties rotate) and correlate its reply by id.
+   * (ties rotate) and correlate its reply by id. With `prefer`, the choice is
+   * among the ready workers it accepts, when there are any.
    */
   private dispatch(
     span: string,
     message: (id: number, enqueueMs: number) => MainToSearch,
+    prefer?: (slot: WorkerSlot) => boolean,
   ): Promise<CandidateGenResult | TemporalIntent | null> {
     if (this.disposed) return Promise.reject(new Error("search worker pool disposed"));
     if (this.slots.length === 0) return Promise.reject(new Error("search worker pool not started"));
     const live = this.slots.filter((s) => s.ready && s.worker !== null);
     if (live.length === 0) return Promise.reject(new Error("no search worker is ready"));
+    const preferred = prefer ? live.filter(prefer) : [];
     const id = this.nextId++;
     const slot = leastLoaded(
-      live,
+      preferred.length > 0 ? preferred : live,
       [...this.inflight.values()].map((p) => p.slot),
       id,
     );
@@ -402,8 +444,13 @@ export class SearchWorkerPool {
     slot.readySince = null;
     slot.lastHeartbeat = 0;
     slot.unresponsiveSince = null;
+    slot.temporal = "cold";
 
-    worker.on("message", (msg: SearchToMain) => this.handleMessage(slot, msg));
+    // A worker that has been replaced may still have messages queued; only the
+    // slot's current worker speaks for it.
+    worker.on("message", (msg: SearchToMain) => {
+      if (slot.worker === worker) this.handleMessage(slot, msg);
+    });
     worker.on("error", (err) => {
       log.error(`search worker ${slot.index} error: ${err.message ?? err}`);
       // Fail safe: a faulted worker stops taking calls at once so the
@@ -437,7 +484,6 @@ export class SearchWorkerPool {
       configDir: this.opts.configDir,
       heartbeatIntervalMs: this.opts.heartbeatIntervalMs,
       backgroundWorkerNice: this.opts.backgroundWorkerNice,
-      warmTemporalIntent: this.opts.warmTemporalIntent,
       ...(this.opts.indexDbKeyHex ? { indexDbKeyHex: this.opts.indexDbKeyHex } : {}),
       ...(this.opts.cacheSizeBytes != null ? { cacheSizeBytes: this.opts.cacheSizeBytes } : {}),
     };
@@ -452,6 +498,9 @@ export class SearchWorkerPool {
     slot.ready = false;
     slot.lastHeartbeat = 0;
     slot.unresponsiveSince = null;
+    // Its replacement starts cold; meanwhile another worker may take the turn.
+    slot.temporal = "cold";
+    this.warmNextWorker();
     this.ready = this.slots.some((s) => s.ready);
     for (const [id, p] of this.inflight) {
       if (p.slot === slot) {
@@ -515,6 +564,11 @@ export class SearchWorkerPool {
         this.resolveFirstReady();
         if (slot.crashStreak > 0) log.info(`search worker ${slot.index} respawned and ready`);
         if (this.slots.every((s) => s.everReady)) this.resolveStart();
+        this.warmNextWorker();
+        break;
+      case "temporalIntentWarm":
+        slot.temporal = "warm";
+        this.warmNextWorker();
         break;
       case "initError":
         if (slot.everReady) {
@@ -553,6 +607,8 @@ export class SearchWorkerPool {
       case "shutdownComplete":
         slot.shutdownResolve?.();
         break;
+      default:
+        assertNever(msg);
     }
   }
 

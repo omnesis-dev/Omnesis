@@ -18,7 +18,7 @@ describe("probeServedCertificate", () => {
   let fingerprint: string;
 
   beforeAll(async () => {
-    const material = generateSelfSigned();
+    const material = await generateSelfSigned();
     fingerprint = material.fingerprintSha256;
     server = createServer({ cert: material.cert, key: material.key }, (socket) => socket.end());
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

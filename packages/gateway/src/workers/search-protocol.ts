@@ -45,12 +45,14 @@ export type SearchInit = {
   heartbeatIntervalMs: number;
   /** OS nice for this compute thread (resolved on the main thread). */
   backgroundWorkerNice: number;
-  /**
-   * Build the date recognizer's models once the worker is ready, so a search's
-   * temporal intent does not pay for them. Off when the temporal lane is.
-   */
-  warmTemporalIntent: boolean;
 };
+
+/**
+ * Build the date recognizer's models now, so a later reading of a query's
+ * temporal intent does not pay for them. Answered with `temporalIntentWarm`
+ * once every culture is built, or once building one has failed.
+ */
+export type SearchWarmTemporalIntent = { type: "warmTemporalIntent" };
 
 export type SearchCall = {
   type: "call";
@@ -85,7 +87,12 @@ export type SearchTemporalIntentCall = {
 export type SearchLexicalIndex = { type: "lexicalIndex"; data: LexicalIndexData };
 
 export type MainToSearch =
-  SearchInit | SearchCall | SearchTemporalIntentCall | SearchLexicalIndex | { type: "shutdown" };
+  | SearchInit
+  | SearchCall
+  | SearchTemporalIntentCall
+  | SearchLexicalIndex
+  | SearchWarmTemporalIntent
+  | { type: "shutdown" };
 
 export type SearchResult =
   | {
@@ -118,6 +125,7 @@ export type SearchToMain =
   | { type: "ready" }
   | { type: "initError"; error: string }
   | { type: "heartbeat"; ts: number }
+  | { type: "temporalIntentWarm" }
   | WorkerLogMessage
   | SearchResult
   | { type: "shutdownComplete" };
