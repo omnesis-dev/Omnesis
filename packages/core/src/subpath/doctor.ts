@@ -16,7 +16,12 @@
  * would collide with the richer domain types the root barrel exports.
  */
 
-export { evaluateDoctor, PROCESS_VITALS_WINDOW_SECONDS } from "../doctor/checks.js";
+export {
+  evaluateDoctor,
+  PROCESS_VITALS_WINDOW_SECONDS,
+  STALLS_MIN_MS,
+  STALLS_WINDOW_MINUTES,
+} from "../doctor/checks.js";
 export { collectSecurityData } from "../doctor/security.js";
 export type { CollectSecurityOptions, SecurityCommandRunner } from "../doctor/security.js";
 export {
@@ -62,4 +67,5 @@ export type {
   DiskUsageStore,
   OverallStatusResult,
   ProcessVitalsResult,
+  StallsResult,
 } from "../doctor/types.js";

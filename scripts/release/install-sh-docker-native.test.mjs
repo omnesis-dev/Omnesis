@@ -26,7 +26,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   callStartingWith,
@@ -449,8 +449,13 @@ describe("removing one install leaves the other", () => {
     ]) {
       writeFileSync(join(logs, name), "fictional log line\n");
     }
+    // The update lock helper its source install keeps in the shared lib directory.
+    const lockHelper = join(native.home, ".local", "lib", "omnesis", "update-lock.cjs");
+    mkdirSync(dirname(lockHelper), { recursive: true });
+    writeFileSync(lockHelper, "// fictional helper\n");
     const done = host(native, native.shim, ["uninstall", "--yes", "--purge"]);
     expect(done.status, done.stderr).toBe(0);
+    expect(existsSync(dirname(lockHelper))).toBe(false);
     const calls = read(join(native.home, "cli-calls.log"));
     expect(calls).toContain("service uninstall collector");
     // Its keys leave the OS keyring before the directory they open goes.
@@ -591,7 +596,8 @@ describe("host folders the collector's container reads", () => {
       `      # shared-folders:begin\n      - '${vault}:${vault}:ro'\n      # shared-folders:end`,
     );
     expect(read(dockerLog(docker.home))).toContain(
-      `compose -f ${compose} up -d --no-deps collector`,
+      // It returns once the recreated container is back, so the next command finds it.
+      `compose -f ${compose} up -d --no-deps --wait --wait-timeout 300 collector`,
     );
 
     // A folder inside one already shared is visible as it is.
@@ -745,7 +751,9 @@ describe("host folders the collector's container reads", () => {
       expect(log).toContain("--env OMNESIS_DOCKER_SHARE_REQUEST=1");
       // The resumed add waits for the recreated collector to reconnect.
       expect(log).toContain("--env OMNESIS_ADD_WAIT_SECONDS=120");
-      expect(log.indexOf("up -d --no-deps collector")).toBeLessThan(log.lastIndexOf("sources add"));
+      expect(log.indexOf("up -d --no-deps --wait --wait-timeout 300 collector")).toBeLessThan(
+        log.lastIndexOf("sources add"),
+      );
     },
   );
 

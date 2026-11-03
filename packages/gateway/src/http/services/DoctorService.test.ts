@@ -18,7 +18,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { PROCESS_VITALS_WINDOW_SECONDS } from "@omnesis/core/doctor";
+import {
+  PROCESS_VITALS_WINDOW_SECONDS,
+  STALLS_MIN_MS,
+  STALLS_WINDOW_MINUTES,
+} from "@omnesis/core/doctor";
 import { GATEWAY_VERSION } from "../../version.js";
 import { DoctorService, type DoctorServiceDeps } from "./DoctorService.js";
 import type { WhoAmIResult } from "@omnesis/core/doctor";
@@ -266,6 +270,27 @@ describe("DoctorService — folding in-process state", () => {
 
     await service.report(WHOAMI);
     expect(windows).toEqual([PROCESS_VITALS_WINDOW_SECONDS]);
+  });
+
+  test("stalls are read over the check's window, and left out while nothing records them", async () => {
+    const asked: Array<[number, number]> = [];
+    const stalls = (running: boolean) => ({
+      running,
+      totals: (windowMinutes: number, minMs: number) => {
+        asked.push([windowMinutes, minMs]);
+        return { summary: { count: 0, totalMs: 0, maxMs: 0 }, ranking: [] };
+      },
+    });
+
+    const recording = await new DoctorService(deps({ stalls: stalls(true) })).report(WHOAMI);
+    expect(asked).toEqual([[STALLS_WINDOW_MINUTES, STALLS_MIN_MS]]);
+    expect(recording.checks).toContainEqual(
+      expect.objectContaining({ id: "process.stalls", status: "pass" }),
+    );
+
+    // Detection off or the watchdog gone: an empty record is not a clean hour.
+    const stopped = await new DoctorService(deps({ stalls: stalls(false) })).report(WHOAMI);
+    expect(stopped.checks.find((c) => c.id === "process.stalls")).toBeUndefined();
   });
 
   test("the config revision and the product version are folded from separate sources", async () => {

@@ -62,9 +62,13 @@ const PAIRING_CODE = "R4TN8W2QJ6";
 const DOCKER_SHIM = `#!/bin/sh
 printf 'docker %s\\n' "$*" >> "$OMNESIS_TEST_DOCKER"
 case "$1" in
-  info) [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
+  info)
+    if [ -n "\${OMNESIS_TEST_DOCKER_INFO_ERROR:-}" ]; then printf '%s\\n' "$OMNESIS_TEST_DOCKER_INFO_ERROR" >&2; exit 1; fi
+    [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
   context) printf '%s\\n' "\${OMNESIS_TEST_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"; exit 0 ;;
   image) [ -z "\${OMNESIS_TEST_IMAGES_ABSENT:-}" ] || exit 1; exit 0 ;;
+  # The images this install's containers run, one per line.
+  ps) [ -z "\${OMNESIS_TEST_DOCKER_PS_IMAGES:-}" ] || printf '%s\\n' $OMNESIS_TEST_DOCKER_PS_IMAGES; exit 0 ;;
   manifest)
     case "\${OMNESIS_TEST_MANIFEST_MODE:-success}" in
       success) exit 0 ;;
@@ -536,6 +540,71 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.docker.some((call) => / compose .* logs .*gateway$/.test(call))).toBe(true);
     expect(run.output).toContain("The gateway is not running, so Omnesis is not ready.");
     expect(run.output).not.toContain("Omnesis is running in Docker.");
+  });
+
+  // An installer re-run onto another release is the upgrade for a release
+  // older than `omnesis update`; the release it came from is not left behind.
+  test("a re-run onto another release removes the previous release's images once it runs", () => {
+    expect(runInstaller("rerun-images", QUIET).status).toBe(0);
+    const envPath = join(prepareHome("rerun-images"), ".config", "omnesis", ".env");
+    writeFileSync(
+      envPath,
+      readFileSync(envPath, "utf8").replace("OMNESIS_IMAGE_TAG=9.9.0", "OMNESIS_IMAGE_TAG=9.8.0"),
+    );
+    const run = runInstaller("rerun-images", QUIET);
+    expect(run.status, run.output).toBe(0);
+    const removed = run.docker.filter((call) => call.startsWith("docker image rm "));
+    expect(removed).toEqual(
+      ["gateway", "collector", "combined", "updater"].map(
+        (name) => `docker image rm ghcr.io/omnesis-dev/omnesis-${name}:9.8.0`,
+      ),
+    );
+    // Only after the new release serves.
+    expect(run.docker.findIndex((call) => call.includes("up -d gateway"))).toBeLessThan(
+      run.docker.findIndex((call) => call.startsWith("docker image rm ")),
+    );
+    expect(run.output).toContain("Removed the 9.8.0 images this install no longer uses");
+    expect(
+      run.docker.some((call) => call.includes(":9.9.0") && call.startsWith("docker image rm")),
+    ).toBe(false);
+  });
+
+  // A run stopped after writing the new release's .env, before its containers
+  // moved, leaves them on the old release; the next run removes that one.
+  test("a re-run after one that stopped part way removes the release the containers still ran", () => {
+    expect(runInstaller("rerun-stopped", QUIET).status).toBe(0);
+    const run = runInstaller("rerun-stopped", QUIET, {
+      OMNESIS_TEST_DOCKER_PS_IMAGES:
+        "ghcr.io/omnesis-dev/omnesis-combined:9.8.0 ghcr.io/omnesis-dev/omnesis-updater:9.8.0",
+    });
+    expect(run.status, run.output).toBe(0);
+    const removed = run.docker.filter((call) => call.startsWith("docker image rm "));
+    expect(removed).toEqual(
+      ["gateway", "collector", "combined", "updater"].map(
+        (name) => `docker image rm ghcr.io/omnesis-dev/omnesis-${name}:9.8.0`,
+      ),
+    );
+    expect(run.output).toContain("Removed the 9.8.0 images this install no longer uses");
+  });
+
+  test("a re-run on the same release, or one whose gateway does not come back, removes no image", () => {
+    expect(runInstaller("rerun-same", QUIET).status).toBe(0);
+    const same = runInstaller("rerun-same", QUIET);
+    expect(same.status).toBe(0);
+    expect(same.docker.some((call) => call.startsWith("docker image rm "))).toBe(false);
+
+    expect(runInstaller("rerun-unhealthy", QUIET).status).toBe(0);
+    const envPath = join(prepareHome("rerun-unhealthy"), ".config", "omnesis", ".env");
+    writeFileSync(
+      envPath,
+      readFileSync(envPath, "utf8").replace("OMNESIS_IMAGE_TAG=9.9.0", "OMNESIS_IMAGE_TAG=9.8.0"),
+    );
+    const down = runInstaller("rerun-unhealthy", QUIET, {
+      OMNESIS_TEST_CURL_EXIT: "7",
+      OMNESIS_GATEWAY_WAIT_SECONDS: "1",
+    });
+    expect(down.status).toBe(1);
+    expect(down.docker.some((call) => call.startsWith("docker image rm "))).toBe(false);
   });
 
   test("writes a compose file, the image tag, a marker and a wrapper", () => {
@@ -1639,6 +1708,130 @@ EOF
   );
 });
 
+describe("install.sh --docker: the host's network, for pairing phones", () => {
+  /**
+   * This host's interfaces, the same through Linux's `ip` and `ifconfig`: a
+   * loopback, a LAN address, a container bridge and a Tailscale address. The
+   * gateway, not the launcher, decides which of them a phone can use.
+   */
+  function installInterfaces(lan) {
+    writeExecutable(
+      fixturePath("fake-bin", "ip"),
+      `#!/bin/sh
+cat <<'EOF'
+1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever preferred_lft forever
+2: en0    inet ${lan}/24 brd 192.0.2.255 scope global dynamic en0\\       valid_lft 86000sec preferred_lft 86000sec
+3: docker0    inet 198.51.100.1/24 brd 198.51.100.255 scope global docker0\\       valid_lft forever preferred_lft forever
+4: utun4    inet 100.64.0.7/32 scope global utun4\\       valid_lft forever preferred_lft forever
+EOF
+`,
+    );
+    writeExecutable(
+      fixturePath("fake-bin", "ifconfig"),
+      `#!/bin/sh
+cat <<'EOF'
+lo: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+	inet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	inet6 fe80::1c2b:3aff:fe4d:5e6f%en0 prefixlen 64 secured scopeid 0x4
+	inet ${lan} netmask 0xffffff00 broadcast 192.0.2.255
+docker0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	inet 198.51.100.1 netmask 0xffffff00 broadcast 198.51.100.255
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
+	inet 100.64.0.7 --> 100.64.0.7 netmask 0xffffffff
+EOF
+`,
+    );
+  }
+
+  /** A host named Studio-Northstar; it answers mDNS through scutil on macOS, avahi on Linux. */
+  function installMdnsName(answers = true) {
+    writeExecutable(
+      fixturePath("fake-bin", "hostname"),
+      '#!/bin/sh\nif [ "${1:-}" = -s ]; then echo Studio-Northstar; else echo Studio-Northstar.example.com; fi\n',
+    );
+    writeExecutable(
+      fixturePath("fake-bin", "scutil"),
+      '#!/bin/sh\n[ "$*" = "--get LocalHostName" ] && echo Studio-Northstar\n',
+    );
+    writeExecutable(
+      fixturePath("fake-bin", "avahi-daemon"),
+      `#!/bin/sh\n[ "\${1:-}" = --check ] && exit ${answers ? 0 : 1}\nexit 2\n`,
+    );
+  }
+
+  const facts = (run) =>
+    readFileSync(join(run.configDir, "host-network"), "utf8")
+      .split("\n")
+      .filter((line) => line && !line.startsWith("#"));
+
+  function runWrapper(run, args) {
+    return spawnSync(run.wrapper, args, {
+      env: {
+        PATH: `${fixturePath("fake-bin")}:/usr/bin:/bin`,
+        HOME: run.home,
+        OMNESIS_TEST_DOCKER: dockerLog(run.home),
+      },
+      input: "",
+      encoding: "utf8",
+    });
+  }
+
+  test("the launcher records the published port, this host's interfaces and its .local name", () => {
+    installInterfaces("192.0.2.47");
+    installMdnsName();
+    const run = runInstaller("host-network", [...QUIET, "--port", "8443"]);
+    expect(run.status, run.output).toBe(0);
+    expect(parseYaml(composeAt(run)).services.gateway.ports).toContain("8443:7600");
+    expect(facts(run)).toEqual([
+      "port 8443",
+      "local-name studio-northstar.local",
+      "interface lo 127.0.0.1",
+      "interface en0 192.0.2.47",
+      "interface docker0 198.51.100.1",
+      "interface utun4 100.64.0.7",
+    ]);
+    // Readable by the gateway's account in the container, whoever wrote it.
+    expect(statSync(join(run.configDir, "host-network")).mode & 0o777).toBe(0o644);
+  });
+
+  test("a new address from the router is recorded by the next command", () => {
+    installInterfaces("192.0.2.47");
+    installMdnsName();
+    const run = runInstaller("host-network-dhcp", QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(facts(run)).toContain("interface en0 192.0.2.47");
+    installInterfaces("192.0.2.61");
+    const proc = runWrapper(run, ["status"]);
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(facts(run)).toContain("interface en0 192.0.2.61");
+    expect(facts(run)).not.toContain("interface en0 192.0.2.47");
+  });
+
+  test.skipIf(process.platform === "darwin")(
+    "a Linux host without avahi records no .local name",
+    () => {
+      installInterfaces("192.0.2.47");
+      installMdnsName(false);
+      const run = runInstaller("host-network-no-mdns", QUIET);
+      expect(run.status, run.output).toBe(0);
+      expect(facts(run).some((line) => line.startsWith("local-name"))).toBe(false);
+    },
+  );
+
+  test("host networking keeps no record, and drops one an earlier bridge install left", () => {
+    installInterfaces("192.0.2.47");
+    installMdnsName();
+    const home = prepareHome("host-network-host-mode");
+    const configDir = join(home, ".config", "omnesis");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, "host-network"), "port 7600\ninterface en0 192.0.2.10\n");
+    const run = runInstaller("host-network-host-mode", [...QUIET, "--docker-network", "host"]);
+    expect(run.status, run.output).toBe(0);
+    expect(existsSync(join(run.configDir, "host-network"))).toBe(false);
+  });
+});
+
 describe("install.sh --docker: the wrapper it leaves behind", () => {
   /**
    * A `docker` that writes one argument per line, so a test can see what the
@@ -1827,6 +2020,47 @@ describe("install.sh --docker --collector", () => {
     expect(run.output).toContain("your code was not used");
     expect(run.output).not.toContain("single-use and short-lived");
     expect(run.docker.some((call) => call.includes("up -d"))).toBe(false);
+  });
+
+  // The collector's token is this machine's device on the gateway: a re-run
+  // that redeemed a new code would make it a second device.
+  test("a re-run of a paired collector needs no code and keeps its device", () => {
+    expect(runInstaller("collector-rerun", CODED).status).toBe(0);
+    const collectorDir = join(prepareHome("collector-rerun"), ".config", "omnesis", "collector");
+    writeFileSync(join(collectorDir, "collector-token"), "fictional-device-token\n", {
+      mode: 0o600,
+    });
+    writeFileSync(
+      join(collectorDir, "collector-pairing-state.json"),
+      `${JSON.stringify({ state: "paired", deviceName: "studio-northstar", gatewayUrl: GATEWAY_URL, lastAuthenticatedAt: "2026-11-02T10:00:00.000Z" }, null, 2)}\n`,
+    );
+    const uncoded = CODED.filter(
+      (flag, index) => flag !== "--code" && CODED[index - 1] !== "--code",
+    );
+    const run = runInstaller("collector-rerun", uncoded);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("This collector is paired already");
+    expect(run.output).toContain("so it keeps that device (studio-northstar)");
+    expect(run.calls.some((call) => call.startsWith("pair "))).toBe(false);
+    expect(readFileSync(join(collectorDir, "collector-token"), "utf8")).toBe(
+      "fictional-device-token\n",
+    );
+    expect(run.docker.some((call) => call.includes("up -d collector"))).toBe(true);
+
+    // Another gateway is another pairing: the code is asked for again.
+    const elsewhere = runInstaller(
+      "collector-rerun",
+      uncoded.map((flag) =>
+        flag === GATEWAY_URL ? "https://other-gateway.example.com:7600" : flag,
+      ),
+    );
+    expect(elsewhere.status).toBe(1);
+    expect(elsewhere.output).toContain("--code <code>");
+
+    // A code given anyway pairs again.
+    const again = runInstaller("collector-rerun", CODED);
+    expect(again.status, again.output).toBe(0);
+    expect(again.calls.some((call) => call.startsWith("pair "))).toBe(true);
   });
 
   test("refuses to pair without a code rather than sending an empty one", () => {
@@ -2683,6 +2917,18 @@ describe("the wrapper's uninstall, on the host", () => {
     expect(readFileSync(profile, "utf8")).toBe("export EDITOR=vim");
   });
 
+  test("a reinstall after an uninstall that kept the data says whose data it is", () => {
+    const run = runInstaller("reinstall-kept", QUIET);
+    expect(runWrapper(run, ["uninstall", "--yes"]).status).toBe(0);
+    writeFileSync(join(run.configDir, "omnesis.db"), "fictional corpus");
+    const again = runInstaller("reinstall-kept", QUIET);
+    expect(again.status, again.output).toBe(0);
+    expect(again.output).toContain(
+      `Using the data an earlier Docker install left in ${run.configDir}.`,
+    );
+    expect(again.output).not.toContain("native gateway's corpus");
+  });
+
   test("uninstalls after the compose file is already gone", () => {
     const run = runInstaller("uninstall-orphan", QUIET);
     rmSync(join(run.configDir, "docker-compose.yml"));
@@ -2839,6 +3085,55 @@ describe("install.sh --docker: without a terminal", () => {
     expect(callStartingWith(run.calls, "model install")).toBe("model install wide-embed");
   });
 
+  test("a re-run keeps the catalog model this machine already downloaded", () => {
+    expect(runInstaller("unattended-kept-model", QUIET).status).toBe(0);
+    const models = join(prepareHome("unattended-kept-model"), ".config", "omnesis", "models");
+    mkdirSync(models, { recursive: true });
+    writeFileSync(
+      join(models, "manifest.json"),
+      JSON.stringify(
+        { version: 1, models: [{ id: "wide-embed", filename: "wide.gguf" }] },
+        null,
+        2,
+      ),
+    );
+    const run = runInstaller("unattended-kept-model", [
+      "--docker",
+      "--no-keyring",
+      "--version",
+      "9.9.0",
+    ]);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("Embedding model: wide-embed, already installed here");
+    expect(run.output).not.toContain("Model download failed");
+    expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
+  });
+
+  test("an --embedder already downloaded is not fetched again", () => {
+    expect(runInstaller("unattended-named-model", QUIET).status).toBe(0);
+    const models = join(prepareHome("unattended-named-model"), ".config", "omnesis", "models");
+    mkdirSync(models, { recursive: true });
+    writeFileSync(
+      join(models, "manifest.json"),
+      JSON.stringify(
+        { version: 1, models: [{ id: "wide-embed", filename: "wide.gguf" }] },
+        null,
+        2,
+      ),
+    );
+    const run = runInstaller("unattended-named-model", [
+      "--docker",
+      "--no-keyring",
+      "--embedder",
+      "wide-embed",
+      "--version",
+      "9.9.0",
+    ]);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output).toContain("Embedding model wide-embed is already installed.");
+    expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
+  });
+
   test("a re-run whose model is served from elsewhere has nothing to ask", () => {
     expect(runInstaller("unattended-rerun", QUIET).status).toBe(0);
     const run = runInstaller(
@@ -2851,6 +3146,35 @@ describe("install.sh --docker: without a terminal", () => {
     expect(run.status, run.output).toBe(0);
     expect(run.output).toContain("local-http/embed-large is already assigned");
     expect(run.calls.some((call) => call.startsWith("model install"))).toBe(false);
+  });
+});
+
+describe("install.sh --docker: a daemon it cannot use", () => {
+  // An account outside the docker group reaches a running daemon and is
+  // refused on the socket: the fix is the group, not starting Docker.
+  test("a socket that refuses this account names the docker group", () => {
+    const run = runInstaller("daemon-denied", QUIET, {
+      OMNESIS_TEST_DOCKER_INFO_ERROR:
+        "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: " +
+        'Get "http://%2Fvar%2Frun%2Fdocker.sock/v1.47/info": dial unix /var/run/docker.sock: connect: permission denied',
+    });
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("may not use the Docker daemon");
+    expect(run.output).toContain("sudo usermod -aG docker");
+    expect(run.output).toContain("newgrp docker");
+    expect(run.output).not.toMatch(/start docker and re-run/i);
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+  });
+
+  test("a daemon that is not running is told to start", () => {
+    const run = runInstaller("daemon-down", QUIET, {
+      OMNESIS_TEST_DOCKER_INFO_ERROR:
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+    });
+    expect(run.status).toBe(1);
+    expect(run.output).toMatch(/docker daemon is not reachable\. start docker and re-run\./i);
+    expect(run.output).not.toContain("docker group");
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
   });
 });
 
@@ -3373,6 +3697,26 @@ exit 0
     expect(done.status, done.stderr).toBe(0);
     expect(existsSync(renewScript(run))).toBe(false);
     expect(existsSync(join(userUnits(run), "omnesis-tls-renew.service"))).toBe(false);
+    expect(existsSync(join(userUnits(run), "omnesis-tls-renew.timer"))).toBe(false);
+    expect(readFileSync(join(run.home, "cli-calls.log"), "utf8")).toContain(
+      "systemctl --user disable --now omnesis-tls-renew.timer\n",
+    );
+  });
+
+  test("an uninstall re-run after the compose file went still removes the renewal job", () => {
+    installHostTailscale();
+    const run = runInstaller("ts-uninstall-rerun", QUIET);
+    expect(run.status, run.output).toBe(0);
+    // A first uninstall that stopped after deleting the compose file.
+    rmSync(join(run.configDir, "docker-compose.yml"));
+    const dry = runWrapper(run, ["uninstall", "--dry-run"]);
+    expect(dry.stdout).toContain(
+      `Remove the job that renews the Tailscale certificate, and ${renewScript(run)}`,
+    );
+
+    const done = runWrapper(run, ["uninstall", "--yes"]);
+    expect(done.status, done.stderr).toBe(0);
+    expect(existsSync(renewScript(run))).toBe(false);
     expect(existsSync(join(userUnits(run), "omnesis-tls-renew.timer"))).toBe(false);
     expect(readFileSync(join(run.home, "cli-calls.log"), "utf8")).toContain(
       "systemctl --user disable --now omnesis-tls-renew.timer\n",

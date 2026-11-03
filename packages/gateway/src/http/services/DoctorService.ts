@@ -24,6 +24,8 @@ import {
   collectSecurityDataInWorker,
   evaluateDoctor,
   PROCESS_VITALS_WINDOW_SECONDS,
+  STALLS_MIN_MS,
+  STALLS_WINDOW_MINUTES,
 } from "@omnesis/core/doctor";
 import { computeIndexStats, type IndexStatsDeps } from "../../indexer/stats.js";
 import { deviceVersionState } from "../../device-version.js";
@@ -40,6 +42,7 @@ import type { ConfigStore } from "../../config-store.js";
 import type { InferenceOverview, TlsLifecycleSnapshot } from "@omnesis/core";
 import type { SystemInfo } from "../../system-info.js";
 import type { ProcessVitalsSnapshot } from "../../process-vitals.js";
+import type { StallReportPort } from "../../observability/stall-monitor.js";
 import type { SourceService } from "./SourceService.js";
 import type { DeviceWsServer } from "../../ws.js";
 import type { PushPlan } from "@omnesis/core/push";
@@ -64,6 +67,8 @@ export interface DoctorServiceDeps {
   /** The served certificate's lifecycle; absent in compositions without TLS wiring. */
   getTlsLifecycle?: () => TlsLifecycleSnapshot | null;
   processVitals?: { snapshot(windowSeconds: number): ProcessVitalsSnapshot };
+  /** Recorded main-thread stalls; absent in compositions without a stall monitor. */
+  stalls?: Pick<StallReportPort, "totals" | "running">;
   /** Resolve the same app-bound push plan exposed by GET /admin/devices. */
   pushPlanForDevice?: (device: DeviceRecord) => PushPlan | null;
   /** The same per-agent authorization verdicts GET /admin/devices carries. */
@@ -184,6 +189,15 @@ export class DoctorService {
         tls: this.deps.getTlsLifecycle?.() ?? null,
       },
       processVitals: this.deps.processVitals?.snapshot(PROCESS_VITALS_WINDOW_SECONDS) ?? null,
+      // A monitor that is not recording has nothing to report, and an empty
+      // record would read as a clean hour.
+      stalls: this.deps.stalls?.running
+        ? {
+            windowMinutes: STALLS_WINDOW_MINUTES,
+            minMs: STALLS_MIN_MS,
+            ...this.deps.stalls.totals(STALLS_WINDOW_MINUTES, STALLS_MIN_MS),
+          }
+        : null,
       sweeps: this.deps.sweeps?.() ?? null,
       ...security,
     };

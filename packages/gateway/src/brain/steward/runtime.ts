@@ -113,6 +113,7 @@ import type { RecordCheck } from "../record-check/check.js";
 import type { TaskChecks } from "../tasks/task-checks.js";
 import type { InterestLookup } from "../interest/engine.js";
 import type { TaskProposeGate } from "../tasks/task-propose.js";
+import type { TemporalStoreReads } from "../../enrichment/temporal/temporal-store-window.js";
 
 type Db = Database.Database;
 
@@ -499,6 +500,12 @@ export interface CognitionRuntimeDeps {
    * jump ahead of interactive traffic); absent, they run synchronously.
    */
   personLookupGate?: PersonLookupGate;
+  /**
+   * Read worker for the store half of the background agent's temporal reads.
+   * Wired, they run off the main event loop at BACKGROUND priority; absent,
+   * they run synchronously.
+   */
+  temporalStoreReads?: TemporalStoreReads;
   getSettings: () => ResolvedBrainSettings;
   /** Entailment verifier resolver for the annotation firewall. Optional. */
   getEntailmentVerifier?: (signal?: AbortSignal) => Promise<EntailCapability | null>;
@@ -553,11 +560,24 @@ export function backgroundLookupGate(gate: PersonLookupGate): PersonLookupGate {
   };
 }
 
+/** The same demotion as {@link backgroundLookupGate}, for temporal store reads. */
+export function backgroundTemporalStoreReads(reads: TemporalStoreReads): TemporalStoreReads {
+  return {
+    temporalStoreWindow: async (request) =>
+      runWithPriority("background", () => reads.temporalStoreWindow(request)),
+  };
+}
+
 /** Production wiring: gateway collaborators → the driver's three seams. */
 export async function createCognitionRuntime(
   deps: CognitionRuntimeDeps,
 ): Promise<CognitionRuntime> {
   const clock = deps.clock ?? systemClock;
+  // Background runs read temporal windows at BACKGROUND priority, for the
+  // same reason as their person lookups.
+  const temporalStoreReads = deps.temporalStoreReads
+    ? backgroundTemporalStoreReads(deps.temporalStoreReads)
+    : undefined;
   // Ports and the index-write-gate import stay lazy so the (heavy) agent
   // ports module only enters the graph when the feature is active — this
   // module itself is lazy-loaded by bootBriefs for the same reason.
@@ -589,7 +609,12 @@ export async function createCognitionRuntime(
     // Read-only temporal lookup — surfaced as `temporal_query` via the
     // allow-list, so the background agent can reconcile annotations with
     // source-owned projections and prior annotations.
-    temporal: createGatewayTemporalPort(deps.db, deps.analyticsDb),
+    temporal: createGatewayTemporalPort(
+      deps.db,
+      deps.analyticsDb,
+      undefined,
+      temporalStoreReads ? { storeReads: temporalStoreReads } : {},
+    ),
     // Read-only cognitive reap — surfaced as `entity_context` via the allow-list,
     // so the background agent can pull an entity's linked neighbourhood in one call.
     entityContext: createGatewayEntityContextPort(deps.db),
@@ -652,7 +677,11 @@ export async function createCognitionRuntime(
   // from the Brain, in their prompts' temporal context or through any tool.
   const sourceFence = createBrainSourceFence(deps.db, () => deps.getSettings().excludedSources);
   const temporalQuery = fenceTemporalReader(
-    new TemporalQueryService(deps.db, deps.analyticsDb),
+    new TemporalQueryService(
+      deps.db,
+      deps.analyticsDb,
+      temporalStoreReads ? { storeReads: temporalStoreReads } : {},
+    ),
     sourceFence,
   );
   /** A run whose subject is a document or source excluded from the Brain. */

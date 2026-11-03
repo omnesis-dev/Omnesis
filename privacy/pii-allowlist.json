@@ -2050,12 +2050,17 @@
   "privateIps": [
     {
       "value": "10.1.2.3",
-      "paths": ["packages/core/src/pairing-address.test.ts"],
+      "paths": [
+        "packages/core/src/host-network.test.ts",
+        "packages/core/src/pairing-address.test.ts",
+        "packages/gateway/src/http/services/PairingQrService.test.ts"
+      ],
       "reason": "invented private-address fixture for the RFC 1918 10/8 range"
     },
     {
       "value": "172.20.0.5",
       "paths": [
+        "packages/core/src/host-network.test.ts",
         "packages/core/src/pairing-address.test.ts",
         "packages/gateway/portal/js/views/access/client-setup.test.ts",
         "packages/gateway/src/http/services/PairingQrService.test.ts"
@@ -2135,6 +2140,7 @@
     {
       "value": "172.17.0.1",
       "paths": [
+        "packages/core/src/host-network.test.ts",
         "packages/core/src/network-discovery.test.ts",
         "packages/core/src/network-discovery.ts",
         "packages/gateway/src/mdns-advertiser.test.ts"
@@ -2165,24 +2171,35 @@
         "packages/cli/src/commands/phone-pairing.test.ts",
         "packages/collector/src/e2e/pairing-lifecycle.e2e.test.ts",
         "packages/collector/src/main.test.ts",
+        "packages/core/src/host-network.test.ts",
         "packages/core/src/mdns-discovery.test.ts",
         "packages/core/src/mdns-discovery.ts",
         "packages/core/src/pairing-address.test.ts",
         "packages/gateway/portal/js/views/access.test.ts",
         "packages/gateway/portal/js/views/access/client-setup.test.ts",
+        "packages/gateway/src/host-network.test.ts",
         "packages/gateway/src/http/services/PairingQrService.test.ts",
+        "packages/gateway/src/server.test.ts",
         "packages/gateway/src/tls-lifecycle/service.test.ts"
       ],
       "reason": "invented private-LAN fixture"
     },
     {
       "value": "192.168.1.50",
-      "paths": ["packages/gateway/src/mdns-advertiser.test.ts"],
+      "paths": [
+        "packages/core/src/host-network.test.ts",
+        "packages/gateway/src/host-network.test.ts",
+        "packages/gateway/src/http/services/PairingQrService.test.ts",
+        "packages/gateway/src/mdns-advertiser.test.ts"
+      ],
       "reason": "reviewed existing fixture"
     },
     {
       "value": "192.168.1.81",
-      "paths": ["packages/core/src/network-discovery.test.ts"],
+      "paths": [
+        "packages/core/src/network-discovery.test.ts",
+        "packages/gateway/src/http/services/PairingQrService.test.ts"
+      ],
       "reason": "reviewed existing fixture"
     }
   ],
@@ -2214,6 +2231,25 @@
         "packages/gateway/src/access/public-json-fetch.ts"
       ],
       "reason": "reviewed carrier-grade NAT range constant"
+    },
+    {
+      "value": "100.64.0.7",
+      "paths": [
+        "packages/core/src/host-network.test.ts",
+        "packages/gateway/src/http/services/PairingQrService.test.ts",
+        "scripts/release/install-sh-docker.test.mjs"
+      ],
+      "reason": "invented tailnet-address fixture at the start of the RFC 6598 range"
+    },
+    {
+      "value": "100.64.0.8",
+      "paths": ["packages/core/src/host-network.test.ts"],
+      "reason": "invented tailnet-address fixture at the start of the RFC 6598 range"
+    },
+    {
+      "value": "100.64.0.9",
+      "paths": ["packages/core/src/host-network.test.ts"],
+      "reason": "invented tailnet-address fixture at the start of the RFC 6598 range"
     },
     {
       "value": "fd7a:115c:a1e0::aa12:3456",

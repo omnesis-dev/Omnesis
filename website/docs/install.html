@@ -847,13 +847,17 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <code>omnesis-combined</code> for both in one container, with
           <code>omnesis-updater</code> for updates. The host needs Docker with the Compose plugin at
           v2.24.0 or later (<code>docker compose version</code> prints it; the installer refuses an
-          older one), <code>curl</code> and a POSIX shell; no Node, checkout or compiler. Pulling
-          the images needs about 4 GB free where Docker stores them; the installer checks before
-          writing anything (<code>OMNESIS_DOCKER_PULL_DISK_GB=0</code> skips the check). The
-          installer uses release images only, so it refuses <code>--edge</code>;
-          <code>--version X.Y.Z</code> selects an exact release. From a checkout,
-          <code>sh scripts/install.sh --docker --build</code> builds the images locally, tagged
-          <code>&lt;version&gt;-local</code> after the checkout's version. The
+          older one), <code>curl</code> and a POSIX shell; no Node, checkout or compiler. On Linux
+          the account that installs must be able to use the Docker daemon without sudo: in the
+          <code>docker</code> group (<code>sudo usermod -aG docker $USER</code>, then log in again),
+          which the installer names when the socket refuses it. Pulling the images needs about 4 GB
+          free where Docker stores them; the installer checks before writing anything (<code
+            >OMNESIS_DOCKER_PULL_DISK_GB=0</code
+          >
+          skips the check). The installer uses release images only, so it refuses
+          <code>--edge</code>; <code>--version X.Y.Z</code> selects an exact release. From a
+          checkout, <code>sh scripts/install.sh --docker --build</code> builds the images locally,
+          tagged <code>&lt;version&gt;-local</code> after the checkout's version. The
           <code>omnesis</code> command it writes finds Docker where Docker Desktop, OrbStack and
           Colima put it even when <code>PATH</code> does not include it, as in a non-login
           <code>ssh</code> session, cron or launchd.
@@ -1016,6 +1020,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             </p>
           </div>
         </div>
+        <p>
+          It asks for a pairing code minted on the gateway host (<code
+            >omnesis devices pair --kind collector</code
+          >); without a terminal, pass it with <code>--code</code>. Re-running the line on a
+          collector that is paired already keeps its device and needs no code; a new
+          <code>--code</code>, or another <code>--gateway-url</code>, pairs it again as a new
+          device.
+        </p>
 
         <h3 id="docker-topologies">Choose a topology</h3>
         <p>
@@ -1034,10 +1046,11 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           On Linux, add <code>--docker-network host</code> for Bonjour/mDNS discovery on the LAN.
           Host networking shares the host interfaces and ports, including UDP 5353; allow multicast
           on the trusted LAN in the host firewall. Port mappings are unnecessary in this mode.
-          Bridge mode is the default and needs an explicit gateway URL on other devices; with its
-          own certificate, the gateway offers phones the host addresses the installer wrote into it.
-          Publishing UDP 5353 alone does not bridge multicast discovery. Docker Desktop runs inside
-          a VM; use an explicit URL there. Only run one gateway on each chosen port.
+          Bridge mode is the default and needs an explicit gateway URL on other devices. Phones are
+          offered the host's own addresses at the published port, which the host's
+          <code>omnesis</code> command records on every run, never the container's. Publishing UDP
+          5353 alone does not bridge multicast discovery. Docker Desktop runs inside a VM; use an
+          explicit URL there. Only run one gateway on each chosen port.
         </p>
         <p>
           OAuth callback ports 3000–3003 are published on host loopback in bridge mode. A provider
@@ -1281,7 +1294,8 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           <code>omnesis folders share</code> command to run. Share the folder first, then add the
           source with its settings as flags (see
           <a href="/docs/sources#adding-without-a-terminal">adding a source from a script</a>).
-          Sharing recreates the collector's container; the add waits for the collector to reconnect.
+          Sharing recreates the collector's container (on <code>--combined</code>, the gateway's
+          too) and returns once it is back; the add waits for the collector to reconnect.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

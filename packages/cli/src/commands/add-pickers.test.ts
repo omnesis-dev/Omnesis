@@ -4,7 +4,7 @@
 import { PassThrough, Writable } from "node:stream";
 import { stripVTControlCharacters } from "node:util";
 import * as clack from "@clack/prompts";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { EXIT_CANCELLED } from "../utils.js";
 import { pickMany } from "./add.js";
 
@@ -50,6 +50,11 @@ const hint = (screen: string): string =>
     .trim();
 
 describe("the pickers of one add flow", () => {
+  // These interactive prompts need ANSI key editing. Node's dumb-terminal
+  // readline leaves Tab in the search instead of applying Clack's selection.
+  beforeEach(() => vi.stubEnv("TERM", "xterm-256color"));
+  afterEach(() => vi.unstubAllEnvs());
+
   const sources = [
     { value: "notes-synth", label: "Synthetic notes" },
     { value: "mail-synth", label: "Synthetic mail" },

@@ -2396,6 +2396,11 @@ if [ "${1:-}" = uninstall ]; then
     printf '%s\n' "Kept $ROOT: it has local changes."
   fi
   rm -rf "$(dirname "$LAUNCHER")"
+  # The update lock helper its source install keeps in the shared lib
+  # directory. Beside a Docker install there is no native gateway, so nothing
+  # else uses it once this collector is gone.
+  rm -f "$HOME/.local/lib/omnesis/update-lock.cjs"
+  rmdir "$HOME/.local/lib/omnesis" 2>/dev/null || true
   if [ "$PURGE" = 1 ]; then
     case "$CONFIG_DIR" in
       /|"$HOME"|"$HOME"/|"$DOCKER_DIR") printf 'omnesis-collector uninstall: refusing to delete %s.\n' "$CONFIG_DIR" >&2; exit 1 ;;
@@ -2980,6 +2985,13 @@ json_node() {
 # catalog that still cannot be read is announced rather than defaulted past.
 # Either way the question comes before the download, and before anything is
 # registered or started.
+# Whether the model store in this install's config directory holds this
+# catalog model already, by the manifest the gateway writes after a download.
+embedder_downloaded() {
+  [ -n "${1:-}" ] && [ -f "$CONFIG_DIR/models/manifest.json" ] || return 1
+  sed -n 's/^ *"id": *"\([^"]*\)".*/\1/p' "$CONFIG_DIR/models/manifest.json" 2>/dev/null | grep -qxF -- "$1"
+}
+
 choose_embedder() {
   if [ "$EMBEDDER_CHOSEN" = 1 ]; then return 0; fi
   # --no-model and --client-only both clear WANT_MODEL: no model, no question.
@@ -3015,6 +3027,23 @@ choose_embedder() {
     EMBEDDER_KEPT=1
     WANT_MODEL=0
     return 0
+  fi
+
+  # A catalog model this machine already downloaded is the one it runs: a
+  # re-run keeps it rather than asking again or fetching it twice. --embedder
+  # names another; --reconfigure asks.
+  if [ "${RECONFIGURE_FLAG:-0}" != 1 ]; then
+    EMBEDDER_PRESENT=""
+    for OPT_ID in $EMBEDDER_ASSIGNED $(printf '%s\n' "$EMBEDDER_OPTIONS" | cut -d'|' -f1); do
+      if embedder_downloaded "$OPT_ID"; then EMBEDDER_PRESENT="$OPT_ID"; break; fi
+    done
+    if [ -n "$EMBEDDER_PRESENT" ]; then
+      EMBEDDER_ID="$EMBEDDER_PRESENT"
+      EMBEDDER_CHOSEN=1
+      EMBEDDER_KEPT=1
+      info "Embedding model: $EMBEDDER_ID, already installed here (--embedder <id> switches to another)."
+      return 0
+    fi
   fi
 
   # Without a terminal the answer is the one Enter gives: the default.
@@ -3842,7 +3871,7 @@ setup_keyring_init() {
   if [ "$DOCKER" != 1 ]; then
     info "Checking OS keyring availability..."
     if keyring_available; then
-      if "$OMNESIS_BIN" keyring init; then
+      if cli_for_person "$OMNESIS_BIN" keyring init; then
         KEYRING_READY=1
         info "Keyring root key ready."
         return 0
@@ -4089,22 +4118,28 @@ print_recovery_code() {
 }
 
 # Run a CLI step whose output is for the person running this installer: the
-# command and its arguments are "$@". Natively the CLI writes to this run's
-# own output. Under --docker it runs in a container, which gets a terminal only
-# when the launcher's input is one, and without a terminal the CLI answers in
-# JSON meant for a program. So a Docker run hands it the terminal when there
-# is one, and otherwise keeps that JSON out of the output: the line this
-# installer prints next says what the step did. Errors still show.
+# command and its arguments are "$@". The CLI answers in JSON, meant for a
+# program, whenever its output is not a terminal, and that JSON stays out of
+# this run's output: the line this installer prints next says what the step
+# did. Errors still show. Natively the CLI writes to this run's own output
+# when that is a terminal. Under --docker it runs in a container, which gets a
+# terminal only when the launcher's input is one, so a Docker run hands it the
+# terminal when there is one, for its output too (this run's own may be a
+# pipe, `| tee log`).
 cli_for_person() {
   if [ "$DOCKER" = 1 ]; then
     if is_promptable; then
-      "$@" </dev/tty
+      "$@" </dev/tty >/dev/tty
     else
       "$@" >/dev/null
     fi
     return
   fi
-  "$@"
+  if [ -t 1 ]; then
+    "$@"
+  else
+    "$@" >/dev/null
+  fi
 }
 
 setup_keyring_migrate() {
@@ -4119,7 +4154,7 @@ setup_keyring_migrate() {
     fi
     return 0
   fi
-  if "$OMNESIS_BIN" keyring migrate; then
+  if cli_for_person "$OMNESIS_BIN" keyring migrate; then
     info "Secret files are keyring-wrapped from here on."
   else
     warn "Keyring migration failed. Existing files remain owner-only; retry later with: $NATIVE_CMD keyring migrate"
@@ -4343,6 +4378,10 @@ process.stdin.on("end", () => {
 install_model() {
   [ "$EMBEDDER_KEPT" = 0 ] || return 0
   [ "$WANT_MODEL" = 1 ] || { warn "Skipping embedding model (--no-model) — search runs keyword-only until you install one."; return 0; }
+  if embedder_downloaded "$EMBEDDER_ID"; then
+    info "Embedding model $EMBEDDER_ID is already installed."
+    return 0
+  fi
   info "Downloading the embedding model ($EMBEDDER_ID)..."
   if "$OMNESIS_BIN" model install "$EMBEDDER_ID"; then
     info "Embedding model installed — semantic search is live."
@@ -5107,7 +5146,7 @@ setup_collector_storage_keys() {
          "$OMNESIS_BIN" keyring storage-init --host collector --backend passphrase; then
       STORAGE_KEYS_READY=1
     fi
-  elif "$OMNESIS_BIN" keyring storage-init --host collector; then
+  elif cli_for_person "$OMNESIS_BIN" keyring storage-init --host collector; then
     STORAGE_KEYS_READY=1
   fi
   if [ "$STORAGE_KEYS_READY" = 1 ]; then
@@ -5544,8 +5583,18 @@ ensure_docker() {
   docker compose version >/dev/null 2>&1 || \
     fail "--docker needs Docker Compose v$DOCKER_COMPOSE_MIN or later (the 'docker compose' subcommand). Update Docker or install the compose plugin."
   docker_require_compose_version
-  docker info >/dev/null 2>&1 || \
-    fail "The Docker daemon is not reachable. Start Docker and re-run."
+  DOCKER_INFO_ERROR="$(docker info 2>&1 >/dev/null)" || docker_daemon_failure "$DOCKER_INFO_ERROR"
+}
+
+# Why `docker info` failed, said as what to do. An account outside the docker
+# group reaches a running daemon and is refused on its socket; telling it to
+# start Docker sends it after a daemon that is already up.
+docker_daemon_failure() {
+  case "$1" in
+    *"permission denied"*|*"Permission denied"*)
+      fail "This account ($(id -un 2>/dev/null || echo you)) may not use the Docker daemon: its socket refused the connection (permission denied). Add the account to the docker group — sudo usermod -aG docker $(id -un 2>/dev/null || echo "\$USER") — then log out and back in, or run newgrp docker, and re-run. Nothing was changed." ;;
+  esac
+  fail "The Docker daemon is not reachable. Start Docker and re-run. Nothing was changed."
 }
 
 # Refuse a Compose older than DOCKER_COMPOSE_MIN before anything is written.
@@ -6758,6 +6807,7 @@ docker_tls_renewal_script() {
   printf 'JOB_LABEL=%s\n' "$(shell_single_quote "$TS_RENEW_LABEL")"
   printf 'JOB_UNIT=%s\n' "$(shell_single_quote "$TS_RENEW_UNIT")"
   printf 'JOB_FILES=%s\n' "$(shell_single_quote "$TS_RENEW_FILES")"
+  printf 'JOB_LOG=%s\n' "$(shell_single_quote "$([ "$TS_RENEW_KIND" = launchd ] && printf '%s' "$TS_RENEW_LOG_DIR/$TS_RENEW_LABEL.log")")"
   cat <<'RENEW_EOF'
 # A scheduler's PATH is minimal; docker, for the reload, may live in one of these.
 PATH="${PATH:-/usr/bin:/bin}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -6770,6 +6820,8 @@ if [ "${1:-}" = --remove ]; then
     systemd-system) systemctl disable --now "$JOB_UNIT.timer" >/dev/null 2>&1 || true ;;
   esac
   for FILE in $JOB_FILES; do rm -f "$FILE"; done
+  # Its launchd log; the directory goes once nothing else logs there.
+  if [ -n "${JOB_LOG:-}" ]; then rm -f "$JOB_LOG"; rmdir "${JOB_LOG%/*}" 2>/dev/null || true; fi
   case "$JOB_KIND" in
     systemd-user) systemctl --user daemon-reload >/dev/null 2>&1 || true ;;
     systemd-system) systemctl daemon-reload >/dev/null 2>&1 || true ;;
@@ -7233,8 +7285,20 @@ if [ "${1:-}" = uninstall ]; then
   printf '  - %s\n' "Remove the launcher $UNINSTALL_LAUNCHER"
   # The host job that renews a Tailscale certificate goes with the install;
   # it lives outside the config directory, so --purge alone would leave it.
+  # The script is named after the compose project; when the compose file is
+  # already gone (an uninstall that stopped part way), it is found by the
+  # config directory it renews into.
   UNINSTALL_RENEW="$HOME/.local/share/omnesis/$(sed -n 's/^name: *//p' "$COMPOSE_FILE" 2>/dev/null | head -n 1)-tls-renew.sh"
-  [ ! -f "$UNINSTALL_RENEW" ] || printf '  - %s\n' "Remove the job that renews the Tailscale certificate, and $UNINSTALL_RENEW"
+  if [ ! -f "$UNINSTALL_RENEW" ]; then
+    UNINSTALL_RENEW=""
+    for UNINSTALL_CANDIDATE in "$HOME"/.local/share/omnesis/*-tls-renew.sh; do
+      [ -f "$UNINSTALL_CANDIDATE" ] || continue
+      [ "$(sed -n "s/^CONFIG_DIR='\(.*\)'\$/\1/p" "$UNINSTALL_CANDIDATE" | head -n 1)" = "$UNINSTALL_DIR" ] || continue
+      UNINSTALL_RENEW="$UNINSTALL_CANDIDATE"
+      break
+    done
+  fi
+  [ -z "$UNINSTALL_RENEW" ] || printf '  - %s\n' "Remove the job that renews the Tailscale certificate, and $UNINSTALL_RENEW"
   # The PATH line the installer added goes too, as it does for a native
   # install, unless other programs share the directory it puts on PATH.
   UNINSTALL_SHARED=0
@@ -7298,6 +7362,17 @@ if [ "${1:-}" = uninstall ]; then
       docker image rm "$UNINSTALL_IMAGE" >/dev/null 2>&1 || true
     done
   done
+  # Before the compose file goes: a re-run after a stop here still finds it.
+  [ -z "$UNINSTALL_RENEW" ] || [ ! -f "$UNINSTALL_RENEW" ] || sh "$UNINSTALL_RENEW" --remove || rm -f "$UNINSTALL_RENEW"
+  # Its launchd log, which a script from before 0.7.5 leaves; the directory
+  # goes once nothing else logs there.
+  if [ -n "$UNINSTALL_RENEW" ] && [ "$(uname -s)" = Darwin ]; then
+    UNINSTALL_RENEW_SUFFIX="${UNINSTALL_RENEW##*/}"
+    UNINSTALL_RENEW_SUFFIX="${UNINSTALL_RENEW_SUFFIX%-tls-renew.sh}"
+    UNINSTALL_RENEW_SUFFIX="${UNINSTALL_RENEW_SUFFIX#omnesis}"
+    rm -f "$HOME/Library/Logs/Omnesis/dev.omnesis.tls-renew${UNINSTALL_RENEW_SUFFIX:+.${UNINSTALL_RENEW_SUFFIX#-}}.log"
+    rmdir "$HOME/Library/Logs/Omnesis" 2>/dev/null || true
+  fi
   if [ "$UNINSTALL_PURGE" = 1 ]; then
     case "$UNINSTALL_DIR" in
       /|"$HOME"|"$HOME"/) printf 'omnesis uninstall: refusing to delete %s.\n' "$UNINSTALL_DIR" >&2; exit 1 ;;
@@ -7306,7 +7381,6 @@ if [ "${1:-}" = uninstall ]; then
   else
     rm -f "$COMPOSE_FILE" "$UNINSTALL_DIR/install-method"
   fi
-  [ ! -f "$UNINSTALL_RENEW" ] || sh "$UNINSTALL_RENEW" --remove || rm -f "$UNINSTALL_RENEW"
   rm -f "$UNINSTALL_LAUNCHER"
   # The installer's PATH line goes too, unless other programs share the directory.
   if [ -z "$(ls -A "$UNINSTALL_BIN" 2>/dev/null)" ]; then
@@ -7348,6 +7422,52 @@ fi
   printf 'omnesis: %s is gone — this host no longer has a Docker install.\n' "$COMPOSE_FILE" >&2
   exit 1
 }
+
+# This host's network, for a gateway behind Docker's bridge. Inside its
+# container the gateway sees only the container's own address and name, which
+# no phone can reach, while Docker publishes its port on every interface here.
+# So before each command this records, in the config directory the gateway
+# reads, the port Docker publishes, this host's IPv4 interface addresses (the
+# gateway judges them by its own rules) and its .local name when this host
+# answers mDNS: macOS always does, Linux when avahi-daemon runs. Rewriting it
+# on every command lets a new address from the router reach the next pairing.
+# Under host networking the gateway sees this host's network itself, and no
+# record is kept.
+host_network_record() {
+  HOST_NETWORK="$(dirname "$COMPOSE_FILE")/host-network"
+  HOST_NETWORK_PORT="$(sed -n 's/^      - "\([0-9][0-9]*\):7600"$/\1/p' "$COMPOSE_FILE" | head -n 1)"
+  if [ -z "$HOST_NETWORK_PORT" ]; then
+    rm -f "$HOST_NETWORK"
+    return 0
+  fi
+  HOST_NETWORK_OS="$(uname -s 2>/dev/null || true)"
+  HOST_NETWORK_NAME=""
+  if [ "$HOST_NETWORK_OS" = Darwin ]; then
+    HOST_NETWORK_NAME="$(scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || true)"
+  elif command -v avahi-daemon >/dev/null 2>&1 && avahi-daemon --check >/dev/null 2>&1; then
+    HOST_NETWORK_NAME="$(hostname -s 2>/dev/null || true)"
+  fi
+  HOST_NETWORK_NAME="$(printf '%s' "${HOST_NETWORK_NAME%%.*}" | tr 'A-Z' 'a-z')"
+  HOST_NETWORK_TMP="$HOST_NETWORK.$$"
+  {
+    printf '%s\n' "# This host's network, as the Omnesis launcher ($0) last read it." \
+      "# The gateway offers phones these addresses; every omnesis command rewrites it."
+    printf 'port %s\n' "$HOST_NETWORK_PORT"
+    case "$HOST_NETWORK_NAME" in
+      ''|localhost|-*|*-|*[!a-z0-9-]*) ;;
+      *) printf 'local-name %s.local\n' "$HOST_NETWORK_NAME" ;;
+    esac
+    if [ "$HOST_NETWORK_OS" = Linux ] && command -v ip >/dev/null 2>&1; then
+      ip -o -4 addr show 2>/dev/null | awk '$3 == "inet" { sub(/\/.*/, "", $4); print "interface", $2, $4 }'
+    else
+      ifconfig 2>/dev/null | awk '
+        /^[^ \t]/ { iface = $1; sub(/:$/, "", iface) }
+        $1 == "inet" { a = $2; sub(/^addr:/, "", a); print "interface", iface, a }'
+    fi
+  } > "$HOST_NETWORK_TMP" 2>/dev/null && chmod 644 "$HOST_NETWORK_TMP" 2>/dev/null &&
+    mv -f "$HOST_NETWORK_TMP" "$HOST_NETWORK" 2>/dev/null || rm -f "$HOST_NETWORK_TMP" 2>/dev/null
+}
+host_network_record || true
 
 # Host folders the collector's container reads. A container sees this install's
 # config directory and nothing else of the machine, so a folder a source reads
@@ -7414,10 +7534,13 @@ folders_render() {
   cat "$COMPOSE_FILE.omnesis-folders" > "$COMPOSE_FILE"
   rm -f "$COMPOSE_FILE.omnesis-folders"
 }
-# Recreate the container that runs the collector, so it mounts the new list.
+# Recreate the container that runs the collector, so it mounts the new list,
+# and return once it is back: running, and healthy when it has a health check.
+# A combined container is the gateway too, and a command run the moment this
+# returns would otherwise find no gateway answering.
 folders_apply() {
-  printf 'Recreating the %s container so it sees the change...\n' "$1"
-  docker compose -f "$COMPOSE_FILE" up -d --no-deps "$1" || {
+  printf 'Recreating the %s container so it sees the change, and waiting for it to come back...\n' "$1"
+  docker compose -f "$COMPOSE_FILE" up -d --no-deps --wait --wait-timeout 300 "$1" || {
     folders_fail "the $1 container did not come back. Check: docker compose -f $COMPOSE_FILE logs $1"
     return 1
   }
@@ -8007,7 +8130,13 @@ docker_refuse_native_install() {
     fail "$CONFIG_DIR holds a native collector's device token (collector-token) and no gateway. The Docker install's collector would authenticate as that device, so nothing was changed. Move it aside first — omnesis uninstall --purge, or point this Docker install at another directory with OMNESIS_CONFIG_DIR — then re-run this line."
   fi
   if [ "$DOCKER_MARKED" = 0 ] && [ -f "$CONFIG_DIR/omnesis.db" ]; then
-    warn "$CONFIG_DIR already holds a native gateway's corpus, with no native service registered: the Docker gateway takes it over."
+    # `omnesis uninstall` of a Docker install keeps its data and its .env,
+    # which records the image tag; a native install never writes that.
+    if grep -q '^OMNESIS_IMAGE_TAG=' "$CONFIG_DIR/.env" 2>/dev/null; then
+      info "Using the data an earlier Docker install left in $CONFIG_DIR."
+    else
+      warn "$CONFIG_DIR already holds a native gateway's corpus, with no native service registered: the Docker gateway takes it over."
+    fi
   fi
   if [ "$NATIVE_LAUNCHER_HERE" = 1 ] && [ "$DOCKER_MARKED" = 0 ]; then
     warn "$HOME/.local/bin/omnesis is replaced by the Docker install's launcher."
@@ -8041,13 +8170,28 @@ docker_prepare_topology_transition() {
   fi
 }
 
+# A host that only collects and is paired already keeps its device on a
+# re-run. The token its collector holds is this machine's identity on the
+# gateway: redeeming another code would make it a new device and leave the old
+# one, with its sources, behind. A --code given anyway, or a gateway other
+# than the one it is paired with, pairs again.
+docker_collector_paired_here() {
+  [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ] || return 1
+  [ -s "$CONFIG_DIR/collector/collector-token" ] || return 1
+  PAIRED_STATE="$CONFIG_DIR/collector/collector-pairing-state.json"
+  PAIRED_URL="$(sed -n 's/^[[:space:]]*"gatewayUrl"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PAIRED_STATE" 2>/dev/null | head -n 1)"
+  [ -z "$PAIRED_URL" ] || [ "$PAIRED_URL" = "$PAIR_GATEWAY_URL" ] || return 1
+  DOCKER_DEVICE_NAME="$(sed -n 's/^[[:space:]]*"deviceName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PAIRED_STATE" 2>/dev/null | head -n 1)"
+  return 0
+}
+
 # Without a terminal, a Docker run reaches its first question only once every
 # image is pulled. A question with a default takes it, as Enter would; one
 # without (a collector's pairing code) is checked here, before anything is
 # pulled or written, so the refusal names its flag and changes nothing.
 docker_require_unattended_answers() {
   is_promptable && return 0
-  if [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ]; then
+  if [ "$COLLECTOR" = 1 ] && [ -z "$PAIR_CODE" ] && ! docker_collector_paired_here; then
     fail "No terminal to ask for this collector's pairing code, so nothing was pulled or changed. Re-run with --code <code>, minted on the gateway host with: omnesis devices pair --kind collector"
   fi
 }
@@ -8096,6 +8240,45 @@ docker_undo_fresh_install() {
   printf '\033[1;33m[omnesis]\033[0m %s\n' "This first install did not finish, so what it wrote is removed again:$DOCKER_UNDONE. Re-run the installer once the problem above is fixed." >&2
 }
 
+# An installer re-run that moves an install to another release — the
+# documented upgrade for a release older than `omnesis update` — leaves the
+# release it came from behind, a gigabyte or more an image. Once the new one is
+# running, exactly this install's release images at that previous tag go, as
+# `omnesis update` removes them after its own move. Docker refuses an image a
+# container still uses, so another install's stays.
+DOCKER_PREVIOUS_TAG=""
+# The previous tag is the one the .env file records and the one this install's
+# containers still run: a run stopped after writing the new .env (before its
+# containers moved) leaves those two different, and the next run removes both.
+docker_previous_tags() {
+  [ -f "$CONFIG_DIR/docker-compose.yml" ] || return 0
+  PREVIOUS_RECORDED="$(dotenv_value OMNESIS_IMAGE_TAG 2>/dev/null || true)"
+  [ -z "$PREVIOUS_RECORDED" ] || printf '%s\n' "$PREVIOUS_RECORDED"
+  docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT:-$(docker_project_name)}" \
+    --format '{{.Image}}' 2>/dev/null | while IFS= read -r PREVIOUS_RUNNING; do
+    case "$PREVIOUS_RUNNING" in "$IMAGE_REPO"/omnesis-*:*) printf '%s\n' "${PREVIOUS_RUNNING##*:}" ;; esac
+  done
+}
+docker_remove_previous_images() {
+  for PREVIOUS_TAG in $(printf '%s\n' $DOCKER_PREVIOUS_TAG | sort -u); do
+    [ "$PREVIOUS_TAG" != "$IMAGE_TAG" ] || continue
+    PREVIOUS_REMOVED=""
+    PREVIOUS_KEPT=""
+    for PREVIOUS_NAME in omnesis-gateway omnesis-collector omnesis-combined omnesis-updater; do
+      PREVIOUS_IMAGE="$IMAGE_REPO/$PREVIOUS_NAME:$PREVIOUS_TAG"
+      docker image inspect "$PREVIOUS_IMAGE" >/dev/null 2>&1 || continue
+      if docker image rm "$PREVIOUS_IMAGE" >/dev/null 2>&1; then
+        PREVIOUS_REMOVED="$PREVIOUS_REMOVED $PREVIOUS_NAME"
+      else
+        PREVIOUS_KEPT="$PREVIOUS_KEPT $PREVIOUS_IMAGE"
+      fi
+    done
+    [ -z "$PREVIOUS_REMOVED" ] || info "Removed the $PREVIOUS_TAG images this install no longer uses:$PREVIOUS_REMOVED."
+    [ -z "$PREVIOUS_KEPT" ] || warn "Kept$PREVIOUS_KEPT: a container still uses it. Remove it once nothing does: docker image rm$PREVIOUS_KEPT"
+  done
+  return 0
+}
+
 docker_install() {
   ensure_docker
   if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
@@ -8123,12 +8306,15 @@ docker_install() {
   docker_tls_prepare
   docker_self_signed_names
   docker_prepare_topology_transition
+  DOCKER_PREVIOUS_TAG="$(docker_previous_tags)"
   docker_write_compose
   docker_write_wrapper
   docker_record_method
   docker_tls_renewal_install
   docker_fetch_images
   docker_probe_socket_group
+  # Like every command, this records the host's network for the gateway
+  # (host-network), before the gateway first starts.
   INSTALLED_VERSION="$("$OMNESIS_BIN" --version 2>/dev/null || true)"
   info "Installed: ${INSTALLED_VERSION:-(version unavailable)}"
   # The catalog answers from the image, so the question can be asked — and
@@ -8143,10 +8329,15 @@ docker_install() {
   docker_propagate_keyring
   if [ "$COLLECTOR" = 1 ]; then
     setup_collector_storage_keys
-    read_pairing_code collector
-    docker_collector_pair
+    if docker_collector_paired_here; then
+      info "This collector is paired already ($CONFIG_DIR/collector/collector-token), so it keeps that device${DOCKER_DEVICE_NAME:+ ($DOCKER_DEVICE_NAME)}. Re-run with --code <code> to pair it again as a new device."
+    else
+      read_pairing_code collector
+      docker_collector_pair
+    fi
     DOCKER_UNDO=0
     docker_up collector
+    docker_remove_previous_images
     print_docker_banner
     return 0
   fi
@@ -8155,6 +8346,7 @@ docker_install() {
   if wait_for_gateway; then
     GATEWAY_HEALTHY=1
     if [ "$DOCKER_COMBINED" = 0 ] && [ "$DOCKER_GATEWAY_ONLY" = 0 ]; then docker_up collector; fi
+    docker_remove_previous_images
     install_model
   else
     # Compose holds the collector until the gateway is healthy, so starting it

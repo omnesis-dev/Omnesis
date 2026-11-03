@@ -14,6 +14,8 @@ import {
   collectSecurityData,
   evaluateDoctor,
   PROCESS_VITALS_WINDOW_SECONDS,
+  STALLS_MIN_MS,
+  STALLS_WINDOW_MINUTES,
 } from "@omnesis/core/doctor";
 import {
   c,
@@ -48,6 +50,7 @@ import type {
   IndexStatsResult,
   OverallStatusResult,
   ProcessVitalsResult,
+  StallsResult,
 } from "@omnesis/core/doctor";
 
 interface Page<T> {
@@ -113,6 +116,7 @@ async function collect(): Promise<DoctorData> {
     overall,
     tls,
     processVitals,
+    stalls,
     sweeps,
   ] = await Promise.all([
     probeHealth(),
@@ -129,6 +133,10 @@ async function collect(): Promise<DoctorData> {
     // 404s on a gateway that predates the certificate lifecycle: no section.
     tryJson<TlsLifecycleSnapshot>("/admin/tls"),
     tryJson<ProcessVitalsResult>(`/admin/process-vitals?window=${PROCESS_VITALS_WINDOW_SECONDS}`),
+    // 404s on a gateway that predates the stall monitor: no check.
+    tryJson<StallsResult & { enabled: boolean }>(
+      `/admin/stalls?windowMinutes=${STALLS_WINDOW_MINUTES}&minMs=${STALLS_MIN_MS}&limit=0`,
+    ),
     // 404s whenever the briefs feature is inactive — an absent section, not a
     // fault, which is exactly what a null slot means to the evaluator.
     tryJson<SweepsListResult>("/admin/brain/sweeps"),
@@ -150,6 +158,9 @@ async function collect(): Promise<DoctorData> {
     indexStats,
     overall: overall ? { ...overall, tls: tls ?? null } : null,
     processVitals,
+    // Not recording (detection off, or the watchdog stopped): no check,
+    // rather than a pass on an empty record.
+    stalls: stalls?.enabled ? stalls : null,
     sweeps: sweeps
       ? {
           laneEnabled: sweeps.laneEnabled,

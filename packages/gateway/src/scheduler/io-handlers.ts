@@ -39,6 +39,10 @@ import {
 import { assemblePersonLookup } from "../domain/person-lookup.js";
 import { countMessagesByPerson, type MessageCountsQuery } from "../domain/message-counts.js";
 import { likeSearchDocuments } from "../search/like-search.js";
+import {
+  readTemporalStoreWindow,
+  type TemporalStoreWindowRequest,
+} from "../enrichment/temporal/temporal-store-window.js";
 import { computeSeedFromContacts } from "../domain/ContactCardBootstrap.js";
 import {
   computeInteractionScores,
@@ -261,6 +265,14 @@ export const ioHandlers = {
       limit: number;
     },
   ) => likeSearchDocuments(db, args),
+
+  // A temporal window's `omnesis.db` half — projections, annotations and a
+  // page of mentions, normalized into the reader's zone. Search's temporal
+  // lane and the agents' `temporal_query` read it for every window they ask
+  // about; on the main handle its index walks and per-row normalization would
+  // be the event loop.
+  "io.temporalStoreWindow": (db: Db, request: TemporalStoreWindowRequest) =>
+    readTemporalStoreWindow(db, request),
 
   // ── people compute (read halves of compute/upsert splits) ─────────
   "io.peopleCounts": (db: Db) => computePeopleCounts(db),

@@ -64,4 +64,24 @@ describe("resolveTemporalRange", () => {
       /Invalid IANA/,
     );
   });
+
+  it("resolves each zone the same however many zones it has resolved before", () => {
+    const zones = Intl.supportedValuesOf("timeZone").slice(0, 150);
+    const first = zones.map((timeZone) => resolveTemporalRange({ from: "2026-10-25", timeZone }));
+    // A second pass reads formatters the first pass cached, or rebuilt after
+    // the cache was cleared; an invalid zone in between is never cached.
+    expect(() => resolveTemporalRange({ from: "2026-10-25", timeZone: "Mars/Olympus" })).toThrow(
+      /Invalid IANA/,
+    );
+    expect(zones.map((timeZone) => resolveTemporalRange({ from: "2026-10-25", timeZone }))).toEqual(
+      first,
+    );
+    expect(() => resolveTemporalRange({ from: "2026-10-25", timeZone: "Mars/Olympus" })).toThrow(
+      /Invalid IANA/,
+    );
+    expect(resolveTemporalRange({ from: "2026-10-25", timeZone: "Europe/London" })).toEqual({
+      fromMs: Date.parse("2026-10-24T23:00:00Z"),
+      toExclusiveMs: Date.parse("2026-10-26T00:00:00Z"),
+    });
+  });
 });

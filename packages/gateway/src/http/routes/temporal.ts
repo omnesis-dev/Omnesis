@@ -35,6 +35,7 @@ import type Database from "better-sqlite3";
 import type { TemporalKind, TemporalModality, TemporalOrigin, TemporalStatus } from "@omnesis/core";
 import type { AnalyticsDb } from "../../analytics-db.js";
 import type { RouteApp } from "./types.js";
+import type { TemporalStoreReads } from "../../enrichment/temporal/temporal-store-window.js";
 
 export interface TemporalRoutesDeps {
   db: Database.Database;
@@ -42,6 +43,8 @@ export interface TemporalRoutesDeps {
   analyticsDb?: AnalyticsDb | undefined;
   /** Whether the mention worth gate is active, so the window hides unworthy mentions as the agent does. */
   hideUnworthyMentions?: (() => boolean) | undefined;
+  /** Read worker for the store half of a window; absent, it is read on `db`. */
+  storeReads?: TemporalStoreReads | undefined;
   clock?: (() => number) | undefined;
 }
 
@@ -49,9 +52,10 @@ export interface TemporalRoutesDeps {
 const MAX_PAGE_LIMIT = 100;
 
 export function mountTemporalRoutes(app: RouteApp, deps: TemporalRoutesDeps): void {
-  const options: TemporalQueryOptions = deps.hideUnworthyMentions
-    ? { hideUnworthyMentions: deps.hideUnworthyMentions }
-    : {};
+  const options: TemporalQueryOptions = {
+    ...(deps.hideUnworthyMentions ? { hideUnworthyMentions: deps.hideUnworthyMentions } : {}),
+    ...(deps.storeReads ? { storeReads: deps.storeReads } : {}),
+  };
   const service = (): TemporalQueryService =>
     new TemporalQueryService(deps.db, deps.analyticsDb, options);
   const now = (): number => (deps.clock ?? Date.now)();

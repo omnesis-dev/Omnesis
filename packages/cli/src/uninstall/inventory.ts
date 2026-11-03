@@ -484,12 +484,13 @@ export async function discoverInventory(
   }
 
   const detected = detectDockerInstall(configDir);
-  const docker =
+  const dockerFiles =
     detected?.method === "docker"
       ? { composeFile: detected.composeFile, projectDir: detected.projectDir }
       : launcher.kind === "docker"
         ? { composeFile: launcher.composeFile, projectDir: dirname(launcher.composeFile) }
         : null;
+  const docker = dockerFiles ? { ...dockerFiles, ...dockerHostExtras(dockerFiles, home) } : null;
 
   const sourceRoot =
     launcher.kind === "source" ? launcher.sourceRoot : recordedSourceRoot(configDir);
@@ -587,4 +588,62 @@ export async function discoverInventory(
     mkcert: existsSync(join(configDir, "tls", "mkcert.crt")),
     warnings,
   };
+}
+
+/** The Omnesis repositories a compose file's `image:` lines name, without their tags. */
+export function composeImageRepos(composeText: string): string[] {
+  const repos = new Set<string>();
+  for (const m of composeText.matchAll(/^ {4}image: *"?([^"\s]+)"? *$/gmu)) {
+    const repo = m[1]!.replace(/:[^:/]*$/u, "");
+    const name = repo.slice(repo.lastIndexOf("/") + 1);
+    if (/^omnesis-(gateway|collector|combined|updater)$/u.test(name)) repos.add(repo);
+  }
+  return [...repos].sort();
+}
+
+/**
+ * What a Docker install keeps outside its compose project: the image tags of
+ * earlier releases, and the host job that renews its Tailscale certificate.
+ * The installer names that job's script after the compose project; when the
+ * compose file is already gone (an uninstall that stopped part way), the
+ * script is found by the config directory it renews into.
+ */
+function dockerHostExtras(
+  docker: { composeFile: string; projectDir: string },
+  home: string,
+): { imageRepos: string[]; renewalScript: string | null } {
+  let composeText = "";
+  try {
+    composeText = readFileSync(docker.composeFile, "utf8");
+  } catch {
+    // Gone already: no images to name, and the script is found below.
+  }
+  const scriptDir = join(home, ".local", "share", "omnesis");
+  const project = composeText.match(/^name: *(\S+) *$/mu)?.[1];
+  const named = project ? join(scriptDir, `${project}-tls-renew.sh`) : null;
+  if (named && existsSync(named)) {
+    return { imageRepos: composeImageRepos(composeText), renewalScript: named };
+  }
+  let renewalScript: string | null = null;
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(scriptDir);
+  } catch {
+    // No scripts directory.
+  }
+  for (const entry of entries.filter((e) => e.endsWith("-tls-renew.sh")).sort()) {
+    const path = join(scriptDir, entry);
+    let text: string;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    const dir = text.match(/^CONFIG_DIR='([^']*)'$/mu)?.[1];
+    if (dir !== undefined && resolve(dir) === resolve(docker.projectDir)) {
+      renewalScript = path;
+      break;
+    }
+  }
+  return { imageRepos: composeImageRepos(composeText), renewalScript };
 }

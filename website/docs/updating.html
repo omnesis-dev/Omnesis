@@ -735,9 +735,10 @@
           a gigabyte each; it never removes another image. One that a container still uses, such as
           the updater image the update itself started from, is kept and removed by the next update.
           An image it cannot remove is reported with the <code>docker image rm</code> command that
-          does, and never fails the update. <code>--target-version</code> pins a release tag. A
-          Docker install follows releases only, so it refuses <code>--edge</code> before anything
-          changes.
+          does, and never fails the update. Re-running the installer onto another release does the
+          same once its gateway serves: the previous release's images of this install go, and one a
+          container still uses stays. <code>--target-version</code> pins a release tag. A Docker
+          install follows releases only, so it refuses <code>--edge</code> before anything changes.
         </p>
         <p>
           To run an exact commit in Docker, a maintainer publishes its gateway, collector and

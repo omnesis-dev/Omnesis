@@ -63,6 +63,7 @@ import { DEFAULT_MDNS_ENABLED, DEFAULT_MDNS_HOSTNAME } from "./mdns-advertiser.j
 import { DEFAULT_AUTO_ISF_STRENGTH } from "./search/source-isf-prior.js";
 import { DEFAULT_PRE_UPDATE_BACKUP_COUNT } from "./http/services/BackupService.js";
 import { DEFAULT_RELEASE_CHECK_ENABLED } from "./release-check/service.js";
+import { resolveStallSettings } from "./observability/stall-settings.js";
 
 function defAt(path: string): unknown {
   return configDefaultAt(path.split("/").filter(Boolean));
@@ -74,6 +75,20 @@ function defMs(path: string): number {
 describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
   it("matches the passive release-check default", () => {
     expect(defAt("/releaseCheck")).toBe(DEFAULT_RELEASE_CHECK_ENABLED);
+  });
+
+  it("matches resolveStallSettings(undefined)", () => {
+    const s = resolveStallSettings(undefined);
+    expect(defAt("/gateway/stalls/enabled")).toBe(s.enabled);
+    expect(defMs("/gateway/stalls/threshold")).toBe(s.thresholdMs);
+    expect(defMs("/gateway/stalls/warn")).toBe(s.warnMs);
+    expect(defAt("/gateway/stalls/profile/enabled")).toBe(s.profile !== null);
+    expect(defMs("/gateway/stalls/profile/minStall")).toBe(s.profile!.minStallMs);
+    expect(defAt("/gateway/stalls/profile/stallCount")).toBe(s.profile!.stallCount);
+    expect(defMs("/gateway/stalls/profile/window")).toBe(s.profile!.windowMs);
+    expect(defMs("/gateway/stalls/profile/duration")).toBe(s.profile!.durationMs);
+    expect(defMs("/gateway/stalls/profile/cooldown")).toBe(s.profile!.cooldownMs);
+    expect(defAt("/gateway/stalls/profile/keep")).toBe(s.profile!.keep);
   });
 
   it("matches the automatic pre-update backup retention default", () => {

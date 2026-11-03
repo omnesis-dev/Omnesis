@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
+  appendFileSync,
   chmodSync,
   writeFileSync,
   existsSync,
@@ -111,9 +112,14 @@ function makeBackend(opts: {
 }
 
 function readLog(path: string): Array<{ event: string; payload: unknown }> {
-  const text = readFileSync(path, "utf8").trim();
-  if (!text) return [];
-  return text.split("\n").map((line) => JSON.parse(line) as { event: string; payload: unknown });
+  const text = readFileSync(path, "utf8");
+  // The fixture can still be appending a record; only its newline commits it.
+  const end = text.lastIndexOf("\n");
+  if (end < 0) return [];
+  return text
+    .slice(0, end)
+    .split("\n")
+    .map((line) => JSON.parse(line) as { event: string; payload: unknown });
 }
 
 function firstPayload<T extends Record<string, unknown>>(
@@ -138,6 +144,52 @@ async function waitForLog(
   }
   throw new Error(`timed out waiting for fake Codex log ${path}`);
 }
+
+describe("fake Codex log framing", () => {
+  it("does not publish a record before its terminating newline", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-log-frame-"));
+    const path = join(dir, "events.jsonl");
+    try {
+      writeFileSync(path, "");
+      expect(readLog(path)).toEqual([]);
+      appendFileSync(path, JSON.stringify({ event: "startup", payload: null }));
+      expect(readLog(path)).toEqual([]);
+      appendFileSync(path, "\n");
+      expect(readLog(path)).toEqual([{ event: "startup", payload: null }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads complete records while an append ends inside a UTF-8 character", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-log-tail-"));
+    const path = join(dir, "events.jsonl");
+    const prefix = { event: "turn_start", payload: { turn: 1 } };
+    const next = { event: "client_message", payload: "invented compass 🧭" };
+    const bytes = Buffer.from(`${JSON.stringify(next)}\n`);
+    const split = bytes.indexOf(Buffer.from("🧭")) + 2;
+    try {
+      writeFileSync(path, `${JSON.stringify(prefix)}\n`);
+      appendFileSync(path, bytes.subarray(0, split));
+      expect(readLog(path)).toEqual([prefix]);
+      appendFileSync(path, bytes.subarray(split));
+      expect(readLog(path)).toEqual([prefix, next]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed newline-terminated records", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-log-invalid-"));
+    const path = join(dir, "events.jsonl");
+    try {
+      writeFileSync(path, `${JSON.stringify({ event: "turn_start", payload: null })}\n{broken}\n`);
+      expect(() => readLog(path)).toThrow(SyntaxError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("parseCodexUsage", () => {
   it("reports the whole turn from the thread total, not the final request", () => {

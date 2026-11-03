@@ -363,7 +363,10 @@
           Some imports work on short-lived plaintext copies: browser-history and Screen Time
           snapshots, and WhatsApp backup imports, use temporary SQLite files in owner-only folders.
           They are removed when the operation finishes, fails or is cancelled; a killed process can
-          leave them until a later operation cleans up. Deleting a file is not secure erasure.
+          leave them until a later operation cleans up. Transcription decodes an MP4-family
+          recording (such as an <code>.m4a</code> voice memo) from a copy in an owner-only temporary
+          folder, removed when decoding ends; a gateway killed mid-decode can leave it in the system
+          temporary directory. Deleting a file is not secure erasure.
         </p>
         <p>
           The source originals Omnesis reads, logs, filesystem snapshots and swap are outside

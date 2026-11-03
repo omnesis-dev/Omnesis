@@ -14,8 +14,9 @@
  * would put the same long-lived document in every window. The read skips the
  * coverage and counts the agents' tool reports, which the lane has no use for.
  *
- * Runs on the main thread, which owns `omnesis.db` and the analytics store;
- * the ids it returns travel to the candidate-generation core.
+ * Runs on the main thread, which owns the analytics store; the query service
+ * reads the `omnesis.db` half of each window on the io worker. The ids it
+ * returns travel to the candidate-generation core.
  */
 
 import { createLogger } from "@omnesis/core";

@@ -106,6 +106,17 @@ export interface FoundClient {
 export interface FoundDocker {
   composeFile: string;
   projectDir: string;
+  /**
+   * The Omnesis image repositories its compose file pulls from. An update
+   * leaves the release before it under another tag, which `down --rmi all`
+   * does not reach.
+   */
+  imageRepos: string[];
+  /**
+   * The host script that renews its Tailscale certificate, and unregisters
+   * its launchd agent or systemd timer with `--remove`; null when it has none.
+   */
+  renewalScript: string | null;
 }
 
 export interface FoundHardened {
@@ -183,6 +194,7 @@ export type Action =
   | { type: "legacy-runner"; instance?: string }
   | { type: "privileged"; commands: PrivilegedCommand[] }
   | { type: "docker-down"; composeFile: string }
+  | { type: "docker-images"; repos: string[] }
   | { type: "npm-uninstall"; prefix: string; packageDir: string }
   | { type: "remove-checkout"; root: string; configDir: string }
   | { type: "purge-config"; dir: string }

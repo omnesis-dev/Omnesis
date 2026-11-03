@@ -1133,6 +1133,8 @@ describe("install.sh service registration", () => {
   // Registering a service leaves a running one on its build (systemd's
   // `enable --now`), so a re-run that moves the checkout has to restart both
   // daemons and wait for the gateway to report the version it just built.
+  // Five installer runs, a couple of them waiting out the gateway: on a macOS
+  // runner that is over the 30 s default.
   test("a re-run that moves the source checkout restarts the services on the new build", () => {
     const args = ["--no-tls", "--embedder", EMBED_IDS[1]];
     const env = {
@@ -1161,7 +1163,7 @@ describe("install.sh service registration", () => {
     });
     expect(staleRerun.status).not.toBe(0);
     expect(staleRerun.output).toContain("Gateway did not answer /health");
-  });
+  }, 120_000);
 
   // A machine this installer set up is updated in place by a plain re-run: the
   // recorded checkout moves and is rebuilt, the registered services restart on

@@ -776,6 +776,45 @@ describe("temporal query — mention layer", () => {
     expect(plan(walk!)).toContain("idx_document_extracted_dates_mention_start");
     expect(plan(walk!)).not.toContain("TEMP B-TREE");
     expect(plan(earlier!)).toContain("idx_document_extracted_dates_mention_range");
+    // A document's repeat of the same bounds is found among its own dates,
+    // not among every date naming that day.
+    for (const sql of [walk!, earlier!]) {
+      expect(plan(sql)).toContain(
+        "SEARCH y USING INDEX idx_document_extracted_dates_doc (document_id=? AND rowid<?)",
+      );
+    }
+  });
+
+  it("walks the day indexes when the window is scoped to sources", async () => {
+    seed("plan", [date("2026-10-12")]);
+    const statements: string[] = [];
+    const prepare = db.prepare.bind(db);
+    const spy = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+      if (sql.includes("document_extracted_dates x")) statements.push(sql);
+      return prepare(sql);
+    }) as typeof db.prepare);
+    await mentions({
+      from: "2026-10-12T09:00:00Z",
+      to: "2026-10-20",
+      sourceIds: ["fictional-mail:primary", "fictional-notes"],
+    });
+    spy.mockRestore();
+
+    expect(statements).toHaveLength(3);
+    for (const sql of statements) {
+      const plan = (
+        db
+          .prepare(`EXPLAIN QUERY PLAN ${sql}`)
+          .all(
+            ...Array.from({ length: (sql.match(/\?/g) ?? []).length }, () => "2026-10-12"),
+          ) as Array<{ detail: string }>
+      ).map((row) => row.detail);
+      // The dates drive; the documents are looked up by id.
+      expect(plan).toContainEqual(
+        expect.stringMatching(/^SEARCH x USING INDEX idx_document_extracted_dates_mention_/),
+      );
+      expect(plan).toContainEqual("SEARCH d USING INDEX sqlite_autoindex_documents_1 (id=?)");
+    }
   });
 
   it("counts a window's mentions only up to the cap", async () => {
