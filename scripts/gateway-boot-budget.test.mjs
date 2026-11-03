@@ -103,6 +103,7 @@ describe("every consumer reads the shared budget", () => {
     ["scripts/ios-push-spike.sh", "gateway_boot_budget_seconds"],
     ["scripts/shot-portal.sh", "gateway_boot_budget_seconds"],
     ["scripts/synth-gateway.sh", "gateway_boot_budget_seconds"],
+    ["scripts/install-e2e/services-health.mjs", "gatewayBootBudgetMs"],
     ["scripts/dev-scripts-smoke.test.mjs", "gatewayBootBudgetMs"],
   ])("%s resolves it rather than restating it", (consumer, marker) => {
     const source = readFileSync(join(ROOT, consumer), "utf8");

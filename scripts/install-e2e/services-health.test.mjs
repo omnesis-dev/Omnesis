@@ -3,13 +3,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { captureServices, waitUnchangedHealthy } from "./services-health.mjs";
+import { gatewayBootBudgetMs } from "../lib/boot-budget.mjs";
 
 const baseline = [
   { component: "gateway", pid: 100, started: "fixture-gateway-start" },
   { component: "collector", pid: 200, started: "fixture-collector-start" },
 ];
 
-function fixture({ health, services = async () => baseline, timeoutMs = 10_000 } = {}) {
+function fixture({ health, services = async () => baseline, timeoutMs } = {}) {
   let time = 0;
   const readServices = vi.fn(services);
   const readHealth = vi.fn(health ?? (async () => {}));
@@ -85,6 +86,15 @@ describe("dry-run services and health", () => {
       expect(f.sleep).not.toHaveBeenCalled();
     },
   );
+
+  it("uses the shared gateway readiness budget by default", async () => {
+    const f = fixture();
+    f.readHealth.mockImplementation(async () => {
+      f.advance(gatewayBootBudgetMs());
+    });
+    await expect(f.run()).rejects.toThrow("did not become healthy");
+    expect(f.readHealth).toHaveBeenCalledTimes(1);
+  });
 
   it("bounds persistent health failure by the deadline", async () => {
     const f = fixture({

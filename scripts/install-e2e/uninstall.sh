@@ -123,7 +123,7 @@ redacted "$OMNESIS" uninstall --dry-run || die "the dry run failed"
 supervised gateway || die "the dry run stopped the gateway"
 redacted node "$E2E_DIR/services-health.mjs" wait --cli "$OMNESIS" \
   --before "$E2E_WORK/dry-run-services.json" --url "$GATEWAY_URL" --expect-version "$V_N" \
-  --timeout 120 || die "the dry run changed services or the gateway did not recover responsiveness"
+  || die "the dry run changed services or the gateway did not recover responsiveness"
 endgroup
 
 group "omnesis uninstall removes the software and keeps the data"

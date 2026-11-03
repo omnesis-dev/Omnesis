@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseCommand } from "./args.mjs";
+import { gatewayBootBudgetMs, gatewayBootBudgetSeconds } from "../lib/boot-budget.mjs";
 
 const run = promisify(execFile);
 const components = ["gateway", "collector"];
@@ -69,7 +70,7 @@ export async function waitUnchangedHealthy(
   {
     readServices,
     readHealth,
-    timeoutMs = 120_000,
+    timeoutMs = gatewayBootBudgetMs(),
     now = Date.now,
     sleep = (ms) => new Promise((done) => setTimeout(done, ms)),
   },
@@ -114,7 +115,7 @@ async function main(argv) {
     return;
   }
   await waitUnchangedHealthy(JSON.parse(readFileSync(flags.before, "utf8")), {
-    timeoutMs: (flags.timeout ?? 120) * 1000,
+    timeoutMs: (flags.timeout ?? gatewayBootBudgetSeconds()) * 1000,
     readServices: (signal) => captureServices(flags.cli, signal),
     readHealth: async (signal) => {
       const response = await fetch(new URL("/health", flags.url), { signal });
