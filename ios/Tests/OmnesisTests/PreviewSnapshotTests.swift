@@ -1091,7 +1091,8 @@ final class PreviewSnapshotTests: XCTestCase {
         capturePresentedChrome: Bool = false,
         settle: TimeInterval = 0.6,
         size: CGSize? = nil,
-        primeLayout: Bool = false
+        primeLayout: Bool = false,
+        until ready: (() -> Bool)? = nil
     ) {
         let isDark = scheme == .dark
         let screen = CGRect(origin: .zero, size: size ?? UIScreen.main.bounds.size)
@@ -1117,6 +1118,16 @@ final class PreviewSnapshotTests: XCTestCase {
             }
         }
         RunLoop.current.run(until: Date().addingTimeInterval(settle))
+        // State that arrives on its own schedule (a preview fan reopens after
+        // a delay each time its viewport settles) can land after `settle` on
+        // a slow simulator, so keep the run loop going until it has, within a
+        // bound.
+        if let ready {
+            let deadline = Date().addingTimeInterval(10)
+            while !ready(), Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
+        }
 
         let image = renderer.image { context in
             if capturePresentedChrome {
@@ -8965,7 +8976,8 @@ final class PreviewSnapshotTests: XCTestCase {
                 name: scheme == .dark ? name : "\(name)-light",
                 scheme: scheme,
                 settle: 1.2,
-                primeLayout: true
+                primeLayout: true,
+                until: { latestLayout?.0 != nil }
             )
             guard let (session, viewport) = latestLayout, let session else {
                 XCTFail("The preview fan did not reopen after its viewport settled")
