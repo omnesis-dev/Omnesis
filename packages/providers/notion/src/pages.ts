@@ -71,6 +71,7 @@ export class NotionPagesSource {
     // across multi-page sync runs via cursor.snapshotMode + snapshotIds.
     const snapshotMode = shouldEnterSnapshotMode(cursor);
 
+    const passStartedAt = cursor?.passStartedAt ?? new Date().toISOString();
     const response = await this.client.searchPages(cursor?.startCursor);
     const nextCursor = response.next_cursor;
     const pageCursors = cursor?.pageCursors ?? [];
@@ -92,7 +93,7 @@ export class NotionPagesSource {
     }
 
     const documents = [];
-    let newestEditedTime = cursor?.lastEditedTime;
+    let newestEditedTime = cursor?.pendingEditedTime ?? cursor?.lastEditedTime;
     let reachedCutoff = false;
     const snapshotIdsThisPage: string[] = [];
 
@@ -211,7 +212,7 @@ export class NotionPagesSource {
     // sub-minute precision we'd otherwise carry forward is illusory and
     // makes the next cycle's `>` comparison inconsistent across reboots.
     const persistedEditedTime = newestEditedTime
-      ? truncateIsoToMinute(newestEditedTime)
+      ? truncateIsoToMinute(newestEditedTime < passStartedAt ? newestEditedTime : passStartedAt)
       : newestEditedTime;
 
     if (snapshotMode && !hasMore) {
@@ -260,12 +261,14 @@ export class NotionPagesSource {
       });
     }
 
-    if (documents.length === 0 && !response.has_more && !snapshotMode) {
+    if (documents.length === 0 && !response.has_more && !snapshotMode && !cursor?.startCursor) {
       return emptySync({ ...cursor, startCursor: undefined, pageCursors: undefined });
     }
 
     const newCursor: NotionPagesCursor = {
-      lastEditedTime: persistedEditedTime,
+      lastEditedTime: hasMore ? cursor?.lastEditedTime : persistedEditedTime,
+      passStartedAt: hasMore ? passStartedAt : undefined,
+      pendingEditedTime: hasMore ? newestEditedTime : undefined,
       startCursor: hasMore ? (nextCursor ?? undefined) : undefined,
       pageCursors: hasMore ? [...pageCursors, nextCursor!] : undefined,
       lastSnapshotAt: cursor?.lastSnapshotAt,
