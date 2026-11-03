@@ -57,6 +57,9 @@ beforeEach(() => {
     knowledgeHasExcludedWork: vi.fn(() => Promise.resolve(false)),
     knowledgeArcs: vi.fn(() => Promise.resolve([])),
     knowledgeDiscoveryBacklog: vi.fn(() => Promise.resolve([])),
+    knowledgePlanningWork: vi.fn(() => Promise.resolve([])),
+    knowledgeRecoverableBatches: vi.fn(() => Promise.resolve([])),
+    knowledgeDecisionPayloadSubjects: vi.fn(() => Promise.resolve(null)),
   };
   const writeGate = directKnowledgeGate(db);
   const base = { db, writeGate, clock: () => now, log, getSettings: () => settings };
@@ -137,4 +140,33 @@ it("asks for outcome-policy revalidation only when record checks are enforced wi
   expect(reads.knowledgeDueReviews.mock.calls[0]![0]).toMatchObject({
     outcomePolicy: outcomeRecordPolicyKey("enforce", "scripted"),
   });
+});
+
+it("recovers only the batches the selection port returns", async () => {
+  const batch = (id: string) =>
+    db
+      .prepare(
+        `INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,revision,created_at,updated_at)
+         VALUES(?,?,'fixture','routine','pending',1,?,?)`,
+      )
+      .run(id, `run-${id}`, now - 2000, now - 2000);
+  batch("orphan");
+  const status = () =>
+    db.prepare<[], { status: string }>("SELECT status FROM knowledge_batches").get()!.status;
+  const upkeep = new KnowledgeUpkeep(deps, () => "kw");
+
+  // The batch's run is missing, which the handle would recover; the port says nothing is.
+  await upkeep.recover();
+  expect(reads.knowledgeRecoverableBatches).toHaveBeenCalledWith({
+    maxAttempts: 5,
+    claimedBefore: now - 60 * 60_000,
+    limit: cfg.maxSeeds,
+  });
+  expect(status()).toBe("pending");
+
+  reads.knowledgeRecoverableBatches.mockResolvedValueOnce([
+    { id: "orphan", runId: "run-orphan", failed: 0, dead: 0 },
+  ]);
+  await upkeep.recover();
+  expect(status()).toBe("abandoned");
 });

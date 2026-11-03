@@ -33,6 +33,15 @@ import type { AnalyticsConnectionPool } from "./connection-pool.js";
 
 const log = createLogger("gateway:analytics:catalog");
 
+/** One catalog row's identity and statistics; see `getCatalogActivity`. */
+export interface AnalyticsCatalogActivity {
+  tableName: string;
+  displayName: string;
+  sourceId: string;
+  recordCount: number;
+  latestDate: string | null;
+}
+
 /** Metadata advertisements cannot turn an exclusive table into a shared one. */
 function mergeCatalogOwner(previous: string | null, incoming: string): string {
   if (previous === null || previous === "" || previous === "unknown") return incoming;
@@ -331,6 +340,31 @@ export class AnalyticsCatalogStore {
         });
       }
       return result;
+    });
+  }
+
+  /**
+   * Each table's owner, size and newest date, without its schema. The status
+   * cache reads this every two seconds; leaving out `schema_json` keeps that
+   * from converting and parsing every table's schema on the event loop each
+   * time. A table whose stored schema no longer parses still has its rows, so
+   * it is listed here although `getCatalog` skips it.
+   */
+  async getCatalogActivity(): Promise<AnalyticsCatalogActivity[]> {
+    return this.pool.withConn(async (p) => {
+      const reader = await p.conn.runAndReadAll(
+        `SELECT table_name, display_name, source_id, record_count, latest_date
+           FROM _analytics_catalog ORDER BY table_name`,
+      );
+      return (reader.getRows() as unknown[][]).map(
+        ([tableName, displayName, sourceId, recordCount, latestDate]) => ({
+          tableName: String(tableName),
+          displayName: String(displayName),
+          sourceId: String(sourceId),
+          recordCount: Number(recordCount ?? 0),
+          latestDate: latestDate === null || latestDate === undefined ? null : String(latestDate),
+        }),
+      );
     });
   }
 

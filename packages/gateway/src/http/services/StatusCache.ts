@@ -2,13 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createLogger } from "@omnesis/core";
-import { getLatestActivityBySource, listSyncStates } from "../../db.js";
-import { listDevices } from "../../data/repositories/DeviceRepository.js";
-import {
-  listDeviceIdsHostingSources,
-  listSources,
-} from "../../data/repositories/SourceRepository.js";
 import { withActivity } from "../../observability/main-activity.js";
+import {
+  readStatusCacheSnapshot,
+  type StatusCacheReads,
+  type StatusCacheSnapshot,
+} from "./status-cache-reads.js";
 import type Database from "better-sqlite3";
 import type { AnalyticsDb } from "../../analytics-db.js";
 
@@ -17,16 +16,6 @@ type Db = Database.Database;
 const log = createLogger("gateway:http").child("status-cache");
 
 /**
- * Hot-read caches with BACKGROUND refresh.
- * The cli + portal poll a handful of read-only admin endpoints at 1-2Hz each.
- * Even though each underlying SELECT is sub-ms, TRUNCATE journal mode forces
- * every read to acquire a SHARED lock that stalls behind any in-flight
- * writer EXCLUSIVE commit. Solution: keep the entire response payload in
- * RAM, refreshed on a 2s background tick on the read-only handle.
- *
- * Mutation routes call `bumpAdminCaches()` so the next read sees fresh
- * data immediately rather than waiting up to 2s for the next tick.
- */
 /**
  * A device revoked while it still hosts sources is a dormant machine, not a
  * retired one: its sources stay assigned, delete refuses to remove it, and
@@ -40,10 +29,21 @@ export function deviceNeedsPairing(
   return device.revokedAt !== null && hostsSources;
 }
 
+/**
+ * Hot-read caches with a background refresh. The CLI and portal poll a handful
+ * of read-only admin endpoints at 1-2 Hz each, so the response data is kept in
+ * memory and refreshed on a two-second tick. With a read port the tick reads on
+ * a read worker; without one it reads on the caller's handle.
+ *
+ * Mutation routes call `bump()`, which reads synchronously on the main handle
+ * so the request that changed something sees the change in its own response
+ * and every later read does too. A tick read that was already in flight when a
+ * bump landed is discarded rather than applied over the bump's newer data.
+ */
 export class StatusCache {
   static readonly REFRESH_INTERVAL_MS = 2_000;
 
-  latestActivity: ReturnType<typeof getLatestActivityBySource> = {};
+  latestActivity: StatusCacheSnapshot["latestActivity"] = {};
   analyticsByType: Record<string, number> = {};
   /**
    * Per-source "what's the most recent sample in DuckDB?" lookup. Keyed by
@@ -59,22 +59,25 @@ export class StatusCache {
       tableDisplayName: string;
     }
   > = {};
-  listSources: ReturnType<typeof listSources> = [];
-  listDevices: ReturnType<typeof listDevices> = [];
+  listSources: StatusCacheSnapshot["sources"] = [];
+  listDevices: StatusCacheSnapshot["devices"] = [];
   /**
    * Devices that still own or are members of a source. A revoked device in
    * this set has durable state a re-pair would restore, which is what the
    * device list reports as `needsPairing`.
    */
   sourceHostingDeviceIds: Set<string> = new Set();
-  listSyncStates: ReturnType<typeof listSyncStates> = [];
+  listSyncStates: StatusCacheSnapshot["syncStates"] = [];
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private inflight = false;
+  /** Advances on every synchronous read, so an older tick read can tell it lost. */
+  private dbGeneration = 0;
 
   constructor(
     private readonly db: Db,
     private readonly analyticsDb?: AnalyticsDb,
+    private readonly reads?: StatusCacheReads,
   ) {}
 
   /**
@@ -91,34 +94,55 @@ export class StatusCache {
   }
 
   /**
-   * Refresh just the SQLite-backed caches (sources, devices, sync_states,
-   * latest activity). Synchronous — the underlying SELECTs are all sub-ms
-   * uncontended.
+   * Refresh the SQLite-backed caches (sources, devices, sync states, latest
+   * activity) synchronously on the main handle.
    */
   refreshDb(): void {
-    withActivity("statusCache.refreshDb", () => this.readDb());
+    withActivity("statusCache.refreshDb", () => {
+      this.dbGeneration++;
+      try {
+        this.apply(readStatusCacheSnapshot(this.db));
+      } catch (err) {
+        StatusCache.keepOnTransientLock(err);
+      }
+    });
   }
 
-  private readDb(): void {
-    try {
-      this.latestActivity = getLatestActivityBySource(this.db);
-      this.listSources = listSources(this.db);
-      this.listSyncStates = listSyncStates(this.db);
-      this.listDevices = listDevices(this.db);
-      this.sourceHostingDeviceIds = new Set(listDeviceIdsHostingSources(this.db));
-    } catch (err) {
-      if (StatusCache.isTransientLockError(err)) {
-        log.debug(`refreshDb: transient lock, keeping previous cache (${(err as Error).message})`);
-        return;
-      }
-      throw err;
+  /** The tick's refresh of the same caches, on the read port when there is one. */
+  private async refreshDbInBackground(): Promise<void> {
+    if (!this.reads) {
+      this.refreshDb();
+      return;
     }
+    const generation = this.dbGeneration;
+    let snapshot: StatusCacheSnapshot;
+    try {
+      snapshot = await this.reads.statusCacheSnapshot();
+    } catch (err) {
+      StatusCache.keepOnTransientLock(err);
+      return;
+    }
+    if (generation === this.dbGeneration) this.apply(snapshot);
+  }
+
+  private apply(snapshot: StatusCacheSnapshot): void {
+    this.latestActivity = snapshot.latestActivity;
+    this.listSources = snapshot.sources;
+    this.listSyncStates = snapshot.syncStates;
+    this.listDevices = snapshot.devices;
+    this.sourceHostingDeviceIds = new Set(snapshot.sourceHostingDeviceIds);
+  }
+
+  /** A transient lock keeps the previous cache until the next refresh; anything else is thrown. */
+  private static keepOnTransientLock(err: unknown): void {
+    if (!StatusCache.isTransientLockError(err)) throw err;
+    log.debug(`refreshDb: transient lock, keeping previous cache (${(err as Error).message})`);
   }
 
   async refreshAnalytics(): Promise<void> {
     if (!this.analyticsDb) return;
     try {
-      const tables = await this.analyticsDb.getCatalog();
+      const tables = await this.analyticsDb.getCatalogActivity();
       const counts: Record<string, number> = {};
       const latest: Record<
         string,
@@ -129,7 +153,7 @@ export class StatusCache {
           tableDisplayName: string;
         }
       > = {};
-      for (const t of tables ?? []) {
+      for (const t of tables) {
         if (!t.sourceId) continue;
         if (t.recordCount) {
           counts[t.sourceId] = (counts[t.sourceId] ?? 0) + t.recordCount;
@@ -166,7 +190,7 @@ export class StatusCache {
     this.inflight = true;
     try {
       const dbStart = Date.now();
-      this.refreshDb();
+      await this.refreshDbInBackground();
       const dbMs = Date.now() - dbStart;
       const analyticsStart = Date.now();
       await this.refreshAnalytics();
@@ -180,18 +204,17 @@ export class StatusCache {
   }
 
   /**
-   * Synchronous invalidation hook called from mutation routes.
-   * The DB SELECTs are sub-ms even contended (writer-worker commits
-   * release the lock between commits, and we're picking up whatever
-   * the latest committed snapshot is), so doing them inline keeps
-   * mutations strictly serializable from the caller's POV.
+   * Synchronous invalidation hook called from mutation routes. Reading inline
+   * keeps a mutation's effect visible to the next read of the cache, which a
+   * worker read could not promise.
    */
   bump(): void {
     this.refreshDb();
   }
 
   /**
-   * Synchronously prime caches and start the background refresh tick.
+   * Synchronously prime the caches, so the first request after boot has them,
+   * and start the background refresh tick.
    */
   start(): void {
     this.refreshDb();

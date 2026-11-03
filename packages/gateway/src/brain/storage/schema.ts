@@ -316,6 +316,14 @@ export function createBriefsStorageTables(db: Db): void {
       ON cognition_runs(dedupe_key)
       WHERE status = 'pending' AND dedupe_key IS NOT NULL
   `);
+  // Any run by its dedupe key, whatever its status: the digest and sweep
+  // enqueuers ask whether an occurrence already ran. Without it that question
+  // scans the whole ledger, reading past each run's payload to its key.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cognition_runs_dedupe
+      ON cognition_runs(dedupe_key)
+      WHERE dedupe_key IS NOT NULL
+  `);
 
   // Durable per-run attribution — which workflow, at which contract version,
   // on which model. Outlives the run rows (those are pruned) so an artifact's

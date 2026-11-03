@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { captureDecisionPayloadSubjects } from "../decision-payload.js";
+import { directReadPort, type ReadPort } from "../../scheduler/read-port.js";
 import {
   listOrganizationAdmissions,
   type OrganizationAdmission,
@@ -18,14 +20,37 @@ import {
   type DueKnowledgeReview,
   type DueKnowledgeReviewOptions,
 } from "./review-selection.js";
-import { hasKnowledgeWorkFromExcludedSources, listStaleKnowledgeWork } from "./work.js";
+import {
+  hasKnowledgeWorkFromExcludedSources,
+  listKnowledgePlanningWork,
+  listStaleKnowledgeWork,
+} from "./work.js";
 import { readKnowledgeArcs, type KnowledgeArcRead } from "./engine-graph.js";
 import {
   listKnowledgeDiscoveryBacklog,
   type DiscoveryDocument,
   type KnowledgeDiscoveryBacklogOptions,
 } from "./discovery.js";
+import { listRecoverableKnowledgeBatches } from "./batch-recovery.js";
 import type Database from "better-sqlite3";
+
+/**
+ * Reads of the knowledge engine's tick and `next` declared as a read port
+ * (`scheduler/read-port.ts`), so each is one `io.<name>` op with no further
+ * wiring. The planning window reads each pending work row in due order and
+ * batch recovery visits every open batch, so on a large backlog each takes a
+ * second or more. A decision's payload capture walks the privacy closure of its
+ * subjects and checks that each is still readable, which reads a document row
+ * per cited source.
+ */
+export const KNOWLEDGE_ENGINE_READS = {
+  /** The planner's pending-work window; see `listKnowledgePlanningWork`. */
+  knowledgePlanningWork: listKnowledgePlanningWork,
+  /** Open batches whose run is over; see `listRecoverableKnowledgeBatches`. */
+  knowledgeRecoverableBatches: listRecoverableKnowledgeBatches,
+  /** The privacy subjects of a decision's request; see `captureDecisionPayloadSubjects`. */
+  knowledgeDecisionPayloadSubjects: captureDecisionPayloadSubjects,
+};
 
 /**
  * Cohort selection options as plain data: the passed-over keys travel as
@@ -52,7 +77,7 @@ export interface OrganizationCohortRead {
  * and the writer refuses an action whose node or source revision has moved, so
  * these reads are exactly as current as reads on the main handle.
  */
-export interface KnowledgeSelectionReads {
+export interface KnowledgeSelectionReads extends ReadPort<typeof KNOWLEDGE_ENGINE_READS> {
   knowledgeOrganizationAdmissions(
     options: OrganizationAdmissionOptions,
   ): Promise<OrganizationAdmission[]>;
@@ -90,6 +115,7 @@ export function readOrganizationCohort(
 /** The same reads on the caller's own handle, for runtimes without a read worker. */
 export function directKnowledgeSelectionReads(db: Database.Database): KnowledgeSelectionReads {
   return {
+    ...directReadPort(KNOWLEDGE_ENGINE_READS, db),
     knowledgeOrganizationAdmissions: (options) =>
       Promise.resolve(listOrganizationAdmissions(db, options)),
     knowledgeOrganizationCohort: (options) => Promise.resolve(readOrganizationCohort(db, options)),

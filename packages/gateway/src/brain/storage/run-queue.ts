@@ -57,36 +57,36 @@ import type { DerivationStage } from "../../domain/DocumentDerivation.js";
 type Db = Database.Database;
 
 /**
- * Pending runs due for a claim right now (next_attempt_at ≤ now). The
- * digest readiness barrier reads this to hold composition until the
+ * Whether a pending run is due for a claim right now (next_attempt_at ≤ now).
+ * The digest readiness barrier reads this to hold composition until the
  * overnight work has drained — debounced/backed-off rows with a future
- * next_attempt_at deliberately do NOT count as outstanding.
+ * next_attempt_at deliberately do NOT count as outstanding. It stops at the
+ * first due run: `attempts` lies past the payload on a run row, so counting
+ * them all would read every due run's payload on a busy queue.
  */
-export function countDuePendingCognitionRuns(
+export function hasDuePendingCognitionRun(
   db: Db,
   now: number,
   maxAttempts = DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
-): number {
-  const row = db
-    .prepare<[number, number], { n: number }>(
-      `SELECT COUNT(*) AS n FROM cognition_runs
-        WHERE status = 'pending' AND next_attempt_at <= ? AND attempts < ?`,
+): boolean {
+  return !!db
+    .prepare<[number, number]>(
+      `SELECT 1 FROM cognition_runs
+        WHERE status = 'pending' AND next_attempt_at <= ? AND attempts < ? LIMIT 1`,
     )
     .get(now, maxAttempts);
-  return row?.n ?? 0;
 }
 
-/** Whether any run — any status — carries this dedupe key. The digest
- * enqueuer's crash-replay guard: a settled digest row for the day means
- * the day already ran even when the marker write was lost. */
+/**
+ * Whether any run — any status — carries this dedupe key. The digest and
+ * sweep enqueuers' crash-replay guard: a settled run for the occurrence means
+ * it already ran even when the marker write was lost. A seek on
+ * `idx_cognition_runs_dedupe`.
+ */
 export function hasCognitionRunWithDedupeKey(db: Db, dedupeKey: string): boolean {
-  return (
-    db
-      .prepare<[string], { n: number }>(
-        "SELECT COUNT(*) AS n FROM cognition_runs WHERE dedupe_key = ?",
-      )
-      .get(dedupeKey)!.n > 0
-  );
+  return !!db
+    .prepare<[string]>("SELECT 1 FROM cognition_runs WHERE dedupe_key = ? LIMIT 1")
+    .get(dedupeKey);
 }
 
 /** Default retry cap before a run is marked terminally `failed`. */

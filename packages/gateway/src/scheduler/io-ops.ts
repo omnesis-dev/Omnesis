@@ -18,6 +18,16 @@
  * via `runWithPriority`.
  */
 
+import {
+  KNOWLEDGE_ENGINE_READS,
+  type KnowledgeSelectionReads,
+} from "../brain/knowledge/selection-reads.js";
+import { STATUS_CACHE_READS, type StatusCacheReads } from "../http/services/status-cache-reads.js";
+import {
+  ANALYTICS_REPLICA_READS,
+  type AnalyticsReplicaReads,
+} from "../http/services/analytics-replica-reads.js";
+import { ioReadOpNames, ioReadPort, type ReadPort } from "./read-port.js";
 import type {
   AutoDetectedRule,
   AutoMergePair,
@@ -47,7 +57,6 @@ import type { LinkReconcileBatch, LinkStatsAggregation } from "../links.js";
 import type { LinkStats } from "../data/repositories/LinkStatsRepository.js";
 import type { SqliteTableStatsRow } from "../sqlite-catalog.js";
 import type { Scheduler } from "./scheduler.js";
-import type { KnowledgeSelectionReads } from "../brain/knowledge/selection-reads.js";
 import type { PeopleDirectoryReader } from "../watch/people-directory.js";
 import type { MessageCountsQuery } from "../domain/message-counts.js";
 import type { MessageCountsBody } from "@omnesis/agent";
@@ -88,7 +97,8 @@ import type {
 
 import type { VocabularySettings, VocabularyDocument } from "../transcribe/vocabulary/types.js";
 
-export interface IoGate {
+export interface IoGate
+  extends StatusCacheReads, AnalyticsReplicaReads, ReadPort<typeof KNOWLEDGE_ENGINE_READS> {
   fetchTranscriptionVocabularyBatch(settings: VocabularySettings): Promise<VocabularyDocument[]>;
   getTranscriptionVocabulary(
     context: TranscriptionContext,
@@ -470,6 +480,14 @@ const DEFAULT_BUDGET_MS = 200;
 const HEAVY_BUDGET_MS = 2_000;
 
 const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
+  // Read ports (`read-port.ts`): the status cache's refresh, the knowledge
+  // engine's planning window, batch recovery and payload capture, and an
+  // analytics page's replica ledger reads.
+  ...[
+    ...ioReadOpNames(STATUS_CACHE_READS),
+    ...ioReadOpNames(KNOWLEDGE_ENGINE_READS),
+    ...ioReadOpNames(ANALYTICS_REPLICA_READS),
+  ].map((name): IoOpDef => ({ name, priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS })),
   { name: "io.fetchTranscriptionVocabularyBatch", priority: "background" },
   { name: "io.getTranscriptionVocabulary", priority: "user" },
   { name: "io.echo", priority: "background" },
@@ -632,6 +650,9 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     return scheduler.enqueue(task, args) as Promise<T>;
   };
   return {
+    ...ioReadPort(STATUS_CACHE_READS, call),
+    ...ioReadPort(KNOWLEDGE_ENGINE_READS, call),
+    ...ioReadPort(ANALYTICS_REPLICA_READS, call),
     echo: (value) => call("io.echo", [value]),
     fetchTranscriptionVocabularyBatch: (settings) =>
       call("io.fetchTranscriptionVocabularyBatch", [settings]),

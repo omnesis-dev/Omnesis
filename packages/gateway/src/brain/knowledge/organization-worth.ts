@@ -2,10 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
-import {
-  captureDecisionPayloadSubjects,
-  decisionPayloadErasureGeneration,
-} from "../decision-payload.js";
+import { decisionPayloadErasureGeneration } from "../decision-payload.js";
+import { knowledgeSelectionReads } from "./selection-reads.js";
 import {
   DISCOVERY_WORTH_THRESHOLD,
   discoveryDecisionState,
@@ -74,11 +72,10 @@ export async function lowWorthOrganizationSources(
         nodeId: `source:${id}`,
         threshold: DISCOVERY_WORTH_THRESHOLD,
         payloadCapture:
-          captureDecisionPayloadSubjects(
-            deps.db,
+          (await knowledgeSelectionReads(deps).knowledgeDecisionPayloadSubjects(
             { sourceIds: [id], nodeIds: [] },
             decisionPayloadErasureGeneration(deps.db),
-          ) ?? undefined,
+          )) ?? undefined,
       });
     }
     if (score !== null && score < DISCOVERY_WORTH_THRESHOLD) low[id] = revision;

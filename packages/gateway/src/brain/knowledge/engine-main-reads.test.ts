@@ -126,27 +126,13 @@ it("reads the knowledge ledgers on the main handle only through index seeks", as
     );
   setCognitionEngineState(writer, COGNITION_BOOTSTRAP_STARTED_AT_KEY, String(now - 1000));
 
-  // The main handle records every statement it runs, with its parameters.
+  // The main handle records every statement it runs, with its parameters; so
+  // does the handle the selection reads use, standing in for the read worker.
   const main = open();
-  const ran = new Map<string, unknown[]>();
   const prepare = main.prepare.bind(main);
-  main.prepare = ((sql: string) => {
-    const statement = prepare(sql);
-    const record =
-      (run: (...params: unknown[]) => unknown) =>
-      (...params: unknown[]) => {
-        if (!ran.has(sql)) ran.set(sql, params);
-        return run(...params);
-      };
-    return new Proxy(statement, {
-      get(target, key) {
-        const value = Reflect.get(target, key, target) as unknown;
-        if (typeof value !== "function") return value;
-        const bound = (value as (...args: unknown[]) => unknown).bind(target);
-        return ["get", "all", "run", "iterate"].includes(String(key)) ? record(bound) : bound;
-      },
-    });
-  }) as typeof main.prepare;
+  const ran = recordStatements(main);
+  const selectionHandle = open();
+  const ranOffMain = recordStatements(selectionHandle);
 
   const settings = resolveBrainSettings({ excludedSources: ["fixture-private"] });
   const writeGate = directKnowledgeGate(writer);
@@ -183,7 +169,7 @@ it("reads the knowledge ledgers on the main handle only through index seeks", as
     log,
     idGen: () => String(++serial),
     decisions: { getDecision: () => decision, log, recordSpend: async () => {} },
-    selectionReads: directKnowledgeSelectionReads(open()),
+    selectionReads: directKnowledgeSelectionReads(selectionHandle),
   });
   for (let tick = 0; tick < 3; tick++) await engine.tick();
   const batch = writer
@@ -209,4 +195,42 @@ it("reads the knowledge ledgers on the main handle only through index seeks", as
   }
   expect(ran.size).toBeGreaterThan(20);
   expect(scans).toEqual([]);
+  // The reads the engine runs on the read worker ran there, and not on main.
+  const ranOn = (statements: Map<string, unknown[]>) =>
+    OFF_MAIN.filter(([, pattern]) => [...statements.keys()].some((sql) => pattern.test(sql))).map(
+      ([name]) => name,
+    );
+  expect(ranOn(ranOffMain)).toEqual(OFF_MAIN.map(([name]) => name));
+  expect(ranOn(ran)).toEqual([]);
 });
+
+/** Statements the engine runs only through its selection reads. */
+const OFF_MAIN: Array<[string, RegExp]> = [
+  ["planning window", /FROM knowledge_work WHERE status='pending' ORDER BY due_at,created_at,id/],
+  ["batch recovery", /LEFT JOIN cognition_runs r ON r\.id=b\.run_id/],
+  ["payload capture", /WITH RECURSIVE ancestors/],
+];
+
+/** Record every statement `handle` runs, with the parameters of its first run. */
+function recordStatements(handle: Database.Database): Map<string, unknown[]> {
+  const ran = new Map<string, unknown[]>();
+  const prepare = handle.prepare.bind(handle);
+  handle.prepare = ((sql: string) => {
+    const statement = prepare(sql);
+    const record =
+      (run: (...params: unknown[]) => unknown) =>
+      (...params: unknown[]) => {
+        if (!ran.has(sql)) ran.set(sql, params);
+        return run(...params);
+      };
+    return new Proxy(statement, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target) as unknown;
+        if (typeof value !== "function") return value;
+        const bound = (value as (...args: unknown[]) => unknown).bind(target);
+        return ["get", "all", "run", "iterate"].includes(String(key)) ? record(bound) : bound;
+      },
+    });
+  }) as typeof handle.prepare;
+  return ran;
+}
