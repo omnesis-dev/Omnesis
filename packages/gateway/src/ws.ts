@@ -263,23 +263,28 @@ export class DeviceWsServer {
   }
 
   start(): void {
-    this.heartbeatTimer = setInterval(() => {
-      // Evict dead sockets before anything else this tick: everything below
-      // (and every push transport decision) reads the connection table.
-      this.sweepLiveness();
-      this.broadcast(makeEvent("ping", { t: Date.now() }));
-      // Update last-seen for all authenticated devices while we're at it.
-      // Fire-and-forget through the writer gate — this is an activity beacon,
-      // not load-bearing, and awaiting on the heartbeat loop would serialize
-      // every device's touch through a single postMessage round-trip.
-      for (const state of this.connections.values()) {
-        if (state.authenticated && state.deviceId) {
-          void this.w.touchDevice(state.deviceId).catch(() => {
-            /* already logged */
-          });
-        }
+    this.heartbeatTimer = setInterval(
+      () => withActivity("ws.heartbeat", () => this.heartbeat()),
+      this.heartbeatIntervalMs,
+    );
+  }
+
+  private heartbeat(): void {
+    // Evict dead sockets before anything else this tick: everything below
+    // (and every push transport decision) reads the connection table.
+    this.sweepLiveness();
+    this.broadcast(makeEvent("ping", { t: Date.now() }));
+    // Update last-seen for all authenticated devices while we're at it.
+    // Fire-and-forget through the writer gate — this is an activity beacon,
+    // not load-bearing, and awaiting on the heartbeat loop would serialize
+    // every device's touch through a single postMessage round-trip.
+    for (const state of this.connections.values()) {
+      if (state.authenticated && state.deviceId) {
+        void this.w.touchDevice(state.deviceId).catch(() => {
+          /* already logged */
+        });
       }
-    }, this.heartbeatIntervalMs);
+    }
   }
 
   stop(): void {
@@ -452,7 +457,7 @@ export class DeviceWsServer {
   }
 
   onClose(ws: WsHandle): void {
-    this.dropConnection(ws, "device disconnected");
+    withActivity("ws.close", () => this.dropConnection(ws, "device disconnected"));
   }
 
   /**

@@ -2013,7 +2013,7 @@ describe("AgentSession — what each turn carries from the session", () => {
       { text: "Train 2026-10-18T17:28:00Z", nested: [{ at: "2026-10-18T17:28:00Z" }] },
     ]);
 
-    // Without a zone nothing is annotated, so the tools are offered unchanged.
+    // Without a zone nothing is annotated, so arguments reach the tool unchanged.
     const plain = recordingBackend();
     await new AgentSession({
       sessionId: "P",
@@ -2021,7 +2021,10 @@ describe("AgentSession — what each turn carries from the session", () => {
       tools: [tool],
       systemPrompt: "test",
     }).send("hi");
-    expect(plain.seen()!.tools[0]).toBe(tool);
+    const unchanged = { text: "Train 2026-10-18T17:28:00Z (18:28 Sun 18 Oct, Europe/London)" };
+    received.length = 0;
+    await plain.seen()!.tools[0]!.invoke(unchanged, { sessionId: "P", messageId: "M" });
+    expect(received).toEqual([unchanged]);
   });
 
   it("leaves the zone unset when the session was built without one", async () => {

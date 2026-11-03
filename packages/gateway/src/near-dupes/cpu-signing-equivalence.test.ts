@@ -26,7 +26,7 @@ import {
 } from "./NearDupComputeService.js";
 import { applyNearDupDfSnapshot } from "./NearDupWriterOps.js";
 import { computeNearDupDfSnapshot } from "./NearDupDfService.js";
-import { signDocBatch, verifyPairBatch } from "./cpu-signing.js";
+import { prepareCandidateBatch, signDocBatch, verifyPairBatch } from "./cpu-signing.js";
 import { assembleVerifyPairs, assembleFinalBatch } from "./NearDupAssembler.js";
 import type { Db } from "../data/types.js";
 import type {
@@ -125,14 +125,16 @@ function runDecomposedPipeline(): NearDupApplyBatch {
     maxCandidatesPerDoc,
   );
 
-  // Phase 2c: assemble verify pairs (main thread)
-  const pairs = assembleVerifyPairs(
-    signedDocs,
-    candidateResult,
-    config.algorithm,
-    eligibleDocTypes,
-    maxCandidatesPerDoc,
+  // Phase 2c: prepare persisted candidates (CPU pool in production, inline
+  // here), then assemble verify pairs (main thread)
+  const prepared = new Map(
+    prepareCandidateBatch(
+      Object.values(candidateResult.candidates),
+      config.algorithm,
+      eligibleDocTypes,
+    ).map((candidate) => [candidate.candidateId, candidate] as const),
   );
+  const pairs = assembleVerifyPairs(signedDocs, candidateResult, prepared, maxCandidatesPerDoc);
 
   // Phase 2d: verify pairs (CPU pool in production, inline here)
   const gateConfig = {

@@ -61,6 +61,7 @@ import { WatchTraceStore } from "./traces.js";
 import type { WatchLayerHealth } from "./health.js";
 import type { OntologyCoverage } from "./ontology.js";
 import type { PeopleDirectoryReader } from "./people-directory.js";
+import type { JournalHistoryReader } from "./journal-document.js";
 import type { AnalyticsDb } from "../analytics-db.js";
 import type { Db } from "../data/types.js";
 import type { WatchJournalStore } from "./store.js";
@@ -129,6 +130,11 @@ export interface WatchV2EngineOptions {
    */
   readonly stores: WatchStores;
   readonly journal: WatchJournalStore;
+  /**
+   * Reads the revision histories a run's index events ask about, off the main
+   * thread. Absent, every lookup reads the journal store's connection.
+   */
+  readonly journalHistories?: JournalHistoryReader;
   /** The materializer's lease on this file, so the two writers take turns. */
   readonly writes: WriteLease;
   readonly analyticsDb: AnalyticsDb | null;
@@ -474,6 +480,7 @@ export function startWatchV2Engine(options: WatchV2EngineOptions): WatchV2Engine
   const host = new WatchEngineHost({
     db,
     journal: options.journal,
+    ...(options.journalHistories ? { journalHistories: options.journalHistories } : {}),
     definitions,
     traces,
     writes: options.writes,

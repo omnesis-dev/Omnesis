@@ -16,7 +16,7 @@
  *                              real handler
  */
 
-import { signDocBatch, verifyPairBatch } from "../near-dupes/cpu-signing.js";
+import { prepareCandidateBatch, signDocBatch, verifyPairBatch } from "../near-dupes/cpu-signing.js";
 import { scoreMergeCandidates } from "../merge-candidates-cpu.js";
 import { extractLinksFromDocs } from "../domain/LinkExtraction-cpu.js";
 import { extractDfChunk } from "../near-dupes/NearDupDfCpu.js";
@@ -32,6 +32,7 @@ export const cpuHandlers = {
   "cpu.extractTranscriptionVocabulary": extractTranscriptionVocabulary,
   "cpu.echo": <T>(value: T): T => value,
   "cpu.nearDupSignBatch": signDocBatch,
+  "cpu.nearDupPrepareCandidates": prepareCandidateBatch,
   "cpu.nearDupVerifyBatch": verifyPairBatch,
   "cpu.scoreMergeCandidates": scoreMergeCandidates,
   "cpu.extractLinksFromDocs": extractLinksFromDocs,

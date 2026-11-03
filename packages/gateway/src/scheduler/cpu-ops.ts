@@ -20,7 +20,9 @@ import type { Scheduler } from "./scheduler.js";
 import type { Priority, Task } from "./types.js";
 import type { CpuOpName } from "./cpu-handlers.js";
 import type {
+  CandidateDocData,
   NearDupDocForSigning,
+  PreparedCandidate,
   SignedDoc,
   VerifyPairInput,
   VerifiedPair,
@@ -62,6 +64,11 @@ export interface CpuGate {
     dfSab: SharedArrayBuffer,
     eligibleDocTypes: string[],
   ): Promise<SignedDoc[]>;
+  nearDupPrepareCandidates(
+    candidates: CandidateDocData[],
+    algoConfig: NearDupeConfig,
+    eligibleDocTypes: string[],
+  ): Promise<PreparedCandidate[]>;
   nearDupVerifyBatch(
     pairs: VerifyPairInput[],
     dfSab: SharedArrayBuffer,
@@ -113,6 +120,11 @@ const CPU_OP_DEFS: readonly CpuOpDef[] = [
   { name: "cpu.extractTranscriptionVocabulary", priority: "background" },
   { name: "cpu.echo", priority: "background" },
   { name: "cpu.nearDupSignBatch", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  {
+    name: "cpu.nearDupPrepareCandidates",
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  },
   { name: "cpu.nearDupVerifyBatch", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "cpu.scoreMergeCandidates", priority: "background", latencyBudgetMs: 5_000 },
   { name: "cpu.extractLinksFromDocs", priority: "background", latencyBudgetMs: 5_000 },
@@ -158,6 +170,8 @@ export function cpuGateFromScheduler(scheduler: Scheduler): CpuGate {
       call("cpu.extractTranscriptionVocabulary", [docs, settings]),
     nearDupSignBatch: (docs, algoConfig, dfData, eligibleDocTypes) =>
       call("cpu.nearDupSignBatch", [docs, algoConfig, dfData, eligibleDocTypes]),
+    nearDupPrepareCandidates: (candidates, algoConfig, eligibleDocTypes) =>
+      call("cpu.nearDupPrepareCandidates", [candidates, algoConfig, eligibleDocTypes]),
     nearDupVerifyBatch: (pairs, dfData, gateConfig) =>
       call("cpu.nearDupVerifyBatch", [pairs, dfData, gateConfig]),
     scoreMergeCandidates: (data, opts) => call("cpu.scoreMergeCandidates", [data, opts ?? {}]),

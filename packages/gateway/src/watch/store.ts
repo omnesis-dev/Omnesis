@@ -41,72 +41,19 @@
  */
 
 import { createLogger } from "@omnesis/core";
-import {
-  journalEventSchema,
-  toJournalInstant,
-  type DocEvent,
-  type JournalEvent,
-} from "@omnesis/watch/journal";
 import { openEncryptedSqlite, type EncryptedSqliteDatabase } from "../sqlite-encryption.js";
+import {
+  decodeEvent,
+  journalDocumentAt,
+  type EventRow,
+  type JournalDocumentAt,
+} from "./journal-document.js";
+import type { JournalEvent } from "@omnesis/watch/journal";
 
 const log = createLogger("gateway").child("watch-v2:store");
 
 /** An event on its way into the journal. `seq` is assigned by the store. */
 export type NewJournalEvent = Omit<JournalEvent, "seq">;
-
-interface EventRow {
-  seq: number;
-  kind: string;
-  occurred_at: string;
-  observed_at: string;
-  payload: string;
-}
-
-/**
- * One stored row as a journal event, or `null` when this build cannot read it.
- *
- * The JSON parse belongs inside the guard rather than beside it: a payload that
- * is not JSON at all is exactly the corruption the skip exists for, and a parse
- * that threw from outside would take down the whole read — turning "skip one
- * row" into "reach no row after it", which is the failure the caller was trying
- * to avoid.
- */
-function decodeEvent(row: EventRow): { event: JournalEvent } | { why: string } {
-  try {
-    const payload = JSON.parse(row.payload) as Record<string, unknown>;
-    // Normalized on the way out as well as on the way in, so an event written
-    // before the writer canonicalized its instants is readable now rather than
-    // invisible forever. The schema is unchanged and still refuses anything
-    // outside the canonical form; this only maps known spellings onto it.
-    const candidate = {
-      seq: row.seq,
-      kind: row.kind,
-      occurredAt: toJournalInstant(row.occurred_at) ?? row.occurred_at,
-      observedAt: toJournalInstant(row.observed_at) ?? row.observed_at,
-      payload: normalizePayloadInstants(payload),
-    };
-    const parsed = journalEventSchema.safeParse(candidate);
-    if (parsed.success) return { event: parsed.data };
-    // Paths and codes only. The values are corpus content — titles, names,
-    // message text — and a log line is the one place they must never reach.
-    const why = parsed.error.issues
-      .map((issue) => `${issue.path.join("/") || "(root)"}:${issue.code}`)
-      .join(" ");
-    return { why };
-  } catch {
-    return { why: "payload is not JSON" };
-  }
-}
-
-/** The instants a payload carries, in the journal's canonical spelling. */
-function normalizePayloadInstants(payload: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...payload };
-  for (const field of ["semanticTime", "eventIndexedAt"]) {
-    const held = out[field];
-    if (typeof held === "string") out[field] = toJournalInstant(held) ?? held;
-  }
-  return out;
-}
 
 /**
  * One string for a `(table, primary key)` pair.
@@ -320,37 +267,11 @@ export class WatchJournalStore {
   }
 
   /**
-   * The most recent `doc.event` for a document at or before `atSeq`.
-   *
-   * The bound is the whole point: a consumer catching up after a restart is
-   * walking a backlog, so an unbounded "most recent" would hand it a revision
-   * that had not happened yet at the event it is evaluating — and a watch would
-   * then decide differently depending on how far behind it was.
-   *
-   * `json_extract` rather than a column, because the docId lives in the payload
-   * and adding a column would be a second copy that can disagree with the
-   * event.
-   *
-   * The `json_valid` term is not redundant: SQLite uses a partial index only
-   * when the query repeats the index's own WHERE terms, and without it this
-   * degrades to a backwards scan of the whole journal — measured at 416ms
-   * against 1ms over twenty thousand events, on the main thread, once per
-   * indexed document.
+   * The most recent `doc.event` for a document at or before `atSeq`, read on
+   * this connection. See {@link journalDocumentAt}.
    */
-  documentAt(docId: string, atSeq: number): { event: DocEvent; seq: number } | null {
-    const row = this.db
-      .prepare<[string, number], EventRow>(
-        `SELECT seq, kind, occurred_at, observed_at, payload FROM watch_events
-          WHERE kind = 'doc.event' AND json_valid(payload)
-            AND json_extract(payload, '$.docId') = ? AND seq <= ?
-          ORDER BY seq DESC LIMIT 1`,
-      )
-      .get(docId, atSeq);
-    if (!row) return null;
-    const decoded = decodeEvent(row);
-    if (!("event" in decoded)) return null;
-    const event = decoded.event;
-    return event.kind === "doc.event" ? { event: event.payload, seq: event.seq } : null;
+  documentAt(docId: string, atSeq: number): JournalDocumentAt | null {
+    return journalDocumentAt(this.db, docId, atSeq);
   }
 
   getState(key: string): string | null {

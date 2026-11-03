@@ -40,6 +40,8 @@ export interface IoTaskRunnerOptions {
   backgroundWorkerNice?: number;
   /** Page-cache budget in bytes for each io worker's read handle. */
   cacheSizeBytes?: number;
+  /** The watch journal the `ioJournalHandlers` ops read, when the install has one. */
+  watchJournal?: { path: string; keyHex?: string };
   /** Test seam: override worker construction. Defaults to `new Worker`. */
   createWorker?: IoWorkerFactory;
 }
@@ -97,10 +99,14 @@ export class IoTaskRunner implements TaskRunner {
   private disposed = false;
   private readonly createWorker: IoWorkerFactory;
   private readonly opts: Required<
-    Omit<IoTaskRunnerOptions, "concurrency" | "gatewayDbKeyHex" | "cacheSizeBytes" | "createWorker">
+    Omit<
+      IoTaskRunnerOptions,
+      "concurrency" | "gatewayDbKeyHex" | "cacheSizeBytes" | "createWorker" | "watchJournal"
+    >
   > & {
     gatewayDbKeyHex: string | undefined;
     cacheSizeBytes: number | undefined;
+    watchJournal: { path: string; keyHex?: string } | undefined;
   };
 
   constructor(opts: IoTaskRunnerOptions) {
@@ -115,6 +121,7 @@ export class IoTaskRunner implements TaskRunner {
       workerExecArgv: opts.workerExecArgv ?? [],
       backgroundWorkerNice: opts.backgroundWorkerNice ?? DEFAULT_BACKGROUND_WORKER_NICE,
       cacheSizeBytes: opts.cacheSizeBytes,
+      watchJournal: opts.watchJournal,
     };
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
@@ -165,6 +172,7 @@ export class IoTaskRunner implements TaskRunner {
         backgroundWorkerNice: this.opts.backgroundWorkerNice,
         ...(this.opts.gatewayDbKeyHex ? { gatewayDbKeyHex: this.opts.gatewayDbKeyHex } : {}),
         ...(this.opts.cacheSizeBytes != null ? { cacheSizeBytes: this.opts.cacheSizeBytes } : {}),
+        ...(this.opts.watchJournal ? { watchJournal: this.opts.watchJournal } : {}),
       };
       worker.postMessage(init);
 

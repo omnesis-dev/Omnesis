@@ -3,6 +3,7 @@
 
 import { DEFAULT_PUSH_WAKE_RETRY_SETTINGS } from "@omnesis/config";
 import { assertNever, createLogger, makeEvent } from "@omnesis/core";
+import { withActivity } from "../observability/main-activity.js";
 import { selectPushTransport, type SelectedPushTransport } from "./select-transport.js";
 import type { NotificationMessage } from "@omnesis/core/push";
 import type { ApnsRegistration, DeviceId, DeviceRecord, FcmRegistration } from "@omnesis/types";
@@ -162,7 +163,9 @@ export class PushBroadcaster {
         })),
       );
     }
-    return await Promise.all(claims.map((claim) => this.dispatchClaimedWake(claim)));
+    return await withActivity("push.dispatch", () =>
+      Promise.all(claims.map((claim) => this.dispatchClaimedWake(claim))),
+    );
   }
 
   private async dispatchClaimedWake(claim: LeasedNotificationWake): Promise<PushDispatchResult> {

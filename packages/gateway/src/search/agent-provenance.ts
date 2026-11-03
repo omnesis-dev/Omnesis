@@ -45,6 +45,13 @@ export interface AgentSearchProvenanceOptions {
   excludeDocumentIds?: readonly string[] | (() => readonly string[]);
   /** Index snapshot hashes prevent stale chunks from claiming current identity. */
   indexedContentHashes?: Readonly<Record<string, string>>;
+  /**
+   * Hits the caller passed through the knowledge readability fence after its
+   * last asynchronous stage, on another connection just before this read.
+   * Their verdicts stand in for fencing them again here; every other document
+   * is fenced in the graph read snapshot.
+   */
+  readableDocumentIds?: ReadonlySet<string>;
 }
 
 interface Doc {
@@ -207,11 +214,13 @@ export function enrichAgentSearch(
         : (options.excludeDocumentIds ?? []),
     );
     const hidden = hiddenSourceIdsToExclude();
+    const readable = (id: string, sourceId: string): boolean =>
+      options.readableDocumentIds?.has(id) || isKnowledgeDocumentReadable(db, id, sourceId);
     const visible = (id: string, sourceId: string): boolean =>
       id.length <= 256 &&
       sourceId.length <= 256 &&
       !excluded.has(id) &&
-      isKnowledgeDocumentReadable(db, id, sourceId) &&
+      readable(id, sourceId) &&
       !sourceMatchesAnyPrefix(sourceId, hidden);
     const hiddenSql = sourcePrefixPredicate("d.source_id", hidden);
     const excludedIds = [...excluded];
@@ -232,9 +241,9 @@ export function enrichAgentSearch(
     const get = (id: string): Doc | undefined => {
       if (!docs.has(id)) {
         const row = load.get(id);
-        const readable = row && isKnowledgeDocumentReadable(db, id, row.source_id);
-        if (row && !readable) unreadable.add(id);
-        docs.set(id, readable ? row : undefined);
+        const isReadable = row && readable(id, row.source_id);
+        if (row && !isReadable) unreadable.add(id);
+        docs.set(id, isReadable ? row : undefined);
       }
       return docs.get(id);
     };
@@ -248,7 +257,7 @@ export function enrichAgentSearch(
         excluded.has(hit.documentId) ||
         sourceMatchesAnyPrefix(hit.sourceId, hidden) ||
         seenIds.has(hit.documentId) ||
-        !isKnowledgeDocumentReadable(db, hit.documentId, hit.sourceId)
+        !readable(hit.documentId, hit.sourceId)
       )
         continue;
       seenIds.add(hit.documentId);

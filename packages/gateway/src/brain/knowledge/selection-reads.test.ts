@@ -7,6 +7,13 @@ import { createLogger } from "@omnesis/core";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { resolveBrainSettings } from "../config.js";
 import { outcomeRecordPolicyKey } from "../record-check/rubric.js";
+import {
+  COGNITION_RUN_STALE_MS,
+  DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
+} from "../storage/run-queue.js";
+import { decisionPayloadErasureGeneration } from "../decision-payload.js";
+import { lowWorthOrganizationSources } from "./organization-worth.js";
+import { createKnowledgeDecisionTable } from "./decision-storage.js";
 import { createKnowledgeTables, saveKnowledgeNode } from "./storage.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { KnowledgeService } from "./service.js";
@@ -57,6 +64,9 @@ beforeEach(() => {
     knowledgeHasExcludedWork: vi.fn(() => Promise.resolve(false)),
     knowledgeArcs: vi.fn(() => Promise.resolve([])),
     knowledgeDiscoveryBacklog: vi.fn(() => Promise.resolve([])),
+    knowledgePlanningWork: vi.fn(() => Promise.resolve([])),
+    knowledgeRecoverableBatches: vi.fn(() => Promise.resolve([])),
+    knowledgeDecisionPayloadSubjects: vi.fn(() => Promise.resolve(null)),
   };
   const writeGate = directKnowledgeGate(db);
   const base = { db, writeGate, clock: () => now, log, getSettings: () => settings };
@@ -137,4 +147,81 @@ it("asks for outcome-policy revalidation only when record checks are enforced wi
   expect(reads.knowledgeDueReviews.mock.calls[0]![0]).toMatchObject({
     outcomePolicy: outcomeRecordPolicyKey("enforce", "scripted"),
   });
+});
+
+it("recovers only the batches the selection port returns", async () => {
+  const batch = (id: string) =>
+    db
+      .prepare(
+        `INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,revision,created_at,updated_at)
+         VALUES(?,?,'fixture','routine','pending',1,?,?)`,
+      )
+      .run(id, `run-${id}`, now - 2000, now - 2000);
+  batch("orphan");
+  const status = () =>
+    db.prepare<[], { status: string }>("SELECT status FROM knowledge_batches").get()!.status;
+  const upkeep = new KnowledgeUpkeep(deps, () => "kw");
+
+  // The batch's run is missing, which the handle would recover; the port says nothing is.
+  await upkeep.recover();
+  expect(reads.knowledgeRecoverableBatches).toHaveBeenCalledWith({
+    maxAttempts: DEFAULT_COGNITION_RUN_MAX_ATTEMPTS,
+    claimedBefore: now - COGNITION_RUN_STALE_MS,
+    limit: cfg.maxSeeds,
+  });
+  expect(status()).toBe("pending");
+
+  reads.knowledgeRecoverableBatches.mockResolvedValueOnce([
+    { id: "orphan", runId: "run-orphan", failed: 0, dead: 0 },
+  ]);
+  await upkeep.recover();
+  expect(status()).toBe("abandoned");
+});
+
+/** A decision model that scores every question low, so a judged source is set aside. */
+function scoringDeps(): KnowledgeEngineDeps {
+  const decision = {
+    modelId: "scripted",
+    dispose() {},
+    decide: vi.fn(async (request: { questions: Record<string, unknown> }) => ({
+      model: "scripted",
+      answers: Object.fromEntries(
+        Object.keys(request.questions).map((key) => [key, { type: "score", score: 0.1 }]),
+      ),
+    })),
+  };
+  return {
+    ...deps,
+    decisions: { ...deps.decisions, getDecision: () => decision },
+  } as unknown as KnowledgeEngineDeps;
+}
+
+it("captures a review decision's payload subjects through the selection port", async () => {
+  reads.knowledgeDueReviews.mockResolvedValueOnce([
+    { id: "page", policy_review: 0, proof_policy_review: 0 },
+  ]);
+  const revision = db
+    .prepare<[], { revision: number }>("SELECT revision FROM knowledge_nodes WHERE id='page'")
+    .get()!.revision;
+  await new KnowledgeUpkeep(scoringDeps(), () => "kw").reviews();
+  expect(reads.knowledgeDecisionPayloadSubjects).toHaveBeenCalledWith(
+    { nodeIds: ["page"], nodeRevisions: { page: revision } },
+    decisionPayloadErasureGeneration(db),
+  );
+});
+
+it("captures an organization worth decision's payload subjects through the selection port", async () => {
+  createKnowledgeDecisionTable(db);
+  const low = await lowWorthOrganizationSources(scoringDeps(), { roster: "r1" }, () => ({
+    title: "Field roster",
+    content: "Six places on the observation team.",
+    sourceRevision: "r1",
+    sourceCreatedAt: null,
+    sourceUpdatedAt: null,
+  }));
+  expect(low).toEqual({ roster: "r1" });
+  expect(reads.knowledgeDecisionPayloadSubjects).toHaveBeenCalledWith(
+    { sourceIds: ["roster"], nodeIds: [] },
+    decisionPayloadErasureGeneration(db),
+  );
 });

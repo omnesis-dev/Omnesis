@@ -17,6 +17,7 @@ import { IoTaskRunner } from "../../scheduler/runners/io.js";
 import { ioGateFromScheduler } from "../../scheduler/io-ops.js";
 import { resolveBrainSettings } from "../config.js";
 import { createOpenLoop } from "../storage/open-loops.js";
+import { decisionPayloadErasureGeneration } from "../decision-payload.js";
 import { KNOWLEDGE_DISCOVERY_POLICY, recordKnowledgeCoverage } from "./discovery.js";
 import { directKnowledgeSelectionReads, type KnowledgeSelectionReads } from "./selection-reads.js";
 import { readKnowledgeSourceRevision } from "./source-revision.js";
@@ -258,4 +259,103 @@ it("reads the same discovery backlog on the worker as on the handle", async () =
       (doc) => doc.id,
     ),
   ).toEqual(["agenda"]);
+});
+
+it("reads the same planning window on the worker as on the handle", async () => {
+  pendingSourceWork("capacity");
+  pendingSourceWork("roster");
+  enqueueKnowledgeWork(
+    db,
+    {
+      id: "work-agenda",
+      subjectId: "agenda",
+      subjectKind: "source",
+      reason: "discovery",
+      inputRevision: readKnowledgeSourceRevision(db, "agenda")!,
+      tier: "routine",
+      dueAt: 50,
+    },
+    1,
+  );
+  for (const limit of [1, 2, 10]) {
+    const expected = await direct.knowledgePlanningWork(limit);
+    expect(await worker.knowledgePlanningWork(limit)).toStrictEqual(expected);
+  }
+  // The historical slot holds a place for discovery work even in a full window.
+  expect((await worker.knowledgePlanningWork(2)).map((item) => item.id)).toEqual([
+    "work-capacity",
+    "work-agenda",
+  ]);
+});
+
+it("finds the same recoverable batches on the worker as on the handle", async () => {
+  const claimedBefore = 1_000;
+  const run = (id: string, status: string, attempts: number, lastAttemptAt: number | null) =>
+    db
+      .prepare(
+        `INSERT INTO cognition_runs(id,kind,status,attempts,next_attempt_at,enqueued_at,last_attempt_at)
+         VALUES(?,'synthesis',?,?,0,0,?)`,
+      )
+      .run(id, status, attempts, lastAttemptAt);
+  const batch = (id: string, runId: string, status: string, createdAt: number) =>
+    db
+      .prepare(
+        `INSERT INTO knowledge_batches(id,run_id,creation_fingerprint,tier,status,created_at,updated_at)
+         VALUES(?,?,'fixture','routine',?,?,?)`,
+      )
+      .run(id, runId, status, createdAt, createdAt);
+  run("run-done", "completed", 1, 10);
+  run("run-failed", "failed", 5, 10);
+  run("run-dead", "pending", 5, 10);
+  run("run-live", "pending", 1, 10);
+  run("run-recent", "pending", 5, 5_000);
+  batch("kb-missing", "run-missing", "pending", 1);
+  batch("kb-done", "run-done", "running", 2);
+  batch("kb-failed", "run-failed", "deferred", 3);
+  batch("kb-dead", "run-dead", "pending", 4);
+  batch("kb-live", "run-live", "pending", 5);
+  batch("kb-recent", "run-recent", "pending", 6);
+  for (const limit of [2, 10]) {
+    const options = { maxAttempts: 5, claimedBefore, limit };
+    const expected = await direct.knowledgeRecoverableBatches(options);
+    expect(await worker.knowledgeRecoverableBatches(options)).toStrictEqual(expected);
+  }
+  expect(
+    await worker.knowledgeRecoverableBatches({ maxAttempts: 5, claimedBefore, limit: 10 }),
+  ).toStrictEqual([
+    { id: "kb-missing", runId: "run-missing", failed: 0, dead: 0 },
+    { id: "kb-done", runId: "run-done", failed: 0, dead: 0 },
+    { id: "kb-failed", runId: "run-failed", failed: 1, dead: 0 },
+    { id: "kb-dead", runId: "run-dead", failed: 0, dead: 1 },
+  ]);
+});
+
+it("captures the same decision payload subjects on the worker as on the handle", async () => {
+  const generation = decisionPayloadErasureGeneration(db);
+  const page = db
+    .prepare<[], { revision: number }>("SELECT revision FROM knowledge_nodes WHERE id='page'")
+    .get()!;
+  const cases = [
+    [{ sourceIds: ["capacity", "roster"] }, generation],
+    [{ nodeIds: ["page"], nodeRevisions: { page: page.revision } }, generation],
+    // A moved node revision, a stale erasure generation and no subjects all capture nothing.
+    [{ nodeIds: ["page"], nodeRevisions: { page: page.revision + 1 } }, generation],
+    [{ sourceIds: ["capacity"] }, generation + 1],
+    [{}, generation],
+  ] as const;
+  for (const [seeds, erasureGeneration] of cases) {
+    const expected = await direct.knowledgeDecisionPayloadSubjects(seeds, erasureGeneration);
+    expect(await worker.knowledgeDecisionPayloadSubjects(seeds, erasureGeneration)).toStrictEqual(
+      expected,
+    );
+  }
+  expect(
+    await worker.knowledgeDecisionPayloadSubjects({ sourceIds: ["capacity"] }, generation),
+  ).toStrictEqual({
+    erasureGeneration: generation,
+    subjects: [{ kind: "source", id: "capacity" }],
+  });
+  expect(
+    await worker.knowledgeDecisionPayloadSubjects({ sourceIds: ["capacity"] }, generation + 1),
+  ).toBeNull();
 });

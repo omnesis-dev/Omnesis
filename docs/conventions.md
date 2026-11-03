@@ -537,6 +537,26 @@ request waits on, so no synchronous segment on it should run past about 50 ms.
 [`stall-investigation.md`](stall-investigation.md) gives the rule, the fixes
 that have worked, and how to find the culprit when the gateway reports a stall.
 
+**A read that leaves the main thread is declared once, as a read port.** A
+port is an object of plain functions that take a database handle first
+(`scheduler/read-port.ts`), registered by adding it to `IO_READS` in
+`scheduler/io-read-ports.ts`. That set gives the io worker one `io.<name>` op
+per read and the gateway's `IoGate` the async form that enqueues it.
+`directReadPort` runs the same functions on the caller's handle
+where there is no read worker, as in storage-only tests. Both forms run the
+same code, so a test on the real io worker can assert that each returns exactly
+what the direct read returns (`toStrictEqual`), which also catches a result
+that does not survive the structured clone: a clone keeps sets, maps and dates
+but drops functions, symbol keys and prototypes, so a read returns plain data.
+Every port read runs at `background` priority on the worker's `omnesis.db`
+handle, so a read that needs `user` priority (search's
+`io.knowledgeDocumentsReadable`) or another store's handle (the Watch journal's
+`io.watchDocumentHistories`) is still written out as its own op.
+A read the caller must see in the same snapshot as its other reads, or one that
+belongs inside a writer transaction, stays where it is.
+`http/services/status-cache-reads.ts` and `brain/knowledge/selection-reads.ts`
+are examples.
+
 ### A DuckDB store is opened once per process, and once per machine
 
 DuckDB guards its database file with a POSIX record lock, and POSIX record

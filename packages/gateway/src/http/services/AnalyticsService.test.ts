@@ -262,8 +262,8 @@ describe("AnalyticsService.ingest", () => {
     };
     const ledger: AnalyticsReplicaLedger = {
       cursorRows: () => ["", "alpha", "beta"],
-      omissionCandidates: () => opts.restored ?? [],
-      claimedKeys: (_sourceId, _tableName, keys) =>
+      omissionCandidates: async () => opts.restored ?? [],
+      claimedKeys: async (_sourceId, _tableName, keys) =>
         opts.claimed ? keys.filter((key) => opts.claimed!.includes(key)) : [...keys],
       judgeTombstones: async (args) => {
         calls.judge.push({
@@ -764,8 +764,8 @@ describe("AnalyticsService.ingest — a member's page keyed by record", () => {
     const seen: Array<{ named: readonly string[]; omitted: readonly string[] }> = [];
     const ledger: AnalyticsReplicaLedger = {
       cursorRows: () => [""],
-      omissionCandidates: () => [REST, GONE],
-      claimedKeys: (_s, _t, keys) => [...keys],
+      omissionCandidates: async () => [REST, GONE],
+      claimedKeys: async (_s, _t, keys) => [...keys],
       judgeTombstones: async (args) => ({
         apply: [...args.existingIds],
         deferred: [],
@@ -809,8 +809,8 @@ describe("AnalyticsService.ingest — a member's page keyed by record", () => {
     const db = fakeDb();
     const ledger: AnalyticsReplicaLedger = {
       cursorRows: () => [""],
-      omissionCandidates: () => [GONE],
-      claimedKeys: (_s, _t, keys) => [...keys],
+      omissionCandidates: async () => [GONE],
+      claimedKeys: async (_s, _t, keys) => [...keys],
       judgeTombstones: async (args) => ({
         apply: [...args.existingIds],
         deferred: [],

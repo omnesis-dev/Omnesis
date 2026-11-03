@@ -26,10 +26,7 @@
  */
 
 import { digestRunDedupeKey } from "../run-payloads.js";
-import {
-  countDuePendingCognitionRuns,
-  hasCognitionRunWithDedupeKey,
-} from "../storage/run-queue.js";
+import { hasCognitionRunWithDedupeKey, hasDuePendingCognitionRun } from "../storage/run-queue.js";
 import {
   getCognitionEngineState,
   cognitionSweepLastBoundaryKey,
@@ -118,7 +115,7 @@ export async function runDigestEnqueuePass(
     const dailiesEnqueued = dailyDay !== null && dailyDay >= boundary.day;
     const queueQuiet =
       (deps.isBudgetExhausted?.() ?? false) ||
-      (countDuePendingCognitionRuns(deps.db, now) === 0 && deps.getActiveRunCount() === 0);
+      (!hasDuePendingCognitionRun(deps.db, now) && deps.getActiveRunCount() === 0);
     if (!dailiesEnqueued || !queueQuiet || !prerequisiteSweepsFired(deps, now)) {
       return { fired: false, reason: "waiting" };
     }

@@ -13,6 +13,7 @@ import {
   listInterestSignals,
   listLiveInterestSignals,
 } from "../storage/interest.js";
+import { captureActivity, nameStall } from "../../observability/stall-test-utils.js";
 import { wordSet, type InterestLookupOptions } from "./lookup.js";
 import { InterestEngine, type InterestEmbedder } from "./engine.js";
 import type Database from "better-sqlite3";
@@ -439,5 +440,19 @@ describe("InterestEngine.lookup", () => {
     await engine.embedBacklog();
     expect(engine.hasBacklog()).toBe(false);
     expect(listLiveInterestSignals(db, { limit: 10 }).every((s) => s.embedding)).toBe(true);
+  });
+});
+
+describe("a kicked embedding pass", () => {
+  test("runs under its own activity, so a stall in it is named", async () => {
+    const seen: ReturnType<typeof captureActivity>[] = [];
+    const engine = makeEngine(() => {
+      seen.push(captureActivity());
+      return embedder;
+    });
+    engine.kick();
+    await engine.embedBacklog();
+    expect(seen.length).toBeGreaterThan(0);
+    expect(nameStall(seen[0]!).inner).toBe("interest.embedBacklog");
   });
 });
