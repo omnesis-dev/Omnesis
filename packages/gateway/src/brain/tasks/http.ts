@@ -115,6 +115,7 @@ const deadline = z
   })
   .strip()
   .nullable();
+const docs = z.array(z.string().min(1)).max(100);
 
 const createBody = z
   .object({
@@ -122,6 +123,7 @@ const createBody = z
     description: z.string().max(2000).optional(),
     scheduledFor: schedule.optional(),
     deadline: deadline.optional(),
+    docs: docs.optional(),
   })
   .strip();
 
@@ -141,6 +143,7 @@ const actionBody = z.discriminatedUnion("action", [
       description: z.string().max(2000).optional(),
       scheduledFor: schedule.optional(),
       deadline: deadline.optional(),
+      docs: docs.optional(),
     })
     .strip(),
   z
@@ -305,6 +308,7 @@ export function mountTaskRoutes(app: RouteApp, opts: MountTaskRoutesOpts): void 
       ...(body.description !== undefined ? { description: body.description } : {}),
       ...(body.scheduledFor !== undefined ? { scheduledFor: body.scheduledFor } : {}),
       ...(body.deadline !== undefined ? { deadline: body.deadline } : {}),
+      ...(body.docs !== undefined ? { docs: body.docs } : {}),
     });
     return c.json(respond(result), 201);
   });

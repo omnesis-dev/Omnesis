@@ -102,7 +102,7 @@ class NotesRepository(
      * notes for delivery. Throws [VoiceNoteNotSavedException] when the gateway refuses
      * the audio and there is no transcript to fall back on.
      */
-    suspend fun capture(text: String, surface: String, audio: VoiceNoteAudio? = null): CaptureOutcome {
+    suspend fun capture(text: String, surface: String, audio: VoiceNoteAudio? = null, taskId: String? = null): CaptureOutcome {
         val normalizedText = text.trim()
         if (audio == null) require(normalizedText.isNotEmpty()) { "Note text must not be empty" }
         require(normalizedText.length <= MAX_TEXT_LENGTH) {
@@ -127,6 +127,7 @@ class NotesRepository(
                 normalizedText,
                 capturedAt,
                 surface,
+                taskId = taskId,
                 lastFailure = "Not paired with a gateway",
                 audio = ownedAudio,
                 language = noteLanguage,
@@ -136,7 +137,7 @@ class NotesRepository(
         if (ownedAudio != null) {
             try {
                 g.client.createVoice(
-                    VoiceNoteBody(noteId, normalizedText, capturedAt, surface, g.deviceId, noteLanguage),
+                    VoiceNoteBody(noteId, normalizedText, capturedAt, surface, g.deviceId, noteLanguage, taskId),
                     ownedAudio.file,
                     ownedAudio.mimeType,
                 )
@@ -160,6 +161,7 @@ class NotesRepository(
                             normalizedText,
                             capturedAt,
                             surface,
+                            taskId = taskId,
                             lastAttemptAt = now().toString(),
                             lastFailure = failureReason(error),
                             audio = ownedAudio,
@@ -178,6 +180,7 @@ class NotesRepository(
                     capturedAt = capturedAt,
                     surface = surface,
                     deviceId = g.deviceId,
+                    taskId = taskId,
                 ),
             )
             CaptureOutcome.Posted
@@ -190,6 +193,7 @@ class NotesRepository(
                 normalizedText,
                 capturedAt,
                 surface,
+                taskId = taskId,
                 lastAttemptAt = now().toString(),
                 lastFailure = failureReason(error),
             )
@@ -274,7 +278,7 @@ class NotesRepository(
         if (audio != null) {
             try {
                 g.client.createVoice(
-                    VoiceNoteBody(note.noteId, note.text, note.capturedAt, note.surface, g.deviceId, note.language),
+                    VoiceNoteBody(note.noteId, note.text, note.capturedAt, note.surface, g.deviceId, note.language, note.taskId),
                     audio.file,
                     audio.mimeType,
                 )
@@ -298,6 +302,7 @@ class NotesRepository(
                 capturedAt = note.capturedAt,
                 surface = note.surface,
                 deviceId = g.deviceId,
+                taskId = note.taskId,
             ),
         )
         return true
@@ -326,8 +331,9 @@ class NotesRepository(
         lastFailure: String,
         audio: VoiceNoteAudio? = null,
         language: String? = null,
+        taskId: String? = null,
     ) {
-        store.insert(noteId, text, capturedAt, surface, lastAttemptAt, lastFailure, audio, language)
+        store.insert(noteId, text, capturedAt, surface, lastAttemptAt, lastFailure, audio, language, taskId)
         refreshPending()
     }
 

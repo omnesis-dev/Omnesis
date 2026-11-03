@@ -12,6 +12,18 @@ import org.junit.Test
 
 /** The Tasks journal on the wire, as `packages/gateway/src/brain/tasks/http.ts` writes it. */
 class TasksDecodeTest {
+    @Test
+    fun note_processing_status_distinguishes_unknown_off_and_unavailable() {
+        assertNull(OmnesisJson.decodeFromString<StatusSnapshot>("{}").noteAgent)
+        assertTrue(OmnesisJson.decodeFromString<StatusSnapshot>(
+            """{"noteAgent":{"enabled":false,"modelAssigned":true,"active":false}}""",
+        ).noteAgent!!.notice!!.contains("Note processing is off"))
+        assertTrue(OmnesisJson.decodeFromString<StatusSnapshot>(
+            """{"noteAgent":{"enabled":true,"modelAssigned":false,"active":false}}""",
+        ).noteAgent!!.notice!!.contains("Agent model is missing or unavailable"))
+        assertNull(NoteAgentStatusDto(enabled = true, modelAssigned = true, active = true).notice)
+    }
+
 
     @Test
     fun a_today_view_decodes_with_counts_proposals_and_people() {

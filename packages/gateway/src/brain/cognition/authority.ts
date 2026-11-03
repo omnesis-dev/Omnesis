@@ -125,10 +125,9 @@ const NARROWED_AUTHORITY: Partial<Record<CognitiveWorkflowId, readonly Cognitive
   // its own tool. It reads evidence widely and writes nothing else.
   "identity-adjudication": ["merge-verdict"],
 
-  // Watch compilation is a tool-less closed-grammar exchange (the compiler
-  // session is built with `tools: []` and never runs under the steward
-  // runtime). Declaring the empty authority keeps that fact enforced rather
-  // than incidental.
+  // Watch compilation runs outside the steward with the restricted retrieval
+  // profile from watch/compiler-session.ts (compilerTools), or a tool-less
+  // completion fallback. It has no authority over the steward's durable state.
   "subscription-compile": [],
 
   // Composes and sends the day's one morning brief from observations the

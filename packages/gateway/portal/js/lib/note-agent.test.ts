@@ -6,8 +6,10 @@ import {
   noteAgentActive,
   noteAgentDisplay,
   noteAgentPending,
+  noteAgentNotice,
   noteAgentSettingPatch,
   noteChangeHref,
+  noteConversationHref,
   noteRefreshChanged,
   noteUndoErrorMessage,
   // @ts-expect-error — the portal is plain JS, no .d.ts ships alongside.
@@ -49,6 +51,22 @@ describe("note agent display", () => {
     expect(noteChangeHref({ taskId: null })).toBeNull();
   });
 
+  it("opens a saved clarification thread only after the note is done", () => {
+    const receipt = { text: "Which workshop booking did you mean?", changes: [], conversationId: "chat/clarify?one" };
+    expect(noteAgentDisplay({ state: "done", receipt })).toMatchObject({
+      kind: "receipt", conversationHref: "/portal/agent/chat%2Fclarify%3Fone",
+    });
+    expect(noteAgentDisplay({ state: "done", receipt: { conversationId: "chat_1" } })).toMatchObject({
+      conversationHref: "/portal/agent/chat_1",
+    });
+    for (const state of ["pending", "running", "failed", "skipped"]) {
+      expect(noteAgentDisplay({ state, receipt })?.conversationHref).toBeUndefined();
+    }
+    for (const value of [null, {}, { conversationId: " " }, { conversationId: 42 }]) {
+      expect(noteConversationHref(value)).toBeNull();
+    }
+  });
+
   it("explains a refused undo", () => {
     expect(noteUndoErrorMessage({ status: 409 })).toBe("A later change to this task has to be undone first.");
     expect(noteUndoErrorMessage({ status: 500 })).toBe("Couldn't undo that change — try again.");
@@ -60,6 +78,13 @@ describe("note agent display", () => {
     expect(noteAgentActive(null)).toBe(false);
   });
 
+  it("only warns on known inactive verdicts and identifies the remedy", () => {
+    for (const status of [null, {}, { noteAgent: {} }, { noteAgent: { enabled: true, modelAssigned: true, active: true } }])
+      expect(noteAgentNotice(status)).toBeNull();
+    expect(noteAgentNotice({ noteAgent: { enabled: false, modelAssigned: true, active: false } })).toContain("Note processing is off");
+    expect(noteAgentNotice({ noteAgent: { enabled: true, modelAssigned: false, active: false } })).toContain("Agent model is missing or unavailable");
+  });
+
   it("writes the setting as a config patch", () => {
     expect(noteAgentSettingPatch(true)).toEqual({ agent: { noteAgent: true } });
     expect(noteAgentSettingPatch(false)).toEqual({ agent: { noteAgent: false } });
@@ -68,6 +93,7 @@ describe("note agent display", () => {
   it("spots a refreshed copy with news", () => {
     const base = { id: "n", agent: { state: "running", receipt: null } };
     expect(noteRefreshChanged(base, { ...base })).toBe(false);
+    expect(noteRefreshChanged({ ...base, updatedAt: "2026-09-12T10:00:00Z" }, { ...base, updatedAt: "2026-09-11T10:00:00Z", agent: { state: "done" } })).toBe(false);
     expect(noteRefreshChanged(base, { id: "n", agent: { state: "done", receipt: { text: "x", changes: [] } } })).toBe(true);
     expect(noteRefreshChanged({ id: "n", transcription: "pending" }, { id: "n" })).toBe(true);
   });

@@ -5,15 +5,15 @@
  * Brain bench: the note agent.
  *
  * Every quick-capture note is the user speaking. Once it settles (and a
- * voice note's transcript is in), one bounded `background-agent` turn acts
+ * voice note's transcript is in), one bounded `agent` turn acts
  * on it: a task the note asks for is added (already scheduled when the note
  * says when), a task it reports done is completed, one it puts off is moved,
  * one the user gave up on is struck, and the receipt the user reads appears
- * under the note. The
- * turn touches only the user's own tasks — never the Brain's suggestions.
+ * under the note. Explicit requests can also accept or ignore the Brain's
+ * suggestions; unrelated suggestions stay unchanged.
  *
  * The note agent is not part of the experimental Brain: it runs on any
- * install with a runnable background-agent model, so this suite boots a
+ * install with a runnable Agent model, so this suite boots a
  * STABLE gateway. The model is the bench puppet, matched on the note text
  * (the turn has no cognition envelope; `readRunContext` reads its note
  * block). A second, model-less gateway proves the agent stays idle.
@@ -25,7 +25,7 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { describeSchedule } from "../../../gateway/src/brain/storage/tasks.js";
 import { createOpenLoop } from "../../../gateway/src/brain/storage/open-loops.js";
-import { SyntheticE2EHarness } from "./synth-harness.js";
+import type { SyntheticE2EHarness } from "./synth-harness.js";
 import {
   BrainBench,
   call,
@@ -55,9 +55,17 @@ function fridayAfter(day: string): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** The UTC day after a note's capture day. */
+function dayAfter(day: string): string {
+  const date = new Date(`${day}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return isoDay(date);
+}
+
 const TASK_NOTE = "Remind me to book the piano tuner next week.";
 const DONE_NOTE = "Paid the plumber this morning.";
-const SUGGESTION_NOTE = "The fete stall is sorted, someone else reserved it.";
+const SUGGESTION_NOTE =
+  "Accept the planetarium workshop suggestion for tomorrow, and ignore the seed library membership suggestion because I handled it elsewhere.";
 const PARKED_NOTE = "Call the optician about the new lenses.";
 const CONTROL_NOTE = "Buy birthday candles for Saturday.";
 const VOICE_DEVICE = "book a table at the harbour restaurant for fry day";
@@ -69,6 +77,16 @@ const STRIKE_NOTE = "I've decided I won't repaint the fence.";
 const RESCHEDULE_NOTE = "Push the quarterly report to Friday.";
 const COUNTED_NOTE = "Watered the window boxes.";
 const SWITCHED_OFF_NOTE = "Remind me to collect the dry cleaning.";
+const GREENHOUSE_NOTE =
+  "Add a task to plan the community greenhouse, and attach the supplies guide.";
+const GREENHOUSE_QUOTE_NOTE =
+  "Attach the delivery quote to my task to plan the community greenhouse too.";
+const EDITED_GREENHOUSE_NOTE =
+  "Add a task to plan the community greenhouse next month, and attach the supplies guide.";
+const GREENHOUSE_TITLE = "Plan the community greenhouse";
+const GUIDE_TITLE = "Community greenhouse supplies guide";
+const QUOTE_TITLE = "Community greenhouse delivery quote";
+const DOCUMENT_SOURCE = "synthetic:test@example.com";
 
 const PLUMBER_TITLE = "Pay the plumber";
 const INSURANCE_TITLE = "Renew the car insurance";
@@ -77,7 +95,11 @@ const FENCE_TITLE = "Repaint the fence";
 const FENCE_REASON = "Decided not to repaint it.";
 const REPORT_TITLE = "Send the quarterly report";
 const WINDOW_BOXES_TITLE = "Water the window boxes";
-const SUGGESTION_ID = "loop_note_agent_suggestion";
+const ACCEPT_SUGGESTION_ID = "loop_note_agent_accept_suggestion";
+const IGNORE_SUGGESTION_ID = "loop_note_agent_ignore_suggestion";
+const UNTOUCHED_SUGGESTION_ID = "loop_note_agent_untouched_suggestion";
+const ACCEPT_SUGGESTION_TITLE = "Reserve the planetarium workshop";
+const IGNORE_SUGGESTION_TITLE = "Renew the seed library membership";
 
 /** Wait out the turn: a note's receipt appears once its agent row is done. */
 async function receiptFor(
@@ -95,7 +117,7 @@ async function receiptFor(
   );
 }
 
-describe("the note agent (stable install, background-agent puppet)", () => {
+describe("the note agent (stable install, Agent puppet, no Brain model)", () => {
   let bench: BrainBench;
   // A note's capture day comes from its `capturedAt`, so a run that crosses
   // midnight UTC compares against the day each note was captured on.
@@ -124,10 +146,29 @@ describe("the note agent (stable install, background-agent puppet)", () => {
     friday = fridayAfter(isoDay(new Date()));
     bench = await BrainBench.start({
       experimental: false,
+      agent: "puppet",
+      brainAgent: false,
       syncSources: false,
+      embedder: true,
       extraInference: { assignments: { transcriber: "replay" } },
       behaviors: {
         behaviors: [
+          {
+            flavour: "note",
+            subject: EDITED_GREENHOUSE_NOTE,
+            plan: {
+              calls: [
+                call("task_list", { query: "community greenhouse" }),
+                call("task_update", {
+                  id: ref("task_list", "tasks.0.id"),
+                  action: "migrate",
+                  to: nextMonth,
+                }),
+              ],
+              finalText:
+                "Moved the existing greenhouse task to next month; its guide stays attached.",
+            },
+          },
           {
             flavour: "note",
             promptContains: TASK_NOTE,
@@ -137,6 +178,50 @@ describe("the note agent (stable install, background-agent puppet)", () => {
                 call("task_create", { title: "Book the piano tuner" }),
               ],
               finalText: "Added a task to book the piano tuner.",
+            },
+          },
+          {
+            flavour: "note",
+            promptContains: GREENHOUSE_NOTE,
+            plan: {
+              calls: [
+                call("task_list", { query: "community greenhouse" }),
+                call("search_many", {
+                  queries: [{ query: GUIDE_TITLE, filters: { sourceIds: [DOCUMENT_SOURCE] } }],
+                }),
+                call("fetch_many", {
+                  documents: [{ documentId: ref("search_many", "items.0.results.0.documentId") }],
+                }),
+                call("task_create", {
+                  title: GREENHOUSE_TITLE,
+                  docs: [ref("fetch_many", "items.0.document.id")],
+                }),
+              ],
+              finalText: "Added the greenhouse task with its supplies guide.",
+            },
+          },
+          {
+            flavour: "note",
+            promptContains: GREENHOUSE_QUOTE_NOTE,
+            plan: {
+              calls: [
+                call("task_list", { query: "community greenhouse" }),
+                call("search_many", {
+                  queries: [{ query: QUOTE_TITLE, filters: { sourceIds: [DOCUMENT_SOURCE] } }],
+                }),
+                call("fetch_many", {
+                  documents: [{ documentId: ref("search_many", "items.0.results.0.documentId") }],
+                }),
+                call("task_update", {
+                  id: ref("task_list", "tasks.0.id"),
+                  action: "edit",
+                  docs: [
+                    ref("task_list", "tasks.0.documents.0.id"),
+                    ref("fetch_many", "items.0.document.id"),
+                  ],
+                }),
+              ],
+              finalText: "Attached the delivery quote and kept the supplies guide.",
             },
           },
           {
@@ -157,13 +242,25 @@ describe("the note agent (stable install, background-agent puppet)", () => {
           {
             flavour: "note",
             promptContains: SUGGESTION_NOTE,
-            plan: {
+            plan: (context) => ({
               calls: [
                 call("task_list", { view: "suggested" }),
-                call("task_update", { id: SUGGESTION_ID, action: "complete" }),
+                call("task_list", { query: "planetarium workshop" }),
+                call("task_update", {
+                  id: ref("task_list", "tasks.0.id", 1),
+                  action: "accept",
+                  scheduledFor: dayAfter(context.detail!),
+                }),
+                call("task_list", { query: "seed library membership" }),
+                call("task_update", {
+                  id: ref("task_list", "tasks.0.id", 2),
+                  action: "ignore",
+                  reason: "Handled elsewhere.",
+                }),
               ],
-              finalText: "Saved the note.",
-            },
+              finalText:
+                "Added the planetarium workshop for tomorrow and ignored the seed library suggestion.",
+            }),
           },
           {
             flavour: "note",
@@ -272,6 +369,14 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   }, 60_000);
 
   test("a note asking for a task adds it, with the receipt under the note", async () => {
+    const status = await bench.harness.gatewayJson<{
+      experimental: boolean;
+      brain: { active: boolean; modelAssigned: boolean };
+      noteAgent: { active: boolean };
+    }>("/status");
+    expect(status.experimental).toBe(false);
+    expect(status.brain).toMatchObject({ active: false, modelAssigned: false });
+    expect(status.noteAgent.active).toBe(true);
     const id = await capture(TASK_NOTE);
     const agent = await receiptFor(tellNotes, id, dayOf(id));
     expect(agent.receipt).toMatchObject({
@@ -304,6 +409,113 @@ describe("the note agent (stable install, background-agent puppet)", () => {
     expect(undo.status).toBe(200);
     expect((await bench.harness.gatewayFetch(`/tasks/${taskId}`)).status).toBe(404);
   }, 180_000);
+
+  test("notes search and attach documents to new and existing tasks without the Brain", async () => {
+    await bench.pushAll([
+      {
+        externalId: "note-greenhouse-supplies",
+        title: GUIDE_TITLE,
+        content: "The community greenhouse supplies guide lists seed trays and a watering can.",
+      },
+      {
+        externalId: "note-greenhouse-delivery",
+        title: QUOTE_TITLE,
+        content: "The community greenhouse delivery quote covers transport of seed trays.",
+      },
+    ]);
+    const guideId = await bench.docId("note-greenhouse-supplies");
+    const quoteId = await bench.docId("note-greenhouse-delivery");
+    await waitFor(
+      "the greenhouse documents to be searchable",
+      async () => {
+        await bench.harness.gatewayJson("/admin/index/reindex-missing", { method: "POST" });
+        await bench.harness.refreshSearchSnapshot();
+        const response = await bench.harness.gatewayJson<{
+          results: Array<{ documentId: string }>;
+        }>("/search", {
+          method: "POST",
+          body: JSON.stringify({
+            text: "community greenhouse",
+            filters: { sourceIds: [DOCUMENT_SOURCE] },
+          }),
+        });
+        const ids = response.results.map((document) => document.documentId);
+        return ids.includes(guideId) && ids.includes(quoteId) ? true : null;
+      },
+      60_000,
+    );
+
+    const created = await capture(GREENHOUSE_NOTE);
+    const creationReceipt = await receiptFor(tellNotes, created, dayOf(created));
+    expect(creationReceipt.receipt?.changes).toHaveLength(1);
+    const taskId = creationReceipt.receipt!.changes[0]!.taskId!;
+    const guide = { id: guideId, title: GUIDE_TITLE, sourceId: DOCUMENT_SOURCE };
+    expect((await bench.obs.task(taskId)).task).toMatchObject({
+      title: GREENHOUSE_TITLE,
+      origin: "note",
+      documents: [guide],
+    });
+
+    const updated = await capture(GREENHOUSE_QUOTE_NOTE);
+    const updateReceipt = await receiptFor(tellNotes, updated, dayOf(updated));
+    expect(updateReceipt.receipt?.changes).toEqual([
+      expect.objectContaining({ taskId, undoSeq: expect.any(Number) }),
+    ]);
+    const detail = await bench.obs.task(taskId);
+    expect(detail.task.documents).toHaveLength(2);
+    expect(detail.task.documents).toEqual(
+      expect.arrayContaining([
+        guide,
+        { id: quoteId, title: QUOTE_TITLE, sourceId: DOCUMENT_SOURCE },
+      ]),
+    );
+    expect(detail.history[0]).toMatchObject({ kind: "edited", surface: "note" });
+
+    const undo = await bench.obs.undoTask(updateReceipt.receipt!.changes[0]!.undoSeq!);
+    expect(undo.status).toBe(200);
+    expect((await bench.obs.task(taskId)).task.documents).toEqual([guide]);
+    const edit = await bench.harness.gatewayFetch(`/notes/${created}`, {
+      method: "PATCH",
+      body: JSON.stringify({ text: EDITED_GREENHOUSE_NOTE }),
+    });
+    expect(edit.status).toBe(200);
+    expect(((await edit.json()) as { agent: unknown }).agent).toEqual({
+      state: "pending",
+      receipt: null,
+    });
+    const editedReceipt = await receiptFor(tellNotes, created, dayOf(created));
+    expect(editedReceipt.receipt?.changes).toHaveLength(1);
+    expect(editedReceipt.receipt?.changes[0]?.taskId).toBe(taskId);
+    const moved = await bench.obs.task(taskId);
+    expect(moved.task.scheduledFor).toBe(nextMonth);
+    expect(moved.task.documents).toEqual([guide]);
+    expect(moved.history[0]).toMatchObject({
+      kind: "migrated",
+      surface: "note",
+    });
+    const editedTurns = noteCalls().filter((c) => c.subject === EDITED_GREENHOUSE_NOTE);
+    expect(editedTurns[0]?.systemPrompt).toContain("note_edit_context");
+    expect(editedTurns[0]?.systemPrompt).toContain(JSON.stringify(creationReceipt.receipt));
+    expect(
+      editedTurns
+        .filter((c) => c.emitted.kind === "tool")
+        .map((c) => (c.emitted.kind === "tool" ? c.emitted.name : "")),
+    ).toEqual(["task_list", "task_update"]);
+    const proof = new Database(bench.harness.getDbPath(), { readonly: true, fileMustExist: true });
+    try {
+      expect(
+        proof
+          .prepare("SELECT run_id FROM open_loop_ledger WHERE seq=?")
+          .get(editedReceipt.receipt!.changes[0]!.undoSeq!),
+      ).toEqual({ run_id: `note:${created}:revision:1` });
+      expect(
+        proof.prepare("SELECT id FROM open_loops WHERE title=?").all(GREENHOUSE_TITLE),
+      ).toEqual([{ id: taskId }]);
+    } finally {
+      proof.close();
+    }
+    expect((await bench.obs.status()).experimental).toBe(false);
+  }, 240_000);
 
   test("a note reporting progress completes the user's task", async () => {
     const plumber = await bench.obs.createTask({ title: PLUMBER_TITLE });
@@ -476,37 +688,60 @@ describe("the note agent (stable install, background-agent puppet)", () => {
     expect(view.tasks.find((t) => t.id === taskId)?.state).toBe("done");
   }, 180_000);
 
-  test("the note turn never touches a Brain suggestion", async () => {
-    bench.withWriteHandle((db) =>
-      createOpenLoop(
-        db,
-        {
-          id: SUGGESTION_ID,
-          createdByRun: "seed",
-          title: "Reserve the fete stall",
-          confidence: 0.8,
-          importance: 0.5,
-        },
-        Date.now(),
-      ),
-    );
+  test("a note accepts and ignores named suggestions with receipts and undo", async () => {
+    bench.withWriteHandle((db) => {
+      for (const [id, title] of [
+        [ACCEPT_SUGGESTION_ID, ACCEPT_SUGGESTION_TITLE],
+        [IGNORE_SUGGESTION_ID, IGNORE_SUGGESTION_TITLE],
+        [UNTOUCHED_SUGGESTION_ID, "Check the pottery kiln booking"],
+      ] as const)
+        createOpenLoop(
+          db,
+          { id, title, createdByRun: "seed", confidence: 0.8, importance: 0.5 },
+          Date.now(),
+        );
+    });
+    const untouched = await bench.obs.task(UNTOUCHED_SUGGESTION_ID);
     const id = await capture(SUGGESTION_NOTE);
     const agent = await receiptFor(tellNotes, id, dayOf(id));
-    expect(agent.receipt).toMatchObject({ text: "Saved the note.", changes: [] });
-    expect((await bench.obs.task(SUGGESTION_ID)).task).toMatchObject({
+    expect(agent.receipt).toMatchObject({
+      text: "Added the planetarium workshop for tomorrow and ignored the seed library suggestion.",
+      changes: [
+        {
+          text: `Added to your tasks: ${ACCEPT_SUGGESTION_TITLE}`,
+          taskId: ACCEPT_SUGGESTION_ID,
+          undoSeq: expect.any(Number),
+        },
+        {
+          text: `Ignored: ${IGNORE_SUGGESTION_TITLE}`,
+          taskId: IGNORE_SUGGESTION_ID,
+          undoSeq: expect.any(Number),
+        },
+      ],
+    });
+    const accepted = await bench.obs.task(ACCEPT_SUGGESTION_ID);
+    expect(accepted.task).toMatchObject({ state: "open", accepted: true, ignored: false });
+    expect(accepted.task.scheduledFor).toBe(dayAfter(dayOf(id)));
+    expect(accepted.history[0]).toMatchObject({ kind: "accepted", surface: "note" });
+    const ignored = await bench.obs.task(IGNORE_SUGGESTION_ID);
+    expect(ignored.task).toMatchObject({ state: "open", accepted: false, ignored: true });
+    expect(ignored.history[0]).toMatchObject({ kind: "ignored", surface: "note" });
+    expect(await bench.obs.task(UNTOUCHED_SUGGESTION_ID)).toEqual(untouched);
+
+    for (const change of agent.receipt!.changes)
+      expect((await bench.obs.undoTask(change.undoSeq!)).status).toBe(200);
+    expect((await bench.obs.task(ACCEPT_SUGGESTION_ID)).task).toMatchObject({
       state: "open",
       accepted: false,
+      ignored: false,
+      scheduledFor: null,
     });
-    // The suggested view is not on offer, and the suggestion is refused by id.
-    const turn = noteCalls().filter((c) => c.prompt.includes(SUGGESTION_NOTE));
-    const emitted = turn.map((c) => c.emitted).filter((e) => e.kind === "tool");
-    expect(emitted.map((e) => (e as { name: string }).name)).toEqual(["task_list", "task_update"]);
-    const lastRequest = turn.at(-1)!;
-    expect(lastRequest.emitted.kind).toBe("final");
-    const results = JSON.stringify(
-      (await bench.harness.gatewayJson<{ entries: ListedNoteDto[] }>("/notes/history")).entries,
-    );
-    expect(results).toContain("Saved the note.");
+    expect((await bench.obs.task(IGNORE_SUGGESTION_ID)).task).toMatchObject({
+      state: "open",
+      accepted: false,
+      ignored: false,
+    });
+    expect(await bench.obs.task(UNTOUCHED_SUGGESTION_ID)).toEqual(untouched);
   }, 180_000);
 
   test("a voice note is read in the gateway's transcript, not the phone's", async () => {
@@ -600,16 +835,17 @@ describe("the note agent (stable install, background-agent puppet)", () => {
   }, 180_000);
 });
 
-describe("the note agent with no background-agent model", () => {
+describe("a Brain assignment does not substitute for an Agent model", () => {
   let harness: SyntheticE2EHarness;
+  let bench: BrainBench;
 
   beforeAll(async () => {
-    harness = new SyntheticE2EHarness({ gatewayMode: "stable", universe: "e2e-minimal" });
-    await harness.start();
+    bench = await BrainBench.start({ experimental: false, syncSources: false });
+    harness = bench.harness;
   }, 240_000);
 
   afterAll(async () => {
-    await harness?.destroy();
+    await bench?.destroy();
   }, 60_000);
 
   test("notes are saved and nothing reads them", async () => {
@@ -654,6 +890,7 @@ describe("the note agent with no background-agent model", () => {
     const note = listed.entries.find((n) => n.id === id);
     expect(note).toBeDefined();
     expect(note!.agent).toBeUndefined();
+    expect(bench.puppetCalls.filter((call) => call.flavour === "note")).toEqual([]);
     const db = new Database(harness.getDbPath(), { readonly: true, fileMustExist: true });
     try {
       expect(db.prepare("SELECT COUNT(*) AS n FROM note_agent_runs").get()).toEqual({ n: 0 });

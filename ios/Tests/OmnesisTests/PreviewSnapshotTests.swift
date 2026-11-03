@@ -26,6 +26,38 @@ import XCTest
 @MainActor
 // swiftlint:disable:next type_body_length
 final class PreviewSnapshotTests: XCTestCase {
+    func testTaskTellFanLayouts() {
+        testTasksFanMain()
+        testTasksFanChat()
+        testTasksFanNearBottom()
+        testTasksFanNearTopLargeText()
+        testTasksSuggestionFan()
+    }
+
+    func testTaskTellAndNoteHandoff() {
+        let task = TaskNoteContext(id: "task_example", title: "Repair the telescope")
+        let capture = CaptureView(speech: .preview(state: .idle), taskContext: task)
+            .environment(AppStore.preview())
+        snapshot(capture, name: "capture-task-tell")
+        let note = NoteEntry(
+            id: "note_example",
+            day: "2026-11-01",
+            capturedAt: "2026-11-01T10:00:00Z",
+            updatedAt: "2026-11-01T10:00:00Z",
+            text: task.initialText + "I need help choosing the replacement part.",
+            surface: "ios-app",
+            deviceId: nil,
+            agent: .init(
+                state: "done",
+                receipt: .init(text: "Which part needs replacing?", changes: [], conversationId: "conversation_example")
+            )
+        )
+        let detail = NavigationStack { NoteHistoryDetail(note: note, model: NotesHistoryModel(client: nil)) }
+            .environment(AppStore.preview())
+            .environment(\.openAgentConversation) { _ in }
+        snapshot(detail, name: "note-handoff")
+    }
+
     func testNotesHistoryStates() {
         snapshot(
             NotesHistoryScreen(model: NotesHistoryModel(client: nil, entries: PreviewMocks.noteHistory), menuOpen: .constant(false)),
@@ -1058,7 +1090,8 @@ final class PreviewSnapshotTests: XCTestCase {
         scheme: ColorScheme = .dark,
         capturePresentedChrome: Bool = false,
         settle: TimeInterval = 0.6,
-        size: CGSize? = nil
+        size: CGSize? = nil,
+        primeLayout: Bool = false
     ) {
         let isDark = scheme == .dark
         let screen = CGRect(origin: .zero, size: size ?? UIScreen.main.bounds.size)
@@ -1074,11 +1107,17 @@ final class PreviewSnapshotTests: XCTestCase {
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
 
-        // Pump the run loop so geometry preferences (composer top edge)
-        // propagate and SwiftUI re-renders the mask before capture.
+        // Navigation and paged containers can finish their geometry only on
+        // a drawing pass. Prime that pass before waiting for geometry-driven
+        // state (such as a preview fan) to settle, rather than at capture time.
+        let renderer = UIGraphicsImageRenderer(size: screen.size)
+        if primeLayout {
+            _ = renderer.image { _ in
+                host.view.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+        }
         RunLoop.current.run(until: Date().addingTimeInterval(settle))
 
-        let renderer = UIGraphicsImageRenderer(size: screen.size)
         let image = renderer.image { context in
             if capturePresentedChrome {
                 // The alert lives above the hosting view. The XCTest unit-test
@@ -2621,30 +2660,21 @@ final class PreviewSnapshotTests: XCTestCase {
     func testMarkdownKitchenSink() {
         let view = ScrollView {
             MarkdownView(text: """
-            # Top-level heading
-
-            A paragraph with **bold**, *italic*, and `inline code`. Also a [link](https://example.com).
-
-            ## Lists
-
+            # Top-level heading\n
+            A paragraph with **bold**, *italic*, and `inline code`. Also a [link](https://example.com).\n
+            ## Lists\n
             - First item
             - Second **bold** item
-            - Third with `code`
-
+            - Third with `code`\n
             1. Ordered one
-            2. Ordered two
-
-            ### Quote
-
-            > A wise person once said something quotable.
-
-            ## Code
-
+            2. Ordered two\n
+            ### Quote\n
+            > A wise person once said something quotable.\n
+            ## Code\n
             ```
             let x = 42
             print(x)
-            ```
-
+            ```\n
             End paragraph.
             """)
             .padding()
@@ -2657,15 +2687,13 @@ final class PreviewSnapshotTests: XCTestCase {
     /// stretching its column into one line, and the overflow scrolls inside
     /// the table's own bounds instead of clipping the page.
     private let markdownWideTable = """
-    ## Quarterly budget review
-
+    ## Quarterly budget review\n
     | Line item | Owner | Q3 actual | Notes |
     | --- | --- | --- | --- |
     | Venue hire | Maya Reeves | 4,200 | Deposit paid in July; balance due at the end of the quarter |
     | Catering | Jamie Lopez | 1,850 | Vegetarian option added after the survey |
     | Travel and accommodation for the visiting speakers and the two facilitators | David Lin | 6,300 | Booked through the agency |
-    | Printing | Sarah Mendez | 310 | — |
-
+    | Printing | Sarah Mendez | 310 | — |\n
     Totals are reconciled monthly.
     """
 
@@ -8907,6 +8935,9 @@ final class PreviewSnapshotTests: XCTestCase {
         offersChat: Bool = false,
         dynamicType: DynamicTypeSize = .large
     ) {
+        var latestLayout: (TaskFanSession?, CGRect)?
+        var preview = fan
+        preview.onLayout = { latestLayout = ($0, $1) }
         let view = NavigationStack {
             TasksContent(
                 model: .fixture(
@@ -8916,8 +8947,9 @@ final class PreviewSnapshotTests: XCTestCase {
                     now: PreviewMocks.tasksNow
                 ),
                 experimental: experimental,
+                offersTell: true,
                 onChat: offersChat ? { _ in } : nil,
-                initialFan: fan
+                initialFan: preview
             )
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
@@ -8926,8 +8958,23 @@ final class PreviewSnapshotTests: XCTestCase {
         }
         .environment(AppStore.preview())
         .environment(\.dynamicTypeSize, dynamicType)
-        renderInWindow(view, name: name, settle: 1.2)
-        renderInWindow(view, name: "\(name)-light", scheme: .light, settle: 1.2)
+        for scheme in [ColorScheme.dark, .light] {
+            latestLayout = nil
+            renderInWindow(
+                view,
+                name: scheme == .dark ? name : "\(name)-light",
+                scheme: scheme,
+                settle: 1.2,
+                primeLayout: true
+            )
+            guard let (session, viewport) = latestLayout, let session else {
+                XCTFail("The preview fan did not reopen after its viewport settled")
+                continue
+            }
+            for target in session.targets {
+                XCTAssertTrue(viewport.contains(target.frame), "\(target.label) is clipped by the visible viewport")
+            }
+        }
     }
 
     /// A long press on a title towards the right, slid onto Tomorrow: the
@@ -8991,6 +9038,34 @@ final class PreviewSnapshotTests: XCTestCase {
     /// The Brain's suggestions on an experimental gateway: the same rows as
     /// the person's own tasks, each with a dashed circle that marks it already
     /// done; the Suggested chip carries the waiting count.
+    func testNoteProcessingNotices() {
+        for (name, enabled, assigned) in [("missing-agent", true, false), ("off", false, true)] {
+            let status = NoteAgentStatus(enabled: enabled, modelAssigned: assigned, active: false)
+            let view = NoteProcessingNotice(previewStatus: status)
+                .environment(AppStore.preview())
+                .background(Theme.bgPrimary)
+            snapshot(view, name: "note-processing-\(name)", size: CGSize(width: 393, height: 180))
+        }
+        let base = PreviewMocks.statusSnapshotTasks
+        let status = StatusSnapshot(
+            documents: base.documents,
+            dbSizeBytes: base.dbSizeBytes,
+            latestActivityBySource: base.latestActivityBySource,
+            tasks: base.tasks,
+            noteAgent: NoteAgentStatus(enabled: true, modelAssigned: false, active: false)
+        )
+        let store = AppStore.preview(statusSnapshot: status)
+        let capture = CaptureView(speech: .preview(state: .unavailable))
+            .environment(store)
+        snapshot(capture, name: "capture-agent-missing")
+        let tasks = TasksScreen(
+            model: .fixture(tasks: PreviewMocks.tasksToday, now: PreviewMocks.tasksNow),
+            experimental: false,
+            menuOpen: .constant(false)
+        ).environment(store)
+        snapshot(tasks, name: "tasks-agent-missing")
+    }
+
     func testTasksSuggested() {
         let view = NavigationStack {
             TasksContent(

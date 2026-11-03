@@ -26,7 +26,8 @@ import {
   call,
   compressCognitionCadences,
   email,
-  preserveCurrentOwner,
+  keepReviewedOwner,
+  refreshCurrentOwner,
   ref,
   salienceDecisionPolicy,
   sourceInterpretations,
@@ -177,6 +178,7 @@ function briefItems(
 const REPLY_DONE = "The first one is done, I booked it this morning.";
 const REPLY_SUPPRESS = "Stop telling me about the boiler, and add a task to buy a boiler filter.";
 const ORDINARY = "Put buying stamps on my list for this Saturday.";
+const ORDINARY_TASK_TITLE = "Buy stamps";
 
 describe("brain bench: the morning brief", () => {
   let bench: BrainBench;
@@ -254,7 +256,13 @@ describe("brain bench: the morning brief", () => {
       },
       behaviors: {
         dynamic: sourceInterpretations({
-          maintainNode: preserveCurrentOwner,
+          // Deleting the ordinary chat removes the new task's originating
+          // reference. The scripted review keeps the user's task after that
+          // evidence is gone; other stale owners still need their own repair.
+          maintainNode: (item, ctx, steps) =>
+            item.node?.kind === "loop" && item.node.title === ORDINARY_TASK_TITLE
+              ? keepReviewedOwner(item, ctx, steps)
+              : refreshCurrentOwner(item, ctx, steps),
           sources: [
             noteOne(RANKED.high),
             noteOne(RANKED.omit),
@@ -353,7 +361,7 @@ describe("brain bench: the morning brief", () => {
             plan: () => ({
               calls: [
                 call("task_list", { query: "stamps" }),
-                call("task_create", { title: "Buy stamps", scheduledFor: DAYS.saturday }),
+                call("task_create", { title: ORDINARY_TASK_TITLE, scheduledFor: DAYS.saturday }),
               ],
               finalText: "Added: Buy stamps.",
             }),
@@ -667,8 +675,13 @@ describe("brain bench: the morning brief", () => {
     const id = await reply("", ORDINARY, "Added: Buy stamps.");
     expect(id).not.toBe(briefConversationId);
     const month = await bench.obs.tasks("today", { date: DAYS.saturday });
-    const stamps = month.tasks.find((t) => t.title === "Buy stamps");
+    const stamps = month.tasks.find((t) => t.title === ORDINARY_TASK_TITLE);
     expect(stamps).toMatchObject({ origin: "user", scheduledFor: DAYS.saturday });
+    expect(stamps!.documents).toHaveLength(1);
+    const referenceId = stamps!.documents[0]!.id;
+    expect(
+      bench.sql.prepare("SELECT external_id FROM documents WHERE id = ?").get(referenceId),
+    ).toEqual({ external_id: id });
     expect((await bench.obs.task(stamps!.id)).history[0]).toMatchObject({
       surface: "conversation",
       conversationId: id,
@@ -690,6 +703,25 @@ describe("brain bench: the morning brief", () => {
       30_000,
     );
     expect(deleted.status).toBe(200);
+    // This is real evidence deletion, not merely removing a conversation
+    // from the list. Review its retained task before moving the virtual day.
+    await bench.drainUntilQuiet();
+    expect((await bench.obs.task(stamps!.id)).task).toMatchObject({
+      state: "open",
+      accepted: true,
+      documents: [],
+    });
+    expect(
+      bench.sql.prepare("SELECT 1 FROM documents WHERE id = ?").get(referenceId),
+    ).toBeUndefined();
+    expect(
+      bench.sql.prepare("SELECT validity FROM knowledge_nodes WHERE id = ?").get(stamps!.id),
+    ).toEqual({ validity: "current" });
+    expect(
+      bench.sql
+        .prepare("SELECT 1 FROM open_loop_ledger WHERE loop_id = ? AND run_id = 'source-deletion'")
+        .get(stamps!.id),
+    ).toBeDefined();
   }, 180_000);
 
   test("a morning whose budget is already spent still sends the brief, and nothing else runs", async () => {

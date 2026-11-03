@@ -13,7 +13,16 @@
  */
 
 import { resolveRoleBackend } from "../agent/agent-lifecycle.js";
-import { BACKGROUND_AGENT_ROLE } from "./feature-gate.js";
+import {
+  BACKGROUND_AGENT_ROLE,
+  briefsFeatureStatus,
+  type BackgroundAgentResolver,
+} from "./feature-gate.js";
+import {
+  loadCompletionFromResolved,
+  type LoadCompletionDeps,
+} from "../inference/completion-loader.js";
+import type { ChatRoleReadinessDeps } from "../models/chat-role-readiness.js";
 import type { ChatBackend } from "@omnesis/agent";
 import type { Logger } from "@omnesis/core";
 import type Database from "better-sqlite3";
@@ -41,4 +50,17 @@ export function backgroundAgentBackendResolver(ctx: {
       codexRuntimeService: ctx.codexRuntimeService,
       claudeCodeService: ctx.claudeCodeService,
     });
+}
+
+/** Optional autonomous completions share the Brain's actual live gate.
+ * No provider is constructed while the Brain is inactive, even if its model
+ * assignment is retained for a later opt-in. The caller owns disposal.
+ */
+export function loadBrainCompletionProvider(
+  registry: BackgroundAgentResolver,
+  readiness: ChatRoleReadinessDeps,
+  deps: LoadCompletionDeps,
+) {
+  if (!briefsFeatureStatus(registry, readiness).active) return null;
+  return loadCompletionFromResolved(registry.resolve(BACKGROUND_AGENT_ROLE), deps);
 }

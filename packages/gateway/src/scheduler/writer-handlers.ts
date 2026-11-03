@@ -21,6 +21,13 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
+import {
+  reserveNoteHandoff,
+  claimNoteHandoff,
+  completeNoteHandoff,
+  cancelNoteHandoff,
+  type NoteHandoff,
+} from "../brain/note-agent/handoffs.js";
 import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
 import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
@@ -68,6 +75,8 @@ import {
   type NewInterestSignal,
 } from "../brain/storage/interest.js";
 import {
+  admitNoteMutation,
+  settleNoteMutation,
   claimDueNote,
   enqueueNewNotes,
   finishNoteRun,
@@ -588,6 +597,8 @@ import {
   withPairingGenerationFence,
   type PairingGenerationFence,
 } from "../data/pairing-generation-fence.js";
+import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
 import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
 import type {
@@ -1821,7 +1832,21 @@ export const writerHandlers = {
   "noteAgent.skip": (db: Db, now: number) => skipNewNotes(db, now),
   "cognition.morningBriefItemsClear": (db: Db, messageId: string) =>
     clearMorningBriefMessageItems(db, messageId),
+  "noteAgent.handoffReserve": (db: Db, input: NoteHandoff) => reserveNoteHandoff(db, input),
+  "noteAgent.handoffClaim": (db: Db, now: number) => claimNoteHandoff(db, now),
+  "noteAgent.handoffComplete": (db: Db, input: NoteHandoff, now: number) =>
+    completeNoteHandoff(db, input, now),
+  "noteAgent.handoffCancel": (db: Db, id: string) => cancelNoteHandoff(db, id),
   "noteAgent.claim": (db: Db, now: number) => claimDueNote(db, now),
+  "noteAgent.admitMutation": (db: Db, entryId: string, attempt: number, now: number) =>
+    admitNoteMutation(db, entryId, attempt, now),
+  "noteAgent.settleMutation": (
+    db: Db,
+    entryId: string,
+    attempt: number,
+    outcome: Parameters<typeof settleNoteMutation>[3],
+    now: number,
+  ) => settleNoteMutation(db, entryId, attempt, outcome, now),
   "noteAgent.finish": (
     db: Db,
     entryId: string,
@@ -1917,8 +1942,13 @@ export const writerHandlers = {
     audit?: McpToolInvocationAuditInput,
     browserAuthority?: BrowserNoteAuthority,
   ): boolean => insertNoteEntry(db, entry, audit, browserAuthority),
-  "notes.updateEntry": (db: Db, id: string, text: string, nowIso: string): boolean =>
-    updateNoteEntryText(db, id, text, nowIso),
+  "notes.updateEntry": (
+    db: Db,
+    id: string,
+    text: string,
+    nowIso: string,
+    authority?: Parameters<typeof updateNoteEntryText>[4],
+  ): boolean => updateNoteEntryText(db, id, text, nowIso, authority),
   "notes.updateBrowserEntry": (db: Db, input: BrowserNoteEditInput) =>
     updateBrowserNoteEntry(db, input),
   "notes.deleteEntry": (db: Db, id: string) => deleteNoteEntry(db, id),
@@ -1972,8 +2002,6 @@ export const writerHandlers = {
  * non-yieldable fallback only applies when a name appears in
  * `writerHandlers` and not here.
  */
-import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
-import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
 import type Database from "better-sqlite3";
 import type { ConversationEvidenceProjection } from "../sources/omnesis-chat/evidence-projection.js";
 import type {

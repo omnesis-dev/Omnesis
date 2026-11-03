@@ -18708,6 +18708,12 @@ summary.decision-card-head {
   padding: 1px 8px;
 }
 
+.note-agent-conversation {
+  display: inline-block;
+  margin-top: 6px;
+  font-weight: 600;
+}
+
 .note-agent-undone {
   color: var(--text-muted);
   font-size: 11.5px;
