@@ -228,6 +228,8 @@
                 </td>
                 <td>
                   Emails and their attachments as documents; correspondents feed the people graph.
+                  Folder walks drain every delta page before starting incremental tracking, even
+                  when a page contains messages outside the retention window.
                 </td>
               </tr>
               <tr>
