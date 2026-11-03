@@ -56,8 +56,17 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Prepare disk for the hardened Docker scenario
+        run: scripts/ci/prepare-hardened-runner.sh
+
       - name: lane [docker-hardened-systemd]
         run: scripts/docker-e2e/systemd/run.sh
+      - name: Report hardened runner disk usage
+        if: always()
+        run: |
+          df -h /
+          docker system df || true
+
       - name: Clean up dangling e2e images
         if: always()
         run: docker image prune -f --filter label=none >/dev/null 2>&1 || true

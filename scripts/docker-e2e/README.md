@@ -38,5 +38,11 @@ collector with a code, interrupts an update while it builds, updates, fails an
 update whose gateway will not start and watches it switch back, rolls back,
 kills the gateway, starts it without its passphrase, uninstalls, and installs
 again over the kept state. It builds several releases, so it takes a while.
-CI runs it as the `hardened-systemd` job of the same workflow, which needs a
-privileged container and so is never triggered by a pull request.
+CI runs it as the `hardened-systemd` job of the same workflow on a fresh
+GitHub-hosted Linux runner. Before building its privileged container, that
+job reclaims the unused Android and .NET SDKs and reports filesystem and Docker
+usage. The preparation script refuses local, self-hosted and native runners;
+it never prunes Docker images or shared caches. Capacity below the installer's
+25 GiB Docker-build reference produces a warning, not a failure: the hardened
+scenario has a different image and no measured minimum of its own. The workflow
+also reports disk usage after the scenario, including failures.
