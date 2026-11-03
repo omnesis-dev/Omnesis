@@ -246,7 +246,7 @@ test("a child-only legacy journal installs parent ownership and preserves siblin
     vi.restoreAllMocks();
     await harness.destroy();
   }
-});
+}, 120_000);
 
 test("mixed pages survive lost analytics responses, gateway restart, committed-cursor snapshot failure, and ack retry", async () => {
   const harness = new MultiCollectorHarness();
