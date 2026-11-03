@@ -124,8 +124,8 @@ This rule applies to every part of the repo: iOS previews, snapshot tests, gatew
 
 ## Tests are mandatory
 
-- **CI runs the lanes a pull request affects, and the full suite on every push to
-  `main`**, on GitHub-hosted runners (`.github/workflows/full-validation.yml`);
+- **CI runs the lanes a pull request affects, all Linux lanes on every push to
+  `main`, and the full suite twice daily or on manual dispatch**, on GitHub-hosted runners (`.github/workflows/full-validation.yml`);
   a newer push to a pull request cancels its older run. A pull request's `scope`
   job (`scripts/nx/ci-scope.mjs`) plans its merge commit with the same Nx affected
   plan as `checks:plan`: the privacy scan, format and lint of the changed files,
@@ -141,15 +141,21 @@ This rule applies to every part of the repo: iOS previews, snapshot tests, gatew
   for the paths they cover, never for a shared input: GitHub lends the
   repository a few macOS runners at a time. The one exception is iOS, which also
   runs when the plan selects an iOS bundle for a gateway wire path the app
-  decodes. `main` always runs everything, in its own run per push, so a lane a
-  pull request skipped still reddens `main` if the change broke it. Before
+  decodes. Every push to `main` keeps its own Linux run. Full sweeps at
+  01:17 and 13:17 UTC include macOS; manual runs default to every lane. A lane a
+  pull request skipped can redden the next full sweep if the change broke it. Before
   handoff, run the affected gate for the actual branch and working tree:
   `npm run checks:plan -- --base origin/main`, then
   `npm run checks:affected -- --base origin/main`. Nx selects package work
   through the dependency graph and adds declared behavioral E2E/native bundles.
-  **A red `main` stops merging.** Whoever notices it fixes it forward or reverts
-  the merge that reddened it before any other pull request merges; a pull
-  request whose skipped macOS lane failed on `main` is the first suspect. Do not
+  **A confirmed unresolved regression on `main` stops unrelated merges.** Fix
+  it forward or revert the responsible merge; a pull request whose skipped
+  macOS lane failed on `main` is the first suspect. Inspect the failing job
+  before treating a red verdict as current: an older commit's failure can be
+  stale after a relevant fix, and a suspected flake needs supporting evidence.
+  Record the failed test, the relevant fix or transient cause, and current
+  validation before allowing unrelated merges. Queued runs are not failures,
+  but green pull-request checks alone do not dismiss a confirmed regression. Do not
   re-push a green pull request only to rebase it: `main` does not require a
   rebased branch to merge, and a new push cancels its finished run.
 - Establish a focused baseline before editing, then rerun the affected tests while iterating. Re-run `checks:affected` after relevant edits because queued evidence is bound to the planned tree and rejects changed inputs. Use `npm run checks:bundle -- <name>` to add a diagnosed bundle; a narrower manual bundle does not replace the affected gate. `npm run checks:full` remains available for CI, migration validation and manual diagnosis. `npm run test:unit` excludes the spawned-gateway suite; use `npm run test:e2e -- <path/to/file.e2e.test.ts>` for a focused gateway check.

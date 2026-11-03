@@ -6,17 +6,18 @@ run-name: "Install e2e (${{ github.event_name }}${{ github.event_name == 'workfl
 # Installs, updates and rolls back Omnesis on real GitHub-hosted machines,
 # under each OS's real service supervisor. See docs/install-e2e.md.
 #
-# Single-host lanes (S1 Linux, S2 macOS) and the uninstall lanes (X1 Linux,
-# X2 macOS) run on pull requests and on pushes to main that touch the
-# installer, the updater, the uninstaller or the service definitions. They
-# need no secrets, so they also run for fork pull requests.
+# Single-host, uninstall and lockfile-upgrade lanes run on pull requests
+# that touch the installer, updater, uninstaller or service definitions.
+# Matching pushes to main run their Linux variants; macOS variants run twice
+# daily and on manual dispatch. They need no secrets, so they also run for
+# fork pull requests.
 #
 # Two-machine tailnet lanes (T1 fresh, T2 upgrade + fleet, T3 Docker + native Mac) join a dedicated CI
-# tailnet through workload identity federation. They run nightly and on manual
+# tailnet through workload identity federation. They run twice daily and on manual
 # dispatch, only on main or a release tag of this repository: the
 # `tailnet-e2e` environment that holds the credential admits nothing else.
 # The release conductor refuses a tag while the newest completed full run on
-# main (nightly, or a dispatch of every lane) is red.
+# main (scheduled, or a dispatch of every lane) is red.
 on:
   pull_request:
     paths:
@@ -46,7 +47,7 @@ on:
       - scripts/install-e2e/**
       - .github/workflows/install-e2e.yml
   schedule:
-    - cron: "23 2 * * *"
+    - cron: "23 2,14 * * *"
   workflow_dispatch:
     inputs:
       lanes:
@@ -60,7 +61,7 @@ permissions: {}
 # A newer push to a pull request replaces its run. Runs on main are never
 # cancelled: the release gate reads them, and a dispatch of one lane must not
 # silently end a dispatch of every lane.
-# The nightly run and a dispatch of every lane share one group, so two full
+# Scheduled runs and a dispatch of every lane share one group, so two full
 # runs never overlap on the tailnet or compete for macOS runners; the later
 # one queues.
 concurrency:
@@ -77,11 +78,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - lane: S1
-            os: ubuntu-22.04
-          - lane: S2
-            os: macos-15
+        include: ${{ fromJSON(github.event_name == 'push' && '[{"lane":"S1","os":"ubuntu-22.04"}]' || '[{"lane":"S1","os":"ubuntu-22.04"},{"lane":"S2","os":"macos-15"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -159,11 +156,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - lane: X1
-            os: ubuntu-22.04
-          - lane: X2
-            os: macos-15
+        include: ${{ fromJSON(github.event_name == 'push' && '[{"lane":"X1","os":"ubuntu-22.04"}]' || '[{"lane":"X1","os":"ubuntu-22.04"},{"lane":"X2","os":"macos-15"}]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -191,7 +184,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-24.04"]' || '["ubuntu-24.04","macos-15"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     permissions:
@@ -238,7 +231,7 @@ jobs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
       # Without the credential the tailnet lanes cannot run. On a full run
-      # (nightly, or a dispatch of every lane) that is a failure, because the
+      # (scheduled, or a dispatch of every lane) that is a failure, because the
       # release gate reads those runs as evidence the lanes passed; on a
       # dispatch of the tailnet lanes alone it is a notice.
       - id: check

@@ -5,8 +5,9 @@ name: mobile-journeys
 # the way a person does. `scripts/run-mobile-journeys.sh` does the work; see
 # docs/mobile-journeys.md.
 #
-# Both lanes run on every push to `main` and on manual dispatch
-# (`gh workflow run mobile-journeys.yml --ref <branch>`); a pull request runs
+# Android runs on every push to `main`; iOS runs twice daily at 03:17 and
+# 15:17 UTC. Manual dispatch selects either or both platforms
+# (`gh workflow run mobile-journeys.yml --ref <branch>`). A pull request runs
 # the platform whose app, or whose shared journey machinery, it changes. The
 # iOS lane takes one macOS runner; the Android lane runs the emulator on Linux
 # with KVM. The lanes stay
@@ -30,6 +31,8 @@ on:
       - "evals/universes/default/agent-demos/**"
       - "evals/universes/e2e-minimal/**"
       - ".github/workflows/mobile-journeys.yml"
+  schedule:
+    - cron: "17 3,15 * * *"
   workflow_dispatch:
     inputs:
       platforms:
@@ -52,8 +55,7 @@ env:
 
 jobs:
   changes:
-    # Which platforms' journeys a pull request touches. Pushes and manual runs
-    # skip this.
+    # Which platforms' journeys a pull request touches. Other events skip this.
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -84,7 +86,7 @@ jobs:
 
   ios:
     needs: changes
-    if: ${{ !cancelled() && (github.event_name == 'push' || (github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true') || (github.event_name == 'workflow_dispatch' && inputs.platforms != 'android')) }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true') || (github.event_name == 'workflow_dispatch' && inputs.platforms != 'android')) }}
     # The project requires Xcode 26; provision an available iPhone simulator
     # for that Xcode rather than assuming the image has a particular name.
     runs-on: macos-26

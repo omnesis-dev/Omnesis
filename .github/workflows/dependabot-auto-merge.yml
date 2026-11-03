@@ -61,5 +61,6 @@ jobs:
           gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$HEAD_SHA"
 
           # A push made with this workflow's token starts no workflow, so the
-          # merged main is validated by an explicit dispatch instead.
-          gh workflow run full-validation.yml --repo "$GITHUB_REPOSITORY" --ref main
+          # merged main gets its Linux validation by explicit dispatch; scheduled
+          # runs cover macOS.
+          gh workflow run full-validation.yml --repo "$GITHUB_REPOSITORY" --ref main --field lanes=linux
