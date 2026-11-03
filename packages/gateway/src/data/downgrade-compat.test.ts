@@ -323,7 +323,7 @@ describe("a downgrade across migrations that leave cursors alone", () => {
 
     expect(
       db
-        .prepare<[], { device_id: string; cursor: string; v: number }>(
+        .prepare<[string], { device_id: string; cursor: string; v: number }>(
           `SELECT device_id, cursor, minimum_gateway_version AS v
              FROM sync_state WHERE source_id = ? ORDER BY device_id`,
         )
