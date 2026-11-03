@@ -58,6 +58,7 @@ let package = Package(
                 // Renders SwiftUI views to PNGs — needs UIKit (iOS only).
                 "PreviewSnapshotTests.swift",
                 "TaskWidgetSnapshotTests.swift",
+                "TaskFanControllerTests.swift",
                 // Exercises MarkdownCache and real clipboard controls through UIKit.
                 "MarkdownCacheTests.swift",
                 // Exercises AppearanceStore, which is UIKit-gated in the library.
