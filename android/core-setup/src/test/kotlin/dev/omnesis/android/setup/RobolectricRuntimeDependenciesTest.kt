@@ -21,7 +21,7 @@ class RobolectricRuntimeDependenciesTest {
         assertEquals("true", System.getProperty("robolectric.usePreinstrumentedJars"))
         val directory = File(requireNotNull(System.getProperty("robolectric.dependency.dir")))
         val sdks = DefaultSdkProvider(LegacyDependencyResolver(System.getProperties())).sdks.associateBy { it.apiLevel }
-        val sdkFiles = listOf(28, 32, 33, 34, 35).map { api ->
+        val sdkFiles = listOf(26, 28, 32, 33, 34, 35).map { api ->
             val jar = sdks.getValue(api).jarPath.toFile()
             assertTrue("SDK $api must be staged before the test JVM starts", jar.isFile)
             assertEquals(directory.canonicalFile, requireNotNull(jar.parentFile).canonicalFile)

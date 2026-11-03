@@ -13,7 +13,7 @@ import org.robolectric.annotation.Config
 
 /** Each staged SDK must boot a real sandbox while runtime downloads are disabled. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28, 32, 33, 34, 35])
+@Config(sdk = [26, 28, 32, 33, 34, 35])
 class RobolectricOfflineSandboxTest {
     @Test
     fun everyTestSdkCanCreateAnApplicationWithoutRuntimeDownloads() {

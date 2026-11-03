@@ -21,6 +21,7 @@ plugins {
 // versions; RobolectricRuntimeDependenciesTest checks its actual SDK resolver
 // against the staged files so a library upgrade cannot leave stale coordinates.
 val robolectricSdkConfigurations = mapOf(
+    26 to "8.0.0_r4-robolectric-r1-i7", // Default target for unannotated library tests.
     28 to "9-robolectric-4913185-2-i7",
     32 to "12.1-robolectric-8229987-i7",
     33 to "13-robolectric-9030017-i7",

@@ -136,7 +136,9 @@ Gradle and stages them under `android/build/robolectric-runtime` before JVM test
 Robolectric reads that directory without downloading artifacts inside test JVMs;
 Gradle owns dependency caching, repository access and download failures.
 
-When updating Robolectric or adding a tested SDK level, update the coordinates in
+The inventory includes explicit test SDKs and the manifest default SDK 26 used
+by library tests without a `@Config` SDK override. When updating Robolectric,
+changing a manifest default or adding a tested SDK level, update the coordinates in
 `android/build.gradle.kts` and the SDK inventory in
 `RobolectricRuntimeDependenciesTest`. Its plain JVM checks use Robolectric's real
 SDK resolver, so a missing or mismatched jar fails without a network fallback.
