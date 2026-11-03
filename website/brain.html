@@ -10,7 +10,7 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta
       name="description"
-      content="The Omnesis Brain is the layer above the index: a live agent and community-contributed sweeps that keep a derived substrate of time, annotations, open loops and briefs — so the right thing surfaces before you go looking for it."
+      content="The Omnesis Brain is the layer above the index: a background agent that maintains a wiki about your life where every claim cites your own documents, tracks open loops as tasks, and writes one morning brief a day."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -1928,6 +1928,416 @@
       }
 
       /* ================================================================
+       WIKIS, CLAIMS, FRESHNESS, ANSWERING
+       Each of these sections leads with one illustration. They are drawn
+       on the page's own dark ground, so in the light theme they sit in a
+       dark frame rather than pretending to be part of a white page.
+       ================================================================ */
+      .bx-figure {
+        margin: clamp(30px, 4vw, 48px) 0 0;
+        max-width: 800px;
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        background: #06090f;
+        overflow: hidden;
+        box-shadow: 0 40px 80px -50px var(--shadow-strong);
+      }
+      .bx-figure a {
+        display: block;
+        cursor: zoom-in;
+      }
+      .bx-figure img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      /* Three short points under an illustration. */
+      .bx-points {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: clamp(14px, 2vw, 24px);
+        margin: clamp(24px, 3vw, 32px) 0 0;
+        max-width: 800px;
+      }
+      .bx-point {
+        padding: 18px 20px;
+        border-radius: 14px;
+        border: 1px solid var(--border-subtle);
+        background: var(--surface-raised);
+      }
+      .bx-point h3 {
+        font-size: 15px;
+        font-weight: 700;
+        margin-bottom: 6px;
+        color: var(--text-primary);
+      }
+      .bx-point p {
+        font-size: 14px;
+        line-height: 1.55;
+        color: var(--text-secondary);
+      }
+      .bx-point code {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        padding: 1px 6px;
+        border-radius: 6px;
+        background: var(--surface-strong);
+        color: var(--ref-hue, var(--text-primary));
+        word-break: break-all;
+      }
+      @media (max-width: 820px) {
+        .bx-points {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      .bx-tag {
+        display: inline-block;
+        margin-left: 4px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--badge-border);
+        background: var(--badge-bg);
+        color: var(--badge-text);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        vertical-align: 3px;
+      }
+
+      /* ================================================================
+       DECISION GATES
+       One row from a document arriving to the morning brief, with the
+       typed checks drawn as small scales between the steps.
+       ================================================================ */
+      .gt-flow {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        align-items: stretch;
+        gap: 10px;
+        margin: clamp(30px, 4vw, 48px) 0 0;
+        max-width: 1160px;
+        list-style: none;
+        padding: 0;
+      }
+      .gt-step,
+      .gt-gate {
+        border-radius: 14px;
+        padding: 14px 14px 16px;
+        text-align: center;
+      }
+      .gt-step {
+        border: 1px solid var(--border);
+        background: var(--bg-card);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      .gt-step b {
+        display: block;
+        font-size: 14px;
+        color: var(--text-primary);
+      }
+      .gt-step span {
+        display: block;
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .gt-gate {
+        position: relative;
+        border: 1px dashed var(--badge-border);
+        background: var(--badge-bg);
+      }
+      .gt-gate svg {
+        width: 22px;
+        height: 22px;
+        stroke: var(--purple);
+        fill: none;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .gt-gate b {
+        display: block;
+        margin-top: 4px;
+        font-size: 13px;
+        color: var(--badge-text);
+      }
+      .gt-gate span {
+        display: block;
+        margin-top: 4px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: var(--text-secondary);
+      }
+      @media (max-width: 1000px) {
+        .gt-flow {
+          grid-template-columns: minmax(0, 1fr);
+          max-width: 420px;
+        }
+      }
+      .gt-more {
+        max-width: 720px;
+        margin: 22px 0 0;
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--text-muted);
+      }
+
+      /* ================================================================
+       MORNING BRIEF — the pinned conversation, drawn in HTML so its text
+       stays crisp and in both themes.
+       ================================================================ */
+      .mb {
+        width: min(100%, 272px);
+        border-radius: 34px;
+        background: var(--frame-screen);
+        box-shadow:
+          0 0 0 1px var(--frame-glass-edge),
+          0 0 0 4px var(--frame-bezel),
+          0 0 0 5px var(--frame-bezel-hi),
+          0 34px 70px -30px var(--shadow-strong);
+        padding: 18px 14px 20px;
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--text-primary);
+      }
+      .mb-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 4px 12px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .mb-bar svg {
+        width: 15px;
+        height: 15px;
+        stroke: var(--text-muted);
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: none;
+      }
+      .mb-bar b {
+        font-size: 14px;
+      }
+      .mb-day {
+        margin: 14px 0 10px;
+        text-align: center;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+      .mb-msg p + p,
+      .mb-msg ol {
+        margin-top: 8px;
+      }
+      .mb-msg ol {
+        padding-left: 18px;
+      }
+      .mb-msg li + li {
+        margin-top: 6px;
+      }
+      .mb-msg li {
+        color: var(--text-secondary);
+      }
+      .mb-msg li b {
+        color: var(--text-primary);
+      }
+      .mb-based {
+        margin-top: 12px;
+      }
+      .mb-based-head {
+        margin-bottom: 2px;
+        font-size: 11.5px;
+        font-weight: 600;
+        color: var(--text-muted);
+      }
+      .mb-obs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .mb-obs img {
+        width: 14px;
+        height: 14px;
+        flex: none;
+      }
+      .mb-obs span {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .mb-thumbs {
+        display: flex;
+        gap: 6px;
+        flex: none;
+      }
+      .mb-thumbs svg {
+        width: 13px;
+        height: 13px;
+        stroke: var(--text-muted);
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .mb-thumbs .is-up svg {
+        stroke: var(--color-note);
+      }
+      .mb-you {
+        margin: 14px 0 0 auto;
+        width: fit-content;
+        max-width: 85%;
+        padding: 8px 12px;
+        border-radius: 16px 16px 4px 16px;
+        background: var(--accent);
+        color: #fff;
+      }
+      .mb-reply {
+        margin-top: 10px;
+        color: var(--text-secondary);
+      }
+      .mb-reply b {
+        color: var(--text-primary);
+      }
+      /* ================================================================
+       TASKS — the journal on its own, and what the Brain adds to it.
+       ================================================================ */
+      .tk-pair {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: clamp(16px, 2.4vw, 28px);
+        margin: clamp(30px, 4vw, 48px) 0 0;
+        max-width: 1100px;
+      }
+      .tk-card {
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: var(--bg-card);
+        padding: clamp(20px, 2.4vw, 28px);
+      }
+      .tk-card--brain {
+        border-color: var(--badge-border);
+        box-shadow: 0 0 0 1px var(--badge-bg) inset;
+      }
+      .tk-card h3 {
+        font-size: 18px;
+        font-weight: 750;
+        margin-bottom: 4px;
+      }
+      .tk-card > p {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-bottom: 18px;
+      }
+      .tk-list {
+        border-radius: 12px;
+        border: 1px solid var(--border-subtle);
+        background: var(--frame-screen);
+        padding: 6px 0;
+        margin-bottom: 18px;
+        font-size: 13.5px;
+      }
+      .tk-head {
+        padding: 6px 14px 4px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+      .tk-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 7px 14px;
+      }
+      .tk-row svg {
+        width: 16px;
+        height: 16px;
+        margin-top: 2px;
+        flex: none;
+        fill: none;
+        stroke: var(--text-muted);
+        stroke-width: 1.8;
+      }
+      .tk-row small {
+        display: block;
+        font-size: 11.5px;
+        color: var(--text-muted);
+      }
+      .tk-row small a {
+        color: var(--accent);
+      }
+      .tk-done {
+        color: var(--text-muted);
+        text-decoration: line-through;
+      }
+      .tk-row.is-done svg {
+        stroke: var(--color-note);
+      }
+      .tk-row.is-suggested svg {
+        stroke: var(--purple);
+      }
+      .tk-chips {
+        display: flex;
+        gap: 6px;
+        margin-top: 5px;
+      }
+      .tk-chips span {
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .tk-points {
+        list-style: none;
+        padding: 0;
+        display: grid;
+        gap: 10px;
+      }
+      .tk-points li {
+        position: relative;
+        padding-left: 18px;
+        font-size: 14.5px;
+        line-height: 1.55;
+        color: var(--text-secondary);
+      }
+      .tk-points li::before {
+        content: "";
+        position: absolute;
+        left: 2px;
+        top: 0.62em;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--text-muted);
+      }
+      .tk-card--brain .tk-points li::before {
+        background: var(--purple);
+      }
+      .tk-points b {
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+      @media (max-width: 820px) {
+        .tk-pair {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      /* ================================================================
        FOOTER
        ================================================================ */
       .site-footer {
@@ -2673,8 +3083,8 @@
                   <div class="bd-producer">
                     <h3>Background agent</h3>
                     <p>
-                      Reacts to mutations in your context substrate to maintain the derived
-                      substrate.
+                      Reacts to new, edited and deleted data and keeps the derived substrate up to
+                      date.
                     </p>
                   </div>
                   <div class="bd-producer bd-producer--sweeps">
@@ -2684,9 +3094,15 @@
                       can be contributed by the community.
                     </p>
                   </div>
+                  <div class="bd-producer bd-producer--gates">
+                    <h3>Decision gates</h3>
+                    <p>
+                      A small, cheap model that decides what is worth a run, how urgent it is, and
+                      what is worth keeping.
+                    </p>
+                  </div>
                 </div>
               </div>
-
               <div class="arch-arrow arch-arrow--loop" aria-hidden="true">
                 <svg viewBox="0 0 36 36">
                   <!-- Two arcs of one ring, each broken where its head goes:
@@ -2704,6 +3120,19 @@
               <div class="arch-col bd-derived">
                 <div class="arch-label">Derived substrate</div>
                 <div class="bd-derived-stack">
+                  <div class="bd-node" style="--hue: var(--purple)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
+                      <path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z" />
+                    </svg>
+                    <div>
+                      <h3>Wiki pages</h3>
+                      <p>
+                        Pages about your projects and topics, with a short root page on top. Every
+                        sentence cites its evidence.
+                      </p>
+                    </div>
+                  </div>
                   <div class="bd-node" style="--hue: var(--color-chat)">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                       <circle cx="12" cy="12" r="9" />
@@ -2726,22 +3155,10 @@
                       <path d="M8.5 13h7M8.5 17h4" />
                     </svg>
                     <div>
-                      <h3>Document annotations</h3>
-                      <p>Annotate your documents with deeper insights.</p>
-                    </div>
-                  </div>
-                  <div class="bd-node" style="--hue: var(--color-note)">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <circle cx="9.5" cy="9" r="3.2" />
-                      <path d="M3.5 19.5a6 6 0 0 1 12 0" />
-                      <circle cx="17.5" cy="8" r="2.3" />
-                      <path d="M16 13.2a5.2 5.2 0 0 1 4.5 5" />
-                    </svg>
-                    <div>
-                      <h3>People annotations</h3>
+                      <h3>Annotations</h3>
                       <p>
-                        Annotate the people in your life with learned insights (relationships,
-                        roles, etc.)
+                        Facts about your documents and the people in your life, each backed by a
+                        quote.
                       </p>
                     </div>
                   </div>
@@ -2750,23 +3167,25 @@
                       <circle cx="12" cy="12" r="9" stroke-dasharray="4.2 3.4" />
                     </svg>
                     <div>
-                      <h3>Open loops</h3>
+                      <h3>Loops &amp; tasks</h3>
                       <p>
-                        Understand all the unresolved things in your life: decisions you need to
-                        make, actions you need to take, commitments made by you or owed to you, etc.
+                        The unresolved things in your life (actions, decisions, commitments),
+                        suggested to you as tasks.
                       </p>
                     </div>
                   </div>
-                  <div class="bd-node" style="--hue: var(--purple)">
+                  <div class="bd-node" style="--hue: var(--color-note)">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M6 9.5a6 6 0 0 1 12 0c0 6.5 2.5 8.5 2.5 8.5h-17S6 16 6 9.5" />
-                      <path d="M10.2 21.2a2.2 2.2 0 0 0 3.6 0" />
+                      <path
+                        d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"
+                      />
+                      <circle cx="12" cy="12" r="2.8" />
                     </svg>
                     <div>
-                      <h3>Briefs</h3>
+                      <h3>Observations</h3>
                       <p>
-                        The Omnesis Brain can choose to bring something to your awareness via a
-                        “brief” in the companion app.
+                        Things the Brain noticed that you probably want to know. They feed your
+                        morning brief.
                       </p>
                     </div>
                   </div>
@@ -2774,6 +3193,237 @@
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- ============================================================
+       WIKIS
+       ============================================================ -->
+      <section class="section" id="wikis">
+        <div class="container">
+          <div class="reveal">
+            <div class="section-label section-label--purple">Wikis</div>
+            <h2 class="section-title">
+              The Brain maintains<br />
+              a wiki about your life
+            </h2>
+            <p class="section-subtitle">
+              The Brain writes and maintains wiki pages about what is going on in your life:
+              projects, places, people, arrangements. A short root page gives the overview and links
+              to more detailed pages, which can themselves point to even more detailed ones.
+              Underneath, pages refer to the loops the Brain is tracking, and eventually to the raw
+              documents in your sources: emails, chats, files.
+            </p>
+          </div>
+          <figure class="bx-figure reveal-scale reveal-delay-1">
+            <a href="media/brain/wiki-hierarchy.webp" target="_blank" rel="noopener">
+              <img
+                src="media/brain/wiki-hierarchy.webp"
+                width="1419"
+                height="1006"
+                alt="A layered graph. The root wiki cites the Home, Finances, Work and Health pages; those cite Kitchen renovation, Q4 launch and Marathon training; Kitchen renovation cites the Studio Northstar page and the Pay deposit loop, which Finances cites too. At the bottom, the largest layer: about twenty overlapping source tiles (WhatsApp chats, Gmail threads, Google Drive files, a calendar event, Notion pages, Strava runs) that the pages and loops cite."
+                loading="lazy"
+            /></a>
+          </figure>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- ============================================================
+       CLAIMS
+       ============================================================ -->
+      <section class="section" id="claims">
+        <div class="container">
+          <div class="reveal">
+            <div class="section-label section-label--purple">Claims</div>
+            <h2 class="section-title">
+              Every sentence in a<br />
+              wiki page is a claim
+            </h2>
+            <p class="section-subtitle">
+              Wiki pages are Markdown, but every bit of text has to sit inside a claim tag. A claim
+              has an ID and references to what supports it: a passage in a source document, a field
+              of a loop, or a claim on another wiki page. A separate verifier model then checks that
+              the references actually entail the claim, taking the page title and section into
+              account, before the claim is marked as verified.
+            </p>
+          </div>
+          <figure class="bx-figure reveal-scale reveal-delay-1">
+            <a href="media/brain/claim-anatomy.webp" target="_blank" rel="noopener">
+              <img
+                src="media/brain/claim-anatomy.webp"
+                width="1117"
+                height="574"
+                alt="The Kitchen renovation page in raw Markdown. Three claim tags, budget, deposit and start, each wrap a heading or sentence and cite one reference: a passage of the Revised quote email, the state field of the Pay deposit loop, and the crew claim on the Studio Northstar page."
+                loading="lazy"
+            /></a>
+          </figure>
+          <div class="bx-points">
+            <div class="bx-point" style="--ref-hue: var(--accent)">
+              <h3>A passage of a document</h3>
+              <p>
+                <code>source:doc#evidence:passage</code> The exact passage in an email, chat, file,
+                etc.
+              </p>
+            </div>
+            <div class="bx-point" style="--ref-hue: var(--color-bookmark)">
+              <h3>A field of a loop</h3>
+              <p>
+                <code>loop:id#field:state</code> What a loop currently records, e.g. whether it’s
+                done.
+              </p>
+            </div>
+            <div class="bx-point" style="--ref-hue: var(--purple)">
+              <h3>A claim on another page</h3>
+              <p><code>wiki:page#claim:id</code> This is how pages build on each other.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- ============================================================
+       FRESHNESS
+       ============================================================ -->
+      <section class="section" id="freshness">
+        <div class="container">
+          <div class="reveal">
+            <div class="section-label section-label--purple">Staying up to date</div>
+            <h2 class="section-title">
+              When a document changes, the<br />
+              Brain knows what to re-check
+            </h2>
+            <p class="section-subtitle">
+              Because claims can point at other claims, everything the Brain derives forms a
+              dependency graph that goes all the way down to your source documents. When a document
+              is edited or deleted, the claims that cite it are marked as stale right away (no model
+              call needed), then the claims that cite those claims, and so on up the graph. Links
+              that are only there for navigation don’t propagate anything. The Brain then only
+              re-checks what was marked stale.
+            </p>
+          </div>
+          <figure class="bx-figure reveal-scale reveal-delay-1">
+            <a href="media/brain/stale-cascade.webp" target="_blank" rel="noopener">
+              <img
+                src="media/brain/stale-cascade.webp"
+                width="1309"
+                height="748"
+                alt="The Revised quote email is edited. The Pay deposit loop that cites it, the Kitchen renovation page, the Home page and the root wiki all turn orange and read needs re-check. Studio Northstar, the Health branch and their sources stay green, and a dashed navigation link from Kitchen renovation to Marathon training carries nothing."
+                loading="lazy"
+            /></a>
+          </figure>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- ============================================================
+       ANSWERING
+       ============================================================ -->
+      <section class="section" id="answering">
+        <div class="container">
+          <div class="reveal">
+            <div class="section-label section-label--purple">Answering</div>
+            <h2 class="section-title">
+              How the agent<br />
+              uses the wiki
+            </h2>
+            <p class="section-subtitle">
+              The root wiki is injected in the Omnesis agent’s system prompt, so the agent knows the
+              broad strokes of what is going on in your life from the start of every conversation.
+              From there it can open the pages it needs. If a claim it reads is verified and none of
+              its evidence has changed, the agent can use it as is. If the claim is stale, it goes
+              back and reads the sources.
+            </p>
+            <p class="section-subtitle">
+              In practice this means fewer tool calls and fewer tokens, so answers come back faster.
+              This is still very experimental.<span class="bx-tag">Experimental</span>
+            </p>
+          </div>
+          <figure class="bx-figure reveal-scale reveal-delay-1">
+            <a href="media/brain/agent-fast-path.webp" target="_blank" rel="noopener">
+              <img
+                src="media/brain/agent-fast-path.webp"
+                width="1485"
+                height="958"
+                alt="Asked when the kitchen fitting starts, the agent goes from the root wiki in its system prompt to the Kitchen renovation and Studio Northstar pages. A verified, current claim answers directly: week of 16 November. A stale claim sends it down into a mountain of source documents, where three arrows pick out the few it re-reads."
+                loading="lazy"
+            /></a>
+          </figure>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- ============================================================
+       DECISION GATES
+       ============================================================ -->
+      <section class="section" id="gates">
+        <div class="container">
+          <div class="reveal">
+            <div class="section-label section-label--purple">Decision gates</div>
+            <h2 class="section-title">
+              Using a small model to<br />
+              decide what is worth doing
+            </h2>
+            <p class="section-subtitle">
+              The Brain is the only part of Omnesis that spends tokens without anyone asking a
+              question, so it has to be careful about what it spends them on. Before the expensive
+              steps, it asks Jev, a small decision model from TypeSafe, for a score. Jev is fast and
+              cheap, every verdict is recorded so you can inspect it, and if Jev is unavailable the
+              Brain falls back to the safe option.
+            </p>
+          </div>
+          <ol
+            class="gt-flow reveal reveal-delay-1"
+            aria-label="From a new document to the morning brief"
+          >
+            <li class="gt-step"><b>New document</b><span>arrives or changes</span></li>
+            <li class="gt-gate">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 3v18M7 21h10M5 7h14M5 7l-3 6a3 3 0 0 0 6 0zM19 7l-3 6a3 3 0 0 0 6 0z"
+                />
+              </svg>
+              <b>Worth</b><span>Is it worth reading at all?</span>
+            </li>
+            <li class="gt-gate">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 3v18M7 21h10M5 7h14M5 7l-3 6a3 3 0 0 0 6 0zM19 7l-3 6a3 3 0 0 0 6 0z"
+                />
+              </svg>
+              <b>Urgency</b><span>Now, within the hour, or later?</span>
+            </li>
+            <li class="gt-step"><b>Brain agent</b><span>reads, links, writes</span></li>
+            <li class="gt-gate">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 3v18M7 21h10M5 7h14M5 7l-3 6a3 3 0 0 0 6 0zM19 7l-3 6a3 3 0 0 0 6 0z"
+                />
+              </svg>
+              <b>Record check</b><span>Does it add real value?</span>
+            </li>
+            <li class="gt-gate">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 3v18M7 21h10M5 7h14M5 7l-3 6a3 3 0 0 0 6 0zM19 7l-3 6a3 3 0 0 0 6 0z"
+                />
+              </svg>
+              <b>Salience</b><span>Does it earn your morning?</span>
+            </li>
+            <li class="gt-step"><b>Morning brief</b><span>one message a day</span></li>
+          </ol>
+          <p class="gt-more reveal">
+            Jev also decides whether a change can affect a claim that depends on it, when a page is
+            due for a review, whether a renamed task is still the same task, and whether a suggested
+            task is worth showing you. When I replayed ten weeks of history, the worth gate alone
+            skipped about 58% of email runs, which were mostly noise.
+          </p>
         </div>
       </section>
 
@@ -2793,7 +3443,8 @@
             <p class="section-subtitle">
               Some things about your life are only visible from a distance — changes in health,
               finance or relationship patterns. Sweeps let a background agent step back and look for
-              those patterns, at a cadence you define.
+              those patterns, at a cadence you define, and note what it finds for your morning
+              brief.
             </p>
           </div>
 
@@ -2827,6 +3478,16 @@
                     tabindex="0"
                     role="button"
                     aria-label="Show the Day ahead sweep"
+                  />
+                  <circle
+                    class="sw-dot"
+                    data-sw-sweep="missed-calls"
+                    cx="254.4"
+                    cy="205"
+                    r="5"
+                    tabindex="0"
+                    role="button"
+                    aria-label="Show the Missed calls sweep"
                   />
                   <circle
                     class="sw-dot"
@@ -2904,6 +3565,15 @@
                     text-anchor="start"
                   >
                     may-day
+                  </text>
+                  <text
+                    class="sw-dot-id"
+                    data-sw-sweep="missed-calls"
+                    x="243.4"
+                    y="208.8"
+                    text-anchor="end"
+                  >
+                    missed-calls
                   </text>
                   <text
                     class="sw-dot-id"
@@ -2993,31 +3663,81 @@
                         ><span class="buf-prose"
                           >Prepare the user for the day that is starting. Look at what is happening
                           today — meetings, appointments, scheduled events — and for the ones that
-                          merit it write an informative brief: what it is, when, with whom, and the
-                          context worth having to hand, drawn from the surrounding correspondence.
-                          Stamp each brief with the time of the event it concerns so the feed can
-                          rank it into the right part of the day, and cite the documents you drew it
-                          from. Check the open loops falling due today or very shortly and remind
-                          the user where a reminder would help. Then look a week out — across both
-                          source-owned schedules and your own recorded interpretations of upcoming
-                          time — and for anything genuinely approaching that needs preparing,
-                          surface it and open a loop if it is a real obligation nobody is tracking
-                          yet. If along the way you find a tracked obligation has already been
-                          fulfilled — a receipt, a confirmation, a reply that settles it — close its
-                          loop as done with a note and remove the briefs it made moot; never delete
-                          a loop that was actually completed, because the record of what happened is
-                          worth keeping. Check what is already in the feed before writing anything,
-                          so an earlier pass's card is updated rather than duplicated. Where an
-                          event later today would benefit from the freshest possible picture,
-                          schedule yourself a short follow-up shortly beforehand to rebuild its
-                          brief. Most days only a handful of things merit a brief, and an empty pass
-                          is a fine outcome.</span
+                          merit it note an informative observation for the morning brief: what it
+                          is, when, with whom, and the context worth having to hand, drawn from the
+                          surrounding correspondence. Include the time of the event it concerns and
+                          cite the documents you drew it from. Check the open loops falling due
+                          today or very shortly and note a reminder observation where it would help.
+                          Then look a week out — across both source-owned schedules and your own
+                          recorded interpretations of upcoming time — and for anything genuinely
+                          approaching that needs preparing, note an observation and open a loop if
+                          it is a real obligation nobody is tracking yet. If along the way you find
+                          a tracked obligation has already been fulfilled — a receipt, a
+                          confirmation, a reply that settles it — close its loop as done with a note
+                          and withdraw the observations it made moot; never delete a loop that was
+                          actually completed, because the record of what happened is worth keeping.
+                          Check existing observations before writing anything, so an earlier pass's
+                          observation is updated rather than duplicated. Where a future event would
+                          benefit from a fresher picture, schedule yourself a follow-up to recheck
+                          it and refresh its observation only if it will still be useful at the next
+                          morning brief. Most days only a handful of things merit an observation,
+                          and an empty pass is a fine outcome.</span
                         ></span
                       >
                     </div>
                   </div>
                   <div class="buf-status">
                     <span class="buf-status-path">sweeps/may-day.md</span>
+                  </div>
+                </div>
+              </div>
+              <div class="sw-panel" data-sw-panel="missed-calls" hidden>
+                <div class="buf-frame sw-file">
+                  <div class="sw-file-scroll">
+                    <div class="buf-body">
+                      <span class="buf-ln">1</span>
+                      <span><span class="buf-fence">---</span></span>
+                      <span class="buf-ln">2</span>
+                      <span
+                        ><span class="buf-key">name</span
+                        ><span class="buf-val">: Missed calls</span></span
+                      >
+                      <span class="buf-ln">3</span>
+                      <span
+                        ><span class="buf-key">cadence</span><span class="buf-val">: 1d</span></span
+                      >
+                      <span class="buf-ln">4</span>
+                      <span
+                        ><span class="buf-key">at</span><span class="buf-val">: </span
+                        ><span class="buf-str">"05:10"</span></span
+                      >
+                      <span class="buf-ln">5</span>
+                      <span><span class="buf-fence">---</span></span>
+                      <span class="buf-ln">6</span>
+                      <span>&nbsp;</span>
+                      <span class="buf-ln">7</span>
+                      <span
+                        ><span class="buf-prose"
+                          >Review recent genuinely missed incoming calls. Do not treat a call known
+                          to have been blocked, rejected, or answered elsewhere as missed; treat one
+                          sent to voicemail according to whether it left an unresolved action. Try
+                          to identify each caller from the available identity links and surrounding
+                          corpus even when no contact name is attached, but never guess. Reconcile
+                          what happened afterwards with that person across every channel. A later
+                          unanswered follow-up strengthens the case only when it plausibly concerns
+                          the same attempt or underlying matter; only a connected return call, a
+                          substantive reply from the user that plausibly handles that attempt or
+                          matter, or other clear evidence that it was handled makes the call moot.
+                          Surface only credible calls that still appear to need a response or
+                          action, and leave an isolated unidentified call quiet unless repetition or
+                          corroborating context makes it matter. An empty pass is a fine
+                          outcome.</span
+                        ></span
+                      >
+                    </div>
+                  </div>
+                  <div class="buf-status">
+                    <span class="buf-status-path">sweeps/missed-calls.md</span>
                   </div>
                 </div>
               </div>
@@ -3284,37 +4004,214 @@
       <div class="divider"></div>
 
       <!-- ============================================================
-       BRIEFS
+       MORNING BRIEF
        ============================================================ -->
       <section class="section" id="briefs">
         <div class="container">
           <div class="br-layout">
             <div class="br-copy reveal">
-              <div class="section-label section-label--purple">Briefs</div>
+              <div class="section-label section-label--purple">Morning brief</div>
               <h2 class="section-title">
-                Briefs: when the Brain<br />
-                decides to speak
+                One morning brief<br />
+                a day
               </h2>
               <p class="section-subtitle">
-                A brief is the Omnesis Brain deciding to tell you something. It can be a briefing
-                about what you need to know for your next meeting, a summary of your day to come, a
-                reminder to top up a bank account that’s about to go negative, or anything else
-                identified by one of your sweeps. You can engage with a brief by responding to it,
-                which opens a new conversation with Omnesis.
+                The Brain doesn’t send you notifications as it goes. When it notices something you
+                probably don’t know yet and would want to act on, it records an
+                <em>observation</em>, with quotes from its sources and a date after which it stops
+                mattering. Every morning, one run goes through the open observations and writes a
+                single message in your Morning brief conversation. If there is nothing worth saying,
+                there is no message.
               </p>
             </div>
 
             <div class="br-visual reveal-scale reveal-delay-1">
-              <div class="br-phone">
-                <img
-                  id="brief-shot"
-                  src="media/brief-health-trend.png"
-                  width="1179"
-                  height="2280"
-                  alt="A brief open in the Omnesis app: resting heart rate up and HRV down against the person's own baseline, after four hard sessions and short nights, citing Apple Health documents"
-                  loading="lazy"
-                />
+              <div
+                class="mb"
+                role="img"
+                aria-label="The Morning brief conversation: three items for today — a revised quote $1,100 higher with the deposit due Friday, a 10:00 site visit with Maya Reeves, and a passport that expires before the March trip — based on three things, with thumbs on each observation. The reply “Add a task to pay the deposit tomorrow” is answered with “Added: Pay Studio Northstar deposit, planned for tomorrow.”"
+              >
+                <div class="mb-bar" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" /></svg>
+                  <b>Morning brief</b>
+                </div>
+                <div aria-hidden="true">
+                  <div class="mb-day">Tuesday</div>
+                  <div class="mb-msg">
+                    <p>Good morning. Three things today:</p>
+                    <ol>
+                      <li>
+                        <b>The revised quote is $1,100 higher.</b> Studio Northstar now asks
+                        $18,400, and the deposit is due Friday.
+                      </li>
+                      <li>
+                        <b>Site visit at 10:00</b> with Maya Reeves. She asked for the final
+                        appliance list.
+                      </li>
+                      <li>
+                        <b>Your passport</b> expires in May; the March trip needs six months of
+                        validity.
+                      </li>
+                    </ol>
+                    <div class="mb-based">
+                      <div class="mb-based-head">Based on 3 things</div>
+                      <div class="mb-obs">
+                        <img src="media/gmail.svg" alt="" width="14" height="14" />
+                        <span>Revised quote · Studio Northstar</span>
+                        <span class="mb-thumbs">
+                          <i class="is-up"
+                            ><svg viewBox="0 0 24 24">
+                              <path
+                                d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.5 21H7V10l4.3-7.4A2 2 0 0 1 15 5.9z"
+                              /></svg
+                          ></i>
+                          <i
+                            ><svg viewBox="0 0 24 24">
+                              <path
+                                d="M17 14V3M9 18.1 10 14H4.2a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5.5 3H17v11l-4.3 7.4A2 2 0 0 1 9 18.1z"
+                              /></svg
+                          ></i>
+                        </span>
+                      </div>
+                      <div class="mb-obs">
+                        <img src="media/gmail.svg" alt="" width="14" height="14" />
+                        <span>Passport renewal reminder</span>
+                        <span class="mb-thumbs">
+                          <i
+                            ><svg viewBox="0 0 24 24">
+                              <path
+                                d="M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.5 21H7V10l4.3-7.4A2 2 0 0 1 15 5.9z"
+                              /></svg
+                          ></i>
+                          <i
+                            ><svg viewBox="0 0 24 24">
+                              <path
+                                d="M17 14V3M9 18.1 10 14H4.2a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5.5 3H17v11l-4.3 7.4A2 2 0 0 1 9 18.1z"
+                              /></svg
+                          ></i>
+                        </span>
+                      </div>
+                      <div class="mb-obs">
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="14"
+                          height="14"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                        >
+                          <rect x="3" y="5" width="18" height="16" rx="2" />
+                          <path d="M3 10h18M8 3v4M16 3v4" />
+                        </svg>
+                        <span>Site visit · 10:00</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mb-you">Add a task to pay the deposit tomorrow</div>
+                  <div class="mb-reply">
+                    <b>Added:</b> Pay Studio Northstar deposit, planned for tomorrow.
+                  </div>
+                </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="divider"></div>
+
+      <!-- ============================================================
+       TASKS
+       ============================================================ -->
+      <section class="section" id="tasks">
+        <div class="container">
+          <div class="reveal">
+            <div class="section-label section-label--purple">Tasks</div>
+            <h2 class="section-title">
+              Tasks work without the Brain,<br />
+              and better with it
+            </h2>
+            <p class="section-subtitle">
+              Tasks are a simple bullet journal that you and the agent can manage. When the Brain is
+              on, the loops it tracks show up as suggested tasks, and the tasks you accept are kept
+              up to date for you.
+            </p>
+          </div>
+          <div class="tk-pair reveal reveal-delay-1">
+            <div class="tk-card">
+              <h3>Without the Brain</h3>
+              <p>Available to everyone</p>
+              <div class="tk-list" aria-hidden="true">
+                <div class="tk-head">Today</div>
+                <div class="tk-row">
+                  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /></svg>
+                  <div>Call the plumber back</div>
+                </div>
+                <div class="tk-row is-done">
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="8" />
+                    <path d="M8.5 12.2l2.4 2.4 4.6-5" />
+                  </svg>
+                  <div>
+                    <span class="tk-done">Send the invoice</span>
+                    <small>Done from Tell Omnesis · <a>Undo</a></small>
+                  </div>
+                </div>
+              </div>
+              <ul class="tk-points">
+                <li>
+                  <b>A bullet journal</b> for today, a specific day, a month or someday, on the
+                  portal, iOS, Android and widgets.
+                </li>
+                <li>
+                  <b>Ask the agent</b> in any conversation to add, complete, move or strike a task,
+                  and undo it.
+                </li>
+                <li>
+                  <b>Tell Omnesis</b> “I sent the invoice” and it gets ticked off, with an undo.
+                </li>
+              </ul>
+            </div>
+            <div class="tk-card tk-card--brain">
+              <h3>With the Brain</h3>
+              <p>Experimental</p>
+              <div class="tk-list" aria-hidden="true">
+                <div class="tk-head">Suggested</div>
+                <div class="tk-row is-suggested">
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="8" stroke-dasharray="3.4 2.8" />
+                  </svg>
+                  <div>
+                    Register for the Riverside half marathon
+                    <div class="tk-chips">
+                      <span>Accept</span><span>Accept for…</span><span>Ignore</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="tk-row is-done">
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="8" />
+                    <path d="M8.5 12.2l2.4 2.4 4.6-5" />
+                  </svg>
+                  <div>
+                    <span class="tk-done">Send the signed plan to Maya</span>
+                    <small>Marked done by Omnesis · <a>Undo</a></small>
+                  </div>
+                </div>
+              </div>
+              <ul class="tk-points">
+                <li><b>Loops show up as suggestions</b> you can accept, schedule or ignore.</li>
+                <li>
+                  <b>Accepted tasks</b> get marked done when a source says so and the verifier
+                  agrees. You can always undo.
+                </li>
+                <li>
+                  <b>If a change touches what you wrote</b> yourself, it shows up as a proposal you
+                  confirm or dismiss.
+                </li>
+                <li><b>It learns</b> from what you accept and ignore.</li>
+              </ul>
             </div>
           </div>
         </div>
@@ -3335,11 +4232,11 @@
                 while on the go
               </h2>
               <p class="section-subtitle">
-                Any context you want to quickly tell the Omnesis Brain? Speak it or type it,
-                directly via the app or via Siri. Say it once, and let it go. Trust that the brain
-                will absorb it and consolidate. Your note is enriched with important metadata: when
-                you said it, where you were when you said it, and what you were doing when you said
-                it.
+                Speak it or type it, in the app, on your watch or with Siri. Each note is read by an
+                agent that acts on it: it can add, complete or move tasks and remember facts about
+                you, and it leaves a receipt you can undo. If it needs to ask you something, it
+                opens a conversation and notifies you. Your note also records when you said it,
+                where you were and what you were doing.
               </p>
             </div>
 
@@ -5920,28 +6817,12 @@
         });
       });
 
-      // ── Theme-aware brief still ──
-      // Ships dark (media/brief-*.png); the light render lives under the
-      // parallel light/ subtree, the same convention as the landing page's
-      // device shots. Applied on load too, so the first paint already matches.
-      const briefShot = document.getElementById("brief-shot");
-      const briefDarkSrc = briefShot?.getAttribute("src");
-      function applyBriefTheme(light) {
-        if (!briefShot || !briefDarkSrc) return;
-        briefShot.setAttribute(
-          "src",
-          light ? briefDarkSrc.replace(/^media\//, "media/light/") : briefDarkSrc,
-        );
-      }
-      applyBriefTheme(document.documentElement.getAttribute("data-theme") === "light");
-
       // ── Theme toggle, persisted and shared with the rest of the site ──
       const themeBtn = document.getElementById("theme-toggle");
       if (themeBtn) {
         themeBtn.addEventListener("click", () => {
           const light = document.documentElement.getAttribute("data-theme") !== "light";
           document.documentElement.setAttribute("data-theme", light ? "light" : "dark");
-          applyBriefTheme(light);
           try {
             localStorage.setItem("omnesis-theme", light ? "light" : "dark");
           } catch (e) {

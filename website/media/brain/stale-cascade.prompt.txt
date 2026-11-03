@@ -1,0 +1,22 @@
+Subject: identical content to the reference image ("when a source changes, staleness flows up the claim references"), re-rendered zoomed out and flat as specified below. Keep the same nodes, edges, colours-by-state and text.
+
+Graph, top to bottom: "Root wiki"; "Home", "Health"; "Kitchen renovation", "Marathon training"; loop "Pay deposit" (dashed-circle glyph), wiki "Studio Northstar", loop "Register for race"; sources with real logos: Gmail "Revised quote", WhatsApp "Chat with Maya", Strava "Long run".
+Edited source: Gmail "Revised quote" with a small flat orange badge "edited" and an orange 1.5px outline (no glow).
+Stale path, orange outlines and orange edges, each orange card with a small flat badge "needs re-check": Revised quote <- Pay deposit <- Kitchen renovation <- Home <- Root wiki (arrows point DOWN from citing card to cited card).
+Everything else muted green outline with a small green check: Studio Northstar, Chat with Maya, Health, Marathon training, Register for race, Long run, and their edges (Kitchen renovation -> Studio Northstar, Studio Northstar -> Chat with Maya, Root wiki -> Health, Health -> Marathon training, Marathon training -> Register for race, Register for race -> Long run).
+A dashed grey line from Kitchen renovation to Marathon training with a tiny label "navigation link".
+Right side, small text, orange numerals:
+1  A source changes
+2  Claims citing it turn stale, no model call
+3  Staleness follows claim references upward
+4  The Brain re-checks only what turned stale
+No other text.
+
+- ZOOMED OUT: every card, icon, line and label about 70% of its size in the reference, with noticeably more empty margin around the whole diagram and between elements. Labels small and calm, like UI text in a developer-tool screenshot, never headline-sized.
+- FLAT: no glow, no bloom, no neon, no outer shadows, no gradients on cards, no lens/vignette light. Solid dark card fills (#131921), thin 1px strokes, flat muted colours. Background: plain flat dark navy (#0b1018) with at most a barely-visible fine grid; no radial light.
+- Muted palette: purple #9d8ce0 = wiki pages, blue #6a9fd8 = claim-reference lines, green #6fbf7f = current, orange #e09a5a = stale / loop, text #d4dae1 primary and #8b949e secondary.
+- Typography: clean geometric sans (Inter-like) for labels, monospace for code.
+- All text spelled EXACTLY as given; add no other words, numbers, titles, captions, watermarks or logos.
+- Landscape 1536x1024.
+
+(Rendered from the previous version as a reference image, then cropped to its content.)

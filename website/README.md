@@ -14,13 +14,15 @@ hand-authored, but a few are **generated from the synthetic demo gateway**
 leak real data. All generators are repeatable: re-run them any time to
 refresh the assets.
 
-## The Brain page's brief still
+## The Brain page's illustrations
 
-`brain.html` shows a phone with a brief open: `media/brief-health-trend.png`
-(and its light-appearance twin in `media/light/`). It is a static still rendered
-from an earlier version of the iOS app against invented fixture data, and no
-script regenerates it; replace both images by hand if the page should show a
-different screen.
+`brain.html` leads its Wikis, Claims, Staying true and Answering sections with
+four illustrations in `media/brain/` (`wiki-hierarchy`, `claim-anatomy`,
+`stale-cascade`, `agent-fast-path`). They were drawn with an image model from
+invented example data (the Kitchen renovation / Studio Northstar scenario) and
+no script regenerates them; the prompts are kept beside them as
+`*.prompt.txt`. Each is shown in a dark frame in both themes. The Morning
+brief conversation and the Tasks journal are plain HTML on the page.
 
 ## Shared architecture stages (collector → substrate)
 
