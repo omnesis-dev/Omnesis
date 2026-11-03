@@ -83,7 +83,7 @@ export class RefusedSourceStateError extends SyncError {
         summary: `${sourceId} has saved sync state this build cannot read`,
         steps: [
           "Check whether this host was downgraded from a newer Omnesis build; if so, upgrade it again and the source resumes where it left off.",
-          "Keep the saved state and take a backup before attempting recovery. Do not discard it or resync until you have verified that the source can recover its history; upstream data or pending work may no longer be available.",
+          "Keep the saved state intact during recovery. Do not discard it or resync until you have verified that the source can recover its history; upstream data or pending work may no longer be available.",
         ],
         restartRequired: false,
       },
