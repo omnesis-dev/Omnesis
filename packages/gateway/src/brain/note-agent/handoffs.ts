@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Durable, revision-fenced outbox for Note clarification conversations. */
-import { recordAgentMessage } from "../../agent/conversation-read-state.js";
 import { createHash } from "node:crypto";
+import { recordAgentMessage } from "../../agent/conversation-read-state.js";
 import type { NoteAgentReceipt } from "./storage.js";
 import type Database from "better-sqlite3";
 
