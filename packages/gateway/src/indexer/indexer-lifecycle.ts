@@ -806,10 +806,6 @@ export class IndexerLifecycle {
         encoding,
         apiKey: httpEmbedderApiKey,
         allowRemoteInference: httpEmbedderAllowRemoteInference,
-        // Interactive search must never throttle itself — single small
-        // requests, latency-critical. The bulk indexer's separate embedder
-        // is the one that's bounded so it can't starve these at the server.
-        maxConcurrentRequests: Infinity,
       });
       this.deps.searchPipeline.setEmbedder(
         this.deps.inferenceRegistry.health.observe(
@@ -1404,8 +1400,6 @@ export class IndexerLifecycle {
         maxInputChars: this.deps.runtime.embedderMaxInputChars,
         encoding,
         apiKey,
-        // Interactive search must never throttle itself.
-        maxConcurrentRequests: Infinity,
       });
     }
     flipActiveIndexVersion(db, {
@@ -1519,7 +1513,7 @@ export class IndexerLifecycle {
       maxInputChars: this.deps.runtime.embedderMaxInputChars,
       encoding,
       apiKey,
-      maxConcurrentRequests: this.deps.runtime.embedConcurrency,
+      maxBackgroundRequests: this.deps.runtime.embedConcurrency,
     });
   }
 

@@ -72,6 +72,7 @@ import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
 import type { DateExtractionDocRow } from "../enrichment/dates/extractor.js";
 import type { LikeSearchArgs, LikeSearchRow } from "../search/like-search.js";
 import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
+import type { KnowledgeReadabilityReads } from "../brain/knowledge/retrieval-fence.js";
 import type {
   PersonSummary as LookupPersonSummary,
   UrlCanonicalizerSpec,
@@ -204,6 +205,8 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
   likeSearchDocuments(args: LikeSearchArgs): Promise<LikeSearchRow[]>;
   /** A temporal window's `omnesis.db` half; see `readTemporalStoreWindow`. */
   temporalStoreWindow: TemporalStoreReads["temporalStoreWindow"];
+  /** Search's knowledge readability fence over its hits; see `knowledgeDocumentsReadable`. */
+  knowledgeDocumentsReadable: KnowledgeReadabilityReads["knowledgeDocumentsReadable"];
   /**
    * Compute `(personId, docCount, aliasCount)` for every unmerged person in
    * one read. Heavy — a full scan of `document_people` — which is why it
@@ -533,6 +536,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // User by default for search and the interactive agent; background runs
   // enqueue it under their own priority.
   { name: "io.temporalStoreWindow", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.knowledgeDocumentsReadable", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCounts", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCountsChunk", priority: "background" },
   { name: "io.mergeCandidates", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -670,6 +674,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     mergeCandidateVisibility: (opts) => call("io.mergeCandidateVisibility", [opts]),
     likeSearchDocuments: (args) => call("io.likeSearchDocuments", [args]),
     temporalStoreWindow: (request) => call("io.temporalStoreWindow", [request]),
+    knowledgeDocumentsReadable: (refs) => call("io.knowledgeDocumentsReadable", [[...refs]]),
     peopleCounts: () => call("io.peopleCounts", []),
     peopleCountsChunk: (cursor, batchSize) => call("io.peopleCountsChunk", [cursor, batchSize]),
     mergeCandidates: (perStepLimit) => call("io.mergeCandidates", [perStepLimit]),

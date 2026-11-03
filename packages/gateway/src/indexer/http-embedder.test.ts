@@ -77,71 +77,131 @@ describe("HttpEmbedder", () => {
     expect(result[2].length).toBe(1);
   });
 
-  test("embed() bounds concurrent requests to maxConcurrentRequests", async () => {
-    let inFlight = 0;
-    let peak = 0;
-    const releases: Array<() => void> = [];
-    mockFetch.mockImplementation(() => {
-      inFlight++;
-      peak = Math.max(peak, inFlight);
-      return new Promise((resolve) => {
-        releases.push(() => {
-          inFlight--;
-          resolve(embedResponse([[0.1]]));
+  describe("request lanes", () => {
+    /** A server that holds every request until the test answers it, in the order sent. */
+    function heldServer() {
+      const held: Array<{ input: string[]; answer: () => void }> = [];
+      const sent: string[] = [];
+      mockFetch.mockImplementation((_url: string, init: { body: string }) => {
+        const { input } = JSON.parse(init.body) as { input: string[] };
+        sent.push(input.join("+"));
+        return new Promise((resolve) => {
+          held.push({ input, answer: () => resolve(embedResponse(input.map(() => [0.1]))) });
         });
       });
-    });
-
-    const embedder = new HttpEmbedder({
-      baseUrl: "http://127.0.0.1:8001",
-      model: "m",
-      batchSize: 1, // one request per input
-      maxConcurrentRequests: 2,
-    });
-    const p = embedder.embed(["a", "b", "c", "d", "e", "f"]); // 6 requests
-    await new Promise((r) => setTimeout(r, 0)); // let the first wave dispatch
-
-    // Only 2 may be in flight; the other 4 wait on the semaphore.
-    expect(inFlight).toBe(2);
-    expect(peak).toBe(2);
-
-    // Drain one at a time; each release lets exactly one queued request start.
-    for (let i = 0; i < 6; i++) {
-      releases.shift()?.();
-      await new Promise((r) => setTimeout(r, 0));
+      const settle = () => new Promise((r) => setTimeout(r, 0));
+      /** Answer the oldest held request whose input is `name`. */
+      const answer = async (name: string) => {
+        const i = held.findIndex((r) => r.input.join("+") === name);
+        expect(i, `${name} is held at the server`).toBeGreaterThanOrEqual(0);
+        held.splice(i, 1)[0]!.answer();
+        await settle();
+      };
+      return { held, sent, settle, answer };
     }
-    const result = await p;
-    expect(result).toHaveLength(6);
-    expect(mockFetch).toHaveBeenCalledTimes(6);
-    expect(peak).toBeLessThanOrEqual(2); // never exceeded the cap
-  });
 
-  test("maxConcurrentRequests=Infinity leaves the path unbounded (interactive search)", async () => {
-    let inFlight = 0;
-    let peak = 0;
-    const releases: Array<() => void> = [];
-    mockFetch.mockImplementation(() => {
-      inFlight++;
-      peak = Math.max(peak, inFlight);
-      return new Promise((resolve) => {
-        releases.push(() => {
-          inFlight--;
-          resolve(embedResponse([[0.1]]));
-        });
+    function embedder(maxBackgroundRequests: number, extra: { timeoutMs?: number } = {}) {
+      return new HttpEmbedder({
+        baseUrl: "http://127.0.0.1:8001",
+        model: "m",
+        batchSize: 1, // one request per input
+        maxBackgroundRequests,
+        ...extra,
       });
+    }
+
+    test("embed() keeps at most maxBackgroundRequests in flight and sends the rest in order", async () => {
+      const server = heldServer();
+      const e = embedder(2);
+      const pending = e.embed(["a", "b", "c", "d", "e"]);
+      await server.settle();
+      expect(server.sent).toEqual(["a", "b"]);
+
+      await server.answer("b");
+      expect(server.sent).toEqual(["a", "b", "c"]);
+      expect(server.held).toHaveLength(2);
+      for (const name of ["a", "c", "d", "e"]) {
+        await server.answer(name);
+        expect(server.held.length).toBeLessThanOrEqual(2);
+      }
+      await expect(pending).resolves.toHaveLength(5);
+      expect(server.sent).toEqual(["a", "b", "c", "d", "e"]);
     });
 
-    const embedder = new HttpEmbedder({
-      baseUrl: "http://127.0.0.1:8001",
-      model: "m",
-      batchSize: 1,
-      maxConcurrentRequests: Infinity,
+    test("a query embed goes out at once, ahead of queued background batches", async () => {
+      const server = heldServer();
+      const e = embedder(2);
+      const bulk = e.embed(["a", "b", "c", "d"]);
+      await server.settle();
+      expect(server.sent).toEqual(["a", "b"]);
+
+      const query = e.embedQuery("q");
+      await server.settle();
+      // Sent while two background batches still wait in the gateway, and not
+      // counted against their cap.
+      expect(server.sent).toEqual(["a", "b", "q"]);
+      await server.answer("q");
+      await expect(query).resolves.toBeInstanceOf(Float32Array);
+      expect(server.sent).toEqual(["a", "b", "q"]);
+
+      for (const name of ["a", "b", "c", "d"]) await server.answer(name);
+      await expect(bulk).resolves.toHaveLength(4);
     });
-    const p = embedder.embed(["a", "b", "c", "d", "e"]);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(peak).toBe(5); // all 5 fired at once
-    releases.forEach((fn) => fn());
-    await p;
+
+    test("background batches keep moving while query embeds are in flight", async () => {
+      const server = heldServer();
+      const e = embedder(1);
+      const bulk = e.embed(["a", "b", "c"]);
+      const queries = [e.embedQuery("q1"), e.embedQuery("q2"), e.embedQuery("q3")];
+      await server.settle();
+      expect([...server.sent].sort()).toEqual(["a", "q1", "q2", "q3"]);
+
+      // Unanswered queries hold no background slot.
+      await server.answer("a");
+      await server.answer("b");
+      expect(server.sent.slice(-2)).toEqual(["b", "c"]);
+      await server.answer("c");
+      await expect(bulk).resolves.toHaveLength(3);
+
+      for (const name of ["q1", "q2", "q3"]) await server.answer(name);
+      await expect(Promise.all(queries)).resolves.toHaveLength(3);
+    });
+
+    test("a background request that times out frees its slot for the next one", async () => {
+      mockFetch.mockImplementation((_url: string, init: { body: string; signal: AbortSignal }) => {
+        const { input } = JSON.parse(init.body) as { input: string[] };
+        if (input[0] === "slow")
+          return new Promise((_, reject) =>
+            init.signal.addEventListener("abort", () => reject(init.signal.reason)),
+          );
+        return Promise.resolve(embedResponse([[0.2]]));
+      });
+      const e = embedder(1, { timeoutMs: 20 });
+      const slow = e.embed(["slow"]);
+      const next = e.embed(["next"]);
+      await expect(slow).rejects.toThrow();
+      await expect(next).resolves.toHaveLength(1);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    test("a query embed times out on the same deadline", async () => {
+      mockFetch.mockImplementation(
+        (_url: string, init: { signal: AbortSignal }) =>
+          new Promise((_, reject) =>
+            init.signal.addEventListener("abort", () => reject(init.signal.reason)),
+          ),
+      );
+      await expect(embedder(1, { timeoutMs: 20 }).embedQuery("q")).rejects.toThrow();
+    });
+
+    test("maxBackgroundRequests=Infinity leaves background unbounded", async () => {
+      const server = heldServer();
+      const pending = embedder(Infinity).embed(["a", "b", "c", "d", "e"]);
+      await server.settle();
+      expect(server.sent).toHaveLength(5);
+      for (const name of ["a", "b", "c", "d", "e"]) await server.answer(name);
+      await pending;
+    });
   });
 
   test("embedQuery() sends single text and returns one vector", async () => {
@@ -305,7 +365,7 @@ describe("HttpEmbedder", () => {
     const embedder = new HttpEmbedder({
       baseUrl: "http://localhost:8001",
       model: "m",
-      maxConcurrentRequests: 1,
+      maxBackgroundRequests: 1,
     });
 
     const pending = embedder.embed(["test"]);
