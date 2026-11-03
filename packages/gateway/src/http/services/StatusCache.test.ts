@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDatabase } from "../../db.js";
 import { directReadPort } from "../../scheduler/read-port.js";
+import { SchedulerQueueFullError } from "../../scheduler/types.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { StatusCache } from "./StatusCache.js";
 import {
@@ -105,7 +106,7 @@ describe("StatusCache refresh through a read port", () => {
     expect(cache.listDevices.map((d) => d.name)).toEqual(["Example phone"]);
   });
 
-  test("a failed port read is reported, unless it met a lock or the cache had stopped", async () => {
+  test("a failed port read is reported, unless it met a lock, a full io queue or the cache had stopped", async () => {
     const path = `/tmp/omnesis-status-cache-${randomUUID()}.db`;
     paths.push(path);
     const db = createDatabase(path);
@@ -126,6 +127,11 @@ describe("StatusCache refresh through a read port", () => {
     const locked = cache.refreshAll();
     fail(new Error("SqliteError: database is locked"));
     await expect(locked).resolves.toBeUndefined();
+
+    // So does a read the io queue refused: the next tick asks again.
+    const queueFull = cache.refreshAll();
+    fail(new SchedulerQueueFullError("io.statusCacheSnapshot", "io", "background", 500, 500));
+    await expect(queueFull).resolves.toBeUndefined();
 
     const stopping = cache.refreshAll();
     cache.stop();

@@ -17,7 +17,7 @@ import { createDatabase } from "../db.js";
 import { saveKnowledgeNode } from "../brain/knowledge/storage.js";
 import { buildKnowledgeDocumentInput } from "../brain/knowledge/mirror.js";
 import {
-  directKnowledgeReadabilityReads,
+  knowledgeDocumentsReadable,
   type KnowledgeDocumentRef,
   type KnowledgeReadabilityReads,
 } from "../brain/knowledge/retrieval-fence.js";
@@ -159,12 +159,11 @@ test.each([
     expect(mainSql.some((sql) => FENCE_SQL.some((fence) => fence.test(sql)))).toBe(true);
 
     const asked: KnowledgeDocumentRef[][] = [];
-    const direct = directKnowledgeReadabilityReads(worker);
     mainSql = [];
     const actual = await pipeline({
       knowledgeDocumentsReadable: (refs) => {
         asked.push([...refs]);
-        return direct.knowledgeDocumentsReadable(refs);
+        return Promise.resolve(knowledgeDocumentsReadable(worker, refs));
       },
     }).search(QUERY, undefined, options);
 

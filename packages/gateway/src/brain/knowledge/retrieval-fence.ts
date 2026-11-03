@@ -18,17 +18,10 @@ export interface KnowledgeDocumentRef {
 
 /**
  * Where a batch of readability verdicts is read. The gateway passes its read
- * worker, so a search's candidate pool is fenced off the main event loop;
- * {@link directKnowledgeReadabilityReads} reads on the caller's own handle.
+ * worker, so a search's candidate pool is fenced off the main event loop.
  */
 export interface KnowledgeReadabilityReads {
   knowledgeDocumentsReadable(refs: readonly KnowledgeDocumentRef[]): Promise<boolean[]>;
-}
-
-export function directKnowledgeReadabilityReads(db: Database.Database): KnowledgeReadabilityReads {
-  return {
-    knowledgeDocumentsReadable: (refs) => Promise.resolve(knowledgeDocumentsReadable(db, refs)),
-  };
 }
 
 /**
@@ -151,16 +144,4 @@ function knowledgeMirrorIsCurrent(
   if (node.validity === "stale") return isKnowledgeNodeReadable(db, nodeId);
   const fence = knowledgeNodeFence(db, nodeId);
   return !fence.hidden && validity === (fence.stale ? "stale" : node.validity);
-}
-
-export function filterKnowledgeDocuments<T>(
-  db: Database.Database,
-  rows: readonly T[],
-  documentId: (row: T) => string,
-): T[] {
-  const verdicts = knowledgeDocumentsReadable(
-    db,
-    rows.map((row) => ({ documentId: documentId(row) })),
-  );
-  return rows.filter((_, i) => verdicts[i]);
 }

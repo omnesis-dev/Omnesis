@@ -48,7 +48,6 @@ import {
   validateWatch,
   watchDslSchema,
   type AnalyticsPort,
-  type JournalDocument,
   type JudgeProvider,
   type RecallScorer,
   type WatchFailure,

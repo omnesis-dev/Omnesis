@@ -95,7 +95,9 @@ Two shared building blocks apply to every purpose:
   waits for every background input already sent; keeping that queue to about
   32 inputs keeps a local server busy while a query waits about half a second
   instead of several. Raise both knobs for a remote API that serves requests
-  concurrently.
+  concurrently. The embedder that rebuilds the index for a reindex or a model
+  swap caps its background requests with `indexer.embedConcurrency`
+  (`OMNESIS_EMBED_CONCURRENCY`, default 2) instead.
 - **Does not send `dimensions`.** A configured smaller output dimension is
   truncated **client-side by slicing** (no re-normalization). The vector index
   uses cosine distance (`MetricKind.Cos`), so magnitude loss from slicing is

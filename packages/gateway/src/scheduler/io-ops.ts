@@ -621,6 +621,9 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
 export const IoOps: ReadonlyMap<string, Task<unknown[], unknown>> = (() => {
   const map = new Map<string, Task<unknown[], unknown>>();
   for (const def of COMPUTE_OP_DEFS) {
+    // A second definition would silently replace the first one's priority and
+    // budget, a read port's included.
+    if (map.has(def.name)) throw new Error(`io op defined twice: ${def.name}`);
     map.set(def.name, {
       name: def.name,
       runner: "io",

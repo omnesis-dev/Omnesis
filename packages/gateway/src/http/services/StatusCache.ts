@@ -3,6 +3,7 @@
 
 import { createLogger } from "@omnesis/core";
 import { withActivity } from "../../observability/main-activity.js";
+import { isBackpressure } from "../../scheduler/backpressure.js";
 import {
   readStatusCacheSnapshot,
   type StatusCacheReads,
@@ -123,6 +124,11 @@ export class StatusCache {
     } catch (err) {
       // The read worker goes away with the scheduler during shutdown.
       if (this.stopped) return;
+      // A full io queue keeps the previous cache until the next tick, as a lock does.
+      if (isBackpressure(err)) {
+        log.debug(`refreshDb: io queue backpressure, keeping previous cache (${String(err)})`);
+        return;
+      }
       StatusCache.keepOnTransientLock(err);
       return;
     }

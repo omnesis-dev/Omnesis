@@ -19,8 +19,8 @@ import { createOpenLoop } from "../storage/open-loops.js";
 import { OPEN_LOOP_SOURCE_ID } from "../open-loop-source/source-meta.js";
 import { buildKnowledgeDocumentInput } from "./mirror.js";
 import {
-  directKnowledgeReadabilityReads,
   isKnowledgeDocumentReadable,
+  knowledgeDocumentsReadable,
   type KnowledgeDocumentRef,
   type KnowledgeReadabilityReads,
 } from "./retrieval-fence.js";
@@ -41,8 +41,8 @@ let scheduler: Scheduler;
 let worker: KnowledgeReadabilityReads;
 
 /**
- * The readability rule judged one hit at a time, reading each knowledge node
- * through `getKnowledgeNode` and so always through the full fence.
+ * Reference oracle: the readability rule applied one hit at a time, reading
+ * each knowledge node through `getKnowledgeNode` and so always through the full fence.
  */
 function perHitReadable(documentId: string, sourceId?: string): boolean {
   const source =
@@ -303,9 +303,7 @@ it("fences every hit on the worker exactly as the per-hit rule does on a direct 
   expect(verdict("missing", undefined)).toBe(false);
 
   expect(await worker.knowledgeDocumentsReadable(refs)).toEqual(expected);
-  expect(await directKnowledgeReadabilityReads(db).knowledgeDocumentsReadable(refs)).toEqual(
-    expected,
-  );
+  expect(knowledgeDocumentsReadable(db, refs)).toEqual(expected);
   expect(refs.map((ref) => isKnowledgeDocumentReadable(db, ref.documentId, ref.sourceId))).toEqual(
     expected,
   );
