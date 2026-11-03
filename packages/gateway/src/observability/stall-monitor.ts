@@ -91,6 +91,12 @@ export interface StallReportQuery {
   limit: number;
 }
 
+/**
+ * A snapshot that began this far into its stall says so on the stall line: what
+ * it names ran late in the stall, and the time before it is unexplained.
+ */
+const LATE_SNAPSHOT_MS = 1_000;
+
 function formatGiB(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)}GiB`;
 }
@@ -100,7 +106,11 @@ export function formatStallLine(
   r: StallRecord,
   mem: { heapUsed: number; rss: number } = process.memoryUsage(),
 ): string {
-  const at = r.code ? ` at ${formatFrame(r.code)}` : "";
+  const sampledLate =
+    r.codeSampledAfterMs != null && r.codeSampledAfterMs >= LATE_SNAPSHOT_MS
+      ? ` (sampled ${(r.codeSampledAfterMs / 1000).toFixed(1)}s in)`
+      : "";
+  const at = r.code ? ` at ${formatFrame(r.code)}${sampledLate}` : "";
   let where: string;
   if (r.attribution === "running") {
     where = ` in ${r.activity}${r.outer && r.outer !== r.activity ? ` (outer: ${r.outer})` : ""}${at}`;

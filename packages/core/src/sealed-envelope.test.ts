@@ -11,8 +11,10 @@
 import { describe, expect, test } from "vitest";
 import {
   openStringEnvelope,
+  openStringEnvelopeAsync,
   parseSealedEnvelope,
   sealStringEnvelope,
+  sealStringEnvelopeAsync,
   SealedEnvelopeInvalidError,
   type SealedEnvelopeScope,
 } from "./sealed-envelope.js";
@@ -93,6 +95,56 @@ describe("sealStringEnvelope / openStringEnvelope", () => {
     expect(() => openStringEnvelope({ ...env, tag: flip(env.tag) }, PASSPHRASE, scope)).toThrow(
       SealedEnvelopeInvalidError,
     );
+  });
+});
+
+describe("the asynchronous twins", () => {
+  test("open what the synchronous form sealed, and seal what it opens", async () => {
+    const scope: SealedEnvelopeScope = { marker: MARKER, aad: "entry-name" };
+    for (const value of ["", "café ☕ — sk-\u{1f510}", "value-42"]) {
+      const sealedSync = sealStringEnvelope(value, PASSPHRASE, scope);
+      expect(await openStringEnvelopeAsync(sealedSync, PASSPHRASE, scope)).toBe(value);
+      const sealedAsync = await sealStringEnvelopeAsync(value, PASSPHRASE, scope);
+      expect(openStringEnvelope(sealedAsync, PASSPHRASE, scope)).toBe(value);
+      // Same envelope shape and parameters: only the random salt, IV and their
+      // ciphertext differ.
+      expect(Object.keys(sealedAsync).sort()).toEqual(Object.keys(sealedSync).sort());
+      expect({ ...sealedAsync, salt: "", iv: "", tag: "", ciphertext: "" }).toEqual({
+        ...sealedSync,
+        salt: "",
+        iv: "",
+        tag: "",
+        ciphertext: "",
+      });
+    }
+  });
+
+  test("reject what the synchronous form rejects", async () => {
+    const scope: SealedEnvelopeScope = { marker: MARKER, aad: "entry-name" };
+    const env = sealStringEnvelope("secret", PASSPHRASE, scope);
+    await expect(openStringEnvelopeAsync(env, "wrong passphrase", scope)).rejects.toBeInstanceOf(
+      SealedEnvelopeInvalidError,
+    );
+    await expect(
+      openStringEnvelopeAsync(env, PASSPHRASE, { marker: MARKER, aad: "another-entry" }),
+    ).rejects.toBeInstanceOf(SealedEnvelopeInvalidError);
+    await expect(
+      openStringEnvelopeAsync({ ...env, n: 1 << 20 }, PASSPHRASE, scope),
+    ).rejects.toBeInstanceOf(SealedEnvelopeInvalidError);
+  });
+
+  test("let the event loop turn while the key is derived", async () => {
+    let turns = 0;
+    const ticker = setInterval(() => turns++, 1);
+    try {
+      const env = await sealStringEnvelopeAsync("secret", PASSPHRASE, { marker: MARKER });
+      expect(await openStringEnvelopeAsync(env, PASSPHRASE, { marker: MARKER })).toBe("secret");
+    } finally {
+      clearInterval(ticker);
+    }
+    // Two scrypt derivations outlast a millisecond timer, so it fires while
+    // they run on the thread pool; derived on this thread, it could not.
+    expect(turns).toBeGreaterThan(0);
   });
 });
 

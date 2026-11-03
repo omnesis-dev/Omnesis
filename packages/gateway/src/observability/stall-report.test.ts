@@ -15,6 +15,7 @@ function stall(overrides: Partial<StallEvent>): StallEvent {
     outer: null,
     inFlight: [],
     code: null,
+    codeSampledAfterMs: null,
     stack: [],
     profileId: null,
     ...overrides,
@@ -137,5 +138,21 @@ describe("formatStallLine", () => {
     expect(
       formatStallLine(attributeStall(stall({ activity: "POST /sql", code }), null), mem),
     ).toContain("in POST /sql at runQuery (packages/gateway/src/sql.ts:42);");
+  });
+
+  test("says when the snapshot began late in the stall", () => {
+    const code = { functionName: "buildTools", file: "packages/agent/src/tools.ts", line: 7 };
+    const late = formatStallLine(
+      attributeStall(stall({ durationMs: 30_000, code, codeSampledAfterMs: 21_300 }), null),
+      mem,
+    );
+    expect(late).toContain(
+      "stalled 30000ms at buildTools (packages/agent/src/tools.ts:7) (sampled 21.3s in) outside any marked activity;",
+    );
+    const early = formatStallLine(
+      attributeStall(stall({ durationMs: 30_000, code, codeSampledAfterMs: 500 }), null),
+      mem,
+    );
+    expect(early).toContain("at buildTools (packages/agent/src/tools.ts:7) outside");
   });
 });

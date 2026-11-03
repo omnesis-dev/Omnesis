@@ -97,6 +97,29 @@ describe("omnesis stalls", () => {
     expect(text).toContain("at all\n");
   });
 
+  test("says when a stall's snapshot began late in it", () => {
+    const code = { functionName: "buildTools", file: "packages/agent/src/tools.ts", line: 7 };
+    const text = plain(
+      renderStalls({
+        ...report,
+        recent: [
+          {
+            startedAt: "2026-01-01T10:00:00.000Z",
+            durationMs: 30_000,
+            activity: null,
+            outer: null,
+            inFlight: [],
+            attribution: "code",
+            culprit: "buildTools (packages/agent/src/tools.ts:7)",
+            code,
+            codeSampledAfterMs: 21_300,
+          },
+        ],
+      }),
+    );
+    expect(text).toContain("buildTools (packages/agent/src/tools.ts:7) (sampled 21.3s in)");
+  });
+
   test("says when detection is off and nothing was recorded", () => {
     const text = plain(
       renderStalls({

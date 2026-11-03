@@ -21,9 +21,13 @@
  * Linux distros all have openssl). One-shot at first boot, output goes to
  * disk under <configDir>/tls/, subsequent boots load from disk. ~80 LOC
  * total, no supply chain surface, no manual ASN.1.
+ *
+ * The program runs through `processLauncher()` and is awaited: generating an
+ * RSA key takes tens to hundreds of milliseconds on a fast host and seconds on
+ * a slow or contended one, and a synchronous spawn would hold the event loop
+ * for all of it.
  */
 
-import { execFileSync } from "node:child_process";
 import { X509Certificate, createHash, createPrivateKey } from "node:crypto";
 import {
   chmodSync,
@@ -44,6 +48,11 @@ import {
   localMdnsHostname,
   safeNetworkInterfaces,
 } from "@omnesis/core";
+
+import { processLauncher } from "./process-launcher/index.js";
+
+/** Longest `openssl req` may take to generate the key and sign the certificate. */
+const OPENSSL_TIMEOUT_MS = 120_000;
 
 const log = createLogger("gateway").child("tls");
 
@@ -118,7 +127,7 @@ export function tlsExtraHostNames(raw: string | undefined): string[] {
  *      present, generate-and-persist otherwise — and return that
  *      (source=auto-generated).
  */
-export function resolveTlsBundle(opts: ResolveTlsBundleOpts): TlsBundle {
+export async function resolveTlsBundle(opts: ResolveTlsBundleOpts): Promise<TlsBundle> {
   const { configDir, envCertPath, envKeyPath, envExtraNames } = opts;
 
   // The installer (scripts/install.sh) auto-provisions a real cert here when
@@ -165,7 +174,7 @@ export function resolveTlsBundle(opts: ResolveTlsBundleOpts): TlsBundle {
 
   // Generate a fresh bundle and persist it.
   mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
-  const generated = generateSelfSigned({ extraNames: envExtraNames });
+  const generated = await generateSelfSigned({ extraNames: envExtraNames });
   writeFileSync(certPath, generated.cert, { mode: 0o600 });
   writeFileSync(keyPath, generated.key, { mode: 0o600 });
   // mkdirSync's mode is masked by umask on some platforms; force it.
@@ -218,11 +227,13 @@ export function fingerprintFromCertPem(certPem: string): string {
  * notBefore: now - 1 day (clock-skew tolerance).
  * notAfter:  now + 10 years.
  */
-export function generateSelfSigned(opts: { extraNames?: string } = {}): {
+export async function generateSelfSigned(
+  opts: { extraNames?: string; signal?: AbortSignal } = {},
+): Promise<{
   cert: string;
   key: string;
   fingerprintSha256: string;
-} {
+}> {
   const tmpDir = mkdtempSync(join(tmpdir(), "omnesis-tls-"));
   const keyPath = join(tmpDir, "key.pem");
   const certPath = join(tmpDir, "cert.pem");
@@ -292,7 +303,7 @@ subjectAltName = ${sanList}
     // -days 3650 ≈ 10 years. -newkey rsa:2048 generates the keypair.
     // -nodes leaves the key unencrypted (we set 0600 on disk anyway).
     // -x509 emits a self-signed cert directly. -keyout/-out write PEMs.
-    execFileSync(
+    const run = await processLauncher().run(
       "openssl",
       [
         "req",
@@ -309,8 +320,28 @@ subjectAltName = ${sanList}
         "-config",
         cnfPath,
       ],
-      { stdio: ["ignore", "ignore", "pipe"] },
+      {
+        timeoutMs: OPENSSL_TIMEOUT_MS,
+        captureStdout: false,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      },
     );
+    if (run.failure || run.exitCode !== 0) {
+      const why =
+        run.failure === "spawn"
+          ? `could not be started${run.failureMessage ? ` (${run.failureMessage})` : ""}`
+          : run.failure === "timeout"
+            ? `did not finish within ${OPENSSL_TIMEOUT_MS / 1000}s`
+            : run.failure === "aborted"
+              ? "was aborted"
+              : run.signal
+                ? `was killed by ${run.signal}`
+                : `exited with code ${run.exitCode}`;
+      const stderr = run.stderr.trim();
+      throw new Error(
+        `openssl could not generate the self-signed certificate: it ${why}${stderr ? `: ${stderr}` : ""}`,
+      );
+    }
 
     let keyPem = readFileSync(keyPath, "utf8");
     const certPem = readFileSync(certPath, "utf8");

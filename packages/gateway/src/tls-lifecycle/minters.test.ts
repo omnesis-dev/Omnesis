@@ -16,7 +16,7 @@ describe("createHostMinter", () => {
       run: async (file) => {
         runs.push(file);
       },
-      selfSigned: () => ({ cert: "CERT", key: "KEY" }),
+      selfSigned: () => Promise.resolve({ cert: "CERT", key: "KEY" }),
     });
     expect(await minter.mint("self-signed", ["localhost"], signal())).toEqual({
       cert: "CERT",

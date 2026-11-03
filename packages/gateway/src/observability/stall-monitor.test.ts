@@ -138,6 +138,9 @@ describe("StallMonitor", () => {
     expect(stall.stack.map((f) => f.functionName)).toContain("unmarkedStallForTest");
     expect(stall.code?.file).toMatch(/stall-monitor\.test\.ts$/);
     expect(stall.culprit).toMatch(/stall-monitor\.test\.ts:\d+\)$/);
+    // The snapshot began while the stall lasted.
+    expect(stall.codeSampledAfterMs).toBeGreaterThan(0);
+    expect(stall.codeSampledAfterMs).toBeLessThan(stall.durationMs);
   });
 
   test("does not pin a stall in native code on the code that ran after it", async () => {
@@ -149,7 +152,12 @@ describe("StallMonitor", () => {
     const stall = await eventually(async () =>
       (await read(monitor)).recent.find((s) => s.durationMs >= 1_000),
     );
-    expect(stall).toMatchObject({ code: null, stack: [], attribution: "none" });
+    expect(stall).toMatchObject({
+      code: null,
+      codeSampledAfterMs: null,
+      stack: [],
+      attribution: "none",
+    });
   });
 
   test(

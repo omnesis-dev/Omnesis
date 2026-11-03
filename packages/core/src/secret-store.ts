@@ -18,8 +18,9 @@ import { join } from "node:path";
 import { atomicWriteFile } from "./atomic-write.js";
 import {
   openStringEnvelope,
+  openStringEnvelopeAsync,
   parseSealedEnvelope,
-  sealStringEnvelope,
+  sealStringEnvelopeAsync,
   SealedEnvelopeInvalidError,
 } from "./sealed-envelope.js";
 import {
@@ -835,7 +836,7 @@ class PassphraseSecretStore implements SecretStore {
       throw new PassphraseMismatchError(name);
     }
     try {
-      return openStringEnvelope(parsed, passphrase, {
+      return await openStringEnvelopeAsync(parsed, passphrase, {
         marker: PASSPHRASE_ENVELOPE_MARKER,
         aad: name,
       });
@@ -847,7 +848,7 @@ class PassphraseSecretStore implements SecretStore {
 
   async write(name: string, value: string): Promise<void> {
     const passphrase = this.requirePassphrase();
-    const envelope = sealStringEnvelope(value, passphrase, {
+    const envelope = await sealStringEnvelopeAsync(value, passphrase, {
       marker: PASSPHRASE_ENVELOPE_MARKER,
       aad: name,
     });
