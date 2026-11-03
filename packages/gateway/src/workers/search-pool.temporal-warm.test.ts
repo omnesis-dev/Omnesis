@@ -114,7 +114,7 @@ function workerThreads(p: SearchWorkerPool): string[] {
   return slots.map((s) => String(s.worker?.threadId));
 }
 
-test("warms nothing until asked, then one worker at a time, sending readings to a warm one", async () => {
+test("warms nothing until asked, then one worker at a time, serving readings meanwhile", async () => {
   const p = startPool(3);
   await p.start();
   // One reading per worker: each worker handles its messages in order, so a
@@ -135,8 +135,10 @@ test("warms nothing until asked, then one worker at a time, sending readings to 
   expect(entries()).toEqual([`start ${first}`, `end ${first}`, `start ${second}`]);
   expect(second).not.toBe(first);
 
-  // While the second warms, readings go to the one warm worker.
-  for (let i = 0; i < 4; i++) expect(await readingThread(p)).toBe(first);
+  // While the second warms, every worker still serves readings.
+  const meanwhile = new Set<string>();
+  for (let i = 0; i < 3; i++) meanwhile.add(await readingThread(p));
+  expect(meanwhile).toEqual(new Set(workerThreads(p)));
 
   release(second);
   await waitFor("the third warm-up", () => entries().length === 5);

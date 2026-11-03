@@ -297,29 +297,22 @@ export class SearchWorkerPool {
     options: TemporalIntentOptions,
   ): Promise<TemporalIntent | null> {
     if (this.isStarting) await this.firstReady();
-    return (await this.dispatch(
-      "search-worker:temporal-intent",
-      (id, enqueueMs) => ({
-        type: "temporalIntent",
-        id,
-        text,
-        options,
-        enqueueMs,
-      }),
-      // A warm worker answers at once; a cold one would build models first.
-      (slot) => slot.temporal === "warm",
-    )) as TemporalIntent | null;
+    return (await this.dispatch("search-worker:temporal-intent", (id, enqueueMs) => ({
+      type: "temporalIntent",
+      id,
+      text,
+      options,
+      enqueueMs,
+    }))) as TemporalIntent | null;
   }
 
   /**
    * Build the date recognizer's models on every worker, one worker at a time,
    * and on each worker that replaces a dead one. Building them takes a second
    * or more of CPU per worker, so all workers at once would occupy as many
-   * cores just as the gateway starts serving; one at a time occupies one, and
-   * readings go to the warm workers meanwhile, even when a cold one has fewer
-   * calls in flight: a cold worker would spend a second or more building the
-   * models first. With no warm worker, a reading goes to the least-loaded one,
-   * which builds the models it needs itself.
+   * cores just as the gateway starts serving; one at a time occupies one.
+   * Readings are dispatched as always meanwhile, and one that reaches a worker
+   * that is not warm yet builds the models it needs there.
    */
   warmDateRecognizers(): void {
     if (!this.opts.warmTemporalIntent || this.disposed) return;
@@ -360,22 +353,19 @@ export class SearchWorkerPool {
 
   /**
    * Post one operation to the ready worker with the fewest calls in flight
-   * (ties rotate) and correlate its reply by id. With `prefer`, the choice is
-   * among the ready workers it accepts, when there are any.
+   * (ties rotate) and correlate its reply by id.
    */
   private dispatch(
     span: string,
     message: (id: number, enqueueMs: number) => MainToSearch,
-    prefer?: (slot: WorkerSlot) => boolean,
   ): Promise<CandidateGenResult | TemporalIntent | null> {
     if (this.disposed) return Promise.reject(new Error("search worker pool disposed"));
     if (this.slots.length === 0) return Promise.reject(new Error("search worker pool not started"));
     const live = this.slots.filter((s) => s.ready && s.worker !== null);
     if (live.length === 0) return Promise.reject(new Error("no search worker is ready"));
-    const preferred = prefer ? live.filter(prefer) : [];
     const id = this.nextId++;
     const slot = leastLoaded(
-      preferred.length > 0 ? preferred : live,
+      live,
       [...this.inflight.values()].map((p) => p.slot),
       id,
     );
