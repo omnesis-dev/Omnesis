@@ -7,11 +7,12 @@
  * Each brief opens its day under a separator ("Today", "Yesterday",
  * "Tue 13 Oct"). The brief carries a header with its send time and, under it,
  * what it was based on: the observations it shipped, each with chips for its
- * sources and its tasks. The latest day is open, with that list expanded;
+ * sources and its tasks, and the documents it used directly. The latest day
+ * is open, with that list expanded;
  * every earlier day folds to one summary line until it is opened. What is
  * open is remembered for as long as the conversation stays on screen.
  *
- * Each listed item takes a thumbs up or down. Up is one click and lands at
+ * Each observation takes a thumbs up or down. Up is one click and lands at
  * once; down asks which kind of "not useful" it was — not interested, which
  * teaches the Brain what to leave out, or a factual error, which goes to
  * Omnesis as a correction note — with room for a sentence of the owner's own.
@@ -158,7 +159,9 @@ export function BriefThread({ conversationId, turns, citations, dispatch, onEdit
       const isLatest = group.day === latest;
       const open = isLatest || openDays.has(group.day);
       const detail = details.get(group.day);
-      const itemCount = detail?.status === "ok" ? (detail.data?.items?.length ?? 0) : null;
+      const itemCount = detail?.status === "ok"
+        ? (detail.data?.items?.length ?? 0) + (detail.data?.references?.length ?? 0)
+        : null;
       const label = briefDayLabel(group.day, today);
       const [brief, ...rest] = group.turns;
       return html`<section class="brief-day" key=${`brief-day-${group.day}`} aria-label=${`Morning brief, ${label}`}>
@@ -229,14 +232,26 @@ function BriefFooter({ detail, open, onToggle, onRetry, onReact }) {
     </div>`;
   }
   const items = detail.data?.items ?? [];
-  if (items.length === 0) return null;
+  const references = detail.data?.references ?? [];
+  const count = items.length + references.length;
+  if (count === 0) return null;
   return html`<div class=${`brief-footer${open ? " open" : ""}`}>
     <button type="button" class="brief-footer-toggle" aria-expanded=${open} onClick=${onToggle}>
       ${CHEVRON}
-      <span>${basedOnLabel(items.length)}</span>
+      <span>${basedOnLabel(count)}</span>
     </button>
     ${open && html`<ol class="brief-items">
       ${items.map((item) => html`<${BriefItem} key=${item.observationId} item=${item} onReact=${onReact} />`)}
+      ${references.map((source) => html`<li class="brief-item brief-reference" key=${`reference-${source.id}`}>
+        <div class="brief-item-body">
+          <${DocChip}
+            className="brief-chip"
+            documentId=${source.id}
+            title=${source.title}
+            sourceId=${source.sourceType ?? ""}
+          />
+        </div>
+      </li>`)}
     </ol>`}
   </div>`;
 }

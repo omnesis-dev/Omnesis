@@ -24,6 +24,7 @@ const EXPECTED_TABLES = [
   "cognition_spend",
   "cognition_spend_daily",
   "morning_brief_items",
+  "morning_brief_references",
   "morning_briefs",
   "observation_citations",
   "observation_outcomes",
