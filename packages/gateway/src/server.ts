@@ -14,7 +14,12 @@ import {
   pickSourceSettings,
   type OmnesisConfig,
 } from "@omnesis/config";
-import { createLogger, parseDuration, type WsRequestPayload } from "@omnesis/core";
+import {
+  createLogger,
+  parseDuration,
+  type HostNetwork,
+  type WsRequestPayload,
+} from "@omnesis/core";
 import {
   missingHostedWriteScopes,
   SourceId,
@@ -608,6 +613,11 @@ export function createServer(
     pairingHostNames?: () => readonly string[];
     /** Whether the gateway runs inside a container. */
     inContainer?: boolean;
+    /**
+     * The network of the Docker host a bridged container runs on, as the
+     * host's launcher recorded it (`<config>/host-network`), or null.
+     */
+    hostNetwork?: () => HostNetwork | null;
     /**
      * Externally-reachable HTTPS base URL of this gateway (no trailing
      * slash). Forwarded to a collector's `auth.begin` so a source's
@@ -1533,6 +1543,7 @@ export function createServer(
     certificateRenewsAt: opts?.certificateRenewsAt,
     pairingHostNames: opts?.pairingHostNames,
     inContainer: opts?.inContainer,
+    hostNetwork: opts?.hostNetwork,
     gatewayPort: opts?.port,
     searchSnapshot: opts?.searchSnapshot,
     doctorService,

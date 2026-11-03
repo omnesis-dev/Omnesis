@@ -1708,6 +1708,130 @@ EOF
   );
 });
 
+describe("install.sh --docker: the host's network, for pairing phones", () => {
+  /**
+   * This host's interfaces, the same through Linux's `ip` and `ifconfig`: a
+   * loopback, a LAN address, a container bridge and a Tailscale address. The
+   * gateway, not the launcher, decides which of them a phone can use.
+   */
+  function installInterfaces(lan) {
+    writeExecutable(
+      fixturePath("fake-bin", "ip"),
+      `#!/bin/sh
+cat <<'EOF'
+1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever preferred_lft forever
+2: en0    inet ${lan}/24 brd 192.0.2.255 scope global dynamic en0\\       valid_lft 86000sec preferred_lft 86000sec
+3: docker0    inet 198.51.100.1/24 brd 198.51.100.255 scope global docker0\\       valid_lft forever preferred_lft forever
+4: utun4    inet 100.64.0.7/32 scope global utun4\\       valid_lft forever preferred_lft forever
+EOF
+`,
+    );
+    writeExecutable(
+      fixturePath("fake-bin", "ifconfig"),
+      `#!/bin/sh
+cat <<'EOF'
+lo: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+	inet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	inet6 fe80::1c2b:3aff:fe4d:5e6f%en0 prefixlen 64 secured scopeid 0x4
+	inet ${lan} netmask 0xffffff00 broadcast 192.0.2.255
+docker0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	inet 198.51.100.1 netmask 0xffffff00 broadcast 198.51.100.255
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
+	inet 100.64.0.7 --> 100.64.0.7 netmask 0xffffffff
+EOF
+`,
+    );
+  }
+
+  /** A host named Studio-Northstar; it answers mDNS through scutil on macOS, avahi on Linux. */
+  function installMdnsName(answers = true) {
+    writeExecutable(
+      fixturePath("fake-bin", "hostname"),
+      '#!/bin/sh\nif [ "${1:-}" = -s ]; then echo Studio-Northstar; else echo Studio-Northstar.example.com; fi\n',
+    );
+    writeExecutable(
+      fixturePath("fake-bin", "scutil"),
+      '#!/bin/sh\n[ "$*" = "--get LocalHostName" ] && echo Studio-Northstar\n',
+    );
+    writeExecutable(
+      fixturePath("fake-bin", "avahi-daemon"),
+      `#!/bin/sh\n[ "\${1:-}" = --check ] && exit ${answers ? 0 : 1}\nexit 2\n`,
+    );
+  }
+
+  const facts = (run) =>
+    readFileSync(join(run.configDir, "host-network"), "utf8")
+      .split("\n")
+      .filter((line) => line && !line.startsWith("#"));
+
+  function runWrapper(run, args) {
+    return spawnSync(run.wrapper, args, {
+      env: {
+        PATH: `${fixturePath("fake-bin")}:/usr/bin:/bin`,
+        HOME: run.home,
+        OMNESIS_TEST_DOCKER: dockerLog(run.home),
+      },
+      input: "",
+      encoding: "utf8",
+    });
+  }
+
+  test("the launcher records the published port, this host's interfaces and its .local name", () => {
+    installInterfaces("192.0.2.47");
+    installMdnsName();
+    const run = runInstaller("host-network", [...QUIET, "--port", "8443"]);
+    expect(run.status, run.output).toBe(0);
+    expect(parseYaml(composeAt(run)).services.gateway.ports).toContain("8443:7600");
+    expect(facts(run)).toEqual([
+      "port 8443",
+      "local-name studio-northstar.local",
+      "interface lo 127.0.0.1",
+      "interface en0 192.0.2.47",
+      "interface docker0 198.51.100.1",
+      "interface utun4 100.64.0.7",
+    ]);
+    // Readable by the gateway's account in the container, whoever wrote it.
+    expect(statSync(join(run.configDir, "host-network")).mode & 0o777).toBe(0o644);
+  });
+
+  test("a new address from the router is recorded by the next command", () => {
+    installInterfaces("192.0.2.47");
+    installMdnsName();
+    const run = runInstaller("host-network-dhcp", QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(facts(run)).toContain("interface en0 192.0.2.47");
+    installInterfaces("192.0.2.61");
+    const proc = runWrapper(run, ["status"]);
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(facts(run)).toContain("interface en0 192.0.2.61");
+    expect(facts(run)).not.toContain("interface en0 192.0.2.47");
+  });
+
+  test.skipIf(process.platform === "darwin")(
+    "a Linux host without avahi records no .local name",
+    () => {
+      installInterfaces("192.0.2.47");
+      installMdnsName(false);
+      const run = runInstaller("host-network-no-mdns", QUIET);
+      expect(run.status, run.output).toBe(0);
+      expect(facts(run).some((line) => line.startsWith("local-name"))).toBe(false);
+    },
+  );
+
+  test("host networking keeps no record, and drops one an earlier bridge install left", () => {
+    installInterfaces("192.0.2.47");
+    installMdnsName();
+    const home = prepareHome("host-network-host-mode");
+    const configDir = join(home, ".config", "omnesis");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, "host-network"), "port 7600\ninterface en0 192.0.2.10\n");
+    const run = runInstaller("host-network-host-mode", [...QUIET, "--docker-network", "host"]);
+    expect(run.status, run.output).toBe(0);
+    expect(existsSync(join(run.configDir, "host-network"))).toBe(false);
+  });
+});
+
 describe("install.sh --docker: the wrapper it leaves behind", () => {
   /**
    * A `docker` that writes one argument per line, so a test can see what the

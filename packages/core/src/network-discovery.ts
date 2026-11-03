@@ -197,30 +197,43 @@ export interface NetworkIdentity {
   offLan: boolean;
 }
 
-/**
- * Discover every address a client could use to reach this host.
- * Ordering: LAN (en* first) → mDNS → Tailscale MagicDNS → tailnet IP.
- * First entry is the recommended default for on-LAN setups.
- */
-export async function discoverNetworkIdentities(): Promise<NetworkIdentity[]> {
-  const out: NetworkIdentity[] = [];
+/** The interface addresses `interfaceIdentities` reads, as `os.networkInterfaces()` lists them. */
+export type InterfaceAddresses = Record<
+  string,
+  ReadonlyArray<{ address: string; family: string; internal: boolean }> | undefined
+>;
 
-  // LAN IPv4 addresses. Prefer en*/eth* over everything else; exclude
-  // virtual/overlay interfaces (docker, VM bridges, VPN tunnels) and the
-  // tailnet IP — they're not a LAN segment another machine reaches us on.
+/**
+ * The identities a set of interfaces gives a host: its real LAN IPv4
+ * addresses, preferred interface names first, and the Tailscale IPv4
+ * addresses on a Tailscale interface (`utun*` on macOS, `tailscale*` on
+ * Linux). Excluded: loopback, link-local (169.254), virtual and overlay
+ * interfaces (Docker, VM bridges, VPN tunnels), and a tailnet address on any
+ * other interface. Pure, so the gateway judges the interfaces a Docker host's
+ * launcher reports by exactly the rules it discovers its own with.
+ */
+export function interfaceIdentities(ifaces: InterfaceAddresses): {
+  lan: NetworkIdentity[];
+  tailscaleIps: NetworkIdentity[];
+} {
   const lanPicks: Array<{ address: string; name: string; rank: number }> = [];
-  const utunTailscaleIps: string[] = [];
-  for (const [name, addrs] of Object.entries(safeNetworkInterfaces())) {
+  const tailscaleIps: NetworkIdentity[] = [];
+  for (const [name, addrs] of Object.entries(ifaces)) {
     for (const a of addrs ?? []) {
       if (a.family !== "IPv4" || a.internal) continue;
       if (a.address.startsWith("169.254.")) continue; // link-local
-      // Tailscale uses 100.64.0.0/10 (CGNAT). If it's on a utun interface
-      // surface it as a Tailscale identity below instead of a LAN one —
-      // this way we still detect Tailscale even when the CLI isn't
-      // installed (e.g. Mac App Store Tailscale with CLI disabled). Done
-      // BEFORE the virtual-interface skip, which also matches `utun*`.
-      if (/^utun\d+$/.test(name) && isTailscaleCgnat(a.address)) {
-        utunTailscaleIps.push(a.address);
+      // Tailscale uses 100.64.0.0/10 (CGNAT). On a Tailscale interface it is
+      // surfaced as a Tailscale identity rather than a LAN one, so Tailscale
+      // is detected even without its CLI (e.g. Mac App Store Tailscale with
+      // the CLI disabled). Done BEFORE the virtual-interface skip, which also
+      // matches `utun*` and `tailscale*`.
+      if (/^(?:utun\d+|tailscale\d*)$/.test(name) && isTailscaleCgnat(a.address)) {
+        tailscaleIps.push({
+          address: a.address,
+          label: name.startsWith("utun") ? "Tailscale (utun, off-LAN)" : "Tailscale (off-LAN)",
+          kind: "tailscale",
+          offLan: true,
+        });
         continue;
       }
       if (isVirtualInterface(name)) continue; // docker/VM/VPN/overlay
@@ -229,14 +242,25 @@ export async function discoverNetworkIdentities(): Promise<NetworkIdentity[]> {
     }
   }
   lanPicks.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
-  for (const p of lanPicks) {
-    out.push({
+  return {
+    lan: lanPicks.map((p) => ({
       address: p.address,
       label: `LAN (${p.name})`,
       kind: "lan",
       offLan: false,
-    });
-  }
+    })),
+    tailscaleIps,
+  };
+}
+
+/**
+ * Discover every address a client could use to reach this host.
+ * Ordering: LAN (en* first) → mDNS → Tailscale MagicDNS → tailnet IP.
+ * First entry is the recommended default for on-LAN setups.
+ */
+export async function discoverNetworkIdentities(): Promise<NetworkIdentity[]> {
+  const { lan, tailscaleIps } = interfaceIdentities(safeNetworkInterfaces());
+  const out: NetworkIdentity[] = [...lan];
 
   // mDNS hostname. `hostname()` on macOS can return the trimmed form
   // ("my-mac"); the .local suffix is what Bonjour resolves.
@@ -264,14 +288,7 @@ export async function discoverNetworkIdentities(): Promise<NetworkIdentity[]> {
     if (cliIdentities.length > 0) {
       out.push(...cliIdentities);
     } else if (os === "darwin") {
-      for (const ip of utunTailscaleIps) {
-        out.push({
-          address: ip,
-          label: "Tailscale (utun, off-LAN)",
-          kind: "tailscale",
-          offLan: true,
-        });
-      }
+      out.push(...tailscaleIps);
     }
   }
 
