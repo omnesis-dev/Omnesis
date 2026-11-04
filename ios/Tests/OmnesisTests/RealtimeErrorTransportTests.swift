@@ -7,6 +7,8 @@ import Foundation
 import XCTest
 
 /// Real URLSession transport against a single-use, loopback-only protocol peer.
+/// Process launch and teardown stay on one run loop across socket awaits.
+@MainActor
 final class RealtimeErrorTransportTests: XCTestCase {
     func testRejectedUpgradeRetainsHTTPStatus() async throws {
         for (status, expected) in [
@@ -112,6 +114,7 @@ final class RealtimeErrorTransportTests: XCTestCase {
     }
 }
 
+@MainActor
 private final class LoopbackVoicePeer {
     let url: URL
     private let process: Process
