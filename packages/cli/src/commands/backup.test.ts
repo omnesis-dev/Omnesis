@@ -18,7 +18,13 @@ vi.mock("../utils.js", async (importOriginal) => ({
   },
 }));
 
-import { backupStartedLine, formatBackupProgress, runBackup } from "./backup.js";
+import {
+  backupAction,
+  backupStartedLine,
+  formatBackupProgress,
+  formatBackupStarted,
+  runBackup,
+} from "./backup.js";
 
 beforeEach(() => {
   mocks.gatewayFetch.mockReset();
@@ -313,5 +319,33 @@ describe("formatBackupProgress", () => {
     expect(line).toContain("1 file done · 1.0 KB written · backing up omnesis.db… [7s]");
     expect(line).not.toContain("at most");
     expect(line).not.toContain("so far");
+  });
+});
+
+describe("backupAction", () => {
+  test("no words creates a backup, and --list lists them", () => {
+    expect(backupAction(false, [])).toBe("create");
+    expect(backupAction(true, [])).toBe("list");
+  });
+
+  test("`omnesis backup list` lists instead of starting a backup", () => {
+    expect(backupAction(false, ["list"])).toBe("list");
+  });
+
+  test("any other word is refused, never ignored", () => {
+    for (const words of [["lsit"], ["before", "cleanup"], ["list", "extra"]]) {
+      expect(() => backupAction(false, words)).toThrow(/takes no arguments/);
+    }
+    expect(() => backupAction(false, ["now"])).toThrow(/omnesis backup list/);
+  });
+});
+
+describe("formatBackupStarted", () => {
+  test("two backups on one day read apart by their time", () => {
+    const morning = formatBackupStarted(new Date(2026, 2, 14, 9, 5).toISOString());
+    const evening = formatBackupStarted(new Date(2026, 2, 14, 21, 40).toISOString());
+    expect(morning).toMatch(/ 09:05$/);
+    expect(evening).toMatch(/ 21:40$/);
+    expect(morning.length).toBeLessThanOrEqual(18);
   });
 });

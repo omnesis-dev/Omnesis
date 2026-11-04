@@ -76,7 +76,12 @@ case "$1" in
     esac
     exit 0 ;;
   # The images this install's containers run, one per line.
-  ps) [ -z "\${OMNESIS_TEST_DOCKER_PS_IMAGES:-}" ] || printf '%s\\n' $OMNESIS_TEST_DOCKER_PS_IMAGES; exit 0 ;;
+  ps)
+    # Which compose files own a project's containers; another install's, when a test names one.
+    case "$*" in
+      *project.config_files*) [ -z "\${OMNESIS_TEST_DOCKER_PS_OWNERS:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_PS_OWNERS"; exit 0 ;;
+    esac
+    [ -z "\${OMNESIS_TEST_DOCKER_PS_IMAGES:-}" ] || printf '%s\\n' $OMNESIS_TEST_DOCKER_PS_IMAGES; exit 0 ;;
   manifest)
     case "\${OMNESIS_TEST_MANIFEST_MODE:-success}" in
       success) exit 0 ;;
@@ -1829,8 +1834,61 @@ EOF
       "interface docker0 198.51.100.1",
       "interface utun4 100.64.0.7",
     ]);
-    // Readable by the gateway's account in the container, whoever wrote it.
-    expect(statSync(join(run.configDir, "host-network")).mode & 0o777).toBe(0o644);
+    // Owner-only like the rest of the config directory, so the doctor's
+    // permission check passes; the gateway's container runs as its owner.
+    expect(statSync(join(run.configDir, "host-network")).mode & 0o777).toBe(0o600);
+  });
+
+  test("a second install on the same Docker daemon is refused before it writes anything", () => {
+    // Another account's install (or a sudo run's) already answers to `omnesis`.
+    const other = "/home/someone-else/.config/omnesis/docker-compose.yml";
+    const run = runInstaller("project-taken", QUIET, { OMNESIS_TEST_DOCKER_PS_OWNERS: other });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain(
+      `already runs on this Docker daemon as the compose project omnesis, from ${other}`,
+    );
+    expect(run.output).toContain("docker compose -p omnesis down");
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    const calls = existsSync(dockerLog(run.home)) ? readFileSync(dockerLog(run.home), "utf8") : "";
+    expect(calls).not.toMatch(/^docker compose .* up\b/mu);
+  });
+
+  test("an install keeps the plain project name its own containers carry", () => {
+    const run = runInstaller("project-own", QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(parseYaml(composeAt(run)).name).toBe("omnesis");
+    const rerun = runInstaller("project-own", QUIET, {
+      OMNESIS_TEST_DOCKER_PS_OWNERS: join(run.configDir, "docker-compose.yml"),
+    });
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(parseYaml(composeAt(rerun)).name).toBe("omnesis");
+  });
+
+  test("under a group-writable umask, the config directory is still owner-only", () => {
+    // Ubuntu's default umask is 002; the doctor's permission check wants 0600.
+    const previous = process.umask(0o002);
+    let run;
+    try {
+      run = runInstaller("umask-002", QUIET);
+    } finally {
+      process.umask(previous);
+    }
+    expect(run.status, run.output).toBe(0);
+    for (const name of ["docker-compose.yml", "install-method", ".env", "host-network"]) {
+      expect(statSync(join(run.configDir, name)).mode & 0o777, name).toBe(0o600);
+    }
+  });
+
+  test("a re-run tightens a compose file and install record an older install left group-writable", () => {
+    const first = runInstaller("umask-legacy", QUIET);
+    expect(first.status, first.output).toBe(0);
+    chmodSync(join(first.configDir, "docker-compose.yml"), 0o664);
+    chmodSync(join(first.configDir, "install-method"), 0o664);
+    const rerun = runInstaller("umask-legacy", QUIET);
+    expect(rerun.status, rerun.output).toBe(0);
+    for (const name of ["docker-compose.yml", "install-method"]) {
+      expect(statSync(join(rerun.configDir, name)).mode & 0o777, name).toBe(0o600);
+    }
   });
 
   test("the launcher records this host's disk encryption for the doctor in the container", () => {
@@ -1853,7 +1911,7 @@ EOF
         ? ["platform darwin", "FileVault is On."]
         : ["platform linux", "/dev/mapper/cryptdata ext4 rw,relatime"],
     );
-    expect(statSync(record).mode & 0o777).toBe(0o644);
+    expect(statSync(record).mode & 0o777).toBe(0o600);
   });
 
   test("a new address from the router is recorded by the next command", () => {
@@ -3543,6 +3601,10 @@ exit 0
       ),
     );
     expect(readFileSync(tierCert(run), "utf8")).toBe(minted.pem);
+    // Owner-only, as the doctor's permission check expects.
+    expect(statSync(tierCert(run)).mode & 0o777).toBe(0o600);
+    expect(statSync(tierKey(run)).mode & 0o777).toBe(0o600);
+    expect(statSync(join(run.configDir, "tls")).mode & 0o777).toBe(0o700);
     // Staged outside the config directory, then moved in.
     expect(tailscaleCerts(run)[0]).not.toContain(`${run.configDir}/tls/`);
     const env = run.envFile();
@@ -3732,6 +3794,8 @@ exit 0
     expect(done.status, done.stderr).toBe(0);
     expect(done.stdout).toContain(`Renewed the Tailscale certificate for ${TS_NAME}`);
     expect(readFileSync(tierCert(run), "utf8")).toBe(renewed.pem);
+    expect(statSync(tierCert(run)).mode & 0o777).toBe(0o600);
+    expect(statSync(join(run.configDir, "tls")).mode & 0o777).toBe(0o700);
     expect(readFileSync(bystander, "utf8")).toBe("not a certificate\n");
     expect(readFileSync(join(run.home, "cli-calls.log"), "utf8")).toContain("tls reload\n");
 
@@ -3876,6 +3940,29 @@ exit 0
     expect(existsSync(join(units, "omnesis-tls-renew.timer"))).toBe(true);
     expect(run.calls).toContain("systemctl enable --now omnesis-tls-renew.timer");
     expect(readFileSync(renewScript(run), "utf8")).toContain("OWNER='10001:10001'");
+  });
+
+  test("a root launcher hands its owner-only host records to the gateway's account", () => {
+    writeExecutable(
+      fixturePath("fake-bin", "id"),
+      '#!/bin/sh\ncase "$1" in -u|-g) echo 0 ;; *) echo root ;; esac\n',
+    );
+    const chowns = fixturePath("chown.log");
+    writeExecutable(
+      fixturePath("fake-bin", "chown"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${chowns}'\n`,
+    );
+    const run = runInstaller("root-records", QUIET);
+    expect(run.status, run.output).toBe(0);
+    for (const name of ["host-network", "host-disk-encryption"]) {
+      const record = join(run.configDir, name);
+      if (!existsSync(record)) continue;
+      expect(statSync(record).mode & 0o777, name).toBe(0o600);
+      expect(readFileSync(chowns, "utf8"), name).toMatch(
+        new RegExp(`^10001:10001 \\S*/${name}\\.\\d+$`, "mu"),
+      );
+    }
+    expect(existsSync(join(run.configDir, "host-network"))).toBe(true);
   });
 });
 

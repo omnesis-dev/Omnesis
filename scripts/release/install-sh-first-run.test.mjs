@@ -3152,7 +3152,7 @@ os.networkInterfaces = () => ({
       },
     );
     expect(rerun.status).toBe(1);
-    expect(rerun.output).toContain("Gateway did not answer /health");
+    expect(rerun.output).toContain("Gateway stopped running after 1s without answering /health");
     expect(rerun.envFile()).toContain("OMNESIS_GATEWAY_URL=https://192.0.2.60:7600");
   });
 
@@ -3326,6 +3326,19 @@ describe("install.sh gateway health", () => {
     // The message names what it really waited, not the first window alone.
     expect(run.output).toContain("did not answer /health within 3s");
     expect(run.output).toContain("The gateway is not running, so Omnesis is not ready.");
+  });
+
+  test("a gateway that stops before it answers is reported as stopped, not as a timeout", () => {
+    const run = runInstaller("health-stopped", ["--no-tls", "--embedder", EMBED_IDS[1]], {
+      OMNESIS_TEST_KEYRING: "ready",
+      OMNESIS_TEST_CURL_EXIT: "7",
+      OMNESIS_GATEWAY_WAIT_SECONDS: "1",
+      OMNESIS_GATEWAY_STARTUP_MAX_SECONDS: "600",
+      OMNESIS_GATEWAY_STARTUP_POLL_SECONDS: "1",
+    });
+    expect(run.status).toBe(1);
+    expect(run.output).toContain("Gateway stopped running after 1s without answering /health");
+    expect(run.output).not.toContain("did not answer /health within");
   });
 });
 

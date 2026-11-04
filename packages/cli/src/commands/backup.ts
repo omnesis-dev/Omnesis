@@ -24,6 +24,7 @@ import {
   isJSON,
   CliError,
   EXIT_FAILURE,
+  EXIT_USER_ERROR,
   pickGatewayExitCode,
 } from "../utils.js";
 
@@ -214,6 +215,13 @@ export async function runBackup(opts: {
   }
 }
 
+/** When a listed backup started: the date and the local time, since one day often holds several. */
+export function formatBackupStarted(iso: string): string {
+  const d = new Date(iso);
+  const time = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${formatDateShort(iso)} ${time}`;
+}
+
 async function runList(): Promise<void> {
   const { backups } = await gatewayJson<{ backups: ListedBackup[] }>("/admin/backups");
   if (isJSON) {
@@ -231,11 +239,28 @@ async function runList(): Promise<void> {
   for (const b of backups) {
     const size = formatSize(b.files.reduce((sum, f) => sum + f.bytes, 0));
     console.log(
-      `${formatDateShort(b.startedAt).padEnd(18)} ${size.padEnd(10)} ${String(b.files.length).padEnd(6)} ${(b.includeIndex ? "yes" : "no").padEnd(6)} ${b.path}` +
+      `${formatBackupStarted(b.startedAt).padEnd(18)} ${size.padEnd(10)} ${String(b.files.length).padEnd(6)} ${(b.includeIndex ? "yes" : "no").padEnd(6)} ${b.path}` +
         (b.note ? `  ${c.dim}— ${b.note}${c.reset}` : ""),
     );
   }
   console.log();
+}
+
+/**
+ * What `omnesis backup` was asked to do. `list` reads as a word too, since
+ * `omnesis backup list` is what an operator types; any other word is refused
+ * rather than ignored, because ignoring it starts a full backup nobody asked for.
+ */
+export function backupAction(listFlag: boolean, words: readonly string[]): "list" | "create" {
+  const [first, ...rest] = words;
+  if (first === undefined) return listFlag ? "list" : "create";
+  if (first === "list" && rest.length === 0) return "list";
+  throw new CliError(
+    `omnesis backup takes no arguments, and "${words.join(" ")}" is not one. ` +
+      `Run 'omnesis backup' to create a backup, 'omnesis backup list' to see them, ` +
+      `or add --note "<text>" to label one.`,
+    EXIT_USER_ERROR,
+  );
 }
 
 export const backupCommand = defineCommand({
@@ -263,7 +288,9 @@ export const backupCommand = defineCommand({
     },
   },
   async run(ctx) {
-    if (ctx.args.list) {
+    if (
+      backupAction(ctx.args.list === true, (ctx.args._ as string[] | undefined) ?? []) === "list"
+    ) {
       await runList();
       return;
     }
