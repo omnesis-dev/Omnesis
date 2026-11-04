@@ -26,63 +26,8 @@ import { directKnowledgeGate } from "./writer.js";
 import { KnowledgeService } from "./service.js";
 import { KnowledgeEngine } from "./engine.js";
 import { directKnowledgeSelectionReads } from "./selection-reads.js";
+import { ledgerScans, recordStatements } from "./test-utils.js";
 import type Database from "better-sqlite3";
-
-/** Tables that grow with the corpus or with every maintenance batch ever run. */
-const LEDGERS = [
-  "documents",
-  "knowledge_work",
-  "knowledge_frontier",
-  "knowledge_batches",
-  "knowledge_batch_regions",
-  "knowledge_changes",
-  "knowledge_discovery_coverage",
-  "knowledge_discovery_targets",
-  "knowledge_dependencies",
-  "source_inventory_documents",
-];
-
-/**
- * A seek on a whole-table index that narrows only by a kind column, which has
- * a handful of values, still walks most of a ledger. A partial index is
- * already bounded by its own condition, such as pending work.
- */
-const BROAD_SEEK = /USING (?:COVERING )?INDEX (\w+) \((?:subject_kind|target_kind|kind)=\?\)$/;
-
-/** The table each alias in a statement names, the tables themselves included. */
-function aliases(sql: string): Map<string, string> {
-  const names = new Map<string, string>();
-  for (const [, table, alias] of sql.matchAll(
-    /\b(?:FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?(?!ON\b|WHERE\b|JOIN\b|LEFT\b|CROSS\b|INNER\b|USING\b|GROUP\b|ORDER\b|LIMIT\b)(\w+))?/gi,
-  )) {
-    names.set(table!, table!);
-    if (alias) names.set(alias, table!);
-  }
-  return names;
-}
-
-/**
- * A document row holds its content before its revision, so a seek that reads
- * document rows other than one by id walks content overflow pages per row. An
- * index that covers the read never touches the rows.
- */
-const DOCUMENT_ROW_RANGE = / USING INDEX (?!sqlite_autoindex_documents_1 \(id=\?\))/;
-
-/** Whether a plan step reads a ledger by a scan or by a seek that is one in practice. */
-function scansLedger(db: Database.Database, detail: string, names: Map<string, string>): boolean {
-  const step = /^(SCAN|SEARCH) (\w+)/.exec(detail);
-  const table = step && (names.get(step[2]!) ?? step[2]!);
-  if (!step || !LEDGERS.includes(table!)) return false;
-  // A step that names no index reads every row, whichever word the plan uses.
-  if (step[1] === "SCAN" || !/ USING /.test(detail)) return true;
-  if (table === "documents" && DOCUMENT_ROW_RANGE.test(detail)) return true;
-  const index = BROAD_SEEK.exec(detail)?.[1];
-  if (!index) return false;
-  const definition = db
-    .prepare<[string], { sql: string | null }>("SELECT sql FROM sqlite_master WHERE name=?")
-    .get(index);
-  return !/\bWHERE\b/i.test(definition?.sql ?? "");
-}
 
 const log = createLogger("test:knowledge-main-reads");
 let dbPath: string;
@@ -129,10 +74,9 @@ it("reads the knowledge ledgers on the main handle only through index seeks", as
   // The main handle records every statement it runs, with its parameters; so
   // does the handle the selection reads use, standing in for the read worker.
   const main = open();
-  const prepare = main.prepare.bind(main);
-  const ran = recordStatements(main);
+  const { statements: ran, stop } = recordStatements(main);
   const selectionHandle = open();
-  const ranOffMain = recordStatements(selectionHandle);
+  const { statements: ranOffMain } = recordStatements(selectionHandle);
 
   const settings = resolveBrainSettings({ excludedSources: ["fixture-private"] });
   const writeGate = directKnowledgeGate(writer);
@@ -181,20 +125,9 @@ it("reads the knowledge ledgers on the main handle only through index seeks", as
   const offered = await engine.next(batch!.id, batch!.runId);
   expect(offered.items.map((item) => item.id)).toContain("source:note-0");
 
-  main.prepare = prepare;
-  const scans: string[] = [];
-  for (const [sql, params] of ran) {
-    if (!/^\s*(WITH|SELECT)/i.test(sql)) continue;
-    const plan = main
-      .prepare<unknown[], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
-      .all(...params)
-      .map((row) => row.detail);
-    for (const detail of plan)
-      if (scansLedger(main, detail, aliases(sql)))
-        scans.push(`${detail}\n  in: ${sql.replace(/\s+/g, " ")}`);
-  }
+  stop();
   expect(ran.size).toBeGreaterThan(20);
-  expect(scans).toEqual([]);
+  expect(ledgerScans(main, ran)).toEqual([]);
   // The reads the engine runs on the read worker ran there, and not on main.
   const ranOn = (statements: Map<string, unknown[]>) =>
     OFF_MAIN.filter(([, pattern]) => [...statements.keys()].some((sql) => pattern.test(sql))).map(
@@ -210,27 +143,3 @@ const OFF_MAIN: Array<[string, RegExp]> = [
   ["batch recovery", /LEFT JOIN cognition_runs r ON r\.id=b\.run_id/],
   ["payload capture", /WITH RECURSIVE ancestors/],
 ];
-
-/** Record every statement `handle` runs, with the parameters of its first run. */
-function recordStatements(handle: Database.Database): Map<string, unknown[]> {
-  const ran = new Map<string, unknown[]>();
-  const prepare = handle.prepare.bind(handle);
-  handle.prepare = ((sql: string) => {
-    const statement = prepare(sql);
-    const record =
-      (run: (...params: unknown[]) => unknown) =>
-      (...params: unknown[]) => {
-        if (!ran.has(sql)) ran.set(sql, params);
-        return run(...params);
-      };
-    return new Proxy(statement, {
-      get(target, key) {
-        const value = Reflect.get(target, key, target) as unknown;
-        if (typeof value !== "function") return value;
-        const bound = (value as (...args: unknown[]) => unknown).bind(target);
-        return ["get", "all", "run", "iterate"].includes(String(key)) ? record(bound) : bound;
-      },
-    });
-  }) as typeof handle.prepare;
-  return ran;
-}
