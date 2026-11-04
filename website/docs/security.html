@@ -401,11 +401,17 @@
               </tr>
               <tr>
                 <td>Full-disk encryption</td>
-                <td>Whether FileVault or LUKS is on, or could not be confirmed.</td>
+                <td>
+                  Whether FileVault or LUKS is on, or could not be confirmed. A Docker install
+                  reports the host's disk, which its <code>omnesis</code> command reads on the host.
+                </td>
               </tr>
               <tr>
                 <td>Service hardening</td>
-                <td>Whether the installed service units carry the expected restrictions.</td>
+                <td>
+                  Whether the installed service units carry the expected restrictions. A Docker
+                  install has none: Docker runs and restarts its containers.
+                </td>
               </tr>
               <tr>
                 <td>Gateway isolation</td>

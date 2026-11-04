@@ -116,7 +116,16 @@ export async function runBackup(opts: {
   includeIndex: boolean;
   note?: string;
   purpose?: BackupPurpose;
+  /**
+   * Report as one human line whatever the output mode, with live progress only
+   * on a terminal: for a backup inside another command's human-readable output
+   * (the update's pre-update backup), where a JSON report or a file table would
+   * interrupt it.
+   */
+  summary?: boolean;
 }): Promise<void> {
+  const json = isJSON && !opts.summary;
+  const progress = opts.summary ? process.stdout.isTTY === true : !isJSON;
   const body: { includeIndex?: boolean; note?: string; purpose?: BackupPurpose } = {};
   if (!opts.includeIndex) body.includeIndex = false;
   if (opts.note) body.note = opts.note;
@@ -145,7 +154,7 @@ export async function runBackup(opts: {
     estimatedTotalBytes?: number;
   };
 
-  if (!isJSON) console.log(`${c.dim}${backupStartedLine(opts.includeIndex)}${c.reset}`);
+  if (!json) console.log(`${c.dim}${backupStartedLine(opts.includeIndex)}${c.reset}`);
 
   const startMs = Date.now();
   let lastLine = "";
@@ -154,7 +163,7 @@ export async function runBackup(opts: {
     const status = await gatewayJson<BackupStatusResponse>("/admin/backup/status");
     const current = status.current;
     if (current && current.backupId === backupId) {
-      if (!isJSON) {
+      if (progress) {
         const elapsed = Math.floor((Date.now() - startMs) / 1000);
         const line = formatBackupProgress(current, elapsed, estimatedTotalBytes);
         if (line !== lastLine) {
@@ -174,7 +183,7 @@ export async function runBackup(opts: {
       );
     }
     if (!last.ok) {
-      if (isJSON) {
+      if (json) {
         console.log(JSON.stringify(last));
         throw new CliError("", EXIT_FAILURE);
       }
@@ -183,8 +192,13 @@ export async function runBackup(opts: {
         EXIT_FAILURE,
       );
     }
-    if (isJSON) {
+    if (json) {
       console.log(JSON.stringify(last));
+    } else if (opts.summary) {
+      if (lastLine) process.stdout.write("\n");
+      console.log(
+        `${c.green}✔${c.reset} Backed up the gateway's databases: ${last.files.length} file${last.files.length === 1 ? "" : "s"}, ${formatSize(last.totalBytes)}, in ${last.path}`,
+      );
     } else {
       if (lastLine) process.stdout.write("\n");
       console.log(

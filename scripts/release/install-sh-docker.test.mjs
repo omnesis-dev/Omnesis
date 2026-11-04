@@ -67,7 +67,14 @@ case "$1" in
     if [ -n "\${OMNESIS_TEST_DOCKER_INFO_ERROR:-}" ]; then printf '%s\\n' "$OMNESIS_TEST_DOCKER_INFO_ERROR" >&2; exit 1; fi
     [ -z "\${OMNESIS_TEST_DOCKER_ROOT:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_ROOT"; exit 0 ;;
   context) printf '%s\\n' "\${OMNESIS_TEST_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"; exit 0 ;;
-  image) [ -z "\${OMNESIS_TEST_IMAGES_ABSENT:-}" ] || exit 1; exit 0 ;;
+  image)
+    [ -z "\${OMNESIS_TEST_IMAGES_ABSENT:-}" ] || exit 1
+    # An image this run removed is gone from then on.
+    case "$2" in
+      rm) printf '%s\\n' "$3" >> "$OMNESIS_TEST_DOCKER.removed" ;;
+      inspect) ! grep -qxF -- "$3" "$OMNESIS_TEST_DOCKER.removed" 2>/dev/null || exit 1 ;;
+    esac
+    exit 0 ;;
   # The images this install's containers run, one per line.
   ps) [ -z "\${OMNESIS_TEST_DOCKER_PS_IMAGES:-}" ] || printf '%s\\n' $OMNESIS_TEST_DOCKER_PS_IMAGES; exit 0 ;;
   manifest)
@@ -586,6 +593,36 @@ describe("install.sh --docker: what it puts on this host", () => {
       ),
     );
     expect(run.output).toContain("Removed the 9.8.0 images this install no longer uses");
+  });
+
+  // `omnesis update` keeps the updater image it ran from and records it for
+  // the next update; a re-run of the installer that comes first takes it back.
+  test("a re-run takes back an image the last update kept, and drops that record", () => {
+    expect(runInstaller("rerun-pending", QUIET).status).toBe(0);
+    const record = join(
+      prepareHome("rerun-pending"),
+      ".config",
+      "omnesis",
+      "update-image-cleanup.json",
+    );
+    writeFileSync(
+      record,
+      JSON.stringify({
+        version: 1,
+        images: [
+          "ghcr.io/omnesis-dev/omnesis-updater:9.8.0",
+          "ghcr.io/someone-else/omnesis-updater:1.0.0",
+        ],
+      }),
+    );
+    const run = runInstaller("rerun-pending", QUIET);
+    expect(run.status, run.output).toBe(0);
+    const removed = run.docker.filter((call) => call.startsWith("docker image rm "));
+    expect(removed).toContain("docker image rm ghcr.io/omnesis-dev/omnesis-updater:9.8.0");
+    expect(removed.some((call) => call.includes("someone-else"))).toBe(false);
+    expect(removed.some((call) => call.includes(":9.9.0"))).toBe(false);
+    expect(run.output).toContain("Removed the 9.8.0 images this install no longer uses");
+    expect(existsSync(record)).toBe(false);
   });
 
   test("a re-run on the same release, or one whose gateway does not come back, removes no image", () => {
@@ -1794,6 +1831,29 @@ EOF
     ]);
     // Readable by the gateway's account in the container, whoever wrote it.
     expect(statSync(join(run.configDir, "host-network")).mode & 0o777).toBe(0o644);
+  });
+
+  test("the launcher records this host's disk encryption for the doctor in the container", () => {
+    writeExecutable(
+      fixturePath("fake-bin", "fdesetup"),
+      '#!/bin/sh\n[ "$*" = status ] && echo "FileVault is On."\n',
+    );
+    writeExecutable(
+      fixturePath("fake-bin", "findmnt"),
+      "#!/bin/sh\necho '/dev/mapper/cryptdata ext4 rw,relatime'\n",
+    );
+    const run = runInstaller("host-disk", QUIET);
+    expect(run.status, run.output).toBe(0);
+    const record = join(run.configDir, "host-disk-encryption");
+    const lines = readFileSync(record, "utf8")
+      .split("\n")
+      .filter((line) => line && !line.startsWith("#"));
+    expect(lines).toEqual(
+      process.platform === "darwin"
+        ? ["platform darwin", "FileVault is On."]
+        : ["platform linux", "/dev/mapper/cryptdata ext4 rw,relatime"],
+    );
+    expect(statSync(record).mode & 0o777).toBe(0o644);
   });
 
   test("a new address from the router is recorded by the next command", () => {

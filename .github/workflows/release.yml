@@ -381,6 +381,16 @@ jobs:
           TARGET_SHA: ${{ needs.verify.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
+      # A hosted runner's free disk varies, and an image built twice (loaded
+      # for the boot test, then exported) can exceed it: release 0.7.5's
+      # gateway amd64 build stopped on "no space left on device". The
+      # toolchains removed here are ones no image build uses.
+      - name: Free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
@@ -412,6 +422,9 @@ jobs:
           docker buildx build --platform "linux/$IMAGE_ARCH" --load \
             --target "$IMAGE_TARGET" --tag "omnesis-release-check:$IMAGE_ARCH" .
           scripts/docker/image-smoke.sh "omnesis-release-check:$IMAGE_ARCH" "$IMAGE_ROLE"
+          # The export below reuses buildx's own layers; the loaded copy only
+          # takes disk.
+          docker image rm "omnesis-release-check:$IMAGE_ARCH"
 
       - name: Re-attest remote tag before image publication
         if: needs.verify.outputs.images_armed == 'true'

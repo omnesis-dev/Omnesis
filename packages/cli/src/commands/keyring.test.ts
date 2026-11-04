@@ -304,6 +304,23 @@ describe("migrationSummaryLines", () => {
     expect(text).toContain("no longer readable with cat");
   });
 
+  test("a re-run that finds every secret already encrypted gets one line", () => {
+    const lines = migrationSummaryLines({ ...nothing, present: 2, encrypted: 2 });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("All 2 secret files are already encrypted; nothing to migrate.");
+  });
+
+  test("a plaintext file left behind still gets the counts", () => {
+    const text = migrationSummaryLines({
+      ...nothing,
+      present: 2,
+      encrypted: 1,
+      plaintextRemaining: 1,
+    }).join("\n");
+    expect(text).toContain("Omnesis keyring migration");
+    expect(text).toContain("plaintext remaining:");
+  });
+
   test("an inline config key moved into the keyring is reported too", () => {
     expect(
       migrationSummaryLines({ ...nothing, inlineConfigApiKeysRemoved: 1 }).join("\n"),

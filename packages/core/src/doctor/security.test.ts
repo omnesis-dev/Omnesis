@@ -16,7 +16,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createRecoveryEnvelope, generateRecoveryCode } from "../recovery-envelope.js";
-import { collectSecurityData, type SecurityCommandRunner } from "./security.js";
+import {
+  collectSecurityData,
+  HOST_DISK_ENCRYPTION_FILE,
+  type SecurityCommandRunner,
+} from "./security.js";
 
 /** Every directory in a tree, root first — what a fixture has to make 0700. */
 function walkDirs(root: string): string[] {
@@ -1036,5 +1040,82 @@ describe("unreadable key material", () => {
       runCommand: async () => ({ code: 1, stdout: "", stderr: "" }),
     });
     expect(data.keyringAccess.readable).toBe(true);
+  });
+});
+
+describe("collectSecurityData — in a container", () => {
+  function container(record: string | null) {
+    const configDir = tmp("omnesis-security-container-");
+    chmodSync(configDir, 0o700);
+    if (record !== null) writeFileSync(join(configDir, HOST_DISK_ENCRYPTION_FILE), record);
+    // A container's own mount never decides it, and no unit is looked for.
+    const asked: string[] = [];
+    const run: SecurityCommandRunner = async (cmd) => {
+      asked.push(cmd);
+      if (cmd === "findmnt") return { code: 0, stdout: "overlay overlay rw", stderr: "" };
+      return { code: 127, stdout: "", stderr: "not found" };
+    };
+    return { configDir, asked, run };
+  }
+
+  test("reads the host's FileVault reading the launcher recorded", async () => {
+    const fx = container("# recorded by the launcher\nplatform darwin\nFileVault is On.\n");
+    const data = await collectSecurityData({
+      configDir: fx.configDir,
+      fixPermissions: false,
+      platform: "linux",
+      homeDir: tmp("omnesis-home-"),
+      runCommand: fx.run,
+      inContainer: true,
+    });
+    expect(data.diskEncryption).toEqual({
+      platform: "darwin",
+      status: "on",
+      detail: "On the Docker host: FileVault is on.",
+    });
+    expect(fx.asked).not.toContain("findmnt");
+    expect(data.serviceUnits).toEqual([]);
+  });
+
+  test("judges a Linux host's recorded mount by the native rules", async () => {
+    const off = container("platform darwin\nFileVault is Off.\n");
+    const offData = await collectSecurityData({
+      configDir: off.configDir,
+      fixPermissions: false,
+      platform: "linux",
+      homeDir: tmp("omnesis-home-"),
+      runCommand: off.run,
+      inContainer: true,
+    });
+    expect(offData.diskEncryption.status).toBe("off");
+
+    const luks = container("platform linux\n/dev/mapper/cryptdata ext4 rw\n");
+    const luksData = await collectSecurityData({
+      configDir: luks.configDir,
+      fixPermissions: false,
+      platform: "linux",
+      homeDir: tmp("omnesis-home-"),
+      runCommand: luks.run,
+      inContainer: true,
+    });
+    expect(luksData.diskEncryption.status).toBe("on");
+    expect(luksData.diskEncryption.detail).toContain("On the Docker host: Encrypted-looking mount");
+  });
+
+  test("says why it cannot tell when no host reading was recorded", async () => {
+    const fx = container(null);
+    const data = await collectSecurityData({
+      configDir: fx.configDir,
+      fixPermissions: false,
+      platform: "linux",
+      homeDir: tmp("omnesis-home-"),
+      runCommand: fx.run,
+      inContainer: true,
+    });
+    expect(data.diskEncryption.status).toBe("unknown");
+    expect(data.diskEncryption.detail).toContain(
+      "runs in a container, which cannot see the host's disk",
+    );
+    expect(fx.asked).not.toContain("findmnt");
   });
 });

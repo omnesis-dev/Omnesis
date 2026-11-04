@@ -3355,7 +3355,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
       // index.db is derivable from omnesis.db and is the largest file in a
       // backup; skipping it keeps the pre-update snapshot fast enough that
       // an operator leaves it on.
-      await runBackup({ includeIndex: false, note, purpose });
+      await runBackup({ includeIndex: false, note, purpose, summary: true });
     },
     // Online or copied offline, a gateway that keeps its state in this config
     // directory backs up into it; a dedicated gateway's is root's.
