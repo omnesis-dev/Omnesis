@@ -22,15 +22,17 @@ import { listPublishablePackages } from "./stage-packages.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-// Matches the specifier of static imports/re-exports, dynamic import() and
-// require() calls. Anchored to line starts / call sites so prose in block
-// comments doesn't produce false positives.
+// Matches the specifier of static imports/re-exports, dynamic import(),
+// require() and `lazyRequire(import.meta.url, "pkg")` calls (a dependency
+// loaded on first use is still a runtime import). Anchored to line starts /
+// call sites so prose in block comments doesn't produce false positives.
 const IMPORT_RES = [
   /^\s*import\s+[^"'`]*?\s+from\s+["']([^"'.][^"']*)["']/gm,
   /^\s*import\s+["']([^"'.][^"']*)["']/gm,
   /^\s*export\s+[^"'`]*?\s+from\s+["']([^"'.][^"']*)["']/gm,
   /\bimport\s*\(\s*["']([^"'.][^"']*)["']\s*\)/g,
   /\brequire\s*\(\s*["']([^"'.][^"']*)["']\s*\)/g,
+  /\blazyRequire\s*(?:<[^>]*>)?\s*\(\s*import\.meta\.url\s*,\s*["']([^"'.][^"']*)["']\s*,?\s*\)/g,
 ];
 
 const BUILTINS = new Set([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);

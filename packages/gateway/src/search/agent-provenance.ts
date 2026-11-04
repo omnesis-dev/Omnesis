@@ -11,7 +11,6 @@ import {
   isCognitionAuthoredDocument,
 } from "../brain/cognition-authored.js";
 import { sourceMatchesAnyPrefix, sourcePrefixPredicate } from "../data/source-addressing.js";
-import { getUrlTraversalHubSources } from "../url-graph-roles.js";
 import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
 import { provenanceModelContext } from "./provenance-model-context.js";
 import type { SearchResultItem } from "./types.js";
@@ -41,17 +40,54 @@ export interface AgentSearchProvenanceOptions {
   maxNodes: number;
   maxCopies: number;
   maxSummaryChars: number;
-  /** Lazy exclusions are resolved in the graph read snapshot, after candidate generation. */
-  excludeDocumentIds?: readonly string[] | (() => readonly string[]);
+  /**
+   * Documents left out of the hits and of every copy and path, by the source
+   * identity they carry once ingested. They are resolved in the graph read
+   * snapshot, so a document ingested while the search's asynchronous lanes
+   * ran is left out too.
+   */
+  excludeExternalDocuments?: readonly ExternalDocumentKey[];
+  /**
+   * Source-id prefixes whose URL links the walk does not follow: the merged
+   * traversal-hub roles (`getUrlTraversalHubSources`). The caller reads them,
+   * because they are process state a read worker does not hold.
+   */
+  urlTraversalHubSources: readonly string[];
   /** Index snapshot hashes prevent stale chunks from claiming current identity. */
   indexedContentHashes?: Readonly<Record<string, string>>;
   /**
    * Hits the caller passed through the knowledge readability fence after its
-   * last asynchronous stage, on another connection just before this read.
-   * Their verdicts stand in for fencing them again here; every other document
-   * is fenced in the graph read snapshot.
+   * last asynchronous stage, in a snapshot taken just before this read's (the
+   * gap is the wait for a read worker). Their verdicts stand in for fencing
+   * them again here; every other document is fenced in the graph read
+   * snapshot.
    */
   readableDocumentIds?: ReadonlySet<string>;
+}
+
+/** Graph context enriches each hit as a singleton, so it takes no result budget. */
+export type GraphContextProvenanceOptions = Omit<AgentSearchProvenanceOptions, "limit" | "topN">;
+
+/** A document by the identity its source gives it. */
+export interface ExternalDocumentKey {
+  providerId: string;
+  sourceId: string;
+  externalId: string;
+}
+
+/**
+ * Where the provenance reads run. The gateway passes its read worker, so the
+ * graph walk runs off the main event loop.
+ */
+export interface AgentProvenanceReads {
+  agentSearchProvenance(
+    results: readonly SearchResultItem[],
+    options: AgentSearchProvenanceOptions,
+  ): Promise<SearchResultItem[]>;
+  graphContextProvenance(
+    hits: readonly SearchResultItem[],
+    options: GraphContextProvenanceOptions,
+  ): Promise<SearchResultItem[][]>;
 }
 
 interface Doc {
@@ -205,14 +241,19 @@ export function enrichAgentSearch(
     reasons.add("summary");
     return `${fullSummary.slice(0, Math.max(0, opts.maxSummaryChars - 1))}…`;
   };
-  // Resolve dynamic exclusions in the same snapshot as identity and paths.
-  // A transcript may arrive while the asynchronous search lanes are running.
+  // Resolve exclusions by source identity in the same snapshot as identity
+  // and paths. A transcript may arrive while the asynchronous search lanes run.
   return db.transaction(() => {
-    const excluded = new Set(
-      typeof options.excludeDocumentIds === "function"
-        ? options.excludeDocumentIds()
-        : (options.excludeDocumentIds ?? []),
-    );
+    const excluded = new Set<string>();
+    if (options.excludeExternalDocuments?.length) {
+      const byExternalId = db.prepare<[string, string, string], { id: string }>(
+        "SELECT id FROM documents WHERE provider_id = ? AND source_id = ? AND external_id = ?",
+      );
+      for (const key of options.excludeExternalDocuments) {
+        const row = byExternalId.get(key.providerId, key.sourceId, key.externalId);
+        if (row) excluded.add(row.id);
+      }
+    }
     const hidden = hiddenSourceIdsToExclude();
     const readable = (id: string, sourceId: string): boolean =>
       options.readableDocumentIds?.has(id) || isKnowledgeDocumentReadable(db, id, sourceId);
@@ -226,7 +267,7 @@ export function enrichAgentSearch(
     const excludedIds = [...excluded];
     const visibleSql = `length(d.id) <= 256 AND length(d.source_id) <= 256 AND NOT ${hiddenSql.sql}${excludedIds.length ? ` AND d.id NOT IN (${excludedIds.map(() => "?").join(",")})` : ""}`;
     const visibleParams = [...hiddenSql.params, ...excludedIds];
-    const hubs = sourcePrefixPredicate("d.source_id", [...getUrlTraversalHubSources()]);
+    const hubs = sourcePrefixPredicate("d.source_id", [...options.urlTraversalHubSources]);
     const derived = cognitionAuthoredSqlExclusion("d.source_id");
     const derivedTypes = cognitionAuthoredDocumentTypes();
     const derivedTypeSql = derivedTypes.length
@@ -671,4 +712,28 @@ export function enrichAgentSearch(
       };
     });
   })();
+}
+
+/**
+ * Graph context for ordinary ranked hits: each hit enriched on its own, as a
+ * singleton in a snapshot of its own, so it keeps its own root, score and
+ * snippet while the same bounded reader discovers its off-pool copies and
+ * trails. An empty entry is an intentional visibility exclusion.
+ */
+export function enrichGraphContextHits(
+  db: Db,
+  hits: readonly SearchResultItem[],
+  options: GraphContextProvenanceOptions,
+): SearchResultItem[][] {
+  return hits.map((hit) => enrichAgentSearch(db, [hit], { ...options, topN: 1, limit: 1 }));
+}
+
+/** The provenance reads on the caller's own handle, delivered as the worker delivers them. */
+export function directAgentProvenanceReads(db: Db): AgentProvenanceReads {
+  return {
+    agentSearchProvenance: (results, options) =>
+      new Promise((resolve) => resolve(enrichAgentSearch(db, results, options))),
+    graphContextProvenance: (hits, options) =>
+      new Promise((resolve) => resolve(enrichGraphContextHits(db, hits, options))),
+  };
 }

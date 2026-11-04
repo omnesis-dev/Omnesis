@@ -30,7 +30,6 @@
  * full price (two breakpoints total, well under the API's cap of 4).
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import {
   createLogger,
   sanitizeProviderFailureField,
@@ -149,7 +148,9 @@ export class AnthropicBackend implements ChatBackend {
   readonly name = "anthropic";
   readonly model: string;
 
-  private readonly client: AnthropicClientLike;
+  private readonly apiKey: string;
+  /** The injected client, or the SDK client once a request has built it. */
+  private clientInstance: AnthropicClientLike | undefined;
   private readonly maxTokens: number;
   private readonly maxToolIterations: number;
   private readonly modelLimits: ModelTokenLimits;
@@ -172,8 +173,8 @@ export class AnthropicBackend implements ChatBackend {
   constructor(opts: AnthropicBackendOptions) {
     if (!opts.apiKey) throw new Error("AnthropicBackend requires apiKey");
     this.model = opts.model;
-    this.client =
-      opts.client ?? (new Anthropic({ apiKey: opts.apiKey }) as unknown as AnthropicClientLike);
+    this.apiKey = opts.apiKey;
+    this.clientInstance = opts.client;
     // A generous per-turn output cap. With adaptive thinking enabled the
     // reasoning and the visible answer SHARE this budget, so the old 4096
     // could truncate a reasoning-heavy turn mid-sentence. The request streams,
@@ -193,6 +194,22 @@ export class AnthropicBackend implements ChatBackend {
       (opts.adaptiveThinking ?? supportsAdaptiveThinking(this.model))
         ? { type: "adaptive", display: "summarized" }
         : undefined;
+  }
+
+  /**
+   * The Anthropic client. The SDK loads with the first turn rather than with
+   * `@omnesis/agent`, which processes and worker threads that never talk to
+   * Anthropic also load. The dynamic import shares the ES module build that
+   * any other module of the process has already loaded.
+   */
+  private async anthropicClient(): Promise<AnthropicClientLike> {
+    if (!this.clientInstance) {
+      const { default: Anthropic } = await import("@anthropic-ai/sdk");
+      this.clientInstance ??= new Anthropic({
+        apiKey: this.apiKey,
+      }) as unknown as AnthropicClientLike;
+    }
+    return this.clientInstance;
   }
 
   /**
@@ -240,6 +257,7 @@ export class AnthropicBackend implements ChatBackend {
 
   async *runTurn(input: TurnInput, signal?: AbortSignal): AsyncIterable<AgentEvent> {
     const { sessionId, messageId, timeZone, caller } = input;
+    const client = await this.anthropicClient();
     // Resolved once per turn, not per tool iteration: every request this turn
     // makes has to carry the same thinking config, or the model would reason
     // under one rule before its first tool call and another after it.
@@ -324,9 +342,9 @@ export class AnthropicBackend implements ChatBackend {
         ...(turnThinking ? { thinking: turnThinking } : {}),
       };
 
-      if (this.client.messages.countTokens) {
+      if (client.messages.countTokens) {
         try {
-          const count = await this.client.messages.countTokens(requestInput, { signal });
+          const count = await client.messages.countTokens(requestInput, { signal });
           contextAssessment = recordContextInput(
             contextAssessment,
             count.input_tokens,
@@ -379,7 +397,7 @@ export class AnthropicBackend implements ChatBackend {
       const llmReq = startLlmRequest(input.llmProbe, requestIteration);
       let stream: AsyncIterable<RawMessageStreamEvent>;
       try {
-        const streamMaybe = this.client.messages.create(
+        const streamMaybe = client.messages.create(
           {
             ...requestInput,
             max_tokens: this.maxTokens,

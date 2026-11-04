@@ -24,11 +24,11 @@
  * restriction in their candidate SQL directly.
  */
 
-import { readRetrievalCoverage } from "./retrieval-coverage.js";
 import {
   knowledgeDocumentsReadable,
   type KnowledgeReadabilityReads,
 } from "../brain/knowledge/retrieval-fence.js";
+import { readRetrievalCoverage } from "./retrieval-coverage.js";
 type Db = Database.Database;
 import {
   createLogger,
@@ -64,7 +64,12 @@ import { mergeFilters } from "./filters.js";
 import { shouldBrowse } from "./browse.js";
 import { resolvePersonDocIds } from "./person-filter.js";
 import { parseQuery, pillTokenForRoles } from "./query-parser.js";
-import { enrichAgentSearch } from "./agent-provenance.js";
+import {
+  directAgentProvenanceReads,
+  type AgentProvenanceReads,
+  type ExternalDocumentKey,
+} from "./agent-provenance.js";
+import { getUrlTraversalHubSources } from "../url-graph-roles.js";
 import {
   resolveSearchSettings,
   resolveDiversityConfig,
@@ -164,6 +169,8 @@ export class SearchPipeline {
   private gatewayDb?: Db;
   /** Where hits are fenced; without it, on {@link gatewayDb} on this thread. */
   private knowledgeReadability?: KnowledgeReadabilityReads;
+  /** Where agent search provenance is walked; without it, on {@link gatewayDb} on this thread. */
+  private provenanceReads?: AgentProvenanceReads;
   private embeddingModelId?: string;
   private queryEnricher?: QueryEnricher;
   private linkRefSource?: LinkRefSource;
@@ -246,6 +253,36 @@ export class SearchPipeline {
    */
   setKnowledgeReadability(reads: KnowledgeReadabilityReads): void {
     this.knowledgeReadability = reads;
+  }
+
+  /**
+   * Walk agent search provenance on a read worker instead of the gateway
+   * database's own thread. The walk reads a hit's conversation, copies and
+   * links, which on a large corpus takes a second or more.
+   */
+  setProvenanceReads(reads: AgentProvenanceReads): void {
+    this.provenanceReads = reads;
+  }
+
+  /**
+   * Runs one provenance read where it is configured to run. A failed read on
+   * the worker is retried on this thread rather than failing the search.
+   */
+  private async provenance<T>(
+    db: Db,
+    read: (reads: AgentProvenanceReads) => Promise<T>,
+  ): Promise<T> {
+    if (!this.provenanceReads) return read(directAgentProvenanceReads(db));
+    try {
+      return await read(this.provenanceReads);
+    } catch (err) {
+      log.warn(
+        `Search provenance read failed, walking on main: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return read(directAgentProvenanceReads(db));
+    }
   }
 
   /**
@@ -468,7 +505,8 @@ export class SearchPipeline {
       prefixLastToken?: boolean;
       /** Enrich ordinary ranked hits without changing their membership or order. */
       graphContext?: boolean;
-      excludeDocumentIds?: readonly string[] | (() => readonly string[]);
+      /** Resolved in the provenance read's snapshot; see `AgentSearchProvenanceOptions`. */
+      excludeExternalDocuments?: readonly ExternalDocumentKey[];
     },
   ): Promise<SearchResponse> {
     const startMs = Date.now();
@@ -740,6 +778,7 @@ export class SearchPipeline {
     // hydrated chunk text and fetched hashes, so neither path rereads index.db.
     // See #269 — retire the disabled-v2 agent fallback after the rollout proves reliable.
     const v2 = resolveSearchV2Config(this.searchConfig);
+    const exclusions = { excludeExternalDocuments: options?.excludeExternalDocuments };
     const finalizeVisibleResults = async () => {
       // Rebuild graph context from authoritative rows after the last asynchronous
       // enrichment. Never carry pre-await copies, paths or summaries forward.
@@ -747,7 +786,8 @@ export class SearchPipeline {
         this.gatewayDb ? await this.readableHits(this.gatewayDb, ctx.results) : ctx.results
       ).map(({ provenance: _provenance, ...hit }) => hit);
       // Graph enrichment takes these verdicts, read after the last asynchronous
-      // stage, instead of fencing each hit again.
+      // stage other than its own wait for a read worker, instead of fencing
+      // each hit again.
       const readableDocumentIds = new Set(ctx.results.map((hit) => hit.documentId));
       if (
         options?.agentContext &&
@@ -756,14 +796,18 @@ export class SearchPipeline {
         (!authorization || authorization.graphContext === "unrestricted")
       ) {
         this.hydrateMetadataFields(ctx.results);
-        ctx.results = enrichAgentSearch(this.gatewayDb, ctx.results, {
-          ...v2,
-          cleanRefCounts: true,
-          limit: ctx.limit,
-          excludeDocumentIds: options.excludeDocumentIds,
-          indexedContentHashes: cg.contentHashByDoc,
-          readableDocumentIds,
-        });
+        const results = ctx.results;
+        ctx.results = await this.provenance(this.gatewayDb, (reads) =>
+          reads.agentSearchProvenance(results, {
+            ...v2,
+            cleanRefCounts: true,
+            limit: ctx.limit,
+            ...exclusions,
+            indexedContentHashes: cg.contentHashByDoc,
+            readableDocumentIds,
+            urlTraversalHubSources: [...getUrlTraversalHubSources()],
+          }),
+        );
       } else {
         ctx.results = dedupeByContentHashWith(cg.contentHashByDoc, ctx.results, ctx.limit);
         this.hydrateMetadataFields(ctx.results);
@@ -773,25 +817,24 @@ export class SearchPipeline {
           this.gatewayDb &&
           (!authorization || authorization.graphContext === "unrestricted")
         ) {
-          // A singleton keeps each result's own root, score and snippet intact.
-          // The same bounded provenance reader discovers its off-pool copies
-          // and trails. Only the configured top results pay for graph traversal.
-          const db = this.gatewayDb;
+          // Only the configured top results pay for graph traversal.
           const topN = Number.isFinite(v2.topN)
             ? Math.max(0, Math.min(10, Math.trunc(v2.topN)))
             : 0;
-          ctx.results = ctx.results.flatMap((hit, rank) => {
-            if (rank >= topN) return [hit];
-            // An empty enrichment is an intentional visibility exclusion.
-            return enrichAgentSearch(db, [hit], {
-              ...v2,
-              topN: 1,
-              limit: 1,
-              excludeDocumentIds: options.excludeDocumentIds,
-              indexedContentHashes: cg.contentHashByDoc,
-              readableDocumentIds,
-            });
-          });
+          const top = ctx.results.slice(0, topN);
+          const enriched =
+            top.length === 0
+              ? []
+              : await this.provenance(this.gatewayDb, (reads) =>
+                  reads.graphContextProvenance(top, {
+                    ...v2,
+                    ...exclusions,
+                    indexedContentHashes: cg.contentHashByDoc,
+                    readableDocumentIds,
+                    urlTraversalHubSources: [...getUrlTraversalHubSources()],
+                  }),
+                );
+          ctx.results = [...enriched.flat(), ...ctx.results.slice(topN)];
         }
       }
     };

@@ -42,6 +42,7 @@ export default defineConfig({
       "scripts/ci/**/*.test.mjs",
       "scripts/install-e2e/**/*.test.mjs",
       "scripts/nx/**/*.test.mjs",
+      "scripts/build-projects.test.mjs",
       "scripts/pii-scan.test.mjs",
       "scripts/text-files.test.mjs",
       "scripts/typecheck-lanes.test.mjs",

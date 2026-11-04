@@ -129,6 +129,8 @@ function sanitizeRunId(runId: string): string {
 
 export class FsCognitionTranscriptStore {
   private pruneDir: Dir | null = null;
+  private indexDb: Sqlite.Database | null = null;
+  private closed = false;
   private backgroundIndexBuild: Promise<void> | null = null;
 
   constructor(private readonly dir: string) {
@@ -202,30 +204,26 @@ export class FsCognitionTranscriptStore {
       params.push(opts.before.finishedAt, opts.before.finishedAt, opts.before.fileName);
     }
     params.push(limit);
-    const db = this.openIndex();
-    try {
-      const items = db
-        .prepare<
-          Array<string | number>,
-          { file_name: string; run_id: string; attempt: number; finished_at: number }
-        >(
-          `SELECT file_name, run_id, attempt, finished_at
-             FROM transcript_refs
-             ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""}
-             ORDER BY finished_at DESC, file_name DESC
-             LIMIT ?`,
-        )
-        .all(...params)
-        .map((row) => ({
-          fileName: row.file_name,
-          runId: row.run_id,
-          attempt: row.attempt,
-          finishedAt: row.finished_at,
-        }));
-      return { items, indexComplete };
-    } finally {
-      db.close();
-    }
+    const db = this.index();
+    const items = db
+      .prepare<
+        Array<string | number>,
+        { file_name: string; run_id: string; attempt: number; finished_at: number }
+      >(
+        `SELECT file_name, run_id, attempt, finished_at
+           FROM transcript_refs
+           ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""}
+           ORDER BY finished_at DESC, file_name DESC
+           LIMIT ?`,
+      )
+      .all(...params)
+      .map((row) => ({
+        fileName: row.file_name,
+        runId: row.run_id,
+        attempt: row.attempt,
+        finishedAt: row.finished_at,
+      }));
+    return { items, indexComplete };
   }
 
   /**
@@ -241,29 +239,25 @@ export class FsCognitionTranscriptStore {
   ): Promise<{ items: CognitionTranscriptRef[]; indexComplete: boolean }> {
     const complete = await this.withIndexOperation(() => this.advanceIndexBatch());
     if (!complete) this.startBackgroundIndexBuild();
-    const db = this.openIndex();
-    try {
-      const items = db
-        .prepare<
-          [string],
-          { file_name: string; run_id: string; attempt: number; finished_at: number }
-        >(
-          `SELECT file_name, run_id, attempt, finished_at
-             FROM transcript_refs
-             WHERE run_id = ? AND state = 'committed'
-             ORDER BY finished_at DESC, file_name DESC`,
-        )
-        .all(sanitizeRunId(runId))
-        .map((row) => ({
-          fileName: row.file_name,
-          runId: row.run_id,
-          attempt: row.attempt,
-          finishedAt: row.finished_at,
-        }));
-      return { items, indexComplete: complete };
-    } finally {
-      db.close();
-    }
+    const db = this.index();
+    const items = db
+      .prepare<
+        [string],
+        { file_name: string; run_id: string; attempt: number; finished_at: number }
+      >(
+        `SELECT file_name, run_id, attempt, finished_at
+           FROM transcript_refs
+           WHERE run_id = ? AND state = 'committed'
+           ORDER BY finished_at DESC, file_name DESC`,
+      )
+      .all(sanitizeRunId(runId))
+      .map((row) => ({
+        fileName: row.file_name,
+        runId: row.run_id,
+        attempt: row.attempt,
+        finishedAt: row.finished_at,
+      }));
+    return { items, indexComplete: complete };
   }
 
   /** Validate and decode one caller-provided stored filename without a scan. */
@@ -392,18 +386,12 @@ export class FsCognitionTranscriptStore {
       }
       let deleted = 0;
       for (const runId of runIds) {
-        const db = this.openIndex();
-        let names: string[];
-        try {
-          names = db
-            .prepare<[string], { file_name: string }>(
-              "SELECT file_name FROM transcript_refs WHERE run_id = ?",
-            )
-            .all(sanitizeRunId(runId))
-            .map((row) => row.file_name);
-        } finally {
-          db.close();
-        }
+        const names = this.index()
+          .prepare<[string], { file_name: string }>(
+            "SELECT file_name FROM transcript_refs WHERE run_id = ?",
+          )
+          .all(sanitizeRunId(runId))
+          .map((row) => row.file_name);
         for (const name of names) {
           this.markIndexedRefState(name, "deleting");
           try {
@@ -428,6 +416,30 @@ export class FsCognitionTranscriptStore {
 
   private indexPath(): string {
     return join(this.dir, ".transcript-index.sqlite");
+  }
+
+  /**
+   * The ref index, opened on first use and kept open. Opening creates the
+   * directory and settles the schema, and closing a write-ahead-logged
+   * database checkpoints it, so neither runs on the event loop around each
+   * read and write; what remains per call is the statement itself.
+   */
+  private index(): Sqlite.Database {
+    if (this.closed) throw new Error(`transcript store is closed: ${this.dir}`);
+    this.indexDb ??= this.openIndex();
+    return this.indexDb;
+  }
+
+  /**
+   * Closes the ref index for good: every later call on the store fails, and a
+   * background index build in flight stops at its next batch. The gateway's
+   * stores live as long as the process, which closes their connections as it
+   * exits; this is for stores with a shorter life, such as a test's.
+   */
+  close(): void {
+    this.closed = true;
+    this.indexDb?.close();
+    this.indexDb = null;
   }
 
   private openIndex(): Sqlite.Database {
@@ -478,73 +490,55 @@ export class FsCognitionTranscriptStore {
     ref: CognitionTranscriptRef,
     state: "pending_save" | "committed" = "committed",
   ): void {
-    const db = this.openIndex();
-    try {
-      db.prepare(
-        `INSERT INTO transcript_refs (file_name, run_id, attempt, finished_at, state)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(file_name) DO UPDATE SET
-           run_id = excluded.run_id,
-           attempt = excluded.attempt,
-           finished_at = excluded.finished_at,
-           state = excluded.state`,
-      ).run(ref.fileName, ref.runId, ref.attempt, ref.finishedAt, state);
-    } finally {
-      db.close();
-    }
+    const db = this.index();
+    db.prepare(
+      `INSERT INTO transcript_refs (file_name, run_id, attempt, finished_at, state)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(file_name) DO UPDATE SET
+         run_id = excluded.run_id,
+         attempt = excluded.attempt,
+         finished_at = excluded.finished_at,
+         state = excluded.state`,
+    ).run(ref.fileName, ref.runId, ref.attempt, ref.finishedAt, state);
   }
 
   private markIndexedRefState(
     fileName: string,
     state: "pending_save" | "committed" | "deleting",
   ): void {
-    const db = this.openIndex();
-    try {
-      db.prepare("UPDATE transcript_refs SET state = ? WHERE file_name = ?").run(state, fileName);
-    } finally {
-      db.close();
-    }
+    const db = this.index();
+    db.prepare("UPDATE transcript_refs SET state = ? WHERE file_name = ?").run(state, fileName);
   }
 
   /** Reconcile only interrupted two-store transitions; committed archives stay O(1). */
   private reconcilePendingRefs(): void {
-    const db = this.openIndex();
-    try {
-      const pending = db
-        .prepare<[], { file_name: string }>(
-          "SELECT file_name FROM transcript_refs WHERE state != 'committed'",
-        )
-        .all();
-      const remove = db.prepare("DELETE FROM transcript_refs WHERE file_name = ?");
-      const commit = db.prepare(
-        "UPDATE transcript_refs SET state = 'committed' WHERE file_name = ?",
-      );
-      db.transaction(() => {
-        for (const row of pending) {
-          const pendingPath = join(this.dir, `${row.file_name}.pending`);
-          if (existsSync(pendingPath)) unlinkSync(pendingPath);
-          if (existsSync(join(this.dir, row.file_name))) commit.run(row.file_name);
-          else remove.run(row.file_name);
-        }
-      })();
-    } finally {
-      db.close();
-    }
+    const db = this.index();
+    const pending = db
+      .prepare<[], { file_name: string }>(
+        "SELECT file_name FROM transcript_refs WHERE state != 'committed'",
+      )
+      .all();
+    const remove = db.prepare("DELETE FROM transcript_refs WHERE file_name = ?");
+    const commit = db.prepare("UPDATE transcript_refs SET state = 'committed' WHERE file_name = ?");
+    db.transaction(() => {
+      for (const row of pending) {
+        const pendingPath = join(this.dir, `${row.file_name}.pending`);
+        if (existsSync(pendingPath)) unlinkSync(pendingPath);
+        if (existsSync(join(this.dir, row.file_name))) commit.run(row.file_name);
+        else remove.run(row.file_name);
+      }
+    })();
   }
 
   private removeIndexedRefs(fileNames: readonly string[]): void {
     if (fileNames.length === 0) return;
-    const db = this.openIndex();
-    try {
-      const remove = db.prepare("DELETE FROM transcript_refs WHERE file_name = ?");
-      db.transaction((names: readonly string[]) => {
-        for (const fileName of names) remove.run(fileName);
-      })(fileNames);
-      if ((db.pragma("auto_vacuum", { simple: true }) as number) === 2) {
-        db.exec("PRAGMA incremental_vacuum(16)");
-      }
-    } finally {
-      db.close();
+    const db = this.index();
+    const remove = db.prepare("DELETE FROM transcript_refs WHERE file_name = ?");
+    db.transaction((names: readonly string[]) => {
+      for (const fileName of names) remove.run(fileName);
+    })(fileNames);
+    if ((db.pragma("auto_vacuum", { simple: true }) as number) === 2) {
+      db.exec("PRAGMA incremental_vacuum(16)");
     }
   }
 
@@ -588,19 +582,15 @@ export class FsCognitionTranscriptStore {
    * in one SQLite transaction. Returns true only after reaching directory EOF.
    */
   private async advanceIndexBatch(entryLimit = 100): Promise<boolean> {
-    let db = this.openIndex();
-    try {
-      if (
-        db
-          .prepare<[string], { value: string }>(
-            "SELECT value FROM transcript_index_meta WHERE key = ?",
-          )
-          .get("scan-complete")?.value === "1"
-      ) {
-        return true;
-      }
-    } finally {
-      db.close();
+    const db = this.index();
+    if (
+      db
+        .prepare<[string], { value: string }>(
+          "SELECT value FROM transcript_index_meta WHERE key = ?",
+        )
+        .get("scan-complete")?.value === "1"
+    ) {
+      return true;
     }
 
     const key = resolve(this.indexPath());
@@ -632,7 +622,6 @@ export class FsCognitionTranscriptStore {
       throw err;
     }
 
-    db = this.openIndex();
     try {
       const insert = db.prepare(
         `INSERT INTO transcript_refs (file_name, run_id, attempt, finished_at)
@@ -659,8 +648,6 @@ export class FsCognitionTranscriptStore {
       state.directory = null;
       INDEX_SCAN_STATES.delete(key);
       throw err;
-    } finally {
-      db.close();
     }
   }
 

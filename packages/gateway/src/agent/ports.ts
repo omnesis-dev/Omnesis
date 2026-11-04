@@ -164,15 +164,6 @@ export function createGatewaySearchPort(
         );
       }
       const currentConversationId = input.currentConversationId;
-      const findOwnConversation = (): string | null =>
-        db && currentConversationId
-          ? findConversationDocId(
-              db,
-              OMNESIS_CHAT_PROVIDER_ID,
-              OMNESIS_CHAT_SOURCE_ID,
-              currentConversationId,
-            )
-          : null;
       const response = await pipeline.search(
         {
           text: parsed?.text ?? input.query,
@@ -202,11 +193,14 @@ export function createGatewaySearchPort(
           : undefined,
         {
           agentContext: !authorization?.restricted,
-          excludeDocumentIds: currentConversationId
-            ? () => {
-                const id = findOwnConversation();
-                return id ? [id] : [];
-              }
+          excludeExternalDocuments: currentConversationId
+            ? [
+                {
+                  providerId: OMNESIS_CHAT_PROVIDER_ID,
+                  sourceId: OMNESIS_CHAT_SOURCE_ID,
+                  externalId: currentConversationId,
+                },
+              ]
             : undefined,
         },
       );
@@ -224,7 +218,15 @@ export function createGatewaySearchPort(
       // Resolve after async retrieval too: ingestion may have created the
       // conversation while the search was waiting for its worker or embedder.
       // V2 resolves the same exclusion within its graph read snapshot.
-      const ownConversationDocId = findOwnConversation();
+      const ownConversationDocId =
+        db && currentConversationId
+          ? findConversationDocId(
+              db,
+              OMNESIS_CHAT_PROVIDER_ID,
+              OMNESIS_CHAT_SOURCE_ID,
+              currentConversationId,
+            )
+          : null;
       if (ownConversationDocId) {
         results = results.filter((r) => r.documentId !== ownConversationDocId);
       }

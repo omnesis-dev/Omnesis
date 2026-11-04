@@ -7,12 +7,20 @@
  * temporal-intent parser.
  *
  * Library note: `@microsoft/recognizers-text-date-time` ships CommonJS/UMD
- * only, so it must be imported via NAMED imports (the `default` export is the
- * namespace object, not the recognizer class).
+ * only. The recognizer class is a named member of what `require` returns (its
+ * `default` is the namespace object, not the class).
  */
 
-import { DateTimeRecognizer } from "@microsoft/recognizers-text-date-time";
+import { lazyRequire } from "@omnesis/core";
 import type { DateCulture } from "./language-route.js";
+
+// The library loads with the first model built, not with this module: it is
+// reached from code shared by every worker thread, and only the threads that
+// read dates need it (see `lazyRequire`).
+const recognizers = lazyRequire<typeof import("@microsoft/recognizers-text-date-time")>(
+  import.meta.url,
+  "@microsoft/recognizers-text-date-time",
+);
 
 /** The recognizer's result shape (its shipped typings are loose — narrow here). */
 export interface RtResolutionValue {
@@ -47,6 +55,7 @@ export function dateTimeModel(culture: DateCulture): RtModel {
   if (!m) {
     // fallbackToDefaultCulture=false: a culture missing from the JS build
     // must throw loudly here, never silently parse with English.
+    const { DateTimeRecognizer } = recognizers();
     m = new DateTimeRecognizer(culture).getDateTimeModel(culture, false) as unknown as RtModel;
     models.set(culture, m);
   }

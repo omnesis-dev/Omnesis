@@ -16,9 +16,6 @@
  * gateway on the same broadcast domain.
  */
 
-// bonjour-service is CommonJS (`export = Bonjour`); the class is the default
-// export — a named `{ Bonjour }` import is not resolvable under Node ESM.
-import Bonjour from "bonjour-service";
 import { createLogger } from "./logger.js";
 import { networkInterfacesUsable } from "./network-discovery.js";
 
@@ -42,7 +39,7 @@ export interface DiscoveredGateway {
  * hit / on any error. The `Bonjour` instance is always destroyed before
  * resolving so no multicast socket leaks.
  */
-export function discoverGatewayViaMdns(opts?: {
+export async function discoverGatewayViaMdns(opts?: {
   timeoutMs?: number;
 }): Promise<DiscoveredGateway | null> {
   const timeoutMs = opts?.timeoutMs ?? 3000;
@@ -57,7 +54,19 @@ export function discoverGatewayViaMdns(opts?: {
     log.debug(
       "mDNS discovery skipped: this host cannot enumerate network interfaces (os.networkInterfaces() fails)",
     );
-    return Promise.resolve(null);
+    return null;
+  }
+
+  // Loaded here rather than with `@omnesis/core`, so the many processes and
+  // worker threads that load core but never browse the LAN do not pay for it.
+  // bonjour-service is CommonJS (`export = Bonjour`); the class is the default
+  // export.
+  let Bonjour: typeof import("bonjour-service");
+  try {
+    Bonjour = (await import("bonjour-service")).default;
+  } catch (err) {
+    log.debug(`mDNS discovery unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
   }
 
   return new Promise<DiscoveredGateway | null>((resolve) => {

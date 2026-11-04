@@ -17,6 +17,7 @@ import {
   upsertChunks,
 } from "../indexer/db.js";
 import { SearchPipeline } from "./pipeline.js";
+import { directAgentProvenanceReads, type AgentProvenanceReads } from "./agent-provenance.js";
 import { closeTempDb } from "./test-utils.js";
 import type Database from "better-sqlite3";
 import type { SearchConfig } from "./search-config.js";
@@ -94,6 +95,11 @@ function addFile(id: string, title: string, body: string): void {
     },
   ]);
   setIndexedDocument(index, id, hash, 1);
+}
+
+/** Exclusions by the source identity `addFile` gives each document. */
+function identities(...ids: string[]) {
+  return ids.map((externalId) => ({ providerId: "fictional", sourceId: SOURCE, externalId }));
 }
 
 function pipeline(config?: SearchConfig, wireDb = true): SearchPipeline {
@@ -252,7 +258,7 @@ describe("agent search v2 enrollment and compatibility", () => {
     const p = pipeline({ v2: { topN: 10 } });
     const result = await p.search({ text: "equipment", limit: 10 }, undefined, {
       graphContext: true,
-      excludeDocumentIds: () => ["a"],
+      excludeExternalDocuments: identities("a"),
     });
     expect(result.results.map((hit) => hit.documentId).sort()).toEqual(["b", "c"]);
     expect(JSON.stringify(result.results.map((hit) => hit.provenance?.copies))).not.toContain(
@@ -446,7 +452,7 @@ describe("agent search v2 enrollment and compatibility", () => {
     const enabled = pipeline({ v2: { enabled: true } });
     const result = await enabled.search({ text: "equipment", limit: 2 }, undefined, {
       agentContext: true,
-      excludeDocumentIds: ["a", "b"],
+      excludeExternalDocuments: identities("a", "b"),
     });
     expect(result.results.map((hit) => hit.documentId)).toEqual(["c"]);
     expect(result.results[0].provenance!.copies.map((copy) => copy.documentId)).toEqual(["c"]);
@@ -489,5 +495,148 @@ describe("agent search v2 enrollment and compatibility", () => {
     expect(provenance).toBeDefined();
     expect(hit.url).toBe(`https://example.org/${hit.documentId}`);
     expect(hit.snippet).toContain("equipment agreement");
+  });
+});
+
+describe("agent search provenance reads", () => {
+  /** Reads on the gateway handle that record each call, as the worker would receive it. */
+  function recording(reads: AgentProvenanceReads = directAgentProvenanceReads(gateway)) {
+    const calls: { read: keyof AgentProvenanceReads; args: unknown[] }[] = [];
+    const port: AgentProvenanceReads = {
+      agentSearchProvenance: (...args) => {
+        calls.push({ read: "agentSearchProvenance", args });
+        return reads.agentSearchProvenance(...args);
+      },
+      graphContextProvenance: (...args) => {
+        calls.push({ read: "graphContextProvenance", args });
+        return reads.graphContextProvenance(...args);
+      },
+    };
+    return { calls, port };
+  }
+
+  test("agent searches walk provenance through the reads port, with the same results", async () => {
+    const expected = await pipeline().search({ text: "equipment", limit: 2 }, undefined, {
+      agentContext: true,
+      excludeExternalDocuments: identities("c"),
+    });
+    const p = pipeline();
+    const { calls, port } = recording();
+    p.setProvenanceReads(port);
+    const actual = await p.search({ text: "equipment", limit: 2 }, undefined, {
+      agentContext: true,
+      excludeExternalDocuments: identities("c"),
+    });
+    expect(actual.results).toEqual(expected.results);
+    expect(actual.results.some((hit) => hit.provenance)).toBe(true);
+    expect(calls.map((call) => call.read)).toEqual(["agentSearchProvenance"]);
+    // The request crosses to a worker by structured clone, which refuses a
+    // function and drops what is not plain data.
+    expect(structuredClone(calls[0]!.args)).toEqual(calls[0]!.args);
+  });
+
+  test("graph context walks only the top hits, each on its own, through the reads port", async () => {
+    const expected = await pipeline({ v2: { topN: 2 } }).search(
+      { text: "equipment", limit: 10 },
+      undefined,
+      { graphContext: true },
+    );
+    const p = pipeline({ v2: { topN: 2 } });
+    const { calls, port } = recording();
+    p.setProvenanceReads(port);
+    const actual = await p.search({ text: "equipment", limit: 10 }, undefined, {
+      graphContext: true,
+    });
+    expect(actual.results).toEqual(expected.results);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.read).toBe("graphContextProvenance");
+    expect((calls[0]!.args[0] as unknown[]).length).toBe(2);
+    expect(structuredClone(calls[0]!.args)).toEqual(calls[0]!.args);
+  });
+
+  test.each([
+    ["v2 disabled", { v2: { enabled: false } }, { agentContext: true }],
+    ["an ordinary search", undefined, {}],
+    ["a zero top-result budget", { v2: { topN: 0 } }, { graphContext: true }],
+  ] as const)("%s never walks provenance", async (_label, config, options) => {
+    const p = pipeline(config);
+    const { calls, port } = recording();
+    p.setProvenanceReads(port);
+    await p.search({ text: "equipment", limit: 10 }, undefined, options);
+    expect(calls).toEqual([]);
+  });
+
+  test("a failed read on the worker walks on this thread instead of failing the search", async () => {
+    const expected = await pipeline().search({ text: "equipment", limit: 2 }, undefined, {
+      agentContext: true,
+    });
+    const failing: AgentProvenanceReads = {
+      agentSearchProvenance: () => Promise.reject(new Error("io-worker shutting down")),
+      graphContextProvenance: () => Promise.reject(new Error("io-worker shutting down")),
+    };
+    const p = pipeline();
+    p.setProvenanceReads(failing);
+    const actual = await p.search({ text: "equipment", limit: 2 }, undefined, {
+      agentContext: true,
+    });
+    expect(actual.results).toEqual(expected.results);
+    const graph = pipeline({ v2: { topN: 2 } });
+    graph.setProvenanceReads(failing);
+    expect(
+      (await graph.search({ text: "equipment", limit: 10 }, undefined, { graphContext: true }))
+        .results,
+    ).toEqual(
+      (
+        await pipeline({ v2: { topN: 2 } }).search({ text: "equipment", limit: 10 }, undefined, {
+          graphContext: true,
+        })
+      ).results,
+    );
+  });
+
+  test("a document taking an excluded identity while the walk is queued stays out", async () => {
+    const options = { agentContext: true, excludeExternalDocuments: identities("late-transcript") };
+    // Control: before the rename, "c" is a hit.
+    const before = await pipeline().search({ text: "equipment", limit: 10 }, undefined, options);
+    expect(before.results.map((hit) => hit.documentId)).toContain("c");
+    const p = pipeline();
+    const direct = directAgentProvenanceReads(gateway);
+    // "c" takes the excluded identity between the request leaving the
+    // pipeline and the read running, as a transcript can be ingested while
+    // the walk waits for a worker.
+    p.setProvenanceReads({
+      agentSearchProvenance: async (results, readOptions) => {
+        expect(() => structuredClone([results, readOptions])).not.toThrow();
+        gateway
+          .prepare("UPDATE documents SET external_id = 'late-transcript' WHERE id = 'c'")
+          .run();
+        return direct.agentSearchProvenance(results, readOptions);
+      },
+      graphContextProvenance: (hits, readOptions) =>
+        direct.graphContextProvenance(hits, readOptions),
+    });
+    const result = await p.search({ text: "equipment", limit: 10 }, undefined, options);
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(JSON.stringify(result.results)).not.toContain('"c"');
+  });
+
+  test("the agent search port names its own conversation by identity, as data", async () => {
+    const p = pipeline();
+    const { calls, port } = recording();
+    p.setProvenanceReads(port);
+    await createGatewaySearchPort(p, undefined, gateway).search({
+      query: "equipment",
+      currentConversationId: "fictional-conversation",
+    });
+    expect(calls).toHaveLength(1);
+    const [, options] = calls[0]!.args as [unknown, { excludeExternalDocuments?: unknown }];
+    expect(options.excludeExternalDocuments).toEqual([
+      {
+        providerId: OMNESIS_CHAT_PROVIDER_ID,
+        sourceId: OMNESIS_CHAT_SOURCE_ID,
+        externalId: "fictional-conversation",
+      },
+    ]);
+    expect(() => structuredClone(calls[0]!.args)).not.toThrow();
   });
 });
