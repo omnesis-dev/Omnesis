@@ -7469,6 +7469,29 @@ host_network_record() {
 }
 host_network_record || true
 
+# This host's disk encryption, for the doctor in a container: a container sees
+# neither the host's disk nor FileVault, so before each command this records,
+# beside host-network, the reading the doctor takes natively on this host —
+# `fdesetup status` on macOS, the config directory's mount on Linux — and the
+# doctor judges it with the same rules.
+host_disk_record() {
+  HOST_DISK="$(dirname "$COMPOSE_FILE")/host-disk-encryption"
+  case "$(uname -s 2>/dev/null || true)" in
+    Darwin) HOST_DISK_PLATFORM=darwin; HOST_DISK_READING="$(fdesetup status 2>/dev/null | head -n 1)" ;;
+    Linux) HOST_DISK_PLATFORM=linux; HOST_DISK_READING="$(findmnt --noheadings --output SOURCE,FSTYPE,OPTIONS --target "$(dirname "$COMPOSE_FILE")" 2>/dev/null | head -n 1)" ;;
+    *) rm -f "$HOST_DISK"; return 0 ;;
+  esac
+  HOST_DISK_TMP="$HOST_DISK.$$"
+  {
+    printf '%s\n' "# This host's disk encryption, as the Omnesis launcher ($0) last read it." \
+      "# The doctor in the container reports it; every omnesis command rewrites it."
+    printf 'platform %s\n' "$HOST_DISK_PLATFORM"
+    [ -z "$HOST_DISK_READING" ] || printf '%s\n' "$HOST_DISK_READING"
+  } > "$HOST_DISK_TMP" 2>/dev/null && chmod 644 "$HOST_DISK_TMP" 2>/dev/null &&
+    mv -f "$HOST_DISK_TMP" "$HOST_DISK" 2>/dev/null || rm -f "$HOST_DISK_TMP" 2>/dev/null
+}
+host_disk_record || true
+
 # Host folders the collector's container reads. A container sees this install's
 # config directory and nothing else of the machine, so a folder a source reads
 # — an Obsidian vault, a mail archive — is shared with it read-only, at the same
@@ -8510,6 +8533,29 @@ docker_previous_tags() {
     --format '{{.Image}}' 2>/dev/null | while IFS= read -r PREVIOUS_RUNNING; do
     case "$PREVIOUS_RUNNING" in "$IMAGE_REPO"/omnesis-*:*) printf '%s\n' "${PREVIOUS_RUNNING##*:}" ;; esac
   done
+  # An update keeps an image a container still used (the updater it ran from)
+  # and records it for the next update; a re-run of this installer may come
+  # first, and takes those tags back too.
+  for PREVIOUS_PENDING in $(docker_pending_cleanup_images); do
+    printf '%s\n' "${PREVIOUS_PENDING##*:}"
+  done
+}
+# The release images of this install that an update recorded as kept, one per
+# line: only references in this install's repositories, so an edited record
+# cannot name anything else.
+docker_pending_cleanup_images() {
+  [ -f "$CONFIG_DIR/update-image-cleanup.json" ] || return 0
+  PENDING_REPO_RE="$(printf '%s' "$IMAGE_REPO" | sed 's/[.]/\\./g')"
+  grep -oE "\"$PENDING_REPO_RE/omnesis-(gateway|collector|combined|updater):[A-Za-z0-9][A-Za-z0-9._-]*\"" \
+    "$CONFIG_DIR/update-image-cleanup.json" 2>/dev/null | tr -d '"' || true
+}
+# Drop the update's record of kept images once none of them is left.
+docker_settle_pending_cleanup() {
+  [ -f "$CONFIG_DIR/update-image-cleanup.json" ] || return 0
+  for PENDING_IMAGE in $(docker_pending_cleanup_images); do
+    ! docker image inspect "$PENDING_IMAGE" >/dev/null 2>&1 || return 0
+  done
+  rm -f "$CONFIG_DIR/update-image-cleanup.json"
 }
 docker_remove_previous_images() {
   for PREVIOUS_TAG in $(printf '%s\n' $DOCKER_PREVIOUS_TAG | sort -u); do
@@ -8528,6 +8574,7 @@ docker_remove_previous_images() {
     [ -z "$PREVIOUS_REMOVED" ] || info "Removed the $PREVIOUS_TAG images this install no longer uses:$PREVIOUS_REMOVED."
     [ -z "$PREVIOUS_KEPT" ] || warn "Kept$PREVIOUS_KEPT: a container still uses it. Remove it once nothing does: docker image rm$PREVIOUS_KEPT"
   done
+  docker_settle_pending_cleanup
   return 0
 }
 

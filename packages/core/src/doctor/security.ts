@@ -135,7 +135,23 @@ export interface CollectSecurityOptions {
   hardenedUnitPath?: string;
   /** Test seam: account database consulted to classify a unit's `User=`. */
   passwdPath?: string;
+  /**
+   * Whether this process runs in a container (default: `/.dockerenv` exists).
+   * A container sees neither the host's disk nor its service manager, so the
+   * disk check reads what the host's launcher recorded and the unit audit is
+   * skipped: Docker supervises the containers.
+   */
+  inContainer?: boolean;
 }
+
+/**
+ * The file in the config directory where the Docker launcher records the
+ * host's disk-encryption reading before every command it forwards: a
+ * `platform <darwin|linux>` line, then the raw output of the command the
+ * doctor runs natively there (`fdesetup status`, or the `findmnt` line of the
+ * config directory's mount), so the container judges it with the same rules.
+ */
+export const HOST_DISK_ENCRYPTION_FILE = "host-disk-encryption";
 
 const defaultRunCommand: SecurityCommandRunner = (cmd, args) =>
   new Promise((resolve) => {
@@ -159,6 +175,7 @@ export async function collectSecurityData(opts: CollectSecurityOptions): Promise
   const runCommand = opts.runCommand ?? defaultRunCommand;
   const component = opts.component ?? "gateway";
   const homeDir = opts.homeDir ?? homedir();
+  const inContainer = opts.inContainer ?? existsSync("/.dockerenv");
   // Unreadable key material must not abort the report: this is the condition an
   // operator runs the doctor to diagnose, so each keyring reading degrades and
   // records why instead of throwing the collection away.
@@ -202,8 +219,12 @@ export async function collectSecurityData(opts: CollectSecurityOptions): Promise
     configDir: opts.configDir,
     fixPermissions: opts.fixPermissions,
     ...collectPermissionData(opts.configDir, opts.fixPermissions),
-    diskEncryption: await collectDiskEncryptionStatus(platform, opts.configDir, runCommand),
-    serviceUnits: collectServiceUnits(platform, homeDir, opts.configDir, component),
+    diskEncryption: inContainer
+      ? await recordedHostDiskEncryption(platform, opts.configDir)
+      : await collectDiskEncryptionStatus(platform, opts.configDir, runCommand),
+    serviceUnits: inContainer
+      ? []
+      : collectServiceUnits(platform, homeDir, opts.configDir, component),
     gatewayIsolation:
       component === "gateway"
         ? collectGatewayIsolation(
@@ -485,6 +506,41 @@ function chmodNoFollow(
   } finally {
     closeSync(fd);
   }
+}
+
+/**
+ * The host's disk encryption as its launcher recorded it, judged by the rules
+ * the doctor applies on that host; unknown, saying why, when there is no
+ * usable record.
+ */
+async function recordedHostDiskEncryption(
+  platform: NodeJS.Platform,
+  configDir: string,
+): Promise<SecurityDiskEncryptionStatus> {
+  let text: string;
+  try {
+    text = readFileSync(resolve(configDir, HOST_DISK_ENCRYPTION_FILE), "utf8");
+  } catch {
+    text = "";
+  }
+  const lines = text.split(/\r?\n/u).filter((line) => line !== "" && !line.startsWith("#"));
+  const hostPlatform = lines[0]?.match(/^platform (darwin|linux)$/u)?.[1] as
+    "darwin" | "linux" | undefined;
+  if (!hostPlatform) {
+    return {
+      platform,
+      status: "unknown",
+      detail:
+        "This runs in a container, which cannot see the host's disk, and the host's launcher has not recorded its disk encryption.",
+    };
+  }
+  const output = lines.slice(1).join("\n");
+  const status = await collectDiskEncryptionStatus(hostPlatform, configDir, async () => ({
+    code: output === "" ? 1 : 0,
+    stdout: output,
+    stderr: "",
+  }));
+  return { ...status, detail: `On the Docker host: ${status.detail}` };
 }
 
 async function collectDiskEncryptionStatus(

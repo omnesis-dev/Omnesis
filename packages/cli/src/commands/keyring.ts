@@ -279,12 +279,21 @@ export interface MigrationSummary {
 /**
  * The human report of a migration. A directory with nothing to migrate — a
  * fresh install arming its keyring before anything wrote a secret — gets one
- * line rather than a table of zeros; the counts are for a migration that did
+ * line rather than a table of zeros, and so does a re-run that finds every
+ * secret file already encrypted; the counts are for a migration that did
  * something, or left something behind.
  */
 export function migrationSummaryLines(summary: MigrationSummary): string[] {
   if (summary.present === 0 && summary.inlineConfigApiKeysRemoved === 0) {
     return [`${c.dim}No secret files to migrate yet; new ones are written encrypted.${c.reset}`];
+  }
+  if (
+    summary.changed === 0 &&
+    summary.plaintextRemaining === 0 &&
+    summary.inlineConfigApiKeysRemoved === 0
+  ) {
+    const files = `${summary.present} secret file${summary.present === 1 ? " is" : "s are"}`;
+    return [`${c.dim}All ${files} already encrypted; nothing to migrate.${c.reset}`];
   }
   const lines = [
     `\n${c.bold}Omnesis keyring migration${c.reset}\n`,
