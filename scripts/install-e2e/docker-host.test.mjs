@@ -53,11 +53,20 @@ describe("install-e2e Docker single-host lanes", () => {
   test("both lanes read only, pin every action, and keep their credentials out of the checkout", () => {
     for (const job of [linux, mac]) {
       expect(job.permissions).toEqual({ contents: "read" });
-      for (const step of job.steps.filter((step) => step.uses))
+      for (const step of job.steps.filter((step) => step.uses && !step.uses.startsWith("./")))
         expect(step.uses).toMatch(/@[a-f0-9]{40}$/u);
       const checkout = job.steps.find((step) => step.uses?.startsWith("actions/checkout@"));
       expect(checkout.with["persist-credentials"]).toBe(false);
     }
+  });
+
+  test("D1 frees the runner's disk before it builds the images", () => {
+    const free = linux.steps.findIndex(
+      (step) => step.uses === "./.github/actions/free-runner-disk",
+    );
+    const journey = linux.steps.findIndex((step) => step.run?.includes("docker-host.sh linux"));
+    expect(free).toBeGreaterThanOrEqual(0);
+    expect(free).toBeLessThan(journey);
   });
 
   test("a change to the image build triggers the lanes, and a dispatch can pick them alone", () => {

@@ -256,6 +256,9 @@ jobs:
       - name: Sample host resources
         continue-on-error: true
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/host-sampler.sh start
+      # Two image builds (this checkout's, then the sudo install's) fill most
+      # of a hosted runner's free disk.
+      - uses: ./.github/actions/free-runner-disk
       - name: Install, re-run with this checkout's images, doctor, backups, sudo, uninstall
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/docker-host.sh linux
       - name: Containers (redacted)
