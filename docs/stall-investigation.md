@@ -19,6 +19,7 @@ Each of these has removed a real stall. Reach for the one that matches the shape
 - **Optional boot work waits for the listening server.** Work that only prepares for later, such as warming a cache or a worker's models, starts once the gateway is listening, and spreads its CPU rather than taking a core per worker at once: before that it competes with the rest of boot for the cores, and on a slow host it is what keeps the first requests waiting. A program boot cannot do without, such as `openssl` minting the first self-signed certificate, is awaited through `processLauncher()` rather than spawned synchronously.
 - **CPU-bound pure computation goes to the cpu worker pool** (`scheduler/cpu-ops.ts`), with plain-data arguments and results. Text processing counts: the near-dup tick shingles its persisted candidates there (`cpu.nearDupPrepareCandidates`), in chunks bounded by text length so no single reply is slow to deserialize on the main thread.
 - **Computation a search waits for goes to the search worker pool** (`workers/search-pool.ts`), which the pipeline calls directly rather than through the scheduler, so an interactive query never queues behind background compute. Candidate generation runs there, and so does reading a query's temporal intent: the date recognizer takes a second or more to build its models and milliseconds per culture to parse, so the search workers build them, one worker at a time once the gateway is listening, and the pipeline sends a worker the moment, zone and numeric-date order it resolved, everything the reading depends on.
+- **A check that runs on a cadence answers from state, not by building what it checks.** The note agent's status, idle and drain checks ask `chatRoleReadiness` (`models/chat-role-readiness.ts`) whether an Agent model is runnable — it mirrors the backend resolver condition for condition — and build a backend only for a note they have claimed: building one for a replay assignment reads the fixture directory. The replay factory keeps each parsed cassette until its file changes, and the background-jobs view observes its jobs only when it is requested.
 
 What does not count as a fix: wrapping the loop in `setImmediate` batches without bounding the batch, raising a timeout, or lowering the frequency of a periodic task that still stalls each time it runs.
 
@@ -41,6 +42,14 @@ Any of the three can carry `at <function> (<file>:<line>)`, which comes from a s
 ```
 event loop stalled 1557ms at compileSafeUrlPattern (packages/gateway/src/known-url-pattern-safety.ts:75) outside any marked activity (in flight: enrichment.extractDates, backfill.linkBatch)
 ```
+
+One gap can hold several pieces of work back to back: timers that fall due together run in one turn of the loop, so a gap can be one timer's callback followed by another's. The stall is named for the activity seen for most of it, and the snapshot is of whatever ran when it was taken, half a second or more in. When the two differ, the line says where the snapshot was taken, and `codeActivity` in `/admin/stalls` carries the same name:
+
+```
+event loop stalled 27543ms in backgroundJobs.refresh at listSources (packages/gateway/src/data/repositories/SourceRepository.ts:346) (sampled in statusCache.refreshDb)
+```
+
+A snapshot during which the main thread moved from one activity to another within the gap is discarded, since its code belongs to neither. A snapshot both taken in another activity and taken late, described below, carries both notes, as in `(sampled in statusCache.refreshDb, 2.0s in)`.
 
 A snapshot has three limits:
 

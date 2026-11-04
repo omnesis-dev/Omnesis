@@ -177,6 +177,14 @@ export interface StallEvent {
    */
   code: ProfileFrame | null;
   /**
+   * The innermost marked activity the main thread was in while the snapshot
+   * behind `code` sampled it; null when no snapshot named code, or when no
+   * activity was marked.
+   * Callbacks that fall due together run back to back within one gap, so this
+   * can differ from `activity`, which is the one seen for most of the stall.
+   */
+  codeActivity: string | null;
+  /**
    * How far into the stall the snapshot behind `code` began, in ms; null
    * without one. A main thread stuck in native code, such as a synchronous
    * spawn or query, cannot be sampled until it returns, so a stall that began

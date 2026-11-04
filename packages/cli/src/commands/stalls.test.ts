@@ -43,6 +43,17 @@ const report: StallsResponse = {
       code: null,
     },
     {
+      startedAt: "2026-01-01T09:30:00.000Z",
+      durationMs: 2_000,
+      activity: "backgroundJobs.refresh",
+      outer: null,
+      inFlight: [],
+      attribution: "running",
+      culprit: "backgroundJobs.refresh",
+      code: { functionName: "listSources", file: "packages/gateway/src/s.ts", line: 15 },
+      codeActivity: "statusCache.refreshDb",
+    },
+    {
       startedAt: "2026-01-01T09:00:00.000Z",
       durationMs: 1_500,
       activity: null,
@@ -61,6 +72,7 @@ const report: StallsResponse = {
       attribution: "code",
       culprit: "runQuery (packages/gateway/src/sql.ts:42)",
       code: { functionName: "runQuery", file: "packages/gateway/src/sql.ts", line: 42 },
+      codeActivity: "ws.message",
     },
   ],
   capturing: null,
@@ -91,8 +103,13 @@ describe("omnesis stalls", () => {
     expect(text).toMatch(/5\.0s\s+2×\s+worst\s+4\.0s\s+index\.cycle/);
     expect(text).toContain("(not attributed)");
     expect(text).toContain("index.cycle (in GET /status)");
+    expect(text).toContain(
+      "backgroundJobs.refresh at listSources (packages/gateway/src/s.ts:15) (sampled in statusCache.refreshDb)",
+    );
     expect(text).toContain("not attributed; in flight: a, b");
-    expect(text).toContain("runQuery (packages/gateway/src/sql.ts:42) (in flight: a, b)");
+    expect(text).toContain(
+      "runQuery (packages/gateway/src/sql.ts:42) (sampled in ws.message) (in flight: a, b)",
+    );
     expect(text).toContain("hottest code: scanAll (packages/gateway/src/scan.ts:12)");
     expect(text).toContain("at all\n");
   });

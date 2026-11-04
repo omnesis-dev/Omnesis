@@ -105,6 +105,8 @@ let capture: { id: string; stalls: StallEvent[] } | null = null;
 interface Snapshot {
   code: ProfileFrame | null;
   stack: ProfileFrame[];
+  /** The innermost activity the main thread was in while the snapshot sampled it (0 = none). */
+  activity: number;
   /** How long the stall had lasted when this snapshot was started. */
   afterMs: number;
 }
@@ -127,13 +129,28 @@ async function takeSnapshot(forBeat: number, afterMs: number): Promise<Snapshot 
     // A stall in native code delays the profiler's start until it returns, by
     // which time the samples would be of whatever ran next: a slow answer, or
     // a heartbeat since `forBeat` (the stall is over), abandons the profile.
+    let activity = 0;
     const profile = await captureMainThreadProfile(
       SNAPSHOT_SAMPLE_MS,
       SNAPSHOT_SAMPLING_INTERVAL_US,
-      (answerWaitMs) =>
-        answerWaitMs <= SNAPSHOT_MAX_ANSWER_WAIT_MS && Number(Atomics.load(beat, 0)) === forBeat,
+      (answerWaitMs) => {
+        // Also the moment sampling starts: note the activity it starts in.
+        activity = sampleActivity(slots).inner;
+        return (
+          answerWaitMs <= SNAPSHOT_MAX_ANSWER_WAIT_MS && Number(Atomics.load(beat, 0)) === forBeat
+        );
+      },
     );
     if (!profile) return null;
+    // One gap can hold several callbacks back to back, so the activity the
+    // stall is named for need not be the one sampled here. The snapshot says
+    // which one it sampled, and is abandoned if the main thread moved to
+    // another activity within the same gap while it sampled: its code would
+    // belong to neither. A stall that ended while it sampled keeps it; the
+    // idle tail adds no long run to the summary.
+    if (Number(Atomics.load(beat, 0)) === forBeat && sampleActivity(slots).inner !== activity) {
+      return null;
+    }
     const body = summarizeProfile(profile, {
       minRunMs: SNAPSHOT_SAMPLE_MS / 4,
       codeRoot: init.codeRoot,
@@ -142,6 +159,7 @@ async function takeSnapshot(forBeat: number, afterMs: number): Promise<Snapshot 
     return {
       code: body.hottestCode,
       stack: body.topStacks[0]?.frames.slice(0, SNAPSHOT_STACK_FRAMES) ?? [],
+      activity,
       afterMs,
     };
   } catch {
@@ -195,6 +213,7 @@ function report(found: DetectedStall, snap: Snapshot | null, profileId: string |
     outer: nameOf(found.outer),
     inFlight: found.inFlight.map((id) => nameOf(id)!),
     code: snap?.code ?? null,
+    codeActivity: snap?.code ? nameOf(snap.activity) : null,
     codeSampledAfterMs: snap?.code ? snap.afterMs : null,
     stack: snap?.stack ?? [],
     profileId,

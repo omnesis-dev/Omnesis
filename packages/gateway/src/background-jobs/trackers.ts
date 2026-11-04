@@ -11,8 +11,9 @@
  * ground-truth reconciliation elsewhere may call setters like
  * `tracker.setRemaining(count)` to correct drift.
  *
- * Trackers must NOT issue DB queries. They are read by the registry
- * cache refresh on a 2s tick — turning that into a per-tracker DB hit
+ * Trackers must NOT issue DB queries. They are read on the main thread
+ * on each background-jobs snapshot (at most every 2s while it is
+ * requested) — turning that into a per-tracker DB hit
  * would directly worsen writer-queue contention. Counters are always derived from
  * already-computed work or from external reconciliation.
  */

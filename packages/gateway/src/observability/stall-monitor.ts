@@ -106,11 +106,22 @@ export function formatStallLine(
   r: StallRecord,
   mem: { heapUsed: number; rss: number } = process.memoryUsage(),
 ): string {
-  const sampledLate =
+  // Where the snapshot behind `code` was sampled, when that is not simply
+  // early in the stall's own activity: in another activity of the same gap
+  // (callbacks that fall due together run back to back), or late.
+  const sampled = [
+    r.codeActivity !== r.activity
+      ? r.codeActivity
+        ? `in ${r.codeActivity}`
+        : "outside any marked activity"
+      : null,
     r.codeSampledAfterMs != null && r.codeSampledAfterMs >= LATE_SNAPSHOT_MS
-      ? ` (sampled ${(r.codeSampledAfterMs / 1000).toFixed(1)}s in)`
-      : "";
-  const at = r.code ? ` at ${formatFrame(r.code)}${sampledLate}` : "";
+      ? `${(r.codeSampledAfterMs / 1000).toFixed(1)}s in`
+      : null,
+  ].filter((part) => part !== null);
+  const at = r.code
+    ? ` at ${formatFrame(r.code)}${sampled.length > 0 ? ` (sampled ${sampled.join(", ")})` : ""}`
+    : "";
   let where: string;
   if (r.attribution === "running") {
     where = ` in ${r.activity}${r.outer && r.outer !== r.activity ? ` (outer: ${r.outer})` : ""}${at}`;
