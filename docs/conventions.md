@@ -159,6 +159,10 @@ Files that follow this shape: `packages/gateway/src/analytics-db.ts`, `packages/
 
 Re-export shims must use **explicit named re-exports** (`export { X } from …`), never `export *` — vite/vitest can't follow `export *` across workspace-package boundaries, so a `export *` shim type-checks but resolves to `undefined` at vitest runtime.
 
+### A large library a shared module needs on one path loads on first use
+
+Every worker thread is a separate V8 isolate that loads its own copy of each module its entry reaches, so a large library imported at the top of a widely shared module costs every worker its memory whether or not that worker calls it. The phone-number metadata in `people-utils`, the HTML converter, the mDNS browser, the date recognizer and its language detector, and the Anthropic SDK are each loaded by the one module that uses them, on the first call that needs them: through `lazyRequire` from `@omnesis/core` when the API is synchronous, through a dynamic `import()` when the caller is already asynchronous. No module a worker reaches imports the library statically, since that would load it in the worker anyway. The first call pays the load synchronously on the thread that makes it, tens of milliseconds for the largest of these, so a library whose first use is on the main thread while it serves loads through a dynamic `import()`. `packages/gateway/src/workers/worker-module-graph.test.ts` reads every gateway worker entry's static import graph and fails if one reaches a deferred library; a library added to its list follows the same rule.
+
 ### HTTPS trust during pairing
 
 Pairing V4 carries an explicit TLS policy. A public HTTPS origin can use `system`, which requires HTTPS and normal platform WebPKI and hostname verification. A private gateway with its auto-generated self-signed certificate uses `pinned-leaf`; its SHA-256 fingerprint travels in the pairing QR and the native clients validate it on every connection. V1-V3 remain decodable for compatibility, with V3 interpreted as pinned-leaf trust. The collector and CLI consume a private gateway's certificate via `NODE_EXTRA_CA_CERTS`.

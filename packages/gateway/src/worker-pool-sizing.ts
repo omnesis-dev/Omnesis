@@ -6,15 +6,16 @@
  *
  * Every worker thread is its own V8 isolate, and each one loads its own copy of
  * the gateway's module graph before it does any work: on an empty source
- * install an io worker holds about 230 MiB resident, a cpu or search worker
- * about 165 MiB, and a search worker adds about 130 MiB more once it has built
- * the date recognizer (resident sizes measured on Linux under tsx). At the
- * sizes a workstation wants (six io, three search and two cpu workers) the
- * pools take about 2.6 GiB and the empty gateway about 3.5 GiB in all, which a
- * machine with 8 GB of memory cannot keep resident beside the operating
- * system, the collector and the CLI. The kernel then compresses or pages out the gateway's own
- * memory, and every thread, the event loop included, stops for seconds at a
- * time on the faults.
+ * install an io or writer worker holds about 120 MiB resident and a cpu or
+ * search worker about 60 MiB, and a search worker adds about 190 MiB once it
+ * has loaded and built the date recognizer (resident sizes measured on Linux
+ * under tsx; the libraries a worker does not use load on first use, see
+ * `lazyRequire` in `@omnesis/core`). At the sizes a workstation wants (six io,
+ * three search and two cpu workers) the pools take about 1.6 GiB and the empty
+ * gateway about 2.7 GiB in all, more than a machine with 8 GB of memory keeps
+ * resident beside the operating system, the collector and the CLI. The kernel
+ * then compresses or pages out the gateway's own memory, and every thread, the
+ * event loop included, stops for seconds at a time on the faults.
  *
  * So the pools scale with the gateway's memory budget (`memory-budget.ts`:
  * `gateway.memoryLimitMb`, else the container's limit, else the host's memory).

@@ -23,7 +23,11 @@
  * document — cheap enough to sit inline with extraction on the cpu worker pool.
  */
 
-import { detectAll } from "tinyld";
+import { lazyRequire } from "@omnesis/core";
+
+// The detector and its language profiles load on the first detection, not with
+// this module (see `lazyRequire` in `@omnesis/core`).
+const tinyld = lazyRequire<typeof import("tinyld")>(import.meta.url, "tinyld");
 
 /**
  * The culture codes the JS build of `@microsoft/recognizers-text-date-time`
@@ -110,7 +114,7 @@ export function routeDateCulture(
   const english = englishCulture(order);
   const sample = detectionSample(title, content);
   if (sample.length < MIN_SAMPLE_CHARS) return english;
-  const [top] = detectAll(sample, { only: SUPPORTED_LANGS });
+  const [top] = tinyld().detectAll(sample, { only: SUPPORTED_LANGS });
   if (!top || top.accuracy < MIN_CONFIDENCE) return english;
   return CULTURE_BY_LANG[top.lang] ?? english;
 }

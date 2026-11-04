@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import {
-  parsePhoneNumberFromString,
-  findPhoneNumbersInText,
-  isSupportedCountry,
-} from "libphonenumber-js";
 import { VALID_TLDS } from "./valid-tlds.js";
 import { personIdentifierIsReadable, personIdentifiers } from "./document.js";
+import { lazyRequire } from "./lazy-require.js";
 import type { CountryCode } from "libphonenumber-js";
 import type { PersonMention } from "./document.js";
+
+// libphonenumber and its metadata load on the first phone-number call, not
+// with `@omnesis/core` (see `lazy-require.ts`).
+const phoneNumbers = lazyRequire<typeof import("libphonenumber-js")>(
+  import.meta.url,
+  "libphonenumber-js",
+);
 
 /** Gmail domains where dots in the local part are ignored. */
 const GMAIL_DOMAINS = new Set(["gmail.com", "googlemail.com"]);
@@ -216,7 +219,9 @@ let _configuredPhoneRegion: CountryCode | undefined;
 export function setDefaultPhoneRegion(region: string | undefined): void {
   const upper = region?.trim().toUpperCase();
   _configuredPhoneRegion =
-    upper && isSupportedCountry(upper as CountryCode) ? (upper as CountryCode) : undefined;
+    upper && phoneNumbers().isSupportedCountry(upper as CountryCode)
+      ? (upper as CountryCode)
+      : undefined;
 }
 
 function getSystemRegion(): CountryCode {
@@ -356,7 +361,7 @@ export function countryNameToISO2(name: string | undefined): CountryCode | undef
   // Already an ISO-2 code? Round-trip uppercased.
   if (/^[A-Za-z]{2}$/.test(trimmed)) {
     const upper = trimmed.toUpperCase() as CountryCode;
-    return isSupportedCountry(upper) ? upper : undefined;
+    return phoneNumbers().isSupportedCountry(upper) ? upper : undefined;
   }
   return undefined;
 }
@@ -406,7 +411,7 @@ export function normalizePhone(
   // Strategy 1: already-international. Skip hints since `+` prefix
   // disambiguates the country.
   if (cleaned.startsWith("+")) {
-    const parsed = parsePhoneNumberFromString(cleaned);
+    const parsed = phoneNumbers().parsePhoneNumberFromString(cleaned);
     if (parsed && parsed.isValid()) {
       return parsed.format("E.164");
     }
@@ -426,7 +431,7 @@ export function normalizePhone(
   }
 
   for (const region of regions) {
-    const parsed = parsePhoneNumberFromString(cleaned, region);
+    const parsed = phoneNumbers().parsePhoneNumberFromString(cleaned, region);
     if (parsed && parsed.isValid()) {
       return parsed.format("E.164");
     }
@@ -758,7 +763,7 @@ function extractEmailsFromUnescaped(unescaped: string): string[] {
 }
 
 function extractPhonesFromUnescaped(unescaped: string, defaultCountry: CountryCode): string[] {
-  const numbers = findPhoneNumbersInText(unescaped, defaultCountry);
+  const numbers = phoneNumbers().findPhoneNumbersInText(unescaped, defaultCountry);
   const seen = new Set<string>();
   const result: string[] = [];
 

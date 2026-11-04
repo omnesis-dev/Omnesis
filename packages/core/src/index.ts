@@ -174,6 +174,7 @@ export {
 } from "./rate-limiter.js";
 
 export { htmlToMarkdown } from "./html-to-markdown.js";
+export { lazyRequire } from "./lazy-require.js";
 export { chooseMailBody, tidyMailBody, decodeMailText, charsetOfContentType } from "./mail-body.js";
 
 export {
