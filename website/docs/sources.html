@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,19 +122,19 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
             <li>
-              <a href="/docs/sources" aria-current="page">Available sources</a>
+              <a href="sources" aria-current="page">Available sources</a>
               <ul class="side-sub">
                 <li><a href="#email-messaging">Email &amp; messaging</a></li>
                 <li><a href="#notes-tasks-meetings">Notes &amp; tasks</a></li>
@@ -151,8 +151,8 @@
                 <li><a href="#what-a-source-contributes">Contributions</a></li>
               </ul>
             </li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -171,9 +171,9 @@
           or your Apple Notes. A <strong>provider</strong> is one sign-in that serves several source
           types: signing in to Google once covers Gmail, Calendar, Drive, and Contacts. Most sources
           run on a collector — some on any machine, some only on macOS because they read local Apple
-          databases. A few run inside the <a href="/docs/apps">phone apps</a> and push straight to
-          the gateway. A handful live on the gateway itself: Web Pages (type <code>web</code>), fed
-          by the browser extension, and the Omnesis-native sources listed under
+          databases. A few run inside the <a href="apps">phone apps</a> and push straight to the
+          gateway. A handful live on the gateway itself: Web Pages (type <code>web</code>), fed by
+          the browser extension, and the Omnesis-native sources listed under
           <a href="#omnesis-itself">Omnesis itself</a>.
         </p>
         <p>
@@ -240,7 +240,7 @@
                 <td>
                   Email from any account that offers IMAP over TLS on port 993 — the whole mailbox,
                   or only mail newer than the source's <code>maxAge</code>
-                  <a href="/docs/operating#configuration">when one is set</a>. Use an app-specific
+                  <a href="operating#configuration">when one is set</a>. Use an app-specific
                   password when the provider offers one. The hostname is the provider's IMAP server,
                   such as <code>imap.fastmail.com</code> for Fastmail or
                   <code>imap.mail.me.com</code> for iCloud Mail. The source skips Drafts, Junk, and
@@ -272,8 +272,8 @@
                   one-time full-history import from an iPhone or Android backup — see
                   <a href="#whatsapp-backup-import">WhatsApp full-history import</a>. Media text is
                   extracted, and voice notes are transcribed
-                  <a href="/docs/operating#models">when a transcriber model is assigned</a>. Until a
-                  note is transcribed its placeholder says why (<code
+                  <a href="operating#models">when a transcriber model is assigned</a>. Until a note
+                  is transcribed its placeholder says why (<code
                     >[Voice note, 0:12 — awaiting transcription]</code
                   >, <code>no transcriber available</code>, <code>no speech detected</code>,
                   <code>audio unavailable</code> or <code>audio could not be decoded</code>), and
@@ -310,13 +310,13 @@
                 <td>
                   Messages as conversational documents, with attachment text inline, and voice-clip
                   transcripts
-                  <a href="/docs/operating#models">when a transcriber model is assigned</a>;
-                  participants feed the people graph. A clip without a transcript says why in its
-                  placeholder and is retried on a schedule; the source's notice on the Sources page
-                  counts the clips still waiting. Transcription failures are retried without
-                  reporting a missing model; an unavailable transcriber notice can also mean the
-                  assigned backend is unreachable. A clip whose audio cannot be decoded is counted
-                  apart and not retried until its file changes or the source is resynced.
+                  <a href="operating#models">when a transcriber model is assigned</a>; participants
+                  feed the people graph. A clip without a transcript says why in its placeholder and
+                  is retried on a schedule; the source's notice on the Sources page counts the clips
+                  still waiting. Transcription failures are retried without reporting a missing
+                  model; an unavailable transcriber notice can also mean the assigned backend is
+                  unreachable. A clip whose audio cannot be decoded is counted apart and not retried
+                  until its file changes or the source is resynced.
                 </td>
               </tr>
               <tr>
@@ -523,7 +523,7 @@
         <div class="callout warn">
           <strong>Experimental.</strong> The Telegram source is unstable and offered in
           <strong>Add source</strong> only when the gateway and the collector run with
-          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="/docs/experimental">Experimental</a>.
+          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="experimental">Experimental</a>.
         </div>
         <p>
           Telegram Messages archives your own Telegram account — signed in as you, not as a bot —
@@ -581,10 +581,10 @@
           </li>
           <li>
             <strong>Media.</strong> Voice notes are transcribed into the day
-            <a href="/docs/operating#models">when a transcriber model is assigned</a>; until then
-            the placeholder says why, as for WhatsApp. Photos and documents follow the shared
-            attachment settings and become attachment documents of their day, with images OCR'd when
-            an OCR model is assigned. Audio, video, round video messages, stickers and GIFs are
+            <a href="operating#models">when a transcriber model is assigned</a>; until then the
+            placeholder says why, as for WhatsApp. Photos and documents follow the shared attachment
+            settings and become attachment documents of their day, with images OCR'd when an OCR
+            model is assigned. Audio, video, round video messages, stickers and GIFs are
             placeholders such as <code>[Video, 0:42]</code> and are never downloaded. Media is
             downloaded a little at a time after its text is indexed, never in bulk.
           </li>
@@ -926,7 +926,7 @@
                 <td>
                   Files as documents, with text extracted from binary formats (PDF, modern and older
                   Office formats, ODF, RTF) and images OCR'd
-                  <a href="/docs/operating#models">when an OCR model is assigned</a>.
+                  <a href="operating#models">when an OCR model is assigned</a>.
                 </td>
               </tr>
               <tr>
@@ -937,9 +937,8 @@
                 <td>
                   Files from your own drive as documents, with text extracted from PDFs and Office
                   formats and images OCR'd
-                  <a href="/docs/operating#models">when an OCR model is assigned</a>. Files other
-                  people have shared with you are not included, nor are SharePoint or Teams
-                  libraries.
+                  <a href="operating#models">when an OCR model is assigned</a>. Files other people
+                  have shared with you are not included, nor are SharePoint or Teams libraries.
                 </td>
               </tr>
               <tr>
@@ -1039,7 +1038,7 @@
         <div class="callout warn">
           <strong>Experimental.</strong> The Immich source is unstable and offered in
           <strong>Add source</strong> only when the gateway and the collector run with
-          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="/docs/experimental">Experimental</a>.
+          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="experimental">Experimental</a>.
         </div>
         <p>
           Immich indexes one Immich user's photo and video library from a server you run, version
@@ -1329,8 +1328,8 @@
                 <td>
                   The same call rows and per-day documents from an Android phone.
                   <a href="#several-devices">Per device</a>: each phone adds its own calls. Only the
-                  Android app you <a href="/docs/apps#build-android">build yourself</a> includes it;
-                  the Google Play app leaves out both the source and its permission.
+                  Android app you <a href="apps#build-android">build yourself</a> includes it; the
+                  Google Play app leaves out both the source and its permission.
                 </td>
               </tr>
               <tr>
@@ -1523,10 +1522,10 @@
                   Quick notes captured with <code>omnesis note</code>, the portal's
                   <strong>Tell Omnesis</strong> page, the mobile apps, Siri or Android voice
                   assistants, Apple Watch, and agents connected through
-                  <a href="/docs/connect">MCP, OpenClaw or Hermes</a>, indexed as one searchable
-                  document per day. Each capture is indexed separately for semantic search; long
-                  captures are split into smaller chunks within that note. No agent model is needed.
-                  The Sources lists show it as a read-only row; to amend or delete a note, use
+                  <a href="connect">MCP, OpenClaw or Hermes</a>, indexed as one searchable document
+                  per day. Each capture is indexed separately for semantic search; long captures are
+                  split into smaller chunks within that note. No agent model is needed. The Sources
+                  lists show it as a read-only row; to amend or delete a note, use
                   <strong>Tell Omnesis</strong>, and the day's document rebuilds from what remains.
                   There is nothing to sync, pause, or remove.
                 </td>
@@ -1537,7 +1536,7 @@
                   <span class="pill">Built-in</span>
                 </td>
                 <td>
-                  Your conversations with the <a href="/docs/agent">agent</a>, indexed back into the
+                  Your conversations with the <a href="agent">agent</a>, indexed back into the
                   corpus as searchable documents with citation links.
                 </td>
               </tr>
@@ -1549,9 +1548,9 @@
                 <td>
                   Conversations from an external agent harness connected with
                   <code>omnesis connect</code> — see
-                  <a href="/docs/connect#openclaw-hermes">OpenClaw and Hermes</a>. The installed
-                  plugin pushes its transcript to the gateway, which renders a document per
-                  conversation per day.
+                  <a href="connect#openclaw-hermes">OpenClaw and Hermes</a>. The installed plugin
+                  pushes its transcript to the gateway, which renders a document per conversation
+                  per day.
                 </td>
               </tr>
             </tbody>
@@ -1562,8 +1561,8 @@
         <p>
           Every source-management task is available both in the portal's
           <strong>Sources</strong> page and under <code>omnesis sources</code>. Phone-hosted sources
-          are the exception: they are turned on and off in the <a href="/docs/apps">mobile apps</a>,
-          not from the portal or the CLI.
+          are the exception: they are turned on and off in the <a href="apps">mobile apps</a>, not
+          from the portal or the CLI.
         </p>
 
         <h3 id="adding-a-source">Adding a source</h3>
@@ -1789,7 +1788,7 @@
           Sources hosted by more than one device have extra tasks — joining a device, detaching one,
           and re-syncing one device only. They are covered in
           <a href="#several-devices">Sources on several devices</a>. When a source reports an error
-          instead, start from <a href="/docs/operating#troubleshooting">Troubleshooting</a>.
+          instead, start from <a href="operating#troubleshooting">Troubleshooting</a>.
         </p>
         <p>
           Accounts of one source type that write the same analytics table can leave rows from before
@@ -1832,7 +1831,7 @@
           Removal deletes data from the gateway only. It does not delete the originals on the
           provider or the phone, retained backups, or exported copies, and it does not promise
           physical secure erasure. To delete one document rather than a whole source, see
-          <a href="/docs/search#beyond-search">deleting a document</a>.
+          <a href="search#beyond-search">deleting a document</a>.
         </p>
 
         <h2 id="several-devices">Sources on several devices</h2>
@@ -1980,7 +1979,7 @@
           <strong>Keep using the other iPhone</strong>, <strong>Use both iPhones</strong>, or
           <strong>Use only this iPhone</strong>. Turning on a per-device source on a second phone
           adds that phone's data and keeps the first phone's history. See
-          <a href="/docs/apps">Mobile apps</a>.
+          <a href="apps">Mobile apps</a>.
         </p>
 
         <h3 id="members-detach-resync">Members, detaching, and re-syncing</h3>
@@ -2010,22 +2009,22 @@
           shows <em>Keeping N items that &lt;device&gt; no longer has</em> in the portal and the
           apps, and <code>omnesis doctor</code> warns. The disagreement clears once the item is
           deleted on the device that still holds it, or once you
-          <a href="/docs/search#beyond-search">delete the document for good</a>.
+          <a href="search#beyond-search">delete the document for good</a>.
         </p>
 
         <h2 id="what-a-source-contributes">What a source contributes</h2>
         <p>
           <strong>Searchable documents.</strong> Most sources emit documents — emails, notes,
           messages, pages, per-day summaries — into the document store, where they are indexed for
-          keyword and vector <a href="/docs/search">search</a> and available to the
-          <a href="/docs/agent">agent</a>.
+          keyword and vector <a href="search">search</a> and available to the
+          <a href="agent">agent</a>.
         </p>
         <p>
           <strong>Typed analytics rows.</strong> Structured sources emit typed rows into analytics
           tables instead of, or alongside, documents: heart-rate samples, bank transactions, browser
           visits, screen-time sessions. These are queryable with plain SQL — see
-          <a href="/docs/search">Search</a>. Many sources contribute both, binding a readable
-          summary document to the underlying rows.
+          <a href="search">Search</a>. Many sources contribute both, binding a readable summary
+          document to the underlying rows.
         </p>
         <p>
           <strong>People-graph identities.</strong> Contacts, email correspondents, message
@@ -2034,11 +2033,11 @@
         </p>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/updating"
+          <a href="updating"
             ><span class="pager-label">Previous</span
             ><span class="pager-title">Backup &amp; updates</span></a
           >
-          <a class="pager-next" href="/docs/building-sources"
+          <a class="pager-next" href="building-sources"
             ><span class="pager-label">Next</span
             ><span class="pager-title">Building sources</span></a
           >
@@ -2055,7 +2054,7 @@
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -2106,6 +2105,6 @@
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

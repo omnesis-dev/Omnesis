@@ -1,25 +1,35 @@
 name: site
 
-# Publishes omnesis.dev: the static assets under website/, configured by
-# wrangler.jsonc. Blog tooling is isolated; neither job installs the monorepo.
-# Generated blog pages are verified before wrangler reads website/.
+# Publishes omnesis.dev. scripts/site/build.mjs assembles the asset tree under
+# dist/site/ — website/ as checked out, with the docs and the installer files
+# taken from the newest stable release tag and the checkout's docs published
+# unlinked at /docs-edge/ — and wrangler (configured by wrangler.jsonc) uploads
+# it. Blog tooling is isolated; neither job installs the monorepo. The
+# generated blog pages and the links of both docs trees are verified before
+# wrangler reads the tree.
 #
-# A pull request that touches the site gets a dry run, which validates the
-# generated blog, Worker configuration and asset set without uploading anything; a push to
-# main that touches it deploys. Commits that leave these paths alone start no
-# run at all.
+# A pull request that touches the site gets a dry run, which builds the tree
+# and validates the Worker configuration and asset set without uploading
+# anything. A push to main that touches the site deploys, and so does a
+# release tag: the deploy always builds main, so a tag push republishes main
+# with the docs and installer of the release that was just cut (GitHub does
+# not apply the paths filter to a tag push, so every release tag deploys).
+# Commits that leave these paths alone start no run at all.
 on:
   push:
     branches: [main]
+    tags: ["v*"]
     paths:
       - "website/**"
       - "scripts/blog/**"
+      - "scripts/site/**"
       - "wrangler.jsonc"
       - ".github/workflows/site.yml"
   pull_request:
     paths:
       - "website/**"
       - "scripts/blog/**"
+      - "scripts/site/**"
       - "wrangler.jsonc"
       - ".github/workflows/site.yml"
   workflow_dispatch:
@@ -61,6 +71,9 @@ jobs:
         working-directory: scripts/blog
         run: exec node build.mjs --check
 
+      - name: Build the site from this checkout and the newest release tag
+        run: node scripts/site/build.mjs
+
       - name: wrangler deploy --dry-run
         run: npx --yes "wrangler@${WRANGLER_VERSION}" deploy --dry-run --outdir "$RUNNER_TEMP/site"
 
@@ -77,6 +90,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Whatever started the run, the deploy builds main: a release tag only
+          # changes which release the docs and installer are taken from, and a
+          # manual run republishes main.
+          ref: refs/heads/main
           persist-credentials: false
 
       - name: Set up Node
@@ -94,6 +111,9 @@ jobs:
       - name: Verify blog pages
         working-directory: scripts/blog
         run: exec node build.mjs --check
+
+      - name: Build the site from main and the newest release tag
+        run: node scripts/site/build.mjs
 
       - name: wrangler deploy
         env:

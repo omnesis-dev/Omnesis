@@ -47,7 +47,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -60,7 +60,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -118,15 +118,15 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
             <li>
-              <a href="/docs/notifications" aria-current="page">Notifications</a>
+              <a href="notifications" aria-current="page">Notifications</a>
               <ul class="side-sub">
                 <li><a href="#what-sends-a-notification">What sends one</a></li>
                 <li><a href="#privacy">Privacy boundary</a></li>
@@ -137,12 +137,12 @@
                 <li><a href="#status">Status and repair</a></li>
               </ul>
             </li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -155,9 +155,9 @@
           the hosted relay, carry only a content-free wake; the phone then fetches the notification
           from the gateway itself. This page lists what sends a notification, explains that privacy
           boundary, and covers delivery setup and repair for operators. With the
-          <a href="/docs/apps#getting-the-apps">official iOS app</a>, installed through TestFlight,
-          there is nothing to set up beyond approving notifications on the phone. If you built and
-          signed the app yourself, see <a href="#setup">Configure direct delivery</a>.
+          <a href="apps#getting-the-apps">official iOS app</a>, installed through TestFlight, there
+          is nothing to set up beyond approving notifications on the phone. If you built and signed
+          the app yourself, see <a href="#setup">Configure direct delivery</a>.
         </p>
 
         <h2 id="what-sends-a-notification">What sends a notification</h2>
@@ -192,7 +192,7 @@
                 <td><strong>Privacy review needed</strong></td>
                 <td>
                   An answer for an external agent is held for your approval under its privacy policy
-                  (see <a href="/docs/connect#privacy-policy">Privacy policy</a>)
+                  (see <a href="connect#privacy-policy">Privacy policy</a>)
                 </td>
               </tr>
               <tr>
@@ -250,8 +250,8 @@
         <p>
           Wakes arrive wherever the phone is, but the notification text still requires the phone to
           reach its paired gateway. Nothing carries the text off your network. If the phone was
-          paired to a LAN address, set up <a href="/docs/setup#remote-access">remote access</a> and
-          pair it again using an address it can reach away from home.
+          paired to a LAN address, set up <a href="setup#remote-access">remote access</a> and pair
+          it again using an address it can reach away from home.
         </p>
 
         <h2 id="delivery">Delivery flow</h2>
@@ -540,11 +540,11 @@
         </p>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/apps"
+          <a href="apps"
             ><span class="pager-label">Previous</span
             ><span class="pager-title">Mobile apps</span></a
           >
-          <a class="pager-next" href="/docs/operating"
+          <a class="pager-next" href="operating"
             ><span class="pager-label">Next</span><span class="pager-title">Operating</span></a
           >
         </nav>
@@ -560,7 +560,7 @@
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -610,6 +610,6 @@
         </div>
       </div>
     </footer>
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

@@ -58,6 +58,10 @@ const publicHtml = Object.fromEntries(
 const redirects = readFileSync(join(WEBSITE, "_redirects"), "utf8");
 const idsOf = (f) => new Set([...html[f].matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
 const slug = (f) => (f === "index.html" ? "/docs/" : "/docs/" + f.replace(".html", ""));
+// Links between docs pages are page-relative, so the same pages serve at
+// /docs/ (the newest release's) and /docs-edge/ (main's).
+const rel = (f) => (f === "index.html" ? "./" : f.replace(".html", ""));
+const isDocsPage = (f) => !f.startsWith("../");
 const REPO_URL = "https://github.com/omnesis-dev/Omnesis";
 const NAV_LINKS = ["/", "/docs/", "/blog/"];
 
@@ -89,11 +93,23 @@ describe("website docs", () => {
         if (anchor && !idsOf(f).has(anchor)) problems.push(`dead same-page anchor #${anchor}`);
         continue;
       }
-      if (!path.startsWith("/")) {
-        problems.push(`non-absolute internal href "${href}"`);
+      let target;
+      if (isDocsPage(f) && /^\/docs(?:[/.]|$)/.test(path)) {
+        problems.push(
+          `root-absolute link into the docs "${href}" (page-relative links serve at every mount)`,
+        );
         continue;
+      } else if (path.startsWith("/")) {
+        target = resolve(path);
+      } else if (!isDocsPage(f)) {
+        problems.push(`non-absolute link "${href}" on a page outside the docs`);
+        continue;
+      } else if (path.includes("/") && path !== "./") {
+        problems.push(`link "${href}" is not page-relative to the docs`);
+        continue;
+      } else {
+        target = resolve(`/docs/${path === "./" ? "" : path}`);
       }
-      const target = resolve(path);
       if (!target) {
         problems.push(`broken link ${href}`);
         continue;
@@ -151,11 +167,9 @@ describe("website docs", () => {
     const pager = html[f].match(/<nav class="docs-pager"[\s\S]*?<\/nav>/)?.[0] ?? "";
     const prev = pager.match(/<a href="([^"]+)"/)?.[1];
     const next = pager.match(/<a class="pager-next" href="([^"]+)"/)?.[1];
-    expect(prev).toBe(i > 0 ? slug(ORDER[i - 1]) : undefined);
-    expect(next).toBe(i < ORDER.length - 1 ? slug(ORDER[i + 1]) : undefined);
-    expect(html[f]).toMatch(
-      new RegExp(`<a href="${slug(f).replaceAll("/", "\\/")}" aria-current="page"`),
-    );
+    expect(prev).toBe(i > 0 ? rel(ORDER[i - 1]) : undefined);
+    expect(next).toBe(i < ORDER.length - 1 ? rel(ORDER[i + 1]) : undefined);
+    expect(html[f]).toContain(`<a href="${rel(f)}" aria-current="page"`);
   });
 
   it("keeps experimental features, experimental sources and external agents on their pages", () => {
@@ -187,9 +201,12 @@ describe("website docs", () => {
   });
 
   it.each(sharedChromePages)("%s: carries the shared chrome", (f) => {
+    // A docs page loads the chrome from its own mount; a page outside the docs
+    // loads the release's.
+    const chrome = isDocsPage(f) ? "" : "/docs/";
     for (const needle of [
-      'href="/docs/docs.css"',
-      'src="/docs/docs.js"',
+      `href="${chrome}docs.css"`,
+      `src="${chrome}docs.js"`,
       "omnesis-theme",
       "<title>",
     ])
@@ -217,15 +234,17 @@ describe("website docs", () => {
       const nav = page.match(/<nav id="nav">[\s\S]*?<\/nav>/)?.[0] ?? "";
       expect(nav, file).toBeTruthy();
 
+      // A docs page's own links to the docs stay inside its mount.
+      const docsHome = file.startsWith("docs/") ? "./" : "/docs/";
       const menu = nav.match(/<ul class="nav-links"(?: id="[^"]+")?>[\s\S]*?<\/ul>/)?.[0] ?? "";
-      expect(links(menu), file).toEqual(NAV_LINKS);
+      expect(links(menu), file).toEqual(NAV_LINKS.map((l) => (l === "/docs/" ? docsHome : l)));
       expect(nav.match(/<a[^>]*class="nav-logo"[^>]*>/)?.[0], file).toContain('href="/"');
 
       const footer = page.match(/<footer class="site-footer">[\s\S]*?<\/footer>/)?.[0] ?? "";
       expect(links(footer), file).toEqual(
         expect.arrayContaining([
           "/blog/",
-          "/docs/",
+          docsHome,
           "/privacy",
           "mailto:contact@omnesis.dev",
           REPO_URL,
@@ -269,38 +288,49 @@ describe("website docs", () => {
     }
   });
 
-  it("renders the same docs chrome at runtime on every page", () => {
-    const renderChromeLinks = (pathname) => {
-      const navLinks = { id: "primary-navigation", innerHTML: "" };
-      const footerLinks = { innerHTML: "" };
-      const nav = {
-        classList: { toggle() {} },
-        querySelector(selector) {
-          return selector === ".nav-links" ? navLinks : null;
-        },
-        querySelectorAll() {
-          return [];
-        },
-      };
-      const document = {
-        body: null,
-        getElementById(id) {
-          return id === "nav" ? nav : null;
-        },
-        querySelector(selector) {
-          return selector === ".site-footer .footer-links" ? footerLinks : null;
-        },
-      };
-      const window = {
-        addEventListener() {},
-        location: { pathname },
-        scrollY: 0,
-      };
-      runInNewContext(sharedChromeScript, { document, window });
-      return [...(navLinks.innerHTML + footerLinks.innerHTML).matchAll(/href="([^"]+)"/g)].map(
-        (match) => match[1],
-      );
+  // Runs the chrome script against a page at `pathname`; a docs page is one
+  // with the docs sidebar. Returns the nav and footer links it rendered and
+  // the URL it forwarded a moved anchor to, if any.
+  const renderChrome = (pathname, { docsPage = false, hash = "" } = {}) => {
+    const navLinks = { id: "primary-navigation", innerHTML: "" };
+    const footerLinks = { innerHTML: "" };
+    const nav = {
+      classList: { toggle() {} },
+      querySelector(selector) {
+        return selector === ".nav-links" ? navLinks : null;
+      },
+      querySelectorAll() {
+        return [];
+      },
     };
+    const document = {
+      body: null,
+      getElementById(id) {
+        return id === "nav" ? nav : null;
+      },
+      querySelector(selector) {
+        if (selector === ".site-footer .footer-links") return footerLinks;
+        if (selector === ".docs-sidebar" && docsPage) return {};
+        return null;
+      },
+    };
+    let replaced = null;
+    const window = {
+      addEventListener() {},
+      location: { pathname, hash, replace: (url) => (replaced = url) },
+      scrollY: 0,
+    };
+    runInNewContext(sharedChromeScript, { document, window });
+    return {
+      links: [...(navLinks.innerHTML + footerLinks.innerHTML).matchAll(/href="([^"]+)"/g)].map(
+        (match) => match[1],
+      ),
+      replaced,
+    };
+  };
+
+  it("renders the same docs chrome at runtime on every page", () => {
+    const renderChromeLinks = (pathname) => renderChrome(pathname).links;
     for (const [file, page] of Object.entries(publicHtml)) {
       if (!page.includes('src="/docs/docs.js"')) continue;
       const pathname = file === "index.html" ? "/" : `/${file.replace(".html", "")}`;
@@ -316,7 +346,94 @@ describe("website docs", () => {
         ]),
       );
     }
-    expect(renderChromeLinks("/docs/").filter((href) => href === "/docs/")).toHaveLength(2);
+  });
+
+  it("keeps a docs page's chrome links inside the mount the reader is in", () => {
+    const docsLinks = (pathname) =>
+      renderChrome(pathname, { docsPage: true }).links.filter((href) => /docs/.test(href));
+    expect(docsLinks("/docs/install")).toEqual(["/docs/", "/docs/"]);
+    expect(docsLinks("/docs/")).toEqual(["/docs/", "/docs/"]);
+    expect(docsLinks("/docs-edge/install")).toEqual(["/docs-edge/", "/docs-edge/"]);
+    expect(docsLinks("/docs-edge/")).toEqual(["/docs-edge/", "/docs-edge/"]);
+    // A page outside the docs, whatever its path, links to the release's docs.
+    expect(renderChrome("/mobile-privacy-policy").links.filter((h) => /docs/.test(h))).toEqual([
+      "/docs/",
+      "/docs/",
+    ]);
+  });
+
+  it("forwards a moved anchor within the reader's mount", () => {
+    expect(renderChrome("/docs/operating", { docsPage: true, hash: "#tls" }).replaced).toBe(
+      "security#tls",
+    );
+    expect(
+      renderChrome("/docs-edge/agent", { docsPage: true, hash: "#help-and-security" }).replaced,
+    ).toBe("./#help");
+    expect(renderChrome("/docs/operating", { docsPage: true, hash: "#logs" }).replaced).toBeNull();
+    expect(renderChrome("/docs/operating", { hash: "#tls" }).replaced).toBeNull();
+  });
+
+  it("shows which release each docs tree describes, from its release.json", async () => {
+    const element = () => {
+      const el = { className: "", textContent: "", href: "", children: [] };
+      el.appendChild = (child) => el.children.push(child);
+      el.cloneNode = () => ({ ...el, children: [...el.children] });
+      return el;
+    };
+    const render = async (pathname, info) => {
+      const sidebar = element();
+      const content = element();
+      const document = {
+        body: null,
+        getElementById: () => null,
+        querySelector: (selector) =>
+          selector === ".docs-sidebar" ? sidebar : selector === ".docs-content" ? content : null,
+        querySelectorAll: () => [],
+        createElement: element,
+        createTextNode: (text) => ({ text }),
+        addEventListener() {},
+      };
+      const fetched = [];
+      runInNewContext(sharedChromeScript, {
+        document,
+        window: { addEventListener() {}, location: { pathname, hash: "" }, scrollY: 0 },
+        fetch: (url) => {
+          fetched.push(url);
+          return Promise.resolve({ ok: info !== null, json: () => Promise.resolve(info) });
+        },
+        Promise,
+        setTimeout,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return { fetched, sidebar, content };
+    };
+    const release = await render("/docs/install", {
+      channel: "release",
+      release: "0.6.0",
+      commit: "abc1234",
+    });
+    expect(release.fetched).toEqual(["/docs/release.json"]);
+    const note = release.sidebar.children.find((c) => c.className === "docs-release");
+    expect(note.textContent).toBe("These pages describe Omnesis v0.6.0, the current release.");
+    expect(release.content.children.find((c) => c.className === "docs-release")).toBeTruthy();
+
+    const edge = await render("/docs-edge/install", {
+      channel: "edge",
+      release: "0.6.0",
+      commit: "def5678",
+    });
+    expect(edge.fetched).toEqual(["/docs-edge/release.json"]);
+    const edgeNote = edge.sidebar.children.find((c) => c.className === "docs-release");
+    expect(edgeNote.children[0].text).toBe(
+      "These pages describe the main branch at def5678, ahead of the current release v0.6.0. ",
+    );
+    expect(edgeNote.children[1]).toMatchObject({
+      href: "/docs/",
+      textContent: "Release docs",
+    });
+
+    const local = await render("/docs/install", null);
+    expect(local.sidebar.children.some((c) => c.className === "docs-release")).toBe(false);
   });
 
   it("copies a terminal's commands, never its prompt glyph or its output", () => {
@@ -570,10 +687,15 @@ describe("website hosting", () => {
     expect(ignored).toContain("README.md");
   });
 
-  it("lets crawlers index every page and lists every page in the sitemap", () => {
+  it("lets crawlers index every page but the edge docs, and lists every page in the sitemap", () => {
     const robots = readFileSync(join(WEBSITE, "robots.txt"), "utf8");
+    // The edge docs are kept out of results by a noindex header, which a
+    // crawler only sees on a page it may fetch, so robots.txt disallows nothing.
     expect(robots).not.toMatch(/Disallow:\s*\//);
     expect(robots).toContain("Sitemap: https://omnesis.dev/sitemap.xml");
+    const headers = readFileSync(join(WEBSITE, "_headers"), "utf8");
+    expect(headers).toMatch(/^\/docs-edge\/\*\n\s+X-Robots-Tag: noindex$/m);
+    expect(readFileSync(join(WEBSITE, "sitemap.xml"), "utf8")).not.toContain("docs-edge");
 
     const sitemap = readFileSync(join(WEBSITE, "sitemap.xml"), "utf8");
     const listed = [...sitemap.matchAll(/<loc>https:\/\/omnesis\.dev([^<]*)<\/loc>/g)].map(

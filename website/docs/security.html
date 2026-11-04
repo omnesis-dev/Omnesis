@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,17 +122,17 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
             <li>
-              <a href="/docs/security" aria-current="page">Security</a>
+              <a href="security" aria-current="page">Security</a>
               <ul class="side-sub">
                 <li><a href="#encryption">Encryption at rest</a></li>
                 <li><a href="#posture">Security checks</a></li>
@@ -140,10 +140,10 @@
                 <li><a href="#tls">TLS certificate</a></li>
               </ul>
             </li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -156,7 +156,7 @@
           the security checks <code>omnesis doctor</code> runs, running the gateway under a
           dedicated account, and what happens to the gateway's TLS certificate after setup. It is
           for whoever installs and looks after the gateway. Choosing a certificate in the first
-          place is covered in <a href="/docs/setup#certificates">Setup → Certificates</a>.
+          place is covered in <a href="setup#certificates">Setup → Certificates</a>.
         </p>
 
         <p>
@@ -199,7 +199,7 @@
           gateway was not running, the backup is an offline snapshot of the database files;
           <code>--rollback --yes</code>, run with the gateway stopped, puts that snapshot back if
           the database step went wrong. A backup taken through the running gateway is restored with
-          <code>omnesis restore</code> instead (see <a href="/docs/updating#restore">Restore</a>).
+          <code>omnesis restore</code> instead (see <a href="updating#restore">Restore</a>).
           <code>--verify</code> checks, without changing anything, that the root key and store keys
           exist, every secret file is encrypted, and the running gateway's database is no longer
           plaintext.
@@ -235,7 +235,7 @@
           whose <code>omnesis</code> command predates this prints the
           <code>docker compose … restart</code> command to run instead; <code>omnesis update</code>
           brings that command up to date (see
-          <a href="/docs/updating#docker-update">Docker installs</a>).
+          <a href="updating#docker-update">Docker installs</a>).
         </p>
         <p>The steps it runs are also available one by one:</p>
         <ul>
@@ -330,7 +330,7 @@
           than this machine. On a new machine, <code>omnesis keyring import-recovery</code> rebuilds
           the root key from the envelope and the code. <code>omnesis restore --code</code> does the
           same while restoring a backup, using the envelope the backup carries (see
-          <a href="/docs/updating#restore">Restore</a>). Backups never contain the root key itself.
+          <a href="updating#restore">Restore</a>). Backups never contain the root key itself.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -522,10 +522,10 @@ installing it takes one command as root:
           It needs git and a Node that only root can change, such as your distribution's under
           <code>/usr</code>; a Node installed in a home directory (through nvm, for example) is
           refused. The release is built from source, so use a Node the
-          <a href="/docs/install#requirements">source install</a> supports: 24.16 or newer within
-          Node 24, or 26.1 or newer. <code>--no-keyring</code> installs without encryption at rest,
-          and <code>--keyring-passphrase-file</code> uses your own passphrase, which root copies
-          into <code>/etc/omnesis-gateway</code>. <code>--port</code> sets the gateway's port.
+          <a href="install#requirements">source install</a> supports: 24.16 or newer within Node 24,
+          or 26.1 or newer. <code>--no-keyring</code> installs without encryption at rest, and
+          <code>--keyring-passphrase-file</code> uses your own passphrase, which root copies into
+          <code>/etc/omnesis-gateway</code>. <code>--port</code> sets the gateway's port.
         </p>
         <p>
           It is a new gateway, never your existing one moved: devices pair with it again and sources
@@ -535,8 +535,7 @@ installing it takes one command as root:
           <code>--docker</code>, the client and collector roles, an agent-harness install,
           <code>--no-service</code> and <code>--mkcert</code>, each with its reason. The dedicated
           gateway serves its own self-signed certificate; for a browser-trusted address put a
-          reverse proxy in front of it (see
-          <a href="/docs/setup#certificates">Setup → Certificates</a>).
+          reverse proxy in front of it (see <a href="setup#certificates">Setup → Certificates</a>).
         </p>
 
         <h3 id="hardened-admin">Administering</h3>
@@ -622,20 +621,19 @@ installing it takes one command as root:
           and <code>sudo omnesis-gateway-admin status</code> shows both.
           <code>sudo omnesis-gateway-admin uninstall</code> removes the service and the releases but
           keeps the state directory and the passphrase that opens it; <code>--purge</code> deletes
-          them too.
-          <a href="/docs/install#uninstall"><code>omnesis uninstall gateway</code></a> runs the same
-          removal from a login account, through <code>sudo</code>. Running the install command on a
-          dedicated gateway whose unit runs code from a login account moves it onto a root-owned
-          release, keeping its port, state and passphrase.
+          them too. <a href="install#uninstall"><code>omnesis uninstall gateway</code></a> runs the
+          same removal from a login account, through <code>sudo</code>. Running the install command
+          on a dedicated gateway whose unit runs code from a login account moves it onto a
+          root-owned release, keeping its port, state and passphrase.
         </p>
 
         <h2 id="tls">TLS certificate</h2>
         <p>
           The gateway always serves HTTPS, with the certificate chosen at
-          <a href="/docs/setup#certificates">setup</a>: a Tailscale certificate, an mkcert one, one
-          you provide, or the self-signed pair the gateway creates on first start. This section
-          covers what happens afterwards: renewal, how a new certificate goes live, and what clients
-          that pinned the old one need.
+          <a href="setup#certificates">setup</a>: a Tailscale certificate, an mkcert one, one you
+          provide, or the self-signed pair the gateway creates on first start. This section covers
+          what happens afterwards: renewal, how a new certificate goes live, and what clients that
+          pinned the old one need.
         </p>
 
         <h3 id="tls-renewal">Renewal and activation</h3>
@@ -775,10 +773,10 @@ Certificate  expiring
         </p>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/operating"
+          <a href="operating"
             ><span class="pager-label">Previous</span><span class="pager-title">Operating</span></a
           >
-          <a class="pager-next" href="/docs/updating"
+          <a class="pager-next" href="updating"
             ><span class="pager-label">Next</span
             ><span class="pager-title">Backup &amp; updates</span></a
           >
@@ -795,7 +793,7 @@ Certificate  expiring
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -846,6 +844,6 @@ Certificate  expiring
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

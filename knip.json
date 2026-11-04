@@ -5,6 +5,7 @@
       "entry": [
         "scripts/*.{ts,mts,mjs}",
         "scripts/release/*.mjs",
+        "scripts/site/*.mjs",
         "scripts/install-e2e/cli-trace.cjs",
         "scripts/blog/*.{mjs,ts}",
         "bench/*.ts",

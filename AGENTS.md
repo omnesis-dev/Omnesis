@@ -49,7 +49,7 @@ docs/                  internal design docs, process docs (e.g. issue-labels.md)
 
 ## Documentation maintenance — your obligation
 
-The public docs are fourteen hand-written static HTML pages under `website/docs/`, published with the landing site at https://omnesis.dev/docs (the `site` workflow deploys `website/` to Cloudflare on every push to `main` that touches it — the site workflow verifies the generated blog, with no generated documentation reference). `website/docs/docs.css` + `docs.js` carry the shared chrome (design tokens extracted from `website/index.html`); every page embeds the same nav / sidebar / footer, so structural changes must be applied to all pages.
+The public docs are fourteen hand-written static HTML pages under `website/docs/`, published with the landing site at https://omnesis.dev/docs (the `site` workflow builds the site with `scripts/site/build.mjs` and deploys it to Cloudflare on every push to `main` that touches it and on every release tag: the blog, landing and policy pages come from `main`, while `website/docs/` and the installer files are taken from the newest stable release tag, so the live docs describe what the served installer installs; `main`'s docs are published unlinked at `/docs-edge/`, and each docs tree carries a release stamp its chrome shows). `website/docs/docs.css` + `docs.js` carry the shared chrome (design tokens extracted from `website/index.html`); every page embeds the same nav / sidebar / footer, so structural changes must be applied to all pages.
 
 When you change user-visible behavior — defaults, CLI commands, source semantics, setup flows, new or removed features — check the affected page and update it **in the same commit**:
 
@@ -74,7 +74,7 @@ Authoring rules for these pages:
 
 - **Keep experimental features contained.** Stable pages must not present gated behavior as generally available. Experimental operator guidance belongs only on the dedicated `/docs/experimental` page, must lead with the `OMNESIS_EXPERIMENTAL=1` gate, and must label the behavior unstable. The one exception is experimental sources: they are listed in the `/docs/sources` catalogue, each clearly labelled experimental together with the gate that offers it. When a feature graduates, move its documentation into the relevant stable page as part of graduation.
 - **No images.** Terminal interactions use the `.term` component; diagrams are ASCII in a `.term` `<pre>` or plain HTML/CSS.
-- Internal links are extensionless (`/docs/install`); Cloudflare serves `install.html` there.
+- Links between docs pages are page-relative and extensionless (`install`, `setup#certificates`, `./` for the overview), so the same pages serve at `/docs/` and `/docs-edge/`; Cloudflare serves `install.html` at `install`. Links to the rest of the site stay root-absolute (`/blog/`, `/privacy`). The site build fails on a link that does not resolve.
 - Voice: technical, precise, calm; no marketing adjectives, dated or release-status markers, or issue numbers. The required unstable warning on the Experimental page is the exception. Example data is always fictional (see § Privacy).
 - `website/mobile-privacy-policy.html` is the iOS/Android privacy policy. Keep the legacy `/privacy-policy` redirect until every mobile-store listing uses `/mobile-privacy-policy`.
 

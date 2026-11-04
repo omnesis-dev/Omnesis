@@ -5,7 +5,8 @@ engineering blog at `/blog/`. Blog authoring and comments setup are documented
 in [blog/README.md](blog/README.md). The site workflow verifies the generated
 blog before deploying; the rest of the site remains hand-authored HTML. Also serves the
 installer: `install.sh` here is a byte-identical mirror of the canonical
-`scripts/install.sh`, so `https://omnesis.dev/install.sh` resolves. The guided
+`scripts/install.sh`, published from the newest release tag (see below), so
+`https://omnesis.dev/install.sh` resolves. The guided
 install prompt follows the same pattern: `website/install-prompt.md` mirrors
 `scripts/install-prompt.md` at `https://omnesis.dev/install-prompt.md`. After
 editing either canonical file, copy it to `website/`; mirror tests fail on drift. Most assets are
@@ -13,6 +14,36 @@ hand-authored, but a few are **generated from the synthetic demo gateway**
 (the John Smith corpus — no personal data) so they stay current and never
 leak real data. All generators are repeatable: re-run them any time to
 refresh the assets.
+
+## What deploys from where
+
+`scripts/site/build.mjs` assembles the tree Cloudflare serves (`dist/site/`,
+the directory `wrangler.jsonc` points at) and the site workflow runs it before
+every dry run and deploy:
+
+| Published path                                                        | Taken from                     |
+| --------------------------------------------------------------------- | ------------------------------ |
+| `/docs/`, `/install.sh`, `/install-prompt.md`, `/hardened-gateway.sh` | the newest stable release tag  |
+| `/docs-edge/`                                                         | `website/docs/` as checked out |
+| everything else (landing, blog, policies, redirects, headers)         | `website/` as checked out      |
+
+The docs and the installer describe and install the newest release, so a reader
+who follows them has what they describe. The blog and the landing page publish
+the moment they merge. `/docs-edge/` is the main branch's documentation, linked
+from nowhere and marked `noindex` through `_headers`, for anyone who needs the
+upcoming pages. The build writes a `release.json` into each docs tree naming
+what it describes, which `docs.js` shows under the page list, and fails on any
+link in either tree that does not resolve — which is why links between docs
+pages are page-relative (`install`, not `/docs/install`): the same pages serve
+at both mounts. A release tag also triggers a deploy, so the live docs flip to
+a release the moment it is cut; a docs fix for the live site therefore ships
+with a patch release. Run the build locally to inspect the exact tree a deploy
+would upload:
+
+```
+node scripts/site/build.mjs            # dist/site/, newest tag from origin
+node scripts/site/build.mjs --tag v0.7.6
+```
 
 ## The Brain page's illustrations
 

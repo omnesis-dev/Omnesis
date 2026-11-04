@@ -1,14 +1,17 @@
 {
   // Deployed by .github/workflows/site.yml on a push to main that touches the
-  // site; pull requests that touch it get a dry run.
+  // site and on every release tag; pull requests that touch it get a dry run.
   //
-  // Assets only: Cloudflare serves website/ as it is checked out. Redirects
-  // live in website/_redirects, and website/.assetsignore keeps repository
+  // Assets only: Cloudflare serves the tree scripts/site/build.mjs assembles
+  // under dist/site/ — website/ as checked out, with the docs and the installer
+  // files taken from the newest stable release tag and the checkout's docs
+  // published at /docs-edge/. Redirects live in website/_redirects, response
+  // headers in website/_headers, and website/.assetsignore keeps repository
   // files that are not part of the site from being published.
   "name": "omnesis",
   "compatibility_date": "2026-05-28",
   "assets": {
-    "directory": "./website/",
+    "directory": "./dist/site/",
     "not_found_handling": "404-page",
   },
 }

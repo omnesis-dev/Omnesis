@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,12 +122,12 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
             <li>
-              <a href="/docs/agent" aria-current="page">The agent</a>
+              <a href="agent" aria-current="page">The agent</a>
               <ul class="side-sub">
                 <li><a href="#what-it-does">What it does</a></li>
                 <li><a href="#memory">Memory</a></li>
@@ -139,15 +139,15 @@
                 <li><a href="#standing-instructions">Standing instructions</a></li>
               </ul>
             </li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -160,7 +160,7 @@
           your indexed data and it answers with citations to the source documents. This page is for
           anyone who chats with it: what it can do, what it remembers, how it keeps your tasks, how
           it is contained, and how to choose the model it runs on. To let an outside AI tool such as
-          Claude, ChatGPT or Codex read your data, see <a href="/docs/connect">Agents &amp; MCP</a>.
+          Claude, ChatGPT or Codex read your data, see <a href="connect">Agents &amp; MCP</a>.
         </p>
 
         <h2 id="what-it-does">What it does</h2>
@@ -171,7 +171,7 @@
         <ul>
           <li>
             <strong>Search</strong> the index, with the same pipeline as
-            <a href="/docs/search">Search</a>.
+            <a href="search">Search</a>.
           </li>
           <li><strong>Read documents</strong> in full, not just search snippets.</li>
           <li>
@@ -214,8 +214,7 @@
         </p>
         <p>
           Open the agent from <strong>Ask</strong> in the portal (<code>/portal/agent</code>) or
-          from <strong>Ask</strong> in the menu of the
-          <a href="/docs/apps">iOS and Android apps</a>.
+          from <strong>Ask</strong> in the menu of the <a href="apps">iOS and Android apps</a>.
         </p>
 
         <p>
@@ -247,11 +246,11 @@
 
         <h2 id="tasks">Tasks</h2>
         <p>
-          In any conversation, the agent works with your <a href="/docs/apps#tasks">Tasks</a> when
-          you ask it to. It can list them, add one, complete, move, strike or edit one, and undo a
-          change it made: “move the dentist call to next week”, “I sent the invoice, tick it off”.
-          It states each change in one line, such as <em>Moved to 2026-10-19: Call the dentist</em>,
-          and the change is recorded in the task's history as made in that conversation, where
+          In any conversation, the agent works with your <a href="apps#tasks">Tasks</a> when you ask
+          it to. It can list them, add one, complete, move, strike or edit one, and undo a change it
+          made: “move the dentist call to next week”, “I sent the invoice, tick it off”. It states
+          each change in one line, such as <em>Moved to 2026-10-19: Call the dentist</em>, and the
+          change is recorded in the task's history as made in that conversation, where
           <strong>Undo</strong> in the Tasks view also reverses it. It changes a task only when you
           ask; a question about your tasks gets an answer, not an edit. The journal and these task
           tools work independently of autonomous background processing. When useful, the agent can
@@ -291,7 +290,7 @@
           <strong>Settings → Models</strong>, or <code>agent.noteAgent</code> set to
           <code>false</code>, switches this off; notes captured while it is off are only saved, and
           are not read when it is switched back on. See
-          <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>.
+          <a href="apps#voice-and-quick-capture">Voice and quick capture</a>.
         </p>
 
         <p>
@@ -328,8 +327,8 @@
           <code>~/.config/omnesis/conversations/</code>, so your history is ordinary files you can
           inspect and copy. They are kept until you delete them, unless
           <code>activityRetention.maxAge</code> is set (see
-          <a href="/docs/operating#configuration">Configuration</a>); pinned conversations are
-          always kept. If the assigned model's backend is unreachable, you can still browse saved
+          <a href="operating#configuration">Configuration</a>); pinned conversations are always
+          kept. If the assigned model's backend is unreachable, you can still browse saved
           conversations; sending a message then shows the backend's error.
         </p>
         <p>
@@ -384,7 +383,7 @@
           tapping it opens that conversation. A turn that writes several messages, or further
           messages before you look, sends no second notification; the conversation can notify you
           again only after you have read it. A conversation already open on your screen never
-          notifies. The <a href="/docs/notifications">Notifications</a> page covers delivery.
+          notifies. The <a href="notifications">Notifications</a> page covers delivery.
         </p>
         <h3 id="conversation-history">Past conversations and length limits</h3>
         <p>
@@ -419,11 +418,11 @@
           local time of that place.
         </p>
         <p>
-          <a href="/docs/search">Search filters</a> work differently: <code>after:</code> and
+          <a href="search">Search filters</a> work differently: <code>after:</code> and
           <code>before:</code> resolve relative words to a UTC calendar date on the gateway's clock,
           so pass an absolute <code>YYYY-MM-DD</code> when a day boundary matters. The
-          <a href="/docs/connect#answer">answer API</a> receives no device time zone either, and
-          uses the gateway's.
+          <a href="connect#answer">answer API</a> receives no device time zone either, and uses the
+          gateway's.
         </p>
 
         <h2 id="pick-the-model">Pick the model</h2>
@@ -449,11 +448,10 @@
           <li>
             <strong>Codex</strong>: the agent runs on your ChatGPT subscription through OpenAI's
             Codex app-server. There is no API key; you sign in once. The privacy reviewer that
-            checks answers for <a href="/docs/connect#privacy-policy">external agents</a> can use
-            the same sign-in and model. The gateway manages its Codex runtime separately from the
-            model list, so refreshing models does not update the runtime;
-            <a href="/docs/operating#models">Operating → Models</a> covers runtime status and
-            updates.
+            checks answers for <a href="connect#privacy-policy">external agents</a> can use the same
+            sign-in and model. The gateway manages its Codex runtime separately from the model list,
+            so refreshing models does not update the runtime;
+            <a href="operating#models">Operating → Models</a> covers runtime status and updates.
           </li>
           <li>
             <strong>Claude Code</strong>: the agent runs on your Claude subscription through the
@@ -529,13 +527,13 @@
           is unassigned; it never replaces an existing assignment. Codex receives the conversation,
           the relevant Omnesis data, and tool results for these requests. When a
           <code>codex</code> command is installed and the agent role is unassigned, an interactive
-          install offers to do this for you (see <a href="/docs/install#first-run">First run</a>).
+          install offers to do this for you (see <a href="install#first-run">First run</a>).
         </p>
         <p>
           After assigning an HTTP, Codex or Claude Code model, open its role card in
           <strong>Settings → Models</strong> to choose the reasoning settings that model offers,
           such as a reasoning toggle, an effort level or a token budget; see
-          <a href="/docs/operating#model-settings">Reasoning settings</a>.
+          <a href="operating#model-settings">Reasoning settings</a>.
         </p>
         <p>
           Nothing leaves your machine by default: cloud backends (Anthropic, Codex, Claude Code) and
@@ -545,7 +543,7 @@
           inference backends on the gateway; turn off the
           <strong>Allow cloud inference</strong> switch under <strong>Settings → Models</strong>.
           Backends, presets, the remote-inference setting, and the other model roles are covered in
-          <a href="/docs/operating#models">Operating → Models</a>.
+          <a href="operating#models">Operating → Models</a>.
         </p>
         <p>
           If the agent already has a cloud model assigned but cloud inference is disabled, the
@@ -589,8 +587,7 @@
           signed in; to stop using it, assign the roles that use it to another model. Claude
           receives the conversation, the relevant Omnesis data and tool results. When a
           <code>claude</code> command is installed and the agent role is unassigned, an interactive
-          install offers to set this up (see
-          <a href="/docs/install#claude-code-offer">First run</a>).
+          install offers to set this up (see <a href="install#claude-code-offer">First run</a>).
         </p>
         <p>
           Each turn runs in isolation from the rest of your Claude Code use. It is a fresh
@@ -626,8 +623,7 @@
         <p>
           Edit it in the portal under <strong>Settings → OMNESIS.md</strong>, or open the file in
           any editor. The file on disk is the only copy, so whichever wrote last is what the agent
-          reads. There is no version history; <a href="/docs/updating#backup">backups</a> include
-          it.
+          reads. There is no version history; <a href="updating#backup">backups</a> include it.
         </p>
         <div class="term">
           <div class="term-bar">
@@ -661,10 +657,10 @@
         </p>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/search"
+          <a href="search"
             ><span class="pager-label">Previous</span><span class="pager-title">Search</span></a
           >
-          <a class="pager-next" href="/docs/connect"
+          <a class="pager-next" href="connect"
             ><span class="pager-label">Next</span
             ><span class="pager-title">Agents &amp; MCP</span></a
           >
@@ -681,7 +677,7 @@
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -732,6 +728,6 @@
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

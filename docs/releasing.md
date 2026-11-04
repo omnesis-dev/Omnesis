@@ -349,12 +349,26 @@ exists, and reads nothing outside the repository.
 
 Cutting the tag stays a human decision.
 
+## The site follows the release
+
+Pushing the tag also starts the `site` workflow. It rebuilds omnesis.dev from
+`main` with `website/docs/` and the installer files taken from the newest stable
+tag, so the live documentation and installer flip to the release the moment it
+is cut, while the blog and landing page keep publishing from `main` and `main`'s
+docs stay reachable, unlinked, at `/docs-edge/`. A documentation fix for the
+live site is therefore a patch release; `/docs-edge/` shows the fix as soon as
+it merges.
+
 ## Installer and release skew
 
-`website/install.sh` is deployed from `main` on every push, and it installs the
-newest **released** CLI: a checkout of the newest stable tag, the package of
-that version, or that release's images under `--docker`. The installer is
-newer than the CLI it drives, so every command and flag it hands that CLI —
+The site build (`scripts/site/build.mjs`, run by the `site` workflow) serves
+`website/install.sh` from the newest stable tag, together with the docs, so the
+installer a user runs normally matches the CLI it installs: a checkout of that
+tag, the package of that version, or that release's images under `--docker`.
+The skew still exists for an installer run from a checkout of `main` (and in
+the minutes after a tag is pushed, when the site already serves the new
+installer while that version's package is still publishing), so every command
+and flag the installer hands the CLI —
 directly, through the Docker launcher and the beside-Docker collector shim it
 writes, or in a command it prints for the operator — must exist in the newest
 release. A call to something newer must be guarded by a capability probe of

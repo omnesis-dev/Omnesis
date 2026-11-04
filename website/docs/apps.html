@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,14 +122,14 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
             <li>
-              <a href="/docs/apps" aria-current="page">Mobile apps</a>
+              <a href="apps" aria-current="page">Mobile apps</a>
               <ul class="side-sub">
                 <li><a href="#getting-the-apps">Getting the apps</a></li>
                 <li><a href="#pairing">Pairing</a></li>
@@ -143,13 +143,13 @@
                 <li><a href="#support">Support</a></li>
               </ul>
             </li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -162,7 +162,7 @@
           your gateway — chat, search, tasks, people, devices — and the runtime for sources whose
           data only exists on the phone. This page covers getting an app onto your phone, pairing
           it, Tasks, the phone-only sources, voice and quick capture, and what to do when phone data
-          does not arrive. It assumes a running gateway (see <a href="/docs/install">Install</a>).
+          does not arrive. It assumes a running gateway (see <a href="install">Install</a>).
         </p>
 
         <h2 id="getting-the-apps">Getting the apps</h2>
@@ -239,7 +239,7 @@
         </div>
         <p>
           How each build receives notifications is covered in
-          <a href="/docs/notifications#choosing-a-transport">Notifications → Choose a transport</a>.
+          <a href="notifications#choosing-a-transport">Notifications → Choose a transport</a>.
         </p>
 
         <h3 id="build-ios">Build and install iOS</h3>
@@ -360,7 +360,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           <code>gateway.pairingSystemTrustOrigins</code>. The address you pair with also decides
           where the phone works: a LAN or <code>.local</code> address only works at home. To use the
           phone away from home, follow
-          <a href="/docs/setup#remote-access">Setup → Remote access</a> before pairing.
+          <a href="setup#remote-access">Setup → Remote access</a> before pairing.
         </p>
         <p>
           The gateway chooses the address to put in the QR code, and the portal and the CLI show its
@@ -415,7 +415,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           mint the code from the CLI with an explicit list:
           <code>omnesis devices pair --kind ios --scopes read,push:claim</code>. The gateway always
           restores write access for the phone's own on-device sources when it connects. The full
-          scope list is in <a href="/docs/#devices-and-tokens">Devices and connections</a>.
+          scope list is in <a href="./#devices-and-tokens">Devices and connections</a>.
         </p>
         <p>
           iOS stores the credentials in the device-only Keychain; Android in encrypted preferences.
@@ -432,8 +432,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           current, behind or unsupported. <strong>Behind</strong> is ordinary rather than a fault;
           the gateway keeps serving the app. Only <strong>unsupported</strong> asks you to update
           the app, which you do on the phone: a
-          <a href="/docs/updating#fleet-update">fleet update</a> never updates phone apps.
-          <a href="/docs/updating#compatibility">Version compatibility</a> explains each reading.
+          <a href="updating#fleet-update">fleet update</a> never updates phone apps.
+          <a href="updating#compatibility">Version compatibility</a> explains each reading.
           <strong>Settings → About</strong> on the phone shows the version, build and protocol
           number to quote when asking for help.
         </p>
@@ -447,17 +447,17 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           establish that files have identical bytes, and a bounded trail can be incomplete.
         </p>
         <p>
-          Both apps open on <a href="/docs/agent">the agent</a> chat. The menu reaches Search,
-          Tasks, Sources, People, Tell Omnesis and Audit, lists recent conversations, and carries
-          Settings and a new conversation at its foot. Swipe right (on the iPhone Tasks screen, from
-          the left edge), or use the menu button, and the screen you are on slides aside to uncover
-          it; tap the strip still showing to come back. There is no tab bar.
+          Both apps open on <a href="agent">the agent</a> chat. The menu reaches Search, Tasks,
+          Sources, People, Tell Omnesis and Audit, lists recent conversations, and carries Settings
+          and a new conversation at its foot. Swipe right (on the iPhone Tasks screen, from the left
+          edge), or use the menu button, and the screen you are on slides aside to uncover it; tap
+          the strip still showing to come back. There is no tab bar.
         </p>
         <p>
           In a completed agent answer, tap the copy icon beside a value or after the last line of a
           plain multiline value to copy its contents. The button copies only that value, without its
           label or Markdown formatting, and remains available in saved conversations. See
-          <a href="/docs/agent">The agent</a>.
+          <a href="agent">The agent</a>.
         </p>
         <p>
           <strong>Settings → Gateway</strong> holds Configure Models, Configure Devices, Policies,
@@ -475,7 +475,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           third-party analytics SDK. The phone is one more paired device, so when the gateway is
           unreachable the app is offline. Notification text also stays on the gateway: Apple's and
           Google's push services carry a fixed, content-free wake, and the app fetches the text over
-          its paired connection. See <a href="/docs/notifications">Notifications</a>.
+          its paired connection. See <a href="notifications">Notifications</a>.
         </p>
 
         <h2 id="tasks">Tasks</h2>
@@ -566,8 +566,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           </li>
           <li>
             <strong>Chat about this</strong>, to start a conversation with
-            <a href="/docs/agent#chat-about-a-task">the agent</a> about the task, which needs an
-            agent model assigned.
+            <a href="agent#chat-about-a-task">the agent</a> about the task, which needs an agent
+            model assigned.
           </li>
         </ul>
         <p>
@@ -580,9 +580,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         <p>
           Every change shows a one-line receipt with <strong>Undo</strong>. Undo reverses the latest
           change to that task; an earlier change cannot be undone once the task has changed again. A
-          task can also change from a conversation with <a href="/docs/agent#tasks">the agent</a> or
-          from a <a href="#voice-and-quick-capture">Tell Omnesis note</a>; its history records
-          which.
+          task can also change from a conversation with <a href="agent#tasks">the agent</a> or from
+          a <a href="#voice-and-quick-capture">Tell Omnesis note</a>; its history records which.
         </p>
 
         <h3 id="ios-task-widgets">iOS task widgets</h3>
@@ -657,8 +656,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         <p>
           Each enabled source shows this phone's sync state, last successful update, errors, and a
           Sync now action. Once synced, the data is searchable like everything else and the
-          structured rows are queryable with SQL — see <a href="/docs/search">Search</a>, and the
-          full catalogue in <a href="/docs/sources">Available sources</a>.
+          structured rows are queryable with SQL — see <a href="search">Search</a>, and the full
+          catalogue in <a href="sources">Available sources</a>.
         </p>
         <p>On iOS:</p>
         <div class="table-wrap">
@@ -794,7 +793,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           Each enabled phone-only source regularly reports its permission state to the gateway. When
           access is reduced, the app shows the affected capability, its impact and the platform's
           repair action, and your phones receive a
-          <a href="/docs/notifications#what-sends-a-notification">reminder</a>. If a phone stops
+          <a href="notifications#what-sends-a-notification">reminder</a>. If a phone stops
           reporting, Omnesis says the source check is overdue; it never concludes that a permission
           was revoked from an empty sync or a quiet period.
         </p>
@@ -827,8 +826,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           source; the confirmation says what happens to the data, which depends on the source's mode
           and whether other devices still host it. <strong>Pause</strong> on source details keeps
           the source and its data. What detach, pause and remove do in each mode is described in
-          <a href="/docs/sources#several-devices">Sources on several devices</a> and
-          <a href="/docs/sources#managing-sources">Managing sources</a>.
+          <a href="sources#several-devices">Sources on several devices</a> and
+          <a href="sources#managing-sources">Managing sources</a>.
         </p>
 
         <h2 id="voice-and-quick-capture">Voice and quick capture</h2>
@@ -840,7 +839,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           and syncs later. The portal offers the same typed capture on its
           <strong>Tell Omnesis</strong> page, which also lists every captured note newest-first so
           individual notes can be amended or deleted; see
-          <a href="/docs/sources#omnesis-itself">Sources</a>.
+          <a href="sources#omnesis-itself">Sources</a>.
         </p>
         <p>
           In both mobile apps, open <strong>Notes</strong> from the menu to browse saved notes
@@ -858,14 +857,14 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           With a model assigned to <strong>Agent</strong> (under
           <strong>Settings → Models</strong>), Omnesis also reads each note you capture from your
           own clients: the portal, the apps and the CLI. Notes that external agents add through
-          <a href="/docs/connect">MCP, OpenClaw or Hermes</a> are saved and searchable but never
-          acted on. A few seconds after a note stops changing, one bounded agent turn acts on it: it
-          adds the tasks the note asks for (“remind me to renew the passport next month”),
-          completes, moves, strikes or edits the task a note reports progress on (“paid the
-          plumber”), remembers facts you state about yourself or people you know, and answers a
-          question the note asks. A request that needs watching over time, such as “tell me when the
-          parcel ships”, is beyond one note; the reply says so plainly. A voice note waits for the
-          gateway's transcript, for up to 30 minutes, before it is read.
+          <a href="connect">MCP, OpenClaw or Hermes</a> are saved and searchable but never acted on.
+          A few seconds after a note stops changing, one bounded agent turn acts on it: it adds the
+          tasks the note asks for (“remind me to renew the passport next month”), completes, moves,
+          strikes or edits the task a note reports progress on (“paid the plumber”), remembers facts
+          you state about yourself or people you know, and answers a question the note asks. A
+          request that needs watching over time, such as “tell me when the parcel ships”, is beyond
+          one note; the reply says so plainly. A voice note waits for the gateway's transcript, for
+          up to 30 minutes, before it is read.
         </p>
         <p>
           What the turn did appears under the note on the <strong>Tell Omnesis</strong> page as a
@@ -1007,14 +1006,14 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
             The Android App Actions have not been properly tested. Invocation depends on the
             assistant, device, locale and Android version, and a phrase may not work on yours. We
             are looking for contributors to help test and harden them; see
-            <a href="/docs/#help">Help and support</a> to report a device and locale combination or
-            to get involved.
+            <a href="./#help">Help and support</a> to report a device and locale combination or to
+            get involved.
           </p>
         </div>
         <p>
           Voice questions wait a bounded time in the foreground. If the answer takes longer, the
           assistant tells you it is still working; once the answer is ready, your phone gets an
-          <a href="/docs/notifications#what-sends-a-notification">Answer ready</a> notification and
+          <a href="notifications#what-sends-a-notification">Answer ready</a> notification and
           fetches the answer directly from your gateway. Notification services never receive the
           question or answer text.
         </p>
@@ -1076,7 +1075,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           off for the gateway and every paired app. The apps fetch hints in the background, keep
           them in memory for offline use for up to 24 hours, and refresh them opportunistically
           after 30 minutes when returning to the foreground or refreshing gateway status. Starting a
-          recording never waits for hints. See <a href="/docs/operating">Operating Omnesis</a> for
+          recording never waits for hints. See <a href="operating">Operating Omnesis</a> for
           vocabulary behavior.
         </p>
         <p>
@@ -1135,7 +1134,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           request in the app, choose its access level, and approve or deny it; the same screen is
           under <strong>Settings → Gateway → Authorize an MCP connection</strong>. Access levels and
           the approval flow are described in
-          <a href="/docs/connect#bring-your-own-agent">Bring your own agent</a>.
+          <a href="connect#bring-your-own-agent">Bring your own agent</a>.
         </p>
         <p>
           Privacy policies are read-only on the phone: <strong>Settings → Policies</strong> lists
@@ -1146,8 +1145,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
         <p>
           A document can be deleted from its page or from a source's recent list, and the prompt
           offers both forms, <em>Delete for good</em> and <em>Delete this copy</em>; see
-          <a href="/docs/search#beyond-search">Search → Beyond search</a> for the difference. A
-          day's quick-capture document cannot be deleted directly: its <em>Manage notes</em>
+          <a href="search#beyond-search">Search → Beyond search</a> for the difference. A day's
+          quick-capture document cannot be deleted directly: its <em>Manage notes</em>
           action opens the portal's Tell Omnesis page at that day, where the original notes can be
           amended or deleted.
         </p>
@@ -1193,19 +1192,19 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
 
         <h2 id="support">Mobile app support</h2>
         <p>
-          When you <a href="/docs/#help">ask for help</a> with a mobile-app issue, include the
-          platform, the three readings from <strong>Settings → About</strong>, and the screen or
-          permission state where the problem occurred. Never include a gateway token, pairing
-          payload, private indexed content, or other credentials. Data handling and deletion
-          controls are described in the <a href="/mobile-privacy-policy">mobile privacy policy</a>.
+          When you <a href="./#help">ask for help</a> with a mobile-app issue, include the platform,
+          the three readings from <strong>Settings → About</strong>, and the screen or permission
+          state where the problem occurred. Never include a gateway token, pairing payload, private
+          indexed content, or other credentials. Data handling and deletion controls are described
+          in the <a href="/mobile-privacy-policy">mobile privacy policy</a>.
         </p>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/connect"
+          <a href="connect"
             ><span class="pager-label">Previous</span
             ><span class="pager-title">Agents &amp; MCP</span></a
           >
-          <a class="pager-next" href="/docs/notifications"
+          <a class="pager-next" href="notifications"
             ><span class="pager-label">Next</span><span class="pager-title">Notifications</span></a
           >
         </nav>
@@ -1221,7 +1220,7 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -1272,6 +1271,6 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

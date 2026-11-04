@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,20 +122,20 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
             <li>
-              <a href="/docs/building-sources" aria-current="page">Building sources</a>
+              <a href="building-sources" aria-current="page">Building sources</a>
               <ul class="side-sub">
                 <li><a href="#what-qualifies">What qualifies</a></li>
                 <li><a href="#the-contract">The contract</a></li>
@@ -146,7 +146,7 @@
                 <li><a href="#contributing">Contributing</a></li>
               </ul>
             </li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -171,7 +171,7 @@
           Platforms whose only way out is a manual, user-triggered export — a "download your data"
           archive the user has to request each time — do not qualify. A stale snapshot that decays
           until the user remembers to re-export is not a source. The
-          <a href="/docs/sources">available sources</a> list shows what has cleared this bar.
+          <a href="sources">available sources</a> list shows what has cleared this bar.
         </p>
 
         <h2 id="the-contract">The contract</h2>
@@ -580,7 +580,7 @@ export default defineSource({
           A descriptor declares how one configured source may be hosted across devices with
           <code>multiDevice: { mode }</code>. Each hosting device is a <em>member</em>. Users see
           these modes under plain names, described in
-          <a href="/docs/sources#several-devices">Sources on several devices</a>.
+          <a href="sources#several-devices">Sources on several devices</a>.
         </p>
         <div class="table-wrap">
           <table>
@@ -803,7 +803,7 @@ export default defineSource({
                 <td><code>boundDocument</code></td>
                 <td>
                   Binds rows to a summary document, so a row found by
-                  <a href="/docs/search">SQL</a> cites back to a searchable document.
+                  <a href="search">SQL</a> cites back to a searchable document.
                 </td>
               </tr>
               <tr>
@@ -892,7 +892,7 @@ src/
           every other touchpoint. A source marked <code>experimental</code> is offered only by a
           collector running with <code>OMNESIS_EXPERIMENTAL=1</code>, and one that declares
           <code>supportedPlatforms</code> only on those platforms. On the next collector start the
-          source appears in <a href="/docs/sources#adding-a-source"><strong>+ Add source</strong></a
+          source appears in <a href="sources#adding-a-source"><strong>+ Add source</strong></a
           >.
         </p>
 
@@ -1011,11 +1011,11 @@ src/
         </p>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/sources"
+          <a href="sources"
             ><span class="pager-label">Previous</span
             ><span class="pager-title">Available sources</span></a
           >
-          <a class="pager-next" href="/docs/experimental"
+          <a class="pager-next" href="experimental"
             ><span class="pager-label">Next</span><span class="pager-title">Experimental</span></a
           >
         </nav>
@@ -1031,7 +1031,7 @@ src/
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -1082,6 +1082,6 @@ src/
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

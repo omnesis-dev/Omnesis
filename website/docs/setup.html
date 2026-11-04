@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,10 +122,10 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
             <li>
-              <a href="/docs/setup" aria-current="page">Setup</a>
+              <a href="setup" aria-current="page">Setup</a>
               <ul class="side-sub">
                 <li><a href="#pairing">How pairing works</a></li>
                 <li><a href="#portal">Portal</a></li>
@@ -139,17 +139,17 @@
                 <li><a href="#repairing-a-device">Repairing a device</a></li>
               </ul>
             </li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -158,7 +158,7 @@
         <p class="docs-kicker">Start</p>
         <h1>Setup</h1>
         <p class="docs-lead">
-          The <a href="/docs/install">installer</a> leaves you with a gateway and a collector on one
+          The <a href="install">installer</a> leaves you with a gateway and a collector on one
           machine. This page connects everything else: the portal, a collector on another machine,
           the phone apps, the browser extension and your own tokens. It also covers the gateway's
           certificate and reaching the gateway when you are away from home.
@@ -169,7 +169,7 @@
           Every client except an external AI agent joins the gateway the same way: you mint a
           pairing code on the gateway, and the new device redeems it for a token of its own. The
           token's scopes depend on the kind of device, as listed in
-          <a href="/docs/#devices-and-tokens">Devices and connections</a>.
+          <a href="./#devices-and-tokens">Devices and connections</a>.
         </p>
         <figure class="diagram diagram-flat diagram-compact">
           <ol class="flow">
@@ -254,7 +254,7 @@
           For a Docker gateway, the installer issues the Tailscale certificate on the host, when
           Tailscale runs there, and registers a host job that renews it. Issue mkcert or other
           certificates on the host yourself and pass them to the installer, as described in
-          <a href="/docs/install#docker-tls">TLS in Docker</a>. The container cannot use the host's
+          <a href="install#docker-tls">TLS in Docker</a>. The container cannot use the host's
           Tailscale daemon. It renews its own self-signed certificate; renew supplied certificates
           on the host and keep their mounted files readable by the container account. The automatic
           provisioning and renewal in the table below apply to native installs.
@@ -338,10 +338,10 @@
           Agents are the other reason. OpenClaw and Hermes pin the gateway's fingerprint and connect
           with any of these certificates. Claude Code cannot connect to the self-signed one, and
           needs a one-time trust setting for a mkcert one; Codex needs that setting for either. See
-          <a href="/docs/connect#trust-certificate">Trust the gateway's certificate</a>. ChatGPT and
-          the Claude apps connect from their providers' servers, so they need a public address
-          whatever the certificate: <a href="/docs/connect#tailscale-funnel">Tailscale Funnel</a> or
-          a <a href="#public-domain">domain of your own</a>.
+          <a href="connect#trust-certificate">Trust the gateway's certificate</a>. ChatGPT and the
+          Claude apps connect from their providers' servers, so they need a public address whatever
+          the certificate: <a href="connect#tailscale-funnel">Tailscale Funnel</a> or a
+          <a href="#public-domain">domain of your own</a>.
         </p>
         <p>
           A certificate controls whether a client trusts the gateway, not whether it can reach it.
@@ -373,7 +373,7 @@
           <code>omnesis tls renew --force</code> for the self-signed one. A phone paired by
           fingerprint, and a CLI or collector on another machine, pinned the certificate it first
           saw and refuses a new one until you pair it again or trust the new fingerprint; see
-          <a href="/docs/security#pinned-clients">Clients that pinned the old certificate</a>.
+          <a href="security#pinned-clients">Clients that pinned the old certificate</a>.
         </p>
 
         <h2 id="remote-access">Remote access</h2>
@@ -404,7 +404,7 @@
             Enable MagicDNS and HTTPS certificates for the tailnet. On a native gateway, run
             <code>omnesis tls provision</code> (see <a href="#certificates">Certificates</a>). For a
             Docker gateway, run the installer again on the host, which issues the certificate there
-            (see <a href="/docs/install#docker-tls">TLS in Docker</a>).
+            (see <a href="install#docker-tls">TLS in Docker</a>).
           </li>
           <li>
             Pair the phone from <strong>Settings → Devices → Pair device</strong> in the portal, or
@@ -439,8 +439,8 @@
           to reach is better served by <a href="#away-from-home">Tailscale</a>. External agents that
           run on their provider's servers, such as Claude Desktop, Claude Cowork and ChatGPT, can
           only use a public address. For them alone, without a domain,
-          <a href="/docs/connect#tailscale-funnel">Tailscale Funnel</a> publishes the gateway's
-          tailnet name; the two routes below are for a domain you own.
+          <a href="connect#tailscale-funnel">Tailscale Funnel</a> publishes the gateway's tailnet
+          name; the two routes below are for a domain you own.
         </p>
         <p>
           <strong>Serve a certificate you obtain.</strong> Get a certificate for the name with the
@@ -578,7 +578,7 @@ omnesis.example.com {
         <h2 id="collector">Collector on another machine</h2>
         <p>
           The installer runs a collector on the gateway machine, and it sets itself up: on first
-          start it pairs using the <a href="/docs/#devices-and-tokens">bootstrap admin token</a> and
+          start it pairs using the <a href="./#devices-and-tokens">bootstrap admin token</a> and
           saves its own token to <code>~/.config/omnesis/collector-token</code>.
         </p>
         <p>
@@ -634,7 +634,7 @@ omnesis.example.com {
           On macOS, run from a terminal, the install ends by opening the Full Disk Access settings
           and revealing the Node executable in Finder, ready to drag into the list; the Apple
           sources need it. See
-          <a href="/docs/operating#full-disk-access">Full Disk Access</a>.
+          <a href="operating#full-disk-access">Full Disk Access</a>.
         </p>
         <p>The role runs three commands, which you can also run yourself:</p>
         <div class="term">
@@ -684,8 +684,8 @@ omnesis.example.com {
           With more than one online, <code>omnesis sources add --device &lt;collector&gt;</code>
           chooses which one hosts a new source; without the flag you get a picker. Some source types
           can be hosted by several machines at once, others by one at a time;
-          <a href="/docs/sources#several-devices">Sources on several devices</a> covers joining,
-          detaching and moving them.
+          <a href="sources#several-devices">Sources on several devices</a> covers joining, detaching
+          and moving them.
         </p>
         <p>
           If you sign in to Google in a browser on a different machine from the collector, the
@@ -701,7 +701,7 @@ omnesis.example.com {
         <p>
           Pair each phone and tablet separately, by scanning a QR code in the app. The QR code
           carries everything the app needs, including how to trust the gateway's certificate; see
-          <a href="/docs/apps#pairing">Mobile apps → Pairing</a>. The portal and the CLI offer only
+          <a href="apps#pairing">Mobile apps → Pairing</a>. The portal and the CLI offer only
           addresses that phone can use and say where each works. A gateway in Docker's default
           bridge network sees only the container's own address and name, which no phone can reach,
           so it never offers them: the <code>omnesis</code> command on the host records the host's
@@ -709,7 +709,7 @@ omnesis.example.com {
           the port Docker publishes, every time it runs, and the gateway offers those. If you want
           the phone to work away from home, set up <a href="#away-from-home">Tailscale</a> before
           pairing. How to install the apps is on
-          <a href="/docs/apps#getting-the-apps">Getting the apps</a>.
+          <a href="apps#getting-the-apps">Getting the apps</a>.
         </p>
         <p>
           Each app hosts sources that read data on the phone. Right after pairing, the app's setup
@@ -718,7 +718,7 @@ omnesis.example.com {
           Apple devices, so two iPhones contribute to one library. The other phone sources, Photos
           included, are kept per device: each phone adds its own data. The app asks about this when
           you enable a source; see
-          <a href="/docs/sources#several-devices">Sources on several devices</a>.
+          <a href="sources#several-devices">Sources on several devices</a>.
         </p>
 
         <h3 id="ios-app">iOS app</h3>
@@ -739,7 +739,7 @@ omnesis.example.com {
             >iOS contributor guide</a
           >; an app signed with your own Apple team needs your own push credentials, set up with
           <code>omnesis push setup</code> (see
-          <a href="/docs/notifications#setup">Notifications → Direct setup</a>).
+          <a href="notifications#setup">Notifications → Direct setup</a>).
         </p>
 
         <h3 id="android-app">Android app</h3>
@@ -763,8 +763,8 @@ omnesis.example.com {
           <code>android/local.push.properties</code> file that the build reads. The package id you
           choose there becomes the app's identity, so your build can be installed beside an official
           one; rebuild after changing it. Build steps are on
-          <a href="/docs/apps#getting-the-apps">Mobile apps</a>, and the Firebase values on
-          <a href="/docs/notifications#setup">Notifications → Direct setup</a>.
+          <a href="apps#getting-the-apps">Mobile apps</a>, and the Firebase values on
+          <a href="notifications#setup">Notifications → Direct setup</a>.
         </p>
 
         <h2 id="browser-extension">Browser extension</h2>
@@ -1003,7 +1003,7 @@ omnesis.example.com {
           without a reload. Deleting a captured page <em>for good</em>, from the portal, the CLI or
           a phone, adds it to these settings so no browser captures it again; deleting
           <em>this copy</em> lets it be captured again. See
-          <a href="/docs/search#beyond-search">Deleting documents</a>.
+          <a href="search#beyond-search">Deleting documents</a>.
         </p>
 
         <h2 id="agent-harness">Agent harness</h2>
@@ -1011,7 +1011,7 @@ omnesis.example.com {
           A machine running OpenClaw or Hermes joins with the installer's <code>--openclaw</code> or
           <code>--hermes</code> role, which pairs it as an <code>agent</code> device and installs
           the harness's Omnesis plugin. The commands, the approval step and refreshing the plugin
-          are in <a href="/docs/connect#openclaw-hermes">OpenClaw and Hermes</a>.
+          are in <a href="connect#openclaw-hermes">OpenClaw and Hermes</a>.
         </p>
 
         <h2 id="tokens">Devices, integrations and tokens</h2>
@@ -1021,9 +1021,9 @@ omnesis.example.com {
           only a label, which you change with
           <code>omnesis devices rename &lt;device&gt; &lt;name&gt;</code>. A device that pairs again
           keeps its identity, sources and data. The list shows each device's version, as described
-          in <a href="/docs/updating#compatibility">version compatibility</a>. A device shows as
-          live only while its connection is open, and otherwise shows when it was last active; not
-          being live is not a fault by itself.
+          in <a href="updating#compatibility">version compatibility</a>. A device shows as live only
+          while its connection is open, and otherwise shows when it was last active; not being live
+          is not a fault by itself.
         </p>
         <p>
           <code>omnesis devices revoke &lt;device&gt;</code> invalidates the device's tokens but
@@ -1045,7 +1045,7 @@ omnesis.example.com {
           Pairing gives each device the token it needs. For a script or a tool of your own, create
           an extra token for an existing device, with only the scopes it needs and, ideally, an
           expiry. The scopes are listed in
-          <a href="/docs/#devices-and-tokens">Devices and connections</a>.
+          <a href="./#devices-and-tokens">Devices and connections</a>.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1089,11 +1089,11 @@ omnesis.example.com {
         </p>
         <p>
           What its answers may use is set by the
-          <a href="/docs/connect#access-levels">access level</a> you put it on, the same kind of
-          named permission set an agent connection uses: which sources answers draw on, and which
-          privacy policy reviews them. You choose the level in the portal. A code minted from the
-          CLI carries no level, so the integration waits on its Devices card until you pick one;
-          until then its questions are refused. <code>omnesis devices list</code> and
+          <a href="connect#access-levels">access level</a> you put it on, the same kind of named
+          permission set an agent connection uses: which sources answers draw on, and which privacy
+          policy reviews them. You choose the level in the portal. A code minted from the CLI
+          carries no level, so the integration waits on its Devices card until you pick one; until
+          then its questions are refused. <code>omnesis devices list</code> and
           <code>omnesis access levels</code> show which integration uses which level.
         </p>
         <p>
@@ -1140,7 +1140,7 @@ omnesis.example.com {
         <p>
           External AI agents such as Claude Code, Codex, Claude Desktop, Claude Cowork and ChatGPT
           don't pair as devices. They connect over MCP and are approved in the portal as
-          connections; see <a href="/docs/connect#bring-your-own-agent">Bring your own agent</a>,
+          connections; see <a href="connect#bring-your-own-agent">Bring your own agent</a>,
           including the <code>gateway.publicBaseUrl</code> setting that agents on other machines
           need.
         </p>
@@ -1209,12 +1209,12 @@ omnesis.example.com {
           >. A re-run of the gateway's installer with <code>--port</code> prints this line for every
           collector it leaves behind.
         </p>
-        <p>With everything paired, continue with <a href="/docs/search">Search</a>.</p>
+        <p>With everything paired, continue with <a href="search">Search</a>.</p>
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/install"
+          <a href="install"
             ><span class="pager-label">Previous</span><span class="pager-title">Install</span></a
           >
-          <a class="pager-next" href="/docs/search"
+          <a class="pager-next" href="search"
             ><span class="pager-label">Next</span><span class="pager-title">Search</span></a
           >
         </nav>
@@ -1230,7 +1230,7 @@ omnesis.example.com {
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -1281,6 +1281,6 @@ omnesis.example.com {
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>
