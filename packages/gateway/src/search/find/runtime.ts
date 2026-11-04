@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { BrowserFindEvidence, createBrowserResultsTool } from "./results-tool.js";
+import { browserFindFinalizationHistory } from "./finalization-history.js";
 import {
   BROWSER_FIND_AGENT_RESULT_LIMIT,
   BROWSER_FIND_RATE_LIMIT_PATIENCE,
@@ -149,7 +150,7 @@ export async function buildBrowserFindRuntime(input: {
     await run(session, input.query);
     if (!presented) {
       input.signal.throwIfAborted();
-      const history = session.historySnapshot();
+      const history = browserFindFinalizationHistory(session.historySnapshot(), input.timeZone);
       // Release the research backend before asking the hot factory for another
       // session: a pooled backend may have only one available worker.
       researchDisposed = true;

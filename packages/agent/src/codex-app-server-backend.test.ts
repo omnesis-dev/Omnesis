@@ -1271,6 +1271,28 @@ describe("CodexAppServerBackend", () => {
     60_000,
   );
 
+  it("explains a turn rejected at the app-server input limit", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-input-limit-")));
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath: join(dir, "events.jsonl"),
+      scenario: "input-too-large",
+    });
+    try {
+      const events = await collect(backend.runTurn(baseInput()));
+      expect(events.find((event) => event.type === "agent.error")?.payload).toMatchObject({
+        code: "codex_input_too_large",
+        message: expect.stringContaining("exceeds Codex's turn input limit"),
+      });
+      expect(
+        events.find((event) => event.type === "agent.message.end")?.payload.failure,
+      ).toMatchObject({ code: "codex_input_too_large", retryable: false });
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects unsupported Codex CLI versions before starting app-server", async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-unsupported-version-")));
     const codexHome = join(dir, "codex-home");

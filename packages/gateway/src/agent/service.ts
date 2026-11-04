@@ -4753,6 +4753,7 @@ export const VETTED_ANSWER_FAILURE_CODES = new Set([
   "codex_usage_limited",
   "codex_invalid_model",
   "codex_runtime_error",
+  "codex_input_too_large",
 ]);
 
 /**

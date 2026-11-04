@@ -159,6 +159,17 @@ rl.on("line", (line) => {
 
   if (msg.method === "turn/start") {
     log("turn_start", { params: msg.params });
+    if (scenario === "input-too-large") {
+      send({
+        id: msg.id,
+        error: {
+          code: -32602,
+          data: { input_error_code: "input_too_large", max_chars: 1048576, actual_chars: 1100000 },
+          message: "Input exceeds the maximum length of 1048576 characters.",
+        },
+      });
+      return;
+    }
     if (scenario === "pending-turn-start") return;
     const firstTurn = !turnStarted;
     turnStarted = true;

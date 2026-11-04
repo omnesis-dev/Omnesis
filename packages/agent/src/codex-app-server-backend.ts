@@ -321,7 +321,7 @@ export class CodexAppServerRuntime {
         failure: {
           code,
           message,
-          retryable: code !== "context_window_exceeded",
+          retryable: code !== "context_window_exceeded" && code !== "codex_input_too_large",
           backend: "codex",
           model,
         },
@@ -467,7 +467,7 @@ export class CodexAppServerRuntime {
           failure: {
             code,
             message,
-            retryable: code !== "context_window_exceeded",
+            retryable: code !== "context_window_exceeded" && code !== "codex_input_too_large",
             backend: "codex",
             model,
           },
@@ -1055,7 +1055,9 @@ export class CodexAppServerRuntime {
           ? {
               failure: {
                 ...failure,
-                retryable: failure.code !== "context_window_exceeded",
+                retryable:
+                  failure.code !== "context_window_exceeded" &&
+                  failure.code !== "codex_input_too_large",
                 backend: "codex",
                 model: state.model,
               },
@@ -1700,6 +1702,8 @@ function codexErrorCode(err: unknown): string {
   const structured = structuredCodexFailure(err);
   if (structured) return structured.code;
   const msg = codexErrorText(err);
+  if (/^Input exceeds the maximum length of \d+ characters\.$/i.test(msg))
+    return "codex_input_too_large";
   if (isCodexContextWindowError(msg)) return "context_window_exceeded";
   if (/not found|ENOENT/i.test(msg)) return "codex_binary_missing";
   if (/unsupported codex cli version/i.test(msg)) return "codex_unsupported_version";
@@ -1713,6 +1717,8 @@ function friendlyCodexErrorMessage(err: unknown, codexHome: string): string {
   const structured = structuredCodexFailure(err);
   if (structured) return structured.message;
   const msg = codexErrorText(err);
+  if (/^Input exceeds the maximum length of \d+ characters\.$/i.test(msg))
+    return "The search or conversation history exceeds Codex's turn input limit. Try a narrower search or a new conversation.";
   if (isCodexContextWindowError(msg)) return CONTEXT_WINDOW_EXCEEDED_MESSAGE;
   if (/not found|ENOENT/i.test(msg)) {
     return "Codex CLI was not found. Install or configure a supported Codex CLI runtime.";

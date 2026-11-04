@@ -479,6 +479,93 @@ class FinalizationBackend implements ChatBackend {
 }
 
 describe("ephemeral read-only browser search", () => {
+  it("repairs a rejected snippet after research exceeds the Codex turn input limit", async () => {
+    const inputs: TurnInput[] = [];
+    const backend: ChatBackend = {
+      name: "puppet",
+      model: "puppet",
+      async *runTurn(input): AsyncIterable<AgentEvent> {
+        inputs.push(input);
+        const payload = { sessionId: input.sessionId, messageId: input.messageId };
+        yield { type: "agent.message.start", payload: { ...payload, role: "assistant" } };
+        const present = input.tools.find((tool) => tool.name === "present_browser_results")!;
+        if (inputs.length === 1) {
+          const args = { queries: [{ query: "example", limit: 100 }] };
+          const retrieved = await input.tools
+            .find((tool) => tool.name === "search_many")!
+            .invoke(args, context);
+          expect(JSON.stringify(retrieved).length).toBeGreaterThan(1_048_576);
+          yield {
+            type: "agent.tool.start",
+            payload: { ...payload, toolCallId: "search", tool: "search_many", args },
+          };
+          yield {
+            type: "agent.tool.result",
+            payload: { ...payload, toolCallId: "search", result: retrieved, durationMs: 1 },
+          };
+          const proposal = { results: [{ ...result(), snippet: "An invented snippet" }] };
+          const rejected = await present.invoke(proposal, context);
+          expect(rejected).toMatchObject({ kind: "error", code: "ungrounded_snippet" });
+          yield {
+            type: "agent.tool.start",
+            payload: { ...payload, toolCallId: "present", tool: present.name, args: proposal },
+          };
+          yield {
+            type: "agent.tool.result",
+            payload: { ...payload, toolCallId: "present", result: rejected, durationMs: 1 },
+          };
+        } else {
+          const transcript = JSON.stringify(input.history);
+          expect(transcript.length).toBeLessThan(300_000);
+          expect(transcript).toContain("doc-1");
+          expect(transcript).toContain("ungrounded_snippet");
+          expect(await present.invoke({ results: [result()] }, context)).toMatchObject({
+            kind: "structured",
+          });
+        }
+        yield { type: "agent.message.end", payload: { ...payload, stopReason: "end_turn" } };
+      },
+    };
+    const service = new AgentService({
+      backendFactory: () => backend,
+      systemPrompt: "Corpus prompt",
+      ports: {
+        document,
+        search: {
+          search: async () => ({
+            query: "example",
+            durationMs: 1,
+            results: Array.from({ length: 100 }, (_, index) => ({
+              documentId: `doc-${index + 1}`,
+              sourceId: "demo:one",
+              sourceType: "demo",
+              title: "Example activity",
+              url: "https://example.org/activity/1",
+              snippet: "A long weekend run. " + "Evidence. ".repeat(2000),
+            })),
+          }),
+        },
+      },
+    });
+    const onResults = vi.fn();
+    try {
+      expect(
+        await buildBrowserFindRuntime({
+          query: "Find example",
+          agent: service,
+          signal: new AbortController().signal,
+          onEvent: () => {},
+          onResults,
+        }),
+      ).toEqual({ presented: true });
+      expect(inputs).toHaveLength(2);
+      expect(onResults).toHaveBeenCalledTimes(1);
+      expect(onResults.mock.lastCall![0][0].sourceUrl).toBe("https://example.org/activity/1");
+    } finally {
+      await service.dispose();
+    }
+  });
+
   it("retains builtin retrieval handles with the read-only default and excludes explicit writes", async () => {
     const retrieval: ToolHandle[] = [];
     const service = new AgentService({
@@ -642,7 +729,7 @@ describe("ephemeral read-only browser search", () => {
       backend.inputs[1]!.history.some(
         (message) =>
           message.role === "user" &&
-          message.parts.some((part) => part.kind === "text" && part.text === "Find route"),
+          message.parts.some((part) => part.kind === "text" && part.text.includes("Find route")),
       ),
     ).toBe(true);
     expect(events.filter((event) => event.type === "agent.user.message")).toHaveLength(1);
