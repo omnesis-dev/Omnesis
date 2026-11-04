@@ -24,6 +24,7 @@ import {
   isJSON,
   CliError,
   EXIT_FAILURE,
+  EXIT_USER_ERROR,
   pickGatewayExitCode,
 } from "../utils.js";
 
@@ -238,6 +239,23 @@ async function runList(): Promise<void> {
   console.log();
 }
 
+/**
+ * What `omnesis backup` was asked to do. `list` reads as a word too, since
+ * `omnesis backup list` is what an operator types; any other word is refused
+ * rather than ignored, because ignoring it starts a full backup nobody asked for.
+ */
+export function backupAction(listFlag: boolean, words: readonly string[]): "list" | "create" {
+  const [first, ...rest] = words;
+  if (first === undefined) return listFlag ? "list" : "create";
+  if (first === "list" && rest.length === 0) return "list";
+  throw new CliError(
+    `omnesis backup takes no arguments, and "${words.join(" ")}" is not one. ` +
+      `Run 'omnesis backup' to create a backup, 'omnesis backup list' to see them, ` +
+      `or add --note "<text>" to label one.`,
+    EXIT_USER_ERROR,
+  );
+}
+
 export const backupCommand = defineCommand({
   meta: {
     name: "backup",
@@ -263,7 +281,9 @@ export const backupCommand = defineCommand({
     },
   },
   async run(ctx) {
-    if (ctx.args.list) {
+    if (
+      backupAction(ctx.args.list === true, (ctx.args._ as string[] | undefined) ?? []) === "list"
+    ) {
       await runList();
       return;
     }

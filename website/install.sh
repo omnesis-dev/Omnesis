@@ -3605,6 +3605,7 @@ try {
   process.exit(typeof error.status === "number" && error.status > 0 ? error.status : 1);
 }
 ' "$MKCERT_CLI" "$CONFIG_DIR/tls/mkcert.crt" "$CONFIG_DIR/tls/mkcert.key" "$HOSTLOCAL"
+      tls_owner_only "$CONFIG_DIR/tls/mkcert.crt" "$CONFIG_DIR/tls/mkcert.key"
       set_env OMNESIS_TLS_CERT "$CONFIG_DIR/tls/mkcert.crt"
       set_env OMNESIS_TLS_KEY "$CONFIG_DIR/tls/mkcert.key"
       unset_env OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN
@@ -3673,6 +3674,7 @@ try {
     mkdir -p "$CONFIG_DIR/tls"
     if mint_tailscale_cert "$CONFIG_DIR/tls/tailscale.crt" \
                            "$CONFIG_DIR/tls/tailscale.key" "$TS_NAME"; then
+      tls_owner_only "$CONFIG_DIR/tls/tailscale.crt" "$CONFIG_DIR/tls/tailscale.key"
       TAILSCALE_GATEWAY_URL="$(node -e 'process.stdout.write(new URL(process.argv[1]).origin)' \
         "https://$TS_NAME:$GATEWAY_PORT")"
       set_env OMNESIS_TLS_CERT "$CONFIG_DIR/tls/tailscale.crt"
@@ -3764,6 +3766,14 @@ ask_tailscale_certificate() {
 # `tailscale cert` orders from Let's Encrypt, which takes seconds, so its bound
 # is generous: it only keeps a hung daemon from stalling the install for good.
 TS_CERT_ERROR=""
+# The pair a mint leaves is owner-only, like the rest of the config directory:
+# `tailscale cert` and mkcert write the certificate world-readable, and the
+# doctor reports any entry that is not. The gateway reads it as this account.
+tls_owner_only() {
+  chmod 700 "$CONFIG_DIR/tls" 2>/dev/null || true
+  chmod 600 "$@" 2>/dev/null || true
+}
+
 mint_tailscale_cert() {
   TS_CERT_ERROR="$(tailscale_cli_bounded 300 cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" && return 0
   case "$TS_CERT_ERROR" in
@@ -4367,10 +4377,19 @@ process.stdin.on("end", () => {
 });' 2>/dev/null || true)"
     warn "The gateway answered as ${GATEWAY_ANSWERED_VERSION:-another version}, not ${GATEWAY_EXPECTED_VERSION:-the version this run installed} — it is serving an older build, not starting up."
   fi
-  if [ "$DOCKER" = 1 ]; then
-    warn "Gateway did not answer /health within ${GATEWAY_TOTAL_WAIT}s — check: docker compose -f $COMPOSE_FILE ps && docker compose -f $COMPOSE_FILE logs gateway"
+  # A gateway that stopped running ended the wait early: say so, rather than
+  # report a timeout that did not happen.
+  if [ "$GATEWAY_ANSWERED" = 0 ] && { [ "$DOCKER" = 1 ] || [ "$WANT_SERVICE" = 1 ]; } &&
+     [ "$GATEWAY_TOTAL_WAIT" -lt $((GATEWAY_WAIT_SECONDS + GATEWAY_STARTUP_MAX_SECONDS)) ] &&
+     ! gateway_is_supervised_and_running; then
+    GATEWAY_WAIT_VERDICT="stopped running after ${GATEWAY_TOTAL_WAIT}s without answering /health"
   else
-    warn "Gateway did not answer /health within ${GATEWAY_TOTAL_WAIT}s — check: omnesis service status && omnesis service logs gateway"
+    GATEWAY_WAIT_VERDICT="did not answer /health within ${GATEWAY_TOTAL_WAIT}s"
+  fi
+  if [ "$DOCKER" = 1 ]; then
+    warn "Gateway $GATEWAY_WAIT_VERDICT — check: docker compose -f $COMPOSE_FILE ps && docker compose -f $COMPOSE_FILE logs gateway"
+  else
+    warn "Gateway $GATEWAY_WAIT_VERDICT — check: omnesis service status && omnesis service logs gateway"
   fi
   return 1
 }
@@ -6677,8 +6696,10 @@ docker_tailscale_mint() {
     rm -rf "$TS_STAGE"
     return 1
   fi
-  chmod 600 "$TS_STAGE/tailscale.key" 2>/dev/null || true
-  chmod 644 "$TS_STAGE/tailscale.crt" 2>/dev/null || true
+  # Owner-only, like the gateway's own renewals; docker_own_path hands the
+  # pair to the containers' account when that is not this one.
+  chmod 600 "$TS_STAGE/tailscale.key" "$TS_STAGE/tailscale.crt" 2>/dev/null || true
+  chmod 700 "$CONFIG_DIR/tls" 2>/dev/null || true
   if ! mv -f "$TS_STAGE/tailscale.key" "$(docker_tailscale_tier_key)" ||
      ! mv -f "$TS_STAGE/tailscale.crt" "$(docker_tailscale_tier_cert)"; then
     rm -rf "$TS_STAGE"
@@ -6850,8 +6871,8 @@ if cmp -s "$STAGE/tailscale.crt" "$TLS_DIR/tailscale.crt" && cmp -s "$STAGE/tail
   echo "The Tailscale certificate for $TS_NAME is current; nothing to renew."
   exit 0
 fi
-chmod 600 "$STAGE/tailscale.key"
-chmod 644 "$STAGE/tailscale.crt"
+chmod 600 "$STAGE/tailscale.key" "$STAGE/tailscale.crt"
+chmod 700 "$TLS_DIR" 2>/dev/null || true
 [ -z "$OWNER" ] || chown "$OWNER" "$STAGE/tailscale.key" "$STAGE/tailscale.crt"
 mv -f "$STAGE/tailscale.key" "$TLS_DIR/tailscale.key"
 mv -f "$STAGE/tailscale.crt" "$TLS_DIR/tailscale.crt"
@@ -7433,6 +7454,18 @@ fi
 # on every command lets a new address from the router reach the next pairing.
 # Under host networking the gateway sees this host's network itself, and no
 # record is kept.
+# A host record goes into place owner-only, like everything else in the config
+# directory, and owned by the account the gateway's container runs as, so a
+# command run through sudo does not leave it a record the gateway cannot read.
+host_record_place() {
+  chmod 600 "$1" 2>/dev/null || { rm -f "$1" 2>/dev/null; return 1; }
+  if [ "$(id -u)" = 0 ]; then
+    HOST_RECORD_OWNER="$(sed -n 's/^    user: "\([0-9][0-9]*:[0-9][0-9]*\)"$/\1/p' "$COMPOSE_FILE" | head -n 1)"
+    [ -z "$HOST_RECORD_OWNER" ] || chown "$HOST_RECORD_OWNER" "$1" 2>/dev/null || true
+  fi
+  mv -f "$1" "$2" 2>/dev/null || { rm -f "$1" 2>/dev/null; return 1; }
+}
+
 host_network_record() {
   HOST_NETWORK="$(dirname "$COMPOSE_FILE")/host-network"
   HOST_NETWORK_PORT="$(sed -n 's/^      - "\([0-9][0-9]*\):7600"$/\1/p' "$COMPOSE_FILE" | head -n 1)"
@@ -7464,8 +7497,7 @@ host_network_record() {
         /^[^ \t]/ { iface = $1; sub(/:$/, "", iface) }
         $1 == "inet" { a = $2; sub(/^addr:/, "", a); print "interface", iface, a }'
     fi
-  } > "$HOST_NETWORK_TMP" 2>/dev/null && chmod 644 "$HOST_NETWORK_TMP" 2>/dev/null &&
-    mv -f "$HOST_NETWORK_TMP" "$HOST_NETWORK" 2>/dev/null || rm -f "$HOST_NETWORK_TMP" 2>/dev/null
+  } > "$HOST_NETWORK_TMP" 2>/dev/null && host_record_place "$HOST_NETWORK_TMP" "$HOST_NETWORK"
 }
 host_network_record || true
 
@@ -7487,8 +7519,7 @@ host_disk_record() {
       "# The doctor in the container reports it; every omnesis command rewrites it."
     printf 'platform %s\n' "$HOST_DISK_PLATFORM"
     [ -z "$HOST_DISK_READING" ] || printf '%s\n' "$HOST_DISK_READING"
-  } > "$HOST_DISK_TMP" 2>/dev/null && chmod 644 "$HOST_DISK_TMP" 2>/dev/null &&
-    mv -f "$HOST_DISK_TMP" "$HOST_DISK" 2>/dev/null || rm -f "$HOST_DISK_TMP" 2>/dev/null
+  } > "$HOST_DISK_TMP" 2>/dev/null && host_record_place "$HOST_DISK_TMP" "$HOST_DISK"
 }
 host_disk_record || true
 
