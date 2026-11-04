@@ -21,9 +21,11 @@ import { SyntheticE2EHarness } from "./synth-harness.js";
 import { loginPortal } from "./mcp-oauth-helper.js";
 import { startDecisionServer, type DecisionServer } from "./brain-bench/decision-server.js";
 import {
+  safeParse,
   startOpenAiServer,
   userPromptOf,
   type OpenAiServerHandle,
+  type WireMessage,
 } from "./brain-bench/openai-server.js";
 
 const nodeFetch: FetchLike = async (url, init) => {
@@ -54,6 +56,17 @@ const link = "https://example.org/workshop-guide";
 const proseOnly = "The requested destination is supported by the retrieved evidence.";
 const sourceId = "strava-activities:7000000";
 
+/** The tool results quoted in a retained research transcript, one per `Tool result` line. */
+function retainedTranscriptResults(messages: readonly WireMessage[]): unknown[] {
+  return messages
+    .filter((message) => message.role === "user")
+    .flatMap((message) => (message.content ?? "").split("\n"))
+    .flatMap((line) => {
+      const match = /^Tool result \S+: (.*)$/u.exec(line);
+      return match ? [safeParse(match[1])] : [];
+    });
+}
+
 describe("Browser Find agentic destinations through scripted production backends", () => {
   let harness: SyntheticE2EHarness;
   let decision: DecisionServer;
@@ -78,7 +91,7 @@ describe("Browser Find agentic destinations through scripted production backends
     });
     puppet = await startOpenAiServer({
       modelId: "browser-find-scripted",
-      respond: (messages) => {
+      respond: (messages, request) => {
         const query = userPromptOf(messages);
         const steps = collectToolSteps(messages);
         const called = steps.map((step) => step.name);
@@ -104,40 +117,49 @@ describe("Browser Find agentic destinations through scripted production backends
         };
         if (called.includes("present_browser_results"))
           return { kind: "text", text: "Found the requested destination from its evidence." };
+        // The research session offers retrieval; the presentation-only session
+        // that follows offers only present_browser_results.
+        const researching = request.tools.includes("fetch_many");
+        if (researching && !called.includes("fetch_many") && !called.includes("run_sql"))
+          return query.includes("longest")
+            ? emit("run_sql", {
+                sql: "SELECT * FROM strava_activities WHERE sport_type = 'Run' ORDER BY distance_m DESC LIMIT 1",
+              })
+            : emit("fetch_many", { documents: [{ documentId: evidenceId }] });
         // First finish with prose despite having retrieved real evidence. The
         // browser runtime must require structured destinations on a bounded continuation.
         if (
-          (called.includes("fetch_many") || called.includes("run_sql")) &&
+          researching &&
           !messages.some((message) => message.role === "assistant" && message.content === proseOnly)
         ) {
           proseQueries.push(query);
           return { kind: "text", text: proseOnly };
         }
+        // Present from the evidence this conversation carries: native tool
+        // results, or the retained research transcript the runtime hands the
+        // presentation-only session. The transcript is model-facing text whose
+        // instants carry local-time annotations, so a document is recognised by
+        // its reference rather than by the wire schema.
+        const evidence = [
+          ...steps.map((step) => step.result),
+          ...retainedTranscriptResults(messages),
+        ];
         if (query.includes("longest")) {
-          if (!called.includes("run_sql"))
-            return emit("run_sql", {
-              sql: "SELECT * FROM strava_activities WHERE sport_type = 'Run' ORDER BY distance_m DESC LIMIT 1",
-            });
-          const parsed = toolResultSchema.safeParse(
-            steps.find((step) => step.name === "run_sql")?.result,
-          );
-          if (
-            !parsed.success ||
-            parsed.data.kind !== "sql.rows" ||
-            !parsed.data.rows[0] ||
-            !parsed.data.rowIdentities?.[0]
-          ) {
+          const result = evidence.flatMap((item) => {
+            const parsed = toolResultSchema.safeParse(item);
+            return parsed.success && parsed.data.kind === "sql.rows" ? [parsed.data] : [];
+          })[0];
+          const row = result?.rows[0];
+          const record = result?.rowIdentities?.[0];
+          if (!result || !row || !record) {
             diagnostics.push(
-              `run_sql returned no identifiable row: ${JSON.stringify(steps.find((step) => step.name === "run_sql")?.result)}`,
+              `run_sql returned no identifiable row: ${JSON.stringify(result ?? null)}`,
             );
             return {
               kind: "text",
               text: "The scripted search could not identify its SQL evidence.",
             };
           }
-          const result = parsed.data;
-          const row = result.rows[0]!;
-          const record = parsed.data.rowIdentities[0];
           return emit("present_browser_results", {
             results: [
               {
@@ -148,8 +170,20 @@ describe("Browser Find agentic destinations through scripted production backends
             ],
           });
         }
-        if (!called.includes("fetch_many"))
-          return emit("fetch_many", { documents: [{ documentId: evidenceId }] });
+        type Loose = { kind?: unknown; items?: unknown; ref?: { documentId?: unknown } } | null;
+        const documentIds = evidence.flatMap(function ids(item): unknown[] {
+          const result = item as Loose;
+          if (result?.kind === "document.batch" && Array.isArray(result.items))
+            return result.items.flatMap(ids);
+          return result?.kind === "document" ? [result.ref?.documentId] : [];
+        });
+        if (!documentIds.includes(evidenceId)) {
+          diagnostics.push(`fetch_many evidence was not retained: ${JSON.stringify(evidence)}`);
+          return {
+            kind: "text",
+            text: "The scripted search could not find its retrieved evidence.",
+          };
+        }
         return emit("present_browser_results", {
           results: [
             {

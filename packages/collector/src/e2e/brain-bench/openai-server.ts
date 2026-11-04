@@ -41,6 +41,12 @@ export type WireReply =
    */
   | { kind: "httpError"; status: number; message: string };
 
+/** What one served request offered the model besides its messages. */
+export interface WireRequest {
+  /** The names of the tools the request declared, in order. */
+  tools: readonly string[];
+}
+
 export interface OpenAiServerHandle {
   url: string;
   modelId: string;
@@ -78,7 +84,10 @@ export function userPromptOf(messages: readonly WireMessage[]): string {
 export async function startOpenAiServer(opts: {
   modelId: string;
   /** Decide the reply for one request. Throwing yields a 500 (the caller's error path). */
-  respond: (messages: readonly WireMessage[]) => WireReply | Promise<WireReply>;
+  respond: (
+    messages: readonly WireMessage[],
+    request: WireRequest,
+  ) => WireReply | Promise<WireReply>;
   /**
    * The input size reported for one request. Defaults to a character
    * estimate of the conversation; a scenario about context growth scripts it.
@@ -104,6 +113,7 @@ export async function startOpenAiServer(opts: {
         const body = safeParse(await readBody(req)) as {
           stream?: unknown;
           messages?: WireMessage[];
+          tools?: unknown;
         } | null;
         if (!body || !Array.isArray(body.messages)) {
           res.writeHead(400, { "Content-Type": "application/json" });
@@ -120,7 +130,12 @@ export async function startOpenAiServer(opts: {
           return;
         }
 
-        const reply = await opts.respond(body.messages);
+        const tools = Array.isArray(body.tools)
+          ? body.tools.flatMap((tool: { function?: { name?: unknown } } | null) =>
+              typeof tool?.function?.name === "string" ? [tool.function.name] : [],
+            )
+          : [];
+        const reply = await opts.respond(body.messages, { tools });
         if (reply.kind === "httpError") {
           res.writeHead(reply.status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: { message: reply.message, type: "invalid_request" } }));
