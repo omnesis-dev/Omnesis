@@ -178,11 +178,18 @@ addresses, pairing codes, the probe token — are registered with
 
 The single-host and uninstall lanes run `scripts/install-e2e/host-sampler.sh`
 beside them. Every 10 seconds it records the host's load, swap, paging and
-memory-pressure counters and its largest processes by name, resident size,
+memory-pressure counters, on macOS whether Spotlight indexes the system and
+data volumes, and its largest and busiest processes by name, resident size,
 CPU and thread count, with the supervised gateway and collector labelled; it
 records no arguments, paths or environment. The samples are printed, through
 the same redactor, after every run of those lanes, so a slow lane shows
 whether the machine ran out of memory or CPU and which process took it.
+
+Every hosted Mac lane that boots a gateway turns Spotlight indexing off
+(`sudo mdutil -a -i off`) before checkout. A hosted Mac has 3 vCPUs, and
+Spotlight indexing the fresh install's `node_modules` and the gateway's
+changing database and logs holds the load near 20 and deschedules the
+gateway's main thread for seconds at a time.
 
 Mac installer failures may print bounded, redacted installer tails after exact tool restoration. A first-cycle gateway health failure may also print up to 50 lines and 8192 bytes of its redacted startup log, before any collector or source starts. Collector logs and gateway logs after source setup stay private; uploaded artifacts remain sanitized result summaries only.
 If that gateway exits with a segmentation-fault status, isolated native dependency probes may add fixed stage names and numeric exit/signal/timeout results to the sanitized summary. The probes load no model and discard process output.
