@@ -277,7 +277,10 @@ jobs:
     name: D2 Docker single host (macos-15-intel, Colima)
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.lanes == 'all' || inputs.lanes == 'docker'))
     runs-on: macos-15-intel
-    timeout-minutes: 90
+    # Colima's VM is slow on the Intel runner: about 30 minutes to start it,
+    # about 40 to pull the two images and 10 for the gateway's first boot, so
+    # a passing journey takes about 90 minutes.
+    timeout-minutes: 150
     permissions:
       contents: read
     steps:
