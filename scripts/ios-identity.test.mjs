@@ -248,6 +248,10 @@ describe("hosted iOS simulator preparation", () => {
           return "";
         case "bootstatus":
           return "";
+        case "shutdown":
+        case "erase":
+          data.devices[ios][0].state = "Shutdown";
+          return "";
         default:
           throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
       }
@@ -294,6 +298,126 @@ describe("hosted iOS simulator preparation", () => {
     const data = inventory();
     data.devices[ios] = [device("Booted")];
     expect(prepare(data).calls.map(({ args }) => args[1])).toEqual(["list", "bootstatus", "list"]);
+  });
+
+  it.each(["boot", "bootstatus"])("recovers once after a %s timeout", (operation) => {
+    let attempts = 0;
+    const { result, calls } = prepare(inventory(), (_, args) => {
+      if (args[1] === operation && attempts++ === 0) {
+        throw Object.assign(new Error("spawnSync xcrun ETIMEDOUT"), { code: "ETIMEDOUT" });
+      }
+    });
+    expect(result).toBe(udid);
+    expect(attempts).toBe(2);
+    expect(calls.map(({ args }) => args[1])).toEqual(
+      operation === "boot"
+        ? ["list", "boot", "list", "erase", "boot", "bootstatus", "list"]
+        : ["list", "boot", "bootstatus", "list", "shutdown", "erase", "boot", "bootstatus", "list"],
+    );
+    for (const { args, timeout } of calls.filter(({ args }) => args[1] !== "list")) {
+      expect(args[2]).toBe(udid);
+      expect(timeout).toBe(300_000);
+    }
+  });
+
+  it("shuts down a partially booted device after the boot command times out", () => {
+    let attempts = 0;
+    const { calls } = prepare(inventory(), (_, args, data) => {
+      if (args[1] === "boot" && attempts++ === 0) {
+        data.devices[ios][0].state = "Booted";
+        throw Object.assign(new Error("boot timed out"), { code: "ETIMEDOUT" });
+      }
+    });
+    expect(calls.map(({ args }) => args[1])).toEqual([
+      "list",
+      "boot",
+      "list",
+      "shutdown",
+      "erase",
+      "boot",
+      "bootstatus",
+      "list",
+    ]);
+  });
+
+  it("recovers a bootstatus timeout on an already booted phone", () => {
+    const data = inventory();
+    data.devices[ios] = [device("Booted")];
+    let attempts = 0;
+    const { calls } = prepare(data, (_, args) => {
+      if (args[1] === "bootstatus" && attempts++ === 0) {
+        throw Object.assign(new Error("bootstatus timed out"), { code: "ETIMEDOUT" });
+      }
+    });
+    expect(calls.map(({ args }) => args[1])).toEqual([
+      "list",
+      "bootstatus",
+      "list",
+      "shutdown",
+      "erase",
+      "boot",
+      "bootstatus",
+      "list",
+    ]);
+  });
+
+  it("fails after a repeated timeout instead of retrying indefinitely", () => {
+    let attempts = 0;
+    expect(() =>
+      prepare(inventory(), (_, args) => {
+        if (args[1] === "bootstatus") {
+          attempts++;
+          throw Object.assign(new Error("bootstatus timed out"), { code: "ETIMEDOUT" });
+        }
+      }),
+    ).toThrow("xcrun simctl bootstatus");
+    expect(attempts).toBe(2);
+  });
+
+  it.each(["shutdown", "erase"])("stops recovery when %s fails", (operation) => {
+    const commands = [];
+    expect(() =>
+      prepare(inventory(), (_, args) => {
+        commands.push(args[1]);
+        if (args[1] === "bootstatus") {
+          throw Object.assign(new Error("bootstatus timed out"), { code: "ETIMEDOUT" });
+        }
+        if (args[1] === operation) throw new Error("Recovery failed");
+      }),
+    ).toThrow(`xcrun simctl ${operation} ${udid} failed`);
+    expect(commands.at(-1)).toBe(operation);
+    expect(commands.filter((command) => command === "boot")).toHaveLength(1);
+  });
+
+  it("does not reset a device for a non-timeout bootstatus failure", () => {
+    const commands = [];
+    expect(() =>
+      prepare(inventory(), (_, args) => {
+        commands.push(args[1]);
+        if (args[1] === "bootstatus") throw new Error("Runtime is unavailable");
+      }),
+    ).toThrow("Runtime is unavailable");
+    expect(commands).toEqual(["list", "boot", "bootstatus"]);
+  });
+
+  it("stops recovery if the selected device disappears, preserving the timeout cause", () => {
+    const commands = [];
+    const timeout = Object.assign(new Error("bootstatus timed out"), { code: "ETIMEDOUT" });
+    let failure;
+    try {
+      prepare(inventory(), (_, args, data) => {
+        commands.push(args[1]);
+        if (args[1] === "bootstatus") {
+          data.devices[ios] = [];
+          throw timeout;
+        }
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure?.message).toBe(`Simulator disappeared before recovery: ${udid}`);
+    expect(failure?.cause?.cause).toBe(timeout);
+    expect(commands).toEqual(["list", "boot", "bootstatus", "list"]);
   });
 
   it("creates a phone when the installed runtime has no registered devices", () => {

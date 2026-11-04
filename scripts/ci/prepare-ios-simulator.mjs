@@ -115,8 +115,25 @@ export function prepareIOSSimulator({
     device = { udid, state: "Shutdown" };
   }
   log(`Preparing iPhone simulator ${device.udid} (${runtime.identifier}).`);
-  if (device.state !== "Booted") command("xcrun", ["simctl", "boot", device.udid]);
-  command("xcrun", ["simctl", "bootstatus", device.udid, "-b"]);
+  const boot = (state) => {
+    if (state !== "Booted") command("xcrun", ["simctl", "boot", device.udid]);
+    command("xcrun", ["simctl", "bootstatus", device.udid, "-b"]);
+  };
+  try {
+    boot(device.state);
+  } catch (error) {
+    // A cold hosted simulator can hang before any app code runs. Reset only
+    // this destination, and only after a command timeout; other failures are fatal.
+    if (error.cause?.code !== "ETIMEDOUT") throw error;
+    log(`${error.message}; resetting ${device.udid} and retrying boot once.`);
+    const current = list().devices?.[runtime.identifier]?.find((item) => item.udid === device.udid);
+    if (!current) {
+      throw new Error(`Simulator disappeared before recovery: ${device.udid}`, { cause: error });
+    }
+    if (current.state !== "Shutdown") command("xcrun", ["simctl", "shutdown", device.udid]);
+    command("xcrun", ["simctl", "erase", device.udid]);
+    boot("Shutdown");
+  }
   const ready = list();
   const selected = ready.devices?.[runtime.identifier]?.find((item) => item.udid === device.udid);
   if (
