@@ -1,5 +1,12 @@
 # @omnesis/provider-pi
 
+## 0.7.7
+
+### Patch Changes
+
+- @omnesis/source-sdk@0.7.7
+  - @omnesis/types@0.7.7
+
 ## 0.7.6
 
 ### Patch Changes

@@ -1,5 +1,33 @@
 # omnesis
 
+## 0.7.7
+
+### Patch Changes
+
+- 55df1c9: Agent searches no longer pause the gateway. The graph evidence an agent search gathers for its hits — copies, conversations and link trails — is now read on the gateway's read workers, so on a large corpus other requests, phones and collectors keep being served while it runs, and several agent searches run at once instead of one after another. Saving and pruning Cognition Steward run transcripts also no longer reopens their index for every file, which made each save and each retention pass hold the gateway for a moment.
+- 55df1c9: On a machine with less than 14 GB of usable memory, `npm run build` (run by the installer and by `omnesis update` for a source install) builds one TypeScript project at a time. The build peaks at about 2 GB instead of 3.5 GB and produces the same output, but takes about twice as long. A machine with more memory, a 16 GB one included, builds everything in one process, as before.
+- 1587ab5: Fixes from the 0.7.6 Docker test:
+
+  - `omnesis doctor` on a fresh Tailscale install no longer fails its permission check. The installer and the daily renewal job now leave the Tailscale or mkcert certificate and its `tls/` directory owner-only, as the gateway's own renewals do. The Docker launcher now writes the host records it leaves for the doctor (`host-network`, `host-disk-encryption`) owner-only too. Before, each command rewrote them world-readable, so even `omnesis doctor --fix-permissions` could not keep the check passing.
+  - `omnesis backup list` lists your backups. Before, it ignored the word and started a full backup. Any other word after `omnesis backup` is now refused instead of ignored.
+  - When the gateway stops before it ever answers, the installer now says so. Before, it reported that the gateway did not answer `/health` within the wait, as if it had timed out.
+  - On Linux, a Docker install now writes its compose file and install record owner-only whatever the account's umask, so the doctor's permission check passes on Ubuntu too. A re-run tightens files an older install left group-writable.
+  - A second Docker install on the same Docker daemon, such as one run with `sudo` beside an existing install, is now refused before it writes anything, with the command that frees the name. Before, it took over the first install's containers, stopping that install and failing midway with an unrelated keyring error.
+  - `omnesis backup list` shows the time each backup started, not only the date.
+
+- 55df1c9: Each of the gateway's worker threads starts with less loaded. The date recognizer, the language detector, the phone-number metadata, the HTML converter, the mDNS browser and the Anthropic SDK now load the first time a thread uses them, not with every worker. On an empty install an io worker holds about 120 MB instead of 220 MB and a cpu worker about 60 MB instead of 165 MB. A gateway on a 7 GB machine starts with about 600 MB less resident.
+- Updated dependencies [55df1c9]
+  - @omnesis/core@0.7.7
+  - @omnesis/gateway@0.7.7
+  - @omnesis/agent-integration@0.7.7
+  - @omnesis/cli-shared@0.7.7
+  - @omnesis/collector@0.7.7
+  - @omnesis/config@0.7.7
+  - @omnesis/eval@0.7.7
+  - @omnesis/gateway-client@0.7.7
+  - @omnesis/source-sdk@0.7.7
+  - @omnesis/types@0.7.7
+
 ## 0.7.6
 
 ### Patch Changes

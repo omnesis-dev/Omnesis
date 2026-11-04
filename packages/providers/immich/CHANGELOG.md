@@ -1,5 +1,14 @@
 # @omnesis/provider-immich
 
+## 0.7.7
+
+### Patch Changes
+
+- Updated dependencies [55df1c9]
+  - @omnesis/core@0.7.7
+  - @omnesis/source-sdk@0.7.7
+  - @omnesis/types@0.7.7
+
 ## 0.7.6
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @omnesis/provider-plaid-synth
 
+## 0.7.7
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.7.7
+  - @omnesis/provider-plaid@0.7.7
+  - @omnesis/source-sdk@0.7.7
+
 ## 0.7.6
 
 ### Patch Changes

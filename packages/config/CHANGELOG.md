@@ -1,5 +1,11 @@
 # @omnesis/config
 
+## 0.7.7
+
+### Patch Changes
+
+- @omnesis/types@0.7.7
+
 ## 0.7.6
 
 ### Patch Changes

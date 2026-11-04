@@ -1,5 +1,14 @@
 # @omnesis/provider-strava-synth
 
+## 0.7.7
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.7.7
+  - @omnesis/provider-strava@0.7.7
+  - @omnesis/source-sdk@0.7.7
+  - @omnesis/types@0.7.7
+
 ## 0.7.6
 
 ### Patch Changes
