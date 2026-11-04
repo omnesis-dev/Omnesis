@@ -4,7 +4,7 @@
 
 ### Patch Changes
 
-- On a machine with less than 16 GB of memory, the gateway now starts fewer worker threads, sized to its memory budget (`gateway.memoryLimitMb`, else the container's memory limit, else the machine's memory). An empty gateway used to reach about 3.5 GiB, and on a small machine without swap it could stall for seconds at a time and take minutes to answer. On a 7 GB machine its io, search and cpu pools now start 2, 1 and 1 workers instead of 6, 3 and 2. Machines with 16 GB or more keep their previous sizes, and an explicit `gateway.ioConcurrency`, `gateway.searchWorker.concurrency` or `gateway.cpuConcurrency` still wins.
+- The gateway now sizes its io, search and cpu worker pools to its memory budget: `gateway.memoryLimitMb`, else a container's memory limit, else the machine's memory. So a gateway with less than 16 GB, including a Docker gateway capped below 16 GB on a bigger host, starts fewer workers and stays responsive. An empty gateway used to reach about 3.5 GiB, and on a small machine without swap it could stall for seconds at a time and take minutes to answer. With a 7 GB budget the pools now start 2, 1 and 1 workers instead of 6, 3 and 2. Budgets of 16 GB or more keep the previous sizes, and an explicit `gateway.ioConcurrency`, `gateway.searchWorker.concurrency` or `gateway.cpuConcurrency` still wins.
 - Updated dependencies [e0f83b3]
 - Updated dependencies
   - @omnesis/core@0.7.6
