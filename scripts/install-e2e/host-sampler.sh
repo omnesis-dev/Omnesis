@@ -41,15 +41,22 @@ daemon_pids() {
   esac
 }
 
+# Every process: pid, resident KiB, cpu%, name.
+process_table() {
+  case "$(uname -s)" in
+    Darwin) ps -axo pid=,rss=,%cpu=,ucomm= ;;
+    *) ps -eo pid=,rss=,%cpu=,comm= ;;
+  esac
+}
+
 # The largest processes by resident size, then any of the busiest by CPU not
 # already listed: pid, resident KiB, cpu%, threads, name.
 top_processes() {
   local daemons table pid rss cpu threads name label
   daemons="$(daemon_pids)"
-  table="$(case "$(uname -s)" in
-    Darwin) ps -axo pid=,rss=,%cpu=,ucomm= ;;
-    *) ps -eo pid=,rss=,%cpu=,comm= ;;
-  esac)"
+  # A function, not a `case` inside `$(...)`: macOS's bash 3.2 cannot parse
+  # the latter.
+  table="$(process_table)"
   {
     printf '%s\n' "$table" | sort -k2 -nr 2>/dev/null | head -12
     printf '%s\n' "$table" | sort -k3 -nr 2>/dev/null | head -6
