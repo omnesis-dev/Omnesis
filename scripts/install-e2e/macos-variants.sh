@@ -29,9 +29,14 @@ QUARANTINE="$SESSION/quarantine"
 BASELINE="$SESSION/services-before"
 /bin/launchctl list | awk '$3 ~ /^dev\.omnesis\.(gateway|collector)$/ {print}' | sort >"$BASELINE"
 write_result() {
-  "$PYTHON" - "$E2E_WORK/result.json" "$MODE" "$1" "$PHASE" "$SESSION" "$COMMIT" "$HERE/macos-native-probes.py" <<'PY'
-import json,sys
+  "$PYTHON" - "$E2E_WORK/result.json" "$MODE" "$1" "$PHASE" "$SESSION" "$COMMIT" "$HERE/macos-native-probes.py" \
+    "$HERE/macos-variants-runtime.py" <<'PY'
+import importlib.util,json,sys
 from pathlib import Path
+def load(name,path):
+    spec=importlib.util.spec_from_file_location(name,path)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
 result={'mode':sys.argv[2],'passed':sys.argv[3]=='0','last_phase':sys.argv[4],'source_commit':sys.argv[6],
  'scope':'real isolated client/no-service foreground runtime' if sys.argv[2]=='isolation' else 'real prerequisite absence, exact restoration and successful rerun',
  'model_inference':'excluded','secret_store':'file'}
@@ -41,9 +46,7 @@ probes=Path(sys.argv[5])/'native-startup-probes.json'
 if probes.is_file() and not probes.is_symlink():
     # Only fixed stage names and bounded numeric status cross the artifact seam.
     try:
-        import importlib.util
-        spec=importlib.util.spec_from_file_location('native_probe_summary',sys.argv[7])
-        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        module=load('native_probe_summary',sys.argv[7])
         rows=json.loads(probes.read_text())
         valid=isinstance(rows,list) and len(rows)==len(module.STAGES)
         for row,stage in zip(rows,module.STAGES):
@@ -52,6 +55,27 @@ if probes.is_file() and not probes.is_symlink():
             valid=valid and (row.get('exit') is None or (type(row.get('exit')) is int and 0<=row['exit']<=255))
             valid=valid and (row.get('signal') is None or (type(row.get('signal')) is int and 1<=row['signal']<=64))
         if valid:result['native_startup_probes']=rows
+    except Exception:
+        pass
+failure=Path(sys.argv[5])/'cli-failure.json'
+if failure.is_file() and not failure.is_symlink():
+    # A failed isolated CLI step crosses the same seam: allowlisted names and
+    # bounded integers only, never the CLI's own output.
+    try:
+        runtime=load('isolated_cli_failure',sys.argv[8])
+        body=json.loads(failure.read_text())
+        def bounded(value,high,nullable=True):
+            return (nullable and value is None) or (type(value) is int and 0<=value<=high)
+        valid=isinstance(body,dict) and set(body)=={'command','exit','signal','timeout','elapsed_ms','error_class','gateway_health_after_ms'}
+        valid=valid and body['command'] in (*runtime.CLI_FAILURE_COMMANDS,'other') and body['error_class'] in runtime.CLI_FAILURE_CLASSES
+        valid=valid and bounded(body['exit'],255) and (body['signal'] is None or (type(body['signal']) is int and 1<=body['signal']<=64))
+        valid=valid and type(body['timeout']) is bool and bounded(body['elapsed_ms'],3600000,False) and bounded(body['gateway_health_after_ms'],60000)
+        if valid:
+            result['cli_failure']=body
+            text=lambda value:'none' if value is None else str(value).lower()
+            health=text(body['gateway_health_after_ms'])+('ms' if body['gateway_health_after_ms'] is not None else '')
+            print(f"[install-e2e] isolated CLI failure: {body['command']} exit={text(body['exit'])} signal={text(body['signal'])}"
+                  f" timeout={text(body['timeout'])} class={body['error_class']} elapsed={body['elapsed_ms']}ms health_after={health}",file=sys.stderr)
     except Exception:
         pass
 Path(sys.argv[1]).write_text(json.dumps(result,indent=2)+'\n')

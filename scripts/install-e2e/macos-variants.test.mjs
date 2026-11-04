@@ -23,6 +23,27 @@ function python(program) {
   );
 }
 
+const variants = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
+const resultWriter = variants.match(
+  /(^write_result\(\) \{\n[\s\S]*?\n\})\ninstaller_failure_diagnostics/m,
+)[1];
+function writeResult(directory) {
+  return spawnSync("bash", ["-c", `${resultWriter}\nwrite_result 1`], {
+    env: {
+      ...process.env,
+      PYTHON: "python3",
+      E2E_WORK: directory,
+      SESSION: directory,
+      HERE: resolve("scripts/install-e2e"),
+      MODE: "isolation",
+      PHASE: "foreground-restart-and-raw-data",
+      COMMIT: "0".repeat(40),
+    },
+    encoding: "utf8",
+    timeout: 10000,
+  });
+}
+
 describe("disposable macOS installer variants", () => {
   test("nested redirected installer failure restores the console before redacted diagnostics", () => {
     const source = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
@@ -162,10 +183,6 @@ exit 23
   });
 
   test("artifact summary accepts only fixed native probe stages and numeric statuses", () => {
-    const source = readFileSync("scripts/install-e2e/macos-variants.sh", "utf8");
-    const writer = source.match(
-      /(^write_result\(\) \{\n[\s\S]*?\n\})\ninstaller_failure_diagnostics/m,
-    )[1];
     const directory = mkdtempSync(join(tmpdir(), "macos-probe-summary-"));
     const stages = [
       "sqlite-import",
@@ -185,25 +202,190 @@ exit 23
         [[{ ...rows[0], raw: "private-canary" }, ...rows.slice(1)], false],
       ]) {
         writeFileSync(join(directory, "native-startup-probes.json"), JSON.stringify(candidate));
-        const result = spawnSync("bash", ["-c", `${writer}\nwrite_result 1`], {
-          env: {
-            ...process.env,
-            PYTHON: "python3",
-            E2E_WORK: directory,
-            SESSION: directory,
-            HERE: resolve("scripts/install-e2e"),
-            MODE: "isolation",
-            PHASE: "foreground-restart-and-raw-data",
-            COMMIT: "0".repeat(40),
-          },
-          encoding: "utf8",
-          timeout: 10000,
-        });
+        const result = writeResult(directory);
         expect(result.status, result.stderr).toBe(0);
         const summary = readFileSync(join(directory, "result.json"), "utf8");
         expect(summary).not.toContain("private-canary");
         expect(Object.hasOwn(JSON.parse(summary), "native_startup_probes")).toBe(valid);
       }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("a failed isolated CLI step records only fixed names and bounded numbers", () => {
+    const runtime = resolve("scripts/install-e2e/macos-variants-runtime.py");
+    const directory = mkdtempSync(join(tmpdir(), "macos-cli-failure-"));
+    const fake = join(directory, "omnesis");
+    const sentinel = "PRIVATE-CLI-SENTINEL";
+    writeFileSync(
+      fake,
+      `#!/bin/sh
+printf 'Bearer ${sentinel}\\n'
+case "$FAKE_CASE" in
+  wait-timeout) printf '\\033[31mTimed out:\\033[0m fictional (0 docs) - last state idle\\n'
+    printf '\\033[31m1 of 1 source(s) did not sync successfully: ${sentinel}\\033[0m\\n' >&2; exit 2 ;;
+  sync-failed) printf 'Error: fictional ${sentinel}\\n'
+    printf '1 of 1 source(s) did not sync successfully: fictional\\n' >&2; exit 2 ;;
+  unreachable) printf 'Cannot reach gateway at https://localhost:1. Is it running? ${sentinel}\\n' >&2; exit 64 ;;
+  http-5xx) printf 'Gateway 503 /admin/sources: ${sentinel}\\n' >&2; exit 65 ;;
+  http-4xx) printf 'Gateway 404 /admin/sources/fictional/sync: ${sentinel}\\n' >&2; exit 2 ;;
+  auth) printf 'Gateway 401 /admin/sources: ${sentinel}\\n' >&2; exit 77 ;;
+  request-timeout) printf 'HeadersTimeoutError: ${sentinel}\\n  code: UND_ERR_HEADERS_TIMEOUT\\n' >&2; exit 1 ;;
+  other) printf '${sentinel}\\n' >&2; exit 1 ;;
+  signal) printf '${sentinel}\\n' >&2; kill -TERM $$ ;;
+  hang) printf '${sentinel}\\n' >&2; exec sleep 30 ;;
+esac
+printf 'Source: fictional\\n'
+`,
+      { mode: 0o700 },
+    );
+    try {
+      const result = python(`
+import json,os,urllib.error
+s=importlib.util.spec_from_file_location('runtime',${JSON.stringify(runtime)});runtime=importlib.util.module_from_spec(s);s.loader.exec_module(runtime)
+work=m.Path(${JSON.stringify(directory)});fake=${JSON.stringify(fake)};failure=work/'cli-failure.json'
+def answered():return {'status':'ok'}
+def failing():raise urllib.error.HTTPError('https://example.invalid/${sentinel}',503,'${sentinel}',{},None)
+def silent():raise urllib.error.URLError('${sentinel}')
+sync=('sources','sync','fictional','--wait','--timeout','300')
+add=('sources','add','obsidian-notes','/fictional/vault','--device','fictional')
+row=lambda command,exit,signal,timeout,error:{'command':command,'exit':exit,'signal':signal,'timeout':timeout,'error_class':error}
+cases=[
+ ('sync-failed',sync,answered,row('sources sync',2,None,False,'sync-failed')),
+ ('unreachable',sync,silent,row('sources sync',64,None,False,'gateway-unreachable')),
+ ('http-5xx',add,failing,row('sources add',65,None,False,'http-5xx')),
+ ('http-4xx',sync,answered,row('sources sync',2,None,False,'http-4xx')),
+ ('auth',add,answered,row('sources add',77,None,False,'auth')),
+ ('request-timeout',sync,answered,row('sources sync',1,None,False,'request-timeout')),
+ ('other',('status','${sentinel}'),answered,row('other',1,None,False,'other')),
+ ('signal',sync,answered,row('sources sync',None,15,False,'other')),
+ ('hang',sync,silent,row('sources sync',None,None,True,'subprocess-timeout')),
+ ('wait-timeout',sync,answered,row('sources sync',2,None,False,'wait-timeout')),
+]
+for case,args,probe,expected in cases:
+ failure.unlink(missing_ok=True);os.environ['FAKE_CASE']=case
+ try:runtime.run_cli(work,fake,args,probe,timeout=1)
+ except RuntimeError as error:assert '${sentinel}' not in str(error),case
+ else:raise AssertionError('failed CLI step passed: '+case)
+ text=failure.read_text();assert '${sentinel}' not in text,case
+ body=json.loads(text);elapsed=body.pop('elapsed_ms');health=body.pop('gateway_health_after_ms')
+ assert type(elapsed) is int and 0<=elapsed<=10000,(case,elapsed)
+ assert (health is None)==(probe is silent) and (health is None or type(health) is int),(case,health)
+ assert body==expected,(case,body)
+saved=failure.read_text();failure.unlink()
+os.environ['FAKE_CASE']='ok'
+assert runtime.run_cli(work,fake,add,answered)=='Bearer ${sentinel}\\nSource: fictional\\n'
+assert not failure.exists()
+os.environ['FAKE_CASE']='other'
+try:runtime.run_cli(work/'missing',fake,sync,answered)
+except RuntimeError as error:assert str(error)=='isolated CLI operation failed: sources'
+else:raise AssertionError('unwritable diagnostics replaced the failure')
+failure.write_text(saved)
+`);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout + result.stderr).not.toContain(sentinel);
+      const merged = writeResult(directory);
+      expect(merged.status, merged.stderr).toBe(0);
+      const summary = readFileSync(join(directory, "result.json"), "utf8");
+      expect(summary).not.toContain(sentinel);
+      expect(merged.stdout + merged.stderr).not.toContain(sentinel);
+      const recorded = JSON.parse(readFileSync(join(directory, "cli-failure.json"), "utf8"));
+      expect(JSON.parse(summary).cli_failure).toEqual(recorded);
+      expect(merged.stderr).toMatch(
+        /^\[install-e2e\] isolated CLI failure: sources sync exit=2 signal=none timeout=false class=wait-timeout elapsed=\d+ms health_after=\d+ms\n$/,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("artifact summary admits a CLI failure only with allowlisted names and bounded numbers", () => {
+    const directory = mkdtempSync(join(tmpdir(), "macos-cli-failure-summary-"));
+    const failure = join(directory, "cli-failure.json");
+    const valid = {
+      command: "sources sync",
+      exit: 2,
+      signal: null,
+      timeout: false,
+      elapsed_ms: 301234,
+      error_class: "wait-timeout",
+      gateway_health_after_ms: 5123,
+    };
+    try {
+      for (const [body, line] of [
+        [
+          valid,
+          "[install-e2e] isolated CLI failure: sources sync exit=2 signal=none timeout=false class=wait-timeout elapsed=301234ms health_after=5123ms\n",
+        ],
+        [
+          {
+            ...valid,
+            command: "other",
+            exit: null,
+            timeout: true,
+            elapsed_ms: 360001,
+            error_class: "subprocess-timeout",
+            gateway_health_after_ms: null,
+          },
+          "[install-e2e] isolated CLI failure: other exit=none signal=none timeout=true class=subprocess-timeout elapsed=360001ms health_after=none\n",
+        ],
+        [
+          { ...valid, command: "sources add", exit: null, signal: 15, error_class: "other" },
+          "[install-e2e] isolated CLI failure: sources add exit=none signal=15 timeout=false class=other elapsed=301234ms health_after=5123ms\n",
+        ],
+      ]) {
+        writeFileSync(failure, JSON.stringify(body));
+        const result = writeResult(directory);
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).toBe(line);
+        expect(
+          JSON.parse(readFileSync(join(directory, "result.json"), "utf8")).cli_failure,
+        ).toEqual(body);
+      }
+      const { command: _command, ...missing } = valid;
+      for (const body of [
+        missing,
+        { ...valid, raw: "private-canary" },
+        { ...valid, command: "private-canary" },
+        { ...valid, command: "sources remove" },
+        { ...valid, error_class: "private-canary" },
+        { ...valid, exit: 256 },
+        { ...valid, exit: -1 },
+        { ...valid, exit: true },
+        { ...valid, exit: "private-canary" },
+        { ...valid, signal: 0 },
+        { ...valid, signal: 65 },
+        { ...valid, timeout: 1 },
+        { ...valid, elapsed_ms: null },
+        { ...valid, elapsed_ms: -1 },
+        { ...valid, elapsed_ms: 1.5 },
+        { ...valid, elapsed_ms: 3600001 },
+        { ...valid, gateway_health_after_ms: 60001 },
+        { ...valid, gateway_health_after_ms: "private-canary" },
+        [valid],
+        "private-canary",
+      ]) {
+        writeFileSync(failure, JSON.stringify(body));
+        const result = writeResult(directory);
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).toBe("");
+        const summary = readFileSync(join(directory, "result.json"), "utf8");
+        expect(summary).not.toContain("private-canary");
+        expect(Object.hasOwn(JSON.parse(summary), "cli_failure")).toBe(false);
+      }
+      writeFileSync(failure, "{private-canary");
+      expect(writeResult(directory).stderr).toBe("");
+      rmSync(failure);
+      writeFileSync(join(directory, "elsewhere.json"), JSON.stringify(valid));
+      symlinkSync(join(directory, "elsewhere.json"), failure);
+      expect(writeResult(directory).stderr).toBe("");
+      expect(
+        Object.hasOwn(
+          JSON.parse(readFileSync(join(directory, "result.json"), "utf8")),
+          "cli_failure",
+        ),
+      ).toBe(false);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -216,6 +217,85 @@ def record_native_startup_probes(work, source, exit_code, cycle, probe=None):
         pass
 
 
+# Fixed vocabulary for an isolated CLI failure. Only these names, never the
+# CLI's own output, cross into result.json and the public job log.
+CLI_FAILURE_COMMANDS = ('sources add', 'sources sync')
+CLI_FAILURE_CLASSES = ('subprocess-timeout', 'wait-timeout', 'sync-failed', 'request-timeout',
+                       'gateway-unreachable', 'auth', 'http-4xx', 'http-5xx', 'other')
+ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def classify_cli_failure(exit_code, timed_out, stdout, stderr):
+    """Map a failed CLI run onto CLI_FAILURE_CLASSES by matching the CLI's own
+    fixed messages and exit codes (packages/cli-shared/src/errors.ts)."""
+    if timed_out:
+        return 'subprocess-timeout'
+    stdout = ANSI_ESCAPE.sub('', stdout or '')
+    stderr = ANSI_ESCAPE.sub('', stderr or '')
+    match = re.search(r'\bGateway (\d{3}) /', stderr)
+    status = match[1] if match else ''
+    if exit_code == 64 or 'Cannot reach gateway' in stderr:
+        return 'gateway-unreachable'
+    if exit_code == 77 or status in ('401', '403') or 'No auth token found' in stderr:
+        return 'auth'
+    if exit_code == 65 or status.startswith('5'):
+        return 'http-5xx'
+    if status.startswith('4'):
+        return 'http-4xx'
+    if 'did not sync successfully' in stderr:
+        return 'wait-timeout' if re.search(r'^\s*Timed out:', stdout, re.M) else 'sync-failed'
+    if re.search(r'UND_ERR_(HEADERS|BODY)_TIMEOUT|HeadersTimeoutError|BodyTimeoutError', stderr):
+        return 'request-timeout'
+    return 'other'
+
+
+def health_after_ms(probe):
+    """Milliseconds the gateway took to answer one health probe, or None when it
+    did not answer. An HTTP error status still counts as an answer."""
+    started = time.monotonic()
+    try:
+        probe()
+    except urllib.error.HTTPError:
+        pass
+    except Exception:
+        return None
+    return round((time.monotonic() - started) * 1000)
+
+
+def record_cli_failure(work, args, exit_code, timed_out, elapsed_ms, stdout, stderr, health_probe):
+    """Write work/cli-failure.json from bounded numbers and fixed names only."""
+    try:
+        operation = ' '.join(args[:2])
+        body = {
+            'command': operation if operation in CLI_FAILURE_COMMANDS else 'other',
+            'exit': exit_code if exit_code is not None and 0 <= exit_code <= 255 else None,
+            'signal': -exit_code if exit_code is not None and exit_code < 0 else None,
+            'timeout': timed_out,
+            'elapsed_ms': elapsed_ms,
+            'error_class': classify_cli_failure(exit_code, timed_out, stdout, stderr),
+            'gateway_health_after_ms': health_after_ms(health_probe),
+        }
+        (work / 'cli-failure.json').write_text(json.dumps(body) + '\n')
+    except Exception:
+        # Diagnostics must never replace the original CLI failure.
+        pass
+
+
+def run_cli(work, cli, args, health_probe, timeout=360):
+    """Return one isolated CLI operation's stdout, or record why it failed and raise."""
+    started = time.monotonic()
+    try:
+        result = subprocess.run([cli, *args], capture_output=True, text=True, timeout=timeout)
+        exit_code, timed_out, stdout, stderr = result.returncode, False, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        exit_code, timed_out, stdout, stderr = None, True, '', ''
+    if exit_code == 0:
+        return stdout
+    record_cli_failure(work, args, exit_code, timed_out, round((time.monotonic() - started) * 1000),
+                       stdout, stderr, health_probe)
+    raise RuntimeError('isolated CLI operation failed: ' + args[0])
+
+
 def run(work, cli):
     config = Path(os.environ['OMNESIS_CONFIG_DIR'])
     url = os.environ['OMNESIS_GATEWAY_URL']
@@ -257,10 +337,7 @@ def run(work, cli):
         rows = [r for r in body.get('results', []) if r.get('title') == 'CI lantern note']
         return rows[0]['id'] if len(rows) == 1 else None
     def command(*args):
-        result = subprocess.run([cli, *args], capture_output=True, text=True, timeout=360)
-        if result.returncode:
-            raise RuntimeError('isolated CLI operation failed: ' + args[0])
-        return result.stdout
+        return run_cli(work, cli, args, lambda: api('/health', False))
     identity = None
     document = None
     try:
