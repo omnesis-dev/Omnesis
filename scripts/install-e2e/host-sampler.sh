@@ -15,6 +15,7 @@
 set -uo pipefail
 
 E2E_WORK="${E2E_WORK:?set E2E_WORK}"
+mkdir -p "$E2E_WORK"
 OUT="$E2E_WORK/host-samples.log"
 INTERVAL="${HOST_SAMPLER_INTERVAL:-10}"
 
@@ -25,7 +26,7 @@ sample_darwin() {
   vm_stat | awk '/free|active|inactive|wired|compressor|Pageins|Pageouts|Swapins|Swapouts|Compressions|Decompressions/ { printf "%s ", $0 } END { print "" }' |
     tr -s ' '
   # pid, resident KiB, cpu%, threads (from ps -M line count), command name
-  ps -axo pid=,rss=,%cpu=,comm= | sort -k2 -nr | head -12 | while read -r pid rss cpu comm; do
+  ps -axo pid=,rss=,%cpu=,comm= | sort -k2 -nr 2>/dev/null | head -12 | while read -r pid rss cpu comm; do
     threads="$(ps -M -p "$pid" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"
     printf '  %6s %8sKiB cpu=%5s thr=%3s %s\n' "$pid" "$rss" "$cpu" "$threads" "$(basename "$comm")"
   done
@@ -36,7 +37,7 @@ sample_linux() {
   free -m | awk 'NR>1 { printf "%s ", $0 } END { print "" }' | tr -s ' '
   grep -E '^(pswpin|pswpout|pgmajfault) ' /proc/vmstat | tr '\n' ' '
   echo
-  ps -eo pid=,rss=,%cpu=,nlwp=,comm= --sort=-rss | head -12 |
+  ps -eo pid=,rss=,%cpu=,nlwp=,comm= --sort=-rss 2>/dev/null | head -12 |
     awk '{ printf "  %6s %8sKiB cpu=%5s thr=%3s %s\n", $1, $2, $3, $4, $5 }'
 }
 

@@ -148,7 +148,7 @@ import {
   scrubPendingSourceIndexPurges,
 } from "./indexer/db.js";
 import { listInterruptedOmnesisChatRetentionDocumentIds } from "./sources/omnesis-chat/wiring.js";
-import { describeMemoryBudget, resolveMemoryBudget } from "./memory-budget.js";
+import { describeMemoryBudget } from "./memory-budget.js";
 import { encryptSidecar, tryUnlink as tryUnlinkSidecar } from "./indexer/usearch-sidecar-crypto.js";
 import { prepareEncryptedGraphForBoot } from "./indexer/usearch-sidecar-boot.js";
 import { IndexerStatusReporter } from "./indexer/indexer-status.js";
@@ -428,8 +428,9 @@ const config = configStore.get();
 const runtime = resolveRuntimeSettings(config);
 announceRuntimeSettings(runtime);
 // How much memory the gateway may use: the knob, else the cgroup limit, else
-// the host's memory. The indexer keeps the HNSW graph within it.
-const memoryBudget = resolveMemoryBudget({ limitMb: runtime.memoryLimitMb });
+// the host's memory. The worker pools are sized from it, and the indexer keeps
+// the HNSW graph within it.
+const memoryBudget = runtime.memoryBudget;
 log.info(`memory budget: ${describeMemoryBudget(memoryBudget)}`);
 
 const storageEncryption = await resolveGatewayStorageEncryptionKeys(configDir).catch((err) => {

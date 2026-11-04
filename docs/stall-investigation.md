@@ -75,6 +75,8 @@ When a stall keeps coming back unattributed, wrap the suspect entry point in `wi
 
 `gc=` reports the garbage collections that overlapped the stall (a lower bound when a long stall held more than a few hundred). A stall that is mostly one major collection is a memory problem, and the fix is allocating less, not moving code.
 
+A stall can also be no code at all. When the host runs short of memory, the kernel compresses or pages out the gateway's resident memory, and every thread stops on the faults: the main thread, the writer and the workers together. The signature is a run of multi-second stalls with `gc=none`, a small steady `heap=` and an `rss=` that swings by hundreds of megabytes between lines while the heap does not move; a flight-recorder profile that names no hot code; `worker unresponsive` warnings from every pool at the same moment; and timeouts even on a TCP connect to the gateway. Moving code off the main thread does nothing for it. The gateway's own fixed cost is mostly its worker threads, since each loads its own copy of the module graph (about 165–230 MiB on an empty source install), so `worker-pool-sizing.ts` sizes the io, search and cpu pools from the memory budget (`memory-budget.ts`). On a host where other programs use much of the memory, set `gateway.memoryLimitMb` to what the gateway may really use, and the pools shrink with it.
+
 ## `GET /admin/stalls` and `omnesis stalls`
 
 `GET /admin/stalls` (admin scope) serves what the monitor has recorded, from memory: the last 2,000 stalls since the gateway started.

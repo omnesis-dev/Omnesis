@@ -100,7 +100,11 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
 
     // journal + concurrency
     expect(defAt("/gateway/journalMode")).toBe(rt.journalMode);
-    expect(defAt("/gateway/ioConcurrency")).toBe(rt.ioConcurrency);
+    // The pool sizes follow the machine (worker-pool-sizing.ts), so the
+    // display mirror carries none.
+    expect(defAt("/gateway/ioConcurrency")).toBeUndefined();
+    expect(defAt("/gateway/searchWorker/concurrency")).toBeUndefined();
+    expect(defAt("/gateway/cpuConcurrency")).toBeUndefined();
     // ioReservedUserSlots is hand-copied between CONFIG_DEFAULTS and the runtime
     // DEFAULTS (config can't import from gateway); pin the two together.
     expect(defAt("/gateway/ioReservedUserSlots")).toBe(rt.ioReservedUserSlots);
@@ -129,7 +133,6 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
     expect(defAt("/gateway/readHandle/ioCacheSizeBytes")).toBe(rt.ioReadCacheSizeBytes);
     // searchWorker knobs are hand-copied between CONFIG_DEFAULTS and the runtime
     // DEFAULTS (config can't import from gateway); pin the two together.
-    expect(defAt("/gateway/searchWorker/concurrency")).toBe(rt.searchWorkerConcurrency);
     expect(defAt("/gateway/searchWorker/maxInflightBeforeFallback")).toBeUndefined();
     expect(rt.searchWorkerMaxInflight).toBeUndefined();
     expect(defAt("/gateway/searchWorker/cacheSizeBytes")).toBe(rt.searchWorkerCacheSizeBytes);
