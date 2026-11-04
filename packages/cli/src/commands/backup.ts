@@ -215,6 +215,13 @@ export async function runBackup(opts: {
   }
 }
 
+/** When a listed backup started: the date and the local time, since one day often holds several. */
+export function formatBackupStarted(iso: string): string {
+  const d = new Date(iso);
+  const time = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${formatDateShort(iso)} ${time}`;
+}
+
 async function runList(): Promise<void> {
   const { backups } = await gatewayJson<{ backups: ListedBackup[] }>("/admin/backups");
   if (isJSON) {
@@ -232,7 +239,7 @@ async function runList(): Promise<void> {
   for (const b of backups) {
     const size = formatSize(b.files.reduce((sum, f) => sum + f.bytes, 0));
     console.log(
-      `${formatDateShort(b.startedAt).padEnd(18)} ${size.padEnd(10)} ${String(b.files.length).padEnd(6)} ${(b.includeIndex ? "yes" : "no").padEnd(6)} ${b.path}` +
+      `${formatBackupStarted(b.startedAt).padEnd(18)} ${size.padEnd(10)} ${String(b.files.length).padEnd(6)} ${(b.includeIndex ? "yes" : "no").padEnd(6)} ${b.path}` +
         (b.note ? `  ${c.dim}— ${b.note}${c.reset}` : ""),
     );
   }

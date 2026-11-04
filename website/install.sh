@@ -6247,11 +6247,35 @@ docker_cli_image() {
 }
 
 docker_project_name() {
+  # An install keeps the name its compose file already records.
+  if [ -f "$CONFIG_DIR/docker-compose.yml" ]; then
+    PROJECT_RECORDED="$(sed -n 's/^name: \(omnesis[a-z0-9-]*\)$/\1/p' "$CONFIG_DIR/docker-compose.yml" | head -n 1)"
+    if [ -n "$PROJECT_RECORDED" ]; then printf '%s' "$PROJECT_RECORDED"; return 0; fi
+  fi
   if [ "$CONFIG_DIR" = "$HOME/.config/omnesis" ]; then
     printf 'omnesis'
     return 0
   fi
   printf 'omnesis-%s' "$(printf '%s' "$CONFIG_DIR" | cksum | cut -d' ' -f1)"
+}
+
+# One Docker daemon runs one Omnesis install under a project name. Another
+# account's install (or this account's, met by a sudo run) answers to the same
+# name, and going on would recreate its containers from this install's compose
+# file: that install would stop, and this one would run in its place. Stop
+# before anything is written, naming it.
+docker_refuse_foreign_project() {
+  PROJECT_CLAIMED="$(docker_project_name)"
+  docker_project_owned_elsewhere "$PROJECT_CLAIMED" || return 0
+  fail "Another Omnesis install already runs on this Docker daemon as the compose project $PROJECT_CLAIMED, from $PROJECT_OWNERS — another account's, or one a sudo run made. This host runs one Omnesis Docker install. Use that one (run omnesis as the account that installed it), or remove its containers first with: docker compose -p $PROJECT_CLAIMED down (its config directory and data stay)."
+}
+
+# Whether containers of compose project $1 on this daemon come from another
+# config directory's compose file.
+docker_project_owned_elsewhere() {
+  PROJECT_OWNERS="$(docker ps -a --filter "label=com.docker.compose.project=$1" \
+    --format '{{.Label "com.docker.compose.project.config_files"}}' 2>/dev/null | sort -u)"
+  [ -n "$PROJECT_OWNERS" ] && [ "$PROJECT_OWNERS" != "$CONFIG_DIR/docker-compose.yml" ]
 }
 
 docker_compose_gateway_service() {
@@ -7144,6 +7168,8 @@ docker_write_compose() {
   COMPOSE_FILE="$CONFIG_DIR/docker-compose.yml"
   COMPOSE_PROJECT="$(docker_project_name)"
   docker_render_compose > "$COMPOSE_FILE"
+  # A truncating write keeps the mode an older install left.
+  chmod 600 "$COMPOSE_FILE"
   set_env OMNESIS_IMAGE_TAG "$IMAGE_TAG"
   info "Wrote $COMPOSE_FILE"
 }
@@ -7184,6 +7210,7 @@ docker_probe_socket_group() {
 # install is not — the CLI it runs lives inside an image — so it is recorded.
 docker_record_method() {
   printf 'docker\n' > "$CONFIG_DIR/install-method"
+  chmod 600 "$CONFIG_DIR/install-method"
   docker_own_path "$CONFIG_DIR/install-method"
 }
 
@@ -7229,6 +7256,9 @@ SERVICE='$DOCKER_CLI_SERVICE'
 EOF
   cat <<'WRAPPER_EOF'
 set -eu
+# What this command writes into the config directory (the host records, the
+# shared-folders list, the compose file a share rewrites) stays owner-only.
+umask 077
 
 # Docker Desktop, OrbStack and Colima put the docker CLI where only a login
 # shell's profile adds it to PATH, and a shell that is not one — ssh running a
@@ -8610,6 +8640,10 @@ docker_remove_previous_images() {
 }
 
 docker_install() {
+  # Everything a Docker install writes into the config directory is owner-only,
+  # whatever the account's umask: Ubuntu's 002 would leave the compose file and
+  # the install record group-writable, and the doctor's permission check fails.
+  umask 077
   ensure_docker
   if [ "$DOCKER_NETWORK" = host ] && [ "$(uname -s)" != Linux ]; then warn "Host networking LAN multicast is supported on Linux; Docker Desktop discovery is not verified."; fi
   docker_socket_facts
@@ -8618,6 +8652,7 @@ docker_install() {
   docker_recorded_passphrase_file
   docker_require_unattended_answers
   docker_runtime_identity
+  docker_refuse_foreign_project
   docker_registry_prepare
   docker_refuse_native_install
   docker_resolve_build_context

@@ -18,7 +18,13 @@ vi.mock("../utils.js", async (importOriginal) => ({
   },
 }));
 
-import { backupAction, backupStartedLine, formatBackupProgress, runBackup } from "./backup.js";
+import {
+  backupAction,
+  backupStartedLine,
+  formatBackupProgress,
+  formatBackupStarted,
+  runBackup,
+} from "./backup.js";
 
 beforeEach(() => {
   mocks.gatewayFetch.mockReset();
@@ -331,5 +337,15 @@ describe("backupAction", () => {
       expect(() => backupAction(false, words)).toThrow(/takes no arguments/);
     }
     expect(() => backupAction(false, ["now"])).toThrow(/omnesis backup list/);
+  });
+});
+
+describe("formatBackupStarted", () => {
+  test("two backups on one day read apart by their time", () => {
+    const morning = formatBackupStarted(new Date(2026, 2, 14, 9, 5).toISOString());
+    const evening = formatBackupStarted(new Date(2026, 2, 14, 21, 40).toISOString());
+    expect(morning).toMatch(/ 09:05$/);
+    expect(evening).toMatch(/ 21:40$/);
+    expect(morning.length).toBeLessThanOrEqual(18);
   });
 });

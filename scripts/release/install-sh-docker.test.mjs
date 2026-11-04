@@ -76,7 +76,12 @@ case "$1" in
     esac
     exit 0 ;;
   # The images this install's containers run, one per line.
-  ps) [ -z "\${OMNESIS_TEST_DOCKER_PS_IMAGES:-}" ] || printf '%s\\n' $OMNESIS_TEST_DOCKER_PS_IMAGES; exit 0 ;;
+  ps)
+    # Which compose files own a project's containers; another install's, when a test names one.
+    case "$*" in
+      *project.config_files*) [ -z "\${OMNESIS_TEST_DOCKER_PS_OWNERS:-}" ] || printf '%s\\n' "$OMNESIS_TEST_DOCKER_PS_OWNERS"; exit 0 ;;
+    esac
+    [ -z "\${OMNESIS_TEST_DOCKER_PS_IMAGES:-}" ] || printf '%s\\n' $OMNESIS_TEST_DOCKER_PS_IMAGES; exit 0 ;;
   manifest)
     case "\${OMNESIS_TEST_MANIFEST_MODE:-success}" in
       success) exit 0 ;;
@@ -1832,6 +1837,58 @@ EOF
     // Owner-only like the rest of the config directory, so the doctor's
     // permission check passes; the gateway's container runs as its owner.
     expect(statSync(join(run.configDir, "host-network")).mode & 0o777).toBe(0o600);
+  });
+
+  test("a second install on the same Docker daemon is refused before it writes anything", () => {
+    // Another account's install (or a sudo run's) already answers to `omnesis`.
+    const other = "/home/someone-else/.config/omnesis/docker-compose.yml";
+    const run = runInstaller("project-taken", QUIET, { OMNESIS_TEST_DOCKER_PS_OWNERS: other });
+    expect(run.status).not.toBe(0);
+    expect(run.output).toContain(
+      `already runs on this Docker daemon as the compose project omnesis, from ${other}`,
+    );
+    expect(run.output).toContain("docker compose -p omnesis down");
+    expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    const calls = existsSync(dockerLog(run.home)) ? readFileSync(dockerLog(run.home), "utf8") : "";
+    expect(calls).not.toMatch(/^docker compose .* up\b/mu);
+  });
+
+  test("an install keeps the plain project name its own containers carry", () => {
+    const run = runInstaller("project-own", QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(parseYaml(composeAt(run)).name).toBe("omnesis");
+    const rerun = runInstaller("project-own", QUIET, {
+      OMNESIS_TEST_DOCKER_PS_OWNERS: join(run.configDir, "docker-compose.yml"),
+    });
+    expect(rerun.status, rerun.output).toBe(0);
+    expect(parseYaml(composeAt(rerun)).name).toBe("omnesis");
+  });
+
+  test("under a group-writable umask, the config directory is still owner-only", () => {
+    // Ubuntu's default umask is 002; the doctor's permission check wants 0600.
+    const previous = process.umask(0o002);
+    let run;
+    try {
+      run = runInstaller("umask-002", QUIET);
+    } finally {
+      process.umask(previous);
+    }
+    expect(run.status, run.output).toBe(0);
+    for (const name of ["docker-compose.yml", "install-method", ".env", "host-network"]) {
+      expect(statSync(join(run.configDir, name)).mode & 0o777, name).toBe(0o600);
+    }
+  });
+
+  test("a re-run tightens a compose file and install record an older install left group-writable", () => {
+    const first = runInstaller("umask-legacy", QUIET);
+    expect(first.status, first.output).toBe(0);
+    chmodSync(join(first.configDir, "docker-compose.yml"), 0o664);
+    chmodSync(join(first.configDir, "install-method"), 0o664);
+    const rerun = runInstaller("umask-legacy", QUIET);
+    expect(rerun.status, rerun.output).toBe(0);
+    for (const name of ["docker-compose.yml", "install-method"]) {
+      expect(statSync(join(rerun.configDir, name)).mode & 0o777, name).toBe(0o600);
+    }
   });
 
   test("the launcher records this host's disk encryption for the doctor in the container", () => {
