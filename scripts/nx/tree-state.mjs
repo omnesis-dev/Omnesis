@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 
 function git(args, options = {}) {
   return execFileSync("git", args, {
@@ -54,6 +54,16 @@ export function changedFiles(base) {
   return { mergeBase, files: [...files].sort() };
 }
 
+function currentEntry(file) {
+  try {
+    return lstatSync(file);
+  } catch (error) {
+    // A removed directory may now be a file, making its former children ENOTDIR.
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return undefined;
+    throw error;
+  }
+}
+
 export function treeFingerprint(base) {
   const { mergeBase, files } = changedFiles(base);
   const hash = createHash("sha256");
@@ -62,7 +72,11 @@ export function treeFingerprint(base) {
   hash.update(git(["diff", "--cached", "--binary"]));
   for (const file of files) {
     hash.update(`${file}\0`);
-    if (existsSync(file)) hash.update(readFileSync(file));
+    const stat = currentEntry(file);
+    // Git tracks the link itself. Canonical files are fingerprinted separately;
+    // following a directory link would try to read a directory as a file.
+    if (stat?.isSymbolicLink()) hash.update(`symlink\0${readlinkSync(file)}`);
+    else if (stat) hash.update(readFileSync(file));
     else hash.update("<deleted>");
     hash.update("\0");
   }

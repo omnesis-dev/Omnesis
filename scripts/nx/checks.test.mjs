@@ -10,6 +10,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -286,6 +287,48 @@ describe("Nx change selection", () => {
         "destination.ts",
       ]),
     );
+  });
+
+  test.each([false, true])("fingerprints directory skill links (staged: %s)", (staged) => {
+    fixture();
+    mkdirSync(".agents/skills/review", { recursive: true });
+    mkdirSync(".claude/skills", { recursive: true });
+    writeFileSync(".agents/skills/review/SKILL.md", "Review the changes.\n");
+    const link = ".claude/skills/review";
+    symlinkSync("../../.agents/skills/review", link);
+    if (staged) execFileSync("git", ["add", "."]);
+    const planned = treeFingerprint("main");
+    expect(planned.files).toContain(link);
+    expect(() => assertTreeFingerprint("main", planned.fingerprint)).not.toThrow();
+
+    writeFileSync(".agents/skills/review/SKILL.md", "Review all the changes.\n");
+    expect(() => assertTreeFingerprint("main", planned.fingerprint)).toThrow(
+      /changed after planning/,
+    );
+  });
+
+  test("rejects retargeted dangling links before following their targets", () => {
+    fixture();
+    symlinkSync("missing-skill", "review");
+    const planned = treeFingerprint("main");
+    rmSync("review");
+    symlinkSync("other-missing-skill", "review");
+    expect(() => assertTreeFingerprint("main", planned.fingerprint)).toThrow(
+      /changed after planning/,
+    );
+  });
+
+  test("fingerprints deleted children when a directory is replaced by a file", () => {
+    fixture();
+    mkdirSync("old-directory");
+    writeFileSync("old-directory/removed.md", "Removed content.\n");
+    execFileSync("git", ["add", "."]);
+    execFileSync("git", ["commit", "-qm", "directory fixture"]);
+    rmSync("old-directory", { recursive: true });
+    writeFileSync("old-directory", "Replacement file.\n");
+    const planned = treeFingerprint("main");
+    expect(planned.files).toContain("old-directory/removed.md");
+    expect(() => assertTreeFingerprint("main", planned.fingerprint)).not.toThrow();
   });
 
   test("rejects evidence after a queued checkout changes", () => {

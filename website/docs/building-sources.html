@@ -888,7 +888,7 @@ src/
           finds. To ship a source, create the package and add it there, as a runtime dependency;
           that is the only registration step. The build still has to know about the package (root
           <code>tsconfig.json</code> references, the lockfile, and the collector's entry in
-          <code>knip.json</code>), and <a href="#reviewing"><code>/source-review</code></a> lists
+          <code>knip.json</code>), and <a href="#reviewing"><code>source-review</code></a> lists
           every other touchpoint. A source marked <code>experimental</code> is offered only by a
           collector running with <code>OMNESIS_EXPERIMENTAL=1</code>, and one that declares
           <code>supportedPlatforms</code> only on those platforms. On the next collector start the
@@ -960,13 +960,13 @@ src/
           second device.
         </p>
         <p>
-          The repository carries the complete checklist as a
-          <a href="https://code.claude.com/docs/en/slash-commands">Claude Code slash command</a>,
-          <code>/source-review</code>, at
+          The repository carries the complete checklist as a shared <code>source-review</code> skill
+          for Codex and Claude Code, at
           <a
-            href="https://github.com/omnesis-dev/Omnesis/blob/main/.claude/commands/source-review.md"
-            ><code>.claude/commands/source-review.md</code></a
-          >. Run it from the branch that adds or changes a source, naming the package:
+            href="https://github.com/omnesis-dev/Omnesis/blob/main/.agents/skills/source-review/SKILL.md"
+            ><code>.agents/skills/source-review/SKILL.md</code></a
+          >. Run it from the branch that adds or changes a source, naming the package. Use
+          <code>$source-review</code> in Codex or <code>/source-review</code> in Claude Code:
         </p>
         <div class="term">
           <div class="term-bar">

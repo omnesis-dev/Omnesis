@@ -1,6 +1,6 @@
 # Synthetic source breadth review
 
-Reviewed the ten previously missing non-Android synthetic twins against `.claude/commands/source-review.md` and `.claude/commands/omnesis-review.md`. This review covers the synthetic fixture boundary and reuse of production normalization; it does not certify new production integrations.
+Reviewed the ten previously missing non-Android synthetic twins against `.agents/skills/source-review/SKILL.md` and `.agents/skills/omnesis-review/SKILL.md`. This review covers the synthetic fixture boundary and reuse of production normalization; it does not certify new production integrations.
 
 | Source              | Fixture              | Production seam exercised                                                          | Isolation and identity                                                                                                     |
 | ------------------- | -------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |

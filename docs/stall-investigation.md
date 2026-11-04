@@ -112,4 +112,4 @@ A summary holds function names, file paths and the lines the functions start on.
 4. Pick the matching fix above, and add a test that pins the work to where it now runs, by thread or by worker op, rather than how long it took.
 5. After deploying, check that the culprit has dropped out of the ranking.
 
-The `/latency-watch` command (`.claude/commands/latency-watch.md`) runs this loop on a schedule (`/loop /latency-watch`): it watches interactive request latency and stalls against a service level, investigates what breaks it, and opens pull requests for review.
+The `latency-watch` skill (`.agents/skills/latency-watch/SKILL.md`) runs a single check in Codex (`$latency-watch`) or Claude Code (`/latency-watch`), or monitors on a requested schedule (Claude Code: `/loop /latency-watch`; Codex: an available host scheduler): it watches interactive request latency and stalls against a service level, investigates what breaks it, and opens pull requests for review.

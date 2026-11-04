@@ -16,7 +16,7 @@
 - [ ] `npm test` passes
 - [ ] Docs updated for any user-visible change (pages under `website/docs/`)
 - [ ] If touching `ios/`, ran `xcodegen generate` after editing `project.yml` or adding a `*.swift` file
-- [ ] If adding or changing a data source, ran `/source-review` (`.claude/commands/source-review.md`) and completed its manual validation list
+- [ ] If adding or changing a data source, ran the `source-review` skill (`.agents/skills/source-review/SKILL.md`) and completed its manual validation list
 - [ ] No real personal data or secrets in the diff, tests, fixtures, or screenshots (see CONTRIBUTING → _Fixture privacy_)
 
 <!--
