@@ -176,6 +176,14 @@ addresses, pairing codes, the probe token — are registered with
 `::add-mask::`, and every diagnostic passes through
 `scripts/install-e2e/redact.mjs` before it is printed.
 
+The single-host and uninstall lanes run `scripts/install-e2e/host-sampler.sh`
+beside them. Every 10 seconds it records the host's load, swap, paging and
+memory-pressure counters and its largest processes by name, resident size,
+CPU and thread count, with the supervised gateway and collector labelled; it
+records no arguments, paths or environment. The samples are printed, through
+the same redactor, after every run of those lanes, so a slow lane shows
+whether the machine ran out of memory or CPU and which process took it.
+
 Mac installer failures may print bounded, redacted installer tails after exact tool restoration. A first-cycle gateway health failure may also print up to 50 lines and 8192 bytes of its redacted startup log, before any collector or source starts. Collector logs and gateway logs after source setup stay private; uploaded artifacts remain sanitized result summaries only.
 If that gateway exits with a segmentation-fault status, isolated native dependency probes may add fixed stage names and numeric exit/signal/timeout results to the sanitized summary. The probes load no model and discard process output.
 The hosted Mac prerequisite tests set `HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1` to avoid cascading upgrades of unrelated image software. An absent `node@24` and its required dependencies still install through the real installer and Homebrew; original tool restoration remains mandatory.

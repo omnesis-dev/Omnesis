@@ -92,6 +92,7 @@ jobs:
         with:
           node-version: 24
       - name: Sample host resources
+        continue-on-error: true
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/host-sampler.sh start
       - name: Install vN, update to vN+1, roll back a broken vN+2
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/single-host.sh
@@ -175,6 +176,7 @@ jobs:
         with:
           node-version: 24
       - name: Sample host resources
+        continue-on-error: true
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/host-sampler.sh start
       - name: Install, uninstall, reinstall over the kept data, uninstall --purge
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/uninstall.sh

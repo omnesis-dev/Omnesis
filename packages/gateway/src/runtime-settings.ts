@@ -45,7 +45,7 @@ import { DEFAULT_ANALYTICS_STREAM_REKEY_MAX_ROWS } from "./analytics/settings.js
 import { DEFAULT_ADMISSION } from "./scheduler/admission.js";
 import { STARVATION_MIN_INTERVAL_MS } from "./scheduler/internals.js";
 import { resolveMemoryBudget, type MemoryBudget } from "./memory-budget.js";
-import { defaultWorkerPoolSizes, type PoolHost } from "./worker-pool-sizing.js";
+import { defaultWorkerPoolSizes } from "./worker-pool-sizing.js";
 
 const log = createLogger("gateway:settings");
 
@@ -242,13 +242,12 @@ const DEFAULTS = {
   // io worker gets 64 MiB (× ioConcurrency).
   readCacheSizeBytes: 256 * 1024 * 1024,
   ioReadCacheSizeBytes: 64 * 1024 * 1024,
-  // Search-worker pool (Slice 3B). One worker de-blocks the main event loop for
-  // candidate generation; the inflight ceiling of 2 keeps a slow query from
-  // queueing behind another on the single-worker FIFO (excess runs inline).
-  // 64 MiB per handle matches the io-worker's read-handle budget. Mirrored as
-  // gateway.searchWorker.* in CONFIG_DEFAULTS. The worker count follows the
-  // memory budget, up to 3 so an agent's parallel search burst (typically 3–4
-  // calls per reasoning step) runs concurrently off the main loop.
+  // Search-worker pool: candidate generation runs off the main event loop.
+  // 64 MiB per handle matches the io-worker's read-handle budget; the cache
+  // size is mirrored as gateway.searchWorker.cacheSizeBytes in CONFIG_DEFAULTS.
+  // The worker count follows the memory budget (worker-pool-sizing.ts), up to 3
+  // so an agent's parallel search burst (typically 3–4 calls per reasoning
+  // step) runs concurrently off the main loop.
   // No saturation fallback: a burst queues on the workers, because a query run
   // inline would block the main event loop for its whole duration.
   searchWorkerMaxInflight: undefined,
@@ -426,8 +425,9 @@ function resolveDuration(
 }
 
 /**
- * The memory budget with no `gateway.memoryLimitMb`, read once: it comes from
- * the cgroup and the host, which do not change while the gateway runs, and the
+ * The memory budget with no `gateway.memoryLimitMb`, read once. It comes from
+ * the cgroup and the host, which are taken as fixed for the life of the
+ * process (the pools and the indexer are sized from it at boot), and the
  * settings are resolved again on every snapshot.
  */
 let detectedMemoryBudget: MemoryBudget | undefined;
@@ -438,20 +438,14 @@ function memoryBudgetFor(limitMb: number | undefined): MemoryBudget {
   return detectedMemoryBudget;
 }
 
-/**
- * @param host  The machine the pool defaults are sized for. Defaults to the
- *   resolved memory budget and `os.availableParallelism()`; tests pass one.
- */
-export function resolveRuntimeSettings(
-  config: OmnesisConfig | undefined,
-  host?: PoolHost,
-): ResolvedRuntimeSettings {
+export function resolveRuntimeSettings(config: OmnesisConfig | undefined): ResolvedRuntimeSettings {
   const indexer = config?.indexer;
   const memoryLimitMb = envIntPositive("OMNESIS_MEMORY_LIMIT_MB") ?? config?.gateway?.memoryLimitMb;
   const memoryBudget = memoryBudgetFor(memoryLimitMb);
-  const pools = defaultWorkerPoolSizes(
-    host ?? { memoryBytes: memoryBudget.bytes, cores: availableParallelism() },
-  );
+  const pools = defaultWorkerPoolSizes({
+    memoryBytes: memoryBudget.bytes,
+    cores: availableParallelism(),
+  });
   const timings = config?.gateway?.timings;
   const publicBaseUrl = resolvePublicBaseUrl(config);
   // Slow-request keeps a back-compat env override

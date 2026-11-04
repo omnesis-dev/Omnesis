@@ -8,16 +8,17 @@
  * the gateway's module graph before it does any work: on an empty source
  * install an io worker holds about 230 MiB resident, a cpu or search worker
  * about 165 MiB, and a search worker adds about 130 MiB more once it has built
- * the date recognizer. At the sizes a workstation wants (six io workers, three
- * search workers) the pools alone take about 3 GiB, which a machine with 8 GB
- * of memory cannot keep resident beside the operating system, the collector
- * and the CLI. The kernel then compresses or pages out the gateway's own
+ * the date recognizer (resident sizes measured on Linux under tsx). At the
+ * sizes a workstation wants (six io, three search and two cpu workers) the
+ * pools take about 2.6 GiB and the empty gateway about 3.5 GiB in all, which a
+ * machine with 8 GB of memory cannot keep resident beside the operating
+ * system, the collector and the CLI. The kernel then compresses or pages out the gateway's own
  * memory, and every thread, the event loop included, stops for seconds at a
  * time on the faults.
  *
  * So the pools scale with the gateway's memory budget (`memory-budget.ts`:
- * `gateway.memoryLimitMb`, else the container's limit, else the host's memory)
- * and reach their full sizes from 16 GB:
+ * `gateway.memoryLimitMb`, else the container's limit, else the host's memory).
+ * The io and search pools reach their full sizes from 16 GB:
  *
  * - io: one worker per 2.5 GiB, between 2 and 6. Two is the floor because one
  *   slot is reserved for interactive reads (`gateway.ioReservedUserSlots`).
