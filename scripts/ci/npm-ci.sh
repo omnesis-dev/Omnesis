@@ -16,4 +16,18 @@
 set -eu
 npm_package_config_node_gyp_nodedir="$(node -p 'require("node:path").resolve(process.execPath, "../..")')"
 export npm_package_config_node_gyp_nodedir
-exec npm ci "$@"
+
+# A stalled registry connection (EIDLETIMEOUT, ECONNRESET) fails the whole
+# install; retry a few times so a transient network hiccup doesn't redden CI.
+# See #740 — flaky npm registry idle timeout in the Docker image build.
+attempt=1
+max_attempts="${NPM_CI_ATTEMPTS:-3}"
+while ! npm ci "$@"; do
+  if [ "$attempt" -ge "$max_attempts" ]; then
+    echo "npm ci failed after $attempt attempts" >&2
+    exit 1
+  fi
+  echo "npm ci failed (attempt $attempt of $max_attempts); retrying in $((attempt * 10))s" >&2
+  sleep "$((attempt * 10))"
+  attempt=$((attempt + 1))
+done
