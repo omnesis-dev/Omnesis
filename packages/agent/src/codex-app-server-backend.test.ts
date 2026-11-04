@@ -22,6 +22,7 @@ import { searchModelContextResult } from "./test-fixtures/search-model-context.j
 
 import {
   CodexAppServerBackend,
+  CodexAppServerRuntime,
   MANAGED_CODEX_PACKAGE,
   MANAGED_CODEX_PACKAGE_VERSION,
   convertToolsToCodexDynamicTools,
@@ -660,6 +661,30 @@ describe("CodexAppServerBackend", () => {
     });
     expect(managed.command).toContain("@openai/codex");
   });
+
+  it("initializes the installed managed runtime and lists models without an inference turn", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-managed-probe-")));
+    const runtime = new CodexAppServerRuntime({
+      codexHome: join(dir, "home"),
+      workspaceDir: join(dir, "workspace"),
+      env: { PATH: process.env.PATH, HOME: dir },
+      startupTimeoutMs: 15_000,
+      requestTimeoutMs: 15_000,
+    });
+    try {
+      await expect(runtime.probeRuntime()).resolves.toMatchObject({
+        version: MANAGED_CODEX_PACKAGE_VERSION,
+      });
+      // model/list exercises initialize and the release-pinned protocol without
+      // credentials, a conversation, or any model inference.
+      await expect(runtime.listModels()).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: expect.any(String) })]),
+      );
+    } finally {
+      await runtime.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 35_000);
 
   it("preserves pre-resolved gateway-owned runtimes as managed", async () => {
     const runtime = new (await import("./codex-app-server-backend.js")).CodexAppServerRuntime({

@@ -10,8 +10,8 @@
  */
 export const CODEX_RUNTIME_COMPAT = Object.freeze({
   packageName: "@openai/codex",
-  testedVersion: "0.163.0",
-  supportedVersionPrefixes: ["0.142.", "0.151.", "0.163."] as const,
+  testedVersion: "0.166.0",
+  supportedVersionPrefixes: ["0.142.", "0.151.", "0.163.", "0.166."] as const,
 });
 
 export function isSupportedCodexCliVersion(version: string): boolean {
