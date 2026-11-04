@@ -1,12 +1,30 @@
+---
+name: latency-watch
+description: Check Omnesis gateway latency and stalls, investigate recurring performance defects, and prepare tested fix pull requests. Use when asked to monitor or investigate gateway performance.
+---
+
 Keep the gateway fast for the people using it. Watch its latency counters
 against the service level below, and when it is broken, find the code
 responsible, fix it, prove the fix is correct and faster, and open a pull
 request for the operator to review.
 
-Run it as `/loop /latency-watch`. Without an interval the loop paces itself:
-every run ends by scheduling the next one at the delay this file gives for the
-current phase. With a fixed interval (`/loop 1h /latency-watch`), run one check
-per fire and ignore the delays.
+## Invocation and scheduling
+
+Use the user's accompanying instructions for the scope, gateway connection,
+and cadence. Invoking this skill runs one check; recurring monitoring requires
+the operator to request it and a scheduler supported by the host agent.
+
+- **Claude Code:** `/latency-watch` runs one check. For requested recurring
+  monitoring, use `/loop /latency-watch`. Without an interval, schedule the next
+  run at the phase delay below. With a fixed interval (`/loop 1h /latency-watch`),
+  run one check per fire and ignore the phase delays.
+- **Codex:** invoke `$latency-watch`. Claude's `/loop` is not a Codex command.
+  For requested recurring monitoring, use a scheduling capability actually
+  available in the current environment. If none is available, run one check
+  and report the next recommended check time; do not claim monitoring is active.
+
+Use one scheduler for this monitor; do not create duplicate recurring jobs.
+Only report a next run as scheduled after the scheduling tool confirms it.
 
 Read these before the first investigation. They hold the rules and the patterns
 that have already worked:
@@ -141,8 +159,10 @@ and create it on the first run:
 - **INVESTIGATE**: the section below. Go back to WATCH once the pull request is
   open, or once you've recorded why no fix was attempted.
 
-4. Schedule the next run: 60 minutes in WATCH, 15 minutes in OBSERVE, and 30
-   minutes while one of your pull requests has CI running.
+4. For requested recurring monitoring, schedule the next run using the host's
+   supported scheduler: 60 minutes in WATCH, 15 minutes in OBSERVE, and 30
+   minutes while one of your pull requests has CI running. For a single check or
+   when no scheduler is available, report the recommended delay instead.
 5. Print one line: the phase, the counts against the service level, and what
    changed. Say nothing else unless something needs the operator.
 
@@ -164,9 +184,10 @@ unless all of these hold:
 
   Raise those with the operator in the session instead.
 
-Give the investigation to one subagent with a self-contained brief: the evidence,
-the service level, and the rules in this file. This keeps the loop's own context
-small enough to run for weeks.
+When delegation is available and permitted, give the investigation to one
+sub-agent using the host's tools, with a self-contained brief: the evidence,
+the service level, and the rules in this file. Otherwise, investigate within
+the current session and persist progress in the state above.
 
 ### Find the cause
 
@@ -271,7 +292,7 @@ Iterate with narrow vitest runs. Before handoff:
 - run `npm run checks:plan -- --base origin/main` and
   `npm run checks:affected -- --base origin/main` through the installed queue, at
   default priority;
-- run `/omnesis-review` on the diff and fix what it finds;
+- apply the `omnesis-review` skill (`.agents/skills/omnesis-review/SKILL.md`) to the diff and fix what it finds;
 - wait for GitHub CI to be green before asking for review.
 
 ### Open the pull request

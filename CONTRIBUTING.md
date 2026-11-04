@@ -185,7 +185,7 @@ or update one in the same commit when you add or materially change a view.
    - [ ] Docs updated for any user-visible change
    - [ ] If touching `ios/`, ran `xcodegen generate` after editing
          `project.yml` or adding a new `*.swift` file
-   - [ ] If adding or changing a data source, ran `/source-review` and
+   - [ ] If adding or changing a data source, ran the `source-review` skill and
          completed its manual validation list
 
 5. **Run the focused checks locally, then let CI run the rest.** Every pull
@@ -212,15 +212,16 @@ Walk through:
 Then propose it by opening an issue describing the source and linking it to
 the data-sources roadmap.
 
-Before opening the PR, run `/source-review packages/providers/<name>` in
-Claude Code (the command lives at
-[`.claude/commands/source-review.md`](.claude/commands/source-review.md)).
+Before opening the PR, run `$source-review packages/providers/<name>` in
+Codex or `/source-review packages/providers/<name>` in Claude Code (the shared
+skill lives at
+[`.agents/skills/source-review/SKILL.md`](.agents/skills/source-review/SKILL.md)).
 It audits the source against the full contract — viability and platform
 terms, encapsulation, auth, the sync runtime, deletions, people, URLs, icons,
 the Watch ontology, multiple accounts, the multi-device mode, every
 registration point outside the package, and tests — fixes mechanical
-omissions, and ends with the checks only a person can do. Without Claude
-Code, the file reads as the checklist; walk it by hand.
+omissions, and ends with the checks only a person can do. Without either agent,
+the file reads as the checklist; walk it by hand.
 
 ---
 

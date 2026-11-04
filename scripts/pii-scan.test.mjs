@@ -552,14 +552,47 @@ describe("--all", () => {
 
   it("fails when a tracked file cannot be read", () => {
     const { status, out } = scanRepo((root, git) => {
-      mkdirSync(join(root, "dir"));
-      writeFileSync(join(root, "dir/a.md"), "fine\n");
-      symlinkSync("dir", join(root, "link.md"));
+      writeFileSync(join(root, "link.md"), "fine\n");
       git("add", "-A");
+      rmSync(join(root, "link.md"));
+      mkdirSync(join(root, "link.md"));
     });
     expect(out).toContain("could not read 1 tracked file(s)");
     expect(out).toContain("link.md (EISDIR)");
     expect(status).toBe(2);
+  });
+
+  it("scans shared skills with directory symlinks", () => {
+    const { status, out } = scanRepo((root, git) => {
+      mkdirSync(join(root, ".agents/skills/review"), { recursive: true });
+      mkdirSync(join(root, ".claude/skills"), { recursive: true });
+      writeFileSync(join(root, ".agents/skills/review/SKILL.md"), "Review changes.\n");
+      symlinkSync("../../.agents/skills/review", join(root, ".claude/skills/review"));
+      git("add", "-A");
+    });
+    expect(status).toBe(0);
+    expect(out).toContain("scanned 2 tracked files");
+  });
+
+  it("rejects private data in a symlink target even when the link is dangling", () => {
+    const { status, out } = scanRepo((root, git) => {
+      symlinkSync("missing/kai@redwoodlabs.com/skill", join(root, "review"));
+      git("add", "-A");
+    });
+    expect(status).toBe(2);
+    expect(out).toContain("email");
+  });
+
+  it("still scans canonical content reached through a directory symlink", () => {
+    const { status, out } = scanRepo((root, git) => {
+      mkdirSync(join(root, "skills"));
+      writeFileSync(join(root, "skills/SKILL.md"), "Contact kai@redwoodlabs.com.\n");
+      symlinkSync("skills", join(root, "review"));
+      git("add", "-A");
+    });
+    expect(status).toBe(2);
+    expect(out).toContain("skills/SKILL.md");
+    expect(out).toContain("email");
   });
 
   it("skips a tracked file deleted from the working tree", () => {

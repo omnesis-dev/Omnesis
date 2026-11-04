@@ -32,7 +32,7 @@
 // one file cannot silently bless the same value elsewhere.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync, realpathSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync, lstatSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -519,7 +519,10 @@ function runAll() {
   for (const f of files) {
     let text;
     try {
-      text = readFileSync(join(REPO_ROOT, f), "utf8");
+      const path = join(REPO_ROOT, f);
+      // Scan the bytes Git publishes for a link, including its target path.
+      // Any tracked canonical contents are scanned under their own paths.
+      text = lstatSync(path).isSymbolicLink() ? readlinkSync(path) : readFileSync(path, "utf8");
     } catch (error) {
       if (error.code !== "ENOENT") unreadable.push(`${f} (${error.code ?? error.message})`);
       continue;

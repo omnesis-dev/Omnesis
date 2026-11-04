@@ -1,3 +1,8 @@
+---
+name: dev-annotations
+description: Investigate the operator's Omnesis developer annotations and propose engineering work. Use when asked to review in-app data-quality feedback.
+---
+
 Review the operator's **developer annotations** — the in-app data-quality feedback
 channel (portal ⚑ button / mobile shake-to-annotate, gated behind `OMNESIS_DEV_MODE`)
 — and propose a plan to act on them. Each note is the operator flagging an
@@ -71,11 +76,11 @@ proposed fix and where it lives (code path or prompt), its blast radius, and a
 rough effort / priority. Surface anything ambiguous or that depends on the
 operator's intent.
 
-**Do not start fixing.** The default for this command is investigate-and-propose.
+**Do not start fixing.** The default for this skill is investigate-and-propose.
 Ask the operator for feedback and instructions on which items to act on and in
 what order **before** making any code or prompt change. Only once they've chosen a
-direction do you implement it — and then follow the normal flow (plan mode for
-non-trivial work, tests, self-review).
+direction do you implement it — and then follow the normal flow (plan
+non-trivial work, run tests, and self-review).
 
 ## 3. After work is actually done — offer to clear notes
 
@@ -94,7 +99,6 @@ hasn't agreed is done.
 
 ---
 
-Additional instructions for this run (narrow the scope, focus on a subsystem,
-override the defaults above, etc.):
-
-$ARGUMENTS
+Use the user’s accompanying instructions to narrow the scope or focus on a
+subsystem. Preserve the investigation and resolution approval boundaries above
+unless the operator has already authorized the relevant action.

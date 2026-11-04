@@ -1,10 +1,21 @@
-Audit all code changed in this session — both committed and unstaged. Spawn
-multiple sub-agents in parallel, each responsible for a subset of the checks
-below. Only apply checks that are relevant to the changes in scope.
+---
+name: omnesis-review
+description: Audit Omnesis changes for architecture, correctness, security, privacy, tests, and documentation. Use for a repository review or the required implementation self-review.
+---
 
-Before dispatching sub-agents, run `git diff HEAD~N` (where N covers today's
-commits) and `git diff` (unstaged) to determine the full scope. Pass each
-sub-agent the exact list of changed files and their role.
+Audit all code changed in this session — committed, staged, unstaged, and new
+files — unless the user's accompanying instructions narrow the scope. Only
+apply checks relevant to those changes.
+
+Determine the review base from the requested scope; for a feature branch use
+`git diff main...HEAD`, then inspect `git diff`, `git diff --cached`, and
+`git ls-files --others --exclude-standard` to include uncommitted work. Do not
+infer scope from the number of commits made today.
+
+When delegation is available and permitted, use the host agent's sub-agent
+tools to split relevant checks in parallel. Pass each reviewer the exact file
+list, review base, and role. Otherwise, work through the full checklist yourself;
+record any checks you cannot perform.
 
 ---
 
@@ -181,10 +192,10 @@ safe to be public.
 
 ## Execution rules
 
-- Determine the right sub-agent split based on the scope of changes. Each
+- If delegating, determine the split based on the scope of changes. Each
   sub-agent gets a clear role and the list of files to review.
 
-- Once sub-agents report back, fix all issues directly — don't just list
+- After collecting findings, fix all issues directly — don't just list
   them. Pause and ask for the user's opinion only when a fix involves a
   judgment call (e.g. disproportionate complexity for an edge case, whether
   a tunable belongs in config).
@@ -196,5 +207,3 @@ safe to be public.
 
 - Run `npm run typecheck` after all changes to catch any type errors
   introduced by the fixes.
-
-$ARGUMENTS

@@ -1,19 +1,26 @@
+---
+name: source-review
+description: Review a new or changed Omnesis data source against the complete provider contract before opening its pull request.
+---
+
 Review a new or changed Omnesis **data source** — a provider package under
 `packages/providers/<name>/` and everything it must touch outside that
 package — against the full source contract. The goal is that nothing a
 source needs is forgotten and nothing is built in a way the gateway,
 collector, portal, mobile apps, Watch, or the people graph cannot use.
 
-The source contract is spread over many files; this command is the one place
+The source contract is spread over many files; this skill is the one place
 that lists all of it. Most of the ways a source can be wrong are **silent**:
 the package builds, its tests pass, and the source syncs — but it shows a
 placeholder icon, cannot be named by a watch, never contributes people, drops
 inbound links, or duplicates itself on a second device. Treat "it works on
 my machine" as no evidence for any check below.
 
-Do § 0 yourself, then spawn sub-agents in parallel, one per group, each with
-the scope from § 0 (file list, descriptor inventory, baseline output) and
-its sections:
+Do § 0 yourself. When delegation is available and permitted, use the host
+agent's sub-agent tools to review these groups in parallel, each with the scope
+from § 0 (file list, descriptor inventory, baseline output) and its sections.
+Otherwise, review every relevant group yourself and record any checks you
+cannot perform:
 
 - **A — viability, terms, encapsulation, descriptor, auth** (§ 1–4). The
   terms-of-service check needs network access; if the sub-agent has none,
@@ -33,9 +40,9 @@ and the user-visible consequence.
 
 ## 0. Scope and baseline
 
-Identify the source under review. `$ARGUMENTS` may name the provider package
-(`github`, `packages/providers/github`) or a source id; when empty, derive the
-scope from `git diff main...HEAD --stat` and the unstaged diff — everything
+Identify the source under review. The user's accompanying instructions may name the provider package
+(`github`, `packages/providers/github`) or a source id; when no source is specified, derive the
+scope from `git diff main...HEAD --stat` plus the staged and unstaged diffs and new files — everything
 under `packages/providers/<name>/`, its synth twin under
 `packages/providers-synth/<name>/`, and every file outside them the branch
 touched.
@@ -762,7 +769,7 @@ confirms before merge, each with the exact steps:
 
 ## Execution rules
 
-- Sub-agents review; they do not edit. Collect their findings, de-duplicate,
+- When delegating, sub-agents review; they do not edit. Collect the findings, de-duplicate,
   and rank: **blocking** (viability, terms, encapsulation, data loss,
   credential handling, wrong multi-device mode, missing registration),
   **must fix before merge** (silent gaps: profile, icon, people, URLs,
@@ -782,5 +789,3 @@ confirms before merge, each with the exact steps:
 - Finish with the ranked report, the list of files you changed, and the
   manual validation list. Do not declare the source ready: that is the
   author's and maintainers' call once § 17 is done.
-
-$ARGUMENTS

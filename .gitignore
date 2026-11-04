@@ -18,7 +18,7 @@ docker-compose.yml
 google-credentials.json
 google-tokens.json
 .claude/*
-!.claude/commands/
+!.claude/skills/
 !.claude/settings.json
 # Operator-specific PII denylist for scripts/pii-scan.mjs — never commit it
 # (its whole purpose is to hold personal identifiers that must stay out of git).
