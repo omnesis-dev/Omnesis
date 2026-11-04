@@ -133,7 +133,9 @@ describe("doctor reports in snapshots", () => {
   });
 
   it("keeps a complete first report without reading again", () => {
-    const fixture = doctorFixture([report(["index.model", "fail"])]);
+    const fixture = doctorFixture([
+      report(["index.model", "fail"], ["gateway.config-revision", "pass"]),
+    ]);
     try {
       expect(fixture.reads).toBe(1);
     } finally {

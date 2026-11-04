@@ -89,7 +89,8 @@ fixture() { node "$E2E_DIR/fixture.mjs" "$@"; }
 probe() { node "$E2E_DIR/probe.mjs" "$@"; }
 mailbox() { node "$E2E_DIR/mailbox.mjs" "$@"; }
 
-# The doctor checks that stand in for a section whose gateway read failed.
+# The doctor checks that, when they do not pass, stand in for a section whose
+# gateway read failed.
 # A section read that way has no verdict of its own, so a snapshot holding one
 # cannot show which of that section's checks fail.
 DOCTOR_UNREAD_CHECKS='["index.unavailable","models.unavailable","sources.unavailable","gateway.config-revision"]'
@@ -102,11 +103,11 @@ doctor_json() {
   local file="$1" attempt
   for attempt in 1 2 3; do
     "$OMNESIS" doctor --json >"$file" 2>/dev/null || true
-    [ "$(json_get "$file" 'j.checks.every((c) => !JSON.parse(a).includes(c.id))' "$DOCTOR_UNREAD_CHECKS" 2>/dev/null)" = true ] &&
+    [ "$(json_get "$file" 'j.checks.every((c) => c.status === "pass" || !JSON.parse(a).includes(c.id))' "$DOCTOR_UNREAD_CHECKS" 2>/dev/null)" = true ] &&
       return 0
     [ "$attempt" = 3 ] || sleep 5
   done
-  log "doctor could not read every section: $(json_get "$file" 'j.checks.filter((c) => JSON.parse(a).includes(c.id)).map((c) => c.id).join(" ")' "$DOCTOR_UNREAD_CHECKS" 2>/dev/null || echo "no report")"
+  log "doctor could not read every section: $(json_get "$file" 'j.checks.filter((c) => c.status !== "pass" && JSON.parse(a).includes(c.id)).map((c) => c.id).join(" ")' "$DOCTOR_UNREAD_CHECKS" 2>/dev/null || echo "no report")"
 }
 
 # Write the CLI's JSON view of this host (services, doctor, backups) next to
