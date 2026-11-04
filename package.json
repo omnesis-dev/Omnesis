@@ -46,7 +46,7 @@
     "typecheck:fast": "sh -c 'set -- ${@:-packages/gateway packages/collector packages/cli}; exec tsc --build \"$@\"' --",
     "typecheck:watch": "tsc --build --watch",
     "typecheck:tests": "node scripts/run-check.mjs types-tests",
-    "build": "tsc --build",
+    "build": "node scripts/build-projects.mjs",
     "release": "node scripts/release/conductor.mjs",
     "release:stage": "node scripts/release/stage-packages.mjs",
     "runtime:stage": "node scripts/runtime/stage-runtime.mjs",
