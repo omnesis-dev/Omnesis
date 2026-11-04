@@ -33,6 +33,7 @@ import {
 } from "./db.js";
 import { Indexer } from "./indexer.js";
 import { DocumentChunker } from "./chunker.js";
+import { isBeforeCutoff } from "./indexable-documents.js";
 import type { UrlCanonicalizerSpec } from "@omnesis/core";
 import type { DocumentSource, Embedder, IndexableDocument } from "./types.js";
 import type { DocumentInput } from "@omnesis/types";
@@ -159,6 +160,22 @@ class MockSource implements DocumentSource {
 
   async listAllIds() {
     return this.allIds;
+  }
+
+  /** The documents' own cutoff test; an id with no document stays in scope. */
+  async listIndexableIds(cutoffFor: (sourceId: string) => string | null) {
+    const byId = new Map(this.documents.map((d) => [d.id, d]));
+    return this.allIds.filter((id) => {
+      const doc = byId.get(id);
+      return (
+        !doc ||
+        !isBeforeCutoff(
+          cutoffFor(doc.sourceId),
+          doc.metadata.sourceCreatedAt,
+          doc.metadata.documentType,
+        )
+      );
+    });
   }
 
   async getByIds(ids: string[]) {
@@ -517,6 +534,8 @@ describe("Indexer", () => {
     const result = await cutoffIndexer.reindexMissing();
     expect(result.indexed).toBe(0);
     expect(getIndexedDocument(db, "d-old")).toBeNull();
+    // Not missing at all: the pass never fetches its content.
+    expect(source.getByIdsCalls).toBe(0);
   });
 
   test("indexes pre-cutoff contacts, which ingest deliberately keeps", async () => {

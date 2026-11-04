@@ -41,6 +41,7 @@ import {
   type ChunkUpsertInput,
 } from "./db.js";
 import { buildDocumentEmbeddingPreamble } from "./chunker.js";
+import { isBeforeCutoff } from "./indexable-documents.js";
 import { normalizeContent } from "./normalize.js";
 import { embedChunksResilient } from "./resilient-embed.js";
 import { ScanPacer, type ScanPacingOptions, type ScanPressureSignal } from "./scan-pacer.js";
@@ -83,20 +84,6 @@ const PROGRESS_LOG_INTERVAL = 5000;
 /** How often an unfinished scan records its position, at most. */
 const DEFAULT_PROGRESS_WRITE_INTERVAL_MS = 1_000;
 const NO_PRESSURE: ScanPressureSignal = { userActive: false, walPendingFrames: 0 };
-
-/**
- * Document types the retention cutoff does not apply to.
- *
- * The gateway boundary already refuses to drop these on ingest
- * (`DocumentService.applyMaxAgeCutoff` — a contact stays relevant however
- * old the record is), so a cutoff applied here would silently keep them out
- * of search: ingested, retained, and permanently unsearchable.
- */
-const CUTOFF_EXEMPT_DOCUMENT_TYPES = new Set(["contact"]);
-
-function isCutoffExempt(documentType: string | null | undefined): boolean {
-  return documentType != null && CUTOFF_EXEMPT_DOCUMENT_TYPES.has(documentType);
-}
 
 export class Indexer {
   private dataCutoff: string | null;
@@ -182,28 +169,14 @@ export class Indexer {
   }
 
   /**
-   * Resolve the effective cutoff for a doc, preferring the per-doc resolver
-   * (hot-reloadable) over the static `dataCutoff` (boot snapshot).
+   * Resolve the effective cutoff for a source, preferring the per-doc resolver
+   * (hot-reloadable) over the static `dataCutoff` (boot snapshot). The
+   * resolver reads only `sourceId` (see `resolveCutoff` in indexer-worker.ts),
+   * so a minimal stub satisfies it wherever only the source is known: a
+   * lightweight header, or the per-source query behind `reindexMissing`.
    */
-  private cutoffFor(doc: IndexableDocument): string | null {
-    if (this.getCutoffForDoc) return this.getCutoffForDoc(doc);
-    return this.dataCutoff;
-  }
-
-  /**
-   * Cutoff check for lightweight headers (two-phase fetch path). The
-   * header carries `sourceId` and `sourceCreatedAt` which is all the
-   * per-doc cutoff resolver needs — it resolves by source ID, not by
-   * full document metadata.
-   */
-  private cutoffForHeader(header: LightweightDocumentHeader): string | null {
-    if (this.getCutoffForDoc) {
-      // The getCutoff callback only reads `doc.sourceId`, so we can
-      // satisfy it with a minimal stub. The cast is safe because the
-      // callback contract (see `resolveCutoff` in indexer-worker.ts)
-      // only accesses `sourceId`.
-      return this.getCutoffForDoc({ sourceId: header.sourceId } as IndexableDocument);
-    }
+  private cutoffForSource(sourceId: string): string | null {
+    if (this.getCutoffForDoc) return this.getCutoffForDoc({ sourceId } as IndexableDocument);
     return this.dataCutoff;
   }
 
@@ -713,8 +686,11 @@ export class Indexer {
 
   /** Whether the retention cutoff keeps this document out of the index. */
   private cutoffSkips(header: LightweightDocumentHeader): boolean {
-    const cutoff = this.cutoffForHeader(header);
-    return !!cutoff && header.sourceCreatedAt < cutoff && !isCutoffExempt(header.documentType);
+    return isBeforeCutoff(
+      this.cutoffForSource(header.sourceId),
+      header.sourceCreatedAt,
+      header.documentType,
+    );
   }
 
   /**
@@ -781,11 +757,12 @@ export class Indexer {
         const doc = docsById.get(docId);
         if (!doc) continue; // Document may have been deleted from the source
 
-        const cutoff = this.cutoffFor(doc);
         if (
-          cutoff &&
-          doc.metadata.sourceCreatedAt < cutoff &&
-          !isCutoffExempt(doc.metadata.documentType)
+          isBeforeCutoff(
+            this.cutoffForSource(doc.sourceId),
+            doc.metadata.sourceCreatedAt,
+            doc.metadata.documentType,
+          )
         ) {
           continue; // Intentionally skipped
         }
@@ -833,13 +810,20 @@ export class Indexer {
    * all chunks to `embedder.embed()` in one call, then distributes vectors
    * and writes per-doc. On batch embed failure, falls back to per-doc
    * embedding so one bad doc doesn't block the rest of the page.
+   *
+   * "Missing" counts only documents the retention cutoff leaves in scope
+   * (`indexable-documents.ts`): an older document a source keeps but the
+   * indexer skips is neither listed nor fetched, and comes back into scope on
+   * the next pass once its cutoff is widened or lifted.
    */
   async reindexMissing(): Promise<{ indexed: number; errors: number }> {
-    const gatewayIds = new Set(await this.source.listAllIds());
+    const indexableIds = new Set(
+      await this.source.listIndexableIds((sourceId) => this.cutoffForSource(sourceId)),
+    );
     const indexedIds = getAllIndexedDocumentIds(this.db);
 
     const missingIds: string[] = [];
-    for (const id of gatewayIds) {
+    for (const id of indexableIds) {
       if (!indexedIds.has(id)) {
         missingIds.push(id);
       }
@@ -866,7 +850,9 @@ export class Indexer {
       const docsProcessed = batchStart + batchIds.length;
       batchStart = docsProcessed;
 
-      // Phase 1: chunk all docs in this batch, filtering cutoff-skipped docs.
+      // Phase 1: chunk all docs in this batch. `listIndexableIds` already
+      // left cutoff-skipped docs out of the missing set; the re-check costs
+      // nothing and holds if the cutoff narrowed since the list was read.
       type Prepared = {
         doc: IndexableDocument;
         chunks: ReturnType<Chunker["chunk"]>;
@@ -875,12 +861,12 @@ export class Indexer {
 
       for (const doc of docs) {
         if (this.stopping) break;
-
-        const cutoff = this.cutoffFor(doc);
         if (
-          cutoff &&
-          doc.metadata.sourceCreatedAt < cutoff &&
-          !isCutoffExempt(doc.metadata.documentType)
+          isBeforeCutoff(
+            this.cutoffForSource(doc.sourceId),
+            doc.metadata.sourceCreatedAt,
+            doc.metadata.documentType,
+          )
         )
           continue;
 

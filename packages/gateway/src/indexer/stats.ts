@@ -17,7 +17,6 @@
  * figures. Callers branch on `state`.
  */
 
-import { getDataCutoffDate, getSourceCutoffDate } from "@omnesis/core";
 import { computeEtaSeconds } from "../workers/indexer-rate.js";
 import {
   getIndexStatsBySource,
@@ -29,6 +28,7 @@ import {
   getWatermark,
   getIndexGenerationStatus,
 } from "./db.js";
+import { configMaxAgeResolver, indexableCountsBySource } from "./indexable-documents.js";
 import { computeIndexingProgress } from "./indexing-progress.js";
 import { readScanProgressView, type ScanProgressView } from "./scan-progress.js";
 import type { OmnesisConfig } from "@omnesis/config";
@@ -99,8 +99,8 @@ export interface IndexStatsPayload {
 
 /**
  * Read the current index figures. Synchronous and DB-bound: it issues
- * several reads against the index database plus, when any data cutoff is
- * configured, one counting query per source against the main database.
+ * several reads against the index database plus, at most once a minute, one
+ * counting query against the main database per source that has a data cutoff.
  */
 export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
   const { db, indexDb, configStore, config, indexerModel, indexerReadiness, getIndexRate } = deps;
@@ -164,46 +164,23 @@ export function computeIndexStats(deps: IndexStatsDeps): IndexStatsPayload {
   const watermark = getWatermark(indexDb, "last_updated_at");
 
   const liveStatsConfig = configStore?.get() ?? config ?? {};
-  const globalCutoff = getDataCutoffDate(liveStatsConfig);
-  const hasPerSourceCutoff = Object.entries(liveStatsConfig.sources ?? {}).some(
-    ([key, val]) => key !== "default" && val?.maxAge,
-  );
-  const hasDefaultCutoff = !!liveStatsConfig.sources?.default?.maxAge;
-  const gatewaySourceCounts: Record<string, number> = {};
-  if (globalCutoff || hasPerSourceCutoff || hasDefaultCutoff) {
-    const sourceIdRows = db
-      .prepare<[], { source_id: string }>("SELECT DISTINCT source_id FROM source_stats")
-      .all();
-    // The `OR` arm mirrors the ingest boundary, which exempts contacts from
-    // the retention cutoff (`DocumentService.applyMaxAgeCutoff`) — so a
-    // pre-cutoff contact is retained AND indexed, and a denominator that
-    // dropped it would report a source as more than 100% indexed. The
-    // predicate is served by the partial `idx_documents_contact_type` index.
-    const cutoffStmt = db.prepare<[string, string], { c: number }>(
-      `SELECT COUNT(*) AS c
-         FROM documents
-        WHERE source_id = ?
-          AND (source_created_at >= ? OR json_extract(metadata, '$.documentType') = 'contact')`,
-    );
-    const fullCountStmt = db.prepare<[string], { c: number }>(
-      "SELECT doc_count AS c FROM source_stats WHERE source_id = ?",
-    );
-    for (const { source_id } of sourceIdRows) {
-      const sc = getSourceCutoffDate(liveStatsConfig, source_id);
-      if (sc) {
-        gatewaySourceCounts[source_id] = cutoffStmt.get(source_id, sc)?.c ?? 0;
-      } else {
-        gatewaySourceCounts[source_id] = fullCountStmt.get(source_id)?.c ?? 0;
-      }
-    }
-  } else {
-    const rows = db
-      .prepare<[], { source_id: string; count: number }>(
-        "SELECT source_id, doc_count AS count FROM source_stats",
-      )
-      .all();
-    for (const row of rows) gatewaySourceCounts[row.source_id] = row.count;
+  const fullCounts: Record<string, number> = {};
+  for (const row of db
+    .prepare<[], { source_id: string; count: number }>(
+      "SELECT source_id, doc_count AS count FROM source_stats",
+    )
+    .all()) {
+    fullCounts[row.source_id] = row.count;
   }
+  // Only documents the retention cutoff leaves in scope are work the indexer
+  // is expected to do — the same population `reindexMissing` compares against
+  // the index, contacts exempt as at the ingest boundary. The excluded part
+  // is the cached figure `/status` also reads.
+  const gatewaySourceCounts = indexableCountsBySource(
+    db,
+    fullCounts,
+    configMaxAgeResolver(liveStatsConfig),
+  );
 
   const totalGatewayDocs = Object.values(gatewaySourceCounts).reduce((a, b) => a + b, 0);
 
