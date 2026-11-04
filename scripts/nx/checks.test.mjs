@@ -318,6 +318,19 @@ describe("Nx change selection", () => {
     );
   });
 
+  test("fingerprints deleted children when a directory is replaced by a file", () => {
+    fixture();
+    mkdirSync("old-directory");
+    writeFileSync("old-directory/removed.md", "Removed content.\n");
+    execFileSync("git", ["add", "."]);
+    execFileSync("git", ["commit", "-qm", "directory fixture"]);
+    rmSync("old-directory", { recursive: true });
+    writeFileSync("old-directory", "Replacement file.\n");
+    const planned = treeFingerprint("main");
+    expect(planned.files).toContain("old-directory/removed.md");
+    expect(() => assertTreeFingerprint("main", planned.fingerprint)).not.toThrow();
+  });
+
   test("rejects evidence after a queued checkout changes", () => {
     fixture();
     writeFileSync("kept.ts", "planned\n");
