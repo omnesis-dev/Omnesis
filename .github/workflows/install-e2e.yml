@@ -91,11 +91,17 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
+      - name: Sample host resources
+        continue-on-error: true
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/host-sampler.sh start
       - name: Install vN, update to vN+1, roll back a broken vN+2
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/single-host.sh
       - name: Diagnostics (redacted)
         if: failure() || cancelled()
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
+      - name: Host resources over the lane
+        if: always()
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/host-sampler.sh print
 
   vector-compat:
     name: Intel vector compatibility diagnosis
@@ -169,11 +175,17 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
+      - name: Sample host resources
+        continue-on-error: true
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/host-sampler.sh start
       - name: Install, uninstall, reinstall over the kept data, uninstall --purge
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/uninstall.sh
       - name: Diagnostics (redacted)
         if: failure() || cancelled()
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/diagnostics.sh
+      - name: Host resources over the lane
+        if: always()
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/host-sampler.sh print
 
   # The update away from the newest release runs that release's own `npm ci`
   # over its own node_modules, so a lockfile npm cannot reconcile in place

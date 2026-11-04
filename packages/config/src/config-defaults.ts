@@ -224,7 +224,6 @@ export const CONFIG_DEFAULTS = {
     // `enabled` is retained only so existing config remains valid; consent is per device.
     pushRelay: { enabled: false, url: "https://push.omnesis.app" },
     pushWakeRetry: DEFAULT_PUSH_WAKE_RETRY_SETTINGS,
-    ioConcurrency: 6,
     // Mirrors DEFAULTS.ioReservedUserSlots in the gateway's runtime-settings.
     ioReservedUserSlots: 1,
     // Mirrors DEFAULTS.readCacheSizeBytes / ioReadCacheSizeBytes in the
@@ -236,7 +235,6 @@ export const CONFIG_DEFAULTS = {
     // Mirrors DEFAULTS.searchWorker* in the gateway's runtime-settings (config
     // can't import from gateway); the cross-check test pins the two together.
     searchWorker: {
-      concurrency: 3,
       cacheSizeBytes: 64 * 1024 * 1024,
     },
     minFreeDiskMb: 500,
@@ -274,8 +272,9 @@ export const CONFIG_DEFAULTS = {
     // Mirrors DEFAULT_ANALYTICS_STREAM_REKEY_MAX_ROWS. DuckDB must replace a
     // table atomically to add the stream column to its primary key.
     analyticsStreamRekeyMaxRows: 100_000,
-    // cpuConcurrency has a machine-dependent default (max(1, cores - 5)); see
-    // NO_STATIC_DEFAULT_PATHS — it carries no static value here.
+    // ioConcurrency, searchWorker.concurrency and cpuConcurrency have
+    // machine-dependent defaults; see NO_STATIC_DEFAULT_PATHS — they carry no
+    // static value here.
     timings: {
       slowRequest: "500ms",
       wsHeartbeatInterval: "30s",
@@ -514,7 +513,10 @@ export const NO_STATIC_DEFAULT_PATHS: readonly string[] = [
   "/dataRetention/maxAge", // globally optional; no fallback
   "/activityRetention/maxAge", // globally optional; absent keeps activity forever
   "/brain/transcriptRetention", // legacy per-cognition override; absent inherits activity retention
-  "/gateway/cpuConcurrency", // machine-dependent: max(2, floor(availableParallelism / 2) - 2)
+  "/gateway/ioConcurrency", // machine-dependent: clamp(memory budget / 2.5 GiB, 2, 6)
+  "/gateway/searchWorker/concurrency", // machine-dependent: clamp(memory budget / 5 GiB, 1, 3)
+  // machine-dependent: max(1, min(max(2, floor(cores / 2) - 2), memory budget / 4 GiB))
+  "/gateway/cpuConcurrency",
   "/gateway/memoryLimitMb", // machine-dependent: the cgroup memory limit, else totalmem
   "/gateway/analyticsMemoryLimitMb", // machine-dependent: clamp(memory budget / 4, 512 MiB, 4 GiB)
   "/gateway/analyticsThreads", // machine-dependent: clamp(cores / 2, 2, 8)
@@ -549,7 +551,11 @@ const CONFIG_UNSET_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "/search/sourcePriors/weights/*": "No source-prior weight is configured for this key.",
   "/search/diversity/topK": "Uses search.params.candidateLimit.",
   "/search/diversity/maxPerSourceInTopK": "No per-source cap; MMR diversity still applies.",
-  "/gateway/cpuConcurrency": "Chosen automatically from the machine's available CPU cores.",
+  "/gateway/ioConcurrency": "Chosen automatically from the gateway's memory budget, up to 6.",
+  "/gateway/searchWorker/concurrency":
+    "Chosen automatically from the gateway's memory budget, up to 3.",
+  "/gateway/cpuConcurrency":
+    "Chosen automatically from the machine's available CPU cores and the gateway's memory budget.",
   "/gateway/memoryLimitMb":
     "The container's memory limit when there is one, otherwise the machine's physical memory.",
   "/gateway/analyticsMemoryLimitMb": "Chosen automatically from the gateway's memory budget.",

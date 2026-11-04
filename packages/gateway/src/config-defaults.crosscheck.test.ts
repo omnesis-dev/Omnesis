@@ -23,6 +23,7 @@ import { CONFIG_DEFAULTS, configDefaultAt, configUnsetDescriptionAt } from "@omn
 import { DEFAULT_MAX_TOOL_ITERATIONS } from "@omnesis/agent";
 import { DEFAULT_NOTE_AGENT_ENABLED } from "./brain/note-agent/runner.js";
 import { resolveRuntimeSettings } from "./runtime-settings.js";
+import { IO_POOL_MAX, SEARCH_POOL_MAX } from "./worker-pool-sizing.js";
 import { resolveNearDupConfig } from "./near-dupes/config.js";
 import { DATE_ENRICHMENT_DEFAULTS } from "./enrichment/dates/config.js";
 import {
@@ -100,7 +101,19 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
 
     // journal + concurrency
     expect(defAt("/gateway/journalMode")).toBe(rt.journalMode);
-    expect(defAt("/gateway/ioConcurrency")).toBe(rt.ioConcurrency);
+    // The pool sizes follow the machine (worker-pool-sizing.ts), so the
+    // display mirror carries none.
+    expect(defAt("/gateway/ioConcurrency")).toBeUndefined();
+    expect(defAt("/gateway/searchWorker/concurrency")).toBeUndefined();
+    expect(defAt("/gateway/cpuConcurrency")).toBeUndefined();
+    // The unset descriptions hand-copy the pools' ceilings (config can't import
+    // from gateway); pin them to the sizing module.
+    expect(configUnsetDescriptionAt(["gateway", "ioConcurrency"])).toContain(
+      `up to ${IO_POOL_MAX}.`,
+    );
+    expect(configUnsetDescriptionAt(["gateway", "searchWorker", "concurrency"])).toContain(
+      `up to ${SEARCH_POOL_MAX}.`,
+    );
     // ioReservedUserSlots is hand-copied between CONFIG_DEFAULTS and the runtime
     // DEFAULTS (config can't import from gateway); pin the two together.
     expect(defAt("/gateway/ioReservedUserSlots")).toBe(rt.ioReservedUserSlots);
@@ -129,7 +142,6 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
     expect(defAt("/gateway/readHandle/ioCacheSizeBytes")).toBe(rt.ioReadCacheSizeBytes);
     // searchWorker knobs are hand-copied between CONFIG_DEFAULTS and the runtime
     // DEFAULTS (config can't import from gateway); pin the two together.
-    expect(defAt("/gateway/searchWorker/concurrency")).toBe(rt.searchWorkerConcurrency);
     expect(defAt("/gateway/searchWorker/maxInflightBeforeFallback")).toBeUndefined();
     expect(rt.searchWorkerMaxInflight).toBeUndefined();
     expect(defAt("/gateway/searchWorker/cacheSizeBytes")).toBe(rt.searchWorkerCacheSizeBytes);

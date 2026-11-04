@@ -89,12 +89,33 @@ fixture() { node "$E2E_DIR/fixture.mjs" "$@"; }
 probe() { node "$E2E_DIR/probe.mjs" "$@"; }
 mailbox() { node "$E2E_DIR/mailbox.mjs" "$@"; }
 
+# The doctor checks that, when they do not pass, stand in for a section whose
+# gateway read failed.
+# A section read that way has no verdict of its own, so a snapshot holding one
+# cannot show which of that section's checks fail.
+DOCTOR_UNREAD_CHECKS='["index.unavailable","models.unavailable","sources.unavailable","gateway.config-revision"]'
+
+# doctor_json <file>: `omnesis doctor --json` into <file>, read again (up to
+# three times, five seconds apart) while the report is missing or a section of
+# it could not be read, as happens while a gateway on a starved machine takes
+# seconds to answer. The last report stands either way.
+doctor_json() {
+  local file="$1" attempt
+  for attempt in 1 2 3; do
+    "$OMNESIS" doctor --json >"$file" 2>/dev/null || true
+    [ "$(json_get "$file" 'j.checks.every((c) => c.status === "pass" || !JSON.parse(a).includes(c.id))' "$DOCTOR_UNREAD_CHECKS" 2>/dev/null)" = true ] &&
+      return 0
+    [ "$attempt" = 3 ] || sleep 5
+  done
+  log "doctor could not read every section: $(json_get "$file" 'j.checks.filter((c) => c.status !== "pass" && JSON.parse(a).includes(c.id)).map((c) => c.id).join(" ")' "$DOCTOR_UNREAD_CHECKS" 2>/dev/null || echo "no report")"
+}
+
 # Write the CLI's JSON view of this host (services, doctor, backups) next to
 # a snapshot name, for `probe snapshot` to fold in.
 host_json() {
   local name="$1"
   "$OMNESIS" service status --json >"$E2E_WORK/$name.services.json" 2>/dev/null || true
-  "$OMNESIS" doctor --json >"$E2E_WORK/$name.doctor.json" 2>/dev/null || true
+  doctor_json "$E2E_WORK/$name.doctor.json"
   "$OMNESIS" backup --list --json >"$E2E_WORK/$name.backups.json" 2>/dev/null || true
 }
 

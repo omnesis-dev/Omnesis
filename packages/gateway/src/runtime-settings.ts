@@ -44,6 +44,8 @@ import { DEFAULT_INGEST_YIELD_BATCH } from "./async-yield.js";
 import { DEFAULT_ANALYTICS_STREAM_REKEY_MAX_ROWS } from "./analytics/settings.js";
 import { DEFAULT_ADMISSION } from "./scheduler/admission.js";
 import { STARVATION_MIN_INTERVAL_MS } from "./scheduler/internals.js";
+import { resolveMemoryBudget, type MemoryBudget } from "./memory-budget.js";
+import { defaultWorkerPoolSizes } from "./worker-pool-sizing.js";
 
 const log = createLogger("gateway:settings");
 
@@ -78,7 +80,10 @@ export interface ResolvedRuntimeSettings {
   embedderTimeoutMs: number;
   /** Embedder hard cap on input length, characters. */
   embedderMaxInputChars: number;
-  /** Compute runner worker count (read-only SQLite handles). */
+  /**
+   * Compute runner worker count (read-only SQLite handles). Absent from config,
+   * sized from the memory budget (see `worker-pool-sizing.ts`).
+   */
   ioConcurrency: number;
   /** Page-cache budget (bytes) for the main-thread compute/read handle. */
   readCacheSizeBytes: number;
@@ -89,7 +94,8 @@ export interface ResolvedRuntimeSettings {
    * threads run candidate generation off the main event loop; 0 disables the
    * pool (pure main-thread candidate-gen). Calls beyond the workers' capacity
    * queue on them; only when `searchWorkerMaxInflight` is set do calls past it
-   * run inline on main instead.
+   * run inline on main instead. Absent from config, sized from the memory
+   * budget (see `worker-pool-sizing.ts`).
    */
   searchWorkerConcurrency: number;
   searchWorkerMaxInflight: number | undefined;
@@ -103,7 +109,11 @@ export interface ResolvedRuntimeSettings {
   ioReservedUserSlots: number;
   /** Automatic admission control (defer background while a user is present). */
   admission: { enabled: boolean; maxHoldMs: number; pumpIntervalMs: number };
-  /** CPU pool worker count (no database handle, pure compute). */
+  /**
+   * CPU pool worker count (no database handle, pure compute). Absent from
+   * config, sized from the cores and the memory budget (see
+   * `worker-pool-sizing.ts`).
+   */
   cpuConcurrency: number;
   /** OS nice for the background compute worker threads (Linux only). */
   backgroundWorkerNice: number;
@@ -112,6 +122,8 @@ export interface ResolvedRuntimeSettings {
   analyticsStreamRekeyMaxRows: number;
   /** Absent means the memory budget is the cgroup limit, else the host's memory. */
   memoryLimitMb: number | undefined;
+  /** How much memory the gateway may use: `memoryLimitMb`, else the cgroup limit, else the host's. */
+  memoryBudget: MemoryBudget;
   /** Absent means the analytics pool derives its default from the memory budget. */
   analyticsMemoryLimitMb: number | undefined;
   analyticsThreads: number | undefined;
@@ -224,22 +236,18 @@ const DEFAULTS = {
   reconcileInterval: "1h",
   reindexMissingInterval: "1h",
   embedConcurrency: 2,
-  ioConcurrency: 6,
   // Read-handle page caches. Larger than SQLite's ~2 MiB default so hot pages
   // stay resident and, under storage encryption, don't re-decrypt on every
   // read. The main compute handle gets more (it serves interactive reads); each
   // io worker gets 64 MiB (× ioConcurrency).
   readCacheSizeBytes: 256 * 1024 * 1024,
   ioReadCacheSizeBytes: 64 * 1024 * 1024,
-  // Search-worker pool (Slice 3B). One worker de-blocks the main event loop for
-  // candidate generation; the inflight ceiling of 2 keeps a slow query from
-  // queueing behind another on the single-worker FIFO (excess runs inline).
-  // 64 MiB per handle matches the io-worker's read-handle budget. Mirrored as
-  // gateway.searchWorker.* in CONFIG_DEFAULTS.
-  // 3 workers so an agent's parallel search burst (typically 3–4 calls per
-  // reasoning step) runs concurrently off the main loop instead of serializing
-  // through one worker or spilling onto the event loop via the inline fallback.
-  searchWorkerConcurrency: 3,
+  // Search-worker pool: candidate generation runs off the main event loop.
+  // 64 MiB per handle matches the io-worker's read-handle budget; the cache
+  // size is mirrored as gateway.searchWorker.cacheSizeBytes in CONFIG_DEFAULTS.
+  // The worker count follows the memory budget (worker-pool-sizing.ts), up to 3
+  // so an agent's parallel search burst (typically 3–4 calls per reasoning
+  // step) runs concurrently off the main loop.
   // No saturation fallback: a burst queues on the workers, because a query run
   // inline would block the main event loop for its whole duration.
   searchWorkerMaxInflight: undefined,
@@ -249,15 +257,6 @@ const DEFAULTS = {
   // land on without waiting for an in-flight background scan to drain.
   ioReservedUserSlots: 1,
   admission: DEFAULT_ADMISSION,
-  // The cpu pool is bursty background batch compute (near-dup signing/DF,
-  // chunking, link extraction). Size it to roughly half the cores minus a
-  // margin so that when it's fully saturated it still leaves headroom for
-  // the io pool, the writer, and — critically — the latency-sensitive main
-  // and indexer threads (which serve interactive search query-embeds). The
-  // previous `cores - 5` ignored the 6-worker io pool and could oversubscribe
-  // the box, starving query-embeds during a heavy resync. Override via
-  // gateway.cpuConcurrency / OMNESIS_CPU_CONCURRENCY.
-  cpuConcurrency: Math.max(2, Math.floor(availableParallelism() / 2) - 2),
   // Low-disk write guard. Below this many MB free on the DB volume,
   // ingestion is rejected with 507 and indexing cycles are skipped so the
   // gateway never writes under low disk. 500 MB is a comfortable floor for
@@ -425,8 +424,28 @@ function resolveDuration(
   return parseDuration(raw);
 }
 
+/**
+ * The memory budget with no `gateway.memoryLimitMb`, read once. It comes from
+ * the cgroup and the host, which are taken as fixed for the life of the
+ * process (the pools and the indexer are sized from it at boot), and the
+ * settings are resolved again on every snapshot.
+ */
+let detectedMemoryBudget: MemoryBudget | undefined;
+
+function memoryBudgetFor(limitMb: number | undefined): MemoryBudget {
+  if (limitMb !== undefined && limitMb > 0) return resolveMemoryBudget({ limitMb });
+  detectedMemoryBudget ??= resolveMemoryBudget();
+  return detectedMemoryBudget;
+}
+
 export function resolveRuntimeSettings(config: OmnesisConfig | undefined): ResolvedRuntimeSettings {
   const indexer = config?.indexer;
+  const memoryLimitMb = envIntPositive("OMNESIS_MEMORY_LIMIT_MB") ?? config?.gateway?.memoryLimitMb;
+  const memoryBudget = memoryBudgetFor(memoryLimitMb);
+  const pools = defaultWorkerPoolSizes({
+    memoryBytes: memoryBudget.bytes,
+    cores: availableParallelism(),
+  });
   const timings = config?.gateway?.timings;
   const publicBaseUrl = resolvePublicBaseUrl(config);
   // Slow-request keeps a back-compat env override
@@ -471,9 +490,7 @@ export function resolveRuntimeSettings(config: OmnesisConfig | undefined): Resol
       indexer?.embedConcurrency ??
       DEFAULTS.embedConcurrency,
     ioConcurrency:
-      envIntPositive("OMNESIS_IO_CONCURRENCY") ??
-      config?.gateway?.ioConcurrency ??
-      DEFAULTS.ioConcurrency,
+      envIntPositive("OMNESIS_IO_CONCURRENCY") ?? config?.gateway?.ioConcurrency ?? pools.io,
     readCacheSizeBytes: config?.gateway?.readHandle?.cacheSizeBytes ?? DEFAULTS.readCacheSizeBytes,
     ioReadCacheSizeBytes:
       config?.gateway?.readHandle?.ioCacheSizeBytes ?? DEFAULTS.ioReadCacheSizeBytes,
@@ -481,7 +498,7 @@ export function resolveRuntimeSettings(config: OmnesisConfig | undefined): Resol
     searchWorkerConcurrency:
       envIntNonNeg("OMNESIS_SEARCH_WORKER_CONCURRENCY") ??
       config?.gateway?.searchWorker?.concurrency ??
-      DEFAULTS.searchWorkerConcurrency,
+      pools.search,
     searchWorkerMaxInflight:
       envIntPositive("OMNESIS_SEARCH_WORKER_MAX_INFLIGHT") ??
       config?.gateway?.searchWorker?.maxInflightBeforeFallback ??
@@ -500,16 +517,15 @@ export function resolveRuntimeSettings(config: OmnesisConfig | undefined): Resol
       ),
     },
     cpuConcurrency:
-      envIntPositive("OMNESIS_CPU_CONCURRENCY") ??
-      config?.gateway?.cpuConcurrency ??
-      DEFAULTS.cpuConcurrency,
+      envIntPositive("OMNESIS_CPU_CONCURRENCY") ?? config?.gateway?.cpuConcurrency ?? pools.cpu,
     // env > config > default + clamp all live in resolveBackgroundWorkerNice,
     // so the same tested resolver serves both here and its own unit tests.
     backgroundWorkerNice: resolveBackgroundWorkerNice(config?.gateway?.backgroundWorkerNice),
     ingestYieldBatch: config?.gateway?.ingestYieldBatch ?? DEFAULT_INGEST_YIELD_BATCH,
     analyticsStreamRekeyMaxRows:
       config?.gateway?.analyticsStreamRekeyMaxRows ?? DEFAULTS.analyticsStreamRekeyMaxRows,
-    memoryLimitMb: envIntPositive("OMNESIS_MEMORY_LIMIT_MB") ?? config?.gateway?.memoryLimitMb,
+    memoryLimitMb,
+    memoryBudget,
     analyticsMemoryLimitMb:
       envIntPositive("OMNESIS_ANALYTICS_MEMORY_LIMIT_MB") ??
       config?.gateway?.analyticsMemoryLimitMb,
@@ -684,7 +700,7 @@ function resolveBackfill(config: OmnesisConfig | undefined) {
  */
 export function announceRuntimeSettings(s: ResolvedRuntimeSettings): void {
   log.info(
-    `gateway: journal_mode=${s.journalMode}, ioConcurrency=${s.ioConcurrency}, ioReservedUserSlots=${s.ioReservedUserSlots}, cpuConcurrency=${s.cpuConcurrency}, ` +
+    `gateway: journal_mode=${s.journalMode}, ioConcurrency=${s.ioConcurrency}, ioReservedUserSlots=${s.ioReservedUserSlots}, cpuConcurrency=${s.cpuConcurrency}, searchWorkerConcurrency=${s.searchWorkerConcurrency}, ` +
       `bgWorkerNice=${s.backgroundWorkerNice}, ingestYieldBatch=${s.ingestYieldBatch}, ` +
       `analyticsStreamRekeyMaxRows=${s.analyticsStreamRekeyMaxRows}, ` +
       `admission=${s.admission.enabled ? `on(maxHold=${s.admission.maxHoldMs}ms,pump=${s.admission.pumpIntervalMs}ms)` : "off"}, ` +

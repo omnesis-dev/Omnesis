@@ -546,7 +546,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           services share the host's memory, such as other containers in the same virtual machine.
           The analytics engine's default memory ceiling is a quarter of the budget, and semantic
           search keeps its index in memory only while it fits (see
-          <a href="#memory">Semantic search is degraded</a>).
+          <a href="#memory">Semantic search is degraded</a>). The budget also sizes the gateway's
+          worker threads, each of which takes about 200 MB: below 16 GB the gateway starts fewer
+          read and search workers, and it keeps at most one compute worker per 4 GB, so it stays
+          resident beside the rest of a small machine. <code>gateway.ioConcurrency</code>,
+          <code>gateway.searchWorker.concurrency</code> and <code>gateway.cpuConcurrency</code> set
+          the counts explicitly.
         </p>
 
         <h2 id="models">Models</h2>

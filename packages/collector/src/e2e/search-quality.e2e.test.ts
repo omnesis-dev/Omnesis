@@ -567,8 +567,8 @@ describe("Semantic search quality on the real POST /search pipeline (C12)", () =
         backends: { localembed: { type: "http", url: EMBEDDER_URL } },
         assignments: { embedder: `localembed/${EMBEDDER_MODEL}` },
       },
-      // WORKER-ON lane (Slice 3B). Candidate generation defaults to a dedicated
-      // search worker (`gateway.searchWorker.concurrency` default 1), so the
+      // WORKER-ON lane. Candidate generation defaults to a dedicated search
+      // worker pool (`gateway.searchWorker.concurrency`), so the
       // spawned gateway already delegates the BM25 + usearch + fusion block to a
       // worker thread and this semantic recall net proves parity THROUGH the
       // worker, not the main-thread fallback. Pinning `concurrency: 1` here

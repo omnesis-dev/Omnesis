@@ -1708,13 +1708,16 @@ const gateway = z
     /**
      * Number of read-only compute workers (each with its own SQLite
      * handle). Higher values let background IO tasks run in parallel
-     * instead of queuing behind each other. Default 6.
+     * instead of queuing behind each other. Default: one per 2.5 GiB of the
+     * memory budget, between 2 and 6.
      */
     ioConcurrency: z
       .number()
       .int()
       .positive()
-      .describe("Read-only compute workers, each with its own SQLite handle. Default 6.")
+      .describe(
+        "Read-only compute workers, each with its own SQLite handle. Default: one per 2.5 GiB of the gateway's memory budget, between 2 and 6.",
+      )
       .optional(),
     ioReservedUserSlots: z
       .number()
@@ -1760,7 +1763,7 @@ const gateway = z
           .int()
           .nonnegative()
           .describe(
-            "Search-worker threads for off-main candidate generation. Default 3; 0 disables the pool (candidate-gen runs inline on main).",
+            "Search-worker threads for off-main candidate generation. Default: one per 5 GiB of the gateway's memory budget, between 1 and 3; 0 disables the pool (candidate-gen runs inline on main).",
           )
           .optional(),
         maxInflightBeforeFallback: z
@@ -1784,13 +1787,16 @@ const gateway = z
     /**
      * Number of pure-compute CPU pool workers (no database handle).
      * Used for CPU-heavy work like MinHash signing, shingle extraction,
-     * weighted Jaccard verification. Default: `max(1, cores - 5)`.
+     * weighted Jaccard verification. Default: half the cores less two (at
+     * least two), capped at one per 4 GiB of the memory budget (at least one).
      */
     cpuConcurrency: z
       .number()
       .int()
       .positive()
-      .describe("Pure-compute CPU pool workers (no DB handle). Default max(1, cores - 5).")
+      .describe(
+        "Pure-compute CPU pool workers (no DB handle). Default: half the cores less two (at least two), capped at one per 4 GiB of the gateway's memory budget (at least one).",
+      )
       .optional(),
     /**
      * OS nice value for the background compute worker threads (cpu + io
