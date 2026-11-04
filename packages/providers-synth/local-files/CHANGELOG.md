@@ -1,5 +1,14 @@
 # @omnesis/provider-local-files-synth
 
+## 0.7.6
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.7.6
+  - @omnesis/provider-local-files@0.7.6
+  - @omnesis/source-sdk@0.7.6
+  - @omnesis/types@0.7.6
+
 ## 0.7.5
 
 ### Patch Changes

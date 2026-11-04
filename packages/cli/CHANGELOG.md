@@ -1,5 +1,32 @@
 # omnesis
 
+## 0.7.6
+
+### Patch Changes
+
+- e0f83b3: Docker installs read more cleanly and report the host correctly.
+
+  - `omnesis update` reports its pre-update backup as one line, even when it runs without a terminal. Before, a run without a terminal printed the backup's JSON report in the middle of the update.
+  - Re-running the installer removes an old updater image that the last update kept because it was still running.
+  - `omnesis doctor` on a Docker install reports the disk encryption of the host, not of the container's mount. It no longer warns that there are no service units, since Docker runs the containers.
+  - When `keyring migrate` finds every secret file already encrypted, it now prints one line instead of a table of zeros.
+
+- The gateway now sizes its io, search and cpu worker pools to its memory budget: `gateway.memoryLimitMb`, else a container's memory limit, else the machine's memory. So a gateway with less than 16 GB, including a Docker gateway capped below 16 GB on a bigger host, starts fewer workers and stays responsive. An empty gateway used to reach about 3.5 GiB, and on a small machine without swap it could stall for seconds at a time and take minutes to answer. With a 7 GB budget the pools now start 2, 1 and 1 workers instead of 6, 3 and 2. Budgets of 16 GB or more keep the previous sizes, and an explicit `gateway.ioConcurrency`, `gateway.searchWorker.concurrency` or `gateway.cpuConcurrency` still wins.
+- 0dc576f: A fleet update of an OpenClaw machine now ends with OpenClaw running the new plugin. Before, OpenClaw's attempt to load the new plugin while it ran could time out waiting for the old plugin to stop, leave OpenClaw unable to serve, and leave the device without an update result until OpenClaw was restarted by hand. `omnesis connect openclaw --refresh` also no longer reports a failed refresh when OpenClaw saved the plugin but could not load it while running; it says the restart loads it.
+- Updated dependencies [e0f83b3]
+- Updated dependencies
+- Updated dependencies [0dc576f]
+  - @omnesis/core@0.7.6
+  - @omnesis/gateway@0.7.6
+  - @omnesis/config@0.7.6
+  - @omnesis/agent-integration@0.7.6
+  - @omnesis/cli-shared@0.7.6
+  - @omnesis/collector@0.7.6
+  - @omnesis/eval@0.7.6
+  - @omnesis/gateway-client@0.7.6
+  - @omnesis/source-sdk@0.7.6
+  - @omnesis/types@0.7.6
+
 ## 0.7.5
 
 ### Patch Changes
