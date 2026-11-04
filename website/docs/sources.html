@@ -218,7 +218,12 @@
                 <td>
                   Every email as a document, dated by when it was sent, with attachment text
                   extracted (scans and images are OCR'd when an OCR model is assigned); senders and
-                  recipients, Bcc included, feed the people graph.
+                  recipients, Bcc included, feed the people graph. Requests are paced to Gmail's
+                  per-user quota: a first sync reads about 90 messages a minute while it runs, fewer
+                  when they carry attachments, and pauses between runs, so it averages about 72 a
+                  minute and a large mailbox takes days. A rate limit from Google shows the source
+                  as rate-limited; it resumes on its own after a wait that doubles while the limit
+                  persists.
                 </td>
               </tr>
               <tr>

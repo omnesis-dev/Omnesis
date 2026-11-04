@@ -1320,6 +1320,27 @@ describe("GoogleDriveSource bootstrap page tokens", () => {
     expect(drive.files.list).toHaveBeenCalledTimes(1);
   });
 
+  test("a rate limit without Retry-After is one the host defers by a minute; a permission 403 is not", async () => {
+    const drive = createMockDrive();
+    drive.files.list = vi.fn(() => Promise.reject(driveRateLimit("userRateLimitExceeded")));
+    const limited = (await createDriveSource(drive)
+      .sync(null)
+      .catch((e: unknown) => e)) as SyncError;
+    expect(limited.kind).toBe("rate-limit");
+    expect(limited.retryAfterMs).toBe(60_000);
+
+    drive.files.list = vi.fn(() =>
+      Promise.reject(
+        driveError(403, { domain: "global", reason: "forbidden", message: "Forbidden" }),
+      ),
+    );
+    const denied = (await createDriveSource(drive)
+      .sync(null)
+      .catch((e: unknown) => e)) as SyncError;
+    expect(denied.kind).toBe("permission");
+    expect(denied.retryAfterMs).toBeUndefined();
+  });
+
   test("a rate limit on a resumed page surfaces and keeps the walk", async () => {
     const drive = createMockDrive();
     drive.files.list = vi.fn(() => Promise.reject(driveRateLimit("userRateLimitExceeded")));

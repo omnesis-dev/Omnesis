@@ -5,11 +5,53 @@ export const GOOGLE_PAGE_SIZE = 100;
 
 /**
  * Concurrency cap for per-page detail fetches (Gmail messages, Drive files).
- * 8 stays comfortably under Gmail's per-second quota (~250 quota-units/sec)
- * and Drive's project-level rate limits while still cutting bootstrap RTT
- * by ~8x relative to the previous serial `for ... await` loop.
+ * It bounds round-trips in flight, not quota spend: Gmail's spend is paced
+ * separately by {@link GMAIL_QUOTA_UNITS_PER_MINUTE}, and every Gmail request
+ * waits for its units before it is sent.
  */
 export const GOOGLE_FETCH_CONCURRENCY = 8;
+
+/**
+ * Messages per bootstrap listing page. A page is committed only once every
+ * message on it is fetched, so it is sized to cost well under one minute's
+ * quota: 25 full fetches and the listing come to about 1,500 units.
+ */
+export const GMAIL_PAGE_SIZE = 25;
+
+/**
+ * Gmail's per-method cost in quota units, for the requests this source makes.
+ * `messagesGetFull` is `messages.get` with `format: "full"`.
+ */
+export const GMAIL_QUOTA_UNITS = {
+  getProfile: 1,
+  labelsList: 1,
+  historyList: 2,
+  messagesList: 5,
+  messagesGetFull: 60,
+  attachmentsGet: 20,
+} as const;
+
+export type GmailRequest = keyof typeof GMAIL_QUOTA_UNITS;
+
+/**
+ * The quota units one account's Gmail source spends per minute, on average:
+ * 90% of Gmail's per-user limit of 6,000, leaving room for the burst below
+ * and for other clients of the same account.
+ */
+export const GMAIL_QUOTA_UNITS_PER_MINUTE = 5_400;
+
+/**
+ * What an idle source may spend at once: five full message fetches. With the
+ * rate above, no minute can spend more than 5,700 units.
+ */
+export const GMAIL_QUOTA_BURST_UNITS = 300;
+
+/**
+ * The wait after a Google rate limit that names no `Retry-After`, doubled for
+ * each consecutive rate-limited sync up to the cap.
+ */
+export const GOOGLE_RATE_LIMIT_BASE_DELAY_MS = 60_000;
+export const GOOGLE_RATE_LIMIT_MAX_DELAY_MS = 30 * 60_000;
 
 export const GMAIL_LABEL_CACHE_TTL_MS = 60 * 60 * 1000;
 

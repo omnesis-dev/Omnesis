@@ -32,13 +32,18 @@ import {
   boundedSelfAuthoredText,
 } from "@omnesis/types";
 import {
-  GOOGLE_PAGE_SIZE,
+  GMAIL_PAGE_SIZE,
   GMAIL_LABEL_CACHE_TTL_MS,
   GOOGLE_FETCH_CONCURRENCY,
   GMAIL_HISTORY_RECOVERY_OVERLAP_MS,
   GMAIL_HISTORY_RECOVERY_FALLBACK_MS,
+  GMAIL_QUOTA_UNITS,
+  GMAIL_QUOTA_UNITS_PER_MINUTE,
+  GMAIL_QUOTA_BURST_UNITS,
+  type GmailRequest,
 } from "./constants.js";
 import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
+import { QuotaPacer } from "./quota-pacer.js";
 import {
   addsToMessage,
   messageContent,
@@ -249,6 +254,27 @@ export interface GmailSourceOptions {
   isTranscriptionVocabularyEnabled?: () => boolean;
   attachmentConfig?: AttachmentExtractionConfig;
   extractAttachment?: AttachmentExtractFn;
+  /** Paces this account's Gmail requests. Defaults to the per-user budget. */
+  quota?: QuotaPacer;
+}
+
+/**
+ * The client library's automatic retries, without 429. A rate limit is a
+ * signal to stop: retrying it spends more of the quota it reports as spent,
+ * and the pacer and the host's deferral own the wait. Server errors and
+ * dropped connections keep the library's retries.
+ */
+export const GMAIL_RETRY_CONFIG = {
+  statusCodesToRetry: [
+    [100, 199],
+    [408, 408],
+    [500, 599],
+  ],
+};
+
+/** Whether a Google API failure is a rate limit. */
+function isRateLimit(err: unknown): boolean {
+  return mapGoogleApiError(err).kind === "rate-limit";
 }
 
 // Build the user-facing "open in Gmail" URL for a message.
@@ -314,13 +340,42 @@ export class GmailSource {
   // "open in Gmail" links to the right account via `?authuser=`.
   private accountEmail?: string;
   private readonly isTranscriptionVocabularyEnabled: () => boolean;
+  /** Every Gmail request this account makes takes its units from here first. */
+  private readonly quota: QuotaPacer;
+  /**
+   * The current sync, and the rate limit it hit. Requests of that sync still
+   * waiting for their units are not sent once one is hit: each would only be
+   * refused too. A new sync starts a new attempt, so a request left over from
+   * a halted one stays halted.
+   */
+  private attempt: { rateLimitedBy?: unknown } = {};
+  /** Syncs in a row that ended on a rate limit; the back-off grows with it. */
+  private consecutiveRateLimits = 0;
+  /**
+   * Messages fetched for a bootstrap page that did not land. A rate limit
+   * part-way through a page fails the page, and the next sync lists the same
+   * page again; what was already fetched is taken from here instead of being
+   * fetched twice. Holds one page at most and is emptied when a page lands.
+   *
+   * Only the bootstrap walk carries: its pages list message ids alone, and
+   * changes made after a message was fetched replay from the history the
+   * walk pinned. An incremental page lists the changes themselves, and a
+   * retry of it can name a change the carried copy predates.
+   */
+  private readonly carried = new Map<string, Fetched>();
   constructor(
     auth: OAuth2Client,
     accountId?: string,
     dataCutoff?: string,
     opts?: GmailSourceOptions,
   ) {
-    this.gmail = google.gmail({ version: "v1", auth });
+    this.gmail = google.gmail({ version: "v1", auth, retryConfig: GMAIL_RETRY_CONFIG });
+    this.quota =
+      opts?.quota ??
+      new QuotaPacer({
+        unitsPerMinute: GMAIL_QUOTA_UNITS_PER_MINUTE,
+        burstUnits: GMAIL_QUOTA_BURST_UNITS,
+      });
     this.id = SourceId(accountId ? `gmail:${accountId}` : "gmail");
     this.providerId = ProviderId(accountId ? `google:${accountId}` : "google");
     this.accountEmail = accountId;
@@ -348,7 +403,9 @@ export class GmailSource {
       return this.labelMap;
     }
     try {
-      const res = await this.gmail.users.labels.list({ userId: "me" });
+      const res = await this.request("labelsList", () =>
+        this.gmail.users.labels.list({ userId: "me" }),
+      );
       const map = new Map<string, string>();
       for (const label of res.data.labels ?? []) {
         if (label.id && label.name) map.set(label.id, label.name);
@@ -357,6 +414,9 @@ export class GmailSource {
       this.labelMapFetchedAt = Date.now();
       return map;
     } catch (err) {
+      // A rate limit fails the page: the fallback below would tag messages
+      // with raw label ids, and the page would land with them.
+      if (isRateLimit(err)) throw err;
       log.warn(`Failed to fetch Gmail labels: ${err instanceof Error ? err.message : String(err)}`);
       return this.labelMap ?? new Map();
     }
@@ -381,15 +441,15 @@ export class GmailSource {
   async sync(cursor: SyncCursor | null, opts?: SyncOptions): Promise<SyncResult> {
     const state = validateGmailSyncCursor(cursor) ?? { phase: "bootstrap" };
 
-    // One typed boundary for both phases. `incrementalSync` maps the errors
-    // it handles itself, and the mapper returns an existing `SyncError`
-    // unchanged, so wrapping here adds nothing to that path — but it is the
-    // only thing that classifies a failure from the bootstrap walk, from the
-    // per-message fetch it fans out, or from an attachment download. Without
-    // it those reach the collector as raw SDK throws: kind `unknown`, and a
-    // transport failure reading `fetch failed` with nothing to say which
-    // request died.
+    // One typed boundary for both phases. It is the only thing that
+    // classifies a failure from the bootstrap walk, from the history listing,
+    // from the per-message fetch they fan out, or from an attachment download.
+    // Without it those reach the collector as raw SDK throws: kind `unknown`,
+    // and a transport failure reading `fetch failed` with nothing to say which
+    // request died. It is also where a rate limit learns how many syncs in a
+    // row have ended on one, which sets how long the host waits.
     const startedAt = this.budgetStart(opts?.run);
+    this.attempt = {};
     try {
       const result =
         state.phase === "bootstrap" || !state.historyId
@@ -402,10 +462,32 @@ export class GmailSource {
         result.hasMore = false;
       }
       if (!result.hasMore) this.budget = undefined;
+      this.consecutiveRateLimits = 0;
+      this.carried.clear();
       return result;
     } catch (error: unknown) {
       this.budget = undefined;
-      throw mapGoogleApiError(error);
+      const mapped = mapGoogleApiError(error, {
+        consecutiveRateLimits: this.consecutiveRateLimits + 1,
+      });
+      if (mapped.kind === "rate-limit") this.consecutiveRateLimits += 1;
+      throw mapped;
+    }
+  }
+
+  /**
+   * Send one Gmail request once its quota units are free. A rate limit stops
+   * the sync's other requests from being sent, so one 429 costs one request.
+   */
+  private async request<T>(kind: GmailRequest, send: () => Promise<T>): Promise<T> {
+    const attempt = this.attempt;
+    await this.quota.acquire(GMAIL_QUOTA_UNITS[kind]);
+    if (attempt.rateLimitedBy !== undefined) throw attempt.rateLimitedBy;
+    try {
+      return await send();
+    } catch (error: unknown) {
+      if (attempt.rateLimitedBy === undefined && isRateLimit(error)) attempt.rateLimitedBy = error;
+      throw error;
     }
   }
 
@@ -420,16 +502,31 @@ export class GmailSource {
     return this.budget.startedAt;
   }
 
-  /** Fetch every listed message, concurrently within Gmail's quota. */
+  /**
+   * Fetch every listed message, concurrently, each request paced by the
+   * quota. With `carry`, a message fetched by an earlier attempt at the same
+   * page is taken from what that attempt carried rather than fetched again,
+   * and only a fetch that finished before this attempt hit a rate limit is
+   * carried: one finishing after it may have been cut short by the halt.
+   */
   private async fetchAll(
     ids: readonly string[],
+    carry: boolean,
   ): Promise<{ documents: DocumentInput[]; gone: string[]; oldestReceivedAt?: number }> {
-    // RTT-bound: each per-message `messages.get` is a separate round-trip,
-    // serial loops over a 100-message page were the dominant bootstrap
-    // wall-clock cost. Bounded concurrency stays inside Gmail's quota.
-    const fetched = await pMap(ids, (id) => this.fetchAndNormalize(id), {
-      concurrency: GOOGLE_FETCH_CONCURRENCY,
-    });
+    const attempt = this.attempt;
+    const listed = new Set(ids);
+    for (const id of this.carried.keys()) if (!carry || !listed.has(id)) this.carried.delete(id);
+    const fetched = await pMap(
+      ids,
+      async (id) => {
+        const carried = this.carried.get(id);
+        if (carried) return carried;
+        const result = await this.fetchAndNormalize(id);
+        if (carry && attempt.rateLimitedBy === undefined) this.carried.set(id, result);
+        return result;
+      },
+      { concurrency: GOOGLE_FETCH_CONCURRENCY },
+    );
     const documents: DocumentInput[] = [];
     const gone: string[] = [];
     let oldestReceivedAt: number | undefined;
@@ -468,7 +565,9 @@ export class GmailSource {
     // pages — beats Gmail's per-query `resultSizeEstimate`, which jitters
     // wildly between calls.
     if (!state.pageToken || bootstrapHistoryId === undefined || totalMessages === undefined) {
-      const profile = await this.gmail.users.getProfile({ userId: "me" });
+      const profile = await this.request("getProfile", () =>
+        this.gmail.users.getProfile({ userId: "me" }),
+      );
       if (bootstrapHistoryId === undefined && profile.data.historyId) {
         bootstrapHistoryId = profile.data.historyId;
         if (!state.pageToken) bootstrapStartedAt = pageStartedAt;
@@ -499,7 +598,7 @@ export class GmailSource {
     const messageIds = (res.data.messages ?? [])
       .map((m) => m.id)
       .filter((id): id is string => typeof id === "string");
-    const { documents, oldestReceivedAt } = await this.fetchAll(messageIds);
+    const { documents, oldestReceivedAt } = await this.fetchAll(messageIds, true);
     const oldestListedAt = earlierIso(state.oldestListedAt, oldestReceivedAt);
 
     // Apply data cutoff as a safety net: Gmail's `after:YYYY/MM/DD` pushdown
@@ -565,7 +664,9 @@ export class GmailSource {
       if (bootstrapHistoryId !== undefined) {
         historyId = bootstrapHistoryId;
       } else {
-        const profile = await this.gmail.users.getProfile({ userId: "me" });
+        const profile = await this.request("getProfile", () =>
+          this.gmail.users.getProfile({ userId: "me" }),
+        );
         historyId = profile.data.historyId ?? historyId;
       }
       log.info(
@@ -626,12 +727,14 @@ export class GmailSource {
     afterFloor: Date | undefined,
   ): Promise<{ res: { data: gmail_v1.Schema$ListMessagesResponse }; listBefore?: string }> {
     const list = (pageToken: string | undefined, listBefore: string | undefined) =>
-      this.gmail.users.messages.list({
-        userId: "me",
-        maxResults: GOOGLE_PAGE_SIZE,
-        pageToken,
-        q: listQuery(afterFloor, listBefore ? new Date(listBefore) : undefined),
-      });
+      this.request("messagesList", () =>
+        this.gmail.users.messages.list({
+          userId: "me",
+          maxResults: GMAIL_PAGE_SIZE,
+          pageToken,
+          q: listQuery(afterFloor, listBefore ? new Date(listBefore) : undefined),
+        }),
+      );
     try {
       const res = await list(state.pageToken ?? undefined, state.listBefore);
       return { res, ...(state.listBefore ? { listBefore: state.listBefore } : {}) };
@@ -662,17 +765,17 @@ export class GmailSource {
     // Only a 404 from `history.list` itself means that: a message deleted
     // between being listed in the history and being fetched 404s too, and is
     // handled where it is fetched.
-    const res = await this.gmail.users.history
-      .list({
+    const res = await this.request("historyList", () =>
+      this.gmail.users.history.list({
         userId: "me",
         startHistoryId: state.historyId,
         pageToken: state.historyPageToken ?? undefined,
         historyTypes: ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"],
-      })
-      .catch((error: unknown) => {
-        if (googleApiStatus(error) === 404) return null;
-        throw mapGoogleApiError(error);
-      });
+      }),
+    ).catch((error: unknown) => {
+      if (googleApiStatus(error) === 404) return null;
+      throw error;
+    });
     if (res === null) return this.recoverFromExpiredHistory(state);
 
     const histories = res.data.history ?? [];
@@ -722,7 +825,7 @@ export class GmailSource {
       addedIds.delete(id);
     }
 
-    const fetched = await this.fetchAll([...addedIds]);
+    const fetched = await this.fetchAll([...addedIds], false);
     // A message Gmail no longer has was deleted after its history event.
     deletedExternalIds.push(...fetched.gone);
     const documents = fetched.documents;
@@ -828,13 +931,13 @@ export class GmailSource {
   }
 
   private async fetchAndNormalize(messageId: string): Promise<Fetched> {
-    const res = await this.gmail.users.messages
-      .get({ userId: "me", id: messageId, format: "full" })
-      .catch((error: unknown) => {
-        // Deleted between being listed and being fetched.
-        if (googleApiStatus(error) === 404) return null;
-        throw error;
-      });
+    const res = await this.request("messagesGetFull", () =>
+      this.gmail.users.messages.get({ userId: "me", id: messageId, format: "full" }),
+    ).catch((error: unknown) => {
+      // Deleted between being listed and being fetched.
+      if (googleApiStatus(error) === 404) return null;
+      throw error;
+    });
     if (res === null) return { gone: true };
 
     const msg = res.data;
@@ -1024,7 +1127,7 @@ export class GmailSource {
         // retries, not get recorded as a permanent download/extraction
         // failure that advances the cursor past the message forever.
         // Optional OCR failures are normalized to null before this boundary.
-        if (isTransientSyncError(err)) throw err;
+        if (isTransientSyncError(err) || isRateLimit(err)) throw err;
         log.warn(
           `Failed to download attachment ${part.filename} from ${messageId}: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -1100,11 +1203,10 @@ export class GmailSource {
   ): Promise<void> {
     const isText = part.mimeType === "text/plain" || part.mimeType === "text/html";
     if (isText && !part.filename && part.body?.attachmentId && !part.body.data) {
-      const res = await this.gmail.users.messages.attachments.get({
-        userId: "me",
-        messageId,
-        id: part.body.attachmentId,
-      });
+      const attachmentId = part.body.attachmentId;
+      const res = await this.request("attachmentsGet", () =>
+        this.gmail.users.messages.attachments.get({ userId: "me", messageId, id: attachmentId }),
+      );
       if (res.data.data) part.body.data = res.data.data;
     }
     for (const child of part.parts ?? []) await this.fetchDeferredBodyText(messageId, child);
@@ -1114,11 +1216,9 @@ export class GmailSource {
    * Download an attachment via the Gmail API.
    */
   private async downloadAttachment(messageId: string, attachmentId: string): Promise<Uint8Array> {
-    const res = await this.gmail.users.messages.attachments.get({
-      userId: "me",
-      messageId,
-      id: attachmentId,
-    });
+    const res = await this.request("attachmentsGet", () =>
+      this.gmail.users.messages.attachments.get({ userId: "me", messageId, id: attachmentId }),
+    );
     const data = res.data.data;
     if (!data) throw new Error("Attachment data is empty");
     return new Uint8Array(Buffer.from(data, "base64url"));
