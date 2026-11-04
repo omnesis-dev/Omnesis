@@ -50,8 +50,19 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          # Gradle's dependency and wrapper caches, keyed on the Gradle build files.
-          cache: gradle
+
+      # Gradle's dependency and wrapper caches. A change to any Gradle build file
+      # (a release bumps the app version in one) makes a new key, so restore the
+      # closest older entry rather than start empty: an empty cache downloads every
+      # dependency from Maven Central, which rate-limits a runner with HTTP 429.
+      - name: Restore Gradle caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-${{ runner.arch }}-
 
       # Required-dependency, FAIL LOUD (never skip): the Android toolchain MUST
       # be reachable on the runner. If JDK 17 or the Android SDK is missing the
@@ -141,8 +152,19 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          # Gradle's dependency and wrapper caches, keyed on the Gradle build files.
-          cache: gradle
+
+      # Gradle's dependency and wrapper caches. A change to any Gradle build file
+      # (a release bumps the app version in one) makes a new key, so restore the
+      # closest older entry rather than start empty: an empty cache downloads every
+      # dependency from Maven Central, which rate-limits a runner with HTTP 429.
+      - name: Restore Gradle caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-${{ runner.arch }}-
 
       # Required-dependency, FAIL LOUD (never skip): the Android toolchain MUST
       # be reachable on the runner. If JDK 17 or the Android SDK is missing the
@@ -231,8 +253,19 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          # Gradle's dependency and wrapper caches, keyed on the Gradle build files.
-          cache: gradle
+
+      # Gradle's dependency and wrapper caches. A change to any Gradle build file
+      # (a release bumps the app version in one) makes a new key, so restore the
+      # closest older entry rather than start empty: an empty cache downloads every
+      # dependency from Maven Central, which rate-limits a runner with HTTP 429.
+      - name: Restore Gradle caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-${{ runner.arch }}-
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
