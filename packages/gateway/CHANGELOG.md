@@ -1,5 +1,20 @@
 # @omnesis/gateway
 
+## 0.7.7
+
+### Patch Changes
+
+- 55df1c9: Each of the gateway's worker threads starts with less loaded. The date recognizer, the language detector, the phone-number metadata, the HTML converter, the mDNS browser and the Anthropic SDK now load the first time a thread uses them, not with every worker. On an empty install an io worker holds about 120 MB instead of 220 MB and a cpu worker about 60 MB instead of 165 MB. A gateway on a 7 GB machine starts with about 600 MB less resident.
+- Updated dependencies [55df1c9]
+  - @omnesis/core@0.7.7
+  - @omnesis/agent@0.7.7
+  - @omnesis/config@0.7.7
+  - @omnesis/near-dupes@0.7.7
+  - @omnesis/provider-web@0.7.7
+  - @omnesis/source-sdk@0.7.7
+  - @omnesis/types@0.7.7
+  - @omnesis/watch@0.7.7
+
 ## 0.7.6
 
 ### Patch Changes

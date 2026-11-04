@@ -1,5 +1,14 @@
 # @omnesis/provider-obsidian-synth
 
+## 0.7.7
+
+### Patch Changes
+
+- @omnesis/providers-synth-common@0.7.7
+  - @omnesis/provider-obsidian@0.7.7
+  - @omnesis/source-sdk@0.7.7
+  - @omnesis/types@0.7.7
+
 ## 0.7.6
 
 ### Patch Changes
