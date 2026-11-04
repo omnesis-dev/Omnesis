@@ -6,7 +6,11 @@ import { rmSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { computeContentHash } from "@omnesis/core";
 import { createDatabase } from "../db.js";
-import { resetUrlGraphRoles, setUrlGraphRoles } from "../url-graph-roles.js";
+import {
+  getUrlTraversalHubSources,
+  resetUrlGraphRoles,
+  setUrlGraphRoles,
+} from "../url-graph-roles.js";
 import { OMNESIS_CHAT_SOURCE_ID } from "../sources/omnesis-chat/ids.js";
 import { cognitionAuthoredDocumentTypes } from "../brain/cognition-authored.js";
 import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
@@ -17,7 +21,7 @@ import type Database from "better-sqlite3";
 const NOW = "2026-01-01T10:00:00.000Z";
 const BODY =
   "A fictional document describes the specifications for an invented garden shelter, its materials and delivery schedule.";
-const DEFAULTS: AgentSearchProvenanceOptions = {
+const DEFAULTS: Omit<AgentSearchProvenanceOptions, "urlTraversalHubSources"> = {
   limit: 10,
   topN: 3,
   maxDepth: 4,
@@ -110,8 +114,20 @@ function role(id: string, documentId: string, name: string, personRole = "partic
     personRole,
   );
 }
+/** Exclusions by the source identity `doc` gives each document. */
+function identities(...ids: string[]) {
+  return ids.map((externalId) => ({
+    providerId: "fictional",
+    sourceId: "archive:fictional",
+    externalId,
+  }));
+}
 function search(hits: SearchResultItem[], overrides: Partial<AgentSearchProvenanceOptions> = {}) {
-  return enrichAgentSearch(db, hits, { ...DEFAULTS, ...overrides });
+  return enrichAgentSearch(db, hits, {
+    ...DEFAULTS,
+    urlTraversalHubSources: [...getUrlTraversalHubSources()],
+    ...overrides,
+  });
 }
 
 describe("agent graph search evidence", () => {
@@ -723,30 +739,45 @@ describe("agent graph search evidence", () => {
     doc("excluded-copy");
     edge("own-chat", "seed");
     edge("seed", "hidden-node", "references");
-    const hit = search([seed], { excludeDocumentIds: ["own-chat", "excluded-copy"] })[0];
+    const hit = search([seed], {
+      excludeExternalDocuments: identities("own-chat", "excluded-copy"),
+    })[0];
     expect(hit.provenance?.copies.map((c) => c.documentId)).toEqual(["seed"]);
     expect(hit.provenance?.paths).toEqual([]);
     expect(JSON.stringify(hit.provenance)).not.toMatch(
       /hidden-copy|hidden-node|own-chat|excluded-copy/,
     );
-    expect(search([doc("excluded-hit")], { excludeDocumentIds: ["excluded-hit"] })).toEqual([]);
+    expect(
+      search([doc("excluded-hit")], { excludeExternalDocuments: identities("excluded-hit") }),
+    ).toEqual([]);
+    // An identity under another provider names a different document.
+    const other = doc("other-provider");
+    expect(
+      search([other], {
+        excludeExternalDocuments: [
+          { ...identities("other-provider")[0]!, providerId: "elsewhere" },
+        ],
+      }).map((h) => h.documentId),
+    ).toEqual(["other-provider"]);
   });
 
-  test("resolves lazy exclusions against the same snapshot as copies and graph paths", () => {
+  test("resolves exclusions by source identity when the walk runs, not when they are named", () => {
     const seed = doc("seed");
-    const excludedIds: string[] = [];
-    const excludeDocumentIds = (): readonly string[] => {
-      expect(db.inTransaction).toBe(true);
-      return excludedIds;
-    };
+    // Named before the documents exist, as an agent names its conversation
+    // before its transcript is ingested.
+    const excludeExternalDocuments = identities("late-chat", "late-copy", "never-ingested");
+    expect(search([seed], { excludeExternalDocuments })[0].provenance?.paths).toEqual([]);
     const chat = doc("late-chat", {
       type: "message",
       body: "A transcript indexed while the query was waiting.",
     });
     doc("late-copy");
     edge(chat.documentId, seed.documentId);
-    excludedIds.push("late-chat", "late-copy");
-    const hits = search([seed, chat], { excludeDocumentIds });
+    // Without the exclusion the late documents are a copy, a hit and a path.
+    const unexcluded = search([seed, chat]);
+    expect(unexcluded.map((hit) => hit.documentId)).toEqual(["seed", "late-chat"]);
+    expect(unexcluded[0].provenance?.copies.map((copy) => copy.documentId)).toContain("late-copy");
+    const hits = search([seed, chat], { excludeExternalDocuments });
     expect(hits.map((hit) => hit.documentId)).toEqual(["seed"]);
     expect(hits[0].provenance?.copies.map((copy) => copy.documentId)).toEqual(["seed"]);
     expect(hits[0].provenance?.paths).toEqual([]);

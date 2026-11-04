@@ -1071,8 +1071,10 @@ const searchPipeline = new SearchPipeline({
   inflightSummary: () => scheduler.inflightSummary(),
 });
 searchPipeline.setGatewayDb(db);
-// Search fences its candidate pool for knowledge readability on the io worker.
+// Search fences its candidate pool for knowledge readability, and walks agent
+// search provenance, on the io worker.
 searchPipeline.setKnowledgeReadability(ioGate);
+searchPipeline.setProvenanceReads(ioGate);
 
 // Dedicated search-worker pool (Slice 3B): relocate the heavy
 // candidate-generation block (BM25 + usearch + fusion/boost/diversity + hydrate)

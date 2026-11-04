@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Sqlite from "better-sqlite3";
@@ -36,6 +36,7 @@ describe("FsCognitionTranscriptStore", () => {
     store = new FsCognitionTranscriptStore(join(dir, "transcripts"));
   });
   afterEach(() => {
+    store.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -209,6 +210,27 @@ describe("FsCognitionTranscriptStore", () => {
     completedIndex.close();
   });
 
+  test("keeps one index connection open across reads and writes until closed", async () => {
+    // Closing a write-ahead-logged database checkpoints it and removes its
+    // log; the log staying put shows no read or write closed the index.
+    const wal = join(dir, "transcripts", ".transcript-index.sqlite-wal");
+    store.save(transcript({ runId: "kept-open", finishedAt: 1 }));
+    expect(existsSync(wal)).toBe(true);
+    await store.listPage({ limit: 5 });
+    await store.pruneBatch(1, 10);
+    expect(existsSync(wal)).toBe(true);
+    store.close();
+    expect(existsSync(wal)).toBe(false);
+    // Closing is final: the store does not quietly reopen its index.
+    expect(() => store.save(transcript({ runId: "after-close", finishedAt: 3 }))).toThrow(/closed/);
+    await expect(store.listPage({ limit: 5 })).rejects.toThrow(/closed/);
+    expect(existsSync(wal)).toBe(false);
+    // Another store on the same directory still reads what was committed.
+    const reopened = new FsCognitionTranscriptStore(join(dir, "transcripts"));
+    expect((await reopened.listPage({ limit: 5 })).map((ref) => ref.runId)).toEqual(["kept-open"]);
+    reopened.close();
+  });
+
   test("new transcript indexes enable incremental vacuum", async () => {
     store.save(transcript({}));
     await store.listPage({ limit: 1 });
@@ -369,7 +391,10 @@ describe("evicting one run's transcripts", () => {
     dir = mkdtempSync(join(tmpdir(), "omnesis-transcripts-evict-"));
     store = new FsCognitionTranscriptStore(join(dir, "transcripts"));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   test("deletes every attempt of the named runs and leaves the others", async () => {
     // Targeted rather than age-based: this is for a run whose history was

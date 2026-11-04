@@ -696,6 +696,51 @@ describe("Agent search v2 — synthetic file journey", () => {
     }
   }, 60_000);
 
+  test("agent search and graph context walk provenance on the io read worker as interactive work", async () => {
+    type TaskStats = {
+      name: string;
+      runner: string;
+      count: number;
+      errorCount: number;
+      countByPriority: Record<string, number>;
+    };
+    const ops = ["io.agentSearchProvenance", "io.graphContextProvenance"] as const;
+    const stats = async () => {
+      const snapshot = await harness.gatewayJson<{ perTask?: TaskStats[] }>(
+        "/admin/scheduler-metrics?window=3600",
+      );
+      return Object.fromEntries(
+        ops.map((op) => [op, (snapshot.perTask ?? []).find((task) => task.name === op)]),
+      ) as Record<(typeof ops)[number], TaskStats | undefined>;
+    };
+    const before = await stats();
+    const agent = JSON.parse(
+      (await runCli(harness, ["search", QUERY, "--agent-context", "--limit", "20", "--json"]))
+        .stdout,
+    ) as ToolResult;
+    expect(agent.kind === "search.results" && agent.results.some((hit) => hit.provenance)).toBe(
+      true,
+    );
+    const graph = await harness.gatewayJson<{ results: PublicHit[] }>("/search", {
+      method: "POST",
+      body: JSON.stringify({ text: QUERY, includeGraphContext: true }),
+    });
+    expect(graph.results.some((hit) => hit.provenance)).toBe(true);
+    const after = await stats();
+    for (const op of ops) {
+      const entry = after[op];
+      expect(entry, `${op} never ran`).toBeDefined();
+      expect(entry!.runner, `${op} ran off the io runner`).toBe("io");
+      // A failed worker read falls back to the event loop; none may have failed.
+      expect(entry!.errorCount - (before[op]?.errorCount ?? 0)).toBe(0);
+      // A search runs at its caller's priority (earlier searches in this file
+      // use a collector device's token, which is realtime work); the two
+      // admin searches above are user work.
+      const user = entry!.countByPriority.user! - (before[op]?.countByPriority.user ?? 0);
+      expect(user, `${op} did not run at user priority`).toBeGreaterThan(0);
+    }
+  }, 120_000);
+
   test("public search stays legacy and disabling v2 restores separate agent copy entries after restart", async () => {
     expect(beforePublic.every((hit) => hit.provenance === undefined)).toBe(true);
     const injection = await fetch(`${harness.gatewayUrl}/search`, {

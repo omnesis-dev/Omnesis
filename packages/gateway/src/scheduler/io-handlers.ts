@@ -47,6 +47,12 @@ import {
   knowledgeDocumentsReadable,
   type KnowledgeDocumentRef,
 } from "../brain/knowledge/retrieval-fence.js";
+import {
+  enrichAgentSearch,
+  enrichGraphContextHits,
+  type AgentSearchProvenanceOptions,
+  type GraphContextProvenanceOptions,
+} from "../search/agent-provenance.js";
 import { computeSeedFromContacts } from "../domain/ContactCardBootstrap.js";
 import {
   computeInteractionScores,
@@ -137,6 +143,7 @@ import {
 } from "../transcribe/vocabulary/storage.js";
 import { ioReadHandlers } from "./read-port.js";
 import { IO_READS } from "./io-read-ports.js";
+import type { SearchResultItem } from "../search/types.js";
 import type { IoJournalHandlers } from "./io-journal-handlers.js";
 import type { UrlCanonicalizerSpec, TranscriptionContext } from "@omnesis/core";
 import type { ExtractedLinkBatchEntry } from "../domain/LinkExtraction.js";
@@ -288,6 +295,20 @@ export const ioHandlers = {
   // search fences its whole candidate pool, twice, on every query.
   "io.knowledgeDocumentsReadable": (db: Db, refs: KnowledgeDocumentRef[]) =>
     knowledgeDocumentsReadable(db, refs),
+
+  // An agent search's graph evidence: copies, conversations and link trails
+  // for its hits, in one read snapshot. On a large corpus the walk takes a
+  // second or more; graph context walks each of its top hits in its own.
+  "io.agentSearchProvenance": (
+    db: Db,
+    results: SearchResultItem[],
+    options: AgentSearchProvenanceOptions,
+  ) => enrichAgentSearch(db, results, options),
+  "io.graphContextProvenance": (
+    db: Db,
+    hits: SearchResultItem[],
+    options: GraphContextProvenanceOptions,
+  ) => enrichGraphContextHits(db, hits, options),
 
   // ── people compute (read halves of compute/upsert splits) ─────────
   "io.peopleCounts": (db: Db) => computePeopleCounts(db),

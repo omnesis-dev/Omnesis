@@ -550,7 +550,8 @@ that does not survive the structured clone: a clone keeps sets, maps and dates
 but drops functions, symbol keys and prototypes, so a read returns plain data.
 Every port read runs at `background` priority on the worker's `omnesis.db`
 handle, so a read that needs `user` priority (search's
-`io.knowledgeDocumentsReadable`) or another store's handle (the Watch journal's
+`io.knowledgeDocumentsReadable` and `io.agentSearchProvenance`) or another
+store's handle (the Watch journal's
 `io.watchDocumentHistories`) is still written out as its own op.
 A read the caller must see in the same snapshot as its other reads, or one that
 belongs inside a writer transaction, stays where it is.

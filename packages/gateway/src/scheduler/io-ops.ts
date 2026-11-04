@@ -74,6 +74,7 @@ import type { DateExtractionDocRow } from "../enrichment/dates/extractor.js";
 import type { LikeSearchArgs, LikeSearchRow } from "../search/like-search.js";
 import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
 import type { KnowledgeReadabilityReads } from "../brain/knowledge/retrieval-fence.js";
+import type { AgentProvenanceReads } from "../search/agent-provenance.js";
 import type {
   PersonSummary as LookupPersonSummary,
   UrlCanonicalizerSpec,
@@ -210,6 +211,10 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
   temporalStoreWindow: TemporalStoreReads["temporalStoreWindow"];
   /** Search's knowledge readability fence over its hits; see `knowledgeDocumentsReadable`. */
   knowledgeDocumentsReadable: KnowledgeReadabilityReads["knowledgeDocumentsReadable"];
+  /** Agent search's graph evidence over its hits; see `enrichAgentSearch`. */
+  agentSearchProvenance: AgentProvenanceReads["agentSearchProvenance"];
+  /** Graph context for search's top hits, each on its own; see `enrichGraphContextHits`. */
+  graphContextProvenance: AgentProvenanceReads["graphContextProvenance"];
   /**
    * Compute `(personId, docCount, aliasCount)` for every unmerged person in
    * one read. Heavy — a full scan of `document_people` — which is why it
@@ -541,6 +546,8 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // enqueue it under their own priority.
   { name: "io.temporalStoreWindow", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.knowledgeDocumentsReadable", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.agentSearchProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.graphContextProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCounts", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCountsChunk", priority: "background" },
   { name: "io.mergeCandidates", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -683,6 +690,10 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     likeSearchDocuments: (args) => call("io.likeSearchDocuments", [args]),
     temporalStoreWindow: (request) => call("io.temporalStoreWindow", [request]),
     knowledgeDocumentsReadable: (refs) => call("io.knowledgeDocumentsReadable", [[...refs]]),
+    agentSearchProvenance: (results, options) =>
+      call("io.agentSearchProvenance", [[...results], options]),
+    graphContextProvenance: (hits, options) =>
+      call("io.graphContextProvenance", [[...hits], options]),
     peopleCounts: () => call("io.peopleCounts", []),
     peopleCountsChunk: (cursor, batchSize) => call("io.peopleCountsChunk", [cursor, batchSize]),
     mergeCandidates: (perStepLimit) => call("io.mergeCandidates", [perStepLimit]),
