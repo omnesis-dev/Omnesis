@@ -1690,6 +1690,22 @@ describe("android.yml CI workflow structure (C20)", () => {
     }
   });
 
+  it("restores the closest older Gradle cache when a build file changes", () => {
+    // A release bumps the app version in a build file, so its exact key never
+    // exists yet; starting empty downloads every dependency from the Maven
+    // repository, which answers a hosted runner with HTTP 429.
+    for (const [job, { steps }] of Object.entries(wf.jobs)) {
+      const java = steps.find((s) => s.uses?.startsWith("actions/setup-java@"));
+      if (!java) continue;
+      expect(java.with.cache, `android.yml ${job} keys its cache with no fallback`).toBeUndefined();
+      const cache = steps.find((s) => s.uses?.startsWith("actions/cache@"));
+      expect(cache, `android.yml ${job} has no Gradle cache step`).toBeTruthy();
+      expect(cache.with.path).toMatch(/~\/\.gradle\/caches/);
+      expect(cache.with.key.startsWith(cache.with["restore-keys"])).toBe(true);
+      expect(cache.with.key).toMatch(/hashFiles\('android\/\*\*\/\*\.gradle\*'/);
+    }
+  });
+
   it("the tracked golden dir is committed and not gitignored", () => {
     // verifyRoborazziDebug needs a committed baseline; the capture filePath must
     // point at a tracked (non-build) dir. Assert the helpers write there and the
