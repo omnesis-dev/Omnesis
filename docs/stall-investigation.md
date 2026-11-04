@@ -111,3 +111,5 @@ A summary holds function names, file paths and the lines the functions start on.
 3. If attribution is `in-flight`, `code` or `none`, read the stall's snapshot `stack` and the newest profile summary: their `hottestCode` and `topStacks` name the function.
 4. Pick the matching fix above, and add a test that pins the work to where it now runs, by thread or by worker op, rather than how long it took.
 5. After deploying, check that the culprit has dropped out of the ranking.
+
+The `/latency-watch` command (`.claude/commands/latency-watch.md`) runs this loop on a schedule (`/loop /latency-watch`): it watches interactive request latency and stalls against a service level, investigates what breaks it, and opens pull requests for review.
