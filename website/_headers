@@ -1,0 +1,7 @@
+# Response headers Cloudflare attaches to the static assets.
+# The edge docs are the main branch's pages, published unlinked for anyone
+# who needs the upcoming documentation; the release docs at /docs/ are the
+# ones to index. A crawler must be able to fetch a page to see noindex, so
+# robots.txt does not disallow the edge docs.
+/docs-edge/*
+  X-Robots-Tag: noindex

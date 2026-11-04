@@ -47,7 +47,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -61,7 +61,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -119,21 +119,21 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
             <li>
-              <a href="/docs/experimental" aria-current="page">Experimental</a>
+              <a href="experimental" aria-current="page">Experimental</a>
               <ul class="side-sub">
                 <li><a href="#realtime-voice">Realtime voice in Omnesis Demo</a></li>
                 <li><a href="#browser-extension">Browser extension</a></li>
@@ -207,7 +207,7 @@
           portal, the mobile apps and the CLI use it to show or hide these controls. The flag on the
           collector matters only for sources: a source marked experimental is offered in the source
           picker only by a collector that runs with the flag itself. Experimental sources are
-          listed, labelled, in the <a href="/docs/sources">sources catalogue</a>.
+          listed, labelled, in the <a href="sources">sources catalogue</a>.
         </p>
 
         <h2 id="realtime-voice">Realtime voice in Omnesis Demo</h2>
@@ -465,7 +465,7 @@
                 <td>Annotations</td>
                 <td>
                   Durable notes about documents and people, each backed by a quote from a cited
-                  document and a confidence. The agent's <a href="/docs/agent#memory">memory</a>
+                  document and a confidence. The agent's <a href="agent#memory">memory</a>
                   reads the same notes.
                 </td>
                 <td>The document or person page; Debug → Cognition → Library</td>
@@ -602,7 +602,7 @@
           showing them.
         </p>
         <p>
-          In experimental mode, <a href="/docs/apps#tasks">Tasks</a> gains a
+          In experimental mode, <a href="apps#tasks">Tasks</a> gains a
           <strong>Suggested</strong> view in the portal and the apps. By default, loops Brain finds
           appear only in Suggested and become yours when you accept them. With the suggestion gate
           set to <code>enforce</code>, the interest-based policy described below can instead adopt
@@ -691,7 +691,7 @@
           The value is <code>anthropic/&lt;model&gt;</code>, <code>codex/&lt;model&gt;</code>,
           <code>claude-code/&lt;model&gt;</code> or <code>&lt;backend&gt;/&lt;model&gt;</code> for
           an OpenAI-compatible backend you configured (see
-          <a href="/docs/operating#models">Operating → Models</a>). A local GGUF model cannot serve
+          <a href="operating#models">Operating → Models</a>). A local GGUF model cannot serve
           <code>background-agent</code>, which needs a chat backend; it can serve
           <code>entailment-verifier</code>. The portal's <strong>Settings → Models</strong> page
           lists the Brain's model roles under <strong>Cognition</strong>. Optional capabilities can
@@ -701,7 +701,7 @@
         <p>
           These experimental uses require <code>OMNESIS_EXPERIMENTAL=1</code> and are unstable. The
           stable roles and their setup are listed under
-          <a href="/docs/operating#model-capabilities">Operating → Models</a>.
+          <a href="operating#model-capabilities">Operating → Models</a>.
         </p>
         <div class="table-wrap">
           <table>
@@ -745,7 +745,7 @@
                   Served only by TypeSafe Jev (<code>typesafe/jev-1.13.0</code>); see
                   <a href="#brain-worth-gate">Routing maintenance</a> and
                   <a href="#brain-record-check">Checking what it writes</a>. The role itself is
-                  stable; <a href="/docs/operating#models">Models</a> covers its setup.
+                  stable; <a href="operating#models">Models</a> covers its setup.
                 </td>
                 <td>
                   Urgency and relevance checks take a conservative fallback; record verification
@@ -1706,9 +1706,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
         </p>
         <p>
           The agent reads open loops and the time index when it answers a question, so they can
-          inform an answer through <a href="/docs/connect#answer">Answer</a>, which passes your
-          privacy review as usual. A Direct grant exposes them only when it is unrestricted.
-          Observations are exposed to neither.
+          inform an answer through <a href="connect#answer">Answer</a>, which passes your privacy
+          review as usual. A Direct grant exposes them only when it is unrestricted. Observations
+          are exposed to neither.
         </p>
         <p>
           Loop lists normally help the agent choose records to read. For counts or recorded
@@ -1721,18 +1721,18 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
         </p>
         <p>
           What Brain writes stays in the gateway's database with the rest of your data and is part
-          of <a href="/docs/updating#backup">backups</a>.
+          of <a href="updating#backup">backups</a>.
         </p>
         <p>
           Deleting a document, whether for good (see
-          <a href="/docs/search#beyond-search">Search → Beyond search</a>), by a sync or by removing
-          its source, never deletes what Brain built on it. The document itself can no longer be
-          read or cited. The loops and tasks, observations and annotations that rested on it lose
-          their link to it, are marked stale and wait for Brain to review them. A dated fact keeps
-          its link but loses the evidence quoted from it, and is reviewed through any task it
-          belongs to; a wiki page's claims that relied on it turn stale. A review keeps, revises,
-          resolves or removes each one as a deliberate decision. Text they quoted from the document
-          stays with them until then.
+          <a href="search#beyond-search">Search → Beyond search</a>), by a sync or by removing its
+          source, never deletes what Brain built on it. The document itself can no longer be read or
+          cited. The loops and tasks, observations and annotations that rested on it lose their link
+          to it, are marked stale and wait for Brain to review them. A dated fact keeps its link but
+          loses the evidence quoted from it, and is reviewed through any task it belongs to; a wiki
+          page's claims that relied on it turn stale. A review keeps, revises, resolves or removes
+          each one as a deliberate decision. Text they quoted from the document stays with them
+          until then.
         </p>
         <p>To remove what Brain wrote:</p>
         <ul>
@@ -2114,9 +2114,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
           <strong>An agent's request needs approval</strong> before it can wake anyone. Until then
           it is listed at the top of the portal's <strong>Watches</strong> page as a pending
           request, and the watch evaluates and wakes nobody. If your
-          <a href="/docs/connect#privacy-policy">privacy policy</a> is set up, its reviewer may
-          approve or deny the request automatically; if the reviewer fails, the request stays
-          pending for you. An operator's own compile or definition approves itself.
+          <a href="connect#privacy-policy">privacy policy</a> is set up, its reviewer may approve or
+          deny the request automatically; if the reviewer fails, the request stays pending for you.
+          An operator's own compile or definition approves itself.
         </p>
         <p>
           To <strong>preview</strong> a compile without installing anything, send
@@ -2464,7 +2464,7 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
           Timers are checked on the same tick, so a wait can fire up to the idle interval late. The
           journal, the definitions, per-key state and traces live in <code>watch.db</code> in the
           config directory, encrypted like the other stores and included in
-          <a href="/docs/updating#backup">backups</a>; a definition exists nowhere else.
+          <a href="updating#backup">backups</a>; a definition exists nowhere else.
         </p>
         <p>
           The <strong>judge</strong> runs on the <code>watch-judge</code> role, which must be
@@ -2553,7 +2553,7 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
         <p>
           When the agent asks what caused the firing, the gateway answers through a read-only turn
           that starts from what the firing recorded, and the reply passes your
-          <a href="/docs/connect#answer">Answer</a>
+          <a href="connect#answer">Answer</a>
           privacy review like any other. The agent can then report what it did, for up to 24 hours;
           <code>omnesis watch firings --all --since 24h</code> shows firings with their outcomes. A
           watch naming an integration that no paired device holds keeps firing and logs that nobody
@@ -2621,13 +2621,13 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
         <p>
           Experimental mode also covers the Watch half of the OpenClaw and Hermes integrations,
           which are otherwise generally available (see
-          <a href="/docs/connect#openclaw-hermes">Agents &amp; MCP → OpenClaw and Hermes</a>). The
-          gateway advertises it as <code>capabilities.subscriptions</code> on
-          <code>GET /health</code>, and <code>omnesis connect</code> reads that to install to match:
-          with the gate off, the agent gets the Answer tool and no Watch tools, its skill describes
-          only what it can do, and the subscription routes themselves are not served. With it on,
-          the agent gets a tool to create, list, inspect, update and revoke its own watches, each a
-          sentence plus the instruction it wants to be woken with.
+          <a href="connect#openclaw-hermes">Agents &amp; MCP → OpenClaw and Hermes</a>). The gateway
+          advertises it as <code>capabilities.subscriptions</code> on <code>GET /health</code>, and
+          <code>omnesis connect</code> reads that to install to match: with the gate off, the agent
+          gets the Answer tool and no Watch tools, its skill describes only what it can do, and the
+          subscription routes themselves are not served. With it on, the agent gets a tool to
+          create, list, inspect, update and revoke its own watches, each a sentence plus the
+          instruction it wants to be woken with.
         </p>
         <p>
           Turn the gate on and reconnect (or run
@@ -2823,7 +2823,7 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
         </div>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/building-sources"
+          <a href="building-sources"
             ><span class="pager-label">Previous</span
             ><span class="pager-title">Building sources</span></a
           >
@@ -2840,7 +2840,7 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -2891,6 +2891,6 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

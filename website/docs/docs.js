@@ -41,55 +41,65 @@
     else if (lightQuery.addListener) lightQuery.addListener(followOs);
   }
 
+  // A docs page is one with the docs sidebar. The docs are served at more than
+  // one mount (/docs/ holds the newest release's pages, /docs-edge/ the main
+  // branch's), so links between docs pages are page-relative and the mount is
+  // the page's own directory; every nav and footer link to the docs stays
+  // inside the mount the reader is in.
+  var path = window.location.pathname;
+  var docsPage = !!(document.querySelector && document.querySelector(".docs-sidebar"));
+  var mount = docsPage ? path.replace(/[^/]*$/, "") : "/docs/";
+  var pageName = docsPage ? path.slice(mount.length).replace(/\.html$/, "") : "";
+
   // Sections that moved to another page or anchor. URLs printed by released
   // binaries and installers, and readers' bookmarks, still name the old
   // place, so a hash this page no longer carries is forwarded to the new one.
   var MOVED = {
-    "/docs/operating": {
-      "hardened-gateway": "/docs/security#hardened-gateway",
-      tls: "/docs/security#tls",
-      backup: "/docs/updating#backup",
-      updating: "/docs/updating#updating",
-      "adopt-source": "/docs/updating#adopt-source",
-      "docker-update": "/docs/updating#docker-update",
-      "fleet-update": "/docs/updating#fleet-update",
-      compatibility: "/docs/updating#compatibility",
+    operating: {
+      "hardened-gateway": "security#hardened-gateway",
+      tls: "security#tls",
+      backup: "updating#backup",
+      updating: "updating#updating",
+      "adopt-source": "updating#adopt-source",
+      "docker-update": "updating#docker-update",
+      "fleet-update": "updating#fleet-update",
+      compatibility: "updating#compatibility",
     },
-    "/docs/agent": {
-      "privacy-policy": "/docs/connect#privacy-policy",
-      "bring-your-own-agent": "/docs/connect#bring-your-own-agent",
-      "openclaw-hermes": "/docs/connect#openclaw-hermes",
-      "custom-agents": "/docs/connect#custom-agents",
-      "help-and-security": "/docs/#help",
+    agent: {
+      "privacy-policy": "connect#privacy-policy",
+      "bring-your-own-agent": "connect#bring-your-own-agent",
+      "openclaw-hermes": "connect#openclaw-hermes",
+      "custom-agents": "connect#custom-agents",
+      "help-and-security": "./#help",
     },
-    "/docs/experimental": {
-      plaid: "/docs/sources#plaid",
-      "local-files": "/docs/sources#local-files",
+    experimental: {
+      plaid: "sources#plaid",
+      "local-files": "sources#local-files",
     },
-    "/docs/setup": {
-      gateway: "/docs/setup#certificates",
-      "multiple-machines": "/docs/setup#tokens",
+    setup: {
+      gateway: "setup#certificates",
+      "multiple-machines": "setup#tokens",
     },
-    "/docs/sources": { removing: "/docs/sources#removing-a-source" },
+    sources: { removing: "sources#removing-a-source" },
   };
   var hash = window.location.hash ? window.location.hash.slice(1) : "";
-  var movedTo = hash && MOVED[window.location.pathname.replace(/\.html$/, "")];
+  var movedTo = hash && docsPage && MOVED[pageName];
   if (movedTo && movedTo[hash] && !document.getElementById(hash)) {
     window.location.replace(movedTo[hash]);
   }
 
   var nav = document.getElementById("nav");
   var navLinks = nav && nav.querySelector(".nav-links");
-  var path = window.location.pathname;
   var blogPage = path === "/blog" || path.indexOf("/blog/") === 0;
-  var docsPage = path === "/docs" || path.indexOf("/docs/") === 0;
   if (navLinks && !navLinks.id) navLinks.id = "primary-navigation";
   if (navLinks) {
     navLinks.innerHTML =
       '<li><a href="/"' +
       (path === "/" ? ' aria-current="page"' : "") +
       ">Context Layer</a></li>" +
-      '<li><a href="/docs/"' +
+      '<li><a href="' +
+      mount +
+      '"' +
       (docsPage ? ' aria-current="page"' : "") +
       ">Docs</a></li>" +
       '<li><a href="/blog/"' +
@@ -101,7 +111,9 @@
   if (footerLinks) {
     footerLinks.innerHTML =
       '<a href="/blog/">Blog</a>' +
-      '<a href="/docs/">Docs</a>' +
+      '<a href="' +
+      mount +
+      '">Docs</a>' +
       '<a href="/privacy">Privacy</a>' +
       '<a class="footer-mail" href="mailto:contact@omnesis.dev" aria-label="Email Omnesis support">' +
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' +
@@ -1260,4 +1272,49 @@
       root.classList.add("smooth-scroll");
     });
   });
+})();
+
+/* Which release the docs describe. The site build writes a release.json beside
+   each docs tree — the newest release's pages at /docs/, the main branch's at
+   /docs-edge/ — and this shows it under the page list, or after the content
+   where the sidebar is the page strip. */
+(function () {
+  if (!document.querySelector || !document.createElement || typeof fetch !== "function") return;
+  var sidebar = document.querySelector(".docs-sidebar");
+  var content = document.querySelector(".docs-content");
+  if (!sidebar || !content || !sidebar.appendChild) return;
+  var path = window.location.pathname;
+  var mount = path.replace(/[^/]*$/, "");
+  fetch(mount + "release.json")
+    .then(function (response) {
+      return response.ok ? response.json() : null;
+    })
+    .then(function (info) {
+      if (!info || !info.release) return;
+      var note = document.createElement("p");
+      note.className = "docs-release";
+      if (info.channel === "edge") {
+        note.appendChild(
+          document.createTextNode(
+            "These pages describe the main branch" +
+              (info.commit ? " at " + info.commit : "") +
+              ", ahead of the current release v" +
+              info.release +
+              ". ",
+          ),
+        );
+        // The release may not have this page yet, so the link goes to the
+        // overview, which every release has.
+        var link = document.createElement("a");
+        link.href = "/docs/";
+        link.textContent = "Release docs";
+        note.appendChild(link);
+      } else {
+        note.textContent =
+          "These pages describe Omnesis v" + info.release + ", the current release.";
+      }
+      sidebar.appendChild(note);
+      content.appendChild(note.cloneNode(true));
+    })
+    .catch(function () {});
 })();

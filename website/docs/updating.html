@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,18 +122,18 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
             <li>
-              <a href="/docs/updating" aria-current="page">Backup &amp; updates</a>
+              <a href="updating" aria-current="page">Backup &amp; updates</a>
               <ul class="side-sub">
                 <li><a href="#backup">Backup</a></li>
                 <li><a href="#restore">Restore and export</a></li>
@@ -146,9 +146,9 @@
                 <li><a href="#compatibility">Version compatibility</a></li>
               </ul>
             </li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -205,8 +205,8 @@
           </li>
           <li>
             <strong>The root key</strong> of an encrypted install. With
-            <a href="/docs/security#encryption">encryption at rest</a> on, the backup's files are
-            encrypted with that key, so keep the <a href="/docs/security#recovery">recovery code</a>
+            <a href="security#encryption">encryption at rest</a> on, the backup's files are
+            encrypted with that key, so keep the <a href="security#recovery">recovery code</a>
             as well: without the key or the code, an encrypted backup cannot be opened.
           </li>
         </ul>
@@ -503,7 +503,7 @@
           On Intel macOS, dependency installation also verifies the native vector engine and builds
           it locally when the bundled binary is incompatible. This applies to fresh installations,
           updates and rollback reinstalls. Keep Xcode Command Line Tools installed; see
-          <a href="/docs/install#requirements">Requirements</a>.
+          <a href="install#requirements">Requirements</a>.
         </p>
 
         <h3 id="update-flags">Options</h3>
@@ -664,11 +664,11 @@
         <h3 id="restart-reporting">Daemons the update cannot restart</h3>
         <p>
           The update restarts only services that belong to the account running it. A daemon started
-          by hand, a hardened gateway, or a <a href="/docs/operating#services">named instance</a> is
+          by hand, a hardened gateway, or a <a href="operating#services">named instance</a> is
           reported as still running the previous release, with the command to restart it when the
           machine knows it. A collector is restarted only once its own gateway is serving the new
           release; if the gateway could not be restarted, the collector is reported instead. A
-          <a href="/docs/security#hardened-update">hardened gateway</a> is updated with its own root
+          <a href="security#hardened-update">hardened gateway</a> is updated with its own root
           command, which <code>omnesis update</code> prints.
         </p>
 
@@ -753,7 +753,7 @@
         <ul>
           <li>
             <strong>Phones and the browser extension</strong>, whose builds are installed outside
-            the gateway (see <a href="/docs/apps#getting-the-apps">Getting the apps</a>).
+            the gateway (see <a href="apps#getting-the-apps">Getting the apps</a>).
           </li>
           <li>
             <strong>A device that has never reported its version</strong>, or one below the oldest
@@ -1068,10 +1068,10 @@
         </p>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/security"
+          <a href="security"
             ><span class="pager-label">Previous</span><span class="pager-title">Security</span></a
           >
-          <a class="pager-next" href="/docs/sources"
+          <a class="pager-next" href="sources"
             ><span class="pager-label">Next</span
             ><span class="pager-title">Available sources</span></a
           >
@@ -1088,7 +1088,7 @@
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -1139,6 +1139,6 @@
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

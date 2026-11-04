@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,16 +122,16 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
             <li>
-              <a href="/docs/operating" aria-current="page">Operating</a>
+              <a href="operating" aria-current="page">Operating</a>
               <ul class="side-sub">
                 <li><a href="#services">Services</a></li>
                 <li><a href="#monitoring">Monitoring</a></li>
@@ -141,11 +141,11 @@
                 <li><a href="#cli">CLI at a glance</a></li>
               </ul>
             </li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -157,8 +157,8 @@
           Running Omnesis once it is installed: the background services, checking health, the
           configuration file, model assignment, and what to do when something goes wrong. It is
           written for whoever looks after the gateway machine. Security and encryption live on
-          <a href="/docs/security">Security</a>; backups and updates on
-          <a href="/docs/updating">Backup &amp; updates</a>.
+          <a href="security">Security</a>; backups and updates on
+          <a href="updating">Backup &amp; updates</a>.
         </p>
 
         <h2 id="services">Services</h2>
@@ -169,10 +169,10 @@
           <code>logs</code> (<code>--follow</code>, <code>--lines</code>).
           <code>docker compose -f ~/.config/omnesis/docker-compose.yml</code> works as well;
           substitute your config directory if you chose another path. Installing and removing them
-          is the installer's; see <a href="/docs/install#docker">Docker installation</a>.
+          is the installer's; see <a href="install#docker">Docker installation</a>.
         </p>
         <p>
-          For a native install, the <a href="/docs/install">installer</a> registers the gateway and
+          For a native install, the <a href="install">installer</a> registers the gateway and
           collector as user services: launchd LaunchAgents on macOS, systemd user units on Linux.
           Both start at login and restart on failure. <code>omnesis service install</code> sets them
           up on a machine where the installer did not. Name a component to install just one, for
@@ -182,7 +182,7 @@
           The other verbs are <code>start</code>, <code>stop</code>, <code>restart</code>,
           <code>status</code>, <code>logs</code> (<code>-f</code> to follow, <code>-n</code> for the
           number of lines) and <code>uninstall</code>, which removes only the units (<a
-            href="/docs/install#uninstall"
+            href="install#uninstall"
             ><code>omnesis uninstall</code></a
           >
           removes the rest of the install too); a bare <code>omnesis service</code> shows status.
@@ -258,7 +258,7 @@ collector    omnesis-collector.service                running        41283</pre>
           families, and <code>loginctl</code> lingering is enabled so the daemons survive logout and
           reboot. On macOS the logs go to <code>~/Library/Logs/Omnesis/</code>. To run the daemons
           against encryption at rest, or to run the gateway under a dedicated account, see
-          <a href="/docs/security#passphrase">Security</a>.
+          <a href="security#passphrase">Security</a>.
         </p>
 
         <h3 id="full-disk-access">Full Disk Access (macOS)</h3>
@@ -294,7 +294,7 @@ collector    omnesis-collector.service                running        41283</pre>
           <code>omnesis status</code> prints one row per source: sync state, document count, index
           coverage, last sync, and the ingested and indexed date ranges. It ends with the gateway's
           version and a count of how the paired devices compare to it (see
-          <a href="/docs/updating#compatibility">Version compatibility</a>). Pass <code>-w</code>
+          <a href="updating#compatibility">Version compatibility</a>). Pass <code>-w</code>
           to keep it open as a live view.
         </p>
         <div class="term">
@@ -332,7 +332,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           configuration and the running process, with a fix next to each finding. It exits non-zero
           only when something is actually blocking, so it is safe to script. Once the gateway has
           checked for releases, it also says whether a newer stable release exists. By default it
-          includes this host's <a href="/docs/security#posture">security checks</a> (<code
+          includes this host's <a href="security#posture">security checks</a> (<code
             >--no-security</code
           >
           skips them).
@@ -442,7 +442,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>ls</code> work on the file directly under the same validation, and the changes apply
           at the next start. <code>OMNESIS.md</code> in the same directory is yours rather than the
           gateway's: the agent's standing instructions, in plain Markdown (see
-          <a href="/docs/agent#standing-instructions">The agent → Standing instructions</a>).
+          <a href="agent#standing-instructions">The agent → Standing instructions</a>).
         </p>
         <p>
           <code
@@ -502,8 +502,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>search.defaultFilters</code> adds filters to every query; list filters combine with
           the query's own, and a date range in the query wins. <code>search.temporal</code> controls
           the lane that reads time phrases in a query (see
-          <a href="/docs/search#time-in-queries">Search → Time in queries</a>). The defaults suit
-          most corpora.
+          <a href="search#time-in-queries">Search → Time in queries</a>). The defaults suit most
+          corpora.
         </p>
         <p>
           <code>dataRetention.maxAge</code> limits how old ingested source data may be;
@@ -598,22 +598,22 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               <tr>
                 <td><code>agent</code></td>
                 <td>
-                  Powers <a href="/docs/agent">the agent</a> in the portal and mobile apps, and the
-                  agent that prepares Answer results for external agents. It also handles Apple
-                  Watch Ask requests and every stage of Deep Research, and reads and acts on notes
-                  you capture with Tell Omnesis from the portal, apps or CLI: task changes, document
-                  research, memory and questions. No open chat is needed. With no Agent model
-                  available, or with <code>agent.noteAgent</code> set to <code>false</code>, notes
-                  are saved and indexed but not acted on. See
-                  <a href="/docs/apps#voice-and-quick-capture">Voice and quick capture</a>.
+                  Powers <a href="agent">the agent</a> in the portal and mobile apps, and the agent
+                  that prepares Answer results for external agents. It also handles Apple Watch Ask
+                  requests and every stage of Deep Research, and reads and acts on notes you capture
+                  with Tell Omnesis from the portal, apps or CLI: task changes, document research,
+                  memory and questions. No open chat is needed. With no Agent model available, or
+                  with <code>agent.noteAgent</code> set to <code>false</code>, notes are saved and
+                  indexed but not acted on. See
+                  <a href="apps#voice-and-quick-capture">Voice and quick capture</a>.
                 </td>
               </tr>
               <tr>
                 <td><code>privacy-reviewer</code></td>
                 <td>
                   Reviews every Answer result (<code>/answer</code> and MCP Answer) against your
-                  <a href="/docs/connect#privacy-policy">privacy policy</a> before it leaves
-                  Omnesis. With no reviewer assigned, every Answer result is held for your approval.
+                  <a href="connect#privacy-policy">privacy policy</a> before it leaves Omnesis. With
+                  no reviewer assigned, every Answer result is held for your approval.
                 </td>
               </tr>
               <tr>
@@ -642,7 +642,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         </div>
         <p>
           Additional capabilities and uses require experimental mode and are described only under
-          <a href="/docs/experimental#model-capabilities">Experimental → Model capabilities</a>.
+          <a href="experimental#model-capabilities">Experimental → Model capabilities</a>.
         </p>
         <h3 id="decision-model">Decision model</h3>
         <p>
@@ -661,8 +661,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             <strong>Use decision gate for Apple Watch complication</strong>. Without an available
             decision model, the complication offers Ask and Tell. If routing fails after Send, or
             the intent is uncertain, it falls back to Ask. The transcript is sent to the decision
-            backend. See <a href="/docs/apps#voice-and-quick-capture">Apple Watch</a> for the
-            capture flow.
+            backend. See <a href="apps#voice-and-quick-capture">Apple Watch</a> for the capture
+            flow.
           </li>
           <li>
             <strong>Email dates in time queries.</strong> When
@@ -671,7 +671,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             newsletters. It receives the subject, sender and first 2,000 characters. Attachments
             inherit their parent email's verdict. Without the model, this filtering is skipped; the
             email stays indexed either way. See
-            <a href="/docs#documents-and-the-index">Documents and the index</a>.
+            <a href="./#documents-and-the-index">Documents and the index</a>.
           </li>
         </ul>
         <p>
@@ -725,7 +725,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             models the CLI offers. Claude Code serves the <code>agent</code>,
             <code>privacy-reviewer</code> and image-capable <code>ocr</code> roles from one login;
             it has no embedding or transcription models. Sign-in and isolation are covered in
-            <a href="/docs/agent#claude-code">The agent → Claude Code</a>.
+            <a href="agent#claude-code">The agent → Claude Code</a>.
           </li>
         </ul>
         <div class="callout warn">
@@ -1264,7 +1264,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               <tr>
                 <td>A collector stopped syncing and its unit is stopped, not failed</td>
                 <td>The gateway revoked or no longer accepts its pairing</td>
-                <td><a href="/docs/setup#repairing-a-device">Bringing a revoked device back</a></td>
+                <td><a href="setup#repairing-a-device">Bringing a revoked device back</a></td>
               </tr>
               <tr>
                 <td>A sync reports a gateway source-contract check timeout</td>
@@ -1284,7 +1284,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td>Expired credentials, or the sign-in flow timed out</td>
                 <td>
                   <a href="#reauth">Below</a> and
-                  <a href="/docs/sources#managing-sources">Managing sources</a>
+                  <a href="sources#managing-sources">Managing sources</a>
                 </td>
               </tr>
               <tr>
@@ -1299,25 +1299,23 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 <td>
                   Publish the consent screen in your Google Cloud project, or add the account as a
                   test user; see
-                  <a href="/docs/sources#google-oauth-client">Google's OAuth client</a>
+                  <a href="sources#google-oauth-client">Google's OAuth client</a>
                 </td>
               </tr>
               <tr>
                 <td>“Can't reach this page” after approving Google sign-in</td>
                 <td>The browser is on a different machine from the collector</td>
-                <td><a href="/docs/setup#collector">Collector setup</a></td>
+                <td><a href="setup#collector">Collector setup</a></td>
               </tr>
               <tr>
                 <td>A Docker collector cannot complete an OAuth sign-in</td>
                 <td>Something else holds a callback port (3000–3003)</td>
-                <td><a href="/docs/install#docker-limits">Docker limits</a></td>
+                <td><a href="install#docker-limits">Docker limits</a></td>
               </tr>
               <tr>
                 <td>Search finds exact words but not related meaning</td>
                 <td>No embedder assigned, or documents not yet embedded</td>
-                <td>
-                  <a href="#models">Models</a> and <a href="/docs/search#searching">Search</a>
-                </td>
+                <td><a href="#models">Models</a> and <a href="search#searching">Search</a></td>
               </tr>
               <tr>
                 <td>The CLI reports <code>Unauthorized</code> on every command</td>
@@ -1330,17 +1328,17 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               <tr>
                 <td>The phone works at home but not away</td>
                 <td>The gateway is reachable only on the home network</td>
-                <td><a href="/docs/setup#remote-access">Remote access</a></td>
+                <td><a href="setup#remote-access">Remote access</a></td>
               </tr>
               <tr>
                 <td>Phone data (health, location, calls) does not arrive</td>
                 <td>Permissions, background limits, or a stalled upload</td>
-                <td><a href="/docs/apps#delivery">When data doesn't arrive</a></td>
+                <td><a href="apps#delivery">When data doesn't arrive</a></td>
               </tr>
               <tr>
                 <td>Notifications never reach the phone</td>
                 <td>Push transport not configured or not registered</td>
-                <td><a href="/docs/notifications#status">Notification status</a></td>
+                <td><a href="notifications#status">Notification status</a></td>
               </tr>
               <tr>
                 <td>
@@ -1348,20 +1346,18 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
                 <td>It pinned the old certificate's fingerprint</td>
                 <td>
-                  <a href="/docs/security#pinned-clients"
-                    >Clients that pinned the old certificate</a
-                  >
+                  <a href="security#pinned-clients">Clients that pinned the old certificate</a>
                 </td>
               </tr>
               <tr>
                 <td>A collector reports <code>Gateway upgrade required</code></td>
                 <td>The collector is newer than the gateway</td>
-                <td><a href="/docs/updating#updating">Updating</a></td>
+                <td><a href="updating#updating">Updating</a></td>
               </tr>
               <tr>
                 <td>A device shows <em>unsupported</em></td>
                 <td>Its build is older than the gateway supports</td>
-                <td><a href="/docs/updating#compatibility">Version compatibility</a></td>
+                <td><a href="updating#compatibility">Version compatibility</a></td>
               </tr>
             </tbody>
           </table>
@@ -1388,7 +1384,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           the gateway may really use, so it backs off before the system runs out. The in-memory copy
           of the keyword index is not released when memory runs short; on a small host, set
           <code>search.bm25.memoryIndex</code> to <code>false</code> to rank keywords from disk (see
-          <a href="/docs/search#searching">Search</a>).
+          <a href="search#searching">Search</a>).
         </p>
         <p>
           The index is saved as it is built and as it changes, so a gateway that stops or is killed
@@ -1404,7 +1400,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           still shutting down, a duplicate gateway, or a tool with the file open) and a damaged
           block, which DuckDB reports as a key mismatch. Neither is a reason to delete the file: the
           analytics store holds rows no other store can rebuild. Keep it and its <code>.wal</code>,
-          and <a href="/docs/updating#restore">restore from a backup</a> or recover the file.
+          and <a href="updating#restore">restore from a backup</a> or recover the file.
         </p>
         <p>
           A gateway that finds another process owning its configuration directory says so and exits
@@ -1432,7 +1428,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <code>omnesis sources legacy-rows &lt;id&gt;</code> lists, claims or drops the rows of a
           shared analytics table that no account has claimed. Pages captured by the browser
           extension cannot be resynced, because nothing holds their past copies to fetch again. See
-          <a href="/docs/sources#managing-sources">Managing sources</a> for every source action.
+          <a href="sources#managing-sources">Managing sources</a> for every source action.
         </p>
         <p>
           Re-authentication must sign in to the same account; add another account as a separate
@@ -1463,18 +1459,18 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                   <code>trail</code>, <code>people</code>, <code>delete</code>
                 </td>
                 <td>Find and read documents and people</td>
-                <td><a href="/docs/search">Search</a></td>
+                <td><a href="search">Search</a></td>
               </tr>
               <tr>
                 <td><code>sql</code>, <code>analytics</code></td>
                 <td>Query analytics tables</td>
-                <td><a href="/docs/search#sql-over-your-analytics">Search → SQL</a></td>
+                <td><a href="search#sql-over-your-analytics">Search → SQL</a></td>
               </tr>
               <tr>
                 <td><code>edges</code>, <code>graph</code></td>
                 <td>Inspect links between documents</td>
                 <td>
-                  <a href="/docs/search#beyond-search">Search → Beyond search</a>;
+                  <a href="search#beyond-search">Search → Beyond search</a>;
                   <code>--help</code>
                 </td>
               </tr>
@@ -1485,8 +1481,8 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                   capture a note
                 </td>
                 <td>
-                  <a href="/docs/sources#managing-sources">Available sources</a>;
-                  <a href="/docs/sources#adding-without-a-terminal">from a script</a>
+                  <a href="sources#managing-sources">Available sources</a>;
+                  <a href="sources#adding-without-a-terminal">from a script</a>
                 </td>
               </tr>
               <tr>
@@ -1494,19 +1490,19 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                   <code>devices</code>, <code>pair</code>, <code>tokens</code>, <code>whoami</code>
                 </td>
                 <td>Pair, list, revoke and repair devices; manage tokens</td>
-                <td><a href="/docs/setup#tokens">Setup</a></td>
+                <td><a href="setup#tokens">Setup</a></td>
               </tr>
               <tr>
                 <td>
                   <code>connect</code>, <code>access</code>, <code>answer</code>, <code>agent</code>
                 </td>
                 <td>Connect external agents, set access levels, ask through Answer</td>
-                <td><a href="/docs/connect">Agents &amp; MCP</a></td>
+                <td><a href="connect">Agents &amp; MCP</a></td>
               </tr>
               <tr>
                 <td><code>push</code></td>
                 <td>Phone notification credentials and tests</td>
-                <td><a href="/docs/notifications">Notifications</a></td>
+                <td><a href="notifications">Notifications</a></td>
               </tr>
               <tr>
                 <td>
@@ -1532,7 +1528,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               <tr>
                 <td><code>secure</code>, <code>keyring</code>, <code>tls</code></td>
                 <td>Encryption at rest and certificates</td>
-                <td><a href="/docs/security">Security</a></td>
+                <td><a href="security">Security</a></td>
               </tr>
               <tr>
                 <td>
@@ -1540,12 +1536,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                   <code>update</code>
                 </td>
                 <td>Back up, restore, export and update</td>
-                <td><a href="/docs/updating">Backup &amp; updates</a></td>
+                <td><a href="updating">Backup &amp; updates</a></td>
               </tr>
               <tr>
                 <td><code>uninstall</code></td>
                 <td>Remove Omnesis from this machine, all of it or the parts named</td>
-                <td><a href="/docs/install#uninstall">Uninstall</a></td>
+                <td><a href="install#uninstall">Uninstall</a></td>
               </tr>
               <tr>
                 <td><code>gateway</code>, <code>collector</code></td>
@@ -1557,11 +1553,11 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         </div>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/notifications"
+          <a href="notifications"
             ><span class="pager-label">Previous</span
             ><span class="pager-title">Notifications</span></a
           >
-          <a class="pager-next" href="/docs/security"
+          <a class="pager-next" href="security"
             ><span class="pager-label">Next</span><span class="pager-title">Security</span></a
           >
         </nav>
@@ -1577,7 +1573,7 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -1628,6 +1624,6 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

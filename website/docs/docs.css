@@ -840,6 +840,37 @@ pre[data-highlighted] {
   background: none;
 }
 
+/* Which release the docs describe, from the release.json the site build
+   writes beside the pages; docs.js renders it under the page list. */
+.docs-release {
+  margin: 14px 10px 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.docs-release a {
+  display: inline;
+  padding: 0;
+  font-size: inherit;
+  color: var(--text-secondary);
+  text-decoration: underline;
+}
+/* The copy after the content shows only where the sidebar is the page strip. */
+.docs-content .docs-release {
+  display: none;
+  margin: 40px 0 0;
+}
+@media (max-width: 900px) {
+  .docs-sidebar .docs-release {
+    display: none;
+  }
+  .docs-content .docs-release {
+    display: block;
+  }
+}
+
 /* On narrow screens the sidebar becomes a horizontally scrollable strip of
    page links above the content. docs.js scrolls the current page's pill into
    view and renders the page's section anchors as an "On this page" disclosure

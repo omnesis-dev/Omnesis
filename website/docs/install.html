@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,9 +122,9 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
+            <li><a href="./">Overview</a></li>
             <li>
-              <a href="/docs/install" aria-current="page">Install</a>
+              <a href="install" aria-current="page">Install</a>
               <ul class="side-sub">
                 <li><a href="#requirements">Requirements</a></li>
                 <li><a href="#guided-install">Guided install</a></li>
@@ -136,18 +136,18 @@
                 <li><a href="#uninstall">Uninstall</a></li>
               </ul>
             </li>
-            <li><a href="/docs/setup">Setup</a></li>
-            <li><a href="/docs/search">Search</a></li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="setup">Setup</a></li>
+            <li><a href="search">Search</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -207,8 +207,8 @@
           <li>
             <strong>Linux</strong>, amd64 or arm64. Source installs need glibc 2.35 or newer; Docker
             hosts do not. Cloud and cross-platform sources work; the Apple, Things and Screen Time
-            sources need a Mac, which can run a <a href="/docs/setup#collector">collector</a> for a
-            Linux gateway. Local embeddings use a CUDA or Vulkan GPU when one is present and the CPU
+            sources need a Mac, which can run a <a href="setup#collector">collector</a> for a Linux
+            gateway. Local embeddings use a CUDA or Vulkan GPU when one is present and the CPU
             otherwise; <code>OMNESIS_LLAMA_GPU=false</code> forces the CPU.
           </li>
           <li><strong>Windows</strong> is not supported.</li>
@@ -229,7 +229,7 @@
           <p>
             <span class="pill">macOS</span> The Apple sources read local databases, so the collector
             needs Full Disk Access. The installer opens the settings pane for it; you can also grant
-            it later. See <a href="/docs/operating#full-disk-access">Full Disk Access</a>.
+            it later. See <a href="operating#full-disk-access">Full Disk Access</a>.
           </p>
         </div>
 
@@ -299,7 +299,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
             terminal it mints it unasked unless you pass <code>--no-tls</code>. When the tailnet has
             HTTPS certificates switched off, it says so instead of asking.
             <code>--mkcert</code> uses a mkcert certificate instead. Otherwise the gateway keeps its
-            own self-signed certificate. <a href="/docs/setup#certificates">Certificates</a>
+            own self-signed certificate. <a href="setup#certificates">Certificates</a>
             explains what each one means for browsers and phones.
           </li>
           <li>
@@ -336,11 +336,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           certificate, and Claude Code, ChatGPT and the Claude apps cannot connect to it. OpenClaw,
           Hermes and the phone apps work as they are, and Codex works with one setting,
           <code>SSL_CERT_FILE</code>, which the portal shows. With a mkcert certificate, Claude Code
-          and Codex each need a
-          <a href="/docs/connect#trust-certificate">one-time trust setting</a>. ChatGPT and the
-          Claude apps connect from their providers' servers, so they also need the gateway
-          <a href="/docs/connect#tailscale-funnel">published</a>. To move to a Tailscale certificate
-          later, set up Tailscale with MagicDNS and HTTPS certificates, then run
+          and Codex each need a <a href="connect#trust-certificate">one-time trust setting</a>.
+          ChatGPT and the Claude apps connect from their providers' servers, so they also need the
+          gateway <a href="connect#tailscale-funnel">published</a>. To move to a Tailscale
+          certificate later, set up Tailscale with MagicDNS and HTTPS certificates, then run
           <code>omnesis tls provision</code>; on a Docker install, run the installer again.
         </div>
 
@@ -380,7 +379,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
                   the installer never installs it. On a machine that already runs Omnesis, the role
                   uses the CLI that is there and leaves the install and its services as they are.
                   See
-                  <a href="/docs/connect#openclaw-hermes">OpenClaw and Hermes</a>.
+                  <a href="connect#openclaw-hermes">OpenClaw and Hermes</a>.
                 </td>
               </tr>
               <tr>
@@ -422,9 +421,8 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           Leave out <code>--gateway-url</code> and the installer looks for a gateway on the local
           network, shows you what answered and its certificate fingerprint, and asks before pairing.
           If nothing answers, or there is no terminal to confirm with, it stops and asks you to name
-          the gateway.
-          <a href="/docs/setup#collector">Setup → Collector on another machine</a> explains each
-          step and the commands underneath.
+          the gateway. <a href="setup#collector">Setup → Collector on another machine</a> explains
+          each step and the commands underneath.
         </p>
 
         <h3 id="installer-flags">Installer flags</h3>
@@ -475,7 +473,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
                 <td>
                   On a machine this installer already set up from source, run the full install again
                   (certificate, keyring, model, pairing, services) instead of updating the install
-                  in place. See <a href="/docs/updating#update-flags">Updating</a>.
+                  in place. See <a href="updating#update-flags">Updating</a>.
                 </td>
               </tr>
               <tr>
@@ -541,8 +539,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
                   state in <code>/var/lib/omnesis-gateway</code>. The installer prints the root
                   command that does it and does not run it. Refused while a gateway service of yours
                   is registered. <code>--no-hardened</code> keeps the gateway under your account
-                  without asking. See
-                  <a href="/docs/security#hardened-gateway">Hardened gateway</a>.
+                  without asking. See <a href="security#hardened-gateway">Hardened gateway</a>.
                 </td>
               </tr>
               <tr>
@@ -717,7 +714,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           (write it down), and configures the services to use it. An install without encryption at
           rest can add it later with <code>omnesis secure</code>, which backs up, encrypts what is
           on disk and restarts the gateway. See
-          <a href="/docs/security#encryption">Encryption at rest</a>.
+          <a href="security#encryption">Encryption at rest</a>.
         </p>
         <p id="codex-offer">
           <strong>Codex.</strong> The offer appears once an ordinary gateway is healthy, when a
@@ -799,21 +796,21 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         </div>
         <p>
           The CLI on the gateway host needs no login: it uses the gateway's
-          <a href="/docs/#devices-and-tokens">bootstrap admin token</a>. On a Docker install the
-          daemons are containers, so use the <code>docker compose</code> commands under
+          <a href="./#devices-and-tokens">bootstrap admin token</a>. On a Docker install the daemons
+          are containers, so use the <code>docker compose</code> commands under
           <a href="#docker">Docker</a> in place of <code>omnesis service</code>.
         </p>
         <p>
           A phone and a browser are optional. Pair the iOS or Android app by scanning a code from
           <code>omnesis devices pair --kind ios</code> (or <code>--kind android</code>); see
-          <a href="/docs/setup#phones">Setup → Phones</a>. The
+          <a href="setup#phones">Setup → Phones</a>. The
           <a
             href="https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn"
             >Omnesis Browser Capture</a
           >
           extension pairs with <code>omnesis devices pair --kind browser</code> and needs a
           certificate the browser trusts; see
-          <a href="/docs/setup#browser-extension">Setup → Browser extension</a>.
+          <a href="setup#browser-extension">Setup → Browser extension</a>.
         </p>
 
         <h2 id="add-your-first-source">Add your first source</h2>
@@ -834,9 +831,9 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         </p>
         <p>
           In the portal, use <strong>+ Add source</strong> on the Sources page. Adding, pausing and
-          removing sources is covered in
-          <a href="/docs/sources#managing-sources">Managing sources</a>, and the full catalogue,
-          with what each source needs, is on <a href="/docs/sources">Available sources</a>.
+          removing sources is covered in <a href="sources#managing-sources">Managing sources</a>,
+          and the full catalogue, with what each source needs, is on
+          <a href="sources">Available sources</a>.
         </p>
 
         <h2 id="docker">Docker</h2>
@@ -894,7 +891,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           commands act on the containers themselves, which no container can do, so the wrapper runs
           them on the host: <code>update</code>, <code>uninstall</code>, <code>folders share</code>,
           the restart <code>secure</code> needs,
-          <a href="/docs/updating#docker-restore"><code>restore</code></a
+          <a href="updating#docker-restore"><code>restore</code></a
           >, which stops the containers around the restore and starts them again, and
           <code>service</code>, whose <code>start</code>, <code>stop</code>, <code>restart</code>,
           <code>status</code> and <code>logs</code> run their
@@ -928,7 +925,7 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           highest stable release available for every image the stack needs, and records that tag so
           updates and rollbacks are repeatable. <code>OMNESIS_IMAGE_REPO</code> changes the registry
           used for both the lookup and the pull. Updating is
-          <a href="/docs/updating#docker-update"><code>omnesis update</code></a
+          <a href="updating#docker-update"><code>omnesis update</code></a
           >, as on any other install.
         </p>
         <p>
@@ -1139,12 +1136,12 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         <p>
           Persist the <em>entire</em> config directory: all databases and sidecars, attachments,
           source caches, credentials, tokens, TLS keys/certificates, sealed keyring, configuration
-          and Compose metadata. The optional
-          <a href="/docs/updating#backup">backup command</a> captures the gateway's data; filesystem
-          snapshots require both daemons to be stopped for consistency. Separately mounted
-          passphrase files and supplied TLS material live outside that directory. A passphrase
-          stored beside encrypted data protects neither against theft of that complete directory nor
-          a host administrator. Losing both unlock and recovery material loses encrypted data.
+          and Compose metadata. The optional <a href="updating#backup">backup command</a> captures
+          the gateway's data; filesystem snapshots require both daemons to be stopped for
+          consistency. Separately mounted passphrase files and supplied TLS material live outside
+          that directory. A passphrase stored beside encrypted data protects neither against theft
+          of that complete directory nor a host administrator. Losing both unlock and recovery
+          material loses encrypted data.
         </p>
         <p>
           Tailscale can run on the Docker host (including the Unraid host); no privileged VPN
@@ -1302,9 +1299,9 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           Without a terminal there is nobody to offer the share to: the add fails, naming the
           <code>omnesis folders share</code> command to run. Share the folder first, then add the
           source with its settings as flags (see
-          <a href="/docs/sources#adding-without-a-terminal">adding a source from a script</a>).
-          Sharing recreates the collector's container (on <code>--combined</code>, the gateway's
-          too) and returns once it is back; the add waits for the collector to reconnect.
+          <a href="sources#adding-without-a-terminal">adding a source from a script</a>). Sharing
+          recreates the collector's container (on <code>--combined</code>, the gateway's too) and
+          returns once it is back; the add waits for the collector to reconnect.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1326,7 +1323,7 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
         <p>
           Under Docker the gateway serves its own self-signed certificate unless it is given one.
           That is enough for the CLI, the phone apps and collectors. It is not enough for browsers
-          or the <a href="/docs/setup#browser-extension">browser extension</a>, which cannot connect
+          or the <a href="setup#browser-extension">browser extension</a>, which cannot connect
           through it at all. The container cannot reach the host's Tailscale daemon, so the
           installer issues the certificate on the host, the machine that runs Docker, as it does for
           a native install:
@@ -1361,16 +1358,16 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           </li>
         </ul>
         <p>
-          The host needs what a <a href="/docs/setup#certificates">native install</a> needs: it has
-          joined the tailnet, with MagicDNS and HTTPS certificates turned on in the admin console.
-          When HTTPS certificates are off, the installer says so and keeps the self-signed
-          certificate. On Linux, <code>tailscale cert</code> needs your user to be the machine's
-          Tailscale operator; the installer asks <code>sudo</code> for that permission, which
-          changes nothing on the tailnet. Without Tailscale, or when you decline, the closing banner
-          warns that browsers and the extension cannot connect, and names the re-run that fixes it.
-          The installer refuses <code>--mkcert</code> under <code>--docker</code>, because the
-          container cannot install a mkcert authority in your browser. To use your own certificate
-          instead, issue it on the host and hand it over, as below.
+          The host needs what a <a href="setup#certificates">native install</a> needs: it has joined
+          the tailnet, with MagicDNS and HTTPS certificates turned on in the admin console. When
+          HTTPS certificates are off, the installer says so and keeps the self-signed certificate.
+          On Linux, <code>tailscale cert</code> needs your user to be the machine's Tailscale
+          operator; the installer asks <code>sudo</code> for that permission, which changes nothing
+          on the tailnet. Without Tailscale, or when you decline, the closing banner warns that
+          browsers and the extension cannot connect, and names the re-run that fixes it. The
+          installer refuses <code>--mkcert</code> under <code>--docker</code>, because the container
+          cannot install a mkcert authority in your browser. To use your own certificate instead,
+          issue it on the host and hand it over, as below.
         </p>
         <p>
           The self-signed certificate covers <code>localhost</code>, the gateway's mDNS names, the
@@ -1489,7 +1486,7 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           without the flags keeps the certificate it recorded. Handing over a certificate of your
           own removes the Tailscale renewal job an earlier run registered. What a renewal means for
           paired clients is in
-          <a href="/docs/security#pinned-clients">Clients that pinned the old certificate</a>.
+          <a href="security#pinned-clients">Clients that pinned the old certificate</a>.
         </p>
 
         <h3 id="docker-limits">What a container cannot do</h3>
@@ -1525,7 +1522,7 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
             at <code>~/.config/omnesis/keyring.pass</code>, and the containers read it at start.
             Keep that file; without it the data cannot be opened. An install without encryption at
             rest adds it later with <code>omnesis secure</code> on the same machine (see
-            <a href="/docs/security#encryption-docker">Encryption in Docker</a>).
+            <a href="security#encryption-docker">Encryption in Docker</a>).
           </li>
           <li>
             <strong>The OAuth callback ports stay published.</strong> A provider redirects your
@@ -1639,8 +1636,8 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
                 <td><code>gateway</code></td>
                 <td>
                   The gateway service: the systemd user unit or LaunchAgent, a
-                  <a href="/docs/security#hardened-gateway">hardened gateway</a> (its service,
-                  releases and admin command, through <code>sudo</code>), or a Docker install.
+                  <a href="security#hardened-gateway">hardened gateway</a> (its service, releases
+                  and admin command, through <code>sudo</code>), or a Docker install.
                 </td>
               </tr>
               <tr>
@@ -1733,10 +1730,10 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           <li>
             On a second machine, remove its device from the gateway as well. For a collector, first
             move or detach the sources it hosts (see
-            <a href="/docs/sources#managing-sources">Managing sources</a>); then, on the gateway
-            host, run <code>omnesis devices revoke &lt;device&gt; --forget</code>; the uninstall
-            prints the device's name. Revoking a harness machine's device also signs its agent out
-            of its connection.
+            <a href="sources#managing-sources">Managing sources</a>); then, on the gateway host, run
+            <code>omnesis devices revoke &lt;device&gt; --forget</code>; the uninstall prints the
+            device's name. Revoking a harness machine's device also signs its agent out of its
+            connection.
           </li>
           <li>Restart OpenClaw or Hermes so the running harness stops loading the plugin.</li>
           <li>
@@ -1750,10 +1747,10 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           </li>
         </ul>
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/"
+          <a href="./"
             ><span class="pager-label">Previous</span><span class="pager-title">Overview</span></a
           >
-          <a class="pager-next" href="/docs/setup"
+          <a class="pager-next" href="setup"
             ><span class="pager-label">Next</span><span class="pager-title">Setup</span></a
           >
         </nav>
@@ -1769,7 +1766,7 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -1820,6 +1817,6 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>

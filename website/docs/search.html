@@ -50,7 +50,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/docs/docs.css" />
+    <link rel="stylesheet" href="docs.css" />
     <link rel="stylesheet" href="/footer-social.css" />
   </head>
   <body>
@@ -64,7 +64,7 @@
         <div class="nav-right">
           <ul class="nav-links">
             <li><a href="/">Context Layer</a></li>
-            <li><a href="/docs/" aria-current="page">Docs</a></li>
+            <li><a href="./" aria-current="page">Docs</a></li>
             <li><a href="/blog/">Blog</a></li>
           </ul>
           <a
@@ -122,11 +122,11 @@
       <aside class="docs-sidebar">
         <nav aria-label="Documentation">
           <ul class="side-pages">
-            <li><a href="/docs/">Overview</a></li>
-            <li><a href="/docs/install">Install</a></li>
-            <li><a href="/docs/setup">Setup</a></li>
+            <li><a href="./">Overview</a></li>
+            <li><a href="install">Install</a></li>
+            <li><a href="setup">Setup</a></li>
             <li>
-              <a href="/docs/search" aria-current="page">Search</a>
+              <a href="search" aria-current="page">Search</a>
               <ul class="side-sub">
                 <li><a href="#searching">Searching</a></li>
                 <li><a href="#query-syntax">Query syntax</a></li>
@@ -135,16 +135,16 @@
                 <li><a href="#from-your-own-tools">Your own tools</a></li>
               </ul>
             </li>
-            <li><a href="/docs/agent">The agent</a></li>
-            <li><a href="/docs/connect">Agents &amp; MCP</a></li>
-            <li><a href="/docs/apps">Mobile apps</a></li>
-            <li><a href="/docs/notifications">Notifications</a></li>
-            <li><a href="/docs/operating">Operating</a></li>
-            <li><a href="/docs/security">Security</a></li>
-            <li><a href="/docs/updating">Backup &amp; updates</a></li>
-            <li><a href="/docs/sources">Available sources</a></li>
-            <li><a href="/docs/building-sources">Building sources</a></li>
-            <li><a href="/docs/experimental">Experimental</a></li>
+            <li><a href="agent">The agent</a></li>
+            <li><a href="connect">Agents &amp; MCP</a></li>
+            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="notifications">Notifications</a></li>
+            <li><a href="operating">Operating</a></li>
+            <li><a href="security">Security</a></li>
+            <li><a href="updating">Backup &amp; updates</a></li>
+            <li><a href="sources">Available sources</a></li>
+            <li><a href="building-sources">Building sources</a></li>
+            <li><a href="experimental">Experimental</a></li>
           </ul>
         </nav>
       </aside>
@@ -156,8 +156,8 @@
           This page is for anyone looking something up in their own corpus: how a search is ranked,
           the filters you can type into a query, the commands that read, trace and delete what you
           find, and read-only SQL over structured data. The same search runs in the portal, the CLI
-          and the <a href="/docs/apps">mobile apps</a>; <a href="/docs/agent">the agent</a> uses it
-          too when it answers a question.
+          and the <a href="apps">mobile apps</a>; <a href="agent">the agent</a> uses it too when it
+          answers a question.
         </p>
 
         <h2 id="searching">Searching</h2>
@@ -258,11 +258,11 @@
         <p>
           Filters restrict every lane before anything is ranked. The ranking settings, including
           <code>search.boosts.typeBoosts</code>, are described under
-          <a href="/docs/operating#configuration">Operating → Configuration</a>.
+          <a href="operating#configuration">Operating → Configuration</a>.
         </p>
         <p>
           The semantic lane needs an embedder assigned (see
-          <a href="/docs/operating#models">Operating → Models</a>) and chunks that have already been
+          <a href="operating#models">Operating → Models</a>) and chunks that have already been
           embedded. Documents are indexed for keyword search even without an embedding model. Until
           both hold, keyword matching alone carries queries, and meaning-aware ranking joins in for
           each document as its vectors land. There is nothing to switch on; the pipeline uses
@@ -271,7 +271,7 @@
           available. Search responses report the active embedding model as assignments change,
           without requiring a gateway restart. The semantic lane also stays off while the vector
           index does not fit in the gateway's memory budget; see
-          <a href="/docs/operating#memory">Semantic search is degraded</a>.
+          <a href="operating#memory">Semantic search is degraded</a>.
         </p>
         <p>
           A query made only of filters, with no free text (<code>from:maya type:email</code>), skips
@@ -436,7 +436,7 @@
         <p>
           Once resolved, every identity merged into that person counts: Omnesis merges identities
           across sources into one person (see
-          <a href="/docs/#people-and-reference-graphs">People &amp; graphs</a>), so
+          <a href="./#people-and-reference-graphs">People &amp; graphs</a>), so
           <code>from:"Maya Reeves"</code> finds her whether a document carries her work email, her
           personal address, or her phone number. A value that matches no one is reported as a notice
           (visible with <code>--json</code>). Repeating a person filter widens it (<code
@@ -570,7 +570,7 @@ Messages  12.9</pre>
           gateway's own database instance, whose access to the filesystem is switched off, so SQL
           can inspect your data but never modify it or reach outside the database. Which tables
           exist depends on which
-          <a href="/docs/sources">sources</a> you have connected.
+          <a href="sources">sources</a> you have connected.
         </p>
         <p>
           A timestamp stored with its zone comes back as a UTC instant
@@ -582,10 +582,10 @@ Messages  12.9</pre>
         <p>
           Everything on this page is a thin client over the gateway's authenticated HTTPS API. The
           portal, the CLI and the apps all call the same endpoints, and so can any script holding a
-          token; <a href="/docs/setup#tokens">Setup → Tokens</a> covers minting one with
+          token; <a href="setup#tokens">Setup → Tokens</a> covers minting one with
           <code>omnesis tokens create</code> and choosing its scopes. To let an AI tool such as
           Claude or ChatGPT search your corpus, connect it over MCP instead: see
-          <a href="/docs/connect">Agents &amp; MCP</a>. The full command list is in
+          <a href="connect">Agents &amp; MCP</a>. The full command list is in
           <code>omnesis --help</code>.
         </p>
         <p>
@@ -606,10 +606,10 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/graph/walk" \
         </div>
 
         <nav class="docs-pager" aria-label="Pages">
-          <a href="/docs/setup"
+          <a href="setup"
             ><span class="pager-label">Previous</span><span class="pager-title">Setup</span></a
           >
-          <a class="pager-next" href="/docs/agent"
+          <a class="pager-next" href="agent"
             ><span class="pager-label">Next</span><span class="pager-title">The agent</span></a
           >
         </nav>
@@ -625,7 +625,7 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/graph/walk" \
           </div>
           <nav class="footer-links" aria-label="Footer">
             <a href="/blog/">Blog</a>
-            <a href="/docs/">Docs</a>
+            <a href="./">Docs</a>
             <a href="/privacy">Privacy</a>
             <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
               >Contributing</a
@@ -676,6 +676,6 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/graph/walk" \
       </div>
     </footer>
 
-    <script src="/docs/docs.js"></script>
+    <script src="docs.js"></script>
   </body>
 </html>
