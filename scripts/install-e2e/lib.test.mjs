@@ -80,3 +80,77 @@ describe("install probe token diagnostics", () => {
     }
   });
 });
+
+/** A launcher whose `doctor --json` prints the given reports in turn, then the last again. */
+function doctorFixture(reports) {
+  const root = mkdtempSync(join(tmpdir(), "install-doctor-"));
+  const bin = join(root, ".local/bin");
+  mkdirSync(bin, { recursive: true });
+  reports.forEach((report, i) => writeFileSync(join(root, `report-${i}.json`), report));
+  writeFileSync(
+    join(bin, "omnesis"),
+    `#!/bin/bash
+n=$(cat "${root}/count" 2>/dev/null || echo 0)
+echo $((n + 1)) > "${root}/count"
+last=${reports.length - 1}
+[ "$n" -gt "$last" ] && n=$last
+cat "${root}/report-$n.json"
+`,
+    { mode: 0o700 },
+  );
+  const out = join(root, "doctor.json");
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      'set -e; source "$1"; sleep() { :; }; doctor_json "$2"',
+      "fixture",
+      resolve("scripts/install-e2e/lib.sh"),
+      out,
+    ],
+    { env: { ...process.env, HOME: root, E2E_WORK: join(root, "work") }, encoding: "utf8" },
+  );
+  const reads = Number(readFileSync(join(root, "count"), "utf8"));
+  return { root, out, reads, result };
+}
+
+const report = (...ids) => JSON.stringify({ checks: ids.map(([id, status]) => ({ id, status })) });
+
+describe("doctor reports in snapshots", () => {
+  it("reads the doctor again until no section is unread", () => {
+    const fixture = doctorFixture([
+      "",
+      report(["index.unavailable", "warn"], ["service.gateway", "pass"]),
+      report(["index.model", "fail"], ["service.gateway", "pass"]),
+    ]);
+    try {
+      expect(fixture.result.status).toBe(0);
+      expect(fixture.reads).toBe(3);
+      expect(JSON.parse(readFileSync(fixture.out, "utf8")).checks[0].id).toBe("index.model");
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a complete first report without reading again", () => {
+    const fixture = doctorFixture([report(["index.model", "fail"])]);
+    try {
+      expect(fixture.reads).toBe(1);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("gives up after three reads and says which sections stayed unread", () => {
+    const fixture = doctorFixture([report(["models.unavailable", "warn"])]);
+    try {
+      expect(fixture.result.status).toBe(0);
+      expect(fixture.reads).toBe(3);
+      expect(fixture.result.stdout).toContain(
+        "doctor could not read every section: models.unavailable",
+      );
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+});

@@ -40,6 +40,12 @@ elif [ -f "$E2E_WORK/gateway-url" ]; then
   section "health" curl -sS --max-time 10 "$GATEWAY_URL/health"
 fi
 [ ! -f "$E2E_WORK/mailbox.log" ] || section "mailbox log" cat "$E2E_WORK/mailbox.log"
+# Each snapshot's doctor verdicts, by check id and status only.
+for report in "$E2E_WORK"/*.doctor.json; do
+  [ -f "$report" ] || continue
+  section "doctor $(basename "$report" .doctor.json)" \
+    json_get "$report" 'j.checks.filter((c) => c.status !== "pass").map((c) => `${c.status} ${c.id}`).join("\n")'
+done
 section "gateway log" "$OMNESIS" service logs gateway --lines 200
 section "collector log" "$OMNESIS" service logs collector --lines 120
 case "$(uname -s)" in
