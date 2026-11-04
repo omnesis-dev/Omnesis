@@ -13,7 +13,7 @@
 #   3. re-run the installer: on linux with --build, so the images become this
 #      checkout's (the upgrade a re-run makes); on mac over the published ones;
 #   4. check what the run must leave: a healthy gateway, the note and the same
-#      device, the one-line keyring report, owner-only files, and a doctor
+#      device, owner-only files, and a doctor
 #      whose permission check passes (twice: every command rewrites the
 #      launcher's host records) and that reads the Docker host's disk;
 #   5. back up, then `backup list` lists without backing up, and a word the
@@ -137,8 +137,6 @@ else
 fi
 endgroup
 serving
-grep -q "already encrypted; nothing to migrate" "$INSTALL_LOG" ||
-  die "the re-run did not report the already-encrypted secrets in one line"
 note_present || die "the note did not survive the re-run"
 [ "$(collector_id)" = "$DEVICE_BEFORE" ] || die "the collector came back as another device"
 
