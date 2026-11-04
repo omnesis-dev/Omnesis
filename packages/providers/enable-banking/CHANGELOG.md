@@ -1,5 +1,14 @@
 # @omnesis/provider-enable-banking
 
+## 0.7.6
+
+### Patch Changes
+
+- Updated dependencies [e0f83b3]
+  - @omnesis/core@0.7.6
+  - @omnesis/source-sdk@0.7.6
+  - @omnesis/types@0.7.6
+
 ## 0.7.5
 
 ### Patch Changes

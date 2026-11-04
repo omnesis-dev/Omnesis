@@ -1,5 +1,21 @@
 # @omnesis/gateway
 
+## 0.7.6
+
+### Patch Changes
+
+- On a machine with less than 16 GB of memory, the gateway now starts fewer worker threads, sized to its memory budget (`gateway.memoryLimitMb`, else the container's memory limit, else the machine's memory). An empty gateway used to reach about 3.5 GiB, and on a small machine without swap it could stall for seconds at a time and take minutes to answer. On a 7 GB machine its io, search and cpu pools now start 2, 1 and 1 workers instead of 6, 3 and 2. Machines with 16 GB or more keep their previous sizes, and an explicit `gateway.ioConcurrency`, `gateway.searchWorker.concurrency` or `gateway.cpuConcurrency` still wins.
+- Updated dependencies [e0f83b3]
+- Updated dependencies
+  - @omnesis/core@0.7.6
+  - @omnesis/config@0.7.6
+  - @omnesis/agent@0.7.6
+  - @omnesis/near-dupes@0.7.6
+  - @omnesis/provider-web@0.7.6
+  - @omnesis/source-sdk@0.7.6
+  - @omnesis/types@0.7.6
+  - @omnesis/watch@0.7.6
+
 ## 0.7.5
 
 ### Patch Changes
