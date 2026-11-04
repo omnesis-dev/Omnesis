@@ -6,11 +6,13 @@ import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { google } from "googleapis";
 import { SyncError } from "@omnesis/types";
 import { createMockGmail, createGmailSource, makeGmailMessage } from "./testing/mock-google.js";
-import { GmailSource, GMAIL_RETRY_CONFIG, type GmailSyncCursor } from "./gmail.js";
+import { GmailSource, GMAIL_RETRY_CONFIG, gmailQuotaPacer, type GmailSyncCursor } from "./gmail.js";
 import { QuotaPacer } from "./quota-pacer.js";
 import {
   GMAIL_PAGE_SIZE,
   GMAIL_QUOTA_BURST_UNITS,
+  GMAIL_QUOTA_FLOOR_UNITS_PER_MINUTE,
+  GMAIL_QUOTA_QUIET_PERIOD_MS,
   GMAIL_QUOTA_UNITS,
   GMAIL_QUOTA_UNITS_PER_MINUTE,
   GOOGLE_RATE_LIMIT_MAX_DELAY_MS,
@@ -175,8 +177,8 @@ describe("Gmail quota pacing", () => {
       GMAIL_QUOTA_UNITS_PER_MINUTE + GMAIL_QUOTA_BURST_UNITS,
     );
     expect(busiestWindow(spend, 60_000)).toBeLessThan(6_000);
-    // Paced, not stalled: roughly 5,400 units a minute at 80 units a message.
-    expect(fetched).toBeGreaterThan(150);
+    // Paced, not stalled: roughly 4,000 units a minute at 80 units a message.
+    expect(fetched).toBeGreaterThan(140);
   });
 
   test("a rate limit stops the sync's queued requests from being sent", async () => {
@@ -385,25 +387,6 @@ describe("Gmail rate-limit back-off", () => {
     ]);
   });
 
-  test("a sync that lands resets the back-off", async () => {
-    const gmail = createMockGmail();
-    gmail.users.getProfile = vi
-      .fn()
-      .mockRejectedValueOnce(rateLimited())
-      .mockRejectedValueOnce(rateLimited())
-      .mockResolvedValueOnce({ data: { messagesTotal: 0, historyId: "h-1" } })
-      .mockResolvedValueOnce({ data: { messagesTotal: 0, historyId: "h-1" } })
-      .mockRejectedValue(rateLimited());
-    const source = createGmailSource(gmail);
-
-    const retryAfter = async () =>
-      ((await source.sync(null).catch((e: unknown) => e)) as SyncError).retryAfterMs;
-    expect(await retryAfter()).toBe(60_000);
-    expect(await retryAfter()).toBe(120_000);
-    await expect(source.sync(null)).resolves.toMatchObject({ hasMore: false });
-    expect(await retryAfter()).toBe(60_000);
-  });
-
   test.each(["userRateLimitExceeded", "rateLimitExceeded"])(
     "a 403 %s is a rate limit with the same back-off",
     async (reason) => {
@@ -450,6 +433,248 @@ describe("Gmail rate-limit back-off", () => {
     const error = (await source.sync(null).catch((e: unknown) => e)) as SyncError;
 
     expect(error.retryAfterMs).toBe(90_000);
+  });
+});
+
+describe("Gmail rate-limit back-off across pages", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-02T09:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A mailbox whose message fetches are refused while `refuse` is set. */
+  function refusableSource() {
+    const gmail = createMockGmail();
+    gmail.users.getProfile = vi.fn(() =>
+      Promise.resolve({ data: { messagesTotal: 1_000, historyId: "h-1" } }),
+    );
+    gmail.users.messages.list = pagedMailbox(mailbox(1_000));
+    let refuse = false;
+    gmail.users.messages.get = vi.fn((params: { id: string }) =>
+      refuse
+        ? Promise.reject(rateLimited())
+        : Promise.resolve({ data: makeGmailMessage(params.id) }),
+    );
+    const source = createGmailSource(gmail);
+    let cursor: GmailSyncCursor | null = null;
+    return {
+      /** Sync one page that lands. */
+      land: async () => {
+        refuse = false;
+        const result = await source.sync(cursor);
+        expect(result.documents.length).toBeGreaterThan(0);
+        cursor = result.cursor as GmailSyncCursor;
+      },
+      /** Sync one page that Google refuses, and return the wait it asks for. */
+      refused: async () => {
+        refuse = true;
+        const error = (await source.sync(cursor).catch((e: unknown) => e)) as SyncError;
+        refuse = false;
+        expect(error.kind).toBe("rate-limit");
+        return error.retryAfterMs;
+      },
+    };
+  }
+
+  /** The host's interval between ticks, which a short rate-limit wait never undercuts. */
+  const TICK_MS = 5 * 60_000;
+
+  test("the back-off keeps doubling while pages land between rate limits", async () => {
+    const mail = refusableSource();
+    await mail.land();
+
+    const delays: Array<number | undefined> = [];
+    for (let i = 0; i < 5; i++) {
+      delays.push(await mail.refused());
+      await vi.advanceTimersByTimeAsync(TICK_MS);
+      await mail.land();
+      await mail.land();
+    }
+
+    expect(delays).toEqual([60_000, 120_000, 240_000, 480_000, 960_000]);
+  });
+
+  test("a sync that lands a quiet period after the last rate limit resets the back-off", async () => {
+    const mail = refusableSource();
+    expect(await mail.refused()).toBe(60_000);
+    await vi.advanceTimersByTimeAsync(TICK_MS);
+    await mail.land();
+    expect(await mail.refused()).toBe(120_000);
+
+    await vi.advanceTimersByTimeAsync(GMAIL_QUOTA_QUIET_PERIOD_MS - 1);
+    await mail.land();
+    expect(await mail.refused(), "a sync landing inside the quiet period").toBe(240_000);
+
+    await vi.advanceTimersByTimeAsync(GMAIL_QUOTA_QUIET_PERIOD_MS);
+    expect(await mail.refused(), "a quiet period with no sync that landed").toBe(480_000);
+
+    await vi.advanceTimersByTimeAsync(GMAIL_QUOTA_QUIET_PERIOD_MS);
+    await mail.land();
+    expect(await mail.refused()).toBe(60_000);
+  });
+});
+
+describe("Gmail adaptive pace", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-02T09:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("a rate limit slows the pace once per sync, however many requests in flight it refuses", async () => {
+    const gmail = createMockGmail();
+    gmail.users.messages.list = pagedMailbox(mailbox(25));
+    gmail.users.messages.get = vi.fn(
+      () => new Promise((_, reject) => setTimeout(() => reject(rateLimited()), 10)),
+    );
+    const quota = gmailQuotaPacer();
+    const source = createGmailSource(gmail, { quota });
+
+    const error = await settle(source.sync(null)).catch((e: unknown) => e);
+
+    expect((error as SyncError).kind).toBe("rate-limit");
+    expect(gmail.users.messages.get.mock.calls.length).toBeGreaterThan(1);
+    expect(quota.unitsPerMinute).toBe(GMAIL_QUOTA_UNITS_PER_MINUTE * 0.75);
+  });
+
+  /**
+   * Gmail's per-user quota, shared with another client of the same account
+   * that spends `neighbourPerMinute` steadily: a request is refused when it
+   * would take the units spent in the last minute past the limit. Refused
+   * requests spend nothing.
+   */
+  function sharedQuotaMailbox(neighbourPerMinute: number) {
+    const LIMIT = 6_000;
+    const startedAt = Date.now();
+    const spent: Array<{ at: number; units: number }> = [];
+    const refusedAt: number[] = [];
+    const charge = <T>(units: number, answer: () => T): Promise<T> => {
+      const now = Date.now();
+      while (spent.length > 0 && spent[0]!.at <= now - 60_000) spent.shift();
+      const ours = spent.reduce((sum, s) => sum + s.units, 0);
+      if (ours + units + neighbourPerMinute > LIMIT) {
+        refusedAt.push(now - startedAt);
+        return Promise.reject(rateLimited(429, "rateLimitExceeded"));
+      }
+      spent.push({ at: now, units });
+      return Promise.resolve(answer());
+    };
+    const gmail = createMockGmail();
+    const listing = pagedMailbox(mailbox(50_000, "n"));
+    gmail.users.getProfile = vi.fn(() =>
+      charge(GMAIL_QUOTA_UNITS.getProfile, () => ({
+        data: { messagesTotal: 50_000, historyId: "h-1" },
+      })),
+    );
+    gmail.users.labels.list = vi.fn(() =>
+      charge(GMAIL_QUOTA_UNITS.labelsList, () => ({ data: { labels: [] } })),
+    );
+    gmail.users.messages.list = vi.fn((params: { pageToken?: string; maxResults?: number }) =>
+      charge(GMAIL_QUOTA_UNITS.messagesList, () => listing(params)).then((page) => page),
+    );
+    gmail.users.messages.get = vi.fn((params: { id: string }) =>
+      charge(GMAIL_QUOTA_UNITS.messagesGetFull, () => ({ data: makeGmailMessage(params.id) })),
+    );
+    return { gmail, refusedAt };
+  }
+
+  /** Advance fake time in whole seconds until `promise` settles. */
+  async function settleCoarse<T>(promise: Promise<T>): Promise<T> {
+    let done = false;
+    promise.then(
+      () => (done = true),
+      () => (done = true),
+    );
+    while (!done) await vi.advanceTimersByTimeAsync(1_000);
+    return promise;
+  }
+
+  /**
+   * Drive the source the way the collector does: pages back to back while
+   * the source says there are more, then the 5-minute interval, or the rate
+   * limit's wait when it is longer.
+   */
+  async function host(source: GmailSource, quota: QuotaPacer, forMs: number) {
+    const startedAt = Date.now();
+    const paces: Array<{ at: number; pace: number }> = [];
+    let cursor: GmailSyncCursor | null = null;
+    let fetched = 0;
+    while (Date.now() - startedAt < forMs) {
+      let waitMs = 5 * 60_000;
+      try {
+        for (;;) {
+          const result = await settleCoarse(source.sync(cursor));
+          fetched += result.documents.length;
+          cursor = result.cursor as GmailSyncCursor;
+          paces.push({ at: Date.now() - startedAt, pace: quota.unitsPerMinute });
+          if (!result.hasMore) break;
+        }
+      } catch (error: unknown) {
+        expect((error as SyncError).kind).toBe("rate-limit");
+        paces.push({ at: Date.now() - startedAt, pace: quota.unitsPerMinute });
+        waitMs = Math.max(waitMs, (error as SyncError).retryAfterMs ?? 0);
+      }
+      await vi.advanceTimersByTimeAsync(waitMs);
+    }
+    return { paces, fetched };
+  }
+
+  const NEIGHBOUR = 2_600;
+  const LEFT = 6_000 - NEIGHBOUR;
+  const RUN_MS = 180 * 60_000;
+  const HOUR = 60 * 60_000;
+
+  test("a source sharing the quota with another client settles under what is left and stops being refused", async () => {
+    const { gmail, refusedAt } = sharedQuotaMailbox(NEIGHBOUR);
+    const quota = gmailQuotaPacer();
+    const source = createGmailSource(gmail, { quota });
+
+    const { paces, fetched } = await host(source, quota, RUN_MS);
+
+    expect(refusedAt[0], "the ceiling is more than the neighbour leaves").toBeLessThan(2 * 60_000);
+    // The longest stretch without a refusal is over an hour, and for the
+    // hour it holds the pace a step under the one refused, so under what the
+    // neighbour leaves; after it, the pace probes upwards again.
+    const bounds = [...refusedAt, RUN_MS];
+    let quietest = { from: 0, to: 0 };
+    for (let i = 1; i < bounds.length; i++) {
+      if (bounds[i]! - bounds[i - 1]! > quietest.to - quietest.from) {
+        quietest = { from: bounds[i - 1]!, to: bounds[i]! };
+      }
+    }
+    expect(quietest.to - quietest.from).toBeGreaterThan(HOUR);
+    const held = paces.filter((p) => p.at > quietest.from && p.at < quietest.from + HOUR);
+    expect(held.length).toBeGreaterThan(0);
+    for (const { pace } of held) expect(pace).toBeLessThan(LEFT);
+    // Once settled, the source meets the limit at most once an hour, when it
+    // probes for room the neighbour may have left.
+    expect(refusedAt.filter((at) => at >= HOUR).length).toBeLessThanOrEqual(2);
+    for (const { pace } of paces)
+      expect(pace).toBeGreaterThanOrEqual(GMAIL_QUOTA_FLOOR_UNITS_PER_MINUTE);
+    // Near what is left, not crushed to the floor: about 3,000 units a minute
+    // is 49 messages, for 20 minutes of every 25, less the refusals.
+    expect(fetched).toBeGreaterThan(6_000);
+  });
+
+  test("without the adaptive pace the same neighbour refuses the source all along", async () => {
+    const { gmail, refusedAt } = sharedQuotaMailbox(NEIGHBOUR);
+    const quota = new QuotaPacer({
+      unitsPerMinute: GMAIL_QUOTA_UNITS_PER_MINUTE,
+      burstUnits: GMAIL_QUOTA_BURST_UNITS,
+    });
+    const source = createGmailSource(gmail, { quota });
+
+    const { fetched } = await host(source, quota, RUN_MS);
+
+    expect(refusedAt.filter((at) => at >= HOUR).length).toBeGreaterThan(10);
+    expect(fetched).toBeLessThan(2_000);
   });
 });
 

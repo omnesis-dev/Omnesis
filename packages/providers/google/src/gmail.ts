@@ -40,6 +40,11 @@ import {
   GMAIL_QUOTA_UNITS,
   GMAIL_QUOTA_UNITS_PER_MINUTE,
   GMAIL_QUOTA_BURST_UNITS,
+  GMAIL_QUOTA_FLOOR_UNITS_PER_MINUTE,
+  GMAIL_QUOTA_DECREASE_FACTOR,
+  GMAIL_QUOTA_INCREASE_UNITS_PER_MINUTE,
+  GMAIL_QUOTA_QUIET_PERIOD_MS,
+  GMAIL_QUOTA_HOLD_MS,
   type GmailRequest,
 } from "./constants.js";
 import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
@@ -272,6 +277,21 @@ export const GMAIL_RETRY_CONFIG = {
   ],
 };
 
+/** The pacer an account's Gmail source spends its per-user quota through. */
+export function gmailQuotaPacer(): QuotaPacer {
+  return new QuotaPacer({
+    unitsPerMinute: GMAIL_QUOTA_UNITS_PER_MINUTE,
+    burstUnits: GMAIL_QUOTA_BURST_UNITS,
+    adaptive: {
+      floorUnitsPerMinute: GMAIL_QUOTA_FLOOR_UNITS_PER_MINUTE,
+      decreaseFactor: GMAIL_QUOTA_DECREASE_FACTOR,
+      increaseUnitsPerMinute: GMAIL_QUOTA_INCREASE_UNITS_PER_MINUTE,
+      quietMs: GMAIL_QUOTA_QUIET_PERIOD_MS,
+      holdMs: GMAIL_QUOTA_HOLD_MS,
+    },
+  });
+}
+
 /** Whether a Google API failure is a rate limit. */
 function isRateLimit(err: unknown): boolean {
   return mapGoogleApiError(err).kind === "rate-limit";
@@ -349,8 +369,15 @@ export class GmailSource {
    * a halted one stays halted.
    */
   private attempt: { rateLimitedBy?: unknown } = {};
-  /** Syncs in a row that ended on a rate limit; the back-off grows with it. */
+  /**
+   * Rate-limited syncs since the last quiet period; the back-off grows with
+   * it. Every page is its own sync, so a page landing between two rate limits
+   * does not reset it: only a sync that lands a quiet period after the last
+   * rate limit does.
+   */
   private consecutiveRateLimits = 0;
+  /** When a sync last ended on a rate limit. */
+  private lastRateLimitAt: number | undefined;
   /**
    * Messages fetched for a bootstrap page that did not land. A rate limit
    * part-way through a page fails the page, and the next sync lists the same
@@ -370,12 +397,7 @@ export class GmailSource {
     opts?: GmailSourceOptions,
   ) {
     this.gmail = google.gmail({ version: "v1", auth, retryConfig: GMAIL_RETRY_CONFIG });
-    this.quota =
-      opts?.quota ??
-      new QuotaPacer({
-        unitsPerMinute: GMAIL_QUOTA_UNITS_PER_MINUTE,
-        burstUnits: GMAIL_QUOTA_BURST_UNITS,
-      });
+    this.quota = opts?.quota ?? gmailQuotaPacer();
     this.id = SourceId(accountId ? `gmail:${accountId}` : "gmail");
     this.providerId = ProviderId(accountId ? `google:${accountId}` : "google");
     this.accountEmail = accountId;
@@ -462,7 +484,12 @@ export class GmailSource {
         result.hasMore = false;
       }
       if (!result.hasMore) this.budget = undefined;
-      this.consecutiveRateLimits = 0;
+      if (
+        this.lastRateLimitAt === undefined ||
+        Date.now() - this.lastRateLimitAt >= GMAIL_QUOTA_QUIET_PERIOD_MS
+      ) {
+        this.consecutiveRateLimits = 0;
+      }
       this.carried.clear();
       return result;
     } catch (error: unknown) {
@@ -470,25 +497,50 @@ export class GmailSource {
       const mapped = mapGoogleApiError(error, {
         consecutiveRateLimits: this.consecutiveRateLimits + 1,
       });
-      if (mapped.kind === "rate-limit") this.consecutiveRateLimits += 1;
+      if (mapped.kind === "rate-limit") {
+        this.consecutiveRateLimits += 1;
+        this.lastRateLimitAt = Date.now();
+      }
       throw mapped;
     }
   }
 
   /**
    * Send one Gmail request once its quota units are free. A rate limit stops
-   * the sync's other requests from being sent, so one 429 costs one request.
+   * the sync's other requests from being sent, so one 429 costs one request,
+   * and slows the pace once per sync: requests already in flight that are
+   * refused too report the same limit, not another.
    */
   private async request<T>(kind: GmailRequest, send: () => Promise<T>): Promise<T> {
     const attempt = this.attempt;
     await this.quota.acquire(GMAIL_QUOTA_UNITS[kind]);
     if (attempt.rateLimitedBy !== undefined) throw attempt.rateLimitedBy;
+    let result: T;
     try {
-      return await send();
+      result = await send();
     } catch (error: unknown) {
-      if (attempt.rateLimitedBy === undefined && isRateLimit(error)) attempt.rateLimitedBy = error;
+      if (attempt.rateLimitedBy === undefined && isRateLimit(error)) {
+        attempt.rateLimitedBy = error;
+        const lowered = this.quota.rateLimited();
+        if (lowered !== undefined) {
+          log.info(
+            `Gmail pace for ${this.accountLabel} lowered to ${lowered} units/min after quota 429`,
+          );
+        }
+      }
       throw error;
     }
+    const raised = this.quota.succeeded();
+    if (raised !== undefined) {
+      log.info(
+        `Gmail pace for ${this.accountLabel} raised to ${raised} units/min after a quiet period`,
+      );
+    }
+    return result;
+  }
+
+  private get accountLabel(): string {
+    return this.accountEmail ?? this.id;
   }
 
   /**

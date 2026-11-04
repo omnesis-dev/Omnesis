@@ -89,4 +89,116 @@ describe("QuotaPacer", () => {
     await Promise.all(Array.from({ length: 1_000 }, () => pacer.acquire(60).then(() => granted++)));
     expect(granted).toBe(1_000);
   });
+  test("an unlimited pacer has no pace to adapt", () => {
+    const pacer = QuotaPacer.unlimited();
+    expect(pacer.rateLimited()).toBeUndefined();
+    expect(pacer.succeeded()).toBeUndefined();
+    expect(pacer.unitsPerMinute).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe("QuotaPacer adaptive pace", () => {
+  const QUIET = 10 * 60_000;
+  const HOLD = 60 * 60_000;
+  const adaptivePacer = () =>
+    new QuotaPacer({
+      unitsPerMinute: 4_000,
+      burstUnits: 300,
+      adaptive: {
+        floorUnitsPerMinute: 1_500,
+        decreaseFactor: 0.75,
+        increaseUnitsPerMinute: 250,
+        quietMs: QUIET,
+        holdMs: HOLD,
+      },
+    });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-02T09:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("repeated rate limits cut the pace to the floor and no further", () => {
+    const pacer = adaptivePacer();
+    const paces: Array<number | undefined> = [];
+    for (let i = 0; i < 6; i++) paces.push(pacer.rateLimited());
+
+    expect(paces).toEqual([3_000, 2_250, 1_688, 1_500, undefined, undefined]);
+    expect(pacer.unitsPerMinute).toBe(1_500);
+  });
+
+  test("quiet periods restore the pace to the ceiling and no further", () => {
+    const pacer = adaptivePacer();
+    for (let i = 0; i < 4; i++) pacer.rateLimited();
+    vi.advanceTimersByTime(HOLD);
+    expect(pacer.succeeded(), "an hour without a rate limit is a quiet period").toBe(1_750);
+
+    const paces: number[] = [];
+    for (let i = 0; i < 13; i++) {
+      vi.advanceTimersByTime(QUIET - 1);
+      expect(pacer.succeeded(), "a quiet period not yet over").toBeUndefined();
+      vi.advanceTimersByTime(1);
+      pacer.succeeded();
+      paces.push(pacer.unitsPerMinute);
+    }
+
+    expect(paces).toEqual([
+      2_000, 2_250, 2_500, 2_750, 3_000, 3_250, 3_500, 3_750, 4_000, 4_000, 4_000, 4_000, 4_000,
+    ]);
+  });
+
+  test("a pace with no rate limit behind it stays at the ceiling", () => {
+    const pacer = adaptivePacer();
+    vi.advanceTimersByTime(5 * QUIET);
+    expect(pacer.succeeded()).toBeUndefined();
+    expect(pacer.unitsPerMinute).toBe(4_000);
+  });
+
+  test("for the hold after a rate limit the pace climbs to a step short of the refused pace", () => {
+    const pacer = adaptivePacer();
+    pacer.rateLimited();
+    pacer.rateLimited();
+    expect(pacer.unitsPerMinute).toBe(2_250);
+
+    const paces: number[] = [];
+    for (let elapsed = QUIET; elapsed < HOLD; elapsed += QUIET) {
+      vi.advanceTimersByTime(QUIET);
+      pacer.succeeded();
+      paces.push(pacer.unitsPerMinute);
+    }
+    expect(paces).toEqual([2_500, 2_750, 2_750, 2_750, 2_750]);
+
+    vi.advanceTimersByTime(QUIET);
+    expect(pacer.succeeded()).toBe(3_000);
+  });
+
+  test("callers waiting for units are paced at the cut rate", async () => {
+    const pacer = adaptivePacer();
+    pacer.rateLimited();
+    pacer.rateLimited();
+    const startedAt = Date.now();
+    const grants: Array<{ at: number; units: number }> = [];
+    let stop = false;
+    const lane = async () => {
+      while (!stop) {
+        await pacer.acquire(60);
+        if (stop) return;
+        grants.push({ at: Date.now() - startedAt, units: 60 });
+      }
+    };
+    const lanes = Array.from({ length: 8 }, () => lane());
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    stop = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await Promise.all(lanes);
+
+    const spent = grants.filter((g) => g.at < 3 * 60_000).reduce((sum, g) => sum + g.units, 0);
+    expect(spent).toBeLessThanOrEqual(3 * 2_250 + 300);
+    expect(spent).toBeGreaterThan(3 * 2_250 - 300);
+  });
 });

@@ -219,11 +219,14 @@
                   Every email as a document, dated by when it was sent, with attachment text
                   extracted (scans and images are OCR'd when an OCR model is assigned); senders and
                   recipients, Bcc included, feed the people graph. Requests are paced to Gmail's
-                  per-user quota: a first sync reads about 90 messages a minute while it runs, fewer
-                  when they carry attachments, and pauses between runs, so it averages about 72 a
-                  minute and a large mailbox takes days. A rate limit from Google shows the source
-                  as rate-limited; it resumes on its own after a wait that doubles while the limit
-                  persists.
+                  per-user quota: a first sync reads about 66 messages a minute while it runs, fewer
+                  when they carry attachments, and pauses between runs, so it averages about 53 a
+                  minute and a large mailbox takes days. Other apps signed in to the same account
+                  through the same Google Cloud project spend the same quota; when Google refuses a
+                  request, the source slows down by a quarter, down to about 25 messages a minute,
+                  and speeds up again in steps after ten minutes without a refusal. A rate limit
+                  shows the source as rate-limited; it resumes on its own after a wait that doubles
+                  while the limit persists.
                 </td>
               </tr>
               <tr>
