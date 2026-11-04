@@ -56,6 +56,7 @@ describe("browser Find repair history", () => {
               columns: ["id", "content"],
               rows: rowIdentities.map((_, index) => [index, "Evidence. ".repeat(3000)]),
               rowCount: 50,
+              durationMs: 0,
               rowIdentities,
             },
           },
