@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Adrien Conrath
 #
-# A lane's host resources over time: memory pressure, swap, paging, load and
-# the largest processes, every few seconds, so a slow lane shows whether the
-# machine was starved and by what.
+# A lane's host resources over time: memory pressure, swap, paging, load,
+# whether Spotlight is indexing (macOS) and the largest and busiest
+# processes, every few seconds, so a slow lane shows whether the machine was
+# starved and by what.
 #
 #   E2E_WORK=<scratch dir> scripts/install-e2e/host-sampler.sh start
 #   E2E_WORK=<scratch dir> scripts/install-e2e/host-sampler.sh stop
@@ -40,14 +41,26 @@ daemon_pids() {
   esac
 }
 
-# The largest processes: pid, resident KiB, cpu%, threads, name.
-top_processes() {
-  local daemons pid rss cpu threads name label
-  daemons="$(daemon_pids)"
+# Every process: pid, resident KiB, cpu%, name.
+process_table() {
   case "$(uname -s)" in
     Darwin) ps -axo pid=,rss=,%cpu=,ucomm= ;;
     *) ps -eo pid=,rss=,%cpu=,comm= ;;
-  esac | sort -k2 -nr 2>/dev/null | head -12 | while read -r pid rss cpu name; do
+  esac
+}
+
+# The largest processes by resident size, then any of the busiest by CPU not
+# already listed: pid, resident KiB, cpu%, threads, name.
+top_processes() {
+  local daemons table pid rss cpu threads name label
+  daemons="$(daemon_pids)"
+  # A function, not a `case` inside `$(...)`: macOS's bash 3.2 cannot parse
+  # the latter.
+  table="$(process_table)"
+  {
+    printf '%s\n' "$table" | sort -k2 -nr 2>/dev/null | head -12
+    printf '%s\n' "$table" | sort -k3 -nr 2>/dev/null | head -6
+  } | awk 'NF && !seen[$1]++' | while read -r pid rss cpu name; do
     case "$(uname -s)" in
       Darwin) threads="$(ps -M -p "$pid" 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')" ;;
       *) threads="$(awk '/^Threads:/ { print $2 }' "/proc/$pid/status" 2>/dev/null)" ;;
@@ -57,9 +70,19 @@ top_processes() {
   done
 }
 
+# Whether Spotlight indexes the system and data volumes, on one line.
+spotlight_status() {
+  local volume state
+  for volume in / /System/Volumes/Data; do
+    state="$(mdutil -s "$volume" 2>&1 | awk 'NR > 1 { gsub(/^[ \t]+|[ \t]+$/, ""); printf "%s", $0 }')"
+    printf ' %s=%s' "$volume" "${state:-unknown}"
+  done
+}
+
 sample_darwin() {
   printf '== %s load %s\n' "$(date -u +%H:%M:%S)" "$(sysctl -n vm.loadavg)"
   printf 'swap %s\n' "$(sysctl -n vm.swapusage)"
+  printf 'spotlight%s\n' "$(spotlight_status)"
   memory_pressure -Q 2>/dev/null | sed 's/^/pressure /'
   vm_stat | awk '/page size|free|active|inactive|wired|compressor|Pageins|Pageouts|Swapins|Swapouts|Compressions|Decompressions/ { printf "%s ", $0 } END { print "" }' |
     tr -s ' '

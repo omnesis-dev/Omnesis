@@ -48,6 +48,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
+      # A hosted Mac has 3 vCPUs. Left on, Spotlight indexes the fresh
+      # install's node_modules and the gateway's changing database and logs,
+      # starving the gateway's main thread for seconds at a time.
+      - name: Turn off Spotlight indexing
+        run: sudo mdutil -a -i off
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.target_sha }}

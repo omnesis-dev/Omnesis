@@ -76,6 +76,21 @@ describe("installer coverage CI admission and verdict", () => {
     }
   });
 
+  test("every hosted Mac journey that boots a gateway turns Spotlight off before checkout", () => {
+    const install = workflow("install-e2e.yml");
+    const journeys = [
+      ...["single-host", "uninstall"].map((id) => install.jobs[id]),
+      workflow("installer-coverage.yml").jobs.macos,
+    ];
+    for (const job of journeys) {
+      const first = job.steps[0];
+      expect(first.run).toBe("sudo mdutil -a -i off");
+      expect(job.steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"))).toBe(1);
+    }
+    expect(install.jobs["single-host"].steps[0].if).toBe("runner.os == 'macOS'");
+    expect(install.jobs.uninstall.steps[0].if).toBe("runner.os == 'macOS'");
+  });
+
   test("scheduled coverage selects the extended journeys without borrowing tailnet credentials", () => {
     const nightly = workflow("install-e2e.yml");
     expect(nightly.on.schedule.length).toBeGreaterThan(0);
