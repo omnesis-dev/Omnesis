@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,33 @@ function alive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether `pid` is still running, as opposed to exited. `alive` also counts a
+ * zombie, which the host tests rely on: the launcher's own child stays a
+ * zombie until the gateway reaps it, and that reaping is the moment it has
+ * noticed the host is gone. A program the host started is not this process's
+ * child, so once the host kills it and exits, it waits as a zombie for
+ * whatever adopts it to reap it, which a loaded machine may not do at once.
+ */
+function running(pid: number): boolean {
+  return alive(pid) && processState(pid) !== "Z";
+}
+
+/** The single-letter state of `pid` (`R`, `S`, `Z`, …), or "" when it cannot be read. */
+function processState(pid: number): string {
+  if (process.platform === "linux") {
+    try {
+      // `pid (comm) S …`: the state follows the last ")", since comm may hold one.
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
+    } catch {
+      return "";
+    }
+  }
+  const ps = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+  return ps.stdout.trim().slice(0, 1);
 }
 async function eventually(check: () => boolean, ms = 5_000): Promise<boolean> {
   const until = Date.now() + ms;
@@ -200,7 +228,10 @@ describe("hosted launcher", () => {
     const programPid = Number(readFileSync(marker, "utf8").trim());
     host.dispose();
     expect(await pending).toMatchObject({ failure: "spawn" });
-    expect(await eventually(() => !alive(programPid))).toBe(true);
+    expect(
+      await eventually(() => !running(programPid)),
+      `program ${programPid} is still running (state ${processState(programPid) || "unknown"})`,
+    ).toBe(true);
     // Disposed: later programs start from the caller, and no host is forked again.
     const after = await host.run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 });
     expect(Number(text(after.stdout))).toBe(process.pid);
