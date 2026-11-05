@@ -3766,6 +3766,27 @@ ask_tailscale_certificate() {
 # `tailscale cert` orders from Let's Encrypt, which takes seconds, so its bound
 # is generous: it only keeps a hung daemon from stalling the install for good.
 TS_CERT_ERROR=""
+# Ordering a certificate goes through Tailscale's control plane and Let's
+# Encrypt, and either can answer a server error or turn one order down
+# ("status: invalid") on a bad moment. Such a failure is tried again, after
+# each wait here, before the installer settles for the self-signed
+# certificate; a refusal that names a cause the operator has to fix is not.
+TS_CERT_RETRY_SECONDS="${OMNESIS_TAILSCALE_CERT_RETRY_SECONDS:-10 30}"
+tailscale_cert_attempts() {
+  for TS_CERT_WAIT in "" $TS_CERT_RETRY_SECONDS; do
+    if [ -n "$TS_CERT_WAIT" ]; then
+      case "$TS_CERT_ERROR" in
+        *"Internal Server Error"*|*"Bad Gateway"*|*"Service Unavailable"*|*"Gateway Timeout"*|*"status: invalid"*|*"timed out"*|*"timeout"*) ;;
+        *) return 1 ;;
+      esac
+      info "tailscale cert failed: $(tailscale_cert_reason) — trying again in ${TS_CERT_WAIT}s..."
+      sleep "$TS_CERT_WAIT"
+    fi
+    TS_CERT_ERROR="$(tailscale_cli_bounded 300 cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" && return 0
+  done
+  return 1
+}
+
 # The pair a mint leaves is owner-only, like the rest of the config directory:
 # `tailscale cert` and mkcert write the certificate world-readable, and the
 # doctor reports any entry that is not. The gateway reads it as this account.
@@ -3775,7 +3796,7 @@ tls_owner_only() {
 }
 
 mint_tailscale_cert() {
-  TS_CERT_ERROR="$(tailscale_cli_bounded 300 cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" && return 0
+  tailscale_cert_attempts "$1" "$2" "$3" && return 0
   case "$TS_CERT_ERROR" in
     *"cert access denied"*) ;;
     *) return 1 ;;
@@ -3794,7 +3815,7 @@ mint_tailscale_cert() {
     warn "Could not take the Tailscale operator permission on this machine."
     return 1
   }
-  TS_CERT_ERROR="$(tailscale_cli_bounded 300 cert --cert-file "$1" --key-file "$2" "$3" 2>&1 >/dev/null)" || return 1
+  tailscale_cert_attempts "$1" "$2" "$3" || return 1
   info "Granted on this machine only — nothing on your tailnet changed."
   return 0
 }
