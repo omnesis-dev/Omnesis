@@ -64,6 +64,7 @@ import {
   type AnalyticsRecentCursor,
 } from "../../analytics-db.js";
 import { epochScope, type SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
+import { matchDocumentIdPrefix } from "../../data/like-prefix-seek.js";
 import { SourceSyncStateService } from "./SourceSyncStateService.js";
 import type { SourceDataRemovalService } from "./SourceDataRemovalService.js";
 import type { SourcePageWriteAuthority } from "../../sync-lease.js";
@@ -1480,11 +1481,9 @@ export class DocumentService {
   }
 
   resolveIdPrefix(idPrefix: string): string[] {
-    return this.deps.db
-      .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id LIKE ? LIMIT 2")
-      .all(`${idPrefix}%`)
-      .map((row) => row.id)
-      .filter((id) => isKnowledgeDocumentReadable(this.deps.db, id));
+    return matchDocumentIdPrefix(this.deps.db, idPrefix).filter((id) =>
+      isKnowledgeDocumentReadable(this.deps.db, id),
+    );
   }
 
   listAnnotations(

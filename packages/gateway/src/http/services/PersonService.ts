@@ -35,6 +35,7 @@ import { listLivePersonAnnotationsForPerson } from "../../brain/storage/person-a
 import { resolvePersonId } from "../../domain/PeopleResolutionService.js";
 import { ValidationError } from "../errors.js";
 import { listSelfIdentitySources } from "../../self-identity-sources.js";
+import { matchDocumentIdPrefix } from "../../data/like-prefix-seek.js";
 import type {
   PersonBrowseCursor,
   PersonSortBy,
@@ -369,10 +370,7 @@ export class PersonService {
     matches: string[];
     people: ReturnType<typeof getDocumentPeople>;
   } {
-    const matches = this.db
-      .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id LIKE ? LIMIT 2")
-      .all(`${idPrefix}%`)
-      .map((row) => row.id);
+    const matches = matchDocumentIdPrefix(this.db, idPrefix);
     return {
       matches,
       people: matches.length === 1 ? getDocumentPeople(this.db, matches[0]!) : [],

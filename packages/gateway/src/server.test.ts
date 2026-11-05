@@ -8648,6 +8648,275 @@ describe("GET /documents/:id/attachments", () => {
     expect(data.attachments).toHaveLength(1);
     expect(data.attachments[0]).toMatchObject({ sourceUrl: link, appUrl: link });
   });
+
+  /** Stores a document with a chosen id, so prefix and ordering cases are exact. */
+  function storeDocument(
+    id: string,
+    externalId: string,
+    options: { sourceId?: string; providerId?: string; streamId?: string; metadata?: object } = {},
+  ): void {
+    db.prepare(
+      `INSERT INTO documents (id, provider_id, source_id, external_id, stream_id, title, content,
+         content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'Body', 'hash', ?, '2025-01-01', '2025-01-01', '2025-01-01',
+         '2025-01-01')`,
+    ).run(
+      id,
+      options.providerId ?? "files",
+      options.sourceId ?? "drive-a",
+      externalId,
+      options.streamId ?? "",
+      `Title of ${externalId}`,
+      JSON.stringify(options.metadata ?? {}),
+    );
+  }
+
+  async function attachmentsOf(id: string): Promise<{ status: number; body: unknown }> {
+    const res = await req(`/documents/${encodeURIComponent(id)}/attachments`);
+    return { status: res.status, body: await res.json() };
+  }
+
+  const PARENT = "5c0ffee0-0000-4000-8000-000000000001";
+
+  test("lists every child in external-id order with each field", async () => {
+    storeDocument(PARENT, "trip/plan");
+    storeDocument("5c0ffee0-0000-4000-8000-000000000003", "trip/plan/att/b", {
+      metadata: {
+        sourceUrl: "https://files.example.com/b",
+        appUrl: "fictional-app://files/b",
+        extra: { mimeType: "application/pdf", sizeBytes: 2048, pages: 3, truncated: true },
+      },
+    });
+    storeDocument("5c0ffee0-0000-4000-8000-000000000002", "trip/plan/att/a");
+
+    expect(await attachmentsOf(PARENT)).toEqual({
+      status: 200,
+      body: {
+        attachments: [
+          {
+            id: "5c0ffee0-0000-4000-8000-000000000002",
+            externalId: "trip/plan/att/a",
+            title: "Title of trip/plan/att/a",
+            attachmentId: "a",
+            mimeType: null,
+            sizeBytes: null,
+            pages: null,
+            truncated: false,
+            sourceUrl: null,
+            appUrl: null,
+          },
+          {
+            id: "5c0ffee0-0000-4000-8000-000000000003",
+            externalId: "trip/plan/att/b",
+            title: "Title of trip/plan/att/b",
+            attachmentId: "b",
+            mimeType: "application/pdf",
+            sizeBytes: 2048,
+            pages: 3,
+            truncated: true,
+            sourceUrl: "https://files.example.com/b",
+            appUrl: "fictional-app://files/b",
+          },
+        ],
+      },
+    });
+  });
+
+  test("a parent without children has an empty list", async () => {
+    storeDocument(PARENT, "trip/plan");
+    storeDocument("5c0ffee0-0000-4000-8000-000000000002", "trip/plan-b/att/0");
+    expect(await attachmentsOf(PARENT)).toEqual({ status: 200, body: { attachments: [] } });
+  });
+
+  test("an unknown id or prefix is not found", async () => {
+    storeDocument(PARENT, "trip/plan");
+    const notFound = { status: 404, body: { error: "Document not found", code: "NOT_FOUND" } };
+    expect(await attachmentsOf("5c0ffee0-0000-4000-8000-00000000000f")).toEqual(notFound);
+    expect(await attachmentsOf("not-a-document-id")).toEqual(notFound);
+    expect(await attachmentsOf("é")).toEqual(notFound);
+  });
+
+  test("a unique prefix or an upper-case id resolves like the full id", async () => {
+    storeDocument(PARENT, "trip/plan");
+    storeDocument("7e57c41d-0000-4000-8000-000000000002", "trip/plan/att/0");
+    const full = await attachmentsOf(PARENT);
+    expect(full.status).toBe(200);
+    expect(await attachmentsOf(PARENT.slice(0, 35))).toEqual(full);
+    expect(await attachmentsOf(PARENT.toUpperCase())).toEqual(full);
+    expect(await attachmentsOf(`${PARENT.slice(0, 7)}_${PARENT.slice(8, 35)}`)).toEqual(full);
+  });
+
+  test("an ambiguous prefix names the two earliest-stored matches", async () => {
+    // Stored out of id order, so storage order and id order disagree.
+    storeDocument("ab000003-0000-4000-8000-000000000000", "first");
+    storeDocument("ab000001-0000-4000-8000-000000000000", "second");
+    storeDocument("ab000002-0000-4000-8000-000000000000", "third");
+    const ambiguous = {
+      status: 400,
+      body: {
+        error: "Ambiguous ID prefix",
+        code: "BAD_REQUEST",
+        detail: {
+          matches: ["ab000003-0000-4000-8000-000000000000", "ab000001-0000-4000-8000-000000000000"],
+        },
+      },
+    };
+    expect(await attachmentsOf("ab")).toEqual(ambiguous);
+    expect(await attachmentsOf("AB0000")).toEqual(ambiguous);
+    // `%` and `_` keep their LIKE meaning in an id.
+    expect(await attachmentsOf("%")).toEqual(ambiguous);
+    expect(await attachmentsOf("_b")).toEqual(ambiguous);
+  });
+
+  test("children are the documents the LIKE child pattern matches in the parent's stream", async () => {
+    const parents = [
+      { id: "5c0ffee0-0000-4000-8000-0000000000a1", externalId: "Folder/Report" },
+      { id: "5c0ffee0-0000-4000-8000-0000000000a2", externalId: "folder/report" },
+      { id: "5c0ffee0-0000-4000-8000-0000000000a3", externalId: "https://example.com/a_b%20c" },
+      { id: "5c0ffee0-0000-4000-8000-0000000000a4", externalId: "_lead/note" },
+      { id: "5c0ffee0-0000-4000-8000-0000000000a5", externalId: "Été/carnet" },
+    ];
+    for (const parent of parents) storeDocument(parent.id, parent.externalId);
+    const children = [
+      "Folder/Report/att/0",
+      "folder/report/att/0",
+      "FOLDER/REPORT/ATT/1",
+      "https://example.com/a_b%20c/att/0",
+      "https://example.com/aXb%20c/att/0",
+      "https://example.com/a_b-more%20c/att/0",
+      "_lead/note/att/0",
+      "xlead/note/att/0",
+      "Été/carnet/att/0",
+      "été/carnet/att/0",
+      "ÉTÉ/carnet/att/0",
+    ];
+    children.forEach((externalId, index) =>
+      storeDocument(
+        `5c0ffee0-0000-4000-8000-0000000001${String(index).padStart(2, "0")}`,
+        externalId,
+      ),
+    );
+    // Same external ids outside the parent's provider, source or stream.
+    storeDocument("5c0ffee0-0000-4000-8000-000000000200", "Folder/Report/att/9", {
+      sourceId: "drive-b",
+    });
+    storeDocument("5c0ffee0-0000-4000-8000-000000000201", "Folder/Report/att/9", {
+      providerId: "other",
+    });
+    storeDocument("5c0ffee0-0000-4000-8000-000000000202", "Folder/Report/att/9", {
+      streamId: "00000000-0000-4000-8000-0000000000d1",
+    });
+
+    /** The child lookup's reference formulation: the LIKE over the parent's stream. */
+    const reference = (externalId: string) =>
+      db
+        .prepare<[string], { id: string }>(
+          `SELECT id FROM documents
+            WHERE provider_id = 'files' AND source_id = 'drive-a' AND stream_id = ''
+              AND external_id LIKE ? ORDER BY external_id`,
+        )
+        .all(`${externalId}/att/%`)
+        .map((row) => row.id);
+
+    for (const parent of parents) {
+      const { status, body } = await attachmentsOf(parent.id);
+      expect(status).toBe(200);
+      const listed = (body as { attachments: Array<{ id: string }> }).attachments.map((a) => a.id);
+      expect(listed, parent.externalId).toEqual(reference(parent.externalId));
+      expect(listed.length, parent.externalId).toBeGreaterThan(0);
+    }
+  });
+
+  test("both reads seek an index instead of scanning the documents table", async () => {
+    storeDocument(PARENT, "trip/plan");
+    storeDocument("7e57c41d-0000-4000-8000-000000000002", "trip/plan/att/0");
+    storeDocument("9a1ead00-0000-4000-8000-0000000000a4", "_lead/note");
+    const reads = await documentReadsDuring(async () => {
+      expect((await attachmentsOf(PARENT)).status).toBe(200);
+      expect((await attachmentsOf(PARENT.slice(0, 8))).status).toBe(200);
+      // A parent whose external id starts with a wildcard has no upper bound.
+      expect((await attachmentsOf("9a1ead00-0000-4000-8000-0000000000a4")).status).toBe(200);
+    });
+    expect(reads).toHaveLength(6);
+    expectEveryReadSeeks(reads);
+  });
+});
+
+/**
+ * Every read of the documents table a request makes, with the parameters it
+ * ran with, so a test can check the query plan each one got.
+ */
+async function documentReadsDuring(
+  run: () => Promise<void>,
+): Promise<Array<{ sql: string; params: unknown[] }>> {
+  const reads: Array<{ sql: string; params: unknown[] }> = [];
+  const prepare = db.prepare.bind(db);
+  const spy = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
+    const statement = prepare(sql);
+    if (!/\bFROM documents\b/.test(sql)) return statement;
+    return new Proxy(statement, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target) as unknown;
+        if (typeof value !== "function") return value;
+        if (key !== "all" && key !== "get") return value.bind(target);
+        return (...params: unknown[]) => {
+          reads.push({ sql, params });
+          return (value as (...args: unknown[]) => unknown).apply(target, params);
+        };
+      },
+    });
+  }) as typeof db.prepare);
+  try {
+    await run();
+  } finally {
+    spy.mockRestore();
+  }
+  return reads;
+}
+
+function expectEveryReadSeeks(reads: Array<{ sql: string; params: unknown[] }>): void {
+  for (const { sql, params } of reads) {
+    const detail = db
+      .prepare<unknown[], { detail: string }>(`EXPLAIN QUERY PLAN ${sql}`)
+      .all(...params)
+      .map((row) => row.detail);
+    expect(detail.join("\n"), sql).not.toMatch(/\bSCAN (documents|document)\b/);
+  }
+}
+
+describe("document id prefixes", () => {
+  test("every route's id-prefix lookup seeks the primary key", async () => {
+    await req("/documents", {
+      method: "POST",
+      body: JSON.stringify({ documents: [makeDocPayload("prefix-a"), makeDocPayload("prefix-b")] }),
+    });
+    const id = db
+      .prepare<[string], { id: string }>("SELECT id FROM documents WHERE external_id = ?")
+      .get("prefix-a")!.id;
+    const prefix = id.slice(0, 13);
+    const paths = [
+      `/documents/${prefix}`,
+      `/documents/${prefix}/refs`,
+      `/documents/${prefix}/refs/inbound`,
+      `/documents/${prefix}/dates`,
+      `/documents/${prefix}/edges`,
+      `/documents/${prefix}/annotations`,
+      `/documents/${prefix}/near-dupes`,
+      `/documents/${prefix}/people`,
+      `/documents/${prefix}/attachments`,
+      `/documents/${prefix}/trail`,
+      `/documents/${prefix}/graph`,
+    ];
+    const reads = await documentReadsDuring(async () => {
+      for (const path of paths) expect((await req(path)).status, path).toBe(200);
+      // A prefix that matches nothing is refused after the lookup, before any write.
+      const deleted = await req("/documents/ffffffff-ffff", { method: "DELETE" });
+      expect(deleted.status).toBe(404);
+    });
+    const lookups = reads.filter(({ sql }) => /\bid LIKE \?/.test(sql));
+    expect(lookups.length).toBeGreaterThanOrEqual(paths.length + 1);
+    expectEveryReadSeeks(lookups);
+  });
 });
 
 describe("POST /sql", () => {
