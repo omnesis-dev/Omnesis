@@ -174,6 +174,41 @@ describe("waitForSyncCompletion — loop with injected clock/sleep/feed", () => 
     expect(isOverallSuccess(states)).toBe(true);
   });
 
+  test("a running sync acknowledged by dispatch can finish before polling begins", async () => {
+    const { deps, fetched } = harness([[{ sourceId: "s:1", state: "synced" }]], {
+      pollIntervalMs: 1000,
+    });
+    const states = await waitForSyncCompletion(
+      { sourceIds: ["s:1"], alreadySyncingIds: ["s:1"], timeoutMs: 5000, pollIntervalMs: 1000 },
+      deps,
+    );
+    expect(isOverallSuccess(states)).toBe(true);
+    expect(fetched()).toBe(1);
+  });
+
+  test("acknowledging one source does not arm another source's race guard", async () => {
+    const { deps } = harness(
+      [
+        [
+          { sourceId: "a:1", state: "synced" },
+          { sourceId: "b:2", state: "synced" },
+        ],
+      ],
+      { pollIntervalMs: 1000 },
+    );
+    const states = await waitForSyncCompletion(
+      {
+        sourceIds: ["a:1", "b:2"],
+        alreadySyncingIds: ["a:1"],
+        timeoutMs: 5000,
+        pollIntervalMs: 1000,
+      },
+      deps,
+    );
+    expect(states.get("a:1")?.outcome).toBe("success");
+    expect(states.get("b:2")?.outcome).toBe("timeout");
+  });
+
   /** A refused connect, as Node's fetch reports one. */
   const refused = () =>
     Object.assign(new TypeError("fetch failed"), { cause: { code: "ETIMEDOUT" } });

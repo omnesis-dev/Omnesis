@@ -43,6 +43,7 @@ interface SyncDispatchResult {
   ok: boolean;
   triggered?: number;
   skipped?: number;
+  alreadySyncing?: number;
   disabled?: number;
   error?: string;
 }
@@ -55,7 +56,7 @@ interface SyncDispatchResult {
 export interface SyncDispatchBody {
   ok: true;
   deviceId?: string;
-  result?: Pick<SyncDispatchResult, "ok" | "triggered" | "skipped" | "disabled">;
+  result?: Pick<SyncDispatchResult, "ok" | "triggered" | "skipped" | "alreadySyncing" | "disabled">;
   results?: SyncDispatchResult[];
 }
 
@@ -253,6 +254,7 @@ export const syncCommand = defineCommand({
     const docsBefore = wait ? await fetchDocCounts(ids) : new Map<string, number>();
 
     const triggered: string[] = [];
+    const alreadySyncing: string[] = [];
     for (const id of ids) {
       const iconPrefix = iconPrefixFor(id);
       const source = sources.find((s) => s.id === id);
@@ -278,6 +280,17 @@ export const syncCommand = defineCommand({
         console.log(line);
       }
       triggered.push(id);
+      // A single collector can attest to the cycle we are joining. A fan-out
+      // can also start fresh work on other members, so it still needs polling.
+      if (
+        !body.results &&
+        body.result?.ok &&
+        body.result.triggered === 0 &&
+        (body.result.alreadySyncing ?? 0) > 0 &&
+        (body.result.disabled ?? 0) === 0
+      ) {
+        alreadySyncing.push(id);
+      }
     }
 
     if (!wait || triggered.length === 0) return;
@@ -290,6 +303,7 @@ export const syncCommand = defineCommand({
       waitForSyncCompletion(
         {
           sourceIds: triggered,
+          alreadySyncingIds: alreadySyncing,
           timeoutMs: timeoutSeconds * 1_000,
           pollIntervalMs: POLL_INTERVAL_MS,
         },

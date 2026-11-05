@@ -21,8 +21,9 @@
  * result immediately and report success for a sync that never actually ran.
  *
  * The guard: a terminal state is only accepted once we have first observed a
- * transition INTO `syncing` for that source. Until then, terminal snapshots
- * are treated as "still the old result, keep waiting". This makes the wait
+ * transition INTO `syncing` for that source, or the collector acknowledged
+ * that it was already syncing when the command arrived. Until then, terminal
+ * snapshots are treated as "still the old result, keep waiting". This makes the wait
  * observe a real sync cycle rather than rubber-stamping the previous one.
  */
 
@@ -49,7 +50,7 @@ export type WaitObservedState =
 
 /** Outcome classification once a source's wait resolves. */
 export type WaitOutcome =
-  | "success" // synced after an observed sync cycle
+  | "success" // synced after an observed or acknowledged sync cycle
   | "error" // generic sync failure
   | "needs-auth" // credential failure — terminal, not success
   | "rate-limited" // provider back-off — terminal, not success
@@ -62,7 +63,7 @@ export type WaitOutcome =
 /** Per-source state carried across polls. */
 export interface SourceWaitState {
   readonly sourceId: string;
-  /** True once a `syncing` snapshot has been observed (arms the race guard). */
+  /** True once syncing was observed or acknowledged by the collector (arms the race guard). */
   observedSyncing: boolean;
   /** Set once the wait resolves; undefined while still pending. */
   outcome?: WaitOutcome;
@@ -102,10 +103,13 @@ const TERMINAL_NON_SUCCESS: Record<string, WaitOutcome> = {
 const SUCCESS_STATES: ReadonlySet<string> = new Set(["synced", "auth-expiring", "stale"]);
 
 /** Initialise per-source wait state for the sources we triggered. */
-export function initWaitStates(sourceIds: readonly string[]): Map<string, SourceWaitState> {
+export function initWaitStates(
+  sourceIds: readonly string[],
+  alreadySyncingIds: readonly string[] = [],
+): Map<string, SourceWaitState> {
   const states = new Map<string, SourceWaitState>();
   for (const sourceId of sourceIds) {
-    states.set(sourceId, { sourceId, observedSyncing: false });
+    states.set(sourceId, { sourceId, observedSyncing: alreadySyncingIds.includes(sourceId) });
   }
   return states;
 }
@@ -132,8 +136,8 @@ export function applyObservations(
       continue;
     }
 
-    // Terminal states only count once we've seen the source actually start.
-    // Before that, a terminal snapshot is the PRIOR cycle's result.
+    // Terminal states require polling or acknowledgement evidence of a running sync.
+    // Without either, the snapshot may still be the prior cycle's result.
     if (!st.observedSyncing) continue;
 
     if (SUCCESS_STATES.has(obs.state)) {
@@ -194,6 +198,8 @@ export const MAX_CONSECUTIVE_FETCH_FAILURES = 5;
 
 export interface WaitOptions {
   sourceIds: readonly string[];
+  /** Sources the collector confirmed were already syncing when it handled the trigger. */
+  alreadySyncingIds?: readonly string[];
   timeoutMs: number;
   pollIntervalMs: number;
 }
@@ -208,7 +214,7 @@ export async function waitForSyncCompletion(
   opts: WaitOptions,
   deps: WaitDeps,
 ): Promise<Map<string, SourceWaitState>> {
-  const states = initWaitStates(opts.sourceIds);
+  const states = initWaitStates(opts.sourceIds, opts.alreadySyncingIds);
   const deadline = deps.now() + opts.timeoutMs;
 
   // Poll immediately, then on each interval, until resolved or past deadline.

@@ -146,6 +146,7 @@ function toSourceSyncResponse(result: TriggerSyncResult): WsResponsePayload<"sou
     ok: !result.error,
     triggered: result.triggered.length,
     skipped: result.skipped.length,
+    alreadySyncing: result.alreadySyncing.length,
     disabled: result.disabled.length,
     restarting: result.restarting.length,
     ...(result.error ? { error: result.error } : {}),

@@ -16,7 +16,7 @@ vi.mock("../utils.js", async (importOriginal) => {
 });
 
 import { gatewayFetch, gatewayJson } from "../utils.js";
-import { renderSyncDispatch, syncCommand } from "./sync.js";
+import { renderSyncDispatch, syncCommand, type SyncDispatchBody } from "./sync.js";
 
 const names: Record<string, string> = {
   "dev-laptop": "Maya-Laptop",
@@ -81,7 +81,7 @@ describe("sources sync", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     logged = [];
-    vi.spyOn(console, "log").mockImplementation((line: string) => {
+    vi.spyOn(console, "log").mockImplementation((line: string = "") => {
       logged.push(line);
     });
     (gatewayJson as Mock).mockImplementation((path: string): Promise<unknown> => {
@@ -97,6 +97,82 @@ describe("sources sync", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  test.each([
+    { state: "synced", succeeds: true },
+    { state: "error", succeeds: false },
+    { state: "needs-auth", succeeds: false },
+  ])(
+    "an acknowledged running sync ends as $state before the first poll",
+    async ({ state, succeeds }) => {
+      vi.useFakeTimers();
+      (gatewayFetch as Mock).mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            deviceId: "dev-mini",
+            result: { ok: true, triggered: 0, skipped: 1, alreadySyncing: 1 },
+          }),
+        ),
+      );
+      (gatewayJson as Mock)
+        .mockResolvedValueOnce({ items: [source] })
+        .mockResolvedValueOnce({ items: [] })
+        .mockResolvedValueOnce({ stats: { [source.id]: { documentCount: 3 } } })
+        .mockResolvedValueOnce({
+          items: [{ sourceId: source.id, state, errorMessage: "sync failed" }],
+        })
+        .mockResolvedValueOnce({ stats: { [source.id]: { documentCount: 3 } } });
+      const run = syncCommand.run!({ args: { _: [source.id], wait: true, timeout: "5" } } as never);
+      if (succeeds) await expect(run).resolves.toBeUndefined();
+      else await expect(run).rejects.toThrow("did not sync successfully");
+      expect(logged.some((line) => line.includes("Timed out"))).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  test.each<{ label: string; body: SyncDispatchBody }>([
+    { label: "a newly triggered sync", body: { ok: true, result: { ok: true, triggered: 1 } } },
+    {
+      label: "a legacy skipped reply",
+      body: { ok: true, result: { ok: true, triggered: 0, skipped: 1 } },
+    },
+    {
+      label: "a push-only source",
+      body: { ok: true, result: { ok: true, triggered: 0, skipped: 1, alreadySyncing: 0 } },
+    },
+    {
+      label: "a paused source",
+      body: { ok: true, result: { ok: true, triggered: 0, disabled: 1, alreadySyncing: 0 } },
+    },
+    {
+      label: "a mixed fan-out",
+      body: {
+        ok: true,
+        results: [
+          { deviceId: "dev-mini", ok: true, triggered: 0, alreadySyncing: 1 },
+          { deviceId: "dev-laptop", ok: true, triggered: 1 },
+        ],
+      },
+    },
+  ])("$label cannot accept a stale terminal result", async ({ body }) => {
+    vi.useFakeTimers();
+    (gatewayFetch as Mock).mockResolvedValue(new Response(JSON.stringify(body)));
+    (gatewayJson as Mock).mockImplementation((path: string) => {
+      if (path === "/admin/sources") return Promise.resolve({ items: [source] });
+      if (path === "/admin/devices") return Promise.resolve({ items: [] });
+      if (path === "/documents/stats") return Promise.resolve({ stats: {} });
+      if (path === "/admin/sync/status")
+        return Promise.resolve({ items: [{ sourceId: source.id, state: "synced" }] });
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+    const run = syncCommand.run!({ args: { _: [source.id], wait: true, timeout: "3" } } as never);
+    const assertion = expect(run).rejects.toThrow("did not sync successfully");
+    await vi.runAllTimersAsync();
+    await assertion;
+    expect(logged.some((line) => line.includes("Timed out"))).toBe(true);
   });
 
   test("POSTs the sync and names the device the gateway sent it to", async () => {

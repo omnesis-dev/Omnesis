@@ -75,6 +75,8 @@ function patternMatches(normalized: string, sourceId: string, providerId: string
 export interface TriggerSyncResult {
   triggered: string[];
   skipped: string[];
+  /** The skipped sources with a sync currently in flight (excludes push-only sources). */
+  alreadySyncing: string[];
   disabled: string[];
   /**
    * Sources whose run in flight was aborted for a restart. The fresh sync
@@ -250,6 +252,7 @@ export class SyncDispatcher {
       return {
         triggered: [],
         skipped: [],
+        alreadySyncing: [],
         disabled: [],
         restarting: [],
         unhosted,
@@ -259,6 +262,7 @@ export class SyncDispatcher {
 
     const triggered: string[] = [];
     const skipped: string[] = [];
+    const alreadySyncing: string[] = [];
     const disabled: string[] = [];
     const restarting: string[] = [];
 
@@ -277,6 +281,7 @@ export class SyncDispatcher {
         } else {
           log.debug(`Skipping triggered sync for ${sourceId} (state: syncing)`);
           skipped.push(sourceId);
+          alreadySyncing.push(sourceId);
         }
         continue;
       }
@@ -350,6 +355,14 @@ export class SyncDispatcher {
         });
     }
 
-    return { triggered, skipped, disabled, restarting, unhosted, error: unhostedError };
+    return {
+      triggered,
+      skipped,
+      alreadySyncing,
+      disabled,
+      restarting,
+      unhosted,
+      error: unhostedError,
+    };
   }
 }
