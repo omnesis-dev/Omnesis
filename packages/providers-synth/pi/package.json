@@ -1,6 +1,6 @@
 {
   "name": "@omnesis/provider-pi-synth",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",

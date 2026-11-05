@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "client": "chrome-extension",
-  "productVersion": "0.7.7",
+  "productVersion": "0.7.8",
   "sourceRepository": "https://github.com/omnesis-dev/Omnesis",
   "sourceAvailability": "on-request",
   "supportContact": "contact@omnesis.dev",
