@@ -5,7 +5,10 @@ import "./synth-env.js";
 import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 import { saveKnowledgeNode } from "../../../gateway/src/brain/knowledge/storage.js";
-import { enqueueKnowledgeWork } from "../../../gateway/src/brain/knowledge/work.js";
+import {
+  enqueueKnowledgeWork,
+  type EnqueueKnowledgeWork,
+} from "../../../gateway/src/brain/knowledge/work.js";
 import {
   BrainBench,
   structuredData,
@@ -177,19 +180,21 @@ it("refuses silent root navigation loss, permits retained navigation, then delib
           const node = db
             .prepare("SELECT revision FROM knowledge_nodes WHERE id=?")
             .get(activeRoot) as { revision: number };
-          enqueueKnowledgeWork(
-            db,
-            {
-              id,
-              subjectId: activeRoot,
-              subjectKind: "node",
-              reason: "root",
-              inputRevision: String(node.revision),
-              tier: "immediate",
-              dueAt: Date.now(),
-            },
-            Date.now(),
-          );
+          const now = Date.now();
+          const input: EnqueueKnowledgeWork = {
+            id,
+            subjectId: activeRoot,
+            subjectKind: "node",
+            reason: "root",
+            inputRevision: String(node.revision),
+            tier: "immediate",
+            dueAt: now,
+          };
+          // See #752: root maintenance may already be pending, so requests can fold.
+          const pending = enqueueKnowledgeWork(db, { ...input, id: `pending-${id}` }, now);
+          const work = enqueueKnowledgeWork(db, input, now);
+          expect(work.id).toBe(pending.id);
+          return work.id;
         })
         .immediate(),
     );
@@ -198,20 +203,18 @@ it("refuses silent root navigation loss, permits retained navigation, then delib
       bench!.sql.prepare("SELECT status FROM knowledge_work WHERE id=?").get(id) as
         { status: string } | undefined
     )?.status;
-  enqueue("root-navigation-retain");
-  await expect.poll(() => settled("root-navigation-retain"), { timeout: 45_000 }).toBe("completed");
+  const retainWorkId = enqueue("root-navigation-retain");
+  await expect.poll(() => settled(retainWorkId), { timeout: 45_000 }).toBe("completed");
   expect(root()!.markdown).toContain(`wiki:${wikiId}`);
   remove = true;
-  enqueue("root-navigation-remove");
-  await expect.poll(() => settled("root-navigation-remove"), { timeout: 45_000 }).toBe("completed");
+  const removeWorkId = enqueue("root-navigation-remove");
+  await expect.poll(() => settled(removeWorkId), { timeout: 45_000 }).toBe("completed");
   expect(root()!.markdown).not.toContain(`wiki:${wikiId}`);
   // An intentional omission stays omitted until a later explicit current-page investigation.
   recover = true;
   remove = false;
-  enqueue("root-navigation-recover");
-  await expect
-    .poll(() => settled("root-navigation-recover"), { timeout: 45_000 })
-    .toBe("completed");
+  const recoverWorkId = enqueue("root-navigation-recover");
+  await expect.poll(() => settled(recoverWorkId), { timeout: 45_000 }).toBe("completed");
   expect(sawRecoveryHint).toBe(true);
   expect(root()!.markdown).toContain(`wiki:${wikiId}`);
   const runs = await bench.obs.runs({ limit: 50 });
