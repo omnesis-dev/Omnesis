@@ -31,6 +31,7 @@ import {
   resolveCollectorToken,
   resolveGatewayUrl,
   waitForGateway,
+  withSelfPairRetries,
 } from "./main.js";
 import { SourceConfigReconciler } from "./source-config-reconciler.js";
 import { createCommandDispatch } from "./ws-command-dispatch.js";
@@ -365,6 +366,28 @@ describe("resolveCollectorToken", () => {
     expect(readCollectorPairingState(dir)?.tokenFingerprint).toBe(tokenFingerprint("omn_fresh"));
   });
 
+  // A busy gateway that has just answered /health can still close the socket
+  // the self-pair request goes out on. One dropped connection used to exit the
+  // collector, and a combined container stopped with it, gateway and all.
+  test("a self-pair whose connection drops is sent again and pairs", async () => {
+    process.env.OMNESIS_TOKEN = "omn_admin";
+    const dropped = Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+    });
+    let registers = 0;
+    const base = answer({ register: registered("omn_fresh") });
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/admin/devices") && registers++ === 0) throw dropped;
+      return base(input, init);
+    }) as unknown as typeof globalThis.fetch;
+
+    expect(await resolveCollectorToken(GATEWAY, dir, { selfPairRetryDelaysMs: [0, 0] })).toEqual({
+      outcome: "token",
+      token: "omn_fresh",
+    });
+    expect(registers).toBe(2);
+  });
+
   /** The name each self-pair asked the gateway for. */
   const registeredNames = (fetchMock: typeof globalThis.fetch): string[] =>
     (
@@ -496,5 +519,40 @@ describe("resolveCollectorToken", () => {
     ) as unknown as typeof globalThis.fetch;
 
     await expect(resolveCollectorToken(GATEWAY, dir)).rejects.toThrow(/No auth token found/);
+  });
+});
+
+describe("withSelfPairRetries", () => {
+  const ok = () => Response.json({ token: "omn_fresh" });
+  const dropped = () =>
+    Object.assign(new TypeError("fetch failed"), { cause: new Error("other side closed") });
+
+  test("a gateway that answers 503 while starting is asked again", async () => {
+    const send = vi
+      .fn<() => Promise<Response>>()
+      .mockResolvedValueOnce(new Response("starting", { status: 503 }))
+      .mockResolvedValueOnce(ok());
+    expect((await withSelfPairRetries(send, [0, 0])).status).toBe(200);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  test("a refusal is returned at once, never retried", async () => {
+    const send = vi
+      .fn<() => Promise<Response>>()
+      .mockResolvedValue(new Response("taken", { status: 409 }));
+    expect((await withSelfPairRetries(send, [0, 0, 0])).status).toBe(409);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test("an error that is not the transport is thrown at once", async () => {
+    const send = vi.fn<() => Promise<Response>>().mockRejectedValue(new Error("bad config"));
+    await expect(withSelfPairRetries(send, [0, 0])).rejects.toThrow("bad config");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test("it gives up after the last delay with the transport's error", async () => {
+    const send = vi.fn<() => Promise<Response>>().mockRejectedValue(dropped());
+    await expect(withSelfPairRetries(send, [0, 0])).rejects.toThrow("fetch failed");
+    expect(send).toHaveBeenCalledTimes(3);
   });
 });

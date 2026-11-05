@@ -382,6 +382,7 @@ export type CollectorTokenResolution =
 export async function resolveCollectorToken(
   gatewayUrl: string,
   configDir: string,
+  opts: { selfPairRetryDelaysMs?: readonly number[] } = {},
 ): Promise<CollectorTokenResolution> {
   const persisted = readCollectorPairingState(configDir);
   // The name this collector last paired as is the identity the gateway knows
@@ -430,23 +431,27 @@ export async function resolveCollectorToken(
     `No valid collector token found — self-pairing as ${deviceName} using bootstrap admin token`,
   );
 
-  const res = await fetch(`${gatewayUrl}/admin/devices`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${bootstrap}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      name: deviceName,
-      kind: "collector",
-      scopes: defaultScopesForDeviceKind("collector"),
-      capabilities: {
-        hostname: collectorHostname(),
-        platform: process.platform,
-        version: COLLECTOR_VERSION,
-      },
-    }),
-  });
+  const res = await withSelfPairRetries(
+    () =>
+      fetch(`${gatewayUrl}/admin/devices`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${bootstrap}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: deviceName,
+          kind: "collector",
+          scopes: defaultScopesForDeviceKind("collector"),
+          capabilities: {
+            hostname: collectorHostname(),
+            platform: process.platform,
+            version: COLLECTOR_VERSION,
+          },
+        }),
+      }),
+    opts.selfPairRetryDelaysMs ?? SELF_PAIR_RETRY_DELAYS_MS,
+  );
   if (!res.ok) {
     // The credential offered as bootstrap is not an admin one either. If some
     // credential here used to be accepted by this gateway, that is a revoke:
@@ -480,6 +485,70 @@ export async function resolveCollectorToken(
     token: body.token,
   });
   return { outcome: "token", token: body.token };
+}
+
+/**
+ * How long apart the self-pair request is tried again when the transport
+ * gives out or the gateway answers that it is not ready: about two minutes in
+ * all. A gateway that has just answered `/health` can still drop the next
+ * request, a busy one closing the kept-alive socket the request went out on
+ * ("other side closed"). Exiting there took a combined container down with
+ * it, gateway and all, over one dropped connection.
+ */
+const SELF_PAIR_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000, 60_000] as const;
+
+/** Statuses a gateway answers while it is starting or overloaded, not refusals. */
+const SELF_PAIR_RETRY_STATUSES = new Set([502, 503, 504]);
+
+/** Whether a thrown fetch failure is the transport giving out, read across its cause chain. */
+function isTransportFailure(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  for (let e: unknown = err; e instanceof Error && !seen.has(e); e = e.cause) {
+    seen.add(e);
+    const code = (e as { code?: unknown }).code;
+    const text = `${e.message} ${typeof code === "string" ? code : ""}`;
+    if (
+      /fetch failed|other side closed|terminated|socket hang up|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT/.test(
+        text,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Send the self-pair request, again after each delay while it fails in
+ * transit or the gateway answers 502/503/504. A refusal (401, 403, 409, …)
+ * or any other error returns or throws at once. A request whose response was
+ * lost after the gateway registered the device is answered 409 on the retry,
+ * which surfaces as the failure it is rather than a second device.
+ */
+export async function withSelfPairRetries(
+  send: () => Promise<Response>,
+  delaysMs: readonly number[],
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const delay = delaysMs[attempt];
+    let res: Response;
+    try {
+      res = await send();
+    } catch (err) {
+      if (delay === undefined || !isTransportFailure(err)) throw err;
+      log.warn(
+        `Self-pair request did not reach the gateway (${err instanceof Error ? err.message : String(err)}); trying again in ${Math.round(delay / 1000)}s`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+      continue;
+    }
+    if (delay === undefined || !SELF_PAIR_RETRY_STATUSES.has(res.status)) return res;
+    await res.body?.cancel().catch(() => undefined);
+    log.warn(
+      `Gateway answered the self-pair with ${res.status}; trying again in ${Math.round(delay / 1000)}s`,
+    );
+    await new Promise((r) => setTimeout(r, delay));
+  }
 }
 
 /** Persist "this credential authenticated" so a later 401 is classifiable. */
