@@ -353,6 +353,123 @@ describe("FsCognitionTranscriptStore", () => {
     expect(await removed.listPage({ limit: 10 })).toEqual([]);
   });
 
+  test("startup settles every interrupted transition and leaves everything else as it was", () => {
+    const transcriptsDir = join(dir, "transcripts");
+    for (let i = 0; i < 20; i += 1) {
+      store.save(transcript({ runId: `run_kept_${i}`, finishedAt: 10_000 + i }));
+    }
+    const index = new Sqlite(join(transcriptsDir, ".transcript-index.sqlite"));
+    const insert = index.prepare(
+      `INSERT INTO transcript_refs (file_name, run_id, attempt, finished_at, state)
+       VALUES (?, ?, 1, ?, ?)`,
+    );
+    const interrupted = (
+      finishedAt: number,
+      runId: string,
+      state: string,
+      files: { final?: boolean; temp?: boolean },
+    ): string => {
+      const fileName = `${finishedAt}-${runId}-a1.json`;
+      insert.run(fileName, runId, finishedAt, state);
+      if (files.final) {
+        writeFileSync(join(transcriptsDir, fileName), JSON.stringify(transcript({ runId })));
+      }
+      if (files.temp) writeFileSync(join(transcriptsDir, `${fileName}.pending`), '{"partial":');
+      return fileName;
+    };
+    // A save interrupted after its rename, before it, and with neither file.
+    const renamed = interrupted(1, "run_renamed", "pending_save", { final: true });
+    const beforeRename = interrupted(2, "run_before_rename", "pending_save", { temp: true });
+    interrupted(3, "run_no_files", "pending_save", {});
+    const bothFiles = interrupted(4, "run_both_files", "pending_save", { final: true, temp: true });
+    // A delete interrupted before and after its unlink.
+    const notUnlinked = interrupted(5, "run_not_unlinked", "deleting", { final: true });
+    interrupted(6, "run_unlinked", "deleting", {});
+    // States this build never writes, either side of `committed` in sort
+    // order, as a newer build could leave them before a rollback.
+    const newerKept = interrupted(7, "run_newer_kept", "superseded", { final: true });
+    interrupted(8, "run_newer_gone", "superseded", {});
+    interrupted(9, "run_sorts_first", "archived", {});
+    // A committed ref whose file is gone is not startup's business: the
+    // reader that meets the missing file removes it.
+    const committedGone = interrupted(10, "run_committed_gone", "committed", {});
+    index.close();
+    const orphanTemp = "11-run_orphan-a1.json.pending";
+    writeFileSync(join(transcriptsDir, orphanTemp), "{");
+
+    const reopened = new FsCognitionTranscriptStore(transcriptsDir);
+    try {
+      const after = new Sqlite(join(transcriptsDir, ".transcript-index.sqlite"), {
+        readonly: true,
+      });
+      const rows = after
+        .prepare<[], { file_name: string; state: string }>(
+          "SELECT file_name, state FROM transcript_refs WHERE finished_at < 10000 ORDER BY file_name",
+        )
+        .all();
+      const keptCommitted = after
+        .prepare<[], { count: number }>(
+          "SELECT COUNT(*) AS count FROM transcript_refs WHERE finished_at >= 10000 AND state = 'committed'",
+        )
+        .get()?.count;
+      after.close();
+      expect(rows).toEqual(
+        [renamed, bothFiles, notUnlinked, newerKept, committedGone].sort().map((file_name) => ({
+          file_name,
+          state: "committed",
+        })),
+      );
+      expect(keptCommitted).toBe(20);
+      const files = readdirSync(transcriptsDir);
+      expect(files.filter((name) => name.endsWith(".pending"))).toEqual([orphanTemp]);
+      expect(files).not.toContain(beforeRename);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  test("opening the store reads only the refs a crash left unsettled", () => {
+    // Every store façade settles interrupted transitions while it is built,
+    // which is on the gateway's boot path. A statement that scans the ref table
+    // there costs time in proportion to the whole archive, all of it on the
+    // main thread before the gateway serves anyone.
+    store.save(transcript({ runId: "run_committed" }));
+    const statements: string[] = [];
+    const real = Sqlite.prototype.prepare;
+    const spy = vi.spyOn(Sqlite.prototype, "prepare").mockImplementation(function (
+      this: Sqlite.Database,
+      source: string,
+    ) {
+      statements.push(source);
+      return real.call(this, source);
+    });
+    let reopened: FsCognitionTranscriptStore | undefined;
+    try {
+      reopened = new FsCognitionTranscriptStore(join(dir, "transcripts"));
+    } finally {
+      spy.mockRestore();
+    }
+    reopened.close();
+
+    const touchingRefs = statements.filter((source) => /\btranscript_refs\b/.test(source));
+    expect(touchingRefs.length).toBeGreaterThan(0);
+    const index = new Sqlite(join(dir, "transcripts", ".transcript-index.sqlite"), {
+      readonly: true,
+    });
+    try {
+      for (const source of touchingRefs) {
+        const parameters = (source.match(/\?/g) ?? []).map(() => null);
+        const plan = index
+          .prepare<unknown[], { detail: string }>(`EXPLAIN QUERY PLAN ${source}`)
+          .all(...parameters)
+          .map((step) => step.detail);
+        expect(plan.filter((detail) => /^SCAN transcript_refs\b/.test(detail))).toEqual([]);
+      }
+    } finally {
+      index.close();
+    }
+  });
+
   test("run ids are sanitized into safe file names but preserved in the payload", () => {
     store.save(transcript({ runId: "run/../weird id" }));
     const refs = store.list();
