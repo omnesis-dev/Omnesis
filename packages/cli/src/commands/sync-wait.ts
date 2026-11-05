@@ -20,10 +20,19 @@
  * old `error`). A naive "wait until terminal" would accept that stale prior
  * result immediately and report success for a sync that never actually ran.
  *
- * The guard: a terminal state is only accepted once we have first observed a
- * transition INTO `syncing` for that source. Until then, terminal snapshots
- * are treated as "still the old result, keep waiting". This makes the wait
- * observe a real sync cycle rather than rubber-stamping the previous one.
+ * The guard: a terminal state is accepted once we have observed a transition
+ * INTO `syncing` for that source, or once the gateway records a run that
+ * finished after the trigger: a `lastSyncAt` (every completed page commits
+ * the cursor and stamps it) or an `erroredAt` that moved past the baseline
+ * read before the trigger. Until then, terminal snapshots are treated as
+ * "still the old result, keep waiting".
+ *
+ * The second arm matters because a poll can miss `syncing` entirely: a small
+ * sync finishes between two polls, and a source that was already syncing when
+ * the trigger arrived (the collector skips it, and the run in flight is the
+ * one to wait for) may finish before the first poll. Both baselines are the
+ * gateway's own timestamps, compared with each other, so no clock skew
+ * between this host and the gateway's can mistake an old run for a new one.
  */
 
 /**
@@ -70,6 +79,10 @@ export interface SourceWaitState {
   lastObserved?: WaitObservedState;
   /** Error/diagnostic message captured from the terminal snapshot, if any. */
   message?: string;
+  /** The gateway's `lastSyncAt` before the trigger; a later one is a run that finished since. */
+  baselineSyncAt?: string | null;
+  /** The gateway's `erroredAt` before the trigger; a later one is a run that failed since. */
+  baselineErroredAt?: string | null;
 }
 
 /** A single source's status as read from `/admin/sync/status`. */
@@ -77,6 +90,19 @@ export interface SyncStatusObservation {
   sourceId: string;
   state: WaitObservedState;
   errorMessage?: string;
+  /** ISO time of the last successful cursor save, as `/admin/sync/status` serves it. */
+  lastSyncAt?: string | null;
+  /** ISO time of the last error, present with an error state. */
+  erroredAt?: string;
+}
+
+/** Whether `next` is a gateway timestamp later than `baseline` (absent baseline: any). */
+function movedPast(next: string | null | undefined, baseline: string | null | undefined): boolean {
+  if (!next) return false;
+  if (!baseline) return true;
+  const a = Date.parse(next);
+  const b = Date.parse(baseline);
+  return Number.isFinite(a) && Number.isFinite(b) ? a > b : next !== baseline;
 }
 
 /** Terminal-not-success states still END the wait — they just aren't success. */
@@ -102,12 +128,36 @@ const TERMINAL_NON_SUCCESS: Record<string, WaitOutcome> = {
 const SUCCESS_STATES: ReadonlySet<string> = new Set(["synced", "auth-expiring", "stale"]);
 
 /** Initialise per-source wait state for the sources we triggered. */
-export function initWaitStates(sourceIds: readonly string[]): Map<string, SourceWaitState> {
+export function initWaitStates(
+  sourceIds: readonly string[],
+  baseline: readonly SyncStatusObservation[] = [],
+): Map<string, SourceWaitState> {
+  const before = new Map(baseline.map((o) => [o.sourceId, o]));
   const states = new Map<string, SourceWaitState>();
   for (const sourceId of sourceIds) {
-    states.set(sourceId, { sourceId, observedSyncing: false });
+    const prior = before.get(sourceId);
+    states.set(sourceId, {
+      sourceId,
+      observedSyncing: false,
+      ...(prior
+        ? { baselineSyncAt: prior.lastSyncAt ?? null, baselineErroredAt: prior.erroredAt ?? null }
+        : {}),
+    });
   }
   return states;
+}
+
+/**
+ * Whether this snapshot is a run that finished after the trigger, judged by
+ * the gateway's own timestamps against the baseline. Only a source with a
+ * baseline can be judged this way; without one the observed `syncing` is
+ * the only evidence.
+ */
+function finishedSinceBaseline(st: SourceWaitState, obs: SyncStatusObservation): boolean {
+  if (st.baselineSyncAt === undefined) return false;
+  if (SUCCESS_STATES.has(obs.state)) return movedPast(obs.lastSyncAt, st.baselineSyncAt);
+  if (obs.state in TERMINAL_NON_SUCCESS) return movedPast(obs.erroredAt, st.baselineErroredAt);
+  return false;
 }
 
 /**
@@ -132,9 +182,10 @@ export function applyObservations(
       continue;
     }
 
-    // Terminal states only count once we've seen the source actually start.
+    // Terminal states only count once we've seen the source actually start,
+    // or once the gateway stamps a run that finished after the trigger.
     // Before that, a terminal snapshot is the PRIOR cycle's result.
-    if (!st.observedSyncing) continue;
+    if (!st.observedSyncing && !finishedSinceBaseline(st, obs)) continue;
 
     if (SUCCESS_STATES.has(obs.state)) {
       st.outcome = "success";
@@ -196,6 +247,8 @@ export interface WaitOptions {
   sourceIds: readonly string[];
   timeoutMs: number;
   pollIntervalMs: number;
+  /** The sources' status read before the trigger, for the finished-since-baseline arm. */
+  baseline?: readonly SyncStatusObservation[];
 }
 
 /**
@@ -208,7 +261,7 @@ export async function waitForSyncCompletion(
   opts: WaitOptions,
   deps: WaitDeps,
 ): Promise<Map<string, SourceWaitState>> {
-  const states = initWaitStates(opts.sourceIds);
+  const states = initWaitStates(opts.sourceIds, opts.baseline);
   const deadline = deps.now() + opts.timeoutMs;
 
   // Poll immediately, then on each interval, until resolved or past deadline.

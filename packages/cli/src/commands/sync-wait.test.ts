@@ -329,3 +329,68 @@ describe("applyObservations — mobile permission overlays are terminal but not 
     },
   );
 });
+
+describe("applyObservations — a run that finished between polls", () => {
+  const T0 = "2026-03-14T09:00:00.000Z";
+  const T1 = "2026-03-14T09:00:04.250Z";
+  const baseline = (over: Partial<SyncStatusObservation> = {}): SyncStatusObservation[] => [
+    { sourceId: "s:1", state: "synced", lastSyncAt: T0, ...over },
+  ];
+
+  test("a later lastSyncAt resolves success though no poll saw syncing", () => {
+    // The collector was already syncing when the trigger came (it skipped it),
+    // and that run finished before the first poll.
+    const st = initWaitStates(["s:1"], baseline());
+    applyObservations(st, [{ sourceId: "s:1", state: "synced", lastSyncAt: T1 }]);
+    expect(st.get("s:1")!.outcome).toBe("success");
+    expect(st.get("s:1")!.observedSyncing).toBe(false);
+  });
+
+  test("the baseline's own lastSyncAt is still the prior result", () => {
+    const st = initWaitStates(["s:1"], baseline());
+    applyObservations(st, [{ sourceId: "s:1", state: "synced", lastSyncAt: T0 }]);
+    expect(st.get("s:1")!.outcome).toBeUndefined();
+  });
+
+  test("a source that had never synced resolves on its first lastSyncAt", () => {
+    const st = initWaitStates(["s:1"], baseline({ state: "idle", lastSyncAt: null }));
+    applyObservations(st, [{ sourceId: "s:1", state: "synced", lastSyncAt: T1 }]);
+    expect(st.get("s:1")!.outcome).toBe("success");
+  });
+
+  test("a new erroredAt resolves the failure; the baseline's old error does not", () => {
+    const old = initWaitStates(["s:1"], baseline({ state: "error", erroredAt: T0 }));
+    applyObservations(old, [{ sourceId: "s:1", state: "error", erroredAt: T0 }]);
+    expect(old.get("s:1")!.outcome).toBeUndefined();
+
+    const fresh = initWaitStates(["s:1"], baseline({ state: "error", erroredAt: T0 }));
+    applyObservations(fresh, [
+      { sourceId: "s:1", state: "error", erroredAt: T1, errorMessage: "provider said no" },
+    ]);
+    expect(fresh.get("s:1")!.outcome).toBe("error");
+    expect(fresh.get("s:1")!.message).toBe("provider said no");
+  });
+
+  test("without a baseline only an observed syncing arms the guard", () => {
+    const st = initWaitStates(["s:1"]);
+    applyObservations(st, [{ sourceId: "s:1", state: "synced", lastSyncAt: T1 }]);
+    expect(st.get("s:1")!.outcome).toBeUndefined();
+  });
+
+  test("the loop ends at once on a run that finished before its first poll", async () => {
+    let polls = 0;
+    const states = await waitForSyncCompletion(
+      { sourceIds: ["s:1"], timeoutMs: 300_000, pollIntervalMs: 1000, baseline: baseline() },
+      {
+        fetchStatus: () => {
+          polls++;
+          return Promise.resolve([{ sourceId: "s:1", state: "synced", lastSyncAt: T1 }]);
+        },
+        now: () => 0,
+        sleep: () => Promise.resolve(),
+      },
+    );
+    expect(states.get("s:1")!.outcome).toBe("success");
+    expect(polls).toBe(1);
+  });
+});

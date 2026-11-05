@@ -63,6 +63,22 @@ interface SyncStatusEntry {
   sourceId: string;
   state: SyncStatusObservation["state"];
   errorMessage?: string;
+  lastSyncAt?: string | null;
+  erroredAt?: string;
+}
+
+/** The sources' status as `/admin/sync/status` serves it, for `ids` only. */
+async function fetchSyncStatus(ids: readonly string[]): Promise<SyncStatusObservation[]> {
+  const { items } = await gatewayJson<{ items: SyncStatusEntry[] }>("/admin/sync/status");
+  return items
+    .filter((i) => ids.includes(i.sourceId))
+    .map((i) => ({
+      sourceId: i.sourceId,
+      state: i.state,
+      errorMessage: i.errorMessage,
+      lastSyncAt: i.lastSyncAt,
+      erroredAt: i.erroredAt,
+    }));
 }
 
 interface SourceStatsRow {
@@ -251,6 +267,11 @@ export const syncCommand = defineCommand({
     // Capture pre-sync doc counts up front so a --wait run can report a delta
     // even if the sync deletes documents (delta can be negative).
     const docsBefore = wait ? await fetchDocCounts(ids) : new Map<string, number>();
+    // Each source's last finished run before the trigger, so the wait can
+    // accept a run that finishes after it even when no poll catches it
+    // syncing: a quick sync, or the one already in flight that the collector
+    // skipped this trigger for.
+    const statusBefore = wait ? await fetchSyncStatus(ids) : [];
 
     const triggered: string[] = [];
     for (const id of ids) {
@@ -292,18 +313,10 @@ export const syncCommand = defineCommand({
           sourceIds: triggered,
           timeoutMs: timeoutSeconds * 1_000,
           pollIntervalMs: POLL_INTERVAL_MS,
+          baseline: statusBefore,
         },
         {
-          fetchStatus: async () => {
-            const { items } = await gatewayJson<{ items: SyncStatusEntry[] }>("/admin/sync/status");
-            return items
-              .filter((i) => triggered.includes(i.sourceId))
-              .map((i) => ({
-                sourceId: i.sourceId,
-                state: i.state,
-                errorMessage: i.errorMessage,
-              }));
-          },
+          fetchStatus: () => fetchSyncStatus(triggered),
           now: () => Date.now(),
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           isTransient: isFetchConnectionError,
