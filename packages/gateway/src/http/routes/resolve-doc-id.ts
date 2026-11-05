@@ -2,21 +2,18 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { BadRequestError, NotFoundError } from "../errors.js";
+import { matchDocumentIdPrefix } from "../../data/like-prefix-seek.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
 
 export function resolveDocId(db: Db, idOrPrefix: string): string {
-  const row = db
-    .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id LIKE ? LIMIT 2")
-    .all(`${idOrPrefix}%`);
-  if (row.length === 0) throw new NotFoundError(`Document not found: ${idOrPrefix}`);
-  if (row.length > 1) {
-    throw new BadRequestError(`Ambiguous ID prefix: ${idOrPrefix}`, {
-      matches: row.map((r) => r.id),
-    });
+  const matches = matchDocumentIdPrefix(db, idOrPrefix);
+  if (matches.length === 0) throw new NotFoundError(`Document not found: ${idOrPrefix}`);
+  if (matches.length > 1) {
+    throw new BadRequestError(`Ambiguous ID prefix: ${idOrPrefix}`, { matches });
   }
-  return row[0].id;
+  return matches[0]!;
 }
 
 export function resolveSeeds(db: Db, firstId: string, extraIdsRaw: string): string[] {

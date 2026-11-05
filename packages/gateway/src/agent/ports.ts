@@ -51,6 +51,7 @@ import {
   lookupDocumentIdsBySourceUrl,
 } from "../data/repositories/DocumentRepository.js";
 import { permittedSourceIds } from "../access/permitted-sources.js";
+import { matchDocumentIdPrefix } from "../data/like-prefix-seek.js";
 import {
   reconstructBoundDocumentRef,
   type BoundDocumentBinding,
@@ -1208,16 +1209,12 @@ export function createGatewayTrailPort(
       for (const idOrPrefix of seedIds) {
         const trimmed = idOrPrefix.trim();
         if (trimmed.length === 0) throw new Error("seed id is empty");
-        const rows = db
-          .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id LIKE ? LIMIT 2")
-          .all(`${trimmed}%`);
-        if (rows.length === 0) throw new Error(`seed not found: ${trimmed}`);
-        if (rows.length > 1) {
-          throw new Error(
-            `ambiguous seed prefix: ${trimmed} (${rows.map((r) => r.id).join(", ")})`,
-          );
+        const matches = matchDocumentIdPrefix(db, trimmed);
+        if (matches.length === 0) throw new Error(`seed not found: ${trimmed}`);
+        if (matches.length > 1) {
+          throw new Error(`ambiguous seed prefix: ${trimmed} (${matches.join(", ")})`);
         }
-        const fullId = rows[0]!.id;
+        const fullId = matches[0]!;
         if (options.knowledgeReads === false && isKnowledgeReadDocument(db, fullId)) {
           throw new Error("Maintained knowledge reads are disabled");
         }

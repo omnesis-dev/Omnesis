@@ -38,6 +38,11 @@ import {
 import { toRecentDocumentDto, toListedDocumentDto } from "../dto/document-dto.js";
 import { assertExternalDocumentWrite, isGatewayInternalSource } from "../../internal-sources.js";
 import { documentsMetadataCodec, syncStateCursorCodec } from "../../data/json-columns.js";
+import {
+  documentIdPrefixFilter,
+  likePrefixSeek,
+  matchDocumentIdPrefix,
+} from "../../data/like-prefix-seek.js";
 import { getExtractedDatesForDocument } from "../../enrichment/dates/storage.js";
 import { BadRequestError, NotFoundError } from "../errors.js";
 import { decodePageCursor, encodePageCursor } from "../pagination-cursor.js";
@@ -352,9 +357,10 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
     if (FULL_UUID.test(id)) {
       row = db.prepare(`SELECT ${cols} FROM documents WHERE id = ?`).get(id) as typeof row;
     } else {
+      const filter = documentIdPrefixFilter(id);
       const rows = db
-        .prepare(`SELECT ${cols} FROM documents WHERE id LIKE ? LIMIT 2`)
-        .all(`${id}%`) as Array<{
+        .prepare(`SELECT ${cols} FROM documents WHERE ${filter.sql} ORDER BY rowid LIMIT 2`)
+        .all(...filter.params) as Array<{
         id: string;
         provider_id: string;
         source_id: string;
@@ -839,20 +845,11 @@ export function mountDocumentRefsRoute(
 
   app.get("/documents/:id/refs", scope.read(), (c) => {
     const id = c.req.param("id");
-    const row = db
-      .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id LIKE ? LIMIT 2")
-      .all(`${id}%`);
+    const matches = matchDocumentIdPrefix(db, id);
+    if (matches.length === 0) throw new NotFoundError("Document not found");
+    if (matches.length > 1) throw new BadRequestError("Ambiguous ID prefix", { matches });
 
-    if (row.length === 0) {
-      throw new NotFoundError("Document not found");
-    }
-    if (row.length > 1) {
-      throw new BadRequestError("Ambiguous ID prefix", {
-        matches: row.map((r) => r.id),
-      });
-    }
-
-    const refs = documentService.getRefs(row[0].id);
+    const refs = documentService.getRefs(matches[0]!);
     return c.json(refs);
   });
 
@@ -905,20 +902,11 @@ export function mountDocumentRefsRoute(
    */
   app.get("/documents/:id/dates", scope.read(), (c) => {
     const id = c.req.param("id");
-    const row = db
-      .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id LIKE ? LIMIT 2")
-      .all(`${id}%`);
+    const matches = matchDocumentIdPrefix(db, id);
+    if (matches.length === 0) throw new NotFoundError("Document not found");
+    if (matches.length > 1) throw new BadRequestError("Ambiguous ID prefix", { matches });
 
-    if (row.length === 0) {
-      throw new NotFoundError("Document not found");
-    }
-    if (row.length > 1) {
-      throw new BadRequestError("Ambiguous ID prefix", {
-        matches: row.map((r) => r.id),
-      });
-    }
-
-    return c.json({ dates: getExtractedDatesForDocument(db, row[0].id) });
+    return c.json({ dates: getExtractedDatesForDocument(db, matches[0]!) });
   });
 
   /**
@@ -983,20 +971,11 @@ export function mountDocumentRefsRoute(
    */
   app.get("/documents/:id/edges", scope.read(), (c) => {
     const id = c.req.param("id");
-    const row = db
-      .prepare<[string], { id: string }>("SELECT id FROM documents WHERE id LIKE ? LIMIT 2")
-      .all(`${id}%`);
+    const matches = matchDocumentIdPrefix(db, id);
+    if (matches.length === 0) throw new NotFoundError("Document not found");
+    if (matches.length > 1) throw new BadRequestError("Ambiguous ID prefix", { matches });
 
-    if (row.length === 0) {
-      throw new NotFoundError("Document not found");
-    }
-    if (row.length > 1) {
-      throw new BadRequestError("Ambiguous ID prefix", {
-        matches: row.map((r) => r.id),
-      });
-    }
-
-    return c.json(documentService.getEdges(row[0].id));
+    return c.json(documentService.getEdges(matches[0]!));
   });
 
   /**
@@ -1038,12 +1017,18 @@ export function mountDocumentRefsRoute(
    * set by `buildAttachmentDocument` in `@omnesis/core/attachments.ts`.
    * Used by the portal's attachments panel to deep-link the parent's
    * attachment list to each child doc view.
+   *
+   * Both reads seek through an index (see `like-prefix-seek.ts`) while
+   * keeping the `LIKE` semantics they have always had: the child match is
+   * case-insensitive and treats `%` and `_` in the parent's external id as
+   * wildcards, and an ambiguous prefix names the two earliest-stored matches.
    */
   app.get("/documents/:id/attachments", scope.read(), (c) => {
     const id = c.req.param("id");
+    const parentFilter = documentIdPrefixFilter(id);
     const parents = db
       .prepare<
-        [string],
+        string[],
         {
           id: string;
           provider_id: string;
@@ -1052,9 +1037,10 @@ export function mountDocumentRefsRoute(
           stream_id: string;
         }
       >(
-        "SELECT id, provider_id, source_id, external_id, stream_id FROM documents WHERE id LIKE ? LIMIT 2",
+        `SELECT id, provider_id, source_id, external_id, stream_id FROM documents
+          WHERE ${parentFilter.sql} ORDER BY rowid LIMIT 2`,
       )
-      .all(`${id}%`);
+      .all(...parentFilter.params);
 
     if (parents.length === 0) {
       throw new NotFoundError("Document not found");
@@ -1066,9 +1052,11 @@ export function mountDocumentRefsRoute(
     }
     const parent = parents[0];
 
+    const childPattern = `${parent.external_id}/att/%`;
+    const childSeek = likePrefixSeek(childPattern);
     const rows = db
       .prepare<
-        [string, string, string, string],
+        string[],
         {
           id: string;
           external_id: string;
@@ -1077,11 +1065,20 @@ export function mountDocumentRefsRoute(
         }
       >(
         `SELECT id, external_id, title, metadata
-           FROM documents
-          WHERE provider_id = ? AND source_id = ? AND stream_id = ? AND external_id LIKE ?
+           FROM documents INDEXED BY idx_documents_external_source
+          WHERE source_id = ? AND LOWER(external_id) >= ?
+            ${childSeek.upper === null ? "" : "AND LOWER(external_id) < ?"}
+            AND provider_id = ? AND stream_id = ? AND external_id LIKE ?
           ORDER BY external_id`,
       )
-      .all(parent.provider_id, parent.source_id, parent.stream_id, `${parent.external_id}/att/%`);
+      .all(
+        parent.source_id,
+        childSeek.lower,
+        ...(childSeek.upper === null ? [] : [childSeek.upper]),
+        parent.provider_id,
+        parent.stream_id,
+        childPattern,
+      );
 
     const children = rows.map((r) => {
       const meta = documentsMetadataCodec.parseWithFallback(r.metadata, { rowId: r.id }) as {
@@ -1150,9 +1147,10 @@ export function mountDocumentByIdRoute(app: RouteApp, deps: { db: Db }): void {
       return c.json(withInternalFlag(row));
     }
 
+    const filter = documentIdPrefixFilter(id, "document.id");
     const candidates = db
-      .prepare(`SELECT ${columns} ${from} WHERE document.id LIKE ? LIMIT 2`)
-      .all(`${id}%`) as Array<Record<string, unknown>>;
+      .prepare(`SELECT ${columns} ${from} WHERE ${filter.sql} ORDER BY document.rowid LIMIT 2`)
+      .all(...filter.params) as Array<Record<string, unknown>>;
     const rows = candidates.filter((row) =>
       isKnowledgeDocumentReadable(db, row.id as string, row.source_id as string),
     );
