@@ -125,7 +125,11 @@ The release tag preflight (`npm run release -- tag`, or
 workflow's completed runs on `main` after it has confirmed the tagged commit's
 green `full-validation` run, and refuses the tag when the newest full run (the
 twice-daily schedule, or a dispatch with `lanes=all`) is red, or when a push run
-newer than it is red. A cancelled run is passed over for the one before it. With no full run yet the tag
+newer than it is red. A cancelled run is passed over for the one before it. A
+run whose only failed job is D2 does not refuse the tag: D2 installs the newest
+published images, so it judges the release users already have, and the release
+being tagged may be what fixes it; the preflight names the failed job instead.
+With no full run yet the tag
 proceeds with a warning; runs that cannot be read refuse it. After a fix on
 `main`, `gh workflow run install-e2e.yml --ref main -f lanes=all` produces the
 evidence that clears it. `--allow-failed-install-e2e` releases anyway, for an

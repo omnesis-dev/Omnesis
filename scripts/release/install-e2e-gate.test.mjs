@@ -2,7 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it } from "vitest";
-import { OVERRIDE_FLAG, checkInstallE2eGate, installE2eVerdict } from "./install-e2e-gate.mjs";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse } from "yaml";
+import {
+  OVERRIDE_FLAG,
+  PUBLISHED_RELEASE_JOBS,
+  checkInstallE2eGate,
+  installE2eVerdict,
+} from "./install-e2e-gate.mjs";
 
 let clock = Date.parse("2026-01-01T00:00:00Z");
 function run(overrides = {}) {
@@ -159,5 +167,63 @@ describe("checkInstallE2eGate", () => {
     expect(() => checkInstallE2eGate("/repo", { gh: shapeless })).toThrow(
       /no run list[\s\S]*--allow-failed-install-e2e/,
     );
+  });
+});
+
+describe("lanes that judge the published release", () => {
+  const D2 = "D2 Docker single host (macos-15-intel, Colima)";
+  const jobs = (...failed) => [
+    { name: "S1 single host (ubuntu-22.04)", conclusion: "success" },
+    { name: "D1 Docker single host (ubuntu-24.04)", conclusion: "success" },
+    { name: "Intel vector compatibility diagnosis", conclusion: "skipped" },
+    ...failed.map(([name, conclusion = "failure"]) => ({ name, conclusion })),
+  ];
+
+  it("a run whose only failure is D2 does not block, and says so", () => {
+    const red = run({ conclusion: "failure" });
+    const verdict = installE2eVerdict([red], { jobsOf: () => jobs([D2]) });
+    expect(verdict).toMatchObject({ ok: true, url: red.html_url, published: [D2] });
+  });
+
+  it("any failed, timed-out or cancelled candidate lane still blocks", () => {
+    for (const other of [
+      ["S2 single host (macos-15)"],
+      ["D1 Docker single host (ubuntu-24.04)", "timed_out"],
+      ["T1 tailnet gateway (ubuntu-24.04)", "cancelled"],
+    ]) {
+      const verdict = installE2eVerdict([run({ conclusion: "failure" })], {
+        jobsOf: () => jobs([D2], other),
+      });
+      expect(verdict.ok, other[0]).toBe(false);
+    }
+  });
+
+  it("jobs that cannot be read leave a red run red", () => {
+    const verdict = installE2eVerdict([run({ conclusion: "failure" })], { jobsOf: () => null });
+    expect(verdict.ok).toBe(false);
+  });
+
+  it("the gate reads the red run's jobs and prints the notice", () => {
+    const red = run({ id: 4242, conclusion: "failure" });
+    const gh = (_root, args) => {
+      if (args[1].includes("/runs/4242/jobs")) {
+        return { code: 0, stdout: JSON.stringify({ jobs: jobs([D2]) }), stderr: "" };
+      }
+      const event = /event=([a-z_]+)/.exec(args[1])?.[1];
+      const own = [red].filter((r) => r.event === event);
+      return { code: 0, stdout: JSON.stringify({ workflow_runs: own }), stderr: "" };
+    };
+    const lines = checkInstallE2eGate("/repo", { gh });
+    expect(lines[0]).toContain("green for this candidate");
+    expect(lines[1]).toContain(D2);
+  });
+
+  it("the workflow's D2 job, and only it, is a published-release lane", () => {
+    const workflow = parse(
+      readFileSync(join(import.meta.dirname, "../../.github/workflows/install-e2e.yml"), "utf8"),
+    );
+    const names = Object.values(workflow.jobs).map((job) => String(job.name ?? ""));
+    const matching = names.filter((name) => PUBLISHED_RELEASE_JOBS.test(name));
+    expect(matching).toEqual([D2]);
   });
 });
