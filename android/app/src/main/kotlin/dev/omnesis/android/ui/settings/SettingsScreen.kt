@@ -364,7 +364,7 @@ fun SettingsContent(
                     KeyValue("Name", gateway.name)
                     UrlEditor(gateway.url, onSaveUrl)
                     Spacer(Modifier.height(OmSpacing.sm))
-                    ConnectionRowLabel(connection)
+                    ConnectionRowLabel(connection, gateway?.usesDirectRouting == true)
                     RowDivider()
                     NavigationRow("Configure Models", onOpenModels, warning = modelsNeedAttention)
                     RowDivider()
@@ -713,7 +713,7 @@ private fun NavigationRow(label: String, onClick: () -> Unit, warning: Boolean =
  * green check; Connecting/Authenticating → spinner + grey; Failed → amber triangle + reason.
  */
 @Composable
-private fun ConnectionRowLabel(connection: ConnectionState) {
+private fun ConnectionRowLabel(connection: ConnectionState, routed: Boolean) {
     val c = OmTheme.colors
     Row(
         Modifier.fillMaxWidth().padding(vertical = OmSpacing.xs),
@@ -724,12 +724,16 @@ private fun ConnectionRowLabel(connection: ConnectionState) {
             is ConnectionState.Connected -> {
                 Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = c.success, modifier = Modifier.size(18.dp))
                 Text("Connected", style = MaterialTheme.typography.bodyMedium, color = c.success)
+                connection.connectionPath?.let { path ->
+                    dev.omnesis.android.ui.common.GatewayConnectionPill(path)
+                }
             }
             // iOS folds disconnected/connecting/authenticating into one "Connecting…" arm — match
             // it so there's no settled grey "Disconnected" state the iOS shell never shows.
             ConnectionState.Disconnected, ConnectionState.Connecting, ConnectionState.Authenticating -> {
                 OmSpinner(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = c.textSecondary)
                 Text("Connecting…", style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
+                if (routed) dev.omnesis.android.ui.common.GatewayConnectionPill(dev.omnesis.android.transport.routing.GatewayConnectionPath.RECONNECTING)
             }
             is ConnectionState.Failed -> {
                 Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = c.warning, modifier = Modifier.size(18.dp))

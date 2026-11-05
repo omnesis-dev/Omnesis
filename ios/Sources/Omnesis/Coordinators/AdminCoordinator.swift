@@ -47,6 +47,7 @@ final class AdminCoordinator {
     /// failure → "Re-pair from Settings", …).
     private(set) var sourcesError: Error?
     private(set) var wsConnected: Bool = false
+    private(set) var connectionPath: GatewayConnectionPath?
     private(set) var wsState: DeviceSocket.ConnectionState = .disconnected
     private(set) var sourceIconByType: [String: String] = [:]
     private(set) var sourceIconById: [String: String] = [:]
@@ -109,6 +110,10 @@ final class AdminCoordinator {
     private var socketEventTask: Task<Void, Never>?
     @ObservationIgnored
     private var socketStateTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var socketPathTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var socketGeneration = UUID()
     /// Whether the device socket has connected at least once for the current
     /// pairing. The first connect happens right after `rebuildAdmin`, which
     /// already fetched source-meta + sources, so we skip the refetch then and
@@ -315,7 +320,11 @@ final class AdminCoordinator {
 
     /// Recreate the AdminClient + SearchClient + DeviceSocket from the
     /// current pairing. Called on pair / unpair / reload.
-    func rebuildAdmin(pairing: Pairing, registerLocalSources: @escaping @MainActor (AdminClient, Pairing) async -> Void) {
+    func rebuildAdmin(
+        pairing: Pairing,
+        hintRefresher: (any GatewayDirectHintRefreshing)? = nil,
+        registerLocalSources: @escaping @MainActor (AdminClient, Pairing) async -> Void
+    ) {
         stopAdmin()
         localDeviceId = pairing.deviceId
         let admin = AdminClient(
@@ -329,7 +338,14 @@ final class AdminCoordinator {
         tasksClient = TasksClient(baseURL: pairing.url, token: pairing.token)
         privacyClient = PrivacyClient(baseURL: pairing.url, token: pairing.token)
         accessClient = AccessClient(baseURL: pairing.url, token: pairing.token)
-        let socket = DeviceSocket(gatewayUrl: pairing.url, token: pairing.token, capabilities: .ios(tlsMode: pairing.tlsMode))
+        let socket = DeviceSocket(
+            gatewayUrl: pairing.url,
+            token: pairing.token,
+            capabilities: .ios(tlsMode: pairing.tlsMode),
+            routingOwner: pairing.makeSocketRoutingSession(),
+            expectedDeviceId: pairing.pairingGeneration == nil ? nil : pairing.deviceId,
+            hintRefresher: hintRefresher
+        )
         deviceSocket = socket
         subscribeSocket(socket)
         Task {
@@ -356,11 +372,15 @@ final class AdminCoordinator {
     }
 
     func stopAdmin() {
+        socketGeneration = UUID()
         sourceRegistryRevision += 1
         socketEventTask?.cancel()
         socketEventTask = nil
         socketStateTask?.cancel()
         socketStateTask = nil
+        socketPathTask?.cancel()
+        socketPathTask = nil
+        connectionPath = nil
         if let s = deviceSocket {
             Task { await s.stop() }
         }
@@ -736,18 +756,38 @@ final class AdminCoordinator {
     // MARK: - WebSocket
 
     private func subscribeSocket(_ socket: DeviceSocket) {
+        subscribeSocket(events: socket.events, states: socket.stateChanges, paths: socket.pathChanges)
+    }
+
+    /// The socket owns these channels; the coordinator owns and cancels their single subscriptions.
+    func subscribeSocket(
+        events: AsyncStream<DeviceSocket.Event>,
+        states: AsyncStream<DeviceSocket.ConnectionState>,
+        paths: AsyncStream<GatewayConnectionPath>
+    ) {
         // Consume events + state changes on the main actor. Published state
         // is observed by SwiftUI views via @Observable.
-        let events = socket.events
-        let states = socket.stateChanges
+        let generation = socketGeneration
         socketEventTask = Task { [weak self] in
             for await event in events {
-                await MainActor.run { self?.handleEvent(event) }
+                await MainActor.run {
+                    guard self?.socketGeneration == generation else { return }
+                    self?.handleEvent(event)
+                }
+            }
+        }
+        socketPathTask = Task { [weak self] in
+            for await path in paths {
+                guard !Task.isCancelled, self?.socketGeneration == generation else { return }
+                self?.connectionPath = path
             }
         }
         socketStateTask = Task { [weak self] in
             for await state in states {
-                await MainActor.run { self?.handleState(state) }
+                await MainActor.run {
+                    guard self?.socketGeneration == generation else { return }
+                    self?.handleState(state)
+                }
             }
         }
     }
@@ -1145,6 +1185,7 @@ extension AdminCoordinator {
         statusSnapshot: StatusSnapshot?,
         indexStats: IndexStats?,
         wsState: DeviceSocket.ConnectionState?,
+        connectionPath: GatewayConnectionPath? = nil,
         sourceIconByType: [String: String],
         sourceIconById: [String: String] = [:],
         sourceUnitNameByType: [String: String] = [:],
@@ -1170,6 +1211,7 @@ extension AdminCoordinator {
         let resolvedState: DeviceSocket.ConnectionState = wsState
             ?? .connected(deviceId: "preview-device", deviceName: "iPhone-preview", scopes: ["read"])
         self.wsState = resolvedState
+        self.connectionPath = connectionPath
         if case .connected = resolvedState {
             wsConnected = true
         }

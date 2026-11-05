@@ -8,6 +8,19 @@
  * a `.env`-provided `OMNESIS_GATEWAY_URL` / `OMNESIS_TOKEN` is honoured.
  */
 import { loadDotEnv } from "@omnesis/config";
+import { bootstrapCliGatewayTransport } from "./trust-preflight.js";
 
 loadDotEnv();
 if (typeof process.umask === "function") process.umask(0o077);
+
+if (
+  process.env.OMNESIS_EXPERIMENTAL === "1" &&
+  !process.env.OMNESIS_GATEWAY_URL &&
+  (process.env.OMNESIS_CLOUD_RELAY_DEVICE_FILE || !process.env.OMNESIS_TOKEN)
+) {
+  await bootstrapCliGatewayTransport(process.argv.slice(2), async () => {
+    await (
+      await import("@omnesis/cloud-relay/bootstrap")
+    ).initializePairedDeviceTransport(process.env, {}, process.argv.slice(2));
+  });
+}

@@ -152,19 +152,12 @@ class SettingsViewModel @Inject constructor(
         val deviceId: String,
         val scopes: List<String>,
         val tlsMode: PairingTlsMode = PairingTlsMode.LEGACY,
+        val usesDirectRouting: Boolean = false,
     )
 
     val gateway: StateFlow<GatewayInfo?> = session.state
         .map { state ->
-            (state as? SessionManager.AppState.Paired)?.pairing?.let { p ->
-                GatewayInfo(
-                    name = p.gatewayName?.takeIf { it.isNotBlank() } ?: "Gateway",
-                    url = p.url,
-                    deviceId = p.deviceId ?: "—",
-                    scopes = p.scopes,
-                    tlsMode = p.tlsMode,
-                )
-            }
+            (state as? SessionManager.AppState.Paired)?.pairing?.let(::settingsGatewayInfo)
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -295,3 +288,13 @@ internal fun voiceSettingsState(
 }
 
 private fun asSentence(text: String): String = if (text.last() in ".!?") text else "$text."
+
+/** Settings projects negotiated authority; local endpoint facts never turn an ordinary pairing into a routed one. */
+internal fun settingsGatewayInfo(pairing: dev.omnesis.android.pairing.Pairing) = SettingsViewModel.GatewayInfo(
+    name = pairing.gatewayName?.takeIf { it.isNotBlank() } ?: "Gateway",
+    url = pairing.url,
+    deviceId = pairing.deviceId ?: "—",
+    scopes = pairing.scopes,
+    tlsMode = pairing.tlsMode,
+    usesDirectRouting = dev.omnesis.android.pairing.PairedGatewayTransport.directRoute(pairing) != null,
+)

@@ -10,6 +10,7 @@
     "@clack/prompts": "^1.8.1",
     "@omnesis/agent-integration": "*",
     "@omnesis/cli-shared": "*",
+    "@omnesis/cloud-relay": "*",
     "@omnesis/collector": "*",
     "@omnesis/config": "*",
     "@omnesis/core": "*",

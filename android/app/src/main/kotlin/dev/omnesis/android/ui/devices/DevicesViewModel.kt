@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.session.SessionManager
+import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.dto.DeviceRecord
 import dev.omnesis.android.transport.dto.NetworkIdentity
@@ -117,6 +118,11 @@ class DevicesViewModel @Inject constructor(
                 )
         }
     }
+
+    fun pairingApprovalClient(): GatewayPairingApproving? = runCatching {
+        val current = session.requireSession()
+        current.admin.takeIf { "admin" in current.pairing.scopes }
+    }.getOrNull()
 
     fun dismissNotice() = _notice.update { null }
 

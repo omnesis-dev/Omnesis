@@ -24,6 +24,9 @@ import dev.omnesis.android.notifications.drainClaimedNotifications
 import dev.omnesis.android.pairing.Pairing
 import dev.omnesis.android.pairing.PairingService
 import dev.omnesis.android.pairing.PairingTlsMode
+import dev.omnesis.android.pairing.PairedGatewayTransport
+import dev.omnesis.android.pairing.PairedGatewayRoutes
+import dev.omnesis.android.pairing.GatewayDirectCandidateDiscovery
 import dev.omnesis.android.setup.PhoneSetupStep
 import dev.omnesis.android.setup.flow.PhoneSetupRecord
 import dev.omnesis.android.setup.flow.pairingStartsClean
@@ -49,7 +52,6 @@ import dev.omnesis.android.transport.dto.NoteAgentStatusDto
 import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.http.GatewayHttp
-import dev.omnesis.android.transport.tls.PinnedOkHttp
 import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.ui.agent.AgentCoordinator
 import dev.omnesis.android.voice.SpeechVocabulary
@@ -236,7 +238,8 @@ class SessionManager @Inject constructor(
 
     /** The set of clients bound to the current pairing. */
     class GatewaySession(
-        val pairing: Pairing,
+        @Volatile var pairing: Pairing,
+        val routes: PairedGatewayRoutes,
         val vocabulary: TranscriptionVocabularyClient,
         val gateway: GatewayClient,
         val search: SearchClient,
@@ -424,7 +427,7 @@ class SessionManager @Inject constructor(
                     continue
                 }
                 val http = GatewayHttp(
-                    PinnedOkHttp.build(pending.fingerprint, host = hostOf(pending.url)),
+                    PairedGatewayTransport.http(pending),
                     pending.url,
                     pending.token,
                     pending.pairingGeneration,
@@ -497,6 +500,19 @@ class SessionManager @Inject constructor(
     fun requireSession(): GatewaySession =
         session ?: error("no active gateway session — app is unpaired")
 
+    /** An asynchronous metadata result may update hints only for this still-current authority. */
+    internal fun acceptDirectCandidates(updated: Pairing) {
+        synchronized(this) {
+            val active = session
+            if (active != null && active.pairing.copy(directCandidates = updated.directCandidates) == updated) {
+                active.pairing = updated
+                _state.value = AppState.Paired(updated)
+                // Background widgets and notifications read the atomic bundle on their next request.
+                // Updating a hint never cancels an upload or replaces the authenticated session.
+            }
+        }
+    }
+
     private fun rebuild(atLaunch: Boolean = false) {
         speechVocabulary.cache.reset()
         sourceRemovalReconciler.invalidateSession()
@@ -504,6 +520,7 @@ class SessionManager @Inject constructor(
         sessionJob = null
         sessionGeneration++
         session?.socket?.stop()
+        session?.routes?.retire()
         session = null
         // Re-probe per rebuild; clear so a stale value from a prior pairing can't
         // surface an experimental feature against a non-experimental gateway.
@@ -530,28 +547,21 @@ class SessionManager @Inject constructor(
             return
         }
         settleLocalState(pairing, atLaunch)
-        val requirePin = pairing.tlsMode == PairingTlsMode.PINNED_LEAF
-        val host = hostOf(pairing.url)
         val upgrade = { onSystemTrustVerified(pairing) }
+        val routes = PairedGatewayRoutes(pairing, pairingService, GatewayDirectCandidateDiscovery::fetch, ::acceptDirectCandidates)
         val http = GatewayHttp(
-            PinnedOkHttp.build(
-                pairing.fingerprint,
-                requirePin = requirePin,
-                host = host,
-                onSystemTrustVerified = upgrade,
-            ),
+            PairedGatewayTransport.httpOnRoute(pairing, upgrade, routes.http),
             pairing.url,
             pairing.token,
             pairing.pairingGeneration,
         )
-        val streaming = PinnedOkHttp.buildStreaming(
-            pairing.fingerprint,
-            requirePin = requirePin,
-            host = host,
-            onSystemTrustVerified = upgrade,
-        )
+        val streaming = PairedGatewayTransport.streamingOnRoute(pairing, upgrade, routes.streaming)
+        val socketRoute = routes.socket
         val socket = DeviceSocket(
-            client = streaming,
+            client = PairedGatewayTransport.socket(pairing, upgrade, socketRoute),
+            directRoute = socketRoute,
+            refreshHints = if (pairing.tlsMode == PairingTlsMode.PINNED_KEY_STRICT) ({ routes.refresh(); Unit }) else null,
+            expectedDeviceId = pairing.deviceId.takeIf { pairing.pairingGeneration != null },
             gatewayUrl = pairing.url,
             token = pairing.token,
             scope = scope,
@@ -583,6 +593,7 @@ class SessionManager @Inject constructor(
         socket.start()
         val built = GatewaySession(
             pairing = pairing,
+            routes = routes,
             vocabulary = TranscriptionVocabularyClient(http),
             gateway = GatewayClient(http),
             search = SearchClient(http),
@@ -604,7 +615,7 @@ class SessionManager @Inject constructor(
                 ?.let { token ->
                     NotificationsClient(
                         GatewayHttp(
-                            PinnedOkHttp.build(pairing.fingerprint, requirePin = requirePin, host = host),
+                            PairedGatewayTransport.httpOnRoute(pairing, null, routes.http),
                             pairing.url,
                             token,
                         ),
@@ -700,6 +711,7 @@ class SessionManager @Inject constructor(
 
     /** Start one foreground visit before its queued registration retry runs. */
     fun beginForegroundVisit() {
+        session?.socket?.recoverAfterInterruption()
         relayConsentDeferral.beginForegroundVisit()
     }
 
@@ -994,11 +1006,7 @@ class SessionManager @Inject constructor(
         pairingService.setPushClaimCredential(deviceId, minted.token)
         current.notifications = NotificationsClient(
             GatewayHttp(
-                PinnedOkHttp.build(
-                    current.pairing.fingerprint,
-                    requirePin = current.pairing.tlsMode == PairingTlsMode.PINNED_LEAF,
-                    host = hostOf(current.pairing.url),
-                ),
+                PairedGatewayTransport.httpOnRoute(current.pairing, null, current.routes.http),
                 current.pairing.url,
                 minted.token,
             ),

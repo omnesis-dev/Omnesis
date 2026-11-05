@@ -22,7 +22,7 @@
  * reported as expired.
  */
 
-import { X509Certificate } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -154,6 +154,20 @@ export class TlsLifecycleService {
   /** The fingerprint of the certificate the server presents right now. */
   fingerprintSha256(): string {
     return this.served.fingerprintSha256;
+  }
+
+  /** A second SNI identity must not replace any existing default certificate name. */
+  coversHostname(hostname: string): boolean {
+    return new X509Certificate(this.served.cert).checkHost(hostname) !== undefined;
+  }
+
+  /** The leaf public key remains stable when ACME renews its certificate. */
+  spkiFingerprintSha256(): string {
+    const spki = new X509Certificate(this.served.cert).publicKey.export({
+      type: "spki",
+      format: "der",
+    });
+    return createHash("sha256").update(spki).digest("hex");
   }
 
   /**

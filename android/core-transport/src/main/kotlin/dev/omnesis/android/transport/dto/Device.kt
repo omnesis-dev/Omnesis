@@ -22,6 +22,8 @@ data class DeviceRecord(
     val capabilities: DeviceCapabilities? = null,
     val online: Boolean? = null,
     val revokedAt: Long? = null,
+    /** Advisory transport status, never authentication evidence. */
+    val connectionPath: String? = null,
 ) {
     val revoked: Boolean get() = revokedAt != null
 }

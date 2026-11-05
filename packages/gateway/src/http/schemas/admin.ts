@@ -162,7 +162,9 @@ export type RevokePairingBody = z.infer<typeof revokePairingBody>;
 export const pairQrBody = z.object({
   pairingCode: nonEmptyString,
   gatewayUrl: nonEmptyString,
-  trustMode: z.enum(["auto", "system", "pinned-leaf"]).optional(),
+  trustMode: z
+    .enum(["auto", "system", "pinned-leaf", "pinned-leaf-strict", "pinned-key-strict"])
+    .optional(),
 });
 export type PairQrBody = z.infer<typeof pairQrBody>;
 

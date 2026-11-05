@@ -5,6 +5,7 @@ import {
   deviceTlsFollowsPublicRenewal,
   deviceTlsTrust,
   deviceTlsTrustMode,
+  experimentalEnabled,
   normalizeEmail,
   normalizePhone,
 } from "@omnesis/core";
@@ -129,13 +130,21 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     wsServer,
     pairingTtlMs,
     tlsFingerprintSha256,
+    tlsSpkiFingerprintSha256,
+    cloudTlsSpkiFingerprintSha256,
     systemTrustPairingOrigins,
     deviceService,
     pushRegistrationService,
     sourceService,
   } = deps;
   const pairingQrService = new PairingQrService({
+    strictPinOrigins:
+      experimentalEnabled() && process.env.OMNESIS_CLOUD_RELAY_URL && deps.publicBaseUrl
+        ? [deps.publicBaseUrl]
+        : [],
     tlsFingerprint: tlsFingerprintSha256,
+    tlsSpkiFingerprint: tlsSpkiFingerprintSha256,
+    strictPinSpkiFingerprint: cloudTlsSpkiFingerprintSha256,
     systemTrustOrigins: systemTrustPairingOrigins,
     publiclyTrustedHosts: deps.publiclyTrustedPairingHosts,
     pairingKind: (code) => deps.pairingService.pendingPairingKind(code),
@@ -204,6 +213,7 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
       return {
         ...d,
         online: wsServer?.isConnected(d.id) ?? false,
+        connectionPath: d.revokedAt ? undefined : wsServer?.connectionPath(d.id),
         versionState: deviceVersionState(d),
         updateDisposition: fleetUpdate.dispositionFor(d),
         needsPairing: deviceNeedsPairing(d, statusCache.sourceHostingDeviceIds.has(d.id)),

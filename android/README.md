@@ -40,3 +40,38 @@ inputs. A failed completion leaves the task open.
 
 `TaskWidgetScreenshotTest` renders the actual RemoteViews in compact, medium,
 large and tablet sizes, including light/dark and offline/empty/error states.
+
+
+## Optional Google pairing through the experimental relay
+
+QR and manual pairing remain available without Google. A configured build may
+also offer Google sign-in using Credential Manager. Supply these public Gradle
+properties or environment variables (the ignored `local.push.properties` may
+also hold them):
+
+```properties
+OMNESIS_GOOGLE_WEB_CLIENT_ID=fictional-web.apps.googleusercontent.com
+OMNESIS_GOOGLE_ANDROID_CLIENT_ID=fictional-android.apps.googleusercontent.com
+OMNESIS_CLOUD_RELAY_URL=https://relay.example.test
+```
+
+Register the Android OAuth client for the application ID and signing-certificate
+fingerprint. The web client is the ID-token audience; the Android client is an
+explicitly trusted authorized presenter. Configure both on the gateway and relay
+as well. The app uses public identifiers and contains no OAuth client secret.
+
+Google identifies the requesting account and discovers a gateway candidate.
+The app independently verifies Google's signature and computes a certificate
+comparison code locally. Compare it on the gateway's **local** portal or trusted
+terminal, then approve the device there and confirm the match on the phone.
+An operator-controlled public hostname is not an independent place to compare
+codes against that operator. Neither sign-in nor remote approval alone can
+persist a device credential.
+
+The initial certificate comparison authenticates a separate SHA-256 pin of the
+gateway's complete DER SubjectPublicKeyInfo. That key stays strictly pinned
+across HTTP, WebSocket, notifications and task widgets. Current certificate
+validity and the canonical hostname are checked; same-key certificate renewal
+works without adopting public certificate trust. A changed gateway key requires
+a fresh trusted pairing. Existing exact certificate pins retain their original
+behavior and are never silently reinterpreted as key pins.

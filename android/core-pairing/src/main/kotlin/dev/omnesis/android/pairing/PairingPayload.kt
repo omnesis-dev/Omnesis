@@ -25,6 +25,8 @@ sealed interface PairingPayload {
     sealed interface V4Tls {
         data object System : V4Tls
         data class PinnedLeaf(val fingerprint: String) : V4Tls
+        data class PinnedLeafStrict(val fingerprint: String) : V4Tls
+        data class PinnedKeyStrict(val spkiFingerprint: String) : V4Tls
     }
 
     data class V4(val gatewayUrl: String, val pairingCode: String, val tls: V4Tls) : PairingPayload
@@ -54,11 +56,18 @@ sealed interface PairingPayload {
                             requireHttpsOrigin(gatewayUrl)
                             V4(gatewayUrl, pairingCode, V4Tls.System)
                         }
-                        "pinned-leaf" -> {
+                        "pinned-key-strict" -> {
+                            val spki = tls["spkiFingerprint"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                            requireNonEmpty(spki, "tls.spkiFingerprint")
+                            requireValidFingerprint(spki)
+                            V4(gatewayUrl, pairingCode, V4Tls.PinnedKeyStrict(spki))
+                        }
+                        "pinned-leaf", "pinned-leaf-strict" -> {
                             val fingerprint = tls["fingerprint"]?.jsonPrimitive?.contentOrNull.orEmpty()
                             requireNonEmpty(fingerprint, "tls.fingerprint")
                             requireValidFingerprint(fingerprint)
-                            V4(gatewayUrl, pairingCode, V4Tls.PinnedLeaf(fingerprint))
+                            V4(gatewayUrl, pairingCode, if (tls["mode"]?.jsonPrimitive?.contentOrNull == "pinned-leaf-strict")
+                                V4Tls.PinnedLeafStrict(fingerprint) else V4Tls.PinnedLeaf(fingerprint))
                         }
                         else -> throw PairingPayloadException("invalid TLS trust mode")
                     }

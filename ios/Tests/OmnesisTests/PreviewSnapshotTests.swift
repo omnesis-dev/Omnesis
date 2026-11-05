@@ -26,6 +26,159 @@ import XCTest
 @MainActor
 // swiftlint:disable:next type_body_length
 final class PreviewSnapshotTests: XCTestCase {
+    func testGoogleCloudPairingStates() {
+        XCTAssertNotNil(UIImage(named: "GoogleSignInMark"), "Google sign-in artwork must be bundled as an original-color image")
+        snapshot(GoogleSignInButton {}.padding(), name: "google-sign-in-button")
+        snapshot(GoogleSignInButton {}.padding().preferredColorScheme(.dark), name: "google-sign-in-button-dark")
+        snapshot(GoogleSignInButton {}.padding().dynamicTypeSize(.accessibility2), name: "google-sign-in-button-large")
+        snapshot(
+            PairingView(googleConfiguration: PreviewMocks.googleCloudPairingConfiguration).environment(AppStore.preview()),
+            name: "google-pairing-qr-entry"
+        )
+        snapshot(
+            GoogleCloudPairingView(configuration: PreviewMocks.googleCloudPairingConfiguration)
+                .environment(AppStore.preview()),
+            name: "google-pairing-sheet"
+        )
+        for (phase, name) in [
+            (GoogleCloudPairingCoordinator.Phase.idle, "idle"),
+            (.signingIn, "signing-in"),
+            (.findingGateway, "finding"),
+            (.comparing, "compare"),
+            (.waiting, "waiting"),
+            (.ready, "approved"),
+            (.pairing, "pairing"),
+            (.failed, "failed"),
+        ] {
+            snapshot(NavigationStack { PreviewMocks.googlePairingPanel(phase) }, name: "google-pairing-\(name)")
+            snapshot(
+                NavigationStack { PreviewMocks.googlePairingPanel(phase) }.preferredColorScheme(.dark),
+                name: "google-pairing-\(name)-dark"
+            )
+        }
+        snapshot(
+            NavigationStack { PreviewMocks.googlePairingPanel(.ready) }.dynamicTypeSize(.accessibility2),
+            name: "google-pairing-approved-large"
+        )
+    }
+
+    func testChapterTwoTrustSurfaces() async {
+        let now = Date()
+        let code = "AAAA-BBBB-CCCC-DDDD-EEEE"
+        let row = GatewayPairingApprovalRequest(
+            requestId: "00000000-0000-4000-8000-000000000901",
+            kind: "android",
+            name: "Test phone",
+            status: "pending",
+            verificationCode: code,
+            expiresAt: now.timeIntervalSince1970 * 1000 + 600_000
+        )
+        let payload = PairingPayload.v4(.init(
+            gatewayUrl: "https://gateway.example.test",
+            pairingCode: "SYNTHETIC",
+            tls: .pinnedKeyStrict(spkiFingerprint: String(repeating: "ab", count: 32))
+        ))
+        for dark in [false, true] {
+            let suffix = dark ? "dark" : "light"
+            snapshot(
+                PairingConfirmationSheet(payload: payload, isPairing: false, onCancel: {}, onConfirm: {})
+                    .preferredColorScheme(dark ? .dark : .light),
+                name: "chapter-two-key-confirm-\(suffix)"
+            )
+            snapshot(
+                PairingConfirmationSheet(payload: payload, isPairing: false, onCancel: {}, onConfirm: {})
+                    .preferredColorScheme(dark ? .dark : .light).dynamicTypeSize(.accessibility2),
+                name: "chapter-two-key-confirm-large-\(suffix)"
+            )
+            for compared in [false, true] {
+                let model = GatewayPairingApprovalModel(now: { now })
+                await model.refresh(client: SnapshotApprovalClient(rows: [row]))
+                model.setCompared(compared, requestId: row.id)
+                snapshot(
+                    GatewayPairingApprovalView(client: nil, model: model).preferredColorScheme(dark ? .dark : .light),
+                    name: "chapter-two-approval-\(compared ? "compared" : "pending")-\(suffix)"
+                )
+                if compared {
+                    let largeModel = GatewayPairingApprovalModel(now: { now })
+                    await largeModel.refresh(client: SnapshotApprovalClient(rows: [row]))
+                    largeModel.setCompared(true, requestId: row.id)
+                    snapshot(
+                        GatewayPairingApprovalView(client: nil, model: largeModel).preferredColorScheme(dark ? .dark : .light)
+                            .dynamicTypeSize(.accessibility2),
+                        name: "chapter-two-approval-large-\(suffix)"
+                    )
+                }
+            }
+            let failedModel = GatewayPairingApprovalModel(now: { now })
+            await failedModel.refresh(client: SnapshotApprovalClient(rows: [], unavailable: true))
+            snapshot(
+                GatewayPairingApprovalView(client: nil, model: failedModel).preferredColorScheme(dark ? .dark : .light),
+                name: "chapter-two-approval-unavailable-\(suffix)"
+            )
+            let cachedModel = GatewayPairingApprovalModel(now: { now })
+            await cachedModel.refresh(client: SnapshotApprovalClient(rows: [row]))
+            await cachedModel.refresh(client: SnapshotApprovalClient(rows: [], unavailable: true))
+            snapshot(
+                GatewayPairingApprovalView(client: nil, model: cachedModel).preferredColorScheme(dark ? .dark : .light),
+                name: "chapter-two-approval-cached-error-\(suffix)"
+            )
+            snapshot(VStack(spacing: 16) {
+                GatewayConnectionPill(path: .local)
+                GatewayConnectionPill(path: .relay)
+                GatewayConnectionPill(path: .reconnecting)
+            }.preferredColorScheme(dark ? .dark : .light), name: "chapter-two-paths-\(suffix)")
+        }
+    }
+
+    func testChapterTwoSettingsAndLegacyPairing() {
+        for path in [GatewayConnectionPath.local, .relay, .reconnecting] {
+            let state: DeviceSocket.ConnectionState = path == .reconnecting ? .connecting :
+                .connected(deviceId: "preview-device", deviceName: "Test phone", scopes: ["read", "admin"])
+            snapshot(
+                SettingsView(initialDestination: .root, previewData: true)
+                    .environment(AppStore.preview(pairedDeviceId: "preview-device", wsState: state, connectionPath: path)),
+                name: "chapter-two-settings-\(path.rawValue)"
+            )
+        }
+        snapshot(
+            PairingConfirmationSheet(
+                payload: .v3(.init(
+                    gatewayUrl: "https://gateway.example.test",
+                    pairingCode: "TEST-CODE",
+                    fingerprint: String(repeating: "ab", count: 32)
+                )),
+                isPairing: false,
+                onCancel: {},
+                onConfirm: {}
+            ),
+            name: "chapter-two-legacy-leaf-qr"
+        )
+        snapshot(PairingConfirmationSheet(
+            payload: .v2(.init(gatewayUrl: "https://gateway.example.test", pairingCode: "TEST-CODE")),
+            isPairing: false,
+            onCancel: {},
+            onConfirm: {}
+        ), name: "chapter-two-legacy-direct-qr")
+        snapshot(PairingManualEntryView(
+            gatewayURL: .constant("https://gateway.example.test"),
+            pairingCode: .constant(""),
+            isPairing: false,
+            onCancel: {},
+            onPair: {}
+        ), name: "chapter-two-legacy-manual-entry")
+    }
+
+    private struct SnapshotApprovalClient: GatewayPairingApproving {
+        let rows: [GatewayPairingApprovalRequest]
+        var unavailable = false
+        func pairingApprovalRequests() async throws -> [GatewayPairingApprovalRequest] {
+            if unavailable { throw URLError(.cannotConnectToHost) }
+            return rows
+        }
+
+        func decidePairingApproval(requestId: String, approve: Bool) async throws {}
+    }
+
     func testTaskTellFanLayouts() {
         testTasksFanMain()
         testTasksFanChat()

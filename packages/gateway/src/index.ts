@@ -2,11 +2,19 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Load $OMNESIS_CONFIG_DIR/.env into process.env before any env reads.
+import { X509Certificate } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostname as osHostname } from "node:os";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
+import {
+  startGatewayCloudTunnel,
+  createGatewayAcmeController,
+  GatewayPublicSni,
+  publicGatewayOrigin,
+  GatewayCloudRelayManagement,
+} from "@omnesis/cloud-relay";
 import { CONFIG_DEFAULTS, DEFAULT_PUSH_WAKE_RETRY_SETTINGS, scaffoldDotEnv } from "@omnesis/config";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -30,6 +38,7 @@ import {
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
 import { setActivityMarker } from "@omnesis/agent";
+import { cloudPairingIdentitySource } from "./http/services/CloudPairingConfiguration.js";
 import { dotEnvKeysAtBoot } from "./load-env.js";
 import {
   resolveAnthropicApiKey,
@@ -99,6 +108,7 @@ import { currentTlsMaterialPaths, partitionAddressedHosts } from "./tls-lifecycl
 import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
 import { TlsLifecycleService } from "./tls-lifecycle/service.js";
+import { createAcmeRenewalTask } from "./tls-lifecycle/acme-task.js";
 import { createTlsLifecycleTask } from "./tls-lifecycle/task.js";
 import { DEFAULT_MDNS_ENABLED, DEFAULT_MDNS_HOSTNAME, MdnsAdvertiser } from "./mdns-advertiser.js";
 import { DeviceWsServer } from "./ws.js";
@@ -1810,6 +1820,10 @@ const addressedHosts = () =>
     ],
     proxyTrusted: reverseProxyTrusted(),
   });
+let acmeController: Awaited<ReturnType<typeof createGatewayAcmeController>>;
+const publicSni = new GatewayPublicSni();
+let cloudTunnel: ReturnType<typeof startGatewayCloudTunnel>;
+let cloudListenPort = 0;
 const tlsLifecycle = new TlsLifecycleService({
   configDir,
   initial: { cert: tlsBundle.cert, key: tlsBundle.key },
@@ -1834,6 +1848,80 @@ const tlsLifecycle = new TlsLifecycleService({
   inContainer,
   onRotation: (fingerprintSha256) => advertiser?.setFingerprint(fingerprintSha256),
 });
+
+let cloudRelayManagement: GatewayCloudRelayManagement | undefined;
+let cloudRelayInitializationFailed = false;
+try {
+  cloudRelayManagement = experimentalEnabled()
+    ? await GatewayCloudRelayManagement.open({
+        configDir,
+        env: process.env,
+        gatewayUrl: () => `https://localhost:${cloudListenPort}`,
+        googleCallbackOrigins: () => {
+          const hostNetwork = inContainer ? readHostNetwork(configDir) : null;
+          return {
+            origins: [
+              runtime.publicBaseUrl,
+              cloudRelayManagement?.publicOrigin(),
+              ...runtime.mcpResourceUrls.map((value) => new URL(value).origin),
+            ],
+            localNames: ["localhost", osHostname(), `${osHostname()}.local`, ...tlsExtraHosts],
+            port: hostNetwork?.port ?? cloudListenPort,
+            ...(hostNetwork
+              ? {
+                  localAddresses: hostNetwork.identities
+                    .filter((value) => value.kind === "lan")
+                    .map((value) => value.address),
+                }
+              : {}),
+            certificates: [new X509Certificate(tlsBundle.cert)],
+          };
+        },
+        directCertificateCoversHostname: (hostname) => tlsLifecycle.coversHostname(hostname),
+        activate: async (material, signal) => {
+          signal.throwIfAborted();
+          publicSni.activate(material);
+        },
+        stopLegacy: async () => {
+          cloudTunnel?.stop();
+          cloudTunnel = undefined;
+          await acmeController?.close();
+          acmeController = undefined;
+        },
+        directIdentity: () => {
+          const value = tlsLifecycle.snapshot();
+          return {
+            id: "direct",
+            names: value.served.names,
+            label: value.ownership,
+            kind:
+              value.ownership === "self-signed"
+                ? "self-signed"
+                : value.ownership === "mkcert"
+                  ? "local-ca"
+                  : value.ownership === "tailscale"
+                    ? "public-ca"
+                    : "external",
+            state:
+              value.served.state === "valid"
+                ? "valid"
+                : value.served.state === "expiring"
+                  ? "expiring"
+                  : value.served.state === "expired"
+                    ? "expired"
+                    : "failed",
+            expiresAt: value.served.notAfter ?? undefined,
+            pinPolicy: "existing-device-policy",
+          };
+        },
+      })
+    : undefined;
+} catch {
+  cloudRelayInitializationFailed = true;
+  log.warn(
+    "Optional cloud relay management configuration is invalid; direct gateway access remains available",
+  );
+}
 
 // Speech-to-text service. Lazily loads the assigned transcriber (a local
 // Whisper model or an HTTP transcription backend) on first use and self-heals
@@ -2549,6 +2637,30 @@ const app = createServer(db, DB_PATH, {
   // in auth.begin so OAuth/aggregator sources build their redirect URI as
   // `${publicBaseUrl}/oauth/callback`. See runtime-settings.ts.
   publicBaseUrl: runtime.publicBaseUrl,
+  ...(experimentalEnabled()
+    ? {
+        additionalOAuthIssuerUrls: () => {
+          const origin =
+            cloudRelayManagement?.publicOrigin() ??
+            (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
+              ? publicGatewayOrigin(process.env)
+              : undefined);
+          return origin ? [origin] : [];
+        },
+      }
+    : {}),
+  cloudRelayManagement,
+  cloudRelayExposure: () => cloudRelayManagement?.isExposing() ?? false,
+  cloudIdentitySource: cloudPairingIdentitySource(
+    process.env,
+    () => cloudRelayManagement?.verifiedGoogleOwnerAccountId(),
+    () => cloudRelayManagement?.managedGoogleBrowser()?.deviceIdentity(),
+  ),
+  cloudPairingPublicOrigin: () =>
+    cloudRelayManagement?.publicOrigin() ??
+    (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
+      ? publicGatewayOrigin(process.env)
+      : runtime.publicBaseUrl),
   mcpResourceUrls: runtime.mcpResourceUrls,
   indexerModel: indexerLifecycle.modelInfo,
   indexerReadiness: () => indexerStatus.getReadiness(),
@@ -2699,6 +2811,17 @@ const app = createServer(db, DB_PATH, {
     }
   },
   tlsFingerprintSha256: () => tlsLifecycle.fingerprintSha256(),
+  cloudTlsFingerprintSha256: () =>
+    cloudRelayManagement?.managesPublicCertificate()
+      ? cloudRelayManagement.fingerprintSha256()
+      : (acmeController?.fingerprintSha256() ?? tlsLifecycle.fingerprintSha256()),
+  tlsSpkiFingerprintSha256: () => tlsLifecycle.spkiFingerprintSha256(),
+  cloudTlsSpkiFingerprintSha256: () =>
+    cloudRelayManagement?.managesPublicCertificate()
+      ? cloudRelayManagement.spkiFingerprintSha256()
+      : process.env.OMNESIS_ACME_DIRECTORY_URL
+        ? acmeController?.spkiFingerprintSha256()
+        : tlsLifecycle.spkiFingerprintSha256(),
   tlsLifecycle,
   agentCertificateTrust: () => tlsLifecycle.agentCertificateTrust(),
   // A Tailscale certificate is publicly chained, so its names need no
@@ -3117,7 +3240,11 @@ function startServer() {
     port: PORT,
     hostname: bind,
     createServer: createHttpsServer,
-    serverOptions: { cert: tlsBundle.cert, key: tlsBundle.key },
+    serverOptions: {
+      cert: tlsBundle.cert,
+      key: tlsBundle.key,
+      ...(experimentalEnabled() ? { SNICallback: publicSni.callback } : {}),
+    },
   });
   activeServer = server as unknown as HttpsServer;
 
@@ -3155,6 +3282,25 @@ const listenPort =
     ? (server.address() as AddressInfo).port
     : PORT;
 log.info(`Listening on https://localhost:${listenPort}, db=${DB_PATH}`);
+cloudListenPort = listenPort;
+if (!cloudRelayInitializationFailed && !cloudRelayManagement?.hasSavedConfiguration()) {
+  try {
+    acmeController = await createGatewayAcmeController(process.env, {
+      configDir,
+      activate: async (material) => {
+        if (!activeServer) throw new Error("The gateway TLS listener is not available");
+        publicSni.activate(material);
+      },
+    });
+  } catch {
+    log.warn("Public ACME configuration is invalid; direct gateway TLS remains available");
+  }
+  cloudTunnel = startGatewayCloudTunnel(`https://localhost:${listenPort}`, {
+    ...process.env,
+    OMNESIS_CONFIG_DIR: configDir,
+  });
+  if (acmeController) scheduler.schedule(createAcmeRenewalTask(acmeController));
+} else cloudRelayManagement?.start();
 scheduleSearchCachePrewarm();
 // Warm-ups wait for the listening server: before it, they compete for the
 // cores the rest of boot needs, and nothing can search yet.
@@ -3655,6 +3801,17 @@ const SHUTDOWN_TIMEOUT_MS = GATEWAY_SHUTDOWN_BUDGET_MS;
 const COMPILE_DRAIN_TIMEOUT_MS = 10_000;
 
 const doShutdown = async (): Promise<void> => {
+  try {
+    await cloudRelayManagement?.close();
+  } catch {
+    log.warn("Optional relay cleanup deferred; direct gateway shutdown continues");
+  }
+  try {
+    await acmeController?.close();
+  } catch {
+    log.warn("ACME DNS cleanup deferred to the persisted challenge journal");
+  }
+  cloudTunnel?.stop();
   // Stop admitting HTTP requests and WebSocket frames while their services
   // still exist. This drain is bounded so a streaming client cannot consume
   // the entire shutdown budget before the indexer has persisted its graph.

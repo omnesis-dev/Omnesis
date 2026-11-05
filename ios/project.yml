@@ -57,6 +57,9 @@ configFiles:
   Release: Config.xcconfig
 
 packages:
+  SwiftASN1:
+    url: https://github.com/apple/swift-asn1.git
+    exactVersion: 1.7.4
   WebRTC:
     path: Vendor/WebRTC
   SwiftDraw:
@@ -182,6 +185,7 @@ targets:
         embed: true
       # No WebRTC: realtime voice ships in OmnesisDemo only, so this app
       # carries no non-Apple encryption (see TESTFLIGHT.md § Export compliance).
+      - package: SwiftASN1
       - package: SwiftDraw
     settings:
       configs:
@@ -222,6 +226,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources/Omnesis
+      - path: Tests/OmnesisTests/Fixtures/cloud-ui-gateway.json
+        buildPhase: resources
       - path: Resources/Assets.xcassets
       - path: Resources/BrandSymbols.xcassets
       - path: Resources/Fonts
@@ -233,6 +239,7 @@ targets:
       # than with production Omnesis.
       - target: OmnesisDemoWatch
         embed: true
+      - package: SwiftASN1
       - package: SwiftDraw
       - package: WebRTC
     settings:
@@ -258,6 +265,8 @@ targets:
 
   OmnesisNotificationService:
     type: app-extension
+    dependencies:
+      - package: SwiftASN1
     platform: iOS
     sources:
       - path: Sources/OmnesisNotificationService
@@ -272,6 +281,15 @@ targets:
       - path: Sources/Omnesis/Pairing/PairingCredentialBundle.swift
       - path: Sources/Omnesis/Pairing/PairingTlsMode.swift
       - path: Sources/Omnesis/Pairing/PinnedSession.swift
+      - path: Sources/Omnesis/Pairing/PinnedTrustPlatformOperations.swift
+      - path: Sources/Omnesis/Pairing/GatewayKeyFingerprint.swift
+      - path: Sources/Omnesis/Transport/GatewayDirectRoute.swift
+      - path: Sources/Omnesis/Transport/GatewayDirectProbe.swift
+      - path: Sources/Omnesis/Transport/GatewaySOCKSHandshake.swift
+      - path: Sources/Omnesis/Transport/GatewayRoutingProxy.swift
+      - path: Sources/Omnesis/Transport/GatewayNetworkTransport.swift
+      - path: Sources/Omnesis/Transport/GatewayTLSNetworkConnection.swift
+      - path: Sources/Omnesis/Transport/GatewayUnavailableProxy.swift
       - path: Sources/Omnesis/Transport/OmnesisURLSession.swift
     settings:
       base:
@@ -298,6 +316,8 @@ targets:
   # omnesis://capture; an app-side run flips CaptureRouter directly).
   OmnesisWidgets:
     type: app-extension
+    dependencies:
+      - package: SwiftASN1
     platform: iOS
     sources:
       - path: Sources/OmnesisWidgets
@@ -319,6 +339,15 @@ targets:
       - path: Sources/Omnesis/Tasks/TaskWidgetDeepLink.swift
       - path: Sources/Omnesis/Pairing/Keychain.swift
       - path: Sources/Omnesis/Pairing/PinnedSession.swift
+      - path: Sources/Omnesis/Pairing/PinnedTrustPlatformOperations.swift
+      - path: Sources/Omnesis/Pairing/GatewayKeyFingerprint.swift
+      - path: Sources/Omnesis/Transport/GatewayDirectRoute.swift
+      - path: Sources/Omnesis/Transport/GatewayDirectProbe.swift
+      - path: Sources/Omnesis/Transport/GatewaySOCKSHandshake.swift
+      - path: Sources/Omnesis/Transport/GatewayRoutingProxy.swift
+      - path: Sources/Omnesis/Transport/GatewayNetworkTransport.swift
+      - path: Sources/Omnesis/Transport/GatewayTLSNetworkConnection.swift
+      - path: Sources/Omnesis/Transport/GatewayUnavailableProxy.swift
       - path: Sources/Omnesis/Pairing/GatewayTrustPolicy.swift
     settings:
       base:

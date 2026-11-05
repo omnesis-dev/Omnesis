@@ -5,6 +5,7 @@
 // connected to the gateway (collectors, CLI, portal, iOS, Android, agents).
 // Pair new devices, revoke devices and their credentials.
 
+import { DeviceConnectionPill } from "../components/device-connection-pill.js";
 import { html } from "htm/preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import QRCode from "qrcode";
@@ -35,6 +36,7 @@ import { answerPrivacySummary, reachSummary } from "./access/terms.js";
 import { CHROME_WEB_STORE_URL } from "../lib/extension-links.js";
 import { KindIcon, PairKindIcon } from "../lib/device-kind-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
+import { CloudPairingRequests } from "../components/cloud-pairing-requests.js";
 import { DoctorReportView } from "./doctor.js";
 import {
   currentDeviceIdForKind,
@@ -944,6 +946,7 @@ export function DeviceCard({
             <span class="devices-card-titlerow">
               <span class="devices-card-name">${d.name}</span>
               ${isThis && html`<span class="devices-card-badge">This device</span>`}
+              <${DeviceConnectionPill} path=${d.connectionPath} revoked=${revoked} />
               ${revoked && html`<span class=${`devices-card-badge ${needsPairing ? "needs-pairing" : "revoked"}`}>${needsPairing ? "Needs re-pairing" : "Revoked"}</span>`}
               ${!revoked && versionChip(d)}
               ${!revoked && updateChip(d)}
@@ -1864,6 +1867,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
         </div>
       </div>
 
+      <${CloudPairingRequests} />
       ${error && html`<div class="devices-banner error">${error}</div>`}
       ${doctorError && html`<div class="devices-banner error">${doctorError}</div>`}
       ${showHealthProgress && !doctorError && html`

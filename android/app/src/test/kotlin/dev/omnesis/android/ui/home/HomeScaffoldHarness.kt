@@ -178,9 +178,13 @@ class MockGateway : AutoCloseable {
 
     /** Every request the gateway received as "METHOD path", without the query, in arrival order. */
     val requests = CopyOnWriteArrayList<String>()
+    val recordedRequests = CopyOnWriteArrayList<RecordedRequest>()
 
     val url: String get() = server.url("/").toString()
     val fingerprint: String = LeafCertPinner.sha256Hex(leaf.certificate.encoded)
+    val spkiFingerprint: String = LeafCertPinner.sha256Hex(leaf.certificate.publicKey.encoded)
+    @Volatile var pairingScopesJson: String = "[\"admin\"]"
+    @Volatile var directCandidatesJson: String = "{\"version\":1,\"candidates\":[]}"
 
     /** A held approvals reply: the connection serving it waits here until [release]. */
     class ApprovalsHold {
@@ -199,13 +203,15 @@ class MockGateway : AutoCloseable {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.path.orEmpty()
                 requestPaths += path
+                recordedRequests += request
                 requests += "${request.method} ${path.substringBefore('?')}"
                 val route = path.substringBefore('?')
                 return when {
                     request.method == "POST" && route == "/devices/pair" -> json(
                         """{"device":{"id":"device-test","name":"Test phone","kind":"android"},""" +
-                            """"tokenId":"token-row-test","token":"token-test","scopes":["admin"]}""",
+                            """"tokenId":"token-row-test","token":"token-test","scopes":$pairingScopesJson}""",
                     )
+                    route == "/devices/direct-candidates" -> json(directCandidatesJson)
                     route == "/status" -> json(statusJson)
                     route == "/admin/privacy/approvals" -> approvalsPage()
                     route.startsWith("/admin/privacy/approvals/") -> json(

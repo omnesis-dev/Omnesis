@@ -4,12 +4,19 @@
 package dev.omnesis.android.transport.ws
 
 import dev.omnesis.android.transport.dto.OmnesisJson
+import dev.omnesis.android.transport.routing.DirectGatewayRoute
+import dev.omnesis.android.transport.routing.DirectGatewayProbe
+import dev.omnesis.android.transport.routing.DirectGatewayProbing
+import dev.omnesis.android.transport.routing.GatewayConnectionPath
 import dev.omnesis.android.transport.DeviceCapabilities
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -19,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -50,6 +58,11 @@ class DeviceSocket(
     private val token: String,
     private val scope: CoroutineScope,
     private val capabilities: DeviceCapabilities = DeviceCapabilities.android(emptyList()),
+    private val directRoute: DirectGatewayRoute? = null,
+    private val directProbe: DirectGatewayProbing = DirectGatewayProbe,
+    private val expectedDeviceId: String? = null,
+    private val refreshHints: (suspend () -> Unit)? = null,
+    private val webSockets: WebSocket.Factory = client,
 ) {
     sealed interface ConnectionState {
         data object Disconnected : ConnectionState
@@ -59,6 +72,7 @@ class DeviceSocket(
             val deviceId: String,
             val deviceName: String,
             val scopes: List<String>,
+            val connectionPath: GatewayConnectionPath? = null,
         ) : ConnectionState
 
         data class Failed(val message: String) : ConnectionState
@@ -100,13 +114,54 @@ class DeviceSocket(
     var dispatchSync: ((String) -> Boolean)? = null
 
     private var loop: Job? = null
-    private var helloId: String? = null
     private var attempt = 0
     private val lifecycleLock = Any()
     private var connectionGeneration = 0L
 
     @Volatile
     private var activeWs: WebSocket? = null
+
+    private var promotion: Job? = null
+    private val reconnectWake = Channel<Unit>(Channel.CONFLATED)
+    private var currentEnded: CompletableDeferred<Unit>? = null
+
+    /** Foreground recovery replaces only the control WS, using the same bearer and TLS policy. */
+    fun recoverAfterInterruption() {
+        val ws = synchronized(lifecycleLock) {
+            if (loop?.isActive != true) return
+            connectionGeneration += 1
+            attempt = 0
+            _state.value = ConnectionState.Connecting
+            currentEnded?.complete(Unit)
+            reconnectWake.trySend(Unit)
+            activeWs.also { activeWs = null }
+        }
+        ws?.cancel()
+    }
+
+    suspend fun promoteDirectPath() {
+        val before = synchronized(lifecycleLock) {
+            val connected = _state.value as? ConnectionState.Connected ?: return
+            connected to connectionGeneration
+        }
+        val route = directRoute ?: return
+        if (before.first.connectionPath != GatewayConnectionPath.RELAY) return
+        if (!directProbe.reachable(route, client)) return
+        val ws = synchronized(lifecycleLock) {
+            val current = _state.value as? ConnectionState.Connected
+            if (connectionGeneration != before.second || current != before.first || loop?.isActive != true) return
+            _state.value = ConnectionState.Connecting
+            attempt = 0
+            activeWs
+        }
+        ws?.cancel()
+    }
+
+    suspend fun refreshDirectPath() {
+        synchronized(lifecycleLock) { if (loop?.isActive != true) return }
+        refreshHints?.invoke()
+        promoteDirectPath()
+    }
 
     fun start() {
         val job = synchronized(lifecycleLock) {
@@ -121,11 +176,12 @@ class DeviceSocket(
                     val generation = synchronized(lifecycleLock) {
                         if (loop?.isActive != true) return@launch
                         connectionGeneration += 1
+                        currentEnded = ended
                         activeWs = null
                         _state.value = ConnectionState.Connecting
                         connectionGeneration
                     }
-                    val ws = client.newWebSocket(request, listener(ended, generation))
+                    val ws = webSockets.newWebSocket(request, listener(ended, generation))
                     val accepted = synchronized(lifecycleLock) {
                         if (connectionGeneration == generation && loop?.isActive == true) {
                             activeWs = ws
@@ -136,15 +192,25 @@ class DeviceSocket(
                     }
                     if (!accepted) {
                         ws.cancel()
-                        break
+                        if (!isActive) break
+                        continue
                     }
 
                     val handshakeTimeout = launch {
                         delay(HANDSHAKE_TIMEOUT_MS)
                         if (_state.value !is ConnectionState.Connected) ws.cancel()
                     }
-                    ended.await()
-                    handshakeTimeout.cancel()
+                    try { ended.await() }
+                    finally {
+                        handshakeTimeout.cancel()
+                        ws.cancel()
+                        synchronized(lifecycleLock) {
+                            if (!isActive && activeWs === ws) {
+                                activeWs = null
+                                _state.value = ConnectionState.Disconnected
+                            }
+                        }
+                    }
                     if (!isActive) break
 
                     val backoff = backoffDelayMs(attempt)
@@ -152,16 +218,31 @@ class DeviceSocket(
                     if (_state.value !is ConnectionState.Failed) {
                         _state.value = ConnectionState.Disconnected
                     }
-                    delay(backoff)
+                    withTimeoutOrNull(backoff) { reconnectWake.receive() }
                 }
             }.also { loop = it }
         }
         job.start()
+        if (directRoute != null) synchronized(lifecycleLock) {
+            if (loop !== job || !job.isActive) return
+            promotion = scope.launch {
+                while (isActive) {
+                    delay(30_000)
+                    try { refreshDirectPath() }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { /* Refused metadata leaves the existing authority and routes intact. */ }
+                }
+            }
+        }
     }
 
     fun stop() {
         val (job, ws, wasConnected) = synchronized(lifecycleLock) {
+            promotion?.cancel()
+            promotion = null
             connectionGeneration += 1
+            currentEnded = null
+            while (reconnectWake.tryReceive().isSuccess) { /* A replacement run starts without stale wakeups. */ }
             val stoppedJob = loop
             loop = null
             val stoppedWs = activeWs
@@ -199,6 +280,8 @@ class DeviceSocket(
         ended: CompletableDeferred<Unit>,
         generation: Long,
     ) = object : WebSocketListener() {
+        private var helloId: String? = null
+
         override fun onOpen(webSocket: WebSocket, response: Response) {
             // The callback may beat newWebSocket() returning, or arrive after
             // stop() cancelled this generation. The generation guard handles
@@ -231,10 +314,11 @@ class DeviceSocket(
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            val current = synchronized(lifecycleLock) {
-                connectionGeneration == generation && activeWs === webSocket
+            synchronized(lifecycleLock) {
+                if (connectionGeneration == generation && activeWs === webSocket && loop?.isActive == true) {
+                    handleFrame(webSocket, text, helloId)
+                }
             }
-            if (current) handleFrame(webSocket, text)
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -252,30 +336,41 @@ class DeviceSocket(
             synchronized(lifecycleLock) {
                 if (connectionGeneration == generation && activeWs === webSocket) {
                     activeWs = null
-                    _state.value = ConnectionState.Failed(t.message ?: "websocket failure")
+                    if (_state.value !is ConnectionState.Failed) {
+                        _state.value = ConnectionState.Failed(t.message ?: "websocket failure")
+                    }
                 }
             }
             if (!ended.isCompleted) ended.complete(Unit)
         }
     }
 
-    private fun handleFrame(webSocket: WebSocket, text: String) {
+    private fun handleFrame(webSocket: WebSocket, text: String, helloId: String?) {
         val obj = runCatching { OmnesisJson.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
         when (obj["kind"]?.jsonPrimitive?.contentOrNull) {
             "response" -> {
                 if (obj["correlationId"]?.jsonPrimitive?.contentOrNull != helloId) return
                 val ok = obj["ok"]?.jsonPrimitive?.booleanOrNull ?: false
                 if (ok) {
-                    val result = obj["result"]?.jsonObject
+                    val result = obj["result"] as? JsonObject
                     synchronized(lifecycleLock) {
                         if (activeWs !== webSocket) return
+                        if (expectedDeviceId != null && (result?.get("deviceId") as? JsonPrimitive)?.contentOrNull != expectedDeviceId) {
+                            _state.value = ConnectionState.Failed("Gateway returned a different device identity")
+                            webSocket.close(1008, "device identity mismatch")
+                            return
+                        }
                         attempt = 0
                         _state.value = ConnectionState.Connected(
                             deviceId = result?.get("deviceId")?.jsonPrimitive?.contentOrNull.orEmpty(),
                             deviceName = result?.get("deviceName")?.jsonPrimitive?.contentOrNull.orEmpty(),
+                            connectionPath = directRoute?.connectionPath?.value,
                             scopes = result?.get("scopes")?.jsonArray
                                 ?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
                         )
+                    }
+                    directRoute?.connectionPath?.value?.takeIf { it != GatewayConnectionPath.RECONNECTING }?.let { path ->
+                        sendEvent("connection.path", buildJsonObject { put("path", if (path == GatewayConnectionPath.LOCAL) "local" else "relay") })
                     }
                 } else {
                     val msg = obj["error"]?.jsonObject?.get("message")

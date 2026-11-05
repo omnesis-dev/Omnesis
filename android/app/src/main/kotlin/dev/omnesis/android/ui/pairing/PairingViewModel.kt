@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.ui.pairing
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -16,13 +17,21 @@ import java.net.URI
 import javax.inject.Inject
 
 @HiltViewModel
-class PairingViewModel @Inject constructor(
-    private val session: SessionManager,
+class PairingViewModel internal constructor(
+    private val session: () -> SessionManager,
+    googlePorts: GooglePairingPorts,
+    googleAvailable: Boolean,
 ) : ViewModel() {
+    @Inject constructor(session: SessionManager) : this(
+        { session },
+        GooglePairingDefaults.ports(session),
+        googlePairingConfigured(),
+    )
 
     /** Which pairing affordance is on screen. Scanner-first, mirroring iOS `PairingView`. */
-    enum class Mode { Scan, Manual }
-    enum class TrustKind { System, PinnedLeaf, Legacy }
+    enum class Mode { Scan, Manual, Google }
+    enum class GooglePhase { Idle, SigningIn, Finding, Comparing, Waiting, Ready, Pairing, Failed }
+    enum class TrustKind { System, PinnedLeaf, PinnedKey, Legacy }
 
     /**
      * A decoded payload awaiting explicit user confirmation. Mirrors the iOS
@@ -49,15 +58,37 @@ class PairingViewModel @Inject constructor(
         val isPairing: Boolean = false,
         val error: String? = null,
         val pending: Pending? = null,
+        val googleAvailable: Boolean = googlePairingConfigured(),
+        val googlePhase: GooglePhase = GooglePhase.Idle,
+        val googleCode: String? = null,
+        val googleHost: String? = null,
+        val googleCompared: Boolean = false,
     ) {
         val canSubmit: Boolean get() = gatewayUrl.isNotBlank() && pairingCode.isNotBlank() && !isPairing
     }
 
-    private val _state = MutableStateFlow(State())
+    private val _state = MutableStateFlow(State(googleAvailable = googleAvailable))
     val state = _state.asStateFlow()
+    private val google = GooglePairingController(
+        scope = viewModelScope,
+        acquireToken = googlePorts.acquireToken,
+        createClient = googlePorts.createClient,
+        applyPairing = googlePorts.applyPairing,
+        changed = { value -> _state.update { it.copy(googlePhase = value.phase, googleCode = value.code,
+            googleHost = value.host, googleCompared = value.compared, error = value.error) } },
+    )
 
-    fun showScanner() = _state.update { it.copy(mode = Mode.Scan, error = null) }
-    fun showManualEntry() = _state.update { it.copy(mode = Mode.Manual, error = null) }
+    fun showScanner() { google.cancel(); _state.update { it.copy(mode = Mode.Scan, error = null) } }
+    fun showManualEntry() { google.cancel(); _state.update { it.copy(mode = Mode.Manual, error = null) } }
+    fun showGoogle() { if (_state.value.googleAvailable) _state.update { it.copy(mode = Mode.Google, error = null) } }
+    fun startGoogle(context: Context) {
+        if (!_state.value.googleAvailable) return
+        _state.update { it.copy(mode = Mode.Google) }
+        google.start(context)
+    }
+    fun confirmGoogleComparison() = google.compare()
+    fun finishGooglePairing() = google.finish()
+    override fun onCleared() { google.cancel(); super.onCleared() }
 
     fun onUrlChange(v: String) = _state.update { it.copy(gatewayUrl = v, error = null) }
     fun onCodeChange(v: String) = _state.update { it.copy(pairingCode = v, error = null) }
@@ -129,7 +160,7 @@ class PairingViewModel @Inject constructor(
         _state.update { it.copy(isPairing = true, error = null) }
         viewModelScope.launch {
             runCatching {
-                pending.confirm(session)
+                pending.confirm(session())
             }.onFailure { e ->
                 _state.update {
                     it.copy(
@@ -154,6 +185,8 @@ class PairingViewModel @Inject constructor(
         is PairingPayload.V4 -> when (val tls = payload.tls) {
             PairingPayload.V4Tls.System -> null
             is PairingPayload.V4Tls.PinnedLeaf -> tls.fingerprint.lowercase()
+            is PairingPayload.V4Tls.PinnedLeafStrict -> tls.fingerprint.lowercase()
+            is PairingPayload.V4Tls.PinnedKeyStrict -> tls.spkiFingerprint.lowercase()
         }
         is PairingPayload.V3 -> payload.fingerprint.lowercase()
         is PairingPayload.V2, is PairingPayload.V1 -> null
@@ -163,6 +196,8 @@ class PairingViewModel @Inject constructor(
         is PairingPayload.V4 -> when (payload.tls) {
             PairingPayload.V4Tls.System -> "System-trusted HTTPS (V4)"
             is PairingPayload.V4Tls.PinnedLeaf -> "TLS-pinned (V4)"
+            is PairingPayload.V4Tls.PinnedLeafStrict -> "Verified gateway (V4)"
+            is PairingPayload.V4Tls.PinnedKeyStrict -> "Verified gateway public key (V4)"
         }
         is PairingPayload.V3 -> "TLS-pinned HTTPS (V3)"
         is PairingPayload.V2 -> "HTTPS (V2)"
@@ -173,6 +208,8 @@ class PairingViewModel @Inject constructor(
         is PairingPayload.V4 -> when (payload.tls) {
             PairingPayload.V4Tls.System -> TrustKind.System
             is PairingPayload.V4Tls.PinnedLeaf -> TrustKind.PinnedLeaf
+            is PairingPayload.V4Tls.PinnedLeafStrict -> TrustKind.PinnedLeaf
+            is PairingPayload.V4Tls.PinnedKeyStrict -> TrustKind.PinnedKey
         }
         is PairingPayload.V3 -> TrustKind.PinnedLeaf
         is PairingPayload.V2, is PairingPayload.V1 -> TrustKind.Legacy

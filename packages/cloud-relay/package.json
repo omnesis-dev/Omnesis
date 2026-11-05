@@ -1,0 +1,39 @@
+{
+  "name": "@omnesis/cloud-relay",
+  "version": "0.7.8",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime": "./src/runtime.ts",
+    "./bootstrap": "./src/client-bootstrap.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@omnesis/core": "*",
+    "better-sqlite3": "^13.0.3",
+    "jose": "^6.2.8",
+    "ws": "^8.22.0",
+    "zod": "^4.6.7",
+    "tsx": "^4.19.0",
+    "acme-client": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "nx": {
+    "targets": {
+      "nx-unit": {
+        "command": "node scripts/run-check.mjs unit --config packages/cloud-relay/vitest.config.ts --coverage"
+      }
+    }
+  }
+}

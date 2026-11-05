@@ -17,6 +17,7 @@ import {
   makeResponseOk,
   newCorrelationId,
   parseRequestPayload,
+  parseEventPayload,
   parseResponsePayload,
   PROTOCOL_VERSION,
   type WsCommand,
@@ -39,6 +40,7 @@ import {
   type SourceId,
   type TokenId,
 } from "@omnesis/types";
+import { DevicePathTelemetry } from "./device-path-telemetry.js";
 import { getDevice } from "./data/repositories/DeviceRepository.js";
 import { isTokenActive, lookupToken } from "./data/repositories/TokenRepository.js";
 import { wsHelloRateLimiter, type IpRateLimiter } from "./rate-limit.js";
@@ -94,6 +96,8 @@ export interface DeviceConnection {
 }
 
 export interface WsUpgradeAuth {
+  /** Advisory transport observation, never used for authentication. */
+  connectionPath?: import("@omnesis/core").ConnectionPath;
   tokenId: TokenId;
   deviceId: DeviceId;
   scopes: Scope[];
@@ -198,6 +202,13 @@ export interface DeviceWsOptions {
  *      so a peer that vanished without a FIN stops counting as connected.
  */
 export class DeviceWsServer {
+  private readonly paths = new DevicePathTelemetry();
+  connectionPath(deviceId: DeviceId) {
+    return this.paths.snapshot(deviceId);
+  }
+  noteConnectionPath(deviceId: DeviceId, path: import("@omnesis/core").ConnectionPath) {
+    this.paths.request(deviceId, path);
+  }
   private connections = new Map<WsHandle, ConnectionState>();
   private byDevice = new Map<DeviceId, Set<WsHandle>>();
   private pending = new Map<WsCorrelationId, PendingOutbound>();
@@ -451,7 +462,7 @@ export class DeviceWsServer {
 
     if (isWsEvent(parsed)) {
       const name = isKnownEventType(parsed.type) ? `ws ${parsed.type}` : "ws (unknown)";
-      withActivity(name, () => this.handleEvent(state, parsed));
+      withActivity(name, () => this.handleEvent(ws, state, parsed));
       return;
     }
   }
@@ -492,6 +503,7 @@ export class DeviceWsServer {
     if (!state) return;
     if (state.authTimer) clearTimeout(state.authTimer);
     if (state.deviceId) {
+      this.paths.close(ws, state.deviceId);
       const set = this.byDevice.get(state.deviceId);
       if (set) {
         set.delete(ws);
@@ -813,6 +825,7 @@ export class DeviceWsServer {
       if (this.connections.get(ws) !== state) return;
     }
 
+    this.paths.open(ws, auth.deviceId, state.upgradeAuth?.connectionPath);
     this.sendRaw(
       ws,
       makeResponseOk(cmd.id, {
@@ -864,8 +877,13 @@ export class DeviceWsServer {
     }
   }
 
-  private handleEvent(state: ConnectionState, event: WsEvent): void {
+  private handleEvent(ws: WsHandle, state: ConnectionState, event: WsEvent): void {
     if (!state.deviceId) return;
+    if (event.type === "connection.path") {
+      const parsed = parseEventPayload("connection.path", event.payload);
+      if (parsed.ok) this.paths.update(ws, state.deviceId, parsed.value.path);
+      return;
+    }
     const conn: DeviceConnection = { deviceId: state.deviceId, scopes: state.scopes };
     // Fire-and-forget device touch — activity beacon, same rationale as
     // the heartbeat loop in start().

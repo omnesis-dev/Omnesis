@@ -4,6 +4,7 @@
 import { createInterface } from "node:readline";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, basename as pathBasename, join as pathJoin } from "node:path";
+import { pairedLogicalGatewayUrl } from "@omnesis/cloud-relay/bootstrap";
 import {
   c as cShared,
   disabledColors,
@@ -104,10 +105,10 @@ export const GATEWAY_URL = defaultGatewayUrl();
  * over loopback on the same port instead — by a `localhost` URL, or, when its
  * certificate names only the recorded host, by resolving that host to loopback.
  */
-export const GATEWAY_REQUEST_URL = localGatewayRequestUrl(
-  GATEWAY_URL,
-  process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
-);
+const pairedGatewayTransport = Boolean(process.env.OMNESIS_GATEWAY_REQUEST_URL);
+export const GATEWAY_REQUEST_URL =
+  process.env.OMNESIS_GATEWAY_REQUEST_URL ??
+  localGatewayRequestUrl(GATEWAY_URL, process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR);
 
 /**
  * Whether a gateway URL reaches this machine. Only then do local files — the
@@ -115,7 +116,7 @@ export const GATEWAY_REQUEST_URL = localGatewayRequestUrl(
  */
 export function targetsLocalGateway(url: string = GATEWAY_REQUEST_URL): boolean {
   try {
-    return resolvesToLoopback(new URL(url).hostname);
+    return resolvesToLoopback(new URL(pairedLogicalGatewayUrl(url)).hostname);
   } catch {
     return false;
   }
@@ -211,9 +212,18 @@ export async function gatewayFetch(path: string, init: RequestInit = {}): Promis
   if (!token) {
     throw new CliError(missingTokenMessage(), EXIT_AUTH);
   }
-  const url = path.startsWith("http") ? path : `${GATEWAY_REQUEST_URL}${path}`;
+  const paired = pairedGatewayTransport;
+  let url = path.startsWith("http") ? path : `${GATEWAY_REQUEST_URL}${path}`;
+  if (paired) {
+    const target = new URL(path, GATEWAY_URL);
+    if (target.origin !== new URL(GATEWAY_URL).origin || target.username || target.password) {
+      throw new CliError("Gateway requests must use the paired gateway origin.", EXIT_USER_ERROR);
+    }
+    url = `${GATEWAY_REQUEST_URL.replace(/\/+$/u, "")}${target.pathname}${target.search}`;
+  }
   return fetch(url, {
     ...init,
+    ...(paired ? { redirect: "error" as const } : {}),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,

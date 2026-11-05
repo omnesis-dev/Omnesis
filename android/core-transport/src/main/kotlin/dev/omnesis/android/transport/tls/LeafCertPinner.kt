@@ -15,6 +15,8 @@ import javax.net.ssl.SSLSession
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
+import java.util.Date
+import okhttp3.OkHttpClient
 
 /**
  * Trust for a gateway paired with a pinned leaf certificate (the SHA-256
@@ -37,13 +39,17 @@ import javax.net.ssl.X509TrustManager
  * every name.
  */
 class LeafCertPinner(
-    fingerprintHex: String,
+    fingerprintHex: String = "",
     private val host: String? = null,
     private val onSystemTrustVerified: (() -> Unit)? = null,
     private val systemTrust: X509TrustManager = platformDefaultTrustManager(),
+    private val requireCertificateValidity: Boolean = false,
+    private val verificationDate: () -> Date = { Date() },
+    private val spkiFingerprint: String? = null,
 ) {
 
     private val expected = fingerprintHex.lowercase()
+    private val strict = requireCertificateValidity || spkiFingerprint != null
     private val notified = AtomicBoolean(false)
 
     val trustManager: X509TrustManager = object : X509TrustManager {
@@ -52,6 +58,11 @@ class LeafCertPinner(
         override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
             val leaf = chain?.firstOrNull()
                 ?: throw CertificateException("no server certificate presented")
+            if (strict) leaf.checkValidity(verificationDate())
+            if (spkiFingerprint != null) {
+                if (sha256Hex(leaf.publicKey.encoded) != spkiFingerprint.lowercase()) throw CertificateException("public key fingerprint mismatch")
+                return
+            }
             val pinMatches = sha256Hex(leaf.encoded) == expected
             // A pinned chain needs the system check only to learn whether to upgrade.
             if (pinMatches && (onSystemTrustVerified == null || notified.get())) return
@@ -91,10 +102,13 @@ class LeafCertPinner(
             .socketFactory
     }
 
-    /** Accepts any hostname; [trustManager] has already decided whether the chain is trusted. */
-    val hostnameVerifier: HostnameVerifier = HostnameVerifier { _: String, _: SSLSession -> true }
+    /** Strict sessions verify SAN and their configured host; legacy leaf behavior remains unchanged. */
+    val hostnameVerifier: HostnameVerifier = HostnameVerifier { name: String, session: SSLSession ->
+        !strict || (spkiFingerprint == null || host == null || name.equals(host, ignoreCase = true)) && strictHostnameVerifier.verify(name, session)
+    }
 
     companion object {
+        private val strictHostnameVerifier: HostnameVerifier by lazy { OkHttpClient().hostnameVerifier }
         /** SHA-256 of [bytes] as lowercase hex with no separators (matches the QR fingerprint). */
         fun sha256Hex(bytes: ByteArray): String =
             MessageDigest.getInstance("SHA-256").digest(bytes)

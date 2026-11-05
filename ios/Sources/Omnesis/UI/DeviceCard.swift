@@ -231,10 +231,14 @@ struct DeviceCard: View {
             Circle()
                 .fill(activeNow ? Theme.success : Theme.textMuted)
                 .frame(width: 6, height: 6)
-            Text(DeviceGrouping.statusLine(device, isCurrent: isThis))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(activeNow ? Theme.success : Theme.textMuted)
-                .lineLimit(1)
+            if !device.isRevoked, let value = device.connectionPath, let path = GatewayConnectionPath(rawValue: value) {
+                GatewayConnectionPill(path: path)
+            } else {
+                Text(DeviceGrouping.statusLine(device, isCurrent: isThis))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(activeNow ? Theme.success : Theme.textMuted)
+                    .lineLimit(1)
+            }
         }
         .fixedSize()
     }

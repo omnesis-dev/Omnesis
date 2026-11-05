@@ -1268,16 +1268,16 @@ export interface WriteGate extends KnowledgeWriteGate {
     browserHandle: string,
   ): Promise<
     AccessMutationResult<
-      | { status: "denied"; redirectUri: string; state: string }
-      | { status: "approved"; redirectUri: string; state: string; code: string }
+      | { status: "denied"; redirectUri: string; state: string; resource: string }
+      | { status: "approved"; redirectUri: string; state: string; code: string; resource: string }
     >
   >;
   issueAuthorizationCodeById(
     requestId: string,
   ): Promise<
     AccessMutationResult<
-      | { status: "denied"; redirectUri: string; state: string }
-      | { status: "approved"; redirectUri: string; state: string; code: string }
+      | { status: "denied"; redirectUri: string; state: string; resource: string }
+      | { status: "approved"; redirectUri: string; state: string; code: string; resource: string }
     >
   >;
   exchangeOAuthToken(input: OAuthTokenExchangeInput): Promise<AccessMutationResult<OAuthTokenSet>>;

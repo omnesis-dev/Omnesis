@@ -108,3 +108,7 @@ You are free to use, modify, run, and redistribute the code under the AGPL. When
 ## Reporting concerns
 
 If you are a brand owner and have concerns about how Omnesis displays your mark, please open an issue and we will adjust promptly.
+
+## Google sign-in mark
+
+The Google G in optional sign-in buttons is Google LLC's original color artwork from the [official Google Identity asset](https://developers.google.com/static/identity/images/g-logo.png), used under the [Sign in with Google branding guidelines](https://developers.google.com/identity/branding-guidelines). It is bundled unmodified in the portal image directory, iOS `GoogleSignInMark` image set and Android drawable resources; the relay discovery page embeds the identical PNG. The mark remains Google's property and implies no endorsement or sponsorship.

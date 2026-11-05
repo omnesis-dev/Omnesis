@@ -32,14 +32,17 @@ struct PairingView: View {
     @State private var isPairing = false
     @State private var showingPasteJSON = false
     @State private var manualJSON = ""
+    @State private var showingGoogleSignIn = false
     /// Decoded payload waiting for user confirmation. We show a sheet
     /// with host + fingerprint and require an explicit "Pair" tap
     /// before persisting any token — protects against a malicious QR
     /// silently steering the app at a hostile gateway.
     @State private var pendingPayload: PairingPayload?
+    private let googleConfiguration: GoogleCloudPairingConfiguration?
 
-    init(initialGatewayURL: URL? = nil) {
+    init(initialGatewayURL: URL? = nil, googleConfiguration: GoogleCloudPairingConfiguration? = .configured()) {
         _manualGatewayUrl = State(initialValue: initialGatewayURL?.absoluteString ?? "")
+        self.googleConfiguration = googleConfiguration
     }
 
     var body: some View {
@@ -75,6 +78,16 @@ struct PairingView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
+                    if googleConfiguration != nil {
+                        Button { showingGoogleSignIn = true } label: {
+                            Label {
+                                Text("Sign in with Google")
+                            } icon: {
+                                Image("GoogleSignInMark").renderingMode(.original)
+                            }
+                        }
+                        .accessibilityIdentifier("pairing.google.menuSignIn")
+                    }
                     Button("Enter code manually") { showingManualEntry = true }
                     Button("Paste JSON") { showingPasteJSON = true }
                 } label: {
@@ -85,6 +98,11 @@ struct PairingView: View {
         }
         .sheet(isPresented: $showingManualEntry) {
             manualEntrySheet
+        }
+        .sheet(isPresented: $showingGoogleSignIn) {
+            if let configuration = googleConfiguration {
+                GoogleCloudPairingView(configuration: configuration)
+            }
         }
         .sheet(isPresented: $showingPasteJSON) {
             pasteJSONSheet
@@ -124,6 +142,10 @@ struct PairingView: View {
                 .font(.footnote.bold().monospaced())
             Text("Then scan the QR code shown in the terminal.")
                 .font(.footnote)
+            if googleConfiguration != nil {
+                GoogleSignInButton { showingGoogleSignIn = true }
+                    .accessibilityIdentifier("pairing.google.open")
+            }
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
@@ -322,45 +344,45 @@ struct PairingConfirmationSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-                Text("Confirm pairing")
-                    .font(.title2.bold())
-                    .foregroundStyle(Theme.textPrimary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                    Text("Confirm pairing")
+                        .font(.title2.bold())
+                        .foregroundStyle(Theme.textPrimary)
 
-                Text("About to pair with:")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
+                    Text("About to pair with:")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
 
-                hostCard
-                fingerprintCard
+                    hostCard
+                    fingerprintCard
 
-                Spacer()
+                    HStack(spacing: Theme.Spacing.md) {
+                        Button(action: onCancel) {
+                            Text("Cancel")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.md)
+                                .background(Theme.bgTertiary)
+                                .foregroundStyle(Theme.textPrimary)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+                        }
+                        .disabled(isPairing)
 
-                HStack(spacing: Theme.Spacing.md) {
-                    Button(action: onCancel) {
-                        Text("Cancel")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, Theme.Spacing.md)
-                            .background(Theme.bgTertiary)
-                            .foregroundStyle(Theme.textPrimary)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+                        Button(action: onConfirm) {
+                            Text(isPairing ? "Pairing…" : "Pair")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, Theme.Spacing.md)
+                                .background(Theme.accent)
+                                .foregroundStyle(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+                        }
+                        .disabled(isPairing)
+                        .accessibilityIdentifier("pairing.confirm")
                     }
-                    .disabled(isPairing)
-
-                    Button(action: onConfirm) {
-                        Text(isPairing ? "Pairing…" : "Pair")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, Theme.Spacing.md)
-                            .background(Theme.accent)
-                            .foregroundStyle(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
-                    }
-                    .disabled(isPairing)
-                    .accessibilityIdentifier("pairing.confirm")
                 }
+                .padding(Theme.Spacing.lg)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .padding(Theme.Spacing.lg)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Theme.bgPrimary.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -417,11 +439,16 @@ struct PairingConfirmationSheet: View {
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                 } else if let formatted = fingerprintFormatted {
+                    if trustPresentation == .pinnedKey {
+                        Text("Gateway public key fingerprint").font(.subheadline.bold()).foregroundStyle(Theme.textPrimary)
+                        Text("The gateway keeps this key when its HTTPS certificate renews.").font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
                     Text(formatted)
-                        .font(Theme.monospace(size: 12))
+                        .font(.system(.footnote, design: .monospaced))
                         .foregroundStyle(Theme.textPrimary)
                         .textSelection(.enabled)
-                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text(legacyUsesHTTPS ? "System-trusted HTTPS (legacy)" : "Unencrypted (legacy payload)")
                         .font(.subheadline.bold())
@@ -453,17 +480,17 @@ struct PairingConfirmationSheet: View {
     private var fingerprintHex: String? {
         switch payload {
         case .v4(let v4):
-            if case .pinnedLeaf(let fingerprint) = v4.tls {
-                fingerprint.lowercased()
-            } else {
-                nil
+            switch v4.tls {
+            case .pinnedLeaf(let fingerprint), .pinnedLeafStrict(let fingerprint): fingerprint.lowercased()
+            case .pinnedKeyStrict(let spki): spki.lowercased()
+            case .system: nil
             }
         case .v3(let v3): v3.fingerprint.lowercased()
         case .v2, .v1: nil
         }
     }
 
-    private enum TrustPresentation { case system, pinnedLeaf, legacy }
+    private enum TrustPresentation { case system, pinnedLeaf, pinnedKey, legacy }
 
     private var legacyUsesHTTPS: Bool {
         guard case .legacy = trustPresentation else { return false }
@@ -482,7 +509,8 @@ struct PairingConfirmationSheet: View {
         case .v4(let v4):
             switch v4.tls {
             case .system: .system
-            case .pinnedLeaf: .pinnedLeaf
+            case .pinnedLeaf, .pinnedLeafStrict: .pinnedLeaf
+            case .pinnedKeyStrict: .pinnedKey
             }
         case .v3: .pinnedLeaf
         case .v2, .v1: .legacy
@@ -514,6 +542,8 @@ struct PairingConfirmationSheet: View {
             switch v4.tls {
             case .system: "System-trusted HTTPS (V4)"
             case .pinnedLeaf: "TLS-pinned (V4)"
+            case .pinnedLeafStrict: "Verified gateway (V4)"
+            case .pinnedKeyStrict: "Verified gateway key (V4)"
             }
         case .v3: "TLS-pinned (V3)"
         case .v2: "Unpinned exchange (V2)"
@@ -636,7 +666,7 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
 #if DEBUG
 @available(iOS 17.0, *)
 #Preview("Pairing") {
-    PairingView()
+    PairingView(googleConfiguration: PreviewMocks.googleCloudPairingConfiguration)
         .environment(AppStore.preview())
 }
 

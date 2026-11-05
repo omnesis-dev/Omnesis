@@ -407,6 +407,11 @@ public struct NotificationClaimer: Sendable {
         }
     }
 
+    public init(baseURL: URL, token: String, ownedSession: URLSession) {
+        let owner = GatewayOwnedSession(ownedSession)
+        self.init(baseURL: baseURL, token: token) { request in try await owner.data(for: request) }
+    }
+
     public init(baseURL: URL, token: String, request: @escaping Request) {
         self.baseURL = baseURL
         self.token = token
@@ -504,19 +509,25 @@ public enum NotificationClaimCredentials {
         let deviceId: String
         let tlsMode: String?
         let fingerprint: String?
+        let spkiFingerprint: String?
+        let directCandidates: [GatewayDirectCandidate]?
 
         init(
             url: String,
             token: String,
             deviceId: String,
             tlsMode: String? = nil,
-            fingerprint: String?
+            fingerprint: String?,
+            spkiFingerprint: String? = nil,
+            directCandidates: [GatewayDirectCandidate]? = nil
         ) {
             self.url = url
             self.token = token
             self.deviceId = deviceId
             self.tlsMode = tlsMode
             self.fingerprint = fingerprint
+            self.spkiFingerprint = spkiFingerprint
+            self.directCandidates = directCandidates
         }
     }
 
@@ -546,7 +557,10 @@ public enum NotificationClaimCredentials {
     }
 
     public static func load(keychain: Keychain? = nil) -> NotificationClaimer? {
-        let resolvedKeychain = keychain ?? sharedKeychain()
+        load(store: keychain ?? sharedKeychain())
+    }
+
+    static func load(store resolvedKeychain: any PairingStore) -> NotificationClaimer? {
         let bundled: StoredCredential? = try? stored(keychain: resolvedKeychain)
         let rawURL = bundled?.url ??
             (try? resolvedKeychain.get(Keys.url))
@@ -563,20 +577,35 @@ public enum NotificationClaimCredentials {
         else {
             return nil
         }
+        let route: GatewayDirectRoute? = if tlsMode == .pinnedKeyStrict {
+            try? GatewayDirectRoute.maintained(origin: baseURL, candidates: bundled?.directCandidates ?? [])
+        } else if tlsMode.isStrict, let candidates = bundled?.directCandidates {
+            try? GatewayDirectRoute(origin: baseURL, candidates: candidates)
+        } else { nil }
         let session: URLSession
         switch tlsMode {
         case .system:
             guard baseURL.scheme?.lowercased() == "https" else { return nil }
             session = URLSession.shared
-        case .pinnedLeaf:
+        case .pinnedKeyStrict:
+            guard let spki = bundled?.spkiFingerprint, spki.count == 64, spki.allSatisfy(\.isHexDigit),
+                  baseURL.scheme?.lowercased() == "https" else { return nil }
+            session = PinnedSession(spkiFingerprint: spki, host: baseURL.host, directRoute: route).session
+        case .pinnedLeaf, .pinnedLeafStrict:
             guard let fingerprint,
                   fingerprint.count == 64,
                   fingerprint.allSatisfy(\.isHexDigit)
             else { return nil }
-            session = PinnedSession(fingerprintHex: fingerprint, host: baseURL.host).session
+            session = PinnedSession(
+                fingerprintHex: fingerprint,
+                host: tlsMode == .pinnedLeafStrict ? nil : baseURL.host,
+                requireCertificateValidity: tlsMode == .pinnedLeafStrict,
+                directRoute: route
+            ).session
         case .legacy:
             return nil
         }
+        if tlsMode.requiresPin { return NotificationClaimer(baseURL: baseURL, token: token, ownedSession: session) }
         return NotificationClaimer(baseURL: baseURL, token: token, session: session)
     }
 }

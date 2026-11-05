@@ -11,3 +11,13 @@ import { loadDotEnv } from "@omnesis/config";
 
 loadDotEnv();
 if (typeof process.umask === "function") process.umask(0o077);
+
+if (
+  process.env.OMNESIS_EXPERIMENTAL === "1" &&
+  !process.env.OMNESIS_GATEWAY_URL &&
+  (process.env.OMNESIS_CLOUD_RELAY_DEVICE_FILE || !process.env.OMNESIS_TOKEN)
+) {
+  await (
+    await import("@omnesis/cloud-relay/bootstrap")
+  ).initializePairedDeviceTransport(process.env, {}, process.argv.slice(2), "collector");
+}

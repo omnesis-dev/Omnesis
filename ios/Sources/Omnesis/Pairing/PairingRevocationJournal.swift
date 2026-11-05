@@ -77,7 +77,9 @@ final class PairingRevocationJournal: Sendable {
             name: pairing.gatewayName,
             scopes: pairing.scopes,
             tlsMode: pairing.tlsMode.rawValue,
-            fingerprint: pairing.fingerprint
+            fingerprint: pairing.fingerprint,
+            spkiFingerprint: pairing.spkiFingerprint,
+            directCandidates: pairing.directCandidates
         )
     }
 }

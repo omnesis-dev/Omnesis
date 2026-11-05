@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Omnesis connects directly to your paired gateway on your local network when available.</string>
+	<key>OmnesisGoogleClientID</key>
+	<string>$(OMNESIS_GOOGLE_CLIENT_ID)</string>
+	<key>OmnesisCloudRelayURL</key>
+	<string>$(OMNESIS_CLOUD_RELAY_URL)</string>
 	<key>OmnesisTaskWidgetAccessGroup</key>
 	<string>$(AppIdentifierPrefix)$(OMNESIS_BUNDLE_ID).task-widgets</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
@@ -31,6 +37,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>omnesis</string>
+				<string>$(OMNESIS_GOOGLE_CALLBACK_SCHEME)</string>
 			</array>
 		</dict>
 	</array>

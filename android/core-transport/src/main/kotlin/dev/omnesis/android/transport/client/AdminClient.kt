@@ -3,6 +3,10 @@
 
 package dev.omnesis.android.transport.client
 
+import dev.omnesis.android.transport.dto.GatewayPairingApproving
+import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
+import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequests
+import dev.omnesis.android.transport.dto.GatewayPairingApprovalDecision
 import dev.omnesis.android.transport.PermissionHealthSnapshot
 import dev.omnesis.android.transport.SourceMultiDeviceMode
 import dev.omnesis.android.transport.SourceModeTransitionNotConfirmed
@@ -116,7 +120,14 @@ import okhttp3.HttpUrl
  * Admin surface (sources, descriptors, sync status, devices) plus the mutating source
  * actions. Mirrors the iOS `AdminClient` routes/shapes exactly.
  */
-class AdminClient(private val http: GatewayHttp) {
+class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving {
+    override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> =
+        http.getJson<GatewayPairingApprovalRequests>("admin/cloud-pairing/requests").items
+
+    override suspend fun decidePairingApproval(requestId: String, approve: Boolean) {
+        http.postJson<GatewayPairingApprovalDecision, OkResponse>("admin/cloud-pairing/decision", GatewayPairingApprovalDecision(requestId, approve))
+    }
+
 
     /**
      * Resolve a pending MCP request only after the owner supplies its short code. The reply

@@ -217,6 +217,9 @@ describe("Settings page tabs", () => {
     // to render — so the only thing that must differ is what the bar offers.
     const shown = (experimental: boolean) =>
       (settingsTabs({ experimental }) as Array<{ key: string }>).map((t) => t.key);
+    expect(shown(true)).toContain("relay");
+    expect(shown(false)).not.toContain("relay");
+    expect(SETTINGS_TAB_KEYS).toContain("relay");
     expect(shown(true)).toContain("sweeps");
     expect(shown(false)).not.toContain("sweeps");
     expect(SETTINGS_TAB_KEYS).toContain("sweeps");

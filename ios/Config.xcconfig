@@ -5,4 +5,8 @@
 // optional include (#include?) is a no-op when the file is missing, so CI
 // and other developers don't fail on a missing Local.xcconfig.
 OMNESIS_BUNDLE_ID = dev.omnesis.ios
+// Optional Google pairing; configure public identifiers in Local.xcconfig.
+OMNESIS_GOOGLE_CLIENT_ID =
+OMNESIS_CLOUD_RELAY_URL =
+OMNESIS_GOOGLE_CALLBACK_SCHEME = com.omnesis.google-unconfigured
 #include? "Local.xcconfig"

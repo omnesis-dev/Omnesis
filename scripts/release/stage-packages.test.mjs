@@ -29,16 +29,43 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 describe("release package selection", () => {
   test("publishes exactly the product packages and excludes synthetic providers", () => {
     const packages = listPublishablePackages();
-    expect(packages).toHaveLength(45);
+    expect(packages).toHaveLength(46);
     expect(packages.map(({ dir }) => dir)).not.toContainEqual(
       expect.stringMatching(/^packages\/providers-synth\//u),
     );
     expect(packages.map(({ pkg }) => pkg.name)).toContain("omnesis");
     expect(packages.map(({ pkg }) => pkg.name)).toContain("@omnesis/provider-local-files");
+    expect(packages.map(({ pkg }) => pkg.name)).toContain("@omnesis/cloud-relay");
   });
 });
 
 describe("release package runtime assets", () => {
+  test("ships the native tunnel and relay runtime exports required by the gateway", () => {
+    const temp = mkdtempSync(join(tmpdir(), "omnesis-cloud-relay-stage-test-"));
+    try {
+      const entry = listPublishablePackages().find(
+        ({ pkg }) => pkg.name === "@omnesis/cloud-relay",
+      );
+      expect(entry).toBeDefined();
+      const staged = stagePackage(entry, join(temp, "staged"));
+      const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
+      expect(manifest.exports["."]).toEqual({
+        types: "./dist/index.d.ts",
+        default: "./dist/index.js",
+      });
+      expect(manifest.exports["./runtime"]).toEqual({
+        types: "./dist/runtime.d.ts",
+        default: "./dist/runtime.js",
+      });
+      expect(existsSync(join(staged, "dist", "tunnel-client.js"))).toBe(true);
+      expect(existsSync(join(staged, "dist", "runtime.js"))).toBe(true);
+      expect(existsSync(join(staged, "test"))).toBe(false);
+      expect(existsSync(join(staged, "dist", "server.test.js"))).toBe(false);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
   test("stages the gateway's offline Models.dev snapshot beside its compiled catalog service", () => {
     expect(runtimeAssetsFor("@omnesis/gateway")).toContainEqual({
       from: "models-dev",
@@ -53,6 +80,7 @@ describe("release package runtime assets", () => {
       expect(existsSync(join(staged, "models-dev", "LICENSE"))).toBe(true);
       expect(existsSync(join(staged, "native-runtime-preflight.mjs"))).toBe(true);
       const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
+      expect(manifest.dependencies["@omnesis/cloud-relay"]).toBe(entry.pkg.version);
       expect(manifest.scripts).toEqual({
         preinstall: "node native-runtime-preflight.mjs",
         postinstall:

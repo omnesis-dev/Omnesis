@@ -15,6 +15,39 @@ import java.security.cert.X509Certificate
 import java.util.concurrent.atomic.AtomicInteger
 
 class LeafCertPinnerTest {
+    @Test fun missingServerChainsFailClosedAndUnusedClientTrustNeverAddsIssuers() {
+        val certificate = leaf("gateway.example.test", issuer = null)
+        val pinner = LeafCertPinner(spkiFingerprint = LeafCertPinner.sha256Hex(certificate.certificate.publicKey.encoded))
+        pinner.trustManager.checkClientTrusted(null, null)
+        assertTrue(pinner.trustManager.acceptedIssuers.isEmpty())
+        assertThrows(CertificateException::class.java) { pinner.trustManager.checkServerTrusted(null, null) }
+        assertThrows(CertificateException::class.java) { pinner.trustManager.checkServerTrusted(emptyArray(), "RSA") }
+        pinner.check(certificate)
+    }
+
+    @Test fun legacyPublicTrustUpgradeReportsOnceAcrossSeveralRenewedCertificatesAndAllowsNoCallback() {
+        val original = leaf("gateway.example.com")
+        val upgrades = AtomicInteger()
+        val pinner = pinner(original, "gateway.example.com", upgrades)
+        pinner.check(leaf("gateway.example.com"))
+        pinner.check(leaf("gateway.example.com"))
+        assertEquals(1, upgrades.get())
+        val withoutCallback = LeafCertPinner(LeafCertPinner.sha256Hex(original.certificate.encoded), host = "gateway.example.com", systemTrust = systemTrust)
+        withoutCallback.trustManager.checkServerTrusted(arrayOf(leaf("gateway.example.com").certificate), null)
+    }
+
+    @Test
+    fun strictPinChecksDatesWithoutChangingLegacyPinBehavior() {
+        val certificate = HeldCertificate.Builder().addSubjectAlternativeName("gateway.example.test").validityInterval(1000, 2000).build()
+        val pin = LeafCertPinner.sha256Hex(certificate.certificate.encoded)
+        val valid = LeafCertPinner(pin, requireCertificateValidity = true, verificationDate = { java.util.Date(1500) })
+        valid.check(certificate)
+        for (time in listOf(0L, 3000L)) {
+            val strict = LeafCertPinner(pin, requireCertificateValidity = true, verificationDate = { java.util.Date(time) })
+            assertThrows(CertificateException::class.java) { strict.check(certificate) }
+            LeafCertPinner(pin, verificationDate = { java.util.Date(time) }).check(certificate)
+        }
+    }
 
     @Test
     fun sha256Hex_matchesKnownVector() {

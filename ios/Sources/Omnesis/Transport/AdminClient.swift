@@ -46,6 +46,20 @@ public final class AdminClient: Sendable {
         encoder = JSONEncoder()
     }
 
+    public func pairingApprovalRequests() async throws -> [GatewayPairingApprovalRequest] {
+        let (data, _) = try await dispatch(method: "GET", path: "/admin/cloud-pairing/requests", body: nil)
+        struct Envelope: Decodable { let items: [GatewayPairingApprovalRequest] }
+        return try decodeOrThrow(Envelope.self, from: data).items
+    }
+
+    public func decidePairingApproval(requestId: String, approve: Bool) async throws {
+        struct Decision: Encodable { let requestId: String
+            let approve: Bool
+        }
+        let body = try encoder.encode(Decision(requestId: requestId, approve: approve))
+        _ = try await dispatch(method: "POST", path: "/admin/cloud-pairing/decision", body: body)
+    }
+
     // MARK: - Source registry
 
     public func listSources() async throws -> [SourceRecord] {
@@ -778,20 +792,4 @@ extension AdminClient {
     }
 }
 
-/// A `CodingKey` whose value is supplied at runtime — for encoding maps with
-/// dynamic string keys (e.g. the `inference.assignments` capability patch).
-struct AnyKey: CodingKey {
-    let stringValue: String
-    let intValue: Int? = nil
-    init(_ stringValue: String) {
-        self.stringValue = stringValue
-    }
-
-    init?(stringValue: String) {
-        self.stringValue = stringValue
-    }
-
-    init?(intValue _: Int) {
-        nil
-    }
-}
+extension AdminClient: GatewayPairingApproving {}

@@ -40,6 +40,7 @@ export const log = createLogger("gateway:http").child("routes:admin");
 export type TlsLifecyclePort = Pick<TlsLifecycleService, "snapshot" | "activateFromDisk" | "renew">;
 
 export interface AdminRoutesDeps {
+  cloudRelayManagement?: import("@omnesis/cloud-relay").CloudRelayManagement;
   db: Db;
   writeGate: WriteGate;
   sourceUrlRecanonicalization: SourceUrlRecanonicalizationService;
@@ -119,6 +120,8 @@ export interface AdminRoutesDeps {
    * always populated by `index.ts` at runtime.
    */
   tlsFingerprintSha256?: string | (() => string);
+  tlsSpkiFingerprintSha256?: string | (() => string);
+  cloudTlsSpkiFingerprintSha256?: () => string | undefined;
   /** The served certificate's lifecycle; absent in compositions without TLS wiring. */
   tlsLifecycle?: TlsLifecyclePort;
   systemTrustPairingOrigins?: readonly string[] | (() => readonly string[]);

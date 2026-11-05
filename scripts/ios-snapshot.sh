@@ -24,6 +24,7 @@
 #   scripts/ios-snapshot.sh                                  # the default snapshot suite
 #   scripts/ios-snapshot.sh OmnesisTests/PreviewSnapshotTests/testPersonDetail   # one case
 #   scripts/ios-snapshot.sh --only OmnesisTests/PreviewSnapshotTests             # a filter
+#   scripts/ios-snapshot.sh --coverage --logic --only OmnesisTests/GatewayErrorViewTests
 #
 # Configuration (all optional except the host; generic defaults — nothing
 # operator-private is committed: the host alias / paths are read at runtime):
@@ -40,8 +41,9 @@
 #   OMNESIS_IOS_SNAPSHOT_OUT      local dir the PNGs are rsynced back to
 #                                 (default: /tmp/omnesis-snapshots)
 #   OMNESIS_IOS_SNAPSHOT_SCHEME   xcodebuild scheme (default: Omnesis)
-#   OMNESIS_IOS_SNAPSHOT_BUNDLE_ID app bundle built and removed from the
+#   OMNESIS_IOS_SNAPSHOT_BUNDLE_ID base bundle id passed to the build; default app removed from the
 #                                 simulator before the test (default: dev.omnesis.ios)
+#   OMNESIS_IOS_SNAPSHOT_APP_BUNDLE_ID actual simulator app removed before testing (defaults to base id)
 #   OMNESIS_IOS_SNAPSHOT_SIGNING   disabled (default) or adhoc, for tests needing
 #                                 a signed simulator app without a team/profile.
 
@@ -50,15 +52,37 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # --- Argument: the test target / scheme / filter to run. -----------------------
-# Accept either a bare `-only-testing` argument or an explicit `--only <id>`.
-ONLY_TESTING="OmnesisTests/PreviewSnapshotTests"
-if [[ "${1:-}" == "--only" ]]; then
-  shift
-  [[ -n "${1:-}" ]] || { echo "ios-snapshot: --only needs a test identifier" >&2; exit 64; }
-  ONLY_TESTING="$1"
-elif [[ -n "${1:-}" ]]; then
-  ONLY_TESTING="$1"
-fi
+# Rendering remains the default. Logic-only simulator tests and coverage are
+# opt-in and use the same reserved host, scratch and Xcode build lane.
+COVERAGE=0
+LOGIC_ONLY=0
+FILTERS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --coverage) COVERAGE=1; shift ;;
+    --logic) LOGIC_ONLY=1; shift ;;
+    --only)
+      shift
+      [[ -n "${1:-}" ]] || { echo "ios-snapshot: --only needs a test identifier" >&2; exit 64; }
+      FILTERS+=("$1"); shift ;;
+    --watch) FILTERS+=("--watch"); shift ;;
+    --*) echo "ios-snapshot: unsupported option $1" >&2; exit 64 ;;
+    *) FILTERS+=("$1"); shift ;;
+  esac
+done
+[[ ${#FILTERS[@]} -gt 0 ]] || FILTERS=("OmnesisTests/PreviewSnapshotTests")
+ONLY_TESTING="${FILTERS[0]}"
+ONLY_TESTING_ARGS=""
+for identifier in "${FILTERS[@]}"; do
+  if [[ "$identifier" == --watch ]]; then
+    [[ ${#FILTERS[@]} -eq 1 && "$COVERAGE" == 0 && "$LOGIC_ONLY" == 0 ]] || {
+      echo "ios-snapshot: watch capture cannot be combined with test filters, logic or coverage" >&2; exit 64;
+    }
+  elif [[ ! "$identifier" =~ ^[A-Za-z0-9_./:-]+$ ]]; then
+    echo "ios-snapshot: invalid test identifier" >&2; exit 64
+  fi
+  ONLY_TESTING_ARGS+=" -only-testing:$identifier"
+done
 
 # --- Configuration (generic env, fail-loud on the host). -----------------------
 HOST="${OMNESIS_EPIC_MACOS_HOST:-}"
@@ -84,9 +108,16 @@ REMOTE_WORKTREE="${OMNESIS_EPIC_MACOS_WORKTREE:-\$HOME/omnesis-ios-snapshot}"
 DEST="${OMNESIS_IOS_SNAPSHOT_DEST:-platform=iOS Simulator,name=iPhone 17}"
 SCHEME="${OMNESIS_IOS_SNAPSHOT_SCHEME:-Omnesis}"
 BUNDLE_ID="${OMNESIS_IOS_SNAPSHOT_BUNDLE_ID:-dev.omnesis.ios}"
+# Alternate schemes can append a product suffix to the build's base identifier.
+# Cleanup must target that actual application without changing the build identity.
+APP_BUNDLE_ID="${OMNESIS_IOS_SNAPSHOT_APP_BUNDLE_ID:-$BUNDLE_ID}"
 OUT_DIR="${OMNESIS_IOS_SNAPSHOT_OUT:-/tmp/omnesis-snapshots}"
 
 fail() { echo "ios-snapshot: $*" >&2; exit 1; }
+if [[ "$COVERAGE" == 1 ]]; then
+  python3 -c 'import pathlib,sys; root=pathlib.Path(sys.argv[1]).resolve(); out=pathlib.Path(sys.argv[2]).resolve(); sys.exit(root == out or root in out.parents)' "$ROOT" "$OUT_DIR" \
+    || fail "coverage output must be outside the checkout"
+fi
 
 SIGNING_MODE="${OMNESIS_IOS_SNAPSHOT_SIGNING:-disabled}"
 case "$SIGNING_MODE" in
@@ -110,6 +141,8 @@ esac
   || fail "simulator destination contains an unsafe selector: $SIMULATOR_SELECTOR"
 [[ "$BUNDLE_ID" =~ ^[A-Za-z0-9.-]+$ ]] \
   || fail "snapshot bundle id contains unsafe characters: $BUNDLE_ID"
+[[ "$APP_BUNDLE_ID" =~ ^[A-Za-z0-9.-]+$ ]] \
+  || fail "snapshot app bundle id contains unsafe characters: $APP_BUNDLE_ID"
 
 # --- Guard: refuse to rsync onto live state on the host. -----------------------
 # We resolve the scratch path ON THE HOST (so ~ / $HOME / symlinks expand there),
@@ -228,21 +261,31 @@ ssh "$HOST" "bash -lc '
   \"\$simctl\" boot \"$SIMULATOR_SELECTOR\" >/dev/null 2>&1 || true
   \"\$simctl\" bootstatus \"$SIMULATOR_SELECTOR\" -b \
     || { echo \"simulator $SIMULATOR_SELECTOR did not become ready\" >&2; exit 1; }
-  \"\$simctl\" terminate \"$SIMULATOR_SELECTOR\" \"$BUNDLE_ID\" >/dev/null 2>&1 || true
-  \"\$simctl\" uninstall \"$SIMULATOR_SELECTOR\" \"$BUNDLE_ID\" >/dev/null 2>&1 || true
+  \"\$simctl\" terminate \"$SIMULATOR_SELECTOR\" \"$APP_BUNDLE_ID\" >/dev/null 2>&1 || true
+  \"\$simctl\" uninstall \"$SIMULATOR_SELECTOR\" \"$APP_BUNDLE_ID\" >/dev/null 2>&1 || true
   # Keep build output inside this scratch so it can be retired without
   # touching the shared DerivedData on the host.
   # Signing settings are fixed literals selected by the validated mode above.
+  # Positional parameters safely expand to zero arguments under macOS Bash 3.2.
+  set --
+  if [ \"$COVERAGE\" -eq 1 ]; then
+    rm -rf \"$RESOLVED_TARGET/.omnesis-simulator-coverage.xcresult\"
+    set -- -enableCodeCoverage YES -resultBundlePath \"$RESOLVED_TARGET/.omnesis-simulator-coverage.xcresult\"
+  fi
   xcodebuild test \
     -project Omnesis.xcodeproj \
     -scheme \"$SCHEME\" \
     -destination \"$DEST\" \
     -derivedDataPath \"$RESOLVED_TARGET/DerivedData\" \
-    -only-testing:$ONLY_TESTING \
+    $ONLY_TESTING_ARGS \
+    \"\$@\" \
     OMNESIS_BUNDLE_ID=\"$BUNDLE_ID\" \
     $SIGNING_SETTINGS \
     >\"$REMOTE_LOG\" 2>&1
   rc=\$?
+  if [ \"$COVERAGE\" -eq 1 ] && [ -d \"$RESOLVED_TARGET/.omnesis-simulator-coverage.xcresult\" ]; then
+    xcrun xccov view --report --json \"$RESOLVED_TARGET/.omnesis-simulator-coverage.xcresult\" >\"$REMOTE_OUT/coverage.json\" || rc=1
+  fi
   if [ \"\$rc\" -eq 0 ] && [ \"$SCHEME\" = Omnesis ]; then
     python3 scripts/verify-built-identities.py \
       \"$RESOLVED_TARGET/DerivedData/Build/Products/Debug-iphonesimulator\" \
@@ -278,6 +321,14 @@ rsync -az --delete "$HOST:$REMOTE_OUT/" "$OUT_DIR/" \
   || fail "rsync of the rendered PNGs back from '$HOST' failed"
 
 LOCAL_COUNT="$(find "$OUT_DIR" -maxdepth 1 -name '*.png' | wc -l | tr -d ' ')"
+if [[ "$SUITE_RC" -eq 0 && "$COVERAGE" == 1 && ! -s "$OUT_DIR/coverage.json" ]]; then
+  fail "the iOS simulator did not export its coverage report — see $OUT_DIR/xcodebuild.log"
+fi
+if [[ "$LOGIC_ONLY" == 1 ]]; then
+  [[ "$SUITE_RC" -eq 0 ]] || fail "the iOS simulator logic suite is RED (exit $SUITE_RC) — see $OUT_DIR/xcodebuild.log"
+  echo "✓ iOS simulator logic tests passed; artifacts in $OUT_DIR"
+  exit 0
+fi
 if [[ "$LOCAL_COUNT" -eq 0 ]]; then
   # No pictures either way, so there is nothing to look at and the only useful
   # thing left is why. The remote log came back with the (empty) mirror.

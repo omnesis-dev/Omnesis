@@ -4,6 +4,7 @@
 // Load $OMNESIS_CONFIG_DIR/.env before any env read (incl. resolveGatewayUrl).
 import "./load-env.js";
 import { pathToFileURL } from "node:url";
+import { pairedLogicalGatewayUrl } from "@omnesis/cloud-relay/bootstrap";
 import {
   applyPrivateUmask,
   acquireUpdateLock,
@@ -127,7 +128,7 @@ function ocrEnabledFromConfig(config: OmnesisConfig): boolean {
  * a fresh host can then trust the discovered gateway without a TTY prompt.
  */
 export async function resolveGatewayUrl(): Promise<{ url: string; fingerprint?: string }> {
-  const override = process.env.OMNESIS_GATEWAY_URL;
+  const override = process.env.OMNESIS_GATEWAY_REQUEST_URL ?? process.env.OMNESIS_GATEWAY_URL;
   if (override) return { url: override };
 
   if (process.env.OMNESIS_MDNS_DISABLE === "1") return { url: DEFAULT_GATEWAY_URL };
@@ -399,7 +400,10 @@ export async function resolveCollectorToken(
     const identity = await probeTokenIdentity(gatewayUrl, existing);
     const verdict = classifyCollectorAuth({
       status: identity.status,
-      everAuthenticated: credentialEverAuthenticated(persisted, { token: existing, gatewayUrl }),
+      everAuthenticated: credentialEverAuthenticated(persisted, {
+        token: existing,
+        gatewayUrl: pairedLogicalGatewayUrl(gatewayUrl),
+      }),
     });
     if (verdict === "authenticated") {
       // The gateway's name for this device is the one every command and the
@@ -460,7 +464,10 @@ export async function resolveCollectorToken(
       status: res.status,
       everAuthenticated:
         existingWasRefused ||
-        credentialEverAuthenticated(persisted, { token: bootstrap, gatewayUrl }),
+        credentialEverAuthenticated(persisted, {
+          token: bootstrap,
+          gatewayUrl: pairedLogicalGatewayUrl(gatewayUrl),
+        }),
     });
     if (verdict === "needs-pairing") return { outcome: "needs-pairing" };
     const txt = await res.text().catch(() => "");
@@ -563,7 +570,7 @@ function recordCollectorPaired(input: {
     state: "paired",
     deviceName: input.deviceName,
     ...(input.deviceId ? { deviceId: input.deviceId } : {}),
-    gatewayUrl: input.gatewayUrl,
+    gatewayUrl: pairedLogicalGatewayUrl(input.gatewayUrl),
     tokenFingerprint: tokenFingerprint(input.token),
     lastAuthenticatedAt: Date.now(),
     unauthorizedAt: null,
@@ -590,7 +597,7 @@ async function haltForRepair(input: {
   writeCollectorPairingState(input.configDir, {
     state: "needs-pairing",
     deviceName: input.deviceName,
-    gatewayUrl: input.gatewayUrl,
+    gatewayUrl: pairedLogicalGatewayUrl(input.gatewayUrl),
     tokenFingerprint: input.token ? tokenFingerprint(input.token) : "",
     lastAuthenticatedAt: input.lastAuthenticatedAt,
     unauthorizedAt: Date.now(),
@@ -599,7 +606,7 @@ async function haltForRepair(input: {
   log.error(
     needsPairingLogLine({
       deviceName: input.deviceName,
-      gatewayUrl: input.gatewayUrl,
+      gatewayUrl: pairedLogicalGatewayUrl(input.gatewayUrl),
       configDir: input.configDir,
     }),
   );

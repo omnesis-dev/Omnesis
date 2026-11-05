@@ -12,6 +12,23 @@ import SwiftUI
 /// Everything here is `#if DEBUG` only — never shipped in release.
 @available(iOS 17.0, *)
 enum PreviewMocks {
+    static let googleCloudPairingConfiguration = GoogleCloudPairingConfiguration(
+        clientId: "fictional-ios.apps.googleusercontent.com", relayOrigin: URL(string: "https://relay.example.test")!
+    )
+    static func googlePairingPanel(_ phase: GoogleCloudPairingCoordinator.Phase) -> GoogleCloudPairingPanel {
+        let hasCode = [.comparing, .waiting, .ready, .pairing].contains(phase)
+        return GoogleCloudPairingPanel(
+            phase: phase,
+            verificationCode: hasCode ? "A1B2-C3D4-E5F6-0718-293A" : nil,
+            gatewayHost: hasCode ? "gateway.example.test" : nil,
+            error: phase == .failed ? CloudPairingError.refused : nil,
+            compared: [.waiting, .ready, .pairing].contains(phase),
+            onSignIn: {},
+            onCompare: {},
+            onPair: {}
+        )
+    }
+
     static let copyableMarkdownInline = "Address: `42 Example Street, Exampleville`. Reference: `000042`. **Keep** this [link](https://example.com)."
     static let copyableMarkdownBlock = "42 Example Street\nExampleville\n"
     static let copyableMarkdownValueAndCode = """

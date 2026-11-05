@@ -7,6 +7,8 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+apply(from = rootProject.file("logic-coverage.gradle.kts"))
+
 android {
     namespace = "dev.omnesis.android.pairing"
     compileSdk = 36
@@ -35,4 +37,5 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.okhttp.tls)
 }

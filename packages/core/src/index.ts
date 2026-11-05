@@ -1351,3 +1351,6 @@ export { oauthCallbackHost } from "./oauth-callback-host.js";
 
 export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./models/speech-to-speech.js";
 export { CLI_COMMAND_ENV, operatorCommand } from "./operator-command.js";
+
+export { connectionPathSchema, parseConnectionPath } from "./connection-path.js";
+export type { ConnectionPath } from "./connection-path.js";

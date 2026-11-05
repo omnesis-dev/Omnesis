@@ -9,6 +9,7 @@
     "dev": "tsx watch src/main.ts"
   },
   "dependencies": {
+    "@omnesis/cloud-relay": "*",
     "@omnesis/config": "*",
     "@omnesis/core": "*",
     "@omnesis/gateway-client": "*",
@@ -98,7 +99,8 @@
     "@omnesis/relay": "*",
     "@types/turndown": "^5.0.6",
     "@types/word-extractor": "^1.0.6",
-    "playwright": "^1.60.0"
+    "playwright": "^1.60.0",
+    "jose": "^6.2.8"
   },
   "files": [
     "dist"
