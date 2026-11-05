@@ -20,12 +20,21 @@
  * old `error`). A naive "wait until terminal" would accept that stale prior
  * result immediately and report success for a sync that never actually ran.
  *
- * A terminal state is accepted after observing `syncing`, including before
- * dispatch when the collector confirms it joined that running cycle. A successful state
- * can also be accepted when its persisted `lastSyncAt` cursor-save time advances beyond the
- * snapshot captured before dispatch: a fast sync may finish between polls,
- * including one already running when the collector received the trigger.
- * An unchanged timestamp cannot prove that a new cycle completed.
+ * The guard: a terminal state is accepted once we have observed a transition
+ * INTO `syncing` for that source, or once the gateway records a run that
+ * finished after the trigger: a `lastSyncAt` (every completed page commits
+ * the cursor and stamps it) or an `erroredAt` that moved past the baseline
+ * read before the trigger. Until then, terminal snapshots are treated as
+ * "still the old result, keep waiting".
+ *
+ * The second arm matters because a poll can miss `syncing` entirely: a small
+ * sync finishes between two polls, and a source that was already syncing when
+ * the trigger arrived (the collector skips it, and the run in flight is the
+ * one to wait for) may finish before the first poll. Both baselines are the
+ * gateway's own timestamps, compared with each other, so no clock skew
+ * between this host and the gateway's can mistake an old run for a new one.
+ * A pre-trigger `syncing` snapshot also counts when dispatch confirms the
+ * collector joined that running cycle; its final cursor may already be saved.
  */
 
 /**
@@ -51,7 +60,7 @@ export type WaitObservedState =
 
 /** Outcome classification once a source's wait resolves. */
 export type WaitOutcome =
-  | "success" // synced after an observed cycle or a newer persisted completion
+  | "success" // synced after an observed sync cycle
   | "error" // generic sync failure
   | "needs-auth" // credential failure — terminal, not success
   | "rate-limited" // provider back-off — terminal, not success
@@ -66,22 +75,35 @@ export interface SourceWaitState {
   readonly sourceId: string;
   /** Syncing was observed during polling, or before a confirmed skipped dispatch. */
   observedSyncing: boolean;
-  /** Last cursor save before dispatch; undefined when no baseline was available. */
-  initialLastSyncAt?: string | null;
   /** Set once the wait resolves; undefined while still pending. */
   outcome?: WaitOutcome;
   /** The last observed state, for diagnostics on timeout. */
   lastObserved?: WaitObservedState;
   /** Error/diagnostic message captured from the terminal snapshot, if any. */
   message?: string;
+  /** The gateway's `lastSyncAt` before the trigger; a later one is a run that finished since. */
+  baselineSyncAt?: string | null;
+  /** The gateway's `erroredAt` before the trigger; a later one is a run that failed since. */
+  baselineErroredAt?: string | null;
 }
 
 /** A single source's status as read from `/admin/sync/status`. */
 export interface SyncStatusObservation {
   sourceId: string;
   state: WaitObservedState;
-  lastSyncAt?: string | null;
   errorMessage?: string;
+  /** ISO time of the last successful cursor save, as `/admin/sync/status` serves it. */
+  lastSyncAt?: string | null;
+  /** ISO time of the last error, present with an error state. */
+  erroredAt?: string;
+}
+
+/** Whether a valid gateway timestamp advances beyond a known baseline (null means never). */
+function movedPast(next: string | null | undefined, baseline: string | null | undefined): boolean {
+  if (!next || baseline === undefined) return false;
+  const a = Date.parse(next);
+  const b = baseline === null ? -Infinity : Date.parse(baseline);
+  return Number.isFinite(a) && a > b;
 }
 
 /** Terminal-not-success states still END the wait — they just aren't success. */
@@ -109,19 +131,34 @@ const SUCCESS_STATES: ReadonlySet<string> = new Set(["synced", "auth-expiring", 
 /** Initialise per-source wait state for the sources we triggered. */
 export function initWaitStates(
   sourceIds: readonly string[],
-  initialObservations: readonly SyncStatusObservation[] = [],
+  baseline: readonly SyncStatusObservation[] = [],
   alreadySyncingIds: readonly string[] = [],
 ): Map<string, SourceWaitState> {
+  const before = new Map(baseline.map((o) => [o.sourceId, o]));
   const states = new Map<string, SourceWaitState>();
-  const initial = new Map(initialObservations.map((obs) => [obs.sourceId, obs]));
   for (const sourceId of sourceIds) {
+    const prior = before.get(sourceId);
     states.set(sourceId, {
       sourceId,
       observedSyncing: alreadySyncingIds.includes(sourceId),
-      initialLastSyncAt: initial.get(sourceId)?.lastSyncAt,
+      ...(prior
+        ? { baselineSyncAt: prior.lastSyncAt, baselineErroredAt: prior.erroredAt ?? null }
+        : {}),
     });
   }
   return states;
+}
+
+/**
+ * Whether this snapshot is a run that finished after the trigger, judged by
+ * the gateway's own timestamps against the baseline. Only a source with a
+ * baseline can be judged this way; without one the observed `syncing` is
+ * the only evidence.
+ */
+function finishedSinceBaseline(st: SourceWaitState, obs: SyncStatusObservation): boolean {
+  if (SUCCESS_STATES.has(obs.state)) return movedPast(obs.lastSyncAt, st.baselineSyncAt);
+  if (obs.state in TERMINAL_NON_SUCCESS) return movedPast(obs.erroredAt, st.baselineErroredAt);
+  return false;
 }
 
 /**
@@ -146,14 +183,10 @@ export function applyObservations(
       continue;
     }
 
-    // A newer cursor save plus a successful terminal proves a fast cycle finished
-    // even when no poll caught it running. Missing or invalid timestamps do
-    // not supply evidence; an older timestamp (e.g. after reset) cannot either.
-    const completedAt = obs.lastSyncAt ? Date.parse(obs.lastSyncAt) : NaN;
-    const initialCompletedAt =
-      st.initialLastSyncAt === null ? -Infinity : Date.parse(st.initialLastSyncAt ?? "");
-    const newerCompletion = Number.isFinite(completedAt) && completedAt > initialCompletedAt;
-    if (!st.observedSyncing && !(SUCCESS_STATES.has(obs.state) && newerCompletion)) continue;
+    // Terminal states only count once we've seen the source actually start,
+    // or once the gateway stamps a run that finished after the trigger.
+    // Before that, a terminal snapshot is the PRIOR cycle's result.
+    if (!st.observedSyncing && !finishedSinceBaseline(st, obs)) continue;
 
     if (SUCCESS_STATES.has(obs.state)) {
       st.outcome = "success";
@@ -213,12 +246,12 @@ export const MAX_CONSECUTIVE_FETCH_FAILURES = 5;
 
 export interface WaitOptions {
   sourceIds: readonly string[];
-  /** Status captured before dispatch, to detect a completion between polls. */
-  initialObservations?: readonly SyncStatusObservation[];
-  /** Sources observed syncing before dispatch that the collector confirmed it skipped. */
-  alreadySyncingIds?: readonly string[];
   timeoutMs: number;
   pollIntervalMs: number;
+  /** The sources' status read before the trigger, for the finished-since-baseline arm. */
+  baseline?: readonly SyncStatusObservation[];
+  /** Sources observed syncing before dispatch that the collector confirmed it skipped. */
+  alreadySyncingIds?: readonly string[];
 }
 
 /**
@@ -231,7 +264,7 @@ export async function waitForSyncCompletion(
   opts: WaitOptions,
   deps: WaitDeps,
 ): Promise<Map<string, SourceWaitState>> {
-  const states = initWaitStates(opts.sourceIds, opts.initialObservations, opts.alreadySyncingIds);
+  const states = initWaitStates(opts.sourceIds, opts.baseline, opts.alreadySyncingIds);
   const deadline = deps.now() + opts.timeoutMs;
 
   // Poll immediately, then on each interval, until resolved or past deadline.

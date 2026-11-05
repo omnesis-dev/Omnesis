@@ -62,8 +62,23 @@ export interface SyncDispatchBody {
 interface SyncStatusEntry {
   sourceId: string;
   state: SyncStatusObservation["state"];
-  lastSyncAt?: string | null;
   errorMessage?: string;
+  lastSyncAt?: string | null;
+  erroredAt?: string;
+}
+
+/** The sources' status as `/admin/sync/status` serves it, for `ids` only. */
+async function fetchSyncStatus(ids: readonly string[]): Promise<SyncStatusObservation[]> {
+  const { items } = await gatewayJson<{ items: SyncStatusEntry[] }>("/admin/sync/status");
+  return items
+    .filter((i) => ids.includes(i.sourceId))
+    .map((i) => ({
+      sourceId: i.sourceId,
+      state: i.state,
+      errorMessage: i.errorMessage,
+      lastSyncAt: i.lastSyncAt,
+      erroredAt: i.erroredAt,
+    }));
 }
 
 interface SourceStatsRow {
@@ -252,20 +267,11 @@ export const syncCommand = defineCommand({
     // Capture pre-sync doc counts up front so a --wait run can report a delta
     // even if the sync deletes documents (delta can be negative).
     const docsBefore = wait ? await fetchDocCounts(ids) : new Map<string, number>();
-
-    const fetchStatus = async (): Promise<SyncStatusObservation[]> => {
-      const { items } = await gatewayJson<{ items: SyncStatusEntry[] }>("/admin/sync/status");
-      return items
-        .filter((i) => ids.includes(i.sourceId))
-        .map((i) => ({
-          sourceId: i.sourceId,
-          state: i.state,
-          lastSyncAt: i.lastSyncAt,
-          errorMessage: i.errorMessage,
-        }));
-    };
-    // Capture persisted completion timestamps before any trigger can finish.
-    const initialObservations = wait ? await fetchStatus() : [];
+    // Each source's last finished run before the trigger, so the wait can
+    // accept a run that finishes after it even when no poll catches it
+    // syncing: a quick sync, or the one already in flight that the collector
+    // skipped this trigger for.
+    const statusBefore = wait ? await fetchSyncStatus(ids) : [];
 
     const triggered: string[] = [];
     const alreadySyncing: string[] = [];
@@ -303,7 +309,7 @@ export const syncCommand = defineCommand({
         body.result.triggered === 0 &&
         (body.result.skipped ?? 0) > 0 &&
         (body.result.disabled ?? 0) === 0 &&
-        initialObservations.some((obs) => obs.sourceId === id && obs.state === "syncing")
+        statusBefore.some((obs) => obs.sourceId === id && obs.state === "syncing")
       ) {
         alreadySyncing.push(id);
       }
@@ -319,13 +325,13 @@ export const syncCommand = defineCommand({
       waitForSyncCompletion(
         {
           sourceIds: triggered,
-          initialObservations,
-          alreadySyncingIds: alreadySyncing,
           timeoutMs: timeoutSeconds * 1_000,
           pollIntervalMs: POLL_INTERVAL_MS,
+          baseline: statusBefore,
+          alreadySyncingIds: alreadySyncing,
         },
         {
-          fetchStatus,
+          fetchStatus: () => fetchSyncStatus(triggered),
           now: () => Date.now(),
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           isTransient: isFetchConnectionError,
