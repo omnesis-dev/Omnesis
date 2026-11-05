@@ -510,12 +510,23 @@ export class FsCognitionTranscriptStore {
     db.prepare("UPDATE transcript_refs SET state = ? WHERE file_name = ?").run(state, fileName);
   }
 
-  /** Reconcile only interrupted two-store transitions; committed archives stay O(1). */
+  /**
+   * Settle the two-store transitions a crash interrupted, from what the
+   * directory holds: a save caught between its pending ref and its rename, or
+   * a delete caught between marking its ref and unlinking the file. Every state
+   * other than `committed` is one of these. The filter is written as the two
+   * ranges either side of `committed`, rather than as `!=`, because SQLite
+   * seeks the state index for a range but scans the whole index for `!=`. The
+   * cost therefore follows the number of interrupted transitions, not the size
+   * of the archive, and a state this build does not know (one a newer build
+   * wrote before a rollback) is still settled.
+   */
   private reconcilePendingRefs(): void {
     const db = this.index();
     const pending = db
       .prepare<[], { file_name: string }>(
-        "SELECT file_name FROM transcript_refs WHERE state != 'committed'",
+        `SELECT file_name FROM transcript_refs
+          WHERE state < 'committed' OR state > 'committed'`,
       )
       .all();
     const remove = db.prepare("DELETE FROM transcript_refs WHERE file_name = ?");
