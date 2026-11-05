@@ -370,11 +370,11 @@ process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`,
         }),
       ).rejects.toThrow("not inside the target source apply transaction");
       const gatePid = Number(readFileSync(join(directory, "entered/pid"), "utf8"));
-      // A killed child can remain a zombie briefly while init reaps it; it must never be runnable.
+      // Procfs can retain an exited task as a zombie (Z) or dead (X) until it is reaped.
       let running;
       try {
         const stat = readFileSync(`/proc/${gatePid}/stat`, "utf8");
-        running = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] !== "Z";
+        running = !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0]);
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
         running = false;
