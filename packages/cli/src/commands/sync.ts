@@ -43,7 +43,6 @@ interface SyncDispatchResult {
   ok: boolean;
   triggered?: number;
   skipped?: number;
-  alreadySyncing?: number;
   disabled?: number;
   error?: string;
 }
@@ -56,13 +55,14 @@ interface SyncDispatchResult {
 export interface SyncDispatchBody {
   ok: true;
   deviceId?: string;
-  result?: Pick<SyncDispatchResult, "ok" | "triggered" | "skipped" | "alreadySyncing" | "disabled">;
+  result?: Pick<SyncDispatchResult, "ok" | "triggered" | "skipped" | "disabled">;
   results?: SyncDispatchResult[];
 }
 
 interface SyncStatusEntry {
   sourceId: string;
   state: SyncStatusObservation["state"];
+  lastSyncAt?: string | null;
   errorMessage?: string;
 }
 
@@ -253,8 +253,21 @@ export const syncCommand = defineCommand({
     // even if the sync deletes documents (delta can be negative).
     const docsBefore = wait ? await fetchDocCounts(ids) : new Map<string, number>();
 
+    const fetchStatus = async (): Promise<SyncStatusObservation[]> => {
+      const { items } = await gatewayJson<{ items: SyncStatusEntry[] }>("/admin/sync/status");
+      return items
+        .filter((i) => ids.includes(i.sourceId))
+        .map((i) => ({
+          sourceId: i.sourceId,
+          state: i.state,
+          lastSyncAt: i.lastSyncAt,
+          errorMessage: i.errorMessage,
+        }));
+    };
+    // Capture persisted completion timestamps before any trigger can finish.
+    const initialObservations = wait ? await fetchStatus() : [];
+
     const triggered: string[] = [];
-    const alreadySyncing: string[] = [];
     for (const id of ids) {
       const iconPrefix = iconPrefixFor(id);
       const source = sources.find((s) => s.id === id);
@@ -280,17 +293,6 @@ export const syncCommand = defineCommand({
         console.log(line);
       }
       triggered.push(id);
-      // A single collector can attest to the cycle we are joining. A fan-out
-      // can also start fresh work on other members, so it still needs polling.
-      if (
-        !body.results &&
-        body.result?.ok &&
-        body.result.triggered === 0 &&
-        (body.result.alreadySyncing ?? 0) > 0 &&
-        (body.result.disabled ?? 0) === 0
-      ) {
-        alreadySyncing.push(id);
-      }
     }
 
     if (!wait || triggered.length === 0) return;
@@ -303,21 +305,12 @@ export const syncCommand = defineCommand({
       waitForSyncCompletion(
         {
           sourceIds: triggered,
-          alreadySyncingIds: alreadySyncing,
+          initialObservations,
           timeoutMs: timeoutSeconds * 1_000,
           pollIntervalMs: POLL_INTERVAL_MS,
         },
         {
-          fetchStatus: async () => {
-            const { items } = await gatewayJson<{ items: SyncStatusEntry[] }>("/admin/sync/status");
-            return items
-              .filter((i) => triggered.includes(i.sourceId))
-              .map((i) => ({
-                sourceId: i.sourceId,
-                state: i.state,
-                errorMessage: i.errorMessage,
-              }));
-          },
+          fetchStatus,
           now: () => Date.now(),
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           isTransient: isFetchConnectionError,

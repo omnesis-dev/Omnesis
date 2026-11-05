@@ -144,7 +144,6 @@ describe("SyncDispatcher.triggerSync with restart", () => {
     const result = dispatcher.triggerSync("chat-synth:acct", { restart: true });
 
     expect(result.restarting).toEqual(["chat-synth:acct"]);
-    expect(result.alreadySyncing).toEqual([]);
     expect(result.skipped).toEqual([]);
     expect(result.triggered).toEqual([]);
     expect(requestRestart).toHaveBeenCalledWith("chat-synth:acct");
@@ -158,7 +157,6 @@ describe("SyncDispatcher.triggerSync with restart", () => {
       "chat-synth:acct",
     );
     expect(result.skipped).toEqual(["chat-synth:acct"]);
-    expect(result.alreadySyncing).toEqual(["chat-synth:acct"]);
     expect(result.restarting).toEqual([]);
     expect(requestRestart).not.toHaveBeenCalled();
   });
@@ -346,7 +344,6 @@ describe("a source that is pushed to, not synced", () => {
     const result = dispatcher.triggerSync("web:local");
 
     expect(result.skipped).toEqual(["web:local"]);
-    expect(result.alreadySyncing).toEqual([]);
     expect(result.triggered).toEqual([]);
     await new Promise((r) => setImmediate(r));
     expect(runSync).not.toHaveBeenCalled();

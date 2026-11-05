@@ -239,10 +239,8 @@ const sourceSyncResponse = z.object({
   ok: z.boolean(),
   /** Syncs started by this command. */
   triggered: z.number().int().nonnegative().optional(),
-  /** Sources the command left alone, including push-only sources. */
+  /** Sources already syncing that the command left alone. */
   skipped: z.number().int().nonnegative().optional(),
-  /** Skipped sources whose sync was already in flight, excluding push-only sources. */
-  alreadySyncing: z.number().int().nonnegative().optional(),
   /** Sources paused on the device. */
   disabled: z.number().int().nonnegative().optional(),
   /**

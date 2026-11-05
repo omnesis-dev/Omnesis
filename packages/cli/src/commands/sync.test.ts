@@ -16,7 +16,7 @@ vi.mock("../utils.js", async (importOriginal) => {
 });
 
 import { gatewayFetch, gatewayJson } from "../utils.js";
-import { renderSyncDispatch, syncCommand, type SyncDispatchBody } from "./sync.js";
+import { renderSyncDispatch, syncCommand } from "./sync.js";
 
 const names: Record<string, string> = {
   "dev-laptop": "Maya-Laptop",
@@ -101,74 +101,59 @@ describe("sources sync", () => {
   });
 
   test.each([
-    { state: "synced", succeeds: true },
-    { state: "error", succeeds: false },
-    { state: "needs-auth", succeeds: false },
-  ])(
-    "an acknowledged running sync ends as $state before the first poll",
-    async ({ state, succeeds }) => {
-      vi.useFakeTimers();
-      (gatewayFetch as Mock).mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            ok: true,
-            deviceId: "dev-mini",
-            result: { ok: true, triggered: 0, skipped: 1, alreadySyncing: 1 },
-          }),
-        ),
+    { label: "already running", result: { ok: true, triggered: 0, skipped: 1 } },
+    { label: "newly triggered", result: { ok: true, triggered: 1, skipped: 0 } },
+  ])("waits for an $label sync that finishes before the first poll", async ({ result }) => {
+    const before = "2026-01-01T00:00:00.000Z";
+    const after = "2026-01-01T00:00:01.000Z";
+    (gatewayFetch as Mock).mockImplementation(() => {
+      // The baseline must be captured before dispatch, not after a fast cycle finishes.
+      expect((gatewayJson as Mock).mock.calls.map(([path]) => path)).toContain(
+        "/admin/sync/status",
       );
-      (gatewayJson as Mock)
-        .mockResolvedValueOnce({ items: [source] })
-        .mockResolvedValueOnce({ items: [] })
-        .mockResolvedValueOnce({ stats: { [source.id]: { documentCount: 3 } } })
-        .mockResolvedValueOnce({
-          items: [{ sourceId: source.id, state, errorMessage: "sync failed" }],
-        })
-        .mockResolvedValueOnce({ stats: { [source.id]: { documentCount: 3 } } });
-      const run = syncCommand.run!({ args: { _: [source.id], wait: true, timeout: "5" } } as never);
-      if (succeeds) await expect(run).resolves.toBeUndefined();
-      else await expect(run).rejects.toThrow("did not sync successfully");
-      expect(logged.some((line) => line.includes("Timed out"))).toBe(false);
-      expect(vi.getTimerCount()).toBe(0);
-    },
-  );
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, deviceId: "dev-mini", result })),
+      );
+    });
+    (gatewayJson as Mock)
+      .mockResolvedValueOnce({ items: [source] })
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ stats: { [source.id]: { documentCount: 3 } } })
+      .mockResolvedValueOnce({
+        items: [{ sourceId: source.id, state: "synced", lastSyncAt: before }],
+      })
+      .mockResolvedValueOnce({
+        items: [{ sourceId: source.id, state: "synced", lastSyncAt: after }],
+      })
+      .mockResolvedValueOnce({ stats: { [source.id]: { documentCount: 3 } } });
+    await expect(
+      (syncCommand as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }).run({
+        args: { _: [source.id], wait: true, timeout: "3" },
+      }),
+    ).resolves.toBeUndefined();
+    expect(logged).toContain("Synced: notes-synth:local (3 docs, ±0)");
+  });
 
-  test.each<{ label: string; body: SyncDispatchBody }>([
-    { label: "a newly triggered sync", body: { ok: true, result: { ok: true, triggered: 1 } } },
-    {
-      label: "a legacy skipped reply",
-      body: { ok: true, result: { ok: true, triggered: 0, skipped: 1 } },
-    },
-    {
-      label: "a push-only source",
-      body: { ok: true, result: { ok: true, triggered: 0, skipped: 1, alreadySyncing: 0 } },
-    },
-    {
-      label: "a paused source",
-      body: { ok: true, result: { ok: true, triggered: 0, disabled: 1, alreadySyncing: 0 } },
-    },
-    {
-      label: "a mixed fan-out",
-      body: {
-        ok: true,
-        results: [
-          { deviceId: "dev-mini", ok: true, triggered: 0, alreadySyncing: 1 },
-          { deviceId: "dev-laptop", ok: true, triggered: 1 },
-        ],
-      },
-    },
-  ])("$label cannot accept a stale terminal result", async ({ body }) => {
+  test("an unchanged successful result does not complete the wait", async () => {
     vi.useFakeTimers();
-    (gatewayFetch as Mock).mockResolvedValue(new Response(JSON.stringify(body)));
+    (gatewayFetch as Mock).mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { ok: true, triggered: 0, skipped: 1 } })),
+    );
     (gatewayJson as Mock).mockImplementation((path: string) => {
       if (path === "/admin/sources") return Promise.resolve({ items: [source] });
       if (path === "/admin/devices") return Promise.resolve({ items: [] });
       if (path === "/documents/stats") return Promise.resolve({ stats: {} });
       if (path === "/admin/sync/status")
-        return Promise.resolve({ items: [{ sourceId: source.id, state: "synced" }] });
+        return Promise.resolve({
+          items: [{ sourceId: source.id, state: "synced", lastSyncAt: "2026-01-01T00:00:00.000Z" }],
+        });
       return Promise.reject(new Error(`unexpected path ${path}`));
     });
-    const run = syncCommand.run!({ args: { _: [source.id], wait: true, timeout: "3" } } as never);
+    const run = (
+      syncCommand as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
+    ).run({
+      args: { _: [source.id], wait: true, timeout: "3" },
+    });
     const assertion = expect(run).rejects.toThrow("did not sync successfully");
     await vi.runAllTimersAsync();
     await assertion;

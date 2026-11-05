@@ -20,11 +20,11 @@
  * old `error`). A naive "wait until terminal" would accept that stale prior
  * result immediately and report success for a sync that never actually ran.
  *
- * The guard: a terminal state is only accepted once we have first observed a
- * transition INTO `syncing` for that source, or the collector acknowledged
- * that it was already syncing when the command arrived. Until then, terminal
- * snapshots are treated as "still the old result, keep waiting". This makes the wait
- * observe a real sync cycle rather than rubber-stamping the previous one.
+ * A terminal state is accepted after observing `syncing`. A successful state
+ * can also be accepted when its persisted `lastSyncAt` advances beyond the
+ * snapshot captured before dispatch: a fast sync may finish between polls,
+ * including one already running when the collector received the trigger.
+ * An unchanged timestamp cannot prove that a new cycle completed.
  */
 
 /**
@@ -50,7 +50,7 @@ export type WaitObservedState =
 
 /** Outcome classification once a source's wait resolves. */
 export type WaitOutcome =
-  | "success" // synced after an observed or acknowledged sync cycle
+  | "success" // synced after an observed cycle or a newer persisted completion
   | "error" // generic sync failure
   | "needs-auth" // credential failure — terminal, not success
   | "rate-limited" // provider back-off — terminal, not success
@@ -63,8 +63,10 @@ export type WaitOutcome =
 /** Per-source state carried across polls. */
 export interface SourceWaitState {
   readonly sourceId: string;
-  /** True once syncing was observed or acknowledged by the collector (arms the race guard). */
+  /** True once a `syncing` snapshot has been observed (arms the race guard). */
   observedSyncing: boolean;
+  /** Persisted completion before dispatch; undefined when no baseline was available. */
+  initialLastSyncAt?: string | null;
   /** Set once the wait resolves; undefined while still pending. */
   outcome?: WaitOutcome;
   /** The last observed state, for diagnostics on timeout. */
@@ -77,6 +79,7 @@ export interface SourceWaitState {
 export interface SyncStatusObservation {
   sourceId: string;
   state: WaitObservedState;
+  lastSyncAt?: string | null;
   errorMessage?: string;
 }
 
@@ -105,11 +108,16 @@ const SUCCESS_STATES: ReadonlySet<string> = new Set(["synced", "auth-expiring", 
 /** Initialise per-source wait state for the sources we triggered. */
 export function initWaitStates(
   sourceIds: readonly string[],
-  alreadySyncingIds: readonly string[] = [],
+  initialObservations: readonly SyncStatusObservation[] = [],
 ): Map<string, SourceWaitState> {
   const states = new Map<string, SourceWaitState>();
+  const initial = new Map(initialObservations.map((obs) => [obs.sourceId, obs]));
   for (const sourceId of sourceIds) {
-    states.set(sourceId, { sourceId, observedSyncing: alreadySyncingIds.includes(sourceId) });
+    states.set(sourceId, {
+      sourceId,
+      observedSyncing: false,
+      initialLastSyncAt: initial.get(sourceId)?.lastSyncAt,
+    });
   }
   return states;
 }
@@ -136,9 +144,14 @@ export function applyObservations(
       continue;
     }
 
-    // Terminal states require polling or acknowledgement evidence of a running sync.
-    // Without either, the snapshot may still be the prior cycle's result.
-    if (!st.observedSyncing) continue;
+    // A newer persisted completion proves a fast successful cycle finished
+    // even when no poll caught it running. Missing or invalid timestamps do
+    // not supply evidence; an older timestamp (e.g. after reset) cannot either.
+    const completedAt = obs.lastSyncAt ? Date.parse(obs.lastSyncAt) : NaN;
+    const initialCompletedAt =
+      st.initialLastSyncAt === null ? -Infinity : Date.parse(st.initialLastSyncAt ?? "");
+    const newerCompletion = Number.isFinite(completedAt) && completedAt > initialCompletedAt;
+    if (!st.observedSyncing && !(SUCCESS_STATES.has(obs.state) && newerCompletion)) continue;
 
     if (SUCCESS_STATES.has(obs.state)) {
       st.outcome = "success";
@@ -198,8 +211,8 @@ export const MAX_CONSECUTIVE_FETCH_FAILURES = 5;
 
 export interface WaitOptions {
   sourceIds: readonly string[];
-  /** Sources the collector confirmed were already syncing when it handled the trigger. */
-  alreadySyncingIds?: readonly string[];
+  /** Status captured before dispatch, to detect a completion between polls. */
+  initialObservations?: readonly SyncStatusObservation[];
   timeoutMs: number;
   pollIntervalMs: number;
 }
@@ -214,7 +227,7 @@ export async function waitForSyncCompletion(
   opts: WaitOptions,
   deps: WaitDeps,
 ): Promise<Map<string, SourceWaitState>> {
-  const states = initWaitStates(opts.sourceIds, opts.alreadySyncingIds);
+  const states = initWaitStates(opts.sourceIds, opts.initialObservations);
   const deadline = deps.now() + opts.timeoutMs;
 
   // Poll immediately, then on each interval, until resolved or past deadline.

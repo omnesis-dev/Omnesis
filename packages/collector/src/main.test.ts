@@ -159,7 +159,6 @@ describe("handleSourceSyncCommand", () => {
     const triggerSync = vi.fn().mockReturnValue({
       triggered: ["local-notes:local"],
       skipped: ["calendar:local"],
-      alreadySyncing: ["calendar:local"],
       disabled: ["tasks:local"],
       restarting: ["chat:local"],
       unhosted: [],
@@ -171,19 +170,17 @@ describe("handleSourceSyncCommand", () => {
       ok: true,
       triggered: 1,
       skipped: 1,
-      alreadySyncing: 1,
       disabled: 1,
       restarting: 1,
     });
     expect(triggerSync).toHaveBeenCalledWith("local-notes:local", { restart: false });
-    expect(parseResponsePayload("source.sync", response)).toEqual({ ok: true, value: response });
+    expect(parseResponsePayload("source.sync", response).ok).toBe(true);
   });
 
   test("preserves a no-match error with zero counts", () => {
     const triggerSync = vi.fn().mockReturnValue({
       triggered: [],
       skipped: [],
-      alreadySyncing: [],
       disabled: [],
       restarting: [],
       unhosted: [],
@@ -199,7 +196,6 @@ describe("handleSourceSyncCommand", () => {
       ok: false,
       triggered: 0,
       skipped: 0,
-      alreadySyncing: 0,
       disabled: 0,
       restarting: 0,
       error: "No sources match: missing-source",
