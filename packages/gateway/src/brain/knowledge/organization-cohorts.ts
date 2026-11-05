@@ -139,7 +139,10 @@ function publishedRetry(
     ownBatchId?: string;
     limit?: number;
     excludedSources?: readonly string[];
-    /** Only the retry with this fingerprint: admission confirms the one selected. */
+    /**
+     * Only the retry with this fingerprint: admission confirms the one selected
+     * through the fingerprint index, instead of walking every released retry.
+     */
     matching?: string;
     skip?: ReadonlySet<string>;
   } = {},
@@ -159,21 +162,30 @@ function publishedRetry(
         LEFT JOIN knowledge_source_revisions r ON r.document_id=m.source_id
         WHERE m.cohort_id=c.id AND (d.id IS NULL OR COALESCE(r.deleted,0)!=0 OR NOT (${included.sql})
           ${removed ? "OR EXISTS(SELECT 1 FROM removed_sources rs WHERE rs.id=d.source_id)" : ""}))
-      AND NOT EXISTS(SELECT 1 FROM knowledge_organization_members m JOIN knowledge_work w
-        ON w.subject_id=m.source_id AND w.subject_kind='source'
+      -- CROSS JOIN starts from the cohort's few members and seeks each one's
+      -- work by subject; the other order walks every source work row ever made.
+      AND NOT EXISTS(SELECT 1 FROM knowledge_organization_members m CROSS JOIN knowledge_work w
+        ON w.subject_kind='source' AND w.subject_id=m.source_id
         WHERE m.cohort_id=c.id AND w.status IN ('pending','batched')
           AND (w.batch_id IS NULL OR w.batch_id!=?))
       -- Parked work answers a new batch's enqueue with the parked row, so a
       -- member parked at its revision could never be admitted again.
       AND NOT EXISTS(SELECT 1 FROM knowledge_organization_members m WHERE m.cohort_id=c.id
         AND ${knowledgeWorkParkedSql("'source'", "m.source_id", "m.content_hash")})
+      ${options.matching === undefined ? "" : "AND c.input_fingerprint=?"}
       ORDER BY c.retrieval_reconsider_at,c.id LIMIT 32`,
     )
-    .all(now, KNOWLEDGE_DISCOVERY_POLICY, limit, ...included.params, ownBatchId);
+    .all(
+      now,
+      KNOWLEDGE_DISCOVERY_POLICY,
+      limit,
+      ...included.params,
+      ownBatchId,
+      ...(options.matching === undefined ? [] : [options.matching]),
+    );
   for (const row of rows) {
     const cohort = getOrganizationCohort(db, row.id);
     if (!cohort) continue;
-    if (options.matching !== undefined && cohort.inputFingerprint !== options.matching) continue;
     if (options.skip?.has(cohort.inputFingerprint)) continue;
     if (isOrganizationCohortCurrent(db, cohort)) return cohort;
   }
