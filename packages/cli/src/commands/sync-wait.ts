@@ -33,6 +33,8 @@
  * one to wait for) may finish before the first poll. Both baselines are the
  * gateway's own timestamps, compared with each other, so no clock skew
  * between this host and the gateway's can mistake an old run for a new one.
+ * A pre-trigger `syncing` snapshot also counts when dispatch confirms the
+ * collector joined that running cycle; its final cursor may already be saved.
  */
 
 /**
@@ -71,7 +73,7 @@ export type WaitOutcome =
 /** Per-source state carried across polls. */
 export interface SourceWaitState {
   readonly sourceId: string;
-  /** True once a `syncing` snapshot has been observed (arms the race guard). */
+  /** Syncing was observed during polling, or before a confirmed skipped dispatch. */
   observedSyncing: boolean;
   /** Set once the wait resolves; undefined while still pending. */
   outcome?: WaitOutcome;
@@ -96,13 +98,12 @@ export interface SyncStatusObservation {
   erroredAt?: string;
 }
 
-/** Whether `next` is a gateway timestamp later than `baseline` (absent baseline: any). */
+/** Whether a valid gateway timestamp advances beyond a known baseline (null means never). */
 function movedPast(next: string | null | undefined, baseline: string | null | undefined): boolean {
-  if (!next) return false;
-  if (!baseline) return true;
+  if (!next || baseline === undefined) return false;
   const a = Date.parse(next);
-  const b = Date.parse(baseline);
-  return Number.isFinite(a) && Number.isFinite(b) ? a > b : next !== baseline;
+  const b = baseline === null ? -Infinity : Date.parse(baseline);
+  return Number.isFinite(a) && a > b;
 }
 
 /** Terminal-not-success states still END the wait — they just aren't success. */
@@ -131,6 +132,7 @@ const SUCCESS_STATES: ReadonlySet<string> = new Set(["synced", "auth-expiring", 
 export function initWaitStates(
   sourceIds: readonly string[],
   baseline: readonly SyncStatusObservation[] = [],
+  alreadySyncingIds: readonly string[] = [],
 ): Map<string, SourceWaitState> {
   const before = new Map(baseline.map((o) => [o.sourceId, o]));
   const states = new Map<string, SourceWaitState>();
@@ -138,9 +140,9 @@ export function initWaitStates(
     const prior = before.get(sourceId);
     states.set(sourceId, {
       sourceId,
-      observedSyncing: false,
+      observedSyncing: alreadySyncingIds.includes(sourceId),
       ...(prior
-        ? { baselineSyncAt: prior.lastSyncAt ?? null, baselineErroredAt: prior.erroredAt ?? null }
+        ? { baselineSyncAt: prior.lastSyncAt, baselineErroredAt: prior.erroredAt ?? null }
         : {}),
     });
   }
@@ -154,7 +156,6 @@ export function initWaitStates(
  * the only evidence.
  */
 function finishedSinceBaseline(st: SourceWaitState, obs: SyncStatusObservation): boolean {
-  if (st.baselineSyncAt === undefined) return false;
   if (SUCCESS_STATES.has(obs.state)) return movedPast(obs.lastSyncAt, st.baselineSyncAt);
   if (obs.state in TERMINAL_NON_SUCCESS) return movedPast(obs.erroredAt, st.baselineErroredAt);
   return false;
@@ -249,6 +250,8 @@ export interface WaitOptions {
   pollIntervalMs: number;
   /** The sources' status read before the trigger, for the finished-since-baseline arm. */
   baseline?: readonly SyncStatusObservation[];
+  /** Sources observed syncing before dispatch that the collector confirmed it skipped. */
+  alreadySyncingIds?: readonly string[];
 }
 
 /**
@@ -261,7 +264,7 @@ export async function waitForSyncCompletion(
   opts: WaitOptions,
   deps: WaitDeps,
 ): Promise<Map<string, SourceWaitState>> {
-  const states = initWaitStates(opts.sourceIds, opts.baseline);
+  const states = initWaitStates(opts.sourceIds, opts.baseline, opts.alreadySyncingIds);
   const deadline = deps.now() + opts.timeoutMs;
 
   // Poll immediately, then on each interval, until resolved or past deadline.

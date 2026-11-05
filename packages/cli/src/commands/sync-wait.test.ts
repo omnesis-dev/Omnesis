@@ -174,6 +174,112 @@ describe("waitForSyncCompletion — loop with injected clock/sleep/feed", () => 
     expect(isOverallSuccess(states)).toBe(true);
   });
 
+  test.each([null, "2026-01-01T00:00:00.000Z"])(
+    "accepts a newer completion before the first poll (baseline %s)",
+    async (lastSyncAt) => {
+      const { deps, fetched } = harness(
+        [
+          [
+            {
+              sourceId: "s:1",
+              state: "synced",
+              lastSyncAt: "2026-01-01T00:00:01.000Z",
+            },
+          ],
+        ],
+        { pollIntervalMs: 1000 },
+      );
+      const states = await waitForSyncCompletion(
+        {
+          sourceIds: ["s:1"],
+          baseline: [{ sourceId: "s:1", state: "syncing", lastSyncAt }],
+          timeoutMs: 5000,
+          pollIntervalMs: 1000,
+        },
+        deps,
+      );
+      expect(isOverallSuccess(states)).toBe(true);
+      expect(fetched()).toBe(1);
+      expect(states.get("s:1")?.observedSyncing).toBe(false);
+    },
+  );
+
+  test("accepts a fast newly triggered cycle after a stale first poll", async () => {
+    const initial = {
+      sourceId: "s:1",
+      state: "synced" as const,
+      lastSyncAt: "2026-01-01T00:00:00.000Z",
+    };
+    const { deps, fetched } = harness(
+      [[initial], [{ ...initial, lastSyncAt: "2026-01-01T00:00:01.000Z" }]],
+      { pollIntervalMs: 1000 },
+    );
+    const states = await waitForSyncCompletion(
+      { sourceIds: ["s:1"], baseline: [initial], timeoutMs: 5000, pollIntervalMs: 1000 },
+      deps,
+    );
+    expect(isOverallSuccess(states)).toBe(true);
+    expect(fetched()).toBe(2);
+  });
+
+  test.each([
+    { initial: "2026-01-01T00:00:01.000Z", current: "2026-01-01T00:00:01.000Z" },
+    { initial: "2026-01-01T00:00:01.000Z", current: "2026-01-01T00:00:00.000Z" },
+    { initial: "invalid", current: "2026-01-01T00:00:01.000Z" },
+    { initial: null, current: "invalid" },
+    { initial: undefined, current: "2026-01-01T00:00:01.000Z" },
+    { initial: "2026-01-01T00:00:00.000Z", current: null },
+    { initial: "2026-01-01T00:00:00.000Z", current: undefined },
+  ])(
+    "rejects unchanged, older, or unavailable completion evidence ($initial → $current)",
+    async ({ initial, current }) => {
+      const { deps } = harness([[{ sourceId: "s:1", state: "synced", lastSyncAt: current }]], {
+        pollIntervalMs: 1000,
+      });
+      const states = await waitForSyncCompletion(
+        {
+          sourceIds: ["s:1"],
+          baseline: [{ sourceId: "s:1", state: "synced", lastSyncAt: initial }],
+          timeoutMs: 5000,
+          pollIntervalMs: 1000,
+        },
+        deps,
+      );
+      expect(states.get("s:1")?.outcome).toBe("timeout");
+    },
+  );
+
+  test("completion evidence belongs only to its source", () => {
+    const states = initWaitStates(
+      ["a:1", "b:2"],
+      [{ sourceId: "a:1", state: "synced", lastSyncAt: null }],
+    );
+    applyObservations(
+      states,
+      ["a:1", "b:2"].map((sourceId) => ({
+        sourceId,
+        state: "synced",
+        lastSyncAt: "2026-01-01T00:00:01.000Z",
+      })),
+    );
+    expect(states.get("a:1")?.outcome).toBe("success");
+    expect(states.get("b:2")?.outcome).toBeUndefined();
+  });
+
+  test.each(["error", "needs-auth", "rate-limited", "paused", "idle", "syncing"] as const)(
+    "a newer timestamp does not turn %s into success",
+    (state) => {
+      const states = initWaitStates(
+        ["s:1"],
+        [{ sourceId: "s:1", state: "synced", lastSyncAt: null }],
+      );
+      applyObservations(states, [
+        { sourceId: "s:1", state, lastSyncAt: "2026-01-01T00:00:01.000Z" },
+      ]);
+      expect(states.get("s:1")?.outcome).toBeUndefined();
+    },
+  );
+
   /** A refused connect, as Node's fetch reports one. */
   const refused = () =>
     Object.assign(new TypeError("fetch failed"), { cause: { code: "ETIMEDOUT" } });
@@ -370,6 +476,19 @@ describe("applyObservations — a run that finished between polls", () => {
     expect(fresh.get("s:1")!.outcome).toBe("error");
     expect(fresh.get("s:1")!.message).toBe("provider said no");
   });
+
+  test.each([
+    { before: T0, after: "invalid" },
+    { before: "invalid", after: T1 },
+    { before: undefined, after: "invalid" },
+  ])(
+    "invalid error timestamps do not prove a new failure ($before → $after)",
+    ({ before, after }) => {
+      const states = initWaitStates(["s:1"], baseline({ state: "error", erroredAt: before }));
+      applyObservations(states, [{ sourceId: "s:1", state: "error", erroredAt: after }]);
+      expect(states.get("s:1")?.outcome).toBeUndefined();
+    },
+  );
 
   test("without a baseline only an observed syncing arms the guard", () => {
     const st = initWaitStates(["s:1"]);
