@@ -134,31 +134,47 @@ describe("sources sync", () => {
     expect(logged).toContain("Synced: notes-synth:local (3 docs, ±0)");
   });
 
-  test("an unchanged successful result does not complete the wait", async () => {
-    vi.useFakeTimers();
-    (gatewayFetch as Mock).mockResolvedValue(
-      new Response(JSON.stringify({ ok: true, result: { ok: true, triggered: 0, skipped: 1 } })),
-    );
-    (gatewayJson as Mock).mockImplementation((path: string) => {
-      if (path === "/admin/sources") return Promise.resolve({ items: [source] });
-      if (path === "/admin/devices") return Promise.resolve({ items: [] });
-      if (path === "/documents/stats") return Promise.resolve({ stats: {} });
-      if (path === "/admin/sync/status")
-        return Promise.resolve({
-          items: [{ sourceId: source.id, state: "synced", lastSyncAt: "2026-01-01T00:00:00.000Z" }],
-        });
-      return Promise.reject(new Error(`unexpected path ${path}`));
-    });
-    const run = (
-      syncCommand as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
-    ).run({
-      args: { _: [source.id], wait: true, timeout: "3" },
-    });
-    const assertion = expect(run).rejects.toThrow("did not sync successfully");
-    await vi.runAllTimersAsync();
-    await assertion;
-    expect(logged.some((line) => line.includes("Timed out"))).toBe(true);
-  });
+  test.each([
+    { initialState: "syncing", triggered: 0, skipped: 1, succeeds: true },
+    { initialState: "syncing", triggered: 1, skipped: 0, succeeds: false },
+    { initialState: "synced", triggered: 0, skipped: 1, succeeds: false },
+  ])(
+    "an unchanged cursor timestamp with initial $initialState and $triggered new syncs succeeds=$succeeds",
+    async ({ initialState, triggered, skipped, succeeds }) => {
+      vi.useFakeTimers();
+      (gatewayFetch as Mock).mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, result: { ok: true, triggered, skipped } })),
+      );
+      let polls = 0;
+      (gatewayJson as Mock).mockImplementation((path: string) => {
+        if (path === "/admin/sources") return Promise.resolve({ items: [source] });
+        if (path === "/admin/devices") return Promise.resolve({ items: [] });
+        if (path === "/documents/stats") return Promise.resolve({ stats: {} });
+        if (path === "/admin/sync/status")
+          return Promise.resolve({
+            items: [
+              {
+                sourceId: source.id,
+                state: polls++ === 0 ? initialState : "synced",
+                lastSyncAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          });
+        return Promise.reject(new Error(`unexpected path ${path}`));
+      });
+      const run = (
+        syncCommand as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
+      ).run({
+        args: { _: [source.id], wait: true, timeout: "3" },
+      });
+      const assertion = succeeds
+        ? expect(run).resolves.toBeUndefined()
+        : expect(run).rejects.toThrow("did not sync successfully");
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(logged.some((line) => line.includes("Timed out"))).toBe(!succeeds);
+    },
+  );
 
   test("POSTs the sync and names the device the gateway sent it to", async () => {
     (gatewayFetch as Mock).mockResolvedValue(

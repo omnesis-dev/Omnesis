@@ -268,6 +268,7 @@ export const syncCommand = defineCommand({
     const initialObservations = wait ? await fetchStatus() : [];
 
     const triggered: string[] = [];
+    const alreadySyncing: string[] = [];
     for (const id of ids) {
       const iconPrefix = iconPrefixFor(id);
       const source = sources.find((s) => s.id === id);
@@ -293,6 +294,19 @@ export const syncCommand = defineCommand({
         console.log(line);
       }
       triggered.push(id);
+      // A running cycle may have saved its final cursor before the baseline.
+      // Reuse that observed `syncing` only when dispatch confirms it joined
+      // the same cycle; a fresh trigger still needs fresh completion evidence.
+      if (
+        !body.results &&
+        body.result?.ok &&
+        body.result.triggered === 0 &&
+        (body.result.skipped ?? 0) > 0 &&
+        (body.result.disabled ?? 0) === 0 &&
+        initialObservations.some((obs) => obs.sourceId === id && obs.state === "syncing")
+      ) {
+        alreadySyncing.push(id);
+      }
     }
 
     if (!wait || triggered.length === 0) return;
@@ -306,6 +320,7 @@ export const syncCommand = defineCommand({
         {
           sourceIds: triggered,
           initialObservations,
+          alreadySyncingIds: alreadySyncing,
           timeoutMs: timeoutSeconds * 1_000,
           pollIntervalMs: POLL_INTERVAL_MS,
         },
