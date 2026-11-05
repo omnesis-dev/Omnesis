@@ -3510,7 +3510,7 @@ describe("install.sh --docker: a Tailscale certificate issued on this host", () 
    * on, off (HTTPS certificates switched off for the tailnet) or absent.
    * Every `cert` call is recorded, with its arguments.
    */
-  function installHostTailscale({ certs = "on", fail = "", path } = {}) {
+  function installHostTailscale({ certs = "on", fail = "", failOnce = "", path } = {}) {
     mints += 1;
     const tag = `host-ts-${mints}`;
     const minted = mintCert(tag, `DNS:${TS_NAME}`);
@@ -3534,7 +3534,7 @@ case "$1" in
     exit 0 ;;
   cert)
     printf 'tailscale %s bundled=%s\\n' "$*" "\${TAILSCALE_BE_CLI:-0}" >> "$OMNESIS_TEST_CALLS"
-    ${fail ? `echo ${JSON.stringify(fail)} >&2; exit 1 ;;` : `cp "${certSource}" "$3"; cp "${keySource}" "$5"; exit 0 ;;`}
+    ${fail ? `echo ${JSON.stringify(fail)} >&2; exit 1 ;;` : `${failOnce ? `if [ ! -e "${certSource}.failed" ]; then : > "${certSource}.failed"; echo ${JSON.stringify(failOnce)} >&2; exit 1; fi; ` : ""}cp "${certSource}" "$3"; cp "${keySource}" "$5"; exit 0 ;;`}
 esac
 exit 1
 `,
@@ -3761,6 +3761,26 @@ exit 0
     expect(services(offline).gateway.networks.default.aliases).toEqual([TS_NAME]);
     expect(offline.output).not.toContain("WARNING: no trusted HTTPS certificate");
     expect(existsSync(renewScript(offline))).toBe(true);
+  });
+
+  test("a certificate order the server fails once is placed again and issued", () => {
+    const minted = installHostTailscale({
+      failOnce: "acme: order https://acme.example.invalid/order/1 status: invalid",
+    });
+    const run = runInstaller("ts-retry", QUIET, { OMNESIS_TAILSCALE_CERT_RETRY_SECONDS: "0 0" });
+    expect(run.status, run.output).toBe(0);
+    expect(tailscaleCerts(run)).toHaveLength(2);
+    expect(run.output).toContain("trying again in 0s");
+    expect(readFileSync(tierCert(run), "utf8")).toBe(minted.pem);
+    expect(run.envFile()).toContain(`OMNESIS_TLS_CERT=${tierCert(run)}\n`);
+  });
+
+  test("a refusal the operator has to fix is not tried again", () => {
+    installHostTailscale({ fail: "your Tailscale account does not support getting TLS certs" });
+    const run = runInstaller("ts-refused", QUIET, { OMNESIS_TAILSCALE_CERT_RETRY_SECONDS: "0 0" });
+    expect(run.status, run.output).toBe(0);
+    expect(tailscaleCerts(run)).toHaveLength(1);
+    expect(run.output).not.toContain("trying again");
   });
 
   test("the renewal script replaces the pair by rename and reloads the gateway", () => {
