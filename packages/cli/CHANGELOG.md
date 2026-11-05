@@ -1,5 +1,25 @@
 # omnesis
 
+## 0.7.8
+
+### Patch Changes
+
+- 6469b9b: A collector registering itself with the gateway now tries again when the request is lost in transit or the gateway answers that it is not ready yet (502, 503 or 504), for about two minutes. A busy gateway can drop that first request even after it answers its health check. The collector used to exit on it, and in a combined Docker install that stopped the whole container, gateway included, until Docker restarted it.
+- 0be13af: With the experimental Brain on (`OMNESIS_EXPERIMENTAL=1`), starting an organization cohort no longer holds the gateway's writes for seconds on a large corpus. The check that a cohort's sources have no other maintenance in progress walked every maintenance record the Brain had ever made, inside the write that collector syncs, sign-ins and browser captures queue behind; it now looks up each of the cohort's few sources directly, and admission confirms only the retry it selected instead of reviewing every released one.
+- 6977f12: `omnesis sources sync --wait` no longer times out on a sync that finished before it looked. A small sync can complete between two of its once-a-second checks, and a source that was already syncing (`Sync skipped; … was already syncing`) can finish before the first one. Either way the wait never saw the source syncing, ignored the finished run, waited out its whole timeout and failed. It now also accepts a run the gateway records as finished, or failed, after the command was given.
+- 0d1b78a: The gateway no longer pauses for a second or more while it starts on a large Cognition Steward transcript archive. The startup check for transcript saves and deletions a crash interrupted now reads only those entries instead of every transcript in the archive's index.
+- Updated dependencies [6469b9b]
+  - @omnesis/collector@0.7.8
+  - @omnesis/agent-integration@0.7.8
+  - @omnesis/cli-shared@0.7.8
+  - @omnesis/config@0.7.8
+  - @omnesis/core@0.7.8
+  - @omnesis/eval@0.7.8
+  - @omnesis/gateway@0.7.8
+  - @omnesis/gateway-client@0.7.8
+  - @omnesis/source-sdk@0.7.8
+  - @omnesis/types@0.7.8
+
 ## 0.7.7
 
 ### Patch Changes

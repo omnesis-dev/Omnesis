@@ -1,5 +1,16 @@
 # @omnesis/provider-web-synth
 
+## 0.7.8
+
+### Patch Changes
+
+- @omnesis/extension@0.7.8
+  - @omnesis/core@0.7.8
+  - @omnesis/providers-synth-common@0.7.8
+  - @omnesis/provider-web@0.7.8
+  - @omnesis/source-sdk@0.7.8
+  - @omnesis/types@0.7.8
+
 ## 0.7.7
 
 ### Patch Changes
