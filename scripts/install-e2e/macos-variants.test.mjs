@@ -117,13 +117,14 @@ nested >"$SESSION/client.private.log" 2>&1
       `Bearer ${secret}\n${"x".repeat(10000)}\n${"omn_fixture_abcdefghijklmnopqrstuvwxyz012345"}\n`,
     );
     writeFileSync(join(directory, "collector.private.log"), "COLLECTOR-PRIVATE-CANARY");
-    function execute() {
+    function execute(stub = "") {
       return spawnSync(
         "bash",
         [
           "-c",
           `set -uo pipefail
 redact() { node "$REDACTOR"; }
+${stub}
 ${diagnostics}
 installer_failure_diagnostics 1
 exit 23
@@ -167,6 +168,10 @@ exit 23
       expect(Buffer.byteLength(allowed.stderr)).toBeLessThanOrEqual(
         8192 + Buffer.byteLength("[install-e2e] redacted gateway pre-readiness tail\n"),
       );
+      const noisy = execute(`redact() { node "$REDACTOR"; printf 'FILTER-PRIVATE-CANARY\\n' >&2; }
+tail() { printf 'TAIL-PRIVATE-CANARY\\n' >&2; command tail "$@"; }`);
+      expect(noisy.status).toBe(23);
+      expect(noisy.stderr).toBe(allowed.stderr);
       rmSync(gateway);
       symlinkSync(join(directory, "collector.private.log"), gateway);
       expect(execute().stderr).toBe("");
@@ -573,6 +578,8 @@ exit "$status"
         "DAEMON-LOG-CANARY",
         "SYMLINK-LOG-CANARY",
         "NODE-MUST-NOT-RUN",
+        "FILTER-PRIVATE-CANARY",
+        "TAIL-PRIVATE-CANARY",
       ])
         expect(result.stderr).not.toContain(canary);
       const headings = allowedLabels
@@ -586,6 +593,12 @@ exit "$status"
       for (const control of [
         { name: "restored", restored: "1", stub: "" },
         {
+          name: "noisy-tools",
+          restored: "1",
+          stub: `redact() { node "$REDACTOR"; printf 'FILTER-PRIVATE-CANARY\\n' >&2; }
+tail() { printf 'TAIL-PRIVATE-CANARY\\n' >&2; command tail "$@"; }`,
+        },
+        {
           name: "restore-failed",
           restored: "0",
           stub: "node() { echo NODE-MUST-NOT-RUN >&2; return 127; }",
@@ -594,7 +607,7 @@ exit "$status"
         { name: "redactor-unavailable", restored: "1", stub: "redact() { return 127; }" },
       ]) {
         const result = execute(control.restored, control.stub);
-        if (control.name === "restored") {
+        if (["restored", "noisy-tools"].includes(control.name)) {
           assertPrivate(result, labels);
           expect(result.stderr).toContain("Bearer ***");
           expect(result.stderr).toContain("omn_***");
@@ -613,6 +626,19 @@ exit "$status"
       const symlink = execute("1");
       assertPrivate(symlink, ["client", "absence"]);
       expect(symlink.stderr).not.toContain("redacted no-service installer tail");
+
+      for (const label of ["client", "absence"])
+        writeFileSync(join(directory, `${label}.private.log`), `Bearer ${bearer}\n`);
+      for (const stub of [
+        `redact() { local data; data="$(cat)"; printf '%s' "$data" | node "$REDACTOR"; printf 'FILTER-PRIVATE-CANARY\\n' >&2; [ -z "$data" ]; }`,
+        `tail() { command tail "$@"; printf 'TAIL-PRIVATE-CANARY\\n' >&2; return 7; }`,
+      ]) {
+        const failed = execute("1", stub);
+        assertPrivate(failed, ["client", "absence"]);
+        expect(failed.stderr).toContain(
+          "[install-e2e] installer diagnostic filtering unavailable\n",
+        );
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
