@@ -30,14 +30,50 @@ function option(args, name, fallback) {
   return index >= 0 ? args[index + 1] : fallback;
 }
 
-function jsonCommand(command, args) {
-  return JSON.parse(
-    execFileSync(command, args, {
-      encoding: "utf8",
-      env: { ...process.env, NX_DAEMON: "false" },
-      maxBuffer: 32 * 1024 * 1024,
-    }),
-  );
+/**
+ * A failed command as one line naming how it ended, which is all the CI scope's
+ * fallback reason keeps, followed by what it printed. Nx reports some failures
+ * on stdout, so stderr alone can leave nothing to go on.
+ */
+function commandFailure(command, args, error) {
+  const ending = error.signal
+    ? `was killed by ${error.signal}`
+    : typeof error.status === "number"
+      ? `exited ${error.status}`
+      : `could not run: ${error.message}`;
+  const printed = ["stderr", "stdout"]
+    .filter((stream) => error[stream]?.trim())
+    .map((stream) => `${stream}:\n${error[stream].trim().slice(-2000)}`);
+  return new Error([`${[command, ...args].join(" ")} ${ending}`, ...printed].join("\n"), {
+    cause: error,
+  });
+}
+
+/**
+ * Run a read-only command and parse its JSON. A process that dies without
+ * writing to stderr gets one more try, because Nx prints a failure it can
+ * explain there and running the same query again costs nothing. The warning
+ * keeps the way it ended in the log.
+ */
+export function jsonCommand(command, args) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return JSON.parse(
+        execFileSync(command, args, {
+          encoding: "utf8",
+          env: { ...process.env, NX_DAEMON: "false" },
+          maxBuffer: 32 * 1024 * 1024,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof SyntaxError) throw error;
+      const failure = commandFailure(command, args, error);
+      // `code` marks a process that never ran or overran its buffer.
+      const ran = !error.code && (error.signal || typeof error.status === "number");
+      if (!ran || error.stderr?.trim() || attempt === 2) throw failure;
+      process.stderr.write(`${failure.message}\nTrying once more.\n`);
+    }
+  }
 }
 
 export async function execute(command, args, env = process.env) {
