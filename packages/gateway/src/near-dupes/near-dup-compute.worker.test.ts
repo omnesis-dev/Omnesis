@@ -338,6 +338,7 @@ it("hands the writer the batch a direct run assembles, byte for byte", async () 
       peopleCountsRefreshIntervalMs: 1_000_000,
       statsRefreshIntervalMs: 1_000_000,
       catalogRefreshIntervalMs: 1_000_000,
+      plannerStatisticsIntervalMs: 0,
       linkStatsRefreshIntervalMs: 1_000_000,
       linkStatsIdleDelayMs: 1_000_000,
       interactionScoresRefreshIntervalMs: 1_000_000,

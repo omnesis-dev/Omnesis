@@ -55,10 +55,11 @@ function write(db: Database.Database, rows: number): void {
 }
 
 function wal(db: Database.Database): { log: number; checkpointed: number } {
-  return db.pragma("wal_checkpoint(NOOP)", { simple: false })[0] as {
+  const rows = db.pragma("wal_checkpoint(NOOP)", { simple: false }) as Array<{
     log: number;
     checkpointed: number;
-  };
+  }>;
+  return rows[0];
 }
 
 /** A thread that runs short read statements back to back until told to stop. */

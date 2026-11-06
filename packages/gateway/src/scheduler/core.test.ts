@@ -991,7 +991,10 @@ describe("SchedulerCore — time spent waiting inside a worker", () => {
     scheduler.registerRunner(runner);
     await scheduler.start();
     try {
-      await scheduler.enqueue(makeTask({ name: "synth.behindCheckpoint", runner: "writer" }));
+      await scheduler.enqueue(
+        makeTask({ name: "synth.behindCheckpoint", runner: "writer" }),
+        undefined,
+      );
       const snap = scheduler.snapshot(60);
       const row = snap.perTask.find((t) => t.name === "synth.behindCheckpoint")!;
       expect(row.max).toBe(40);
