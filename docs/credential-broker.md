@@ -1,8 +1,7 @@
-# Credential broker (Nango): design, status and open work
+# Credential broker (Nango)
 
-Branch `nango-credentials` on the `csima/Omnesis` fork, based on upstream `main` at `0fc3ee62`. This page is the
-handoff for whoever finishes the work: what exists, how it fits together, how to check it, and what is left. It
-holds no deployment details; those live with the operator.
+How an Omnesis account takes its credential from a self-hosted Nango instead of a sign-in here: what exists, how it
+fits together, how to check it, and what is left.
 
 ## What it does
 
@@ -97,105 +96,75 @@ sources.
 
 ## Checking it
 
-With Node 24 (`.nvmrc`), after `npm ci` (the postinstall runs `patch-package`, needed for typechecks):
+With Node 24 (`.nvmrc`), after `npm ci`:
 
 ```sh
 npx vitest run packages/core/src/credential-broker.test.ts packages/cli/src/commands/broker.test.ts \
   packages/providers/{notion,google,outlook,strava,github,granola,lunchflow,coinbase,imap}
-NODE_OPTIONS=--max-old-space-size=10240 npx tsc --build packages/cli
-npx prettier --check $(git diff --name-only 0fc3ee62)
+npx tsc --build packages/cli
 ```
 
-Full unit suites passed at `d1f2af2e` (core, source-sdk, portal, collector, cli, all providers). The only failures
-were nine tests in untouched files (`source-sdk/local-agent-sessions`, `providers/local-files`,
-`providers/screen-time`) that make folders unreadable with `chmod`, which does not work when tests run as root.
+## Identity re-check
 
-An independent adversarial review ran on the branch; everything it confirmed was fixed in `d1f2af2e` except the items
-below.
+Google, GitHub, Coinbase and Lunch Flow pass a `verify` hook to `BrokeredCredentials.load`, so every credential the broker hands out is
+checked before any request uses it; a mismatch throws `BrokerCredentialError("identity-changed", ...)` (an
+`auth` failure), and a failed check keeps the classification of the request that failed (`network`,
+`transient`, `rate-limit`, `auth`, `permission`) and is never taken as a match or remembered. A credential
+that passes is remembered for that context, so a token handed out again is not asked about twice. No
+message names the account a connection now belongs to. Each provider with a check also declares it as its
+broker spec's `verify`, and `omnesis broker status` runs it on every connection, so a connection signed in
+again as someone else reads as failed there instead of healthy.
 
-## Open work, in priority order
+- **Google** (`verifyGoogleIdentity`, `packages/providers/google/src/broker.ts`): each purpose asks Google
+  with that token alone (never through the broker client, inside whose refresh it runs): Gmail
+  `users.getProfile`, Calendar `calendars.get(primary)`, Drive `about.get(fields=user(emailAddress))`,
+  Contacts `people.get(people/me, personFields=emailAddresses)`. Each is meant to be allowed by its
+  purpose's read-only scope (`gmail.readonly`, `calendar.readonly`, `drive.readonly`, `contacts.readonly`),
+  and linking runs the same probes, so a grant that cannot answer one is refused when it is linked rather
+  than at the first sync. The address must be the
+  account's (case-insensitive); for Contacts, an `ACCOUNT`-sourced address if Google gives one, and the
+  `people/me` resource name must equal the `contactsPerson` param linking now records. A token for which
+  nothing could be compared is refused. Linking now refuses a purpose Google will not identify at all (a
+  Contacts grant refused on `people/me`), and a Contacts binding linked before `contactsPerson` was recorded
+  must be linked again. Under `contacts.readonly` Google answers `people/me` with nothing about the account, so a
+  Contacts purpose linked to the same connection as Gmail, Calendar or Drive (one combined `google` integration) is
+  confirmed by that purpose's probe asked with the Contacts token; a Contacts connection of its own still has to name
+  its account. A Google rate limit declares no quota bucket: Google counts per-user limits per API, so a Gmail limit
+  leaves the account's Calendar, Drive and Contacts sources running (a Contacts check that has to ask a sibling on its
+  shared connection passes over one that fails for the next).
+- **GitHub** (`verifyGithubIdentity`): linking records the numeric `GET /user` id (`userId`), and each
+  token's `GET /user` id must equal it. The login is only the account's name: a renamed user still
+  matches, and a login another user claims after a rename does not. A binding linked before `userId`
+  was recorded is refused until it is linked again.
+- **Coinbase** (`verifyCoinbaseIdentity`): linking records the key name (`keyName`), and that key is
+  accepted offline. Any other key is asked `key_permissions` with itself: it must be View-only, and the
+  portfolio `portfolioIdOf` gives (the permissions' `retail_portfolio_id`, else the first account's, the
+  rule linking and a paste use) must derive the account id. `portfolio_uuid` is not used: account ids
+  have always come from `retail_portfolio_id`, and Coinbase does not document the two as the same.
+- **Lunch Flow** (`verifyLunchflowIdentity`): the key the account id was hashed from is accepted offline.
+  Any other key must list at least one bank account recorded at link time (`bankAccounts`, a JSON array);
+  a binding without that record refuses every other key and must be linked again.
+- **Granola** is not re-checked, by decision: a personal key also lists notes shared with its owner, so no
+  note proves whose key it is.
 
-1. **Notion Databases: duplicate `<name>_start` column (upstream bug, not broker-related). Fixed on this branch.**
-   A text property named like a date property's derived column ("date start" before "Date") made the schema emit
-   two `date_start` columns, and the gateway's analytics ingest failed with DuckDB
-   `Catalog Error: Column with name date_start already exists!` on every sync. A date property now picks a name that is free
-   together with its `_start` and `_end`, and the schema and the row extractor share one naming pass (`mapPropertyColumns` in
-   `packages/providers/notion/src/schema-mapper.ts`), so a row's keys always name the table's columns. Databases
-   without a collision keep their column names. Worth proposing upstream on its own, together with the next fix.
-   **Notion Pages: one unreadable block stopped the whole sync. Fixed on this branch.** A nested block whose children
-   Notion answers with `object_not_found` or `restricted_resource` (such as a synced block whose original is not
-   shared with the integration) renders without them. A page that 404s between search and its content fetch is
-   skipped for the run and still counted present; its stored copy stays until its next edit or the next snapshot
-   rewalk reads it. A restricted page still fails the run as a permission error.
-   **A stored page the gateway refuses kept a source stuck forever. Fixed on this branch.** A structured source's
-   prepared page is replayed byte for byte, so a page an older gateway stored with a schema declaring a column twice
-   failed the same way on every retry and the pilot's Notion databases source never moved again. The source SDK's
-   schema validator now refuses a column declared twice (in any letter case), so the gateway answers such a write with
-   a 400 `VALIDATION_ERROR` instead of a DuckDB error, and the collector then discards the page through
-   `POST /sync-state/:sourceId/pending-page/abandon` while its cursor is uncommitted; that attempt fails and the next
-   one fetches the page again. A cursor-committed page is never discarded. Worth proposing upstream.
-2. **Identity re-check for Google, GitHub, Coinbase and Lunch Flow. Done on this branch.** Each
-   provider passes a `verify` hook to `BrokeredCredentials.load`, so every credential the broker hands out is
-   checked before any request uses it; a mismatch throws `BrokerCredentialError("identity-changed", ...)` (an
-   `auth` failure), and a failed check keeps the classification of the request that failed (`network`,
-   `transient`, `rate-limit`, `auth`, `permission`) and is never taken as a match or remembered. A credential
-   that passes is remembered for that context, so a token handed out again is not asked about twice. No
-   message names the account a connection now belongs to. Each provider with a check also declares it as its
-   broker spec's `verify`, and `omnesis broker status` runs it on every connection, so a connection signed in
-   again as someone else reads as failed there instead of healthy.
-   - **Google** (`verifyGoogleIdentity`, `packages/providers/google/src/broker.ts`): each purpose asks Google
-     with that token alone (never through the broker client, inside whose refresh it runs): Gmail
-     `users.getProfile`, Calendar `calendars.get(primary)`, Drive `about.get(fields=user(emailAddress))`,
-     Contacts `people.get(people/me, personFields=emailAddresses)`. Each is meant to be allowed by its
-     purpose's read-only scope (`gmail.readonly`, `calendar.readonly`, `drive.readonly`, `contacts.readonly`),
-     and linking runs the same probes, so a grant that cannot answer one is refused when it is linked rather
-     than at the first sync. The address must be the
-     account's (case-insensitive); for Contacts, an `ACCOUNT`-sourced address if Google gives one, and the
-     `people/me` resource name must equal the `contactsPerson` param linking now records. A token for which
-     nothing could be compared is refused. Linking now refuses a purpose Google will not identify at all (a
-     Contacts grant refused on `people/me`), and a Contacts binding linked before `contactsPerson` was recorded
-     must be linked again. Under `contacts.readonly` Google answers `people/me` with nothing about the account, so a
-     Contacts purpose linked to the same connection as Gmail, Calendar or Drive (one combined `google` integration) is
-     confirmed by that purpose's probe asked with the Contacts token; a Contacts connection of its own still has to name
-     its account. A Google rate limit declares no quota bucket: Google counts per-user limits per API, so a Gmail limit
-     leaves the account's Calendar, Drive and Contacts sources running (a Contacts check that has to ask a sibling on its
-     shared connection passes over one that fails for the next).
-   - **GitHub** (`verifyGithubIdentity`): linking records the numeric `GET /user` id (`userId`), and each
-     token's `GET /user` id must equal it. The login is only the account's name: a renamed user still
-     matches, and a login another user claims after a rename does not. A binding linked before `userId`
-     was recorded is refused until it is linked again.
-   - **Coinbase** (`verifyCoinbaseIdentity`): linking records the key name (`keyName`), and that key is
-     accepted offline. Any other key is asked `key_permissions` with itself: it must be View-only, and the
-     portfolio `portfolioIdOf` gives (the permissions' `retail_portfolio_id`, else the first account's, the
-     rule linking and a paste use) must derive the account id. `portfolio_uuid` is not used: account ids
-     have always come from `retail_portfolio_id`, and Coinbase does not document the two as the same.
-   - **Lunch Flow** (`verifyLunchflowIdentity`): the key the account id was hashed from is accepted offline.
-     Any other key must list at least one bank account recorded at link time (`bankAccounts`, a JSON array);
-     a binding without that record refuses every other key and must be linked again.
-   - **Granola** is not re-checked, by decision: a personal key also lists notes shared with its owner, so no
-     note proves whose key it is.
-3. **Needs-sign-in hint for brokered accounts. Done.** A provider account registered with a broker spec carries
-   `brokered()` on its `RegisteredProvider` (`source-instantiator.ts`), which checks for the binding file when it is
-   asked rather than at registration, since `omnesis broker unlink` drops it while the source stays registered.
-   `markNeedsAuth` passes it to `buildReauthHint`, which then says to sign the connection in again at the broker or
-   run `omnesis broker unlink <provider> <account>`, instead of `sources reauth` (which `auth.begin` refuses). The
-   gateway's needs-sign-in notice and the portal's reauth banner still offer a sign-in here; they cannot tell a
-   brokered account apart yet.
-4. **Portal wizard skip. Done.** `shouldOpenCredentialsWizard` now takes whether each account is already added, read
-   by `isAccountRegistered` from the gateway's source rows (`GET /admin/sources`) with the CLI's
-   `splitConfiguredAccounts` rule: an account counts as added when the gateway lists its source on any device,
-   enabled or not. The wizard is skipped only while a brokered account is not added yet; once every brokered account
-   is added, connecting another account opens the wizard as usual.
-5. **Narrower Nango key** (see above), and document it in `website/docs/sources.html`.
-6. **Before proposing upstream:** consider gating behind `OMNESIS_EXPERIMENTAL` per the repository's rules for new
-   behaviour; add a `.changeset/` entry; split into reviewable commits (core + contract + CLI, then providers); rebase
-   on current upstream `main`; drop this page; contributions need the upstream CLA.
+## Sign-in hints and the add flow
 
-## Commits
+A provider account registered with a broker spec carries
+`brokered()` on its `RegisteredProvider` (`source-instantiator.ts`), which checks for the binding file when it is
+asked rather than at registration, since `omnesis broker unlink` drops it while the source stays registered.
+`markNeedsAuth` passes it to `buildReauthHint`, which then says to sign the connection in again at the broker or
+run `omnesis broker unlink <provider> <account>`, instead of `sources reauth` (which `auth.begin` refuses). The
+gateway's needs-sign-in notice and the portal's reauth banner still offer a sign-in here; they cannot tell a
+brokered account apart yet.
 
-| Commit     | What                                                                                                                                                                                          |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `2d7ae699` | Core broker, contract, CLI, add flow, Notion/GitHub/Granola/Lunch Flow/Coinbase/IMAP, docs                                                                                                    |
-| `b1ca022e` | Google, Outlook, Strava                                                                                                                                                                       |
-| `06abcacd` | Import order                                                                                                                                                                                  |
-| `d1f2af2e` | Review fixes: Nango error codes, input checks, cache sequence and refresh throttle, identity re-check (Notion, Strava, Outlook), Google Contacts rule, `--replace`, unlink and clear clean-up |
+`shouldOpenCredentialsWizard` now takes whether each account is already added, read
+by `isAccountRegistered` from the gateway's source rows (`GET /admin/sources`) with the CLI's
+`splitConfiguredAccounts` rule: an account counts as added when the gateway lists its source on any device,
+enabled or not. The wizard is skipped only while a brokered account is not added yet; once every brokered account
+is added, connecting another account opens the wizard as usual.
+
+## Open work
+
+- **A narrower Nango key** (see "Nango behaviour relied on"), documented in `website/docs/sources.html`.
+- **The gateway's needs-sign-in notice and the portal's reauth banner** cannot tell a brokered account apart yet, so
+  they still offer a sign-in here.
