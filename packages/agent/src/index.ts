@@ -21,6 +21,8 @@ export {
   type SessionOptions,
   type SendOptions,
   type Subscriber,
+  type TurnFollowUp,
+  type TurnToolCall,
 } from "./session.js";
 
 export {
@@ -179,6 +181,9 @@ export {
   selectGenericSubagentTools,
   selectSubagentTools,
   CITATION_TOOL_NAMES,
+  CITATION_FOLLOW_UP_MESSAGE,
+  citationFollowUp,
+  DOCUMENT_RETRIEVAL_TOOL_NAMES,
   GENERIC_SUBAGENT_TOOL_NAMES,
   type BuiltinToolsOptions,
 } from "./tools/registry.js";

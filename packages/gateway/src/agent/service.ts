@@ -95,6 +95,7 @@ import {
   CitationReads,
   buildBuiltinTools,
   CITATION_TOOL_NAMES,
+  citationFollowUp,
   selectDocumentCitationTools,
   selectNonCitationTools,
   selectSharedTools,
@@ -110,6 +111,7 @@ import {
   type ToolCaller,
   type ToolHandle,
   type ToolPorts,
+  type TurnFollowUp,
 } from "@omnesis/agent";
 import { observeSessionForAnswerProfile, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { AnswerCitationCollector } from "../privacy/answer-citations.js";
@@ -122,6 +124,7 @@ import {
 } from "./spend-recorder.js";
 import { slimPersistedHistory } from "./persist-slim.js";
 import {
+  CLARIFICATION_TOOL_NAME,
   ConversationControls,
   restoreConversationControls,
   type ConversationControlState,
@@ -628,6 +631,30 @@ const VOICE_RESPONSE_PROMPT = `
 The user is asking by voice through a phone assistant, and your reply will be read aloud by text-to-speech. Answer in one to three short spoken sentences, leading with the answer itself. Use plain prose only — no markdown, no lists, no code, no citation markers, no emoji, no URLs. Say dates and times the way a person would speak them. If the answer is not in the corpus, say so in one sentence.
 
 Your reply must contain the answer itself, never an announcement of work. The caller hears exactly one reply and cannot see progress or prompt you onward: a turn ending with "let me check…" delivers nothing and is a failure. Do every lookup first, then answer.`;
+
+/**
+ * The citation follow-up an operator's chat session runs with: the interactive
+ * profile renders a Timeline, so a turn that answered from retrieved documents
+ * without citing gets one silent run to cite them. Voice has no Timeline, and a turn
+ * that ended on a clarifying question is waiting for the user, not answering.
+ */
+function withTurnFollowUp(
+  profile: "interactive" | "voice",
+  tools: ReadonlyArray<ToolHandle>,
+): { turnFollowUp?: TurnFollowUp } {
+  if (profile !== "interactive") return {};
+  const followUp = citationFollowUp(tools);
+  if (!followUp) return {};
+  return {
+    turnFollowUp: {
+      ...followUp,
+      ask: (calls) =>
+        calls.some((call) => call.tool === CLARIFICATION_TOOL_NAME)
+          ? undefined
+          : followUp.ask(calls),
+    },
+  };
+}
 
 /** Compose profile-specific prompt fragments without exposing their prose as a test contract. */
 export function composeAgentPromptForProfile(
@@ -1503,6 +1530,7 @@ export class AgentService {
         : {}),
       timeZone: opts.timeZone,
       caller: opts.caller,
+      ...(opts.unattended ? {} : withTurnFollowUp(chatProfile, tools)),
     });
     const meta = {
       createdAt,
@@ -1916,15 +1944,17 @@ export class AgentService {
   ): void {
     const backend = this.backendFactory("agent");
     if (!backend) throw new AgentError("agent_unconfigured", "no agent model is assigned");
+    const tools = this.buildInteractiveTools(sessionId, profile, entry.meta.origin?.kind);
     const session = new AgentSession({
       sessionId,
       backend,
-      tools: [...this.buildInteractiveTools(sessionId, profile, entry.meta.origin?.kind)],
+      tools: [...tools],
       systemPrompt,
       systemPromptSection: () => this.originPromptSection(sessionId),
       initialHistory: entry.session.historySnapshot(),
       timeZone: entry.session.timeZone,
       caller: entry.session.caller,
+      ...withTurnFollowUp(profile, tools),
     });
     this.attachSessionEvents(sessionId, session);
     entry.session = session;
