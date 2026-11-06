@@ -14,6 +14,7 @@
  * drives and observes it.
  */
 
+import { isFetchConnectionError } from "@omnesis/cli-shared";
 import { defineCommand } from "citty";
 import {
   c,
@@ -27,6 +28,7 @@ import {
   EXIT_USER_ERROR,
   pickGatewayExitCode,
 } from "../utils.js";
+import { MAX_CONSECUTIVE_FETCH_FAILURES } from "./sync-wait.js";
 
 interface BackupFileProgress {
   name: string;
@@ -159,9 +161,21 @@ export async function runBackup(opts: {
 
   const startMs = Date.now();
   let lastLine = "";
-  // Poll until the gateway reports our backup as no longer current.
+  let failedPolls = 0;
+  // Poll until the gateway reports our backup as no longer current. The backup
+  // runs on the gateway whether or not a poll gets through, and it keeps the
+  // gateway busy enough to miss a connect, so one missed poll settles nothing.
   for (;;) {
-    const status = await gatewayJson<BackupStatusResponse>("/admin/backup/status");
+    let status: BackupStatusResponse;
+    try {
+      status = await gatewayJson<BackupStatusResponse>("/admin/backup/status");
+      failedPolls = 0;
+    } catch (err) {
+      failedPolls++;
+      if (!isFetchConnectionError(err) || failedPolls >= MAX_CONSECUTIVE_FETCH_FAILURES) throw err;
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
     const current = status.current;
     if (current && current.backupId === backupId) {
       if (progress) {

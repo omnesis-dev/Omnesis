@@ -18,6 +18,7 @@ vi.mock("../utils.js", async (importOriginal) => ({
   },
 }));
 
+import { CliError } from "../utils.js";
 import {
   backupAction,
   backupStartedLine,
@@ -25,6 +26,7 @@ import {
   formatBackupStarted,
   runBackup,
 } from "./backup.js";
+import { MAX_CONSECUTIVE_FETCH_FAILURES } from "./sync-wait.js";
 
 beforeEach(() => {
   mocks.gatewayFetch.mockReset();
@@ -186,6 +188,98 @@ describe("runBackup", () => {
         "1 file done · 1.0 KB written · at most ~4.0 KB · backing up omnesis.db… [7s]",
       ),
     );
+  });
+
+  describe("when a status poll cannot reach the gateway", () => {
+    const refused = () => new TypeError("fetch failed");
+    const finished = {
+      running: false,
+      lastResult: {
+        backupId: "backup-poll",
+        ok: true,
+        startedAt: "2030-01-01T00:00:00.000Z",
+        finishedAt: "2030-01-01T00:00:01.000Z",
+        path: "/tmp/example-backup",
+        totalBytes: 1024,
+        files: [],
+      },
+    };
+    const running = {
+      running: true,
+      current: {
+        backupId: "backup-poll",
+        startedAt: "2030-01-01T00:00:00.000Z",
+        files: [],
+        currentFileBytes: 0,
+      },
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      mocks.gatewayFetch.mockResolvedValue(
+        new Response(JSON.stringify({ backupId: "backup-poll" }), {
+          status: 202,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Run a backup to its end, letting its waits between polls elapse. */
+    async function settled(): Promise<unknown> {
+      const outcome = runBackup({ includeIndex: true }).then(
+        () => undefined,
+        (err: unknown) => err,
+      );
+      await vi.runAllTimersAsync();
+      return outcome;
+    }
+
+    test("a backup that finishes across missed polls still reports its result", async () => {
+      mocks.gatewayJson
+        .mockRejectedValueOnce(refused())
+        .mockResolvedValueOnce(running)
+        .mockRejectedValueOnce(refused())
+        .mockResolvedValueOnce(finished);
+
+      expect(await settled()).toBeUndefined();
+
+      expect(mocks.gatewayJson).toHaveBeenCalledTimes(4);
+      expect(vi.mocked(console.log).mock.calls.map(([line]) => String(line))).toContainEqual(
+        expect.stringContaining("Backup complete"),
+      );
+    });
+
+    test("only polls missed in a row count against the wait", async () => {
+      const almostAll = MAX_CONSECUTIVE_FETCH_FAILURES - 1;
+      for (let i = 0; i < almostAll; i++) mocks.gatewayJson.mockRejectedValueOnce(refused());
+      mocks.gatewayJson.mockResolvedValueOnce(running);
+      for (let i = 0; i < almostAll; i++) mocks.gatewayJson.mockRejectedValueOnce(refused());
+      mocks.gatewayJson.mockResolvedValueOnce(finished);
+
+      expect(await settled()).toBeUndefined();
+    });
+
+    test("a gateway that stays unreachable ends the wait with the connection failure", async () => {
+      const failure = refused();
+      mocks.gatewayJson.mockRejectedValue(failure);
+
+      expect(await settled()).toBe(failure);
+
+      expect(mocks.gatewayJson).toHaveBeenCalledTimes(MAX_CONSECUTIVE_FETCH_FAILURES);
+    });
+
+    test("an answer that refuses the poll ends the wait at once", async () => {
+      const failure = new CliError("Gateway 401 /admin/backup/status: unauthorized", 1);
+      mocks.gatewayJson.mockRejectedValue(failure);
+
+      expect(await settled()).toBe(failure);
+
+      expect(mocks.gatewayJson).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("summary, as the update's pre-update backup reports", () => {
