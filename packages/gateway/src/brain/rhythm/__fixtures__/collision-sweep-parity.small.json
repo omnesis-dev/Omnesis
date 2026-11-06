@@ -1,0 +1,535 @@
+{
+ "sweeps": {
+  "default": {
+   "result": {
+    "fired": true,
+    "enqueued": 5
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-a",
+       "loop-b"
+      ],
+      "matchedBy": [
+       "person:person-p"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-a,loop-b",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-c",
+       "loop-d"
+      ],
+      "matchedBy": [
+       "doc:doc-shared"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-c,loop-d",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p3",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "temporalAnnotationIds": [
+       "ta-deadline",
+       "ta-trip"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-14..2026-07-15"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:ta-deadline,ta-trip",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p4",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-1",
+       "da-2"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-1,da-2",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p5",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "pa-1",
+       "pa-2"
+      ],
+      "store": "person"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:pa-1,pa-2",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "loops only": {
+   "result": {
+    "fired": true,
+    "enqueued": 3
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-a",
+       "loop-b"
+      ],
+      "matchedBy": [
+       "person:person-p"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-a,loop-b",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-c",
+       "loop-d"
+      ],
+      "matchedBy": [
+       "doc:doc-shared"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-c,loop-d",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p3",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "temporalAnnotationIds": [
+       "ta-deadline",
+       "ta-trip"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-14..2026-07-15"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:ta-deadline,ta-trip",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "contradictions only": {
+   "result": {
+    "fired": true,
+    "enqueued": 2
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-1",
+       "da-2"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-1,da-2",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "pa-1",
+       "pa-2"
+      ],
+      "store": "person"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:pa-1,pa-2",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "both off": {
+   "result": {
+    "fired": true,
+    "enqueued": 0
+   },
+   "runs": [],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "cap of one": {
+   "result": {
+    "fired": true,
+    "enqueued": 2
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-a",
+       "loop-b"
+      ],
+      "matchedBy": [
+       "person:person-p"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-a,loop-b",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-1",
+       "da-2"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-1,da-2",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "under the cap": {
+   "result": {
+    "fired": true,
+    "enqueued": 5
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-a",
+       "loop-b"
+      ],
+      "matchedBy": [
+       "person:person-p"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-a,loop-b",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-c",
+       "loop-d"
+      ],
+      "matchedBy": [
+       "doc:doc-shared"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-c,loop-d",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p3",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "temporalAnnotationIds": [
+       "ta-deadline",
+       "ta-trip"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-14..2026-07-15"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:ta-deadline,ta-trip",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p4",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-1",
+       "da-2"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-1,da-2",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p5",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "pa-1",
+       "pa-2"
+      ],
+      "store": "person"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:pa-1,pa-2",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "one-day horizon": {
+   "result": {
+    "fired": true,
+    "enqueued": 4
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-a",
+       "loop-b"
+      ],
+      "matchedBy": [
+       "person:person-p"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-a,loop-b",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-c",
+       "loop-d"
+      ],
+      "matchedBy": [
+       "doc:doc-shared"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-c,loop-d",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p3",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-1",
+       "da-2"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-1,da-2",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p4",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "pa-1",
+       "pa-2"
+      ],
+      "store": "person"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:pa-1,pa-2",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  }
+ },
+ "finders": {
+  "loops": {
+   "count": 2,
+   "sha256": "333bce662b6e34c5b3f5901bcc8cf1fcfbca7751e89d3437bbc35a3b58b40077",
+   "head": [
+    {
+     "loopIds": [
+      "loop-a",
+      "loop-b"
+     ],
+     "matchedBy": [
+      "person:person-p"
+     ],
+     "score": 0.9
+    },
+    {
+     "loopIds": [
+      "loop-c",
+      "loop-d"
+     ],
+     "matchedBy": [
+      "doc:doc-shared"
+     ],
+     "score": 0.6
+    }
+   ]
+  },
+  "loopsWithoutSelf": {
+   "count": 2,
+   "sha256": "9cf3f585212aacebfca62e30fd71917ba71fca45b5194a049a6b9d5692295982",
+   "head": [
+    {
+     "loopIds": [
+      "loop-a",
+      "loop-b"
+     ],
+     "matchedBy": [
+      "person:person-p",
+      "person:person-self"
+     ],
+     "score": 0.9
+    },
+    {
+     "loopIds": [
+      "loop-c",
+      "loop-d"
+     ],
+     "matchedBy": [
+      "doc:doc-shared"
+     ],
+     "score": 0.6
+    }
+   ]
+  },
+  "temporal": {
+   "horizon 1d": {
+    "count": 0,
+    "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "head": []
+   },
+   "horizon 60d": {
+    "count": 1,
+    "sha256": "30987ffb2c6b3b249766259003c21631a66d95b478c4d92f05f66c24b4fd8039",
+    "head": [
+     {
+      "temporalAnnotationIds": [
+       "ta-deadline",
+       "ta-trip"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-14..2026-07-15"
+      ]
+     }
+    ]
+   },
+   "horizon 400d": {
+    "count": 1,
+    "sha256": "30987ffb2c6b3b249766259003c21631a66d95b478c4d92f05f66c24b4fd8039",
+    "head": [
+     {
+      "temporalAnnotationIds": [
+       "ta-deadline",
+       "ta-trip"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-14..2026-07-15"
+      ]
+     }
+    ]
+   }
+  },
+  "contradictions": {
+   "count": 2,
+   "sha256": "69a2774dd44b2b66567df45d513053cc4f96b7cab3a177b0a5e0febfc3d182e4",
+   "head": [
+    {
+     "store": "doc",
+     "annotationIds": [
+      "da-1",
+      "da-2"
+     ],
+     "subjectId": "doc-a",
+     "claimType": "status"
+    },
+    {
+     "store": "person",
+     "annotationIds": [
+      "pa-1",
+      "pa-2"
+     ],
+     "subjectId": "person-p",
+     "claimType": "role"
+    }
+   ]
+  }
+ }
+}
