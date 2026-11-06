@@ -92,6 +92,9 @@ interface ControlHost {
 const log = createLogger("gateway:agent").child("controls");
 
 /** Serializes acceptance and start barriers; the conversation owns durable state. */
+/** The tool a turn calls to end on a question for the user. */
+export const CLARIFICATION_TOOL_NAME = "ask_clarification";
+
 export class ConversationControls {
   private readonly revisions = new WeakMap<ConversationControlState, number>();
   private readonly tails = new Map<string, Promise<unknown>>();
@@ -507,7 +510,7 @@ export class ConversationControls {
 
   clarificationTool(id: string): ToolHandle {
     return {
-      name: "ask_clarification",
+      name: CLARIFICATION_TOOL_NAME,
       description:
         "Ask the user a necessary clarification with 2–6 concise choices. Free text is always allowed. The question is saved across devices. After calling this tool, repeat the question and choices in your ordinary reply for clients without choice controls, then end your turn and wait for the user's answer; never choose for them. Do not use for optional suggestions after a complete answer.",
       schema: questionSchema,
