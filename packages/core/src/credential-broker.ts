@@ -354,7 +354,7 @@ async function brokerFailure(res: Response, label: string): Promise<BrokerCreden
     const error = body?.error;
     code = typeof error === "string" ? error : typeof error?.code === "string" ? error.code : "";
   } catch {
-    code = "";
+    // A body that is not JSON names no code.
   }
   if (res.status === 401 || res.status === 403) {
     return new BrokerCredentialError(
