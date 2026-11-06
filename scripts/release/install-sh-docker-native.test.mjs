@@ -26,7 +26,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   callStartingWith,
@@ -791,7 +791,44 @@ describe("host folders the collector's container reads", () => {
   );
 });
 
+/** Keep host tools available without exposing an installed Docker command. */
+function pathWithoutDocker(home, dirs = ["/usr/bin", "/bin"]) {
+  const bare = join(home, "bare-path");
+  mkdirSync(bare, { recursive: true });
+  for (const dir of dirs) {
+    for (const name of readdirSync(dir)) {
+      const source = resolve(dir, name);
+      // A shell skips dangling PATH entries and can find a later working command.
+      if (name.startsWith("docker") || existsSync(join(bare, name)) || !existsSync(source))
+        continue;
+      symlinkSync(source, join(bare, name));
+    }
+  }
+  return bare;
+}
+
 describe("the Docker launcher outside a login shell", () => {
+  test("the isolated PATH skips dangling tools and preserves the first working command", () => {
+    const first = fixturePath("path-first");
+    const later = fixturePath("path-later");
+    mkdirSync(first);
+    mkdirSync(later);
+    symlinkSync(join(first, "missing"), join(first, "unavailable"));
+    symlinkSync(join(first, "missing"), join(first, "available"));
+    writeExecutable(join(later, "available"), "#!/bin/sh\necho available\n");
+    writeExecutable(join(first, "preferred"), "#!/bin/sh\necho first\n");
+    writeExecutable(join(later, "preferred"), "#!/bin/sh\necho later\n");
+    writeExecutable(join(later, "docker"), DOCKER_SHIM);
+    const bare = pathWithoutDocker(prepareHome("path-fixture"), [first, first, later]);
+    expect(readdirSync(bare).sort()).toEqual(["available", "preferred"]);
+    const proc = spawnSync("/bin/sh", ["-c", "available; preferred"], {
+      env: { PATH: bare },
+      encoding: "utf8",
+    });
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(proc.stdout).toBe("available\nfirst\n");
+  });
+
   // ssh running one command, cron and launchd start without the directories a
   // login shell's profile adds, where the desktop apps keep docker.
   test("finds docker where the installer looks for it when PATH has none", () => {
@@ -800,15 +837,7 @@ describe("the Docker launcher outside a login shell", () => {
     mkdirSync(elsewhere, { recursive: true });
     writeExecutable(join(elsewhere, "docker"), DOCKER_SHIM);
     writeFileSync(dockerLog(docker.home), "");
-    // The system's tools without any docker: a machine's own must not answer.
-    const bare = join(docker.home, "bare-path");
-    mkdirSync(bare, { recursive: true });
-    for (const dir of ["/usr/bin", "/bin"]) {
-      for (const name of readdirSync(dir)) {
-        if (name.startsWith("docker") || existsSync(join(bare, name))) continue;
-        symlinkSync(join(dir, name), join(bare, name));
-      }
-    }
+    const bare = pathWithoutDocker(docker.home);
     const proc = host(docker, docker.launcher, ["status"], { PATH: bare });
     expect(proc.status, proc.stderr).toBe(0);
     expect(proc.stderr).not.toContain("docker: not found");
