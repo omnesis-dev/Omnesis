@@ -63,6 +63,12 @@ export interface PairedCollector {
   ws: GatewayWsClient;
   /** Synth descriptors this collector advertises to source.descriptors. */
   descriptors: Array<Record<string, unknown>>;
+  /**
+   * How this collector answers `source.descriptors`: after this many
+   * milliseconds, or `"never"`, which models a collector whose event loop is
+   * too busy to answer.
+   */
+  descriptorsAnswer: number | "never";
   /** Exact account ids returned by source.discover, keyed by descriptor id. */
   discoveredAccountsByType: Record<string, string[]>;
   /** WS commands the gateway sent this collector — used for routing assertions. */
@@ -213,6 +219,8 @@ export class MultiCollectorHarness {
      */
     memberScopedParams?: Record<string, string[]> | false;
     descriptors?: Array<Record<string, unknown>>;
+    /** See {@link PairedCollector.descriptorsAnswer}; answers at once by default. */
+    descriptorsAnswer?: number | "never";
     /** Per-source discovery results. Unspecified types retain the `local` fixture default. */
     discoveredAccountsByType?: Record<string, string[]>;
     doctorReport?: DoctorReport;
@@ -305,6 +313,7 @@ export class MultiCollectorHarness {
       capabilities: wsCaps,
       ws: null as unknown as GatewayWsClient,
       descriptors,
+      descriptorsAnswer: opts.descriptorsAnswer ?? 0,
       discoveredAccountsByType: opts.discoveredAccountsByType ?? {},
       receivedCommands: [],
       sourceSyncResponse: { ok: true, triggered: 1 },
@@ -690,6 +699,8 @@ async function handlePseudoCommand<K extends WsCommandType>(
 ): Promise<WsResponsePayload<K>> {
   switch (type) {
     case "source.descriptors": {
+      if (c.descriptorsAnswer === "never") await new Promise<never>(() => {});
+      else if (c.descriptorsAnswer > 0) await sleep(c.descriptorsAnswer);
       return {
         descriptors: c.descriptors,
         hostname: `${c.name}.example.com`,

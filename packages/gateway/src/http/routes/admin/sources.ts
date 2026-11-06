@@ -77,6 +77,7 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     sourceService,
     deviceService,
     wsServer,
+    collectorDescriptors,
     resolveCollectorDeviceId,
     resolveCollectorDeviceIdForType,
     resolveCollectorDeviceIdForReauth,
@@ -147,12 +148,16 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
    * (only when ambiguous).
    *
    * Descriptors with identical `id` from different collectors are merged
-   * — first descriptor wins for the visible payload (display name, icon,
-   * params), and every device hosting that id is appended to `devices`.
-   * Diverging descriptor shapes across collectors is rare in practice
-   * (same package version installed on each), so first-wins is fine.
-   * A future enhancement could surface per-device descriptor differences
-   * explicitly if needed.
+   * — the first collector in pairing order wins for the visible payload
+   * (display name, icon, params), and every device hosting that id is
+   * appended to `devices`. Diverging descriptor shapes across collectors
+   * are rare in practice (same package version installed on each).
+   *
+   * Each collector's descriptors come from what it reported over its current
+   * connection (`CollectorDescriptorCache`), so the list does not wait on a
+   * collector that is busy: only a collector that connected moments ago and
+   * has not answered yet can hold the request, for a few seconds at most, and
+   * one that has not answered by then is left out, as an offline one is.
    */
   app.get("/admin/source-descriptors", scope.admin(), async (c) => {
     type Aggregate = {
@@ -178,35 +183,33 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
           .listDevices()
           .filter((d): d is DeviceRecord => d.kind === "collector" && ws.isConnected(d.id))
       : [];
-    // 3s per-collector timeout — descriptors are an in-memory map on the
-    // collector and should respond in <100ms. A higher cap would let one
-    // hung collector stall the entire Add Source modal opening; one
-    // failure is logged and the union proceeds without it.
-    await Promise.all(
-      onlineCollectors.map(async (dev) => {
-        try {
-          // `ws` is defined whenever `onlineCollectors` is non-empty.
-          const result = await ws!.sendCommand(dev.id, "source.descriptors", {}, 3_000);
-          for (const raw of result.descriptors as Array<Record<string, unknown>>) {
-            const id = typeof raw.id === "string" ? raw.id : null;
-            if (!id) continue;
-            const entry = byDescriptorId.get(id);
-            if (entry) {
-              entry.devices.push({ id: dev.id, name: dev.name });
-            } else {
-              byDescriptorId.set(id, {
-                descriptor: raw,
-                devices: [{ id: dev.id, name: dev.name }],
-              });
-            }
-          }
-        } catch (err) {
-          log.warn(
-            `/admin/source-descriptors: skipping device ${dev.name} (${dev.id}) — ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }),
+    const reported = await Promise.all(
+      onlineCollectors.map(async (dev) => ({
+        dev,
+        descriptors: await collectorDescriptors.descriptorsFor(dev.id),
+      })),
     );
+    for (const { dev, descriptors } of reported) {
+      if (!descriptors) {
+        log.warn(
+          `/admin/source-descriptors: skipping device ${dev.name} (${dev.id}) — it has not reported its source descriptors yet`,
+        );
+        continue;
+      }
+      for (const raw of descriptors) {
+        const id = typeof raw.id === "string" ? raw.id : null;
+        if (!id) continue;
+        const entry = byDescriptorId.get(id);
+        if (entry) {
+          entry.devices.push({ id: dev.id, name: dev.name });
+        } else {
+          byDescriptorId.set(id, {
+            descriptor: raw,
+            devices: [{ id: dev.id, name: dev.name }],
+          });
+        }
+      }
+    }
     // Apply icon normalisation once per merged descriptor (memoised by
     // url inside normalizeIcon, so re-rasterising across collectors that
     // advertise the same icon is free).

@@ -112,6 +112,7 @@ import { HostFleetUpdateService } from "./http/services/HostFleetUpdateService.j
 import { ServiceManagerPortalFleetUpdateLauncher } from "./portal-fleet-update-launcher.js";
 import { portalFleetUpdateE2EFixture } from "./portal-fleet-update-e2e.js";
 import { DeviceDoctorService } from "./http/services/DeviceDoctorService.js";
+import { CollectorDescriptorCache } from "./http/services/CollectorDescriptorCache.js";
 import { updateCollectorDeclarationPresence } from "./domain/LinkDeclarationService.js";
 import { BackupService, DEFAULT_PRE_UPDATE_BACKUP_COUNT } from "./http/services/BackupService.js";
 import { ExportService } from "./http/services/ExportService.js";
@@ -811,6 +812,9 @@ const deviceDoctor = new DeviceDoctorService({
   writeGate,
   wsServer: () => wsServerRef.current,
 });
+const collectorDescriptors = new CollectorDescriptorCache({
+  wsServer: () => wsServerRef.current,
+});
 const wsEventHandler = new WsEventHandler({
   db,
   writeGate,
@@ -820,6 +824,7 @@ const wsEventHandler = new WsEventHandler({
   needsAuthNotifier,
   fleetUpdate,
   deviceDoctor,
+  collectorDescriptors,
 });
 const wsServer = new DeviceWsServer({
   db,
@@ -2534,6 +2539,7 @@ const app = createServer(db, DB_PATH, {
   fleetUpdateService: fleetUpdate,
   hostFleetUpdateService: hostFleetUpdate,
   deviceDoctorService: deviceDoctor,
+  collectorDescriptors,
   syncStatus,
   authFlows,
   importFlows,
@@ -3659,6 +3665,7 @@ const doShutdown = async (): Promise<void> => {
   // still exist. This drain is bounded so a streaming client cannot consume
   // the entire shutdown budget before the indexer has persisted its graph.
   wsServer.stop();
+  collectorDescriptors.close();
   const httpDrain = httpShutdown.close(server, 5_000);
   const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
   if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");

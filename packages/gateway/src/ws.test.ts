@@ -1064,6 +1064,64 @@ describe("DeviceWsServer collector presence lifecycle", () => {
       cleanupDb(localDbPath);
     }
   });
+
+  // What a device reported over one connection is current only under that
+  // connection's epoch (the collector descriptor cache relies on it), so every
+  // change to the device's sockets must give a number never seen before.
+  test("connectionEpoch changes with every socket a device opens or closes and is 0 offline", async () => {
+    const localDbPath = `/tmp/omnesis-ws-epoch-${randomUUID()}.db`;
+    const localDb = createDatabase(localDbPath);
+    const collector = createDevice(localDb, { name: "epoch-collector", kind: "collector" });
+    const { id: tokenId } = createToken(localDb, collector.id, [SCOPE_WRITE_ALL]);
+    const srv = new DeviceWsServer({
+      db: localDb,
+      writeGate: directWriteGate(localDb),
+      authTimeoutMs: 60_000,
+    });
+    const auth = { tokenId, deviceId: collector.id, scopes: [SCOPE_WRITE_ALL] };
+    const open = async () => {
+      const sent: string[] = [];
+      const ws = { send: (data: string) => sent.push(data), close: vi.fn() };
+      srv.onOpen(ws, "fictional-epoch-client", auth);
+      srv.onMessage(
+        ws,
+        JSON.stringify(makeCommand("hello", { protocolVersion: PROTOCOL_VERSION })),
+      );
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      return ws;
+    };
+
+    try {
+      const seen = new Set<number>();
+      const record = () => {
+        const epoch = srv.connectionEpoch(collector.id);
+        expect(seen.has(epoch)).toBe(false);
+        seen.add(epoch);
+        return epoch;
+      };
+      expect(srv.connectionEpoch(collector.id)).toBe(0);
+
+      const first = await open();
+      expect(record()).toBeGreaterThan(0);
+      const second = await open();
+      record();
+      srv.onClose(first);
+      expect(srv.isConnected(collector.id)).toBe(true);
+      record();
+      srv.onClose(second);
+      expect(srv.connectionEpoch(collector.id)).toBe(0);
+
+      const reconnected = await open();
+      record();
+      expect(srv.disconnectDevice(collector.id)).toBe(1);
+      expect(srv.connectionEpoch(collector.id)).toBe(0);
+      srv.onClose(reconnected);
+      expect(srv.connectionEpoch(collector.id)).toBe(0);
+    } finally {
+      localDb.close();
+      cleanupDb(localDbPath);
+    }
+  });
 });
 
 /**

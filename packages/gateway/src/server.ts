@@ -90,6 +90,7 @@ import { SourceService } from "./http/services/SourceService.js";
 import { AuthService, scheduleSessionRefresh } from "./http/services/AuthService.js";
 import { DoctorService } from "./http/services/DoctorService.js";
 import { DeviceDoctorService } from "./http/services/DeviceDoctorService.js";
+import { CollectorDescriptorCache } from "./http/services/CollectorDescriptorCache.js";
 import { PushAdminService } from "./http/services/PushAdminService.js";
 import { WatermarkService } from "./http/services/WatermarkService.js";
 import {
@@ -349,6 +350,12 @@ export function createServer(
     wsServer?: DeviceWsServer;
     /** Shared fleet-doctor coordinator. Production passes the WS lifecycle singleton. */
     deviceDoctorService?: DeviceDoctorService;
+    /**
+     * Each connected collector's source descriptors. Production passes the
+     * instance the WS lifecycle prefetches into; without one, the routes fill
+     * their own on first use.
+     */
+    collectorDescriptors?: CollectorDescriptorCache;
     /** Shared device update service, including reconnect/result lifecycle state. */
     fleetUpdateService?: import("./http/services/FleetUpdateService.js").FleetUpdateService;
     /** Portal-session-only gateway-host update orchestration. */
@@ -1503,6 +1510,8 @@ export function createServer(
       writeGate: w,
       wsServer: () => opts?.wsServer,
     });
+  const collectorDescriptors =
+    opts?.collectorDescriptors ?? new CollectorDescriptorCache({ wsServer: () => opts?.wsServer });
   const watermarkService = new WatermarkService(db);
   const sourceUrlRecanonicalization = new SourceUrlRecanonicalizationService({
     plan: opts?.ioGate?.planSourceUrlRecanonicalization
@@ -1527,6 +1536,7 @@ export function createServer(
     pushRegistrationService,
     indexDb: opts?.indexDb,
     wsServer: opts?.wsServer,
+    collectorDescriptors,
     authFlows: opts?.authFlows,
     importFlows: opts?.importFlows,
     metrics: opts?.metrics,

@@ -36,6 +36,7 @@ import type { ImportFlowRegistry } from "../../import-flows.js";
 import type { DeviceConnection, DeviceWsServer } from "../../ws.js";
 import type { FleetUpdateService } from "./FleetUpdateService.js";
 import type { DeviceDoctorService } from "./DeviceDoctorService.js";
+import type { CollectorDescriptorCache } from "./CollectorDescriptorCache.js";
 import type { NeedsAuthNotifier } from "../../push/producers/needs-auth.js";
 
 type Db = Database.Database;
@@ -63,6 +64,8 @@ export interface WsEventHandlerDeps {
   fleetUpdate?: FleetUpdateService;
   /** Durable collector-local health checks and their correlated results. */
   deviceDoctor?: DeviceDoctorService;
+  /** Asked to learn a collector's source descriptors as soon as it connects. */
+  collectorDescriptors?: CollectorDescriptorCache;
 }
 
 /**
@@ -80,6 +83,7 @@ export class WsEventHandler {
   private readonly needsAuthNotifier: NeedsAuthNotifier | undefined;
   private readonly fleetUpdate: FleetUpdateService | undefined;
   private readonly deviceDoctor: DeviceDoctorService | undefined;
+  private readonly collectorDescriptors: CollectorDescriptorCache | undefined;
   private wsServer: DeviceWsServer | null = null;
 
   constructor(deps: WsEventHandlerDeps) {
@@ -92,6 +96,7 @@ export class WsEventHandler {
     this.needsAuthNotifier = deps.needsAuthNotifier;
     this.fleetUpdate = deps.fleetUpdate;
     this.deviceDoctor = deps.deviceDoctor;
+    this.collectorDescriptors = deps.collectorDescriptors;
   }
 
   /** Attach (or clear) the agent service. Called at boot and on hot-swap. */
@@ -501,6 +506,9 @@ export class WsEventHandler {
     // receiving a command they have no use for.
     const device = getDevice(this.db, conn.deviceId);
     if (device?.kind !== "collector") return;
+    // Ask before the snapshot: answering is cheap for the collector, while
+    // applying the snapshot can start work that keeps it busy.
+    this.collectorDescriptors?.prefetch(conn.deviceId);
     // Sent even when the list is empty. The snapshot is the gateway's
     // authoritative statement of what this device should host, and "nothing" is
     // a legitimate statement: a collector whose last source was removed, or
@@ -533,6 +541,7 @@ export class WsEventHandler {
   };
 
   handleDisconnected = (conn: DeviceConnection): void => {
+    this.collectorDescriptors?.onDisconnected(conn.deviceId);
     if (!scopeSatisfies(conn.scopes, SCOPE_WRITE_ALL)) return;
     void this.deviceDoctor?.onDeviceDisconnected(conn.deviceId).catch((err) => {
       log.warn(
