@@ -182,6 +182,7 @@ async function request(method, path, opts = {}) {
   const init = {
     method,
     ...(opts.cache ? { cache: opts.cache } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
     headers:
       opts.body !== undefined || (opts.csrf && _csrfToken)
         ? {
@@ -946,8 +947,14 @@ export const revokeTokenById = (id) =>
 // --- Delegated MCP access (Portal owner surface) ---
 
 /** Every connection an agent holds on this gateway, with the access levels they can share. */
-export const getAccessOverview = () =>
-  request("GET", "/admin/access", { cache: "no-store" });
+export const getAccessOverview = (signal) =>
+  request("GET", "/admin/access", { cache: "no-store", signal });
+
+export const getSourceFilterOptions = (sourceId, query, signal) =>
+  request("GET", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/options`, { query, signal, cache: "no-store" });
+
+export const previewSourceFilter = (sourceId, policy, signal) =>
+  request("POST", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/preview`, { body: { policy }, signal });
 
 /**
  * Resolve the short code shown by an MCP client's authorization window: the

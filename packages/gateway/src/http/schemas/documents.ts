@@ -25,6 +25,11 @@ import {
 import { DOCUMENT_PROJECTION_FIELDS, type DocumentProjectionField } from "@omnesis/source-sdk";
 import { z } from "zod";
 import { SOURCE_ICON_MAX_INPUT_CHARS } from "../../icon-limits.js";
+import {
+  documentScopeFactsSchema,
+  sourceScopeUpdatesSchema,
+} from "../../access/scope-update-schema.js";
+import { documentHierarchySchema } from "../../access/scope-hierarchy-validation.js";
 import { nonEmptyString, urlPatternSpecSchema } from "./common.js";
 import { accountDescriptorSchema } from "./account-descriptor.js";
 
@@ -38,10 +43,34 @@ const documentInputShape = z
     contentHash: nonEmptyString,
     /** See Document.extractedContentHash — optional. */
     extractedContentHash: z.string().optional(),
-    metadata: z.record(z.string(), z.unknown()).transform((value) => {
+    metadata: z.record(z.string(), z.unknown()).transform((value, ctx) => {
       // Older browser extensions sent this retired producer-detail field.
       // Accept those clients during upgrade, but never persist the field.
       const { captureMethod: _retired, ...metadata } = value;
+      if (metadata.scopeFacts !== undefined) {
+        const facts = documentScopeFactsSchema.safeParse(metadata.scopeFacts);
+        if (!facts.success) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["scopeFacts"],
+            message: "Invalid source scope facts.",
+          });
+          return z.NEVER;
+        }
+        metadata.scopeFacts = facts.data;
+      }
+      if (metadata.scopeHierarchy !== undefined) {
+        const hierarchy = documentHierarchySchema.safeParse(metadata.scopeHierarchy);
+        if (!hierarchy.success) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["scopeHierarchy"],
+            message: "Invalid native hierarchy.",
+          });
+          return z.NEVER;
+        }
+        metadata.scopeHierarchy = hierarchy.data;
+      }
       return metadata;
     }),
     sourceCreatedAt: nonEmptyString,
@@ -368,6 +397,7 @@ export const upsertWithCursorBody = z
     providerId: nonEmptyString,
     sourceId: nonEmptyString,
     documents: z.array(documentInputShape).optional(),
+    scopeUpdates: sourceScopeUpdatesSchema.optional(),
     documentTemporalProjections: documentTemporalProjectionsShape.optional(),
     deletedExternalIds: z.array(z.string()).optional(),
     /** Source-declared structural edges for this page. */

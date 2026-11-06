@@ -11306,6 +11306,7 @@ describe("POST /admin/background/run/:taskName", () => {
   });
 
   test.each([
+    "backfill.scopeFacts",
     "backfill.mergeCandidatesDetect",
     "nearDup.inboxFlush",
     "backfill.nearDupDfRefresh",

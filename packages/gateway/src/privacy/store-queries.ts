@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import { parseCorpusAuthorization } from "../access/corpus-authorization.js";
+import { corpusAuthorizationBindingIsLive } from "../access/authorization-live.js";
 import {
   approvalJoinSql,
   effectiveApprovalStatus,
@@ -13,6 +16,12 @@ import {
   toApprovalSummary,
 } from "./store-internals.js";
 import { parseStoredCitations } from "./answer-citations.js";
+import {
+  answerTaskRequiresScopeProof,
+  createScopeReleaseCapture,
+  scopeChanged,
+} from "./answer-scope.js";
+import { scopedAnswerHistory } from "./answer-history.js";
 import {
   AnswerStoreError,
   PrivacyCursorError,
@@ -54,11 +63,11 @@ export function getAnswerTaskResponse(
   return responseForTask(db, taskId);
 }
 
-export function loadReleasedAnswerHistory(
+export async function loadReleasedAnswerHistory(
   db: PrivacyDb,
   conversationId: string,
   ownerId: string,
-): ChatMessage[] {
+): Promise<ChatMessage[]> {
   const conversation = db
     .prepare<[string], { owner_id: string }>(
       "SELECT owner_id FROM answer_conversations WHERE id = ?",
@@ -70,6 +79,48 @@ export function loadReleasedAnswerHistory(
   if (conversation.owner_id !== ownerId) {
     throw new AnswerStoreError("owner_mismatch", "Answer conversation belongs to another caller.");
   }
+  const scopedTask = db
+    .prepare<[string], { id: string; authorization: string }>(
+      `SELECT t.id,s.authorization FROM answer_tasks t JOIN answer_task_scope s ON s.task_id=t.id
+    WHERE t.conversation_id=? ORDER BY t.created_at DESC,t.id DESC LIMIT 1`,
+    )
+    .get(conversationId);
+  if (scopedTask) {
+    const authorization = parseCorpusAuthorization(scopedTask.authorization);
+    const capture = createScopeReleaseCapture(db, authorization);
+    const history = await scopedAnswerHistory(
+      db,
+      scopedTask.id,
+      conversationId,
+      ownerId,
+      Number.MAX_SAFE_INTEGER,
+      { includeTaskIds: false },
+    );
+    if (!history) return [];
+    const result: ChatMessage[] = [];
+    for (let offset = 0; offset < history.messages.length; offset += 80) {
+      result.push(
+        ...history.messages.slice(offset, offset + 80).map((row) => ({
+          role: row.role,
+          parts: [{ kind: "text" as const, text: row.content }],
+        })),
+      );
+      if (offset + 80 < history.messages.length) await yieldToEventLoop();
+    }
+    capture.observer.recordDocuments(history.reads.documentIds);
+    if (history.reads.complete) capture.observer.markComplete();
+    db.transaction(() => {
+      if (!corpusAuthorizationBindingIsLive(db, authorization)) throw scopeChanged();
+      capture.assertCurrent();
+    })();
+    return result;
+  }
+  const latest = db
+    .prepare<[string], { id: string }>(
+      "SELECT id FROM answer_tasks WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+    )
+    .get(conversationId);
+  if (latest && answerTaskRequiresScopeProof(db, latest.id)) return [];
   return db
     .prepare<[string], { role: "user" | "assistant"; content: string }>(
       "SELECT role, content FROM answer_messages WHERE conversation_id = ? ORDER BY id ASC",

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { DEFAULT_CONFIG_DIR, createLogger, resolveAttachmentConfig } from "@omnesis/core";
 import { defineSource } from "@omnesis/source-sdk";
+import { scopeContracts } from "./scope-contracts.js";
 import { whatsappStateSpec } from "./state.js";
 import { inspectMessageStore } from "./message-store.js";
 import { whatsappIconUrl } from "./icons.js";
@@ -23,6 +24,7 @@ export default defineSource<WhatsAppSyncCursor>({
   provider: { id: "whatsapp", name: "WhatsApp" },
   authType: "qr",
   unitName: "messages",
+  scopes: scopeContracts["whatsapp-messages"],
   contentRetention: "best-effort",
   // Voice notes are transcribed inline into the conversation rather than
   // emitted as separate attachment child-docs.
@@ -227,6 +229,7 @@ export default defineSource<WhatsAppSyncCursor>({
       onConnectionError: (handler) => provider.onConnectionError(handler),
       offConnectionError: (handler) => provider.offConnectionError(handler),
       connectionFailure: () => provider.connectionFailure(),
+      refreshScopeGroupRosters: (jids) => provider.refreshScopeGroupRosters(jids),
     });
 
     return {

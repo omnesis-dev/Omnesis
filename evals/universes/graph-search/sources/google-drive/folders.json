@@ -1,0 +1,22 @@
+[
+  {
+    "id": "synth-drive-root",
+    "name": "Fictional Drive",
+    "parentIds": []
+  },
+  {
+    "id": "synth-drive-observatory",
+    "name": "Observatory",
+    "parentIds": ["synth-drive-root"]
+  },
+  {
+    "id": "synth-drive-reports",
+    "name": "Reports",
+    "parentIds": ["synth-drive-observatory"]
+  },
+  {
+    "id": "synth-drive-archive",
+    "name": "Archive",
+    "parentIds": ["synth-drive-root"]
+  }
+]

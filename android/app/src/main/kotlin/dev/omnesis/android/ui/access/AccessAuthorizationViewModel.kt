@@ -32,6 +32,7 @@ import kotlinx.coroutines.async
 import javax.inject.Inject
 
 interface AccessAuthorizationGateway {
+    fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): ScopeEditorGateway? = null
     /** The pending request behind a code, with the gateway's proposal for approving it. */
     suspend fun lookup(
         code: String,
@@ -69,6 +70,11 @@ class SessionAccessAuthorizationGateway @Inject constructor(
     private val sourceCatalog: SourceCatalog,
     private val pendingRequests: AccessPendingRequests,
 ) : AccessAuthorizationGateway {
+    override fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): ScopeEditorGateway {
+        val current = session.requireSession()
+        if (expectedPairing != null && current.pairing.accessAuthorizationIdentity() != expectedPairing) throw AccessAuthorizationPairingChanged()
+        return PairedScopeEditorGateway(session)
+    }
     override suspend fun lookup(
         code: String,
         expectedPairing: AccessAuthorizationPairingIdentity?,
@@ -174,6 +180,8 @@ class AccessAuthorizationViewModel @Inject constructor(
     private var authorizationKey: AccessLookupKey? = null
     private var authorizationPairing: AccessAuthorizationPairingIdentity? = null
     private var handledLaunchNonce: Long? = null
+
+    val scopeEditorGateway: ScopeEditorGateway? get() = gateway.scopeEditor(authorizationPairing)
 
     fun sourceIcon(sourceId: String) = sourceCatalog.iconModel(sourceId)
 

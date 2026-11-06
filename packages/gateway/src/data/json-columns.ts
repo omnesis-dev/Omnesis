@@ -333,3 +333,49 @@ export const sourceSyncIssuesCodec = makeCodec({
   schema: z.array(syncIssueStatusSchema).max(50),
   fallback: () => [],
 });
+
+/** Source-native membership data, independent from mutable person rows. */
+const scopeMembershipIdentifiersSchema = z.array(
+  z.object({
+    type: z.enum(["phone", "email", "domain"]),
+    value: z.string(),
+  }),
+);
+export const scopeMembershipIdentifiersCodec = makeCodec({
+  table: "scope_conversation_members",
+  column: "identifiers_json",
+  schema: scopeMembershipIdentifiersSchema,
+  fallback: () => [],
+});
+export const scopeMembershipRebuildCodec = makeCodec({
+  table: "scope_conversation_rebuilds",
+  column: "members_json",
+  schema: z.array(
+    z.object({
+      key: z.string(),
+      identifiers: scopeMembershipIdentifiersSchema,
+      complete: z.boolean(),
+      pinned: z.boolean(),
+    }),
+  ),
+  fallback: () => [],
+});
+
+export const scopeFactRebuildProjectionCodec = makeCodec({
+  table: "scope_fact_rebuilds",
+  column: "projection",
+  schema: z.strictObject({
+    version: z.literal(1),
+    facts: z
+      .array(
+        z.strictObject({
+          kind: z.enum(["conversation", "participant", "label", "folder"]),
+          entityId: z.string().min(1).max(1024),
+          label: z.string().max(512).optional(),
+        }),
+      )
+      .max(32768),
+    complete: z.array(z.enum(["conversation", "participant", "label", "folder"])).max(4),
+  }),
+  fallback: () => ({ version: 1 as const, facts: [], complete: [] }),
+});

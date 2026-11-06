@@ -45,6 +45,11 @@ export function GrantWizard({
   onRules,
   sources = [],
   policies = [],
+  sourceFiltersEnabled = false,
+  accessLevel = "new",
+  isNew = false,
+  linkFilters = isNew,
+  onLinkFilters = () => {},
   linkSources = true,
   onLinkSources = () => {},
   disabled = false,
@@ -88,66 +93,115 @@ export function GrantWizard({
 
   return html`<div class="access-request access-request--page">
     <nav class="access-wizard-steps" aria-label="Progress">
-      ${path.map((phase, index) => html`<button type="button" key=${label(phase)}
-          class=${phase === step ? "is-current" : phase < step ? "is-complete" : ""}
-          aria-current=${phase === step ? "step" : undefined}
-          disabled=${disabled || phase > step}
-          onClick=${() => phase < step && onStep(phase)}>
-          <span>${phase < step ? "✓" : index + 1}</span>${label(phase)}
-        </button>`)}
+      ${path.map(
+        (phase, index) =>
+          html`<button
+            type="button"
+            key=${label(phase)}
+            class=${phase === step ? "is-current" : phase < step ? "is-complete" : ""}
+            aria-current=${phase === step ? "step" : undefined}
+            disabled=${disabled || phase > step}
+            onClick=${() => phase < step && onStep(phase)}
+          >
+            <span>${phase < step ? "✓" : index + 1}</span>${label(phase)}
+          </button>`,
+      )}
     </nav>
 
     <div class="access-wizard-panel">
-      ${step === 0 && leadStep && html`
-        <div class="access-wizard-copy">
-          <h3 ref=${stepHeadingRef} tabIndex="-1">${leadStep.heading}</h3>
-          ${leadStep.blurb ? html`<p>${leadStep.blurb}</p>` : null}
-        </div>
-        ${leadStep.content}
-      `}
-
-      ${step === 1 && html`
-        <div class="access-wizard-copy">
-          <h3 ref=${stepHeadingRef} tabIndex="-1">${copy.one.heading}</h3>
-          ${copy.one.blurb ? html`<p>${copy.one.blurb}</p>` : null}
-        </div>
-        <${CapabilityPicker} value=${rules} onChange=${(nextRules) => {
-          onRules(nextRules);
-          if (nextRules.answer && nextRules.direct) onLinkSources(rulesShareSources(nextRules));
-        }} policies=${policies} disabled=${disabled} requiresAnswer=${requiresAnswer}
-          hideLegend idPrefix=${idPrefix} />
-      `}
-
-      ${step === 2 && html`
-        <div class="access-wizard-copy">
-          <h3 ref=${stepHeadingRef} tabIndex="-1">${copy.two.heading}</h3>
-          ${copy.two.blurb ? html`<p>${copy.two.blurb}</p>` : null}
-        </div>
-        <${GrantDataPrivacy} value=${rules} onChange=${onRules} sources=${sources}
-          policies=${policies} disabled=${disabled}
-          linkSources=${linkSources} onLinkSources=${onLinkSources} idPrefix=${idPrefix} />
-        ${releaseError(rules) && html`<p class="access-field-error" role="alert">${releaseError(rules)}</p>`}
-      `}
-
-      ${step === 3 && html`
-        <div class="access-wizard-copy">
-          <h3 ref=${stepHeadingRef} tabIndex="-1">${copy.three.heading}</h3>
-          ${copy.three.blurb ? html`<p>${copy.three.blurb}</p>` : null}
-        </div>
-        ${review}
-      `}
+      ${
+        step === 0 &&
+        leadStep &&
+        html`
+          <div class="access-wizard-copy">
+            <h3 ref=${stepHeadingRef} tabindex="-1">${leadStep.heading}</h3>
+            ${leadStep.blurb ? html`<p>${leadStep.blurb}</p>` : null}
+          </div>
+          ${leadStep.content}
+        `
+      }
+      ${
+        step === 1 &&
+        html`
+          <div class="access-wizard-copy">
+            <h3 ref=${stepHeadingRef} tabindex="-1">${copy.one.heading}</h3>
+            ${copy.one.blurb ? html`<p>${copy.one.blurb}</p>` : null}
+          </div>
+          <${CapabilityPicker}
+            value=${rules}
+            onChange=${(nextRules) => {
+              onRules(nextRules);
+              if (nextRules.answer && nextRules.direct) onLinkSources(rulesShareSources(nextRules));
+            }}
+            policies=${policies}
+            disabled=${disabled}
+            requiresAnswer=${requiresAnswer}
+            hideLegend
+            idPrefix=${idPrefix}
+            isNew=${isNew}
+            linkFilters=${linkFilters}
+            accessLevel=${accessLevel}
+            sourceFiltersEnabled=${sourceFiltersEnabled}
+          />
+        `
+      }
+      ${
+        step === 2 &&
+        html`
+          <div class="access-wizard-copy">
+            <h3 ref=${stepHeadingRef} tabindex="-1">${copy.two.heading}</h3>
+            ${copy.two.blurb ? html`<p>${copy.two.blurb}</p>` : null}
+          </div>
+          <${GrantDataPrivacy}
+            value=${rules}
+            onChange=${onRules}
+            sources=${sources}
+            policies=${policies}
+            disabled=${disabled}
+            linkSources=${linkSources}
+            onLinkSources=${onLinkSources}
+            idPrefix=${idPrefix}
+            sourceFiltersEnabled=${sourceFiltersEnabled}
+            accessLevel=${accessLevel}
+            isNew=${isNew}
+            linkFilters=${linkFilters}
+            onLinkFilters=${onLinkFilters}
+          />
+          ${releaseError(rules) && html`<p class="access-field-error" role="alert">${releaseError(rules)}</p>`}
+        `
+      }
+      ${
+        step === 3 &&
+        html`
+          <div class="access-wizard-copy">
+            <h3 ref=${stepHeadingRef} tabindex="-1">${copy.three.heading}</h3>
+            ${copy.three.blurb ? html`<p>${copy.three.blurb}</p>` : null}
+          </div>
+          ${review}
+        `
+      }
     </div>
     ${error && html`<p class="access-error" role="alert">${error}</p>`}
     <div class="access-request-actions">
       ${leadAction}
       <span class="access-wizard-nav">
         ${position > 0 && html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${() => onStep(previous)}>Back</button>`}
-        ${step < 3 && html`<button type="button" class="btn-primary"
-          disabled=${disabled
-            || (step === 0 && !leadStep?.canContinue)
-            || (step === 1 && !hasCapability(rules) && !requiresAnswer)
-            || (step === 2 && Boolean(ruleError))}
-          onClick=${() => onStep(next)}>Continue</button>`}
+        ${
+          step < 3 &&
+          html`<button
+            type="button"
+            class="btn-primary"
+            disabled=${
+              disabled ||
+              (step === 0 && !leadStep?.canContinue) ||
+              (step === 1 && !hasCapability(rules) && !requiresAnswer) ||
+              (step === 2 && Boolean(ruleError))
+            }
+            onClick=${() => onStep(next)}
+          >
+            Continue
+          </button>`
+        }
         ${step === 3 ? finalAction : null}
       </span>
     </div>

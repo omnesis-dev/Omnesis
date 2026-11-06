@@ -3,6 +3,31 @@
   "comment": "Reviewed fixture/example identifiers allowed in the repository. Identity entries are path-scoped; add only invented or deliberately public values and never live corpus data.",
   "emails": [
     {
+      "value": "scope-fixture@g.us",
+      "paths": ["packages/providers/whatsapp/src/scope-membership.test.ts"],
+      "reason": "Invented native group or reserved 555-01xx phone JID for membership scope tests."
+    },
+    {
+      "value": "12025550101@s.whatsapp.net",
+      "paths": ["packages/providers/whatsapp/src/scope-membership.test.ts"],
+      "reason": "Invented native group or reserved 555-01xx phone JID for membership scope tests."
+    },
+    {
+      "value": "12025550102@s.whatsapp.net",
+      "paths": ["packages/providers/whatsapp/src/scope-membership.test.ts"],
+      "reason": "Invented native group or reserved 555-01xx phone JID for membership scope tests."
+    },
+    {
+      "value": "fictional.scope.check+filter@gmail.com",
+      "paths": ["packages/gateway/src/access/scope-policy.test.ts"],
+      "reason": "Invented address exercising Gmail dot and plus-alias canonicalization against native source identifiers."
+    },
+    {
+      "value": "fictionalscopecheck@gmail.com",
+      "paths": ["packages/gateway/src/access/scope-policy.test.ts"],
+      "reason": "Canonical form of an invented Gmail alias fixture; reserved domains do not exercise this behavior."
+    },
+    {
       "value": "0@s.whatsapp.net",
       "paths": [
         "evals/universes/whatsapp-backfill/sources/whatsapp-messages/fake-corpus.json",
@@ -1021,12 +1046,12 @@
     {
       "value": "marek.vint+news@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "marekvint@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "maria.smith@acme.com",
@@ -1282,7 +1307,7 @@
         "packages/providers/github/src/normalizer.test.ts",
         "packages/providers/github/src/normalizer.ts"
       ],
-      "reason": "GitHub's public squash-merge committer address — a code constant, not corpus data"
+      "reason": "GitHub's public squash-merge committer address \u2014 a code constant, not corpus data"
     },
     {
       "value": "noreply@vendor.com",
@@ -1478,7 +1503,7 @@
     {
       "value": "someone@a-real-looking-domain.co.uk",
       "paths": ["scripts/lib/brain-cassette.test.mjs"],
-      "reason": "invented, deliberately OFF a reserved domain — the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
+      "reason": "invented, deliberately OFF a reserved domain \u2014 the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
     },
     {
       "value": "someone@s.whatsapp.net",
@@ -1762,6 +1787,16 @@
       "value": "zeta@gmail.com",
       "paths": ["packages/gateway/portal/js/views/reauth-grouping.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "fictional-scope-group@g.us",
+      "paths": ["packages/providers/whatsapp/src/normalizer.test.ts"],
+      "reason": "Invented group identifier exercising the WhatsApp scope projection."
+    },
+    {
+      "value": "12025550124@s.whatsapp.net",
+      "paths": ["packages/providers/whatsapp/src/normalizer.test.ts"],
+      "reason": "Invented WhatsApp scope-filter fixture; phone JID uses NANP reserved 555-01xx range."
     }
   ],
   "phones": [
@@ -1787,7 +1822,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture — placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
+      "reason": "reviewed invented fixture \u2014 placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
     },
     {
       "value": "+1 415 555 7777",
@@ -1828,7 +1863,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+15551111111",
@@ -1917,7 +1952,7 @@
         "packages/providers/apple/src/contacts.test.ts",
         "packages/gateway/src/domain/LinkGraphService.test.ts"
       ],
-      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+442071234567",
@@ -5529,7 +5564,7 @@
     {
       "value": "Alex Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Alex Doe",
@@ -5858,7 +5893,7 @@
     {
       "value": "Apple Watch",
       "paths": ["evals/universes/wrist/universe.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Apple Watch Series",
@@ -6148,7 +6183,7 @@
         "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "product name — the brain end-to-end test kit, not a person"
+      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
     },
     {
       "value": "Bram Halvorsen",
@@ -6348,7 +6383,7 @@
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Cedar Grove Billing",
@@ -7156,7 +7191,7 @@
     {
       "value": "Eurostar Bookings",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Eve Bond",
@@ -7559,7 +7594,7 @@
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Guided Kyoto",
@@ -7668,7 +7703,7 @@
     {
       "value": "Hello Alex",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hello John Smith",
@@ -7736,7 +7771,7 @@
         "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hi Anton",
@@ -7976,7 +8011,7 @@
     {
       "value": "Iris Kelland",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "JP Bond",
@@ -8279,7 +8314,7 @@
     {
       "value": "Jordan Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Juniper Workshop",
@@ -8432,7 +8467,7 @@
     {
       "value": "London Paris",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "London St Pancras",
@@ -8441,7 +8476,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Lucian Farrow",
@@ -8961,7 +8996,7 @@
     {
       "value": "My Sweep",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture — a deliberately malformed sweep file name"
+      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
     },
     {
       "value": "My Task",
@@ -9133,7 +9168,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "North Quarter",
@@ -9263,7 +9298,7 @@
     {
       "value": "Not An Id",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture — a deliberately malformed sweep file name"
+      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
     },
     {
       "value": "Not Found",
@@ -9406,7 +9441,7 @@
     {
       "value": "Outbound Sunday",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Outgoing Phone",
@@ -9451,7 +9486,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Paris Riverside Triathlon",
@@ -9460,7 +9495,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Parkside Cafe",
@@ -9966,7 +10001,7 @@
       "reason": "reviewed invented fixture"
     },
     {
-      "value": "Renée Vance",
+      "value": "Ren\u00e9e Vance",
       "paths": ["packages/gateway/src/merge-candidates.test.ts"],
       "reason": "reviewed invented fixture"
     },
@@ -10075,7 +10110,7 @@
     {
       "value": "Riverbend Tri Club",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Riverside Bank",
@@ -10189,7 +10224,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Robin Vale",
@@ -10231,12 +10266,12 @@
     {
       "value": "Sam Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Diaz",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Quinn",
@@ -10554,7 +10589,7 @@
     {
       "value": "St Pancras",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "St Pancras International",
@@ -10562,7 +10597,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Stable Child",
@@ -10590,7 +10625,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Standup Recap",
@@ -11106,17 +11141,17 @@
         "packages/collector/src/e2e/brain-bench/README.md",
         "packages/collector/src/e2e/brain-bench/index.ts"
       ],
-      "reason": "product name — the brain end-to-end test kit, not a person"
+      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
     },
     {
       "value": "The Brambling",
       "paths": ["packages/collector/src/e2e/brain-loops.e2e.test.ts"],
-      "reason": "invented fixture — an invented venue used for a lighting-quote arc in the bench's loop tests"
+      "reason": "invented fixture \u2014 an invented venue used for a lighting-quote arc in the bench's loop tests"
     },
     {
       "value": "The Cedar Grove",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture — a three-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "The Coinbase",
@@ -11222,7 +11257,7 @@
     {
       "value": "The Riverside Estate",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture — a three-word window of the invented venue 'Riverside Estate'"
+      "reason": "invented fixture \u2014 a three-word window of the invented venue 'Riverside Estate'"
     },
     {
       "value": "The Studio Northstar",
@@ -11258,7 +11293,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Theo Marsh",
@@ -11395,7 +11430,7 @@
     {
       "value": "Tri Club",
       "paths": ["evals/universes/wrist/sources/gmail/messages.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Tuesday James",
@@ -11557,7 +11592,7 @@
     {
       "value": "Wakes Fictional",
       "paths": ["packages/gateway/portal/js/views/watches.test.ts"],
-      "reason": "invented fixture — two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
+      "reason": "invented fixture \u2014 two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
     },
     {
       "value": "Web Crypto",
@@ -12519,6 +12554,31 @@
       "value": "Main Camera",
       "paths": ["packages/providers/immich/src/normalizer.test.ts"],
       "reason": "Invented Immich fixture name (person, album, place or camera), not corpus data."
+    },
+    {
+      "value": "Fictional Drive",
+      "paths": [
+        "evals/universes/default/sources/google-drive/folders.json",
+        "evals/universes/e2e-minimal/sources/google-drive/folders.json",
+        "evals/universes/graph-search/sources/google-drive/folders.json",
+        "evals/universes/handoff/sources/google-drive/folders.json",
+        "evals/universes/japan-trip/sources/google-drive/folders.json",
+        "evals/universes/loops-test-life/sources/google-drive/folders.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/folders.json",
+        "packages/providers-synth/google/src/drive-source.test.ts",
+        "packages/providers/google/src/drive-scope-folders.test.ts"
+      ],
+      "reason": "Invented root-folder display label shared by synthetic folder-tree fixtures; not a person or corpus data."
+    },
+    {
+      "value": "Copy Answer",
+      "paths": ["packages/gateway/portal/js/components/source-filter-editor.test.ts"],
+      "reason": "Literal UI action text for copying Answer filters, not a person name."
+    },
+    {
+      "value": "Fictional Person",
+      "paths": ["packages/gateway/portal/js/components/source-filter-state.test.ts"],
+      "reason": "Invented invalid identifier input proving that a display name is not an accepted typed address."
     }
   ],
   "secretFixtures": [

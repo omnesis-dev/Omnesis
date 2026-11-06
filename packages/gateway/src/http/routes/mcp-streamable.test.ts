@@ -38,6 +38,7 @@ import type { OmnesisNotesRuntime, CaptureNoteInput } from "../../sources/omnesi
 const notesToken = "notes-token";
 const answerToken = "answer-token";
 const directToken = "direct-token";
+const scopedDirectToken = "scoped-direct-token";
 const restrictedDirectToken = "restricted-direct-token";
 const unreviewedAnswerToken = "unreviewed-answer-token";
 const bothToken = "both-token";
@@ -92,6 +93,20 @@ const PRINCIPAL_AUTH: Record<string, PrincipalOAuthAuthContext> = {
   [notesToken]: principalAuth(notesToken, [capability("notes")]),
   [answerToken]: principalAuth(answerToken, [capability("answer")]),
   [directToken]: principalAuth(directToken, [capability("direct")]),
+  [scopedDirectToken]: principalAuth(scopedDirectToken, [
+    {
+      ...capability("direct"),
+      filterRevision: 1,
+      scopePolicies: [
+        {
+          sourceId: "fictional-mail:alpha",
+          audience: { accessLevel: "fictional-level", capability: "direct" },
+          rules: [{ match: [{ kind: "label", id: "chosen" }], action: "share" }],
+          otherwise: "hide",
+        },
+      ],
+    },
+  ]),
   [restrictedDirectToken]: principalAuth(restrictedDirectToken, [
     {
       capability: "direct",
@@ -126,6 +141,7 @@ const PRINCIPAL_AUTH: Record<string, PrincipalOAuthAuthContext> = {
 function service(
   scopedHandles?: (authorization: CorpusAuthorization) => readonly ToolHandle[],
   canonicalOverrides: readonly ToolHandle[] = [],
+  scopeCapture?: ConstructorParameters<typeof DirectMcpService>[3],
 ): DirectMcpService {
   return new DirectMcpService(
     DIRECT_MCP_TOOL_NAMES.map(
@@ -146,6 +162,7 @@ function service(
     ),
     () => Promise.resolve({}),
     scopedHandles,
+    scopeCapture,
   );
 }
 
@@ -631,6 +648,57 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
       expect(recordMcpToolInvocation).toHaveBeenCalledWith(
         expect.objectContaining({ requireActiveAuthority: true }),
       );
+    },
+  );
+
+  it.each(["audit", "transcript"] as const)(
+    "checks filtered Direct provenance after the final asynchronous %s write",
+    async (stage) => {
+      let current = true;
+      const assertCurrent = vi.fn(() => {
+        if (!current) throw new Error("Invented native facts changed.");
+      });
+      const invoke = vi.fn(() =>
+        Promise.resolve({
+          kind: "structured" as const,
+          resultType: "test.result",
+          data: { ok: true },
+        }),
+      );
+      const handle: ToolHandle = {
+        name: "search_many",
+        description: "Invented scoped read",
+        schema: z.object({ value: z.string() }),
+        invoke,
+      };
+      const direct = service(
+        () => [handle],
+        [],
+        () => ({
+          observer: { recordDocuments() {}, markComplete() {} },
+          assertCurrent,
+        }),
+      );
+      const mutate = async () => {
+        await Promise.resolve();
+        current = false;
+      };
+      const { app, runtime } = appFixture(direct, {
+        ...(stage === "audit"
+          ? { recordMcpToolInvocation: mutate }
+          : { recordDirectAuditEvent: mutate }),
+      });
+      closeables.push(runtime);
+      const { client, transport } = await connect(app, scopedDirectToken);
+      closeables.push(client, transport);
+      const result = await client.callTool({
+        name: "search_many",
+        arguments: { value: "Invented query" },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).not.toContain('"ok":true');
+      expect(invoke).toHaveBeenCalledOnce();
+      expect(assertCurrent).toHaveBeenCalledOnce();
     },
   );
 

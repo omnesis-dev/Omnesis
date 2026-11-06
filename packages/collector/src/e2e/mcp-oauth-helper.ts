@@ -15,14 +15,24 @@ import {
   type StoredOAuthTokens,
 } from "@modelcontextprotocol/client";
 
+import type { ScopePolicy } from "@omnesis/types";
+
 export type TestGrantCapability = "direct" | "answer" | "notes";
 export type TestGrantRule =
   | {
-      capability: "direct" | "notes";
+      capability: "notes";
+      sources: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
+    }
+  | {
+      capability: "direct";
+      filterRevision?: number;
+      scopePolicies?: ScopePolicy[];
       sources: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
     }
   | {
       capability: "answer";
+      filterRevision?: number;
+      scopePolicies?: ScopePolicy[];
       sources: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
       release: { mode: "reviewed"; policyFamilyId: string } | { mode: "unreviewed" };
     };
@@ -619,8 +629,9 @@ export async function portalJson<T>(
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = body === undefined ? "GET" : "POST",
 ): Promise<T> {
   const response = await portalFetch(gatewayUrl, portal, method, path, body);
-  if (!response.ok) assertStatus(response, 200, path);
   const text = await response.text();
+  if (!response.ok)
+    throw new Error(`${path} returned HTTP ${response.status}: ${text.slice(0, 2000)}`);
   try {
     return JSON.parse(text) as T;
   } catch {

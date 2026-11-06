@@ -310,6 +310,7 @@ export {
 export {
   buildCompatManifest,
   HTTP_API_COMPAT,
+  SOURCE_SCOPES_PROTOCOL_RANGE,
   type CompatManifest,
   type StoreCompat,
   type StorePolicy,

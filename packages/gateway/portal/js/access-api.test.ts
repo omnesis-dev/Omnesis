@@ -13,6 +13,8 @@ const {
   deleteAccessLevel,
   getAccessAuthorization,
   getAccessOverview,
+  getSourceFilterOptions,
+  previewSourceFilter,
   lookupAccessAuthorization,
   moveConnectionLevel,
   revokeAccess,
@@ -22,6 +24,22 @@ const {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("delegated access API wrappers", () => {
+  test("source picker and preview requests bind the account path, preserve cancellation and use owner CSRF",async()=>{
+    const fetchMock=vi.fn(async(input:string)=>input==="/portal/api/session" ? Response.json({authenticated:true,scope:["admin"],csrfToken:"fictional-csrf"}) : Response.json({sourceId:"fictional:account/one",items:[]}));
+    vi.stubGlobal("fetch",fetchMock);await checkSession();
+    const controller=new AbortController();
+    await getSourceFilterOptions("fictional:account/one",{kind:"folder",q:"project",parentId:"folder/root",cursor:"opaque-cursor"},controller.signal);
+    const policy={sourceId:"fictional:account/one",audience:{accessLevel:"new",capability:"direct"},rules:[{action:"share",match:[{kind:"folder",id:"folder/root"}]}],otherwise:"hide"};
+    await previewSourceFilter("fictional:account/one",policy,controller.signal);
+    const get=fetchMock.mock.calls[1] as unknown as [string,RequestInit];
+    expect(get[0]).toBe("/admin/access/source-filters/fictional%3Aaccount%2Fone/options?kind=folder&q=project&parentId=folder%2Froot&cursor=opaque-cursor");
+    expect(get[1].signal).toBe(controller.signal);
+    const post=fetchMock.mock.calls[2] as unknown as [string,RequestInit];
+    expect(post[0]).toBe("/admin/access/source-filters/fictional%3Aaccount%2Fone/preview");
+    expect(post[1].signal).toBe(controller.signal);
+    expect(post[1].headers).toMatchObject({"X-Omnesis-CSRF":"fictional-csrf"});
+    expect(JSON.parse(post[1].body as string)).toEqual({policy});
+  });
   test("use the Portal access routes and attach CSRF to every mutation", async () => {
     const fetchMock = vi.fn(async (input: string, _init?: RequestInit) => {
       if (input === "/portal/api/session") {

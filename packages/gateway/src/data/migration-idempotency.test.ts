@@ -16,12 +16,14 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { getGrantCapabilities } from "../access/store-rules.js";
 import { createDatabase } from "../db.js";
 import { LATEST_SCHEMA_VERSION } from "./migrations.js";
 import {
   buildSeedDatabase,
   SEEDED_SCHEMA_VERSION,
   SEED_DONE_LOOP_ID,
+  SEED_GRANT_ID,
   SEED_OPEN_LOOP_ID,
 } from "./migration-idempotency-seed.js";
 import type { Db } from "./types.js";
@@ -74,6 +76,14 @@ describe("migration-idempotency standing fixture", () => {
     const db = createDatabase(dbPath) as unknown as Db;
     try {
       expect(userVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+      expect(getGrantCapabilities(db, SEED_GRANT_ID)).toMatchObject([
+        { capability: "direct", sourceMode: "all", sourceIds: [] },
+      ]);
+      expect(getGrantCapabilities(db, SEED_GRANT_ID)[0]?.scopePolicies ?? []).toEqual([]);
+      expect(db.prepare("SELECT 1 FROM access_levels").get()).toBeDefined();
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name='access_scope_capabilities'").get(),
+      ).toBeDefined();
 
       const recorded = new Set(
         db
@@ -239,7 +249,9 @@ describe("migration-idempotency standing fixture", () => {
     const first = createDatabase(dbPath) as unknown as Db;
     let firstLoops: Array<Record<string, unknown>>;
     let firstMigrationCount: number;
+    let firstCapabilities: ReturnType<typeof getGrantCapabilities>;
     try {
+      firstCapabilities = getGrantCapabilities(first, SEED_GRANT_ID);
       firstLoops = first
         .prepare<[], Record<string, unknown>>(
           "SELECT id, state, origin, accepted, created_at, last_update FROM open_loops ORDER BY id",
@@ -255,6 +267,7 @@ describe("migration-idempotency standing fixture", () => {
     const second = createDatabase(dbPath) as unknown as Db;
     try {
       expect(userVersion(second)).toBe(LATEST_SCHEMA_VERSION);
+      expect(getGrantCapabilities(second, SEED_GRANT_ID)).toEqual(firstCapabilities);
       expect(
         second
           .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM schema_migrations")
@@ -279,6 +292,23 @@ describe("migration-idempotency standing fixture", () => {
     const raw = new Database(dbPath, { readonly: true }) as unknown as Db;
     try {
       expect(userVersion(raw)).toBe(SEEDED_SCHEMA_VERSION);
+      expect(
+        raw
+          .prepare("SELECT source_mode,source_ids FROM access_grant_capabilities WHERE grant_id=?")
+          .get(SEED_GRANT_ID),
+      ).toEqual({ source_mode: "all", source_ids: "[]" });
+      expect(
+        raw
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE name IN ('access_levels','access_scope_capabilities','source_scope_descriptors','scope_generation_clock','answer_task_scope')",
+          )
+          .all(),
+      ).toEqual([]);
+      expect(
+        raw.prepare("SELECT name FROM pragma_table_info('oauth_refresh_tokens')").all(),
+      ).toEqual(
+        expect.arrayContaining([{ name: "replacement_ciphertext" }, { name: "retry_until" }]),
+      );
       const columns = raw
         .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('open_loops')")
         .all()

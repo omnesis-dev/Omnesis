@@ -662,6 +662,12 @@ fun HomeScaffold(
                     },
                 )
             }
+            composable("access-home") {
+                dev.omnesis.android.ui.access.AccessHomeScreen(
+                    onClose = { nav.popBackStack() },
+                    onConnect = { openSettingsChild(ACCESS_AUTHORIZATION_ROUTE) },
+                )
+            }
             composable(POLICIES_ROUTE) {
                 PoliciesListScreen(
                     onBack = { nav.returnToSettings() },
@@ -972,6 +978,7 @@ fun HomeScaffold(
                         openSettingsChild(DEVICES_ROUTE)
                     },
                     onOpenPolicies = { openSettingsChild(POLICIES_ROUTE) },
+                    onOpenAccessHome = { openSettingsChild("access-home") },
                     onOpenAccessAuthorization = {
                         openSettingsChild(ACCESS_AUTHORIZATION_ROUTE)
                     },

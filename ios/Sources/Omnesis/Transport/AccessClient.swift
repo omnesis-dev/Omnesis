@@ -56,6 +56,74 @@ public final class AccessClient: Sendable {
         _ = try await dispatch(method: "POST", path: path, body: body)
     }
 
+    public func createLevel(name: String, rules: [AccessGrantRule]) async throws -> AccessLevelSummary {
+        struct Body: Encodable { let name: String
+            let rules: [AccessGrantRule]
+        }
+        return try await saveLevel(
+            method: "POST",
+            path: "/admin/access/levels",
+            body: encoder.encode(Body(name: name, rules: rules))
+        )
+    }
+
+    public func updateLevel(
+        id: String,
+        name: String,
+        rules: [AccessGrantRule],
+        expectedRevision: Int,
+        expectedFilterRevisions: [String: Int]
+    ) async throws
+        -> AccessLevelSummary {
+        struct Body: Encodable {
+            let name: String
+            let rules: [AccessGrantRule]
+            let expectedRevision: Int
+            let expectedFilterRevisions: [String: Int]
+        }
+        return try await saveLevel(
+            method: "PATCH",
+            path: "/admin/access/levels/\(percentEncode(id))",
+            body: encoder.encode(Body(
+                name: name,
+                rules: rules,
+                expectedRevision: expectedRevision,
+                expectedFilterRevisions: expectedFilterRevisions
+            ))
+        )
+    }
+
+    private func saveLevel(method: String, path: String, body: Data) async throws -> AccessLevelSummary {
+        struct Reply: Decodable { let level: AccessLevelSummary }
+        return try await decodeOrThrow(Reply.self, from: dispatch(method: method, path: path, body: body)).level
+    }
+
+    public func scopeOptions(
+        sourceId: String,
+        kind: String,
+        query: String = "",
+        parentId: String? = nil,
+        cursor: String? = nil
+    ) async throws
+        -> ScopeOptions {
+        var components = URLComponents()
+        components.percentEncodedPath = "/admin/access/source-filters/\(percentEncode(sourceId))/options"
+        components.queryItems = [URLQueryItem(name: "kind", value: kind), URLQueryItem(name: "q", value: query)]
+        if let parentId { components.queryItems?.append(URLQueryItem(name: "parentId", value: parentId)) }
+        if let cursor { components.queryItems?.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await decodeOrThrow(ScopeOptions.self, from: dispatch(method: "GET", path: components.string!, body: nil))
+    }
+
+    public func scopePreview(_ policy: ScopePolicy) async throws -> ScopePreview {
+        struct Body: Encodable { let policy: ScopePolicy }
+        let path = "/admin/access/source-filters/\(percentEncode(policy.sourceId))/preview"
+        return try await decodeOrThrow(ScopePreview.self, from: dispatch(
+            method: "POST",
+            path: path,
+            body: encoder.encode(Body(policy: policy))
+        ))
+    }
+
     private func dispatch(method: String, path: String, body: Data?) async throws -> Data {
         guard let requestURL = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
             throw GatewayClient.Error.invalidURL
@@ -100,6 +168,10 @@ public final class AccessClient: Sendable {
     }
 
     private func percentEncode(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
+        value
+            .addingPercentEncoding(
+                withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+            ) ??
+            value
     }
 }

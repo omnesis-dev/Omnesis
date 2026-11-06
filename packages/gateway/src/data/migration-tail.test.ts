@@ -73,6 +73,8 @@ const WOUND_BACK = [
   210,
   // 211 lowers cursor stamps; its input is the sync_state rows a test plants.
   211,
+  // 212–217 source authority, native facts and Answer proofs are removed by undoSourceScopes.
+  212, 213, 214, 215, 216, 217,
 ];
 
 let dir: string;
@@ -86,6 +88,42 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
+
+interface ScopeTailObject {
+  type: "table" | "index" | "trigger";
+  name: string;
+}
+
+/** These namespaces are introduced by the source-scope migration tail. */
+function sourceScopeObjects(db: Db): ScopeTailObject[] {
+  const tables = (column: string) =>
+    ["scope_*", "source_scope_*", "document_scope_*", "access_scope_*", "answer_task_scope*"]
+      .map((pattern) => `${column} GLOB '${pattern}'`)
+      .join(" OR ");
+  return db
+    .prepare<[], ScopeTailObject>(
+      `SELECT type,name FROM sqlite_master
+    WHERE (type IN ('table','index') AND (${tables("tbl_name")}))
+      OR (type='trigger' AND (${tables("name")} OR name GLOB 'native_witness_*'
+        OR name GLOB 'native_document_*' OR name GLOB 'native_reprojection_*'))
+    ORDER BY type,name`,
+    )
+    .all();
+}
+
+/** Remove every added table (and its columns/indexes), plus triggers on older tables. */
+function undoSourceScopes(db: Db): void {
+  const objects = sourceScopeObjects(db);
+  const foreignKeys = db.pragma("foreign_keys", { simple: true });
+  db.pragma("foreign_keys = OFF");
+  try {
+    for (const type of ["trigger", "table"] as const)
+      for (const object of objects.filter((item) => item.type === type))
+        db.exec(`DROP ${type.toUpperCase()} "${object.name.replaceAll('"', '""')}"`);
+  } finally {
+    if (foreignKeys) db.pragma("foreign_keys = ON");
+  }
+}
 
 /** Remove additive evidence shape so migration 192 must install it again. */
 function undoVocabularyEvidence(db: Db): void {
@@ -256,6 +294,7 @@ function undoKnowledge(db: Db): void {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  undoSourceScopes(db);
   db.exec("ALTER TABLE agent_messages DROP COLUMN author_json");
   undoInterest(db);
   undoDecisionAnchors(db);
@@ -614,8 +653,52 @@ describe("an install several versions behind, upgrading", () => {
     expect(WOUND_BACK).toEqual(TAIL_VERSIONS);
   });
 
+  test("source scope migrations recreate their entire schema instead of replaying over it", () => {
+    const head = createDatabase(dbPath) as unknown as Db;
+    const expected = sourceScopeObjects(head);
+    try {
+      expect(expected).toEqual(
+        expect.arrayContaining([
+          { type: "table", name: "access_scope_capabilities" },
+          { type: "table", name: "source_scope_descriptor_conflicts" },
+          { type: "table", name: "scope_fact_rebuilds" },
+          { type: "table", name: "answer_task_scope" },
+          { type: "table", name: "scope_hierarchy_dependencies" },
+          { type: "table", name: "scope_native_desired_witnesses" },
+          { type: "table", name: "access_scope_policy_sources" },
+          { type: "trigger", name: "scope_legacy_level_insert" },
+        ]),
+      );
+      windBack(head);
+      expect(sourceScopeObjects(head)).toEqual([]);
+    } finally {
+      (head as unknown as Database.Database).close();
+    }
+    const upgraded = upgrade();
+    try {
+      expect(sourceScopeObjects(upgraded)).toEqual(expected);
+      expect(
+        upgraded
+          .prepare("SELECT name FROM pragma_table_info('source_scope_refresh_requirements')")
+          .all(),
+      ).toEqual(expect.arrayContaining([{ name: "epoch" }, { name: "request_id" }]));
+      expect(
+        upgraded.prepare("SELECT name FROM pragma_table_info('scope_conversations')").all(),
+      ).toEqual(
+        expect.arrayContaining([
+          { name: "authority_id" },
+          { name: "revision_epoch" },
+          { name: "revision_sequence" },
+        ]),
+      );
+    } finally {
+      (upgraded as unknown as Database.Database).close();
+    }
+  });
+
   test("the tail runs in order and lands on the head version", () => {
     seedOlderInstall((old) => {
+      expect(sourceScopeObjects(old)).toEqual([]);
       expect(
         old.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
       ).toBeUndefined();

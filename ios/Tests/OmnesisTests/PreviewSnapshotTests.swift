@@ -8093,6 +8093,119 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testAccessScopeAuthoringDisabledEntries() {
+        let overview = PreviewMocks.scopeReadOnlyOverview
+        snapshot(
+            NavigationStack { AccessLevelEditorView(level: overview.levels[0], overview: overview) }.environment(AppStore.preview()),
+            name: "scope-level-authoring-disabled",
+            size: CGSize(width: 393, height: 1600)
+        )
+        snapshot(
+            AccessAuthorizationSheet(
+                previewRequest: PreviewMocks.accessAuthorizationRequest,
+                overview: overview,
+                mode: .sharedSources
+            ).environment(AppStore.preview()),
+            name: "scope-consent-authoring-disabled",
+            size: CGSize(width: 393, height: 1400)
+        )
+    }
+
+    func testAccessScopeEditors() {
+        let overview = PreviewMocks.scopeEditorOverview
+        snapshot(
+            NavigationStack { AccessHomeView(previewOverview: overview) }.environment(AppStore.preview()),
+            name: "scope-access-home"
+        )
+        snapshot(
+            NavigationStack { AccessLevelEditorView(level: overview.levels[0], overview: overview) }.environment(AppStore.preview()),
+            name: "scope-access-level",
+            size: CGSize(width: 393, height: 1600)
+        )
+        snapshot(
+            NavigationStack { AccessLevelEditorView(level: nil, overview: overview) }.environment(AppStore.preview()),
+            name: "scope-access-new"
+        )
+        snapshot(
+            NavigationStack {
+                SourceFilterEditorView(
+                    source: PreviewMocks.scopeEditorSource,
+                    levelId: "scope-level",
+                    capability: "answer",
+                    initialPolicy: PreviewMocks.scopeEditorPolicy,
+                    authoringEnabled: true,
+                    preview: PreviewMocks.scopeEditorPreview
+                ) { _ in }
+            }
+            .environment(AppStore.preview()),
+            name: "scope-filter",
+            size: CGSize(width: 393, height: 1500)
+        )
+        snapshot(
+            NavigationStack {
+                SourceFilterEditorView(
+                    source: PreviewMocks.scopeEditorSource,
+                    levelId: "scope-level",
+                    capability: "answer",
+                    initialPolicy: PreviewMocks.scopeEditorPolicy,
+                    authoringEnabled: false,
+                    preview: PreviewMocks.scopeEditorPreview
+                ) { _ in }
+            }
+            .environment(AppStore.preview()),
+            name: "scope-filter-disabled",
+            size: CGSize(width: 393, height: 1400)
+        )
+        snapshot(
+            NavigationStack {
+                SourceFilterEditorView(
+                    source: PreviewMocks.scopeEditorSource,
+                    levelId: "scope-level",
+                    capability: "answer",
+                    initialPolicy: PreviewMocks.scopeEditorPolicy,
+                    authoringEnabled: true,
+                    preview: PreviewMocks.scopeEditorPreview
+                ) { _ in }
+            }
+            .environment(AppStore.preview()).dynamicTypeSize(.accessibility2),
+            name: "scope-filter-accessible",
+            size: CGSize(width: 393, height: 2200)
+        )
+    }
+
+    func testAccessScopePickerStates() {
+        snapshot(NavigationStack {
+            SourceFilterPickerView(source: PreviewMocks.scopeFolderSource, options: PreviewMocks.scopeFolderOptions) { _ in }
+        }.environment(AppStore.preview()), name: "scope-folder-picker")
+        snapshot(NavigationStack {
+            SourceFilterPickerView(source: PreviewMocks.scopeParticipantSource, typedInput: "maya@example.org") { _ in }
+        }.environment(AppStore.preview()), name: "scope-phone-invalid")
+    }
+
+    func testAccessScopePreparationAndConflict() {
+        snapshot(NavigationStack {
+            SourceFilterEditorView(
+                source: PreviewMocks.scopeEditorSource,
+                levelId: "scope-level",
+                capability: "answer",
+                initialPolicy: PreviewMocks.scopeEditorPolicy,
+                authoringEnabled: true,
+                preview: PreviewMocks.scopePreparingPreview
+            ) { _ in }
+        }.environment(AppStore.preview()), name: "scope-filter-preparing")
+        snapshot(
+            NavigationStack {
+                AccessLevelEditorView(
+                    level: PreviewMocks.scopeEditorOverview.levels[0],
+                    overview: PreviewMocks.scopeEditorOverview,
+                    previewConflict: true
+                )
+            }.environment(AppStore.preview()),
+            name: "scope-level-stale",
+            size: CGSize(width: 393, height: 1800)
+        )
+    }
+
     func testAccessAuthorizationCodeGate() {
         snapshot(
             AccessAuthorizationSheet()

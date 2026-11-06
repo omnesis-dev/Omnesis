@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createScopeDescriptorsSchema } from "../access/scope-descriptors.js";
+import {
+  createScopeFactsSchema,
+  createScopeFactsDocumentTriggers,
+} from "../access/scope-schema.js";
 import { createKnowledgeTables } from "../brain/knowledge/schema.js";
 import { createKnowledgeDecisionTable } from "../brain/knowledge/decision-storage.js";
 import { installKnowledgeOwnerTriggers } from "../brain/knowledge/owner-triggers.js";
@@ -79,6 +84,8 @@ export function runSchemaSetup(db: Db): void {
 }
 
 function runSchemaSetupInTxn(db: Db): void {
+  createScopeFactsSchema(db);
+  createScopeDescriptorsSchema(db);
   createTranscriptionVocabularyTables(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS documents (
@@ -118,6 +125,7 @@ function runSchemaSetupInTxn(db: Db): void {
     )
   `);
 
+  createScopeFactsDocumentTriggers(db);
   if (
     (
       db.prepare("SELECT name FROM pragma_table_info('documents')").all() as Array<{ name: string }>
@@ -501,6 +509,7 @@ function runSchemaSetupInTxn(db: Db): void {
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_sources_device ON sources(device_id)");
+  createScopeFactsDocumentTriggers(db);
 
   // Which devices may contribute to a source. `sources.device_id` remains
   // the primary member (compatibility read); this table is the membership

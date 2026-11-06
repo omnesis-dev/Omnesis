@@ -29,6 +29,7 @@
 
 import { QueueTracker, ScanTracker, StatelessTracker } from "../../background-jobs/trackers.js";
 import { periodicJob } from "../../background-jobs/scheduler-job.js";
+import { scopeFactsBackfillTask } from "./scope-facts.js";
 import { type IdleResult } from "./backfill-helpers.js";
 import {
   linkBackfillTask,
@@ -291,7 +292,9 @@ export function createBackfillTasks(opts: BackfillTaskOpts, scheduler: Scheduler
   const nearDupDfRefresh = nearDupDfRefreshTask(internal);
   const nearDupAlgoSweep = nearDupAlgoSweepTask(internal);
 
+  const scopeFacts = scopeFactsBackfillTask(internal);
   const tasks = [
+    scopeFacts,
     linkBackfill,
     linkReconcile,
     peopleBackfill,
@@ -310,6 +313,14 @@ export function createBackfillTasks(opts: BackfillTaskOpts, scheduler: Scheduler
   ];
 
   const jobs: BackgroundJob[] = [
+    periodicJob(scopeFacts, {
+      scheduler,
+      displayName: "Source filter facts",
+      description:
+        "Projects native source metadata for external-agent source filters in bounded batches.",
+      category: "graph",
+      tracker: new StatelessTracker(),
+    }),
     periodicJob(linkBackfill, {
       scheduler,
       displayName: "Link extraction",

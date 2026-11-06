@@ -31,6 +31,7 @@ import {
   mapCallLogRecords,
   mapVoicemail,
 } from "./fixtures.js";
+import { createChatFixtureSource } from "./scope-source.js";
 import type { StructuredSyncResult } from "@omnesis/source-sdk";
 
 const { type: _type, ...rest } = realApple;
@@ -195,6 +196,8 @@ export default defineProvider<Record<string, never>>({
       // know it. Inheriting the declaration refuses that cursor on the next tick.
       contract: undefined,
       async create({ sourceId, providerId }) {
+        if (s.id === "apple-imessage")
+          return createChatFixtureSource(loadChats(), { sourceId, providerId });
         const w = wiring[s.id];
         if (!w) throw new Error(`No synth wiring for apple source: ${s.id}`);
         const entries = w.load();

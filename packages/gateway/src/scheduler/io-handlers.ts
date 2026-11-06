@@ -15,6 +15,7 @@
  *                                  a real handler
  */
 
+import { readScopeSourceGenerations } from "../access/scope-generations.js";
 import type Database from "better-sqlite3";
 import { readOccMeta } from "../data/occ-materialized.js";
 import { collectorRosterSnapshot } from "../collector-declaration-roster.js";
@@ -293,6 +294,8 @@ export const ioHandlers = {
   // Whether each of a search's hits may be shown. A knowledge mirror's verdict
   // walks its node's ancestors, which on a large page takes a second or more;
   // search fences its whole candidate pool, twice, on every query.
+  "io.scopeSourceGenerations": (db: Db, sourceIds: string[]) =>
+    readScopeSourceGenerations(db, sourceIds),
   "io.knowledgeDocumentsReadable": (db: Db, refs: KnowledgeDocumentRef[]) =>
     knowledgeDocumentsReadable(db, refs),
 

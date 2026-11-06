@@ -117,6 +117,7 @@ export class SyncEngine {
       filePollIntervalMs?: number;
       syncTimeoutMs?: number;
       ingestionContext?: DocumentIngestionContext;
+      scopeRefreshActorId?: string;
     },
   ) {
     this.pushDebounceMs = opts?.pushDebounceMs ?? DEFAULT_PUSH_DEBOUNCE_MS;
@@ -137,6 +138,7 @@ export class SyncEngine {
       syncTimeoutMs,
       undefined,
       opts?.ingestionContext,
+      opts?.scopeRefreshActorId,
     );
     this.dispatcher = new SyncDispatcher(this.registry, (source, reason) =>
       this.syncSource(source, reason),

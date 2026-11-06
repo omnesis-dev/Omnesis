@@ -789,3 +789,31 @@ confirms before merge, each with the exact steps:
 - Finish with the ranked report, the list of files you changed, and the
   manual validation list. Do not declare the source ready: that is the
   author's and maintainers' call once § 17 is done.
+
+## Source scope facts (when declared)
+
+- `scopes.items` declares only source-native, stable item kinds and accepted
+  identifier types. Display names never decide access, and shared consumers
+  never branch on the source name.
+- A legacy projection recipe reads only source-owned metadata. Native people
+  identifiers are captured independently of mutable person merges; body-only
+  mentions do not count. Unknown or unresolved identifiers remain incomplete.
+- Conversation membership applies to every stored day, including silent
+  members, and membership changes invalidate historical facts. Labels use
+  stable IDs and follow label-only changes. Folder facts include ancestors;
+  moves invalidate affected descendants before any bounded recompute.
+- New fact payloads are negotiated with the gateway compatibility manifest.
+  A source with no scope declaration keeps its existing behavior. A filtered
+  read fails closed on absent or stale facts; attachments inherit their parent.
+- Required native refresh cuts bind durable cursor progress to the native
+  store, registered actor and holder/member role. A restart request keeps its
+  nonce across retries and follows a replacement epoch only after the gateway
+  acknowledges that nonce; an unrelated epoch change is not an acknowledgement.
+  Members never rotate or release the source-wide refresh fence.
+- A required epoch is echoed only after fresh authoritative native observation,
+  never by relabelling cached metadata. Unreachable or malformed native rows
+  stay unknown. Full refreshes paginate aggregate work, survive lost cursors,
+  and omit unsupported wire fields after a gateway downgrade.
+- Tests cover both list modes, missing facts, identifier stability and each
+  declared link's update behavior. Refresh readiness is explicit, not inferred
+  from a display tag or from one document having complete facts.

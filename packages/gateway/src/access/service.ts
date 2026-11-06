@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { hasSavedScopePolicySource } from "./scope-policy-source-index.js";
 import {
   agentDeviceAuthorizations,
   agentDeviceRevocationImpacts,
@@ -9,7 +10,6 @@ import {
   getAuthorizationRequestById,
   getAuthorizationRequestByUserCode,
   getRefreshTokenAudience,
-  issueAuthorizationCodeById,
   getOAuthClient,
   listAccessAuditEvents,
   listAccessOverview,
@@ -19,7 +19,6 @@ import {
   preflightExecutionTokensReissue,
   preflightOAuthTokenExchange,
   preflightOAuthTokenRevocation,
-  upsertOAuthMetadataClient,
 } from "./store.js";
 import { registeredRedirectMatches } from "./redirect-uri.js";
 import { getLiveLevelRow } from "./store-level-summaries.js";
@@ -65,6 +64,18 @@ export class AccessService {
     private readonly reader: Db,
     private readonly writer: WriteGate,
   ) {}
+
+  hasSavedSourceFilters(sourceId: string): boolean {
+    return hasSavedScopePolicySource(this.reader, sourceId);
+  }
+
+  isNativeAccessEditorDevice(deviceId: string): boolean {
+    return !!this.reader
+      .prepare(
+        "SELECT 1 FROM devices WHERE id=? AND revoked_at IS NULL AND kind IN ('ios','android')",
+      )
+      .get(deviceId);
+  }
 
   registerOAuthClient(input: OAuthClientRegistrationInput) {
     return this.writer.registerOAuthClient(input);

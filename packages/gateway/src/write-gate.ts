@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+
+import { acknowledgeScopeReplay, type ScopeSourceGeneration } from "./access/scope-generations.js";
 import {
   reserveNoteHandoff,
   claimNoteHandoff,
@@ -102,8 +105,8 @@ import {
  * routes each typed method through the Scheduler's writer runner
  * (which owns the single writable handle on omnesis.db). Tests that don't need the
  * crash-protection invariant hand in `directWriteGate(db)`, which
- * just wraps the sync write functions in `Promise.resolve` and runs
- * them on the test's own db handle.
+ * runs writes on the test's own db handle. Cursor pages retain bounded
+ * transactions and yield to the event loop between their continuations.
  *
  * Why this indirection: the Scheduler-backed gate round-trips every
  * call over a worker `postMessage`, which requires spawning a Worker.
@@ -180,7 +183,7 @@ import type {
 
 import {
   upsertDocuments,
-  upsertWithCursor,
+  upsertWithCursorYieldable,
   prepareDocumentsForWrite,
   deleteDocuments,
   deleteDocumentForUser,
@@ -682,6 +685,8 @@ import {
   completeSourceStreamCleanup,
   recordSourceStreamCleanupFailure,
 } from "./data/repositories/SourceStreamCleanupRepository.js";
+import { backfillDocumentScopes, type ScopeBackfillResult } from "./access/scope-backfill.js";
+import { upsertSourceScopes, type SourceScopesEntry } from "./access/scope-descriptors.js";
 import {
   upsertSourceDocumentProfiles,
   type SourceDocumentProfileEntry,
@@ -721,6 +726,7 @@ import type {
 } from "./transcribe/vocabulary/types.js";
 
 export interface WriteGate extends KnowledgeWriteGate {
+  acknowledgeScopeReplay(completed: ScopeSourceGeneration): Promise<number>;
   advanceTranscriptionVocabularyRebuild(
     settings: VocabularySettings,
   ): Promise<{ ready: boolean; worked: boolean }>;
@@ -738,6 +744,7 @@ export interface WriteGate extends KnowledgeWriteGate {
     streams?: Readonly<Record<string, string>>,
     /** Conflict policies for independently replicated shared sources. */
     replicaVersionPolicies?: Readonly<Record<string, "source-updated-at">>,
+    scopeRefreshActorId?: string,
   ): Promise<{
     rejectedSourceIds: string[];
     ignoredReplicaDocuments: Array<{ sourceId: string; externalId: string }>;
@@ -955,6 +962,7 @@ export interface WriteGate extends KnowledgeWriteGate {
     sourceId: string,
     docDate: string,
   ): Promise<{ resolved: number; created: number; skipped: number }>;
+  backfillDocumentScopes(batchSize: number): Promise<ScopeBackfillResult>;
   backfillManyPeople(
     batchSize?: number,
   ): Promise<{ processed: number; resolved: number; skipped: number }>;
@@ -1646,6 +1654,11 @@ export interface WriteGate extends KnowledgeWriteGate {
    * publishing collector's full declaration. See
    * `data/repositories/SourceDocumentProfileRepository.ts`.
    */
+  upsertSourceScopes(
+    entries: readonly SourceScopesEntry[],
+    publishedAt: number,
+  ): Promise<{ stored: number }>;
+
   upsertSourceDocumentProfiles(
     entries: readonly SourceDocumentProfileEntry[],
     publishedAt: number,
@@ -2380,6 +2393,7 @@ export function maintenanceCanonicalWriteGate(
 }
 export function writeGateFromCall(call: WriterCallFn): WriteGate {
   const gate: WriteGate = {
+    acknowledgeScopeReplay: (completed) => call("scopes.acknowledgeReplay", [completed]),
     ...knowledgeGateFromCall(call),
     upsertDocuments: (
       docs,
@@ -2388,6 +2402,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       cursorRows,
       streams,
       replicaVersionPolicies,
+      scopeRefreshActorId,
     ) => {
       const registry = canonicalizerRegistryForWrite(canonicalizers);
       const prepared = prepareDocumentsForWrite(docs, registry);
@@ -2397,6 +2412,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
         cursorRows,
         streams,
         replicaVersionPolicies,
+        scopeRefreshActorId,
       ]);
     },
     deleteDocuments: (providerId, sourceId, externalIds, expectedWipeEpoch, cursorRow, streamId) =>
@@ -2482,6 +2498,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("people.findOrCreatePerson", [mention, sourceId, docDate]),
     resolveDocumentPeople: (docId, people, sourceId, docDate) =>
       call("people.resolveDocumentPeople", [docId, people, sourceId, docDate]),
+    backfillDocumentScopes: (batchSize) => call("scopes.backfill", [batchSize]),
     backfillManyPeople: (batchSize) => call("people.backfillManyPeople", [batchSize]),
     seedFromContacts: () => call("people.seedFromContacts", []),
     upsertSeedFromContacts: (plan) => call("people.upsertSeedFromContacts", [plan]),
@@ -2722,6 +2739,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     markSourceCleanupDone: (id) => call("sources.markSourceCleanupDone", [id]),
     clearSourceRemoved: (id) => call("sources.clearSourceRemoved", [id]),
     clearSourceRemovedIfCleanupDone: (id) => call("sources.clearSourceRemovedIfCleanupDone", [id]),
+    upsertSourceScopes: (entries, publishedAt) =>
+      call("sources.upsertScopes", [entries, publishedAt]),
     upsertSourceDocumentProfiles: (entries, publishedAt) =>
       call("sources.upsertDocumentProfiles", [entries, publishedAt]),
 
@@ -2926,12 +2945,13 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
 }
 
 /**
- * Sync-in-Promise adapter for tests. Runs each write directly against
- * the passed db handle. Don't use in production — bypasses the single-
- * writer invariant.
+ * Direct-handle adapter for isolated tests. Cursor pages cooperate between
+ * bounded continuations; the remaining writes run directly on the passed
+ * handle. Production uses the scheduler to preserve the single-writer invariant.
  */
 export function directWriteGate(db: Db): WriteGate {
   const gate: WriteGate = {
+    acknowledgeScopeReplay: async (completed) => acknowledgeScopeReplay(db, completed),
     ...directKnowledgeGate(db),
     upsertDocuments: async (
       docs,
@@ -2940,18 +2960,32 @@ export function directWriteGate(db: Db): WriteGate {
       cursorRows,
       streams,
       replicaVersionPolicies,
+      scopeRefreshActorId,
     ) => {
       const registry = canonicalizerRegistryForWrite(canonicalizers);
-      const result = upsertDocuments(db, prepareDocumentsForWrite(docs, registry), {
-        writeEpochs,
-        cursorRows,
-        streams,
-        replicaVersionPolicies,
-      });
+      let remaining = prepareDocumentsForWrite(docs, registry);
+      const rejectedSourceIds: string[] = [];
+      const ignoredReplicaDocuments: Array<{ sourceId: string; externalId: string }> = [];
+      const suppressedDocuments: Array<{ sourceId: string; externalId: string }> = [];
+      do {
+        const result = upsertDocuments(db, remaining, {
+          token: { requested: () => true },
+          writeEpochs,
+          cursorRows,
+          streams,
+          replicaVersionPolicies,
+          scopeRefreshActorId,
+        });
+        rejectedSourceIds.push(...result.rejectedSourceIds);
+        ignoredReplicaDocuments.push(...result.ignoredReplicaDocuments);
+        suppressedDocuments.push(...result.suppressedDocuments);
+        remaining = result.remaining;
+        if (remaining.length) await yieldToEventLoop();
+      } while (remaining.length);
       return {
-        rejectedSourceIds: result.rejectedSourceIds,
-        ignoredReplicaDocuments: result.ignoredReplicaDocuments,
-        suppressedDocuments: result.suppressedDocuments,
+        rejectedSourceIds,
+        ignoredReplicaDocuments,
+        suppressedDocuments,
       };
     },
     deleteDocuments: async (
@@ -3027,12 +3061,23 @@ export function directWriteGate(db: Db): WriteGate {
     },
     upsertWithCursor: async (args, canonicalizers) => {
       const registry = canonicalizerRegistryForWrite(canonicalizers);
-      return upsertWithCursor(db, {
-        ...args,
-        documents: args.documents
-          ? prepareDocumentsForWrite(args.documents, registry)
-          : args.documents,
-      });
+      let outcome = upsertWithCursorYieldable(
+        db,
+        {
+          ...args,
+          documents: args.documents
+            ? prepareDocumentsForWrite(args.documents, registry)
+            : args.documents,
+        },
+        { token: { requested: () => true } },
+      );
+      while (outcome.kind === "yield") {
+        await yieldToEventLoop();
+        outcome = upsertWithCursorYieldable(db, outcome.resume, {
+          token: { requested: () => true },
+        });
+      }
+      return outcome.value;
     },
     applySourceUrlRecanonicalizationPage: async (cursor, mutations) =>
       writerHandlers["db.applySourceUrlRecanonicalizationPage"](db, cursor, mutations),
@@ -3070,6 +3115,7 @@ export function directWriteGate(db: Db): WriteGate {
       findOrCreatePerson(db, mention, sourceId, docDate),
     resolveDocumentPeople: async (docId, people, sourceId, docDate) =>
       resolveDocumentPeople(db, docId, people, sourceId, docDate),
+    backfillDocumentScopes: async (batchSize) => backfillDocumentScopes(db, batchSize),
     backfillManyPeople: async (batchSize) => backfillManyPeople(db, batchSize),
     seedFromContacts: async () => seedFromContacts(db),
     upsertSeedFromContacts: async (plan) => upsertSeedFromContacts(db, plan),
@@ -3372,6 +3418,8 @@ export function directWriteGate(db: Db): WriteGate {
     markSourceCleanupDone: async (id) => markSourceCleanupDone(db, id),
     clearSourceRemoved: async (id) => clearSourceRemoved(db, id),
     clearSourceRemovedIfCleanupDone: async (id) => clearSourceRemovedIfCleanupDone(db, id),
+    upsertSourceScopes: async (entries, publishedAt) =>
+      upsertSourceScopes(db, entries, publishedAt),
     upsertSourceDocumentProfiles: async (entries, publishedAt) =>
       upsertSourceDocumentProfiles(db, entries, publishedAt),
 

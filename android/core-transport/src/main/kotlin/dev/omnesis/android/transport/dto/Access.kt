@@ -68,6 +68,8 @@ data class AccessGrantRule(
     val capability: AccessCapability,
     val sources: AccessSourceBoundary,
     val release: AccessAnswerRelease? = null,
+    val filterRevision: Int? = null,
+    val scopePolicies: List<ScopePolicy> = emptyList(),
 ) {
     init {
         require(
@@ -94,6 +96,9 @@ data class AccessSourceInstance(
     val name: String,
     val icon: String? = null,
     val available: Boolean = true,
+    val sourceType: String? = null,
+    val scopes: SourceScopes? = null,
+    val scopeReadiness: List<ScopeKindReadiness>? = null,
 )
 
 @Serializable
@@ -173,6 +178,7 @@ data class AccessOverview(
     val pendingRequests: List<AccessPendingRequest> = emptyList(),
     /** The live access levels; empty from a gateway that has none or predates them. */
     val levels: List<AccessLevelSummary> = emptyList(),
+    val sourceFilters: SourceFiltersAvailability? = null,
 )
 
 @Serializable
@@ -184,6 +190,7 @@ private data class AccessOverviewWire(
     val defaultPolicyFamilyId: String? = null,
     val pendingRequests: List<AccessPendingRequest>? = null,
     val levels: List<AccessLevelSummary>? = null,
+    val sourceFilters: SourceFiltersAvailability? = null,
 )
 
 object AccessOverviewSerializer : KSerializer<AccessOverview> {
@@ -198,6 +205,7 @@ object AccessOverviewSerializer : KSerializer<AccessOverview> {
             defaultPolicyFamilyId = wire.defaultPolicyFamilyId,
             pendingRequests = wire.pendingRequests.orEmpty(),
             levels = wire.levels.orEmpty(),
+            sourceFilters = wire.sourceFilters,
         )
     }
 
@@ -211,6 +219,7 @@ object AccessOverviewSerializer : KSerializer<AccessOverview> {
                 defaultPolicyFamilyId = value.defaultPolicyFamilyId,
                 pendingRequests = value.pendingRequests,
                 levels = value.levels,
+                sourceFilters = value.sourceFilters,
             ),
         )
     }

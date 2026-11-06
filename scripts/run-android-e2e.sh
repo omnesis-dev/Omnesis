@@ -13,6 +13,8 @@ export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
 export OMNESIS_CONFIG_DIR="${OMNESIS_CONFIG_DIR:-/tmp/omnesis-android-e2e}"
 export OMNESIS_GATEWAY_PORT="${OMNESIS_GATEWAY_PORT:-17700}"
 export OMNESIS_SYNTH_UNIVERSE="${OMNESIS_SYNTH_UNIVERSE:-e2e-minimal}"
+# This isolated gateway exercises experimental filter authoring explicitly.
+export OMNESIS_EXPERIMENTAL=1
 
 URL="https://localhost:${OMNESIS_GATEWAY_PORT}"
 CONFIG_FILE="/tmp/omnesis-android-e2e-config.json"
@@ -84,12 +86,8 @@ if [[ "$catalogue_ready" != 1 ]]; then
   exit 1
 fi
 
-# The config carries the gateway admin token; create it owner-only from the
-# start (umask in a subshell, no world-readable window).
-(umask 077; cat > "$CONFIG_FILE" <<EOF
-{"gatewayURL":"$URL","apiToken":"$TOKEN","tlsFingerprint":"$FINGERPRINT"}
-EOF
-)
+# Pair a real owner phone; the helper writes its short-lived config owner-only.
+node "$ROOT/scripts/ci/native-e2e-pair.mjs" "$URL" "$OMNESIS_CONFIG_DIR/token" android "$CONFIG_FILE" "$FINGERPRINT"
 echo "→ Config written to $CONFIG_FILE (fingerprint=$FINGERPRINT)"
 
 echo "→ Running Android live-gateway E2E (host JVM, real TLS pinning)…"

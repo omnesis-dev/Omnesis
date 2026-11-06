@@ -1196,6 +1196,144 @@ describe("AppleIMessageSource", () => {
     expect(group!.metadata.sourceUrl).toBe("messages://open?message-guid=msg-200");
   });
 
+  test("pages native roster upgrades across more than 256 conversations", async () => {
+    for (let index = 10; index < 311; index++)
+      insertChat(testDb, index, `scope-page-${index}`, { handleIds: [1] });
+    let cursor: Awaited<ReturnType<typeof source.sync>>["cursor"] | null = null;
+    const seen = new Set<string>();
+    let hasMore = true;
+    let pages = 0;
+    while (hasMore && pages < 10) {
+      const page = await source.sync(cursor, { scopeFactsSupported: true });
+      const updates = page.scopeUpdates?.conversations ?? [];
+      expect(updates.length).toBeLessThanOrEqual(200);
+      for (const item of updates) {
+        expect(seen.has(item.id)).toBe(false);
+        seen.add(item.id);
+      }
+      cursor = page.cursor;
+      hasMore = page.hasMore ?? false;
+      pages += 1;
+    }
+    expect(hasMore).toBe(false);
+    expect(seen.size).toBe(303);
+    expect(pages).toBeGreaterThan(1);
+  });
+
+  test("refreshes required participant cuts across old completed cursors and protocol-one intervals", async () => {
+    for (let index = 10; index < 311; index++)
+      insertChat(testDb, index, `scope-page-${index}`, { handleIds: [1] });
+    const options = (epoch: string, requestId?: string, actorId = "collector-a") => ({
+      scopeFactsSupported: true,
+      scopeRefreshEpochsSupported: true,
+      scopeRefreshEpochs: { participant: epoch },
+      scopeRefreshActorId: actorId,
+      ...(requestId ? { scopeRefreshRequestIds: { participant: requestId } } : {}),
+    });
+    const legacy = await source.sync(null, { scopeFactsSupported: true });
+    const restart = await source.sync(legacy.cursor, options("required-b"));
+    expect(restart.scopeUpdates?.refreshes).toEqual([
+      {
+        kind: "participant",
+        active: true,
+        epoch: "required-b",
+        restart: true,
+        requestId: expect.any(String),
+      },
+    ]);
+    const first = await source.sync(
+      restart.cursor,
+      options("required-c", restart.scopeUpdates?.refreshes?.[0]?.requestId),
+    );
+    expect(first.scopeUpdates?.conversations).toHaveLength(200);
+    expect(
+      first.scopeUpdates?.conversations?.every((item) => item.refreshEpoch === "required-c"),
+    ).toBe(true);
+    const replay = await source.sync(
+      restart.cursor,
+      options("required-c", restart.scopeUpdates?.refreshes?.[0]?.requestId),
+    );
+    expect(replay.scopeUpdates?.conversations?.map((item) => item.id)).toEqual(
+      first.scopeUpdates?.conversations?.map((item) => item.id),
+    );
+    const changed = await source.sync(first.cursor, options("required-d"));
+    expect(changed.scopeUpdates?.refreshes?.[0]?.restart).toBe(true);
+    const next = await source.sync(
+      changed.cursor,
+      options("required-e", changed.scopeUpdates?.refreshes?.[0]?.requestId),
+    );
+    const final = await source.sync(
+      next.cursor,
+      options("required-e", changed.scopeUpdates?.refreshes?.[0]?.requestId),
+    );
+    expect(
+      new Set(
+        [...next.scopeUpdates!.conversations!, ...final.scopeUpdates!.conversations!].map(
+          (item) => item.id,
+        ),
+      ).size,
+    ).toBe(303);
+    expect(final.scopeUpdates?.refreshes).toEqual([
+      { kind: "participant", active: false, epoch: "required-e" },
+    ]);
+    const oldGateway = await source.sync(final.cursor, { scopeFactsSupported: true });
+    expect(oldGateway.cursor.scopeParticipantRefresh).toBeUndefined();
+    expect(oldGateway.cursor.scopeRosterComplete).toBe(true);
+    const upgrade = await source.sync(
+      oldGateway.cursor,
+      options("required-e", changed.scopeUpdates?.refreshes?.[0]?.requestId),
+    );
+    expect(upgrade.scopeUpdates?.refreshes?.[0]?.restart).toBe(true);
+    const peer = await source.sync(
+      final.cursor,
+      options("required-e", changed.scopeUpdates?.refreshes?.[0]?.requestId, "collector-b"),
+    );
+    expect(peer.scopeUpdates?.refreshes?.[0]?.restart).toBe(true);
+    expect(peer.cursor.scopeParticipantRefresh).toMatchObject({ actorId: "collector-b" });
+  });
+
+  test("negotiates native roster refresh without resync and follows joins and leaves across old days", async () => {
+    insertHandle(testDb, 50, "maya@example.org");
+    insertHandle(testDb, 51, "jamie@example.org");
+    insertChat(testDb, 50, "scope-roster-group", {
+      displayName: "Cedar planning",
+      handleIds: [50, 51],
+    });
+    insertMessage(testDb, 500, 50, {
+      text: "Only one person spoke",
+      handleId: 50,
+      date: DATE_2024_03_08_10AM,
+    });
+    const legacy = await source.sync(null);
+    expect(legacy.scopeUpdates).toBeUndefined();
+    const refreshed = await source.sync(legacy.cursor, { scopeFactsSupported: true });
+    const snapshot = refreshed.scopeUpdates!.conversations!.find(
+      (update) => update.id === "scope-roster-group",
+    )!;
+    expect(snapshot.mode).toBe("snapshot");
+    expect(snapshot.participants.flatMap((person) => person.identifiers ?? [])).toContainEqual({
+      kind: "email",
+      value: "jamie@example.org",
+    });
+    testDb.prepare("DELETE FROM chat_handle_join WHERE chat_id=50 AND handle_id=50").run();
+    const changed = await source.sync(refreshed.cursor, { scopeFactsSupported: true });
+    const day = changed.documents.find(
+      (doc) => doc.externalId === "scope-roster-group:2024-03-08",
+    )!;
+    expect(day).toBeDefined();
+    const native = day.metadata.extra!.scopeConversation as {
+      participants: Array<{ identifiers?: Array<{ kind: string; value: string }> }>;
+      revision: { epoch: string; sequence: number };
+    };
+    expect(
+      native.participants
+        .flatMap((person) => person.identifiers ?? [])
+        .some((id) => id.value === "maya@example.org"),
+    ).toBe(false);
+    expect(native.revision.epoch).toBe(snapshot.revision.epoch);
+    expect(native.revision.sequence).toBeGreaterThan(snapshot.revision.sequence);
+  });
+
   test("group chat people metadata includes silent roster members", async () => {
     insertHandle(testDb, 30, "sarah.mendez@example.com");
     insertHandle(testDb, 31, "jamie.lopez@example.com");

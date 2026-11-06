@@ -28,9 +28,16 @@ import { experimentalVisible, type ToolResult } from "@omnesis/core";
 
 import { createGatewayLoopReadPort } from "../brain/interactive-loop-port.js";
 import { listSources } from "../data/repositories/SourceRepository.js";
-import { permittedSourceIds } from "../access/permitted-sources.js";
+import { permittedSourceIds, permittedAnalyticsSourceIds } from "../access/permitted-sources.js";
 import { createGatewayEntityContextPort } from "../domain/cognitive-graph/interactive-entity-context-port.js";
 import { createGatewayTemporalPort } from "../enrichment/temporal/interactive-temporal-port.js";
+import { corpusAuthorizationIsLive } from "../access/authorization-live.js";
+import {
+  createScopeReleaseCapture,
+  type ScopeReleaseCapture,
+  type AnswerScopeReadObserver,
+} from "../privacy/answer-scope.js";
+import { observeScopeReadPorts } from "./scope-read-ports.js";
 import { createDirectListTablesTool } from "./direct-list-tables.js";
 import { DIRECT_MCP_ESSENTIAL_INSTRUCTIONS } from "./direct-instructions.js";
 import {
@@ -122,6 +129,7 @@ export interface DirectMcpInvokeContext {
   timeZone?: string;
   signal?: AbortSignal;
   authorization?: CorpusAuthorization;
+  scopeReads?: AnswerScopeReadObserver;
 }
 
 /**
@@ -216,7 +224,11 @@ export class DirectMcpService {
     private readonly instructionContext: (
       authorization?: CorpusAuthorization,
     ) => Promise<ReadOnlyRetrievalPlaybookInput> = () => Promise.resolve({}),
-    private readonly scopedHandles?: (authorization: CorpusAuthorization) => readonly ToolHandle[],
+    private readonly scopedHandles?: (
+      authorization: CorpusAuthorization,
+      scopeReads?: AnswerScopeReadObserver,
+    ) => readonly ToolHandle[],
+    private readonly scopeCapture?: (authorization: CorpusAuthorization) => ScopeReleaseCapture,
   ) {
     const available = new Map(handles.map((handle) => [handle.name, handle]));
     available.set("list_tables", this.listTablesHandle());
@@ -310,6 +322,12 @@ export class DirectMcpService {
     return instructions;
   }
 
+  captureScope(authorization?: CorpusAuthorization): ScopeReleaseCapture | null {
+    if (!authorization?.scopePolicies.length) return null;
+    if (!this.scopeCapture) throw new Error("Filtered Direct provenance capture is unavailable.");
+    return this.scopeCapture(authorization);
+  }
+
   async invoke(
     name: DirectMcpToolName,
     args: Record<string, unknown>,
@@ -323,10 +341,9 @@ export class DirectMcpService {
         ? this.listTablesHandle(context.authorization)
         : context.authorization?.restricted
           ? new Map(
-              (this.scopedHandles?.(context.authorization) ?? []).map((candidate) => [
-                candidate.name,
-                candidate,
-              ]),
+              (this.scopedHandles?.(context.authorization, context.scopeReads) ?? []).map(
+                (candidate) => [candidate.name, candidate],
+              ),
             ).get(name)
           : this.byName.get(name);
     // The route validates the path first. Keep the service fail-closed too so
@@ -528,71 +545,90 @@ export interface GatewayDirectMcpDeps {
 
 /** Build the fixed façade without consulting any agent/model assignment. */
 export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): DirectMcpService {
-  const buildHandles = (authorization?: CorpusAuthorization) =>
+  const buildHandles = (
+    authorization?: CorpusAuthorization,
+    scopeReads?: AnswerScopeReadObserver,
+  ) =>
     buildBuiltinTools({
       experimental: experimentalVisible() && !authorization?.restricted,
-      ports: authorization?.restricted
-        ? {
-            search: createGatewaySearchPort(
-              deps.searchPipeline,
-              deps.syncStatus,
-              deps.db,
-              authorization,
-            ),
-            document: createGatewayDocumentPort(
-              deps.db,
-              deps.syncStatus,
-              { maxStoredDocumentBytes: MAX_DIRECT_MCP_STORED_DOCUMENT_BYTES },
-              authorization,
-            ),
-            documentByUrl: createGatewayDocumentByUrlPort(deps.db, deps.syncStatus, authorization),
-            // In this branch the authorization is restricted, so the set
-            // below is never null — an empty grant simply denies every table.
-            sql: createGatewaySqlPort(deps.analyticsDb, {
-              permittedSourceIds: permittedSourceIds(deps.db, authorization) ?? new Set<string>(),
-            }),
-          }
-        : {
-            search: createGatewaySearchPort(deps.searchPipeline, deps.syncStatus, deps.db),
-            document: createGatewayDocumentPort(deps.db, deps.syncStatus, {
-              maxStoredDocumentBytes: MAX_DIRECT_MCP_STORED_DOCUMENT_BYTES,
-              graphContext: deps.searchPipeline.agentSearchV2Enabled,
-              allowVerifiedAnswers: false,
-            }),
-            documentByUrl: createGatewayDocumentByUrlPort(deps.db, deps.syncStatus),
-            person: createGatewayPersonPort(deps.db, { lookupGate: deps.personLookupGate }),
-            trail: createGatewayTrailPort(deps.db, deps.analyticsDb, {
-              graphContext: deps.searchPipeline.agentSearchV2Enabled,
-            }),
-            sql: createGatewaySqlPort(deps.analyticsDb),
-            temporal: createGatewayTemporalPort(
-              deps.db,
-              deps.analyticsDb,
-              { maxWindowMs: MAX_DIRECT_MCP_TEMPORAL_WINDOW_MS },
-              {
-                ...(deps.mentionWorthGateActive
-                  ? { hideUnworthyMentions: deps.mentionWorthGateActive }
-                  : {}),
-                ...(deps.temporalStoreReads ? { storeReads: deps.temporalStoreReads } : {}),
-              },
-            ),
-            entityContext: createGatewayEntityContextPort(deps.db),
-            loopRead: createGatewayLoopReadPort(deps.db, undefined, {
-              allowVerifiedAnswers: false,
-            }),
-          },
+      ports: observeScopeReadPorts(
+        authorization?.restricted
+          ? {
+              search: createGatewaySearchPort(
+                deps.searchPipeline,
+                deps.syncStatus,
+                deps.db,
+                authorization,
+                authorization.scopePolicies.length === 0,
+              ),
+              document: createGatewayDocumentPort(
+                deps.db,
+                deps.syncStatus,
+                {
+                  maxStoredDocumentBytes: MAX_DIRECT_MCP_STORED_DOCUMENT_BYTES,
+                  knowledgeReads: authorization.scopePolicies.length === 0,
+                },
+                authorization,
+              ),
+              documentByUrl: createGatewayDocumentByUrlPort(
+                deps.db,
+                deps.syncStatus,
+                authorization,
+                authorization.scopePolicies.length === 0,
+              ),
+              // In this branch the authorization is restricted, so the set
+              // below is never null — an empty grant simply denies every table.
+              sql: createGatewaySqlPort(deps.analyticsDb, {
+                permittedSourceIds:
+                  permittedAnalyticsSourceIds(deps.db, authorization) ?? new Set<string>(),
+              }),
+            }
+          : {
+              search: createGatewaySearchPort(deps.searchPipeline, deps.syncStatus, deps.db),
+              document: createGatewayDocumentPort(deps.db, deps.syncStatus, {
+                maxStoredDocumentBytes: MAX_DIRECT_MCP_STORED_DOCUMENT_BYTES,
+                graphContext: deps.searchPipeline.agentSearchV2Enabled,
+                allowVerifiedAnswers: false,
+              }),
+              documentByUrl: createGatewayDocumentByUrlPort(deps.db, deps.syncStatus),
+              person: createGatewayPersonPort(deps.db, { lookupGate: deps.personLookupGate }),
+              trail: createGatewayTrailPort(deps.db, deps.analyticsDb, {
+                graphContext: deps.searchPipeline.agentSearchV2Enabled,
+              }),
+              sql: createGatewaySqlPort(deps.analyticsDb),
+              temporal: createGatewayTemporalPort(
+                deps.db,
+                deps.analyticsDb,
+                { maxWindowMs: MAX_DIRECT_MCP_TEMPORAL_WINDOW_MS },
+                {
+                  ...(deps.mentionWorthGateActive
+                    ? { hideUnworthyMentions: deps.mentionWorthGateActive }
+                    : {}),
+                  ...(deps.temporalStoreReads ? { storeReads: deps.temporalStoreReads } : {}),
+                },
+              ),
+              entityContext: createGatewayEntityContextPort(deps.db),
+              loopRead: createGatewayLoopReadPort(deps.db, undefined, {
+                allowVerifiedAnswers: false,
+              }),
+            },
+        scopeReads,
+      ),
     });
   return new DirectMcpService(
     buildHandles(),
     async (authorization) => {
       const permitted = authorization ? permittedSourceIds(deps.db, authorization) : null;
+      const analyticsPermitted = authorization
+        ? permittedAnalyticsSourceIds(deps.db, authorization)
+        : null;
       const liveCatalog = await deps.analyticsDb.getCatalog();
       return {
         // Restricted grants see only their permitted sources' tables, so
         // the agent can discover what its scoped `run_sql` may query.
         // `null` (unrestricted) sees the whole catalog, as before.
-        catalog: permitted
-          ? liveCatalog.filter((entry) => permitted.has(entry.sourceId))
+        catalog: analyticsPermitted
+          ? liveCatalog.filter((entry) => analyticsPermitted.has(entry.sourceId))
           : liveCatalog,
         sourceTypes: [
           ...new Set(
@@ -602,9 +638,26 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
           ),
         ],
         // Source-restricted grants receive no graph context on their searches.
-        graphContext: !permitted && deps.searchPipeline.agentSearchV2Enabled,
+        graphContext: !authorization?.restricted && deps.searchPipeline.agentSearchV2Enabled,
       };
     },
-    (authorization) => buildHandles(authorization),
+    (authorization, scopeReads) => {
+      const tools = buildHandles(authorization, scopeReads);
+      scopeReads?.markComplete();
+      return tools;
+    },
+    (authorization) => {
+      const capture = createScopeReleaseCapture(deps.db, authorization);
+      return {
+        observer: capture.observer,
+        assertCurrent() {
+          deps.db.transaction(() => {
+            if (!corpusAuthorizationIsLive(deps.db, authorization))
+              throw new Error("Direct authority changed before disclosure.");
+            capture.assertCurrent();
+          })();
+        },
+      };
+    },
   );
 }

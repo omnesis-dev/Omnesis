@@ -68,3 +68,17 @@ export * from "./gateway-client.js";
 export type { PendingStructuredPage, PrepareStructuredPage } from "./pending-source-page.js";
 export * from "./read-access.js";
 export * from "./read-access-tree.js";
+
+export {
+  projectDocumentScopeFacts,
+  projectNativeScopeParticipants,
+  type NativeScopeParticipant,
+} from "./scope-facts.js";
+
+export {
+  SOURCE_SCOPE_PAGE_WORK,
+  SOURCE_SCOPE_MAX_PAGE_WORK,
+  conversationScopeWork,
+} from "./scope-page-budget.js";
+export { planScopeRefresh, isScopeRefreshBookmark } from "./scope-refresh.js";
+export type { ScopeRefreshBookmark, ScopeRefreshPlan } from "./scope-refresh.js";

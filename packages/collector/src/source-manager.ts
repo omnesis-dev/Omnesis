@@ -39,7 +39,12 @@ import type {
   ImportCallbacks,
   ImportSummary,
 } from "@omnesis/source-sdk";
-import type { DocumentIngestionContext, MultiDeviceMode, ProviderType } from "@omnesis/types";
+import type {
+  DocumentIngestionContext,
+  MultiDeviceMode,
+  ProviderType,
+  SourceScopes,
+} from "@omnesis/types";
 import type { CollectorInternalConfig } from "./internal-config.js";
 import type { RegisteredSource, SyncEngine } from "./sync-engine.js";
 
@@ -150,6 +155,20 @@ export function collectDocumentEventProfiles(
     }
   }
   return entries.sort((a, b) => a.sourceType.localeCompare(b.sourceType));
+}
+
+/** Collect optional source filter declarations, retaining platform-specific source types. */
+export function collectSourceScopes(
+  definitions: readonly SourceOrProviderDefinition[],
+): Array<{ sourceType: string; scopes: SourceScopes }> {
+  return definitions
+    .flatMap((definition) => {
+      const sources = definition.type === "provider" ? definition.sources : [definition];
+      return sources.flatMap((source) =>
+        source.scopes ? [{ sourceType: source.id, scopes: source.scopes }] : [],
+      );
+    })
+    .sort((a, b) => a.sourceType.localeCompare(b.sourceType));
 }
 
 /** Aggregated widget-vendor origins per CSP fetch directive. */
@@ -363,6 +382,16 @@ export class SourceManager {
       log.info(`Pushed ${domains.length} owned web domain(s) to gateway`);
     } catch (err) {
       log.warn(`Failed to push owned web domains (continuing): ${toErrorMessage(err)}`);
+    }
+  }
+
+  /** Publish optional scope contracts; the HTTP client negotiates gateway support first. */
+  async pushSourceScopes(): Promise<void> {
+    if (!this.gateway.setSourceScopes) return;
+    try {
+      await this.gateway.setSourceScopes(collectSourceScopes(this._definitions));
+    } catch (err) {
+      log.warn(`Failed to push source filter declarations (continuing): ${toErrorMessage(err)}`);
     }
   }
 

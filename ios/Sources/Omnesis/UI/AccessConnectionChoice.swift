@@ -365,7 +365,7 @@ struct AccessConnectionChoice: Equatable {
             return form
         }
         var review = AccessAuthorizationFormState.opening(request: request, overview: overview, prefill: rules)
-        for case .answer(_, .reviewed(let familyId)) in rules {
+        for case .answer(_, .reviewed(let familyId), _, _) in rules {
             review.policyFamilyId = familyId
         }
         return review
@@ -383,6 +383,7 @@ struct AccessConnectionChoice: Equatable {
         case .newLevel:
             let rules = form.rules(request: request, overview: overview)
             guard !rules.isEmpty,
+                  overview.sourceFilters?.enabled == true || rules.allSatisfy(\.scopePolicies.isEmpty),
                   let name = accessConnectionTrimmedName(name),
                   let levelName = accessConnectionTrimmedName(levelName) else { return nil }
             return .newConnection(name: name, level: .new(name: levelName, rules: rules))

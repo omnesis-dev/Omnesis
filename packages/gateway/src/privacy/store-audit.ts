@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { assertNever } from "@omnesis/core";
 import { PRIVACY_AUDIT_EVENT_KINDS } from "@omnesis/types/privacy";
 import { compareReleasedAnswer } from "./answer-diff.js";
+import { scopedAnswerHistory, type ScopedAnswerHistory } from "./answer-history.js";
 import { getOwnedTask, parseDisclosureCategories, responseForTask } from "./store-internals.js";
 import { parseStoredCitations } from "./answer-citations.js";
 import {
@@ -23,6 +24,8 @@ import {
   type RecordAnswerEgressInput,
   type RecordedAnswerEgress,
 } from "./store-types.js";
+import type { AnswerHistoryReads } from "./context-reads.js";
+import type { AnswerScopeReadSet } from "./answer-scope.js";
 import type {
   PrivacyAuditEventDetail,
   PrivacyAuditEventDisplay,
@@ -430,12 +433,39 @@ export function getPrivacyAuditEvent(
   };
 }
 
-export function loadPrivacyReviewerContext(
+export async function loadPrivacyReviewerContext(
   db: PrivacyDb,
   workflowId: string,
   conversationId: string,
   ownerId: string,
+  taskId?: string,
+  options: { reads?: AnswerHistoryReads; signal?: AbortSignal } = {},
+): Promise<ReturnType<typeof assemblePrivacyReviewerContext>> {
+  const scoped = taskId
+    ? await scopedAnswerHistory(
+        db,
+        taskId,
+        conversationId,
+        ownerId,
+        MAX_EXTERNAL_CONTEXT_MESSAGES,
+        options,
+      )
+    : null;
+  options.signal?.throwIfAborted();
+  return options.reads
+    ? options.reads.scopeReviewerContext(workflowId, conversationId, ownerId, scoped)
+    : assemblePrivacyReviewerContext(db, workflowId, conversationId, ownerId, scoped);
+}
+
+export function assemblePrivacyReviewerContext(
+  db: PrivacyDb,
+  workflowId: string,
+  conversationId: string,
+  ownerId: string,
+  scoped: ScopedAnswerHistory | null,
 ): {
+  scopeReads?: AnswerScopeReadSet;
+  scopeHistoryWithheld?: boolean;
   priorExternalConversation: PrivacyExternalMessage[];
   cumulativeDisclosure: PrivacyCumulativeDisclosure;
 } {
@@ -452,24 +482,26 @@ export function loadPrivacyReviewerContext(
   }
   // An assistant turn carries the citations released with it: they left with
   // the text, so a later review judges the combined disclosure of both.
-  const priorExternalConversation = db
-    .prepare<
-      [string, number],
-      { role: "user" | "assistant"; content: string; citations_json: string | null }
-    >(
-      `SELECT role, content, citations_json FROM (
+  const priorExternalConversation = (
+    scoped?.messages ??
+    db
+      .prepare<
+        [string, number],
+        { role: "user" | "assistant"; content: string; citations_json: string | null }
+      >(
+        `SELECT role, content, citations_json FROM (
          SELECT m.id, m.role, m.content,
                 CASE WHEN m.role = 'assistant' THEN r.citations_json END AS citations_json
            FROM answer_messages m
            LEFT JOIN answer_releases r ON r.task_id = m.task_id
           WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT ?
        ) ORDER BY id ASC`,
-    )
-    .all(conversationId, MAX_EXTERNAL_CONTEXT_MESSAGES)
-    .map(({ role, content, citations_json }): PrivacyExternalMessage => {
-      const citations = parseStoredCitations(citations_json);
-      return citations.length > 0 ? { role, content, citations } : { role, content };
-    });
+      )
+      .all(conversationId, MAX_EXTERNAL_CONTEXT_MESSAGES)
+  ).map(({ role, content, citations_json }): PrivacyExternalMessage => {
+    const citations = parseStoredCitations(citations_json);
+    return citations.length > 0 ? { role, content, citations } : { role, content };
+  });
   const totalMessages =
     db
       .prepare<[string], { count: number }>(
@@ -477,10 +509,55 @@ export function loadPrivacyReviewerContext(
       )
       .get(conversationId)?.count ?? priorExternalConversation.length;
   const cumulativeDisclosure = loadWorkflowCumulativeDisclosure(db, workflowId);
+  let safeCategories: PrivacyCumulativeCategory[] = [];
+  if (scoped) {
+    const reviews = db
+      .prepare<[string], { review_json: string | null }>(
+        "SELECT review_json FROM answer_tasks WHERE id IN (SELECT value FROM json_each(?)) AND status IN ('released','released_with_reductions')",
+      )
+      .all(JSON.stringify(scoped.taskIds));
+    for (const row of reviews) {
+      let findings: unknown;
+      try {
+        const parsed: unknown = JSON.parse(row.review_json ?? "{}");
+        findings =
+          parsed && typeof parsed === "object" && "findings" in parsed ? parsed.findings : null;
+      } catch {
+        findings = null;
+      }
+      if (!Array.isArray(findings)) continue;
+      safeCategories = mergeReviewerDisclosureCategories(
+        safeCategories,
+        parseDisclosureCategories(
+          JSON.stringify(
+            findings.flatMap((finding) =>
+              finding && typeof finding === "object" ? [{ ...finding, count: 1 }] : [],
+            ),
+          ),
+        ).map(({ category, detailLevel, subject, count }) => ({
+          category,
+          detailLevel,
+          subject,
+          count,
+        })),
+      );
+    }
+  }
+  const opaqueCategories =
+    !!scoped &&
+    cumulativeDisclosure.categories.reduce((sum, item) => sum + item.count, 0) !==
+      safeCategories.reduce((sum, item) => sum + item.count, 0);
   return {
     priorExternalConversation,
+    ...(scoped
+      ? {
+          scopeReads: scoped.reads,
+          scopeHistoryWithheld: scoped.withheld || opaqueCategories,
+        }
+      : {}),
     cumulativeDisclosure: {
       ...cumulativeDisclosure,
+      ...(scoped ? { categories: safeCategories } : {}),
       olderTurnsOmitted: Math.floor(
         Math.max(0, totalMessages - priorExternalConversation.length) / 2,
       ),

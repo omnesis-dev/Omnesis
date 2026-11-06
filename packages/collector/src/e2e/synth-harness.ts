@@ -53,6 +53,7 @@ import {
 } from "@omnesis/providers-synth-common";
 import {
   createLogger,
+  SOURCE_SCOPES_PROTOCOL_RANGE,
   readSecretTextFile,
   type AttachmentExtractFn,
   type AudioTranscribeFn,
@@ -718,6 +719,7 @@ export class SyntheticE2EHarness {
         hostname: `${entry.id}.example.com`,
         platform: entry.kind === "collector" ? process.platform : entry.kind,
         hostableSourceTypes: hostableSourceTypes.map(SourceType),
+        sourceScopes: SOURCE_SCOPES_PROTOCOL_RANGE,
         ...(entry.kind === "collector" || hostsLeaseBackedMode ? { syncLease: true } : {}),
         ...(Object.keys(hostedModes).length > 0 ? { multiDeviceModes: hostedModes } : {}),
         ...(Object.keys(replicaVersionPolicies).length > 0 ? { replicaVersionPolicies } : {}),

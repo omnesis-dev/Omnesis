@@ -18,6 +18,7 @@
  */
 
 import { sourceSettingKeys } from "@omnesis/config";
+import type { ScopeSourceGeneration } from "../access/scope-generations.js";
 import type { EmbedderEncoding } from "../indexer/embedder-prefixes.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { MemoryBudget } from "../memory-budget.js";
@@ -155,6 +156,7 @@ export type IndexerInit = {
 };
 
 export type MainToIndexer =
+  | { type: "scopeReplayAcknowledged"; completed: ScopeSourceGeneration }
   | IndexerInit
   | { type: "embedQuery"; id: number; text: string; sentAtMs: number }
   | { type: "runReindexMissing"; id: number }
@@ -240,6 +242,7 @@ export type IndexerJobUpdate = {
 };
 
 export type IndexerToMain =
+  | { type: "scopeReplayAck"; completed: ScopeSourceGeneration }
   | { type: "embeddingStarted"; id: number }
   | {
       type: "embeddingSettled";

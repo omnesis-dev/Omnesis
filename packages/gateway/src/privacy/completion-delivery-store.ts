@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
-
 import { randomUUID } from "node:crypto";
+import { assertAnswerTaskScopeCurrent } from "./answer-scope.js";
 
 import {
   type AnswerCompletionDelivery,
@@ -79,6 +79,12 @@ export function authorizeAnswerCompletionDelivery(
   input: AuthorizeAnswerCompletionDeliveryInput,
 ): boolean {
   return db.transaction(() => {
+    const task = db
+      .prepare<[string], { task_id: string }>(
+        "SELECT task_id FROM answer_completion_deliveries WHERE id=?",
+      )
+      .get(input.deliveryId);
+    if (task) assertAnswerTaskScopeCurrent(db, task.task_id);
     const changed = db
       .prepare(
         `UPDATE answer_completion_deliveries SET status = 'commit_authorized', updated_at = ?

@@ -75,13 +75,12 @@ import {
 } from "../enrichment/temporal-annotations/storage.js";
 import { createDocumentTemporalProjectionTables } from "../enrichment/temporal-projections/document-storage.js";
 import { supersedeNotificationsByCollapseIdPrefix } from "../push/queue.js";
+import { advanceWorkflowDisclosure, parseReview } from "../privacy/store-internals.js";
 import {
-  advanceWorkflowDisclosure,
   createAnswerApprovalListIndexes,
   createAnswerPrivacyTables,
   createDirectAuditTables,
-  parseReview,
-} from "../privacy/store.js";
+} from "../privacy/store-schema.js";
 import {
   createSubscriptionApprovalListIndexes,
   createSubscriptionTables,
@@ -90,6 +89,16 @@ import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/reb
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
+import { createScopeDescriptorsSchema } from "../access/scope-descriptors.js";
+import { createScopePolicyStore } from "../access/scope-policy-store.js";
+import {
+  createScopeStorageFloor,
+  reconcileLegacyScopeBoundaries,
+} from "../access/scope-storage-floor.js";
+import { backfillScopePolicySourceIndex } from "../access/scope-policy-source-index.js";
+import { createScopeFactsSchema } from "../access/scope-schema.js";
+import { createAnswerScopeSchema } from "../privacy/answer-scope-schema.js";
+import { upgradeScopePolicyEncodingV2 } from "../access/scope-policy-encoding.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -4965,6 +4974,53 @@ export const MIGRATIONS: readonly Migration[] = [
       db.prepare(
         "UPDATE sync_state SET minimum_gateway_version = ? WHERE minimum_gateway_version > ?",
       ).run(178, 178);
+    },
+  },
+  {
+    version: 212,
+    description: "add external source scope policies and document facts",
+    up(db) {
+      createScopePolicyStore(db);
+      createScopeFactsSchema(db);
+      createScopeDescriptorsSchema(db);
+    },
+  },
+  {
+    version: 213,
+    description: "persist source scope declaration conflicts and replay fences",
+    up(db) {
+      createScopeDescriptorsSchema(db);
+    },
+  },
+  {
+    version: 214,
+    description: "add resumable bounded source scope publication",
+    up(db) {
+      createScopeFactsSchema(db);
+    },
+  },
+  {
+    version: 215,
+    description: "persist trusted Answer source provenance fences",
+    up(db) {
+      createAnswerScopeSchema(db);
+    },
+  },
+  {
+    version: 216,
+    description: "persist bounded native scope hierarchy refresh and ancestry work",
+    up(db) {
+      createScopeFactsSchema(db);
+      upgradeScopePolicyEncodingV2(db);
+    },
+  },
+  {
+    version: 217,
+    description: "index configured source filters for bounded owner discovery",
+    up(db) {
+      backfillScopePolicySourceIndex(db);
+      createScopeStorageFloor(db);
+      reconcileLegacyScopeBoundaries(db);
     },
   },
 ];

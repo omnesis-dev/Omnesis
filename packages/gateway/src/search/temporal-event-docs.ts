@@ -62,6 +62,7 @@ export async function eventDocumentsInWindows(
   windows: readonly TemporalWindow[],
   timeZone: string,
   sourceIds: readonly string[] | undefined,
+  options: { includeAnnotations?: boolean } = {},
 ): Promise<string[]> {
   const ids = new Set<string>();
   const signal = AbortSignal.timeout(READ_BUDGET_MS);
@@ -73,13 +74,23 @@ export async function eventDocumentsInWindows(
           from: new Date(window.startMs).toISOString(),
           to: new Date(window.endExclusiveMs).toISOString(),
           timeZone,
-          origins: ["projection", "annotation", "mention"],
+          origins:
+            options.includeAnnotations === false
+              ? ["projection", "mention"]
+              : ["projection", "annotation", "mention"],
           limit: ITEMS_PER_WINDOW,
           ...(sourceIds && sourceIds.length > 0 ? { sourceIds: [...sourceIds] } : {}),
         },
         { signal },
       );
-      for (const item of items) for (const id of itemDocumentIds(item)) ids.add(id);
+      for (const item of items) {
+        if (
+          options.includeAnnotations === false &&
+          (item.origin === "annotation" || item.annotation)
+        )
+          continue;
+        for (const id of itemDocumentIds(item)) ids.add(id);
+      }
     }
   } catch (err) {
     log.warn(

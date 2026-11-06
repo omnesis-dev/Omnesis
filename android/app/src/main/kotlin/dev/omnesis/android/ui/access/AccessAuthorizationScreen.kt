@@ -54,6 +54,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,6 +103,19 @@ fun AccessAuthorizationScreen(
     vm: AccessAuthorizationViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    var editingFilter by remember { mutableStateOf<Pair<dev.omnesis.android.transport.dto.AccessSourceInstance, String>?>(null) }
+    val filterGateway = remember(editingFilter) { if (editingFilter != null) vm.scopeEditorGateway else null }
+    editingFilter?.let { (source, capability) ->
+        if (filterGateway != null) SourceFilterEditor(source, "new", capability,
+            state.form?.scopePolicies?.get(capability)?.firstOrNull { it.sourceId == source.id },
+            state.overview?.sourceFilters?.enabled == true, filterGateway, onClose = { editingFilter = null }) { policy ->
+            state.form?.let { form ->
+                val policies = form.scopePolicies[capability].orEmpty().filterNot { it.sourceId == source.id } + listOfNotNull(policy)
+                vm.updateForm(form.copy(scopePolicies = form.scopePolicies + (capability to policies)))
+            }
+            editingFilter = null
+        }
+    }
     LaunchedEffect(initialCode, initialRequestId, launchNonce, expectedPairing) {
         when {
             expectedPairing == null -> Unit
@@ -128,6 +143,7 @@ fun AccessAuthorizationScreen(
         onShowPolicy = vm::showPolicy,
         onDismissPolicy = vm::dismissPolicy,
         iconFor = vm::sourceIcon,
+        onEditFilter = { source, capability -> editingFilter = source to capability },
     )
 }
 
@@ -142,6 +158,7 @@ internal fun AccessAuthorizationContent(
     onFormChange: (AccessAuthorizationForm) -> Unit = {},
     onStepChange: (AccessAuthorizationStep) -> Unit = {},
     onShowPolicy: (String) -> Unit = {},
+    onEditFilter: (dev.omnesis.android.transport.dto.AccessSourceInstance, String) -> Unit = { _, _ -> },
     onDismissPolicy: () -> Unit = {},
     iconFor: (String) -> SourceIconModel = { SourceIconModel(fallbackInitial = it.take(1).uppercase()) },
     /**
@@ -201,6 +218,7 @@ internal fun AccessAuthorizationContent(
                 onFormChange = onFormChange,
                 onStepChange = onStepChange,
                 onShowPolicy = onShowPolicy,
+                onEditFilter = onEditFilter,
                 iconFor = iconFor,
                 clock = clock,
                 // The keyboard takes its height from the bottom of the wizard, so the step and its
@@ -364,6 +382,7 @@ private fun AuthorizationWizard(
     onFormChange: (AccessAuthorizationForm) -> Unit,
     onStepChange: (AccessAuthorizationStep) -> Unit,
     onShowPolicy: (String) -> Unit,
+    onEditFilter: (dev.omnesis.android.transport.dto.AccessSourceInstance, String) -> Unit,
     iconFor: (String) -> SourceIconModel,
     clock: () -> Long,
     modifier: Modifier = Modifier,
@@ -416,6 +435,11 @@ private fun AuthorizationWizard(
                 )
             }
             actionError?.let { item { WarningCard(it) } }
+            if (overview.sourceFilters?.enabled != true && (form.connection == null || form.connection.path == AccessConnectionPath.NEW_LEVEL) &&
+                form.ownRules(request, overview).orEmpty().any { it.scopePolicies.isNotEmpty() } &&
+                (step == AccessAuthorizationStep.DATA || step == AccessAuthorizationStep.REVIEW)) {
+                item { Text("New access with filters is unavailable. Choose an existing level or change the allowed capabilities.", style = MaterialTheme.typography.bodySmall) }
+            }
             when (step) {
                 AccessAuthorizationStep.CONNECTION -> item {
                     ConnectionStep(request, overview, form, nowMillis, levelNameTaken, onFormChange)
@@ -424,7 +448,7 @@ private fun AuthorizationWizard(
                     PermissionsStep(request, form, onFormChange)
                 }
                 AccessAuthorizationStep.DATA -> item {
-                    DataAndPrivacyStep(overview, request, form, iconFor, onShowPolicy, onFormChange)
+                    DataAndPrivacyStep(overview, request, form, iconFor, onShowPolicy, onEditFilter, onFormChange)
                 }
                 AccessAuthorizationStep.REVIEW -> item {
                     ReviewStep(
@@ -727,7 +751,7 @@ private fun PermissionsStep(
             "Ask questions using allowed sources. A privacy policy can review every answer before it is released.",
             form.answerEnabled || request.requiresAnswer,
             request.requiresAnswer,
-        ) { update(form.copy(answerEnabled = it).relinkSources(it || request.requiresAnswer, form.directEnabled)) }
+        ) { update(form.withAnswerEnabled(it, request.requiresAnswer)) }
         if (request.requiresAnswer) {
             Text("Answer is required by this integration.", color = OmTheme.colors.textSecondary)
         }
@@ -760,17 +784,23 @@ private fun DataAndPrivacyStep(
     form: AccessAuthorizationForm,
     iconFor: (String) -> SourceIconModel,
     onShowPolicy: (String) -> Unit,
+    onEditFilter: (dev.omnesis.android.transport.dto.AccessSourceInstance, String) -> Unit,
     update: (AccessAuthorizationForm) -> Unit,
 ) {
     val answerOn = form.answerEnabled || request.requiresAnswer
     val both = answerOn && form.directEnabled
+    val known = overview.sources.filter { it.available }.mapTo(mutableSetOf()) { it.id }
     Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.lg)) {
+        if (overview.sourceFilters?.enabled != true && form.scopePolicies.values.any { it.isNotEmpty() }) {
+            Text("Saved filters are read-only while filter editing is unavailable. You can still revoke capabilities.", style = MaterialTheme.typography.bodySmall)
+        }
         if (both) {
             RadioCard(
                 "Allow the same sources for Answer and Direct",
-                "One selection controls both capabilities.",
+                "Use Answer's source selection and filters for both capabilities.",
                 form.linkedSources,
-            ) { update(form.withLinkedSources(true, answerOn)) }
+                enabled = form.canShareSources(overview.sourceFilters?.enabled),
+            ) { update(form.withLinkedSources(true, answerOn, overview.sourceFilters?.enabled)) }
             RadioCard(
                 "Allow different sources",
                 "Direct may expose raw records, so a narrower boundary can be useful.",
@@ -784,7 +814,9 @@ private fun DataAndPrivacyStep(
                 overview.sources,
                 form.answerSources,
                 iconFor,
-            ) { update(form.copy(answerSources = it)) }
+                    canUpdate = { form.canSetSources(it, AccessSourceScope.SHARED, known, overview.sourceFilters?.enabled) },
+            ) { update(form.withSources(it, AccessSourceScope.SHARED, known, overview.sourceFilters?.enabled)) }
+            ConsentSourceFilterActions(overview, form, "answer", "Answer and Direct", form.answerSources, onEditFilter)
         } else {
             if (answerOn) {
                 SourceRuleEditor(
@@ -793,7 +825,9 @@ private fun DataAndPrivacyStep(
                     overview.sources,
                     form.answerSources,
                     iconFor,
-                ) { update(form.copy(answerSources = it)) }
+                    canUpdate = { form.canSetSources(it, AccessSourceScope.ANSWER, known, overview.sourceFilters?.enabled) },
+                ) { update(form.withSources(it, AccessSourceScope.ANSWER, known, overview.sourceFilters?.enabled)) }
+                ConsentSourceFilterActions(overview, form, "answer", "Answer", form.answerSources, onEditFilter)
             }
             if (form.directEnabled) {
                 HorizontalDivider(color = OmTheme.colors.border)
@@ -803,7 +837,9 @@ private fun DataAndPrivacyStep(
                     overview.sources,
                     form.directBoundary(answerOn),
                     iconFor,
-                ) { update(form.copy(directSources = it)) }
+                    canUpdate = { form.canSetSources(it, AccessSourceScope.DIRECT, known, overview.sourceFilters?.enabled) },
+                ) { update(form.withSources(it, AccessSourceScope.DIRECT, known, overview.sourceFilters?.enabled)) }
+                ConsentSourceFilterActions(overview, form, "direct", "Direct", form.directBoundary(answerOn), onEditFilter)
             }
         }
         if (answerOn) {
@@ -846,5 +882,22 @@ private fun DataAndPrivacyStep(
                 warning = true,
             ) { update(form.copy(answerRelease = AccessAnswerReleaseChoice.UNREVIEWED)) }
         }
+    }
+}
+
+@Composable
+private fun ConsentSourceFilterActions(
+    overview: AccessOverview,
+    form: AccessAuthorizationForm,
+    capability: String,
+    capabilityLabel: String,
+    selection: AccessSourceSelectionState,
+    onEditFilter: (dev.omnesis.android.transport.dto.AccessSourceInstance, String) -> Unit,
+) {
+    overview.sources.filter { source ->
+        val hasSavedPolicy = form.scopePolicies[capability].orEmpty().any { it.sourceId == source.id }
+        selection.allows(source.id) && (hasSavedPolicy || (overview.sourceFilters?.enabled == true && source.scopes != null))
+    }.forEach { source ->
+        TextButton(onClick = { onEditFilter(source, capability) }) { Text("Filter ${source.name} for $capabilityLabel") }
     }
 }

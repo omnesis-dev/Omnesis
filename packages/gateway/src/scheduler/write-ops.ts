@@ -177,6 +177,8 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // ── people.ts ──────────────────────────────────────────────────────
   { name: "people.findOrCreatePerson", priority: "realtime" },
   { name: "people.resolveDocumentPeople", priority: "background" },
+  { name: "scopes.acknowledgeReplay", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "scopes.backfill", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "people.backfillManyPeople", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "people.seedFromContacts", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
@@ -433,6 +435,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "sources.clearSourceRemovedIfCleanupDone", priority: "user" },
   // Collector boot push of every source type's document-event profile. One
   // small transaction over a table with one row per installed source type.
+  { name: "sources.upsertScopes", priority: "background" },
   { name: "sources.upsertDocumentProfiles", priority: "realtime" },
 
   // ── the Cognition Steward run queue ───────────────────────────────────────

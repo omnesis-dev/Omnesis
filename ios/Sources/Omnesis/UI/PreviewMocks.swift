@@ -7684,4 +7684,146 @@ extension PreviewMocks {
         return session
     }
 }
+
+@available(iOS 17.0, *)
+extension PreviewMocks {
+    static let scopeEditorContract = SourceScopes(items: [
+        .init(kind: "conversation", noun: .init(one: "conversation", many: "conversations"), picker: "search", link: "fixed"),
+        .init(kind: "participant", identifiers: ["phone", "email"], link: "changes"),
+        .init(kind: "folder", noun: .init(one: "folder", many: "folders"), picker: "tree", link: "hierarchy"),
+    ])
+    static let scopeEditorReadiness: [ScopeKindReadiness] = ["conversation", "participant", "folder"].map {
+        .init(kind: $0, ready: true)
+    }
+
+    static var scopeEditorSource: AccessSourceInstance {
+        var source = AccessSourceInstance(id: "scope-chat:example", name: "Cedar account")
+        source.sourceType = "scope-chat"
+        source.scopes = scopeEditorContract
+        source.scopeReadiness = scopeEditorReadiness
+        return source
+    }
+
+    static let scopeEditorRefs: [ScopeRef] = [
+        .init(kind: "conversation", id: "cedar-planning"),
+        .init(kind: "participant", label: "Maya Reeves", identifiers: [.init(type: "phone", value: "+15550100123")]),
+    ]
+    static let scopeEditorPolicy = ScopePolicy(
+        sourceId: "scope-chat:example",
+        audience: .init(accessLevel: "scope-level", capability: "answer"),
+        rules: [.init(match: scopeEditorRefs, action: "hide")],
+        otherwise: "share"
+    )
+    static let scopeEditorPreview = ScopePreview(
+        sourceId: "scope-chat:example",
+        total: 120,
+        visible: 83,
+        hidden: 37,
+        unknown: 4,
+        items: [
+            .init(ref: scopeEditorRefs[0], label: "Cedar planning", count: 24),
+            .init(ref: scopeEditorRefs[1], label: "Maya Reeves", count: 17),
+        ],
+        samples: [
+            .init(
+                documentId: "scope-visible",
+                title: "Workshop planning",
+                visible: true,
+                unknown: false
+            ),
+            .init(
+                documentId: "scope-hidden",
+                title: "Cedar planning",
+                visible: false,
+                unknown: false
+            ),
+            .init(
+                documentId: "scope-unknown",
+                title: "Unresolved group members",
+                visible: false,
+                unknown: true
+            ),
+        ],
+        identifierProposals: [.init(
+            itemIndex: 1,
+            label: "Maya Reeves",
+            identifiers: [.init(type: "email", value: "maya@example.org")]
+        )],
+        readiness: scopeEditorReadiness
+    )
+    static var scopeEditorOverview: AccessOverview {
+        var overview = AccessOverview(
+            principals: [],
+            sources: [scopeEditorSource],
+            policyFamilies: accessOverview.policyFamilies,
+            defaultPolicyFamilyId: accessOverview.defaultPolicyFamilyId,
+            levels: [AccessLevelSummary(
+                id: "scope-level",
+                name: "Research assistant",
+                revision: 4,
+                rules: [
+                    .answer(
+                        sources: .init(mode: .allowlist, sourceIds: ["scope-chat:example"]),
+                        release: .unreviewed,
+                        filterRevision: 3,
+                        scopePolicies: [scopeEditorPolicy]
+                    ),
+                    .direct(sources: .init(mode: .allowlist, sourceIds: ["scope-chat:example"])),
+                ],
+                connectionCount: 2,
+                createdAt: 1,
+                updatedAt: 2
+            )]
+        )
+        overview.sourceFilters = .init(enabled: true)
+        return overview
+    }
+
+    static var scopeReadOnlyOverview: AccessOverview {
+        var overview = scopeEditorOverview
+        overview.sourceFilters = .init(enabled: false)
+        return overview
+    }
+
+    static var scopeFolderSource: AccessSourceInstance {
+        var source = scopeEditorSource
+        source.scopes = SourceScopes(items: scopeEditorContract.items.filter { $0.kind == "folder" })
+        return source
+    }
+
+    static var scopeParticipantSource: AccessSourceInstance {
+        var source = scopeEditorSource
+        source.scopes = SourceScopes(items: [.init(kind: "participant", identifiers: ["phone"], link: "changes")])
+        return source
+    }
+
+    static let scopeFolderOptions = ScopeOptions(
+        sourceId: "scope-chat:example",
+        sourceType: "scope-chat",
+        scopes: scopeEditorContract,
+        readiness: scopeEditorReadiness,
+        items: [
+            .init(
+                ref: .init(kind: "folder", id: "cedar"),
+                label: "Cedar",
+                count: 18,
+                hasChildren: true
+            ),
+            .init(ref: .init(kind: "folder", id: "archive"), label: "Archive", count: 9),
+        ]
+    )
+    static var scopePreparingPreview: ScopePreview {
+        var preview = scopeEditorPreview
+        preview.readiness = [.init(
+            kind: "participant",
+            ready: false,
+            reason: "backfill",
+            message: "Preparing participant filters",
+            processed: 120,
+            pending: 30,
+            behindCollectors: [.init(deviceId: "fixture-device", name: "Cedar laptop")]
+        )]
+        return preview
+    }
+}
 #endif

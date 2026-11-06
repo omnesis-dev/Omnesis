@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { createDatabase } from "../db.js";
 import { createCorpusAuthorization } from "./corpus-authorization.js";
-import { permittedSourceIds } from "./permitted-sources.js";
+import { permittedSourceIds, permittedAnalyticsSourceIds } from "./permitted-sources.js";
+import type { ScopePolicy } from "@omnesis/types";
 import type Database from "better-sqlite3";
 
 let tmpDir: string;
@@ -33,7 +34,11 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function authorization(mode: "all" | "allowlist" | "denylist", sourceIds: string[]) {
+function authorization(
+  mode: "all" | "allowlist" | "denylist",
+  sourceIds: string[],
+  scopePolicies: ScopePolicy[] = [],
+) {
   return createCorpusAuthorization(
     {
       principalId: "principal-example",
@@ -45,6 +50,7 @@ function authorization(mode: "all" | "allowlist" | "denylist", sourceIds: string
     [
       {
         capability: "direct",
+        ...(scopePolicies.length ? { filterRevision: 1, scopePolicies } : {}),
         sourceMode: mode,
         sourceIds,
         releaseMode: null,
@@ -78,4 +84,61 @@ describe("permittedSourceIds", () => {
   test("a rule naming a source that is no longer configured yields an empty set", () => {
     expect(permittedSourceIds(db, authorization("allowlist", ["mail:gone"]))!.size).toBe(0);
   });
+});
+
+describe("permittedAnalyticsSourceIds", () => {
+  test("keeps legacy unrestricted analytics unchanged", () => {
+    expect(permittedAnalyticsSourceIds(db, authorization("all", []))).toBeNull();
+  });
+
+  test("excludes only the filtered account, retaining unfiltered sibling sources", () => {
+    const auth = authorization(
+      "all",
+      [],
+      [
+        {
+          sourceId: "mail:alpha",
+          audience: { accessLevel: "fictional-level", capability: "direct" },
+          rules: [{ action: "hide", match: [{ kind: "label", id: "private" }] }],
+          otherwise: "share",
+        },
+      ],
+    );
+    expect([...permittedAnalyticsSourceIds(db, auth)!].sort()).toEqual([
+      "files",
+      "files:gamma",
+      "mail:beta",
+    ]);
+    expect(permittedSourceIds(db, auth)).toBeNull();
+  });
+});
+
+test("shared catalog owners survive only an all-source boundary with no filtered account of their type", () => {
+  const policy: ScopePolicy = {
+    sourceId: "mail:alpha",
+    audience: { accessLevel: "fictional-level", capability: "direct" },
+    rules: [{ action: "hide", match: [{ kind: "label", id: "private" }] }],
+    otherwise: "share",
+  };
+  db.prepare(
+    "INSERT INTO sources(id,type,account_id,device_id,created_at,updated_at) SELECT 'files:delta','files','delta',device_id,1,1 FROM sources LIMIT 1",
+  ).run();
+  // Historical accountless source ids must not accidentally authorize the
+  // ambiguous shared catalog owner once another account is filtered.
+  db.prepare(
+    "INSERT INTO sources(id,type,account_id,device_id,created_at,updated_at) SELECT 'mail','mail','legacy-accountless',device_id,1,1 FROM sources LIMIT 1",
+  ).run();
+  const all = permittedAnalyticsSourceIds(db, authorization("all", [], [policy]))!;
+  expect([...all].sort()).toEqual(["files", "files:delta", "files:gamma", "mail:beta"]);
+  expect(all.has("mail")).toBe(false);
+  expect(all.has("unconfigured")).toBe(false);
+  for (const mode of ["allowlist", "denylist"] as const) {
+    const ids = mode === "allowlist" ? ["files:gamma", "files:delta", "mail:alpha"] : ["mail:beta"];
+    const restricted = permittedAnalyticsSourceIds(db, authorization(mode, ids, [policy]))!;
+    expect(restricted.has("files:gamma")).toBe(true);
+    expect(restricted.has("files:delta")).toBe(true);
+    expect(restricted.has("files")).toBe(false);
+    expect(restricted.has("mail")).toBe(false);
+    expect(restricted.has("mail:alpha")).toBe(false);
+  }
 });

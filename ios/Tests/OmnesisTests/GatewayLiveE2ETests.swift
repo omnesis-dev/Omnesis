@@ -180,6 +180,61 @@ final class GatewayLiveE2ETests: XCTestCase {
         _ = try await tasks.perform(.delete, on: task.id)
     }
 
+    func testPairedOwnerCanCreateReopenAndEditASourceFilteredLevel() async throws {
+        let access = AccessClient(baseURL: baseURL, token: apiKey, session: session)
+        var source: AccessSourceInstance?
+        for _ in 0 ..< 60 {
+            let overview = try await access.overview()
+            XCTAssertTrue(overview.sourceFilters?.enabled == true)
+            source = overview.sources.first { source in
+                source.scopes?.items.contains { $0.kind == "conversation" } == true &&
+                    source.scopeReadiness?.first { $0.kind == "conversation" }?.ready == true
+            }
+            if source != nil { break }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+        let selectedSource = try XCTUnwrap(source, "Native scope preparation did not finish")
+        let options = try await access.scopeOptions(sourceId: selectedSource.id, kind: "conversation")
+        let selected = try XCTUnwrap(options.items.first)
+        var policy = ScopePolicy.empty(sourceId: selectedSource.id, levelId: "new", capability: "direct")
+        policy.rules = [.init(match: [selected.ref], action: "share")]
+        policy.otherwise = "hide"
+        let boundary = AccessSourceBoundary(mode: .allowlist, sourceIds: [selectedSource.id])
+        let created = try await access.createLevel(
+            name: "native scope editor \(UUID().uuidString)",
+            rules: [.direct(sources: boundary, filterRevision: 0, scopePolicies: [policy])]
+        )
+        let reopened = try await access.overview().levels.first { $0.id == created.id }
+        let savedPolicy = try XCTUnwrap(reopened?.rules.first?.scopePolicies.first)
+        XCTAssertEqual(savedPolicy.rules[0].match, [selected.ref])
+        XCTAssertEqual(savedPolicy.audience.accessLevel, created.id)
+        let preview = try await access.scopePreview(savedPolicy)
+        XCTAssertEqual(preview.total, preview.visible + preview.hidden)
+        XCTAssertLessThanOrEqual(preview.unknown, preview.hidden)
+        policy = savedPolicy
+        policy.rules[0].action = "hide"
+        policy.otherwise = "share"
+        let revision = created.rules.first?.filterRevision ?? 0
+        let updated = try await access.updateLevel(
+            id: created.id,
+            name: created.name,
+            rules: [.direct(sources: boundary, filterRevision: revision, scopePolicies: [policy])],
+            expectedRevision: created.revision,
+            expectedFilterRevisions: ["direct": revision]
+        )
+        XCTAssertGreaterThan(updated.revision, created.revision)
+        do {
+            _ = try await access.updateLevel(
+                id: created.id,
+                name: created.name,
+                rules: created.rules,
+                expectedRevision: created.revision,
+                expectedFilterRevisions: ["direct": revision]
+            )
+            XCTFail("A stale native save must not erase a newer filter")
+        } catch GatewayClient.Error.serverError(let status, _) { XCTAssertEqual(status, 409) }
+    }
+
     // MARK: - AdminClient (admin-scope paths)
 
     /// Lists registered devices — should at least return a parseable

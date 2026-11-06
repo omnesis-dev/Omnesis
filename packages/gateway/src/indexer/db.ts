@@ -6,6 +6,7 @@
  * Single SQLite file at ~/.config/omnesis/index.db.
  */
 
+import { createScopeMirrorSchema } from "./scope-mirror.js";
 import { readdirSync, rmSync, unlinkSync, type Dirent } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -107,6 +108,7 @@ function ensureColumn(db: Db, table: string, column: string, ddl: string): void 
 
 export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {}): Db {
   const db = openIndexDb(path, opts);
+  createScopeMirrorSchema(db);
 
   const hadChunksFts =
     db

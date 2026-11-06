@@ -26,6 +26,7 @@ data class SerializedDescriptor(
     val unitName: String? = null,
     val icon: SourceIcon? = null,
     val attribution: SourceAttribution? = null,
+    val scopes: SourceScopes? = null,
 ) {
     @Serializable
     data class Provider(

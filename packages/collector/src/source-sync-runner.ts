@@ -197,6 +197,7 @@ export class SourceSyncRunner {
     private readonly syncTimeoutMs: number,
     private readonly feedProcess: FeedProcessSupervisor = new FeedProcessSupervisor(),
     private readonly ingestionContext?: DocumentIngestionContext,
+    private readonly scopeRefreshActorId?: string,
   ) {}
 
   /**
@@ -554,7 +555,7 @@ export class SourceSyncRunner {
       start: "resume",
       page: pageCount,
       deadline: runInfo.deadline,
-      ...(source.multiDeviceMode
+      ...(mode === "handoff" || mode === "replicated"
         ? { role: this.heldLeases.has(source.id) ? ("holder" as const) : ("member" as const) }
         : {}),
     });
@@ -581,6 +582,8 @@ export class SourceSyncRunner {
         onEpochClaimed(attemptEpoch);
       }
       const state = await this.gateway.getSyncState(source.id);
+      let scopeRefreshEpochs = state?.scopeRefreshEpochs;
+      let scopeRefreshRequestIds = state?.scopeRefreshRequestIds;
       if (
         signal.aborted ||
         this.activeAttempts.get(source.id) !== attemptToken ||
@@ -668,10 +671,42 @@ export class SourceSyncRunner {
           return;
         }
 
+        const scopeFactsSupported = this.gateway.supportsSourceScopes
+          ? await this.gateway.supportsSourceScopes()
+          : false;
+        const scopeHierarchySupported =
+          scopeFactsSupported && this.gateway.supportsSourceScopes
+            ? await this.gateway.supportsSourceScopes(2)
+            : false;
+        if (scopeHierarchySupported && this.gateway.getScopeRefreshState) {
+          const fresh = await this.gateway.getScopeRefreshState(source.id);
+          scopeRefreshEpochs = fresh.epochs;
+          scopeRefreshRequestIds = fresh.requestIds;
+        } else if (scopeHierarchySupported && this.gateway.getScopeRefreshEpochs)
+          scopeRefreshEpochs = await this.gateway.getScopeRefreshEpochs(source.id);
+        if (!scopeHierarchySupported) {
+          scopeRefreshEpochs = undefined;
+          scopeRefreshRequestIds = undefined;
+        }
         // Route to structured or unstructured sync
         if (isStructuredSource) {
           const syncStructured = () =>
-            source.instance.syncStructured!(cursor, { signal, run: runOf() });
+            source.instance.syncStructured!(cursor, {
+              signal,
+              run: runOf(),
+              ...(scopeFactsSupported ? { scopeFactsSupported: true } : {}),
+              ...(scopeHierarchySupported ? { scopeHierarchySupported: true } : {}),
+              ...(scopeHierarchySupported ? { scopeRefreshEpochsSupported: true } : {}),
+              ...(scopeRefreshEpochs && Object.keys(scopeRefreshEpochs).length
+                ? { scopeRefreshEpochs }
+                : {}),
+              ...(scopeRefreshRequestIds && Object.keys(scopeRefreshRequestIds).length
+                ? { scopeRefreshRequestIds }
+                : {}),
+              ...(scopeHierarchySupported && this.scopeRefreshActorId
+                ? { scopeRefreshActorId: this.scopeRefreshActorId }
+                : {}),
+            });
           let result =
             pendingStructuredPage?.result ??
             (wipeEpoch !== undefined && this.gateway.runWithSourceWriteEpoch
@@ -814,6 +849,7 @@ export class SourceSyncRunner {
                 pendingPageId: pendingStructuredPage?.id,
                 providerId: source.providerId,
                 sourceId: source.id,
+                scopeUpdates: result.scopeUpdates,
                 documents: pendingStructuredPage
                   ? result.documents
                   : this.documentsWithIngestionContext(result.documents),
@@ -944,7 +980,23 @@ export class SourceSyncRunner {
           );
           hasMore = result.hasMore;
         } else {
-          const sync = () => source.instance.sync(cursor, { signal, run: runOf() });
+          const sync = () =>
+            source.instance.sync(cursor, {
+              signal,
+              run: runOf(),
+              ...(scopeFactsSupported ? { scopeFactsSupported: true } : {}),
+              ...(scopeHierarchySupported ? { scopeHierarchySupported: true } : {}),
+              ...(scopeHierarchySupported ? { scopeRefreshEpochsSupported: true } : {}),
+              ...(scopeRefreshEpochs && Object.keys(scopeRefreshEpochs).length
+                ? { scopeRefreshEpochs }
+                : {}),
+              ...(scopeRefreshRequestIds && Object.keys(scopeRefreshRequestIds).length
+                ? { scopeRefreshRequestIds }
+                : {}),
+              ...(scopeHierarchySupported && this.scopeRefreshActorId
+                ? { scopeRefreshActorId: this.scopeRefreshActorId }
+                : {}),
+            });
           const result =
             wipeEpoch !== undefined && this.gateway.runWithSourceWriteEpoch
               ? await this.gateway.runWithSourceWriteEpoch(source.id, wipeEpoch, sync)
@@ -970,6 +1022,7 @@ export class SourceSyncRunner {
           const writeResult = await this.gateway.upsertWithCursor({
             providerId: source.providerId,
             sourceId: source.id,
+            scopeUpdates: result.scopeUpdates,
             documents: this.documentsWithIngestionContext(result.documents),
             documentTemporalProjections: source.documentTemporalProjections,
             deletedExternalIds:
@@ -1038,7 +1091,7 @@ export class SourceSyncRunner {
 
           // Avoid hot-looping when a push-based source reports
           // hasMore but has no data yet (waiting for data to arrive)
-          if (hasMore && result.documents.length === 0) {
+          if (hasMore && result.documents.length === 0 && result.scopeUpdates === undefined) {
             await new Promise((r) => setTimeout(r, 2000));
           }
         }

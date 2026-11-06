@@ -14,13 +14,21 @@ import {
   AUDIO_UNREADABLE,
   AudioUnreadableError,
 } from "@omnesis/core";
-import { makeCursorValidator } from "@omnesis/source-sdk";
+import {
+  makeCursorValidator,
+  SOURCE_SCOPE_PAGE_WORK,
+  conversationScopeWork,
+  isScopeRefreshBookmark,
+} from "@omnesis/source-sdk";
 import { SourceId, ProviderId, SyncError, isTransientSyncError } from "@omnesis/types";
+import { prepareWhatsAppScopeRefresh } from "./scope-refresh.js";
+import { whatsappScopeMembership } from "./scope-membership.js";
 import {
   normalizeDayChat,
   buildContactsByLidJid,
   whatsappPersonIdentifiers,
 } from "./normalizer.js";
+import type { RefreshScopeGroupRosters } from "./scope-refresh.js";
 import type {
   AttachmentInfo,
   AttachmentExtractionConfig,
@@ -73,7 +81,10 @@ export type MediaDownloadFn = (msg: StoredMessage) => Promise<MediaDownloadResul
 function isWhatsAppSyncCursor(v: unknown): v is WhatsAppSyncCursor {
   if (!v || typeof v !== "object") return false;
   const c = v as Record<string, unknown>;
-  return c.phase === "bootstrap" || c.phase === "incremental";
+  return (
+    (c.phase === "bootstrap" || c.phase === "incremental") &&
+    (c.scopeParticipantRefresh === undefined || isScopeRefreshBookmark(c.scopeParticipantRefresh))
+  );
 }
 
 const validateWhatsAppSyncCursor = makeCursorValidator(isWhatsAppSyncCursor);
@@ -99,6 +110,7 @@ interface MediaAttemptBudget {
 }
 
 export interface WhatsAppMessagesSourceOptions {
+  refreshScopeGroupRosters?: RefreshScopeGroupRosters;
   isTranscriptionVocabularyEnabled?: () => boolean;
   /** ISO 8601 date string. Documents with sourceCreatedAt older than this are filtered out. */
   dataCutoff?: string;
@@ -142,6 +154,7 @@ export class WhatsAppMessagesSource {
   private registerConnectionError?: (handler: (error: string) => void) => void;
   private unregisterConnectionError?: (handler: (error: string) => void) => void;
   private connectionFailure?: () => WhatsAppConnectionFailure | null;
+  private refreshScopeGroupRosters?: RefreshScopeGroupRosters;
 
   constructor(
     private store: MessageStore,
@@ -170,6 +183,7 @@ export class WhatsAppMessagesSource {
     });
     this.unregisterConnectionError = options?.offConnectionError;
     this.connectionFailure = options?.connectionFailure;
+    this.refreshScopeGroupRosters = options?.refreshScopeGroupRosters;
     if (this.dataCutoff) {
       log.info(`Data age cutoff: ${this.dataCutoff}`);
     }
@@ -219,6 +233,14 @@ export class WhatsAppMessagesSource {
       lastTimestamp: 0,
       committedSeq: 0,
     };
+    const scopeEnabled = opts?.scopeFactsSupported === true;
+    if (scopeEnabled) this.store.enrollScopeMembership();
+    const {
+      plan: scopePlan,
+      candidates: refreshCandidates,
+      restartPage,
+    } = await prepareWhatsAppScopeRefresh(this.store, state, opts, this.refreshScopeGroupRosters);
+    if (restartPage) return restartPage;
     const committedSeq = state.storeId === this.store.storeId ? (state.committedSeq ?? 0) : 0;
     this.store.reconcileSelfAuthoredTextNormalization(committedSeq, vocabularyEnabled);
     const vocabularyBackfillPending = vocabularyEnabled
@@ -247,6 +269,64 @@ export class WhatsAppMessagesSource {
       this.store.drain({
         committedSeq,
       });
+
+    const scopeCache = new Map<string, ReturnType<typeof whatsappScopeMembership>>();
+    const scopeForChat = (chatJid: string) => {
+      const cached = scopeCache.get(chatJid);
+      if (cached) return cached;
+      const version = this.store.scopeConversationVersion(chatJid);
+      if (!version) return undefined;
+      const membership = whatsappScopeMembership({
+        chatJid,
+        chat: this.store.getChat(chatJid),
+        sourceId: this.id,
+        contacts,
+        lidPhoneMap,
+        senders: this.store.isScopeRosterAuthoritative(chatJid)
+          ? []
+          : this.store.scopeConversationSenders(chatJid),
+        uncertainRoster: this.store.isScopeRosterUncertain(chatJid),
+        authoritativeRoster: this.store.isScopeRosterAuthoritative(chatJid),
+        contested: (jid) => this.store.isScopeLidContested(jid),
+        revision: { epoch: this.store.storeId, sequence: version.revision },
+        observedAt: version.observed_at,
+      });
+      if (scopePlan.epoch && this.store.hasScopeRefreshWitness(chatJid, scopePlan.epoch))
+        membership.refreshEpoch = scopePlan.epoch;
+      scopeCache.set(chatJid, membership);
+      return membership;
+    };
+    const scopePage =
+      scopeEnabled && !scopePlan.scan
+        ? this.store.drainScopeMembership(
+            state.storeId === this.store.storeId ? (state.scopeCommittedSeq ?? 0) : 0,
+            undefined,
+            {
+              max: SOURCE_SCOPE_PAGE_WORK,
+              cost: (chatJid) => {
+                const update = scopeForChat(chatJid);
+                return update ? conversationScopeWork(update) : 1;
+              },
+            },
+          )
+        : undefined;
+    const forced: NonNullable<ReturnType<typeof scopeForChat>>[] = [];
+    let forcedWork = 0;
+    if (scopePlan.scan)
+      for (const jid of refreshCandidates.slice(0, 200)) {
+        const update = scopeForChat(jid);
+        if (!update) continue;
+        const cost = conversationScopeWork(update);
+        if (forced.length > 0 && forcedWork + cost > SOURCE_SCOPE_PAGE_WORK) break;
+        forced.push(update);
+        forcedWork += cost;
+      }
+    const scopeMore = scopePlan.scan && refreshCandidates.length > forced.length;
+    const scopeUpdates = scopePlan.scan
+      ? forced
+      : scopePage?.chats
+          .map((row) => scopeForChat(row.chat_jid))
+          .filter((update) => update !== undefined);
 
     log.debug("Draining message store", {
       dirtyKeys: dirtyKeys.size,
@@ -331,6 +411,11 @@ export class WhatsAppMessagesSource {
         vocabularyEnabled,
       );
 
+      if (scopeEnabled) {
+        const snapshot = scopeForChat(chatJid);
+        if (snapshot) doc.metadata.extra = { ...doc.metadata.extra, scopeConversation: snapshot };
+      }
+
       // Post-filter safety: skip documents whose sourceCreatedAt is before the cutoff
       if (this.dataCutoff && doc.sourceCreatedAt < this.dataCutoff) {
         skippedKeys++;
@@ -383,7 +468,12 @@ export class WhatsAppMessagesSource {
       (deadline === undefined || deadline - Date.now() > MEDIA_CONTINUATION_MARGIN_MS) &&
       this.store.hasDueMedia(mediaBudget.attempted);
     const hasMore =
-      morePending || vocabularyBackfillPending || historyState === "streaming" || mediaContinues;
+      morePending ||
+      vocabularyBackfillPending ||
+      historyState === "streaming" ||
+      mediaContinues ||
+      scopePage?.morePending === true ||
+      scopeMore;
 
     const phase = historyComplete ? "incremental" : "bootstrap";
     // Coverage reports whether the synced corpus is whole. WhatsApp only serves
@@ -440,12 +530,46 @@ export class WhatsAppMessagesSource {
     return {
       documents,
       deletedExternalIds,
+      ...(scopeEnabled
+        ? {
+            scopeUpdates: {
+              conversations: scopeUpdates ?? [],
+              ...(scopePlan.controls && scopePlan.scan && !scopeMore
+                ? {
+                    refreshes: [
+                      { kind: "participant" as const, active: false, epoch: scopePlan.epoch },
+                    ],
+                  }
+                : {}),
+            },
+          }
+        : {}),
       ...(issues ? { issues } : {}),
       cursor: {
         phase,
         lastTimestamp: maxTimestamp,
         committedSeq: emitSeq,
         storeId: this.store.storeId,
+        ...(scopePage
+          ? { scopeCommittedSeq: scopePage.emitSeq }
+          : scopePlan.scan || state.scopeCommittedSeq !== undefined
+            ? {
+                scopeCommittedSeq:
+                  state.storeId === this.store.storeId ? (state.scopeCommittedSeq ?? 0) : 0,
+              }
+            : {}),
+        ...(scopePlan.bookmark
+          ? {
+              scopeParticipantRefresh: {
+                ...scopePlan.bookmark,
+                storeId: this.store.storeId,
+                after: scopePlan.scan
+                  ? (forced.at(-1)?.id ?? scopePlan.bookmark.after ?? "")
+                  : scopePlan.bookmark.after,
+                completed: scopePlan.scan ? !scopeMore : scopePlan.bookmark.completed,
+              },
+            }
+          : {}),
       } satisfies WhatsAppSyncCursor,
       hasMore,
       // Every page states the coverage, including the page that has nothing to

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import type { ScopePolicy, SourceScopes, SourceScopeKindReadiness } from "@omnesis/types";
+
 export const MCP_ACCESS_SCOPE = "omnesis:access";
 
 export type AccessCapability = "direct" | "answer" | "notes";
@@ -12,6 +14,9 @@ export type PrincipalCredentialKind = "interactive";
 export type PrincipalCredentialStatus = "pending" | "active";
 
 export interface AccessGrantCapability {
+  /** Scope-policy revision; absent on legacy whole-source capabilities. */
+  filterRevision?: number;
+  scopePolicies?: ScopePolicy[];
   capability: AccessCapability;
   sourceMode: AccessSourceMode;
   sourceIds: string[];
@@ -22,7 +27,10 @@ export interface AccessGrantCapability {
   privacyPolicy: string | null;
 }
 
-export type AccessGrantRuleInput =
+export type AccessGrantRuleInput = {
+  filterRevision?: number;
+  scopePolicies?: ScopePolicy[];
+} & (
   | {
       capability: "direct" | "notes";
       sources: { mode: AccessSourceMode; sourceIds: string[] };
@@ -31,7 +39,8 @@ export type AccessGrantRuleInput =
       capability: "answer";
       sources: { mode: AccessSourceMode; sourceIds: string[] };
       release: { mode: "reviewed"; policyFamilyId: string } | { mode: "unreviewed" };
-    };
+    }
+);
 
 export interface AccessPrincipal {
   id: string;
@@ -360,6 +369,7 @@ export type OAuthTokenExchangeInput =
     };
 
 export interface AccessGrantUpdateInput {
+  expectedFilterRevisions?: Partial<Record<"direct" | "answer", number>>;
   grantId: string;
   expectedRevision: number;
   rules: AccessGrantRuleInput[];
@@ -386,6 +396,7 @@ export interface AccessLevelCreateInput {
 }
 
 export interface AccessLevelUpdateInput {
+  expectedFilterRevisions?: Partial<Record<"direct" | "answer", number>>;
   levelId: string;
   expectedRevision: number;
   name?: string;
@@ -467,6 +478,7 @@ export interface PendingAuthorizationRequest {
 }
 
 export interface AccessOverview {
+  sourceFilters?: { enabled: boolean };
   /** Undecided, unexpired requests, newest first, for the client's waiting banner. */
   pendingRequests: PendingAuthorizationRequest[];
   sources: Array<{
@@ -474,6 +486,9 @@ export interface AccessOverview {
     name: string;
     icon: string | null;
     available: boolean;
+    sourceType?: string;
+    scopes?: SourceScopes;
+    scopeReadiness?: SourceScopeKindReadiness[];
   }>;
   policyFamilies: Array<{
     id: string;

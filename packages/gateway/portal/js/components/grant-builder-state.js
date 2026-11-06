@@ -86,7 +86,10 @@ export function normalizeGrantRules(rules = [], fallbackPolicyFamilyId = "") {
     const release = rule.capability === "answer"
       ? normalizeAnswerRelease(rule, fallbackPolicyFamilyId)
       : null;
+    const retained = { ...rule };
+    for (const key of ["sourceMode", "sourceIds", "releaseMode", "policyFamilyId", "policyRevision", "privacyPolicy"]) delete retained[key];
     normalized[rule.capability] = {
+      ...retained,
       capability: rule.capability,
       sources: normalizeSources(rule),
       ...(rule.capability === "answer"
@@ -104,6 +107,7 @@ export function serializeGrantRules(state) {
     const rule = state?.[capability];
     if (!rule) return [];
     const common = {
+      ...rule,
       capability,
       sources: {
         mode: rule.sources.mode,
@@ -119,6 +123,36 @@ export function serializeGrantRules(state) {
         }]
       : [common];
   });
+}
+
+/** A fresh authority owns new revisions and audiences, never the matched connection's fence. */
+export function serializeNewAuthorityRules(state) {
+  return serializeGrantRules(state).map((rule) => {
+    if (rule.filterRevision === undefined && !rule.scopePolicies?.length) return rule;
+    return {
+      ...rule,
+      filterRevision: 0,
+      scopePolicies: (rule.scopePolicies ?? []).map((policy) => ({
+        ...policy,
+        audience: { ...policy.audience, accessLevel: "new", capability: rule.capability },
+      })),
+    };
+  });
+}
+
+export function newAuthorityFilterError(state, authoringEnabled) {
+  return authoringEnabled !== true && serializeGrantRules(state).some((rule) => rule.scopePolicies?.length)
+    ? "Creating a new access level with these saved filters requires experimental mode. Choose an existing access level to keep its restrictions."
+    : null;
+}
+
+export const SAVED_FILTER_SOURCE_MESSAGE =
+  "Sources with saved filters must stay allowed while filter editing is unavailable. You can still remove the capability.";
+
+export function sourceBoundaryBlocksSavedFilter(rule, authoringEnabled, protectedSourceIds) {
+  return authoringEnabled !== true &&
+    (protectedSourceIds ?? (rule.scopePolicies ?? []).map((policy) => policy.sourceId))
+      .some((id) => !isSourceAllowed(rule, id));
 }
 
 /**
@@ -174,6 +208,11 @@ export function releaseError(state) {
 export function validateGrantRules(state, sources = []) {
   const rules = serializeGrantRules(state);
   if (rules.length === 0) return NO_CAPABILITY_MESSAGE;
+  for (const rule of rules) {
+    if ((rule.scopePolicies ?? []).some((policy) => !isSourceAllowed(rule, policy.sourceId))) {
+      return "A blocked source still has a filter. Restore that source or explicitly remove its filter before saving.";
+    }
+  }
   // One boundary or two. When Answer and Direct hold the same list the owner
   // edits it once, so an empty one is a single fault named for both.
   if (state.answer && state.direct && rulesShareSources(state)) {

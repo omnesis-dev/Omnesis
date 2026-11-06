@@ -7,6 +7,10 @@ import { getSyncState, getWipeEpoch } from "../../db.js";
 import { isSourceRemoved } from "../../data/repositories/SourceRepository.js";
 import { normalizeSourceMetaIcons } from "../../icon-normalizer.js";
 import { invalidateUrlPatternCache } from "../../links.js";
+import {
+  sourceScopeRefreshEpochs,
+  sourceScopeRefreshState,
+} from "../../access/scope-refresh-requirements.js";
 import { epochScope, type SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
 import type Database from "better-sqlite3";
 import type { SourceSyncMeta, SyncCursor } from "@omnesis/source-sdk";
@@ -132,6 +136,12 @@ export class SourceSyncStateService {
   /** One row of a source's sync state: `""` (shared) or a member device's own. */
   getState(sourceId: string, deviceId = "") {
     return getSyncState(this.deps.db, sourceId, deviceId);
+  }
+  getScopeRefreshEpochs(sourceId: string) {
+    return sourceScopeRefreshEpochs(this.deps.db, sourceId);
+  }
+  getScopeRefreshState(sourceId: string) {
+    return sourceScopeRefreshState(this.deps.db, sourceId);
   }
 
   /** Current write epoch of one cursor row (0 if never claimed or wiped). */

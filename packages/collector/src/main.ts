@@ -30,6 +30,7 @@ import {
   readPackageVersion,
   runningSourceCommit,
   SOURCE_CONTRACT_WIRE_RANGE,
+  SOURCE_SCOPES_PROTOCOL_RANGE,
   type AudioTranscribeFn,
   type OcrFn,
   type WsCommand,
@@ -736,7 +737,10 @@ export async function main() {
   gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(unifiedConfig));
   const config = toLegacyConfig(unifiedConfig);
 
-  const engine = new SyncEngine(gateway, { ingestionContext });
+  const engine = new SyncEngine(gateway, {
+    ingestionContext,
+    scopeRefreshActorId: readCollectorPairingState(configDir)?.deviceId,
+  });
   // Voice notes are transcribed through the gateway. Image / scanned-PDF OCR is
   // additionally gated by the live config assignment so "OCR disabled" never
   // turns into a sync-time call to /inference/ocr.
@@ -807,6 +811,7 @@ export async function main() {
     onSocketError: retrustOnCertError,
     capabilities: {
       sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
+      sourceScopes: SOURCE_SCOPES_PROTOCOL_RANGE,
       hostname: collectorHostname(),
       platform: process.platform,
       version: COLLECTOR_VERSION,
@@ -990,6 +995,9 @@ export async function main() {
       // subscription compilation can turn a natural-language watch condition
       // into a deterministic document predicate. Fire-and-forget; the gateway
       // keeps the set it persisted on the last successful push.
+      manager.pushSourceScopes().catch((err) => {
+        log.warn(`pushSourceScopes failed: ${toErrorMessage(err)}`);
+      });
       manager.pushDocumentEventProfiles().catch((err) => {
         log.warn(`pushDocumentEventProfiles failed: ${toErrorMessage(err)}`);
       });

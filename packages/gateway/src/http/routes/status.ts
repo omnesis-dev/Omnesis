@@ -204,6 +204,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
         ws: GATEWAY_COMPAT.protocols.ws,
         pairing: GATEWAY_COMPAT.protocols.pairing,
         watchPrivacyPolicy: 1,
+        sourceScopes: GATEWAY_COMPAT.protocols.sourceScopes,
       },
     });
   });

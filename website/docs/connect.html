@@ -353,6 +353,12 @@
           adds, changes or completes a task.
         </p>
 
+        <p>
+          Upgrading preserves existing whole-source permissions. A source remains entirely granted
+          unless its owner explicitly narrows that access level. Optional unstable controls are
+          described on the <a href="experimental#source-filters">Experimental page</a>.
+        </p>
+
         <h3 id="managing-access">Managing access levels and connections</h3>
         <p>
           <strong>Settings → Access</strong> in the portal lists each access level followed by the
@@ -361,6 +367,11 @@
           its name, ID, the app it signed in from, when it was last used, and its sign-ins.
           Permissions and connection details are always visible within each access level card.
           <code>omnesis access levels</code> prints the same list from the CLI.
+        </p>
+        <p>
+          In the iOS and Android apps, open <strong>Settings → Access</strong> to view connections
+          and create or edit access levels. The editor lets you choose capabilities, source accounts
+          and Answer's privacy policy. Changes apply to every connection using that level.
         </p>
         <ul>
           <li>

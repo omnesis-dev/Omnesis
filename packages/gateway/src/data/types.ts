@@ -110,6 +110,8 @@ export interface ListedDocumentRow {
 }
 
 export interface UpsertDocumentsOptions {
+  /** Authenticated plain-ingest actor, supplied by the service rather than document metadata. */
+  scopeRefreshActorId?: string;
   initialInventory?: { id: string; startedAt: string };
   /**
    * Conflict policy for shared documents emitted by independent replicas.
@@ -125,6 +127,9 @@ export interface UpsertDocumentsOptions {
    * Only a member's own sync page sets it; push ingest never does.
    */
   replicaClaimant?: { deviceId: string };
+  /** Trusted source owner/lease admission for native conversation membership snapshots. */
+  scopeSnapshotAuthority?: Readonly<Record<string, boolean>>;
+  scopeAuthorityIds?: Readonly<Record<string, string>>;
   /** The cursor row each source's `writeEpochs` entry was claimed on (`""` = shared). */
   cursorRows?: Readonly<Record<string, string>>;
   /** The stream each source's documents belong to (`""` = the source's one stream). */

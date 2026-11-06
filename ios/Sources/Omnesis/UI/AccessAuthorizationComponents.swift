@@ -286,6 +286,10 @@ struct AccessSourceRuleEditor: View {
     @Binding var value: AccessSourceSelectionState
     let sources: [AccessSourceInstance]
     let store: AppStore
+    var editFilter: ((AccessSourceInstance) -> Void)?
+    var filterAuthoringEnabled: Bool? = false
+    var savedFilterSourceIds: Set<String> = []
+    var canUpdate: (AccessSourceSelectionState) -> Bool = { _ in true }
     @State private var query = ""
 
     private var availableSourceIds: Set<String> {
@@ -340,8 +344,10 @@ struct AccessSourceRuleEditor: View {
                     .autocorrectionDisabled()
                 HStack {
                     Button("Allow all") { value.allowAll(availableSourceIds) }
+                        .disabled(!canUpdate(changedSelection { $0.allowAll(availableSourceIds) }))
                     Spacer()
                     Button("Block all") { value.blockAll(availableSourceIds) }
+                        .disabled(!canUpdate(changedSelection { $0.blockAll(availableSourceIds) }))
                 }
                 // Buttons in the same Form row otherwise inherit List's row-wide
                 // tap behavior, which can invoke both actions from one tap.
@@ -389,7 +395,15 @@ struct AccessSourceRuleEditor: View {
                     .accessibilityLabel(source.name)
                     .accessibilityValue(allowed ? "Allowed" : "Blocked")
                     .accessibilityAddTraits(allowed ? .isSelected : [])
-                    .disabled(!source.available)
+                    .disabled(!source.available || !canUpdate(changedSelection { $0.setAllowed(!allowed, sourceId: source.id) }))
+                    if accessFilterEntryVisible(
+                        authoringEnabled: filterAuthoringEnabled,
+                        sourceAllowed: allowed,
+                        hasDeclaration: source.scopes != nil,
+                        hasSavedPolicy: savedFilterSourceIds.contains(source.id)
+                    ), let editFilter {
+                        Button("Filter \(source.name)") { editFilter(source) }
+                    }
                 }
                 if shownSources.isEmpty {
                     Text("No sources match that search.")
@@ -418,6 +432,12 @@ struct AccessSourceRuleEditor: View {
         .listRowBackground(Theme.bgSecondary)
     }
 
+    private func changedSelection(_ change: (inout AccessSourceSelectionState) -> Void) -> AccessSourceSelectionState {
+        var proposed = value
+        change(&proposed)
+        return proposed
+    }
+
     private func futureSourceChoice(allowed: Bool, title: String) -> some View {
         Button {
             value.setFutureSourcesAllowed(allowed, knownSourceIds: availableSourceIds)
@@ -436,6 +456,7 @@ struct AccessSourceRuleEditor: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(value.allowsFutureSources == allowed ? .isSelected : [])
+        .disabled(!canUpdate(changedSelection { $0.setFutureSourcesAllowed(allowed, knownSourceIds: availableSourceIds) }))
     }
 }
 
@@ -485,6 +506,16 @@ extension PreviewMocks {
         mode: .review
     )
     .environment(AppStore())
+}
+#endif
+
+#if DEBUG
+#Preview("Source selection without filter authoring") {
+    AccessAuthorizationSheet(
+        previewRequest: PreviewMocks.accessAuthorizationRequest,
+        overview: PreviewMocks.scopeReadOnlyOverview,
+        mode: .sharedSources
+    ).environment(AppStore.preview())
 }
 #endif
 

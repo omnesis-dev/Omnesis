@@ -129,6 +129,16 @@ struct AccessAuthorizationReviewSection: View {
                         form.answerRelease == .unreviewed ? Theme.warning : Theme.textPrimary
                     )
             }
+            ForEach(form.rules(request: request, overview: overview).filter { !$0.scopePolicies.isEmpty }, id: \.capability) { rule in
+                ForEach(rule.scopePolicies, id: \.sourceId) { policy in
+                    let source = overview.sources.first { $0.id == policy.sourceId }?.name ?? policy.sourceId
+                    let items = policy.rules.first?.match.map { $0.label ?? $0.id ?? "Person" }.joined(separator: ", ") ?? ""
+                    LabeledContent(
+                        "\(rule.capability.capitalized) · \(source)",
+                        value: "\(policy.rules.first?.action == "share" ? "Only" : "Everything except"): \(items)"
+                    )
+                }
+            }
             if form.notesEnabled {
                 LabeledContent("Notes", value: "Save notes; the agent’s name is recorded")
             }
@@ -137,7 +147,7 @@ struct AccessAuthorizationReviewSection: View {
                     .font(.footnote)
                     .foregroundStyle(Theme.textSecondary)
             }
-            Text("Access can be edited or revoked later from Settings → Access in the Omnesis Portal.")
+            Text("Access levels can be edited later from Settings → Access. Connections can also be revoked in the Omnesis Portal.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

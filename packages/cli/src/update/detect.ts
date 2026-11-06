@@ -147,6 +147,49 @@ export interface UpdateAssessment {
   readonly requiresForce: boolean;
 }
 
+/** Compatibility evidence comes from a served health response or an exact build manifest. */
+export interface UpdateCompatibilityEvidence {
+  readonly current?: unknown;
+  readonly target?: unknown;
+}
+
+function advertisesSourceScopes(value: unknown, minimumVersion = 1): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const envelope = value as { protocols?: unknown; compat?: unknown };
+  const protocols = envelope.protocols ?? envelope.compat;
+  if (typeof protocols !== "object" || protocols === null) return false;
+  const range = (protocols as { sourceScopes?: unknown }).sourceScopes;
+  if (typeof range !== "object" || range === null) return false;
+  const { min, max } = range as { min?: unknown; max?: unknown };
+  return (
+    typeof min === "number" &&
+    Number.isInteger(min) &&
+    min >= 1 &&
+    min <= minimumVersion &&
+    typeof max === "number" &&
+    Number.isInteger(max) &&
+    max >= minimumVersion
+  );
+}
+
+/** Missing target evidence is uncertainty, never a version-number guess. */
+export function sourceFilterRollbackNote(evidence?: UpdateCompatibilityEvidence): string | null {
+  if (evidence === undefined) return null;
+  const required =
+    advertisesSourceScopes(evidence.current) && !advertisesSourceScopes(evidence.current, 2)
+      ? 1
+      : 2;
+  if (advertisesSourceScopes(evidence.target, required)) return null;
+  const introduction = advertisesSourceScopes(evidence.current)
+    ? "If source filters are configured, target filter enforcement has not been verified. "
+    : "If source filters are configured, verify that the target gateway supports them. ";
+  return (
+    introduction +
+    "A gateway without filter support denies filtered source accounts entirely to external agents " +
+    "until a supporting gateway is restored; it does not grant the whole source."
+  );
+}
+
 /**
  * Classify an update before it runs. Omnesis has no down-migrations: an
  * upgrade migrates the DB forward (effectively irreversible without a
@@ -155,9 +198,13 @@ export interface UpdateAssessment {
  * warning the update flow prints — and the block it puts in front of it. What
  * an upgrade's migrations mean depends on whether its plan backs up first, so
  * that warning is `migrationBackupNote`'s. Pure: target/current are the only
- * inputs.
+ * inputs, with optional observed compatibility evidence.
  */
-export function assessUpdate(currentVersion: string, targetVersion: string): UpdateAssessment {
+export function assessUpdate(
+  currentVersion: string,
+  targetVersion: string,
+  compatibility?: UpdateCompatibilityEvidence,
+): UpdateAssessment {
   const current = normalizeVersion(currentVersion);
   const target = normalizeVersion(targetVersion);
   const cmp = compareSemver(target, current);
@@ -173,6 +220,10 @@ export function assessUpdate(currentVersion: string, targetVersion: string): Upd
         "the gateway reads them; those sources resync automatically. " +
         "Restore a pre-upgrade backup if you need the exact prior state.",
     );
+  }
+  if (direction === "downgrade") {
+    const scopeNote = sourceFilterRollbackNote(compatibility);
+    if (scopeNote) notes.push(scopeNote);
   }
   return { direction, current, target, notes, requiresForce };
 }

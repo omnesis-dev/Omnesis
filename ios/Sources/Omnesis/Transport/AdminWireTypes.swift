@@ -531,6 +531,7 @@ public struct SerializedDescriptor: Decodable, Equatable, Sendable, Identifiable
     /// gateway rasterises a hosted URL into `imageDataUri` before serving
     /// this, so a consumer never has to fetch one.
     public let icon: Icon?
+    public var scopes: SourceScopes?
     public struct Provider: Decodable, Equatable, Sendable {
         public let id: String
         public let name: String
@@ -554,5 +555,6 @@ public struct SerializedDescriptor: Decodable, Equatable, Sendable, Identifiable
         case provider
         case unitName
         case icon
+        case scopes
     }
 }

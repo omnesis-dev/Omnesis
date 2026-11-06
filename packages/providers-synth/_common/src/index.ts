@@ -74,3 +74,9 @@ export { sourceFixtureClock, type SourceFixtureClock } from "./fixture-clock.js"
 
 export { loadBinaryFixtureAssets, validateBinaryFixtureAssets } from "./binary-assets.js";
 export type { BinaryFixtureAsset, LoadedBinaryFixtureAsset } from "./binary-assets.js";
+
+export {
+  withFixtureScopeRefresh,
+  type FixtureScopeRevision,
+  type FixtureScopeRow,
+} from "./scope-refresh.js";

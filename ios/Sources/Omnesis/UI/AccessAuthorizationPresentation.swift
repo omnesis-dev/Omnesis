@@ -334,7 +334,7 @@ func accessCapabilityHoldings(rules: [AccessGrantRule]) -> AccessCapabilityHoldi
             holdings.notes = true
         case .direct:
             holdings.direct = true
-        case .answer(_, let release):
+        case .answer(_, let release, _, _):
             holdings.answer = true
             holdings.answerUnreviewed = release == .unreviewed
         }
@@ -456,10 +456,35 @@ struct AccessAuthorizationFormState {
     var linkSources = true
     var answerRelease: AccessAnswerReleaseChoice = .reviewed
     var policyFamilyId = ""
+    var scopePolicies: [String: [ScopePolicy]] = [:]
 
     init(sourceIds: Set<String>) {
         directSources = .newGrant(knownSourceIds: sourceIds)
         answerSources = .newGrant(knownSourceIds: sourceIds)
+    }
+
+    func canShareSources(authoringEnabled: Bool?) -> Bool {
+        authoringEnabled == true || (scopePolicies["answer"] ?? []).isEmpty && (scopePolicies["direct"] ?? []).isEmpty
+    }
+
+    mutating func setLinkedSources(_ linked: Bool, authoringEnabled: Bool? = true) {
+        guard !linked || canShareSources(authoringEnabled: authoringEnabled) else { return }
+        if !linked, linkSources {
+            directSources = answerSources
+            scopePolicies["direct"] = (scopePolicies["answer"] ?? []).map { policy in
+                var copy = policy
+                copy.audience.capability = "direct"
+                return copy
+            }
+        }
+        linkSources = linked
+    }
+
+    mutating func setAnswerEnabled(_ enabled: Bool, requiresAnswer: Bool) {
+        if !enabled, !requiresAnswer, answerEnabled, directEnabled, linkSources {
+            setLinkedSources(false)
+        }
+        answerEnabled = requiresAnswer || enabled
     }
 
     /// The form the wizard opens on, built from what the gateway serves for
@@ -492,6 +517,7 @@ struct AccessAuthorizationFormState {
         overview: AccessOverview,
         prefill: [AccessGrantRule]? = nil
     ) {
+        scopePolicies = [:]
         policyFamilyId = overview.defaultPolicyFamilyId
             ?? overview.policyFamilies.first?.id
             ?? ""
@@ -506,14 +532,15 @@ struct AccessAuthorizationFormState {
         var directBoundary: AccessSourceBoundary?
         var answerBoundary: AccessSourceBoundary?
         for rule in prefill {
+            scopePolicies[rule.capability] = rule.scopePolicies
             switch rule {
             case .notes:
                 notesEnabled = true
-            case .direct(let sources):
+            case .direct(let sources, _, _):
                 directEnabled = true
                 directBoundary = sources
                 directSources = AccessSourceSelectionState(boundary: sources, knownSourceIds: known)
-            case .answer(let sources, let release):
+            case .answer(let sources, let release, _, _):
                 answerEnabled = true
                 answerBoundary = sources
                 answerSources = AccessSourceSelectionState(boundary: sources, knownSourceIds: known)
@@ -533,7 +560,8 @@ struct AccessAuthorizationFormState {
         // Two reading rules drawn on the same boundary are one list; a Direct
         // rule narrower than Answer's is the separate list it was written as.
         if let directBoundary, let answerBoundary {
-            linkSources = directBoundary == answerBoundary
+            linkSources = directBoundary == answerBoundary && (scopePolicies["direct"] ?? []).isEmpty && (scopePolicies["answer"] ?? [])
+                .isEmpty
         }
     }
 
@@ -569,7 +597,27 @@ struct AccessAuthorizationFormState {
         scope == .direct ? directSources : answerSources
     }
 
-    mutating func setSources(_ value: AccessSourceSelectionState, for scope: AccessSourceScope) {
+    func canSetSources(
+        _ value: AccessSourceSelectionState,
+        for scope: AccessSourceScope,
+        knownSourceIds: Set<String>,
+        authoringEnabled: Bool?
+    )
+        -> Bool {
+        accessBoundaryPreservesFilters(
+            value.boundary(knownSourceIds: knownSourceIds),
+            policies: scopePolicies[scope == .direct ? "direct" : "answer"] ?? [],
+            authoringEnabled: authoringEnabled
+        )
+    }
+
+    mutating func setSources(
+        _ value: AccessSourceSelectionState,
+        for scope: AccessSourceScope,
+        knownSourceIds: Set<String> = [],
+        authoringEnabled: Bool? = true
+    ) {
+        guard canSetSources(value, for: scope, knownSourceIds: knownSourceIds, authoringEnabled: authoringEnabled) else { return }
         if scope == .direct { directSources = value } else { answerSources = value }
     }
 
@@ -582,7 +630,7 @@ struct AccessAuthorizationFormState {
     )
         -> AccessAuthorizationSelection? {
         let rules = rules(request: request, overview: overview)
-        guard !rules.isEmpty else { return nil }
+        guard !rules.isEmpty, overview.sourceFilters?.enabled == true || rules.allSatisfy(\.scopePolicies.isEmpty) else { return nil }
         return .connect(
             rules: rules,
             credentialLabel: accessAuthorizationPrefix(request.clientName, maxUTF16Length: 160)
@@ -621,6 +669,18 @@ struct AccessAuthorizationFormState {
             guard boundary.sourceIds.count <= accessMaxSourceSelections else { return [] }
             result.append(.answer(sources: boundary, release: release))
         }
-        return result
+        return result.map { rule in
+            guard rule.capability != "notes" else { return rule }
+            let key = rule.capability == "direct" && linkSources && answerActive(request: request) ? "answer" : rule.capability
+            let policies = (scopePolicies[key] ?? []).filter { policy in
+                rule.boundary.mode == .all || (rule.boundary.mode == .allowlist
+                    ? rule.boundary.sourceIds.contains(policy.sourceId) : !rule.boundary.sourceIds.contains(policy.sourceId))
+            }.map { policy in
+                var copy = policy
+                copy.audience = .init(accessLevel: "new", capability: rule.capability)
+                return copy
+            }
+            return rule.replacing(policies: policies)
+        }
     }
 }

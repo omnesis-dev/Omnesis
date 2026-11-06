@@ -21,6 +21,7 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
+import { acknowledgeScopeReplay, type ScopeSourceGeneration } from "../access/scope-generations.js";
 import {
   reserveNoteHandoff,
   claimNoteHandoff,
@@ -460,6 +461,8 @@ import {
   recordSourceModeTransitionFailure,
   recordSourceModeTransitionPublicationFailure,
 } from "../data/repositories/SourceModeTransitionRepository.js";
+import { backfillDocumentScopes } from "../access/scope-backfill.js";
+import { upsertSourceScopes, type SourceScopesEntry } from "../access/scope-descriptors.js";
 import {
   upsertSourceDocumentProfiles,
   type SourceDocumentProfileEntry,
@@ -723,6 +726,8 @@ function guardedCanonicalMutation(
 }
 
 export const writerHandlers = {
+  "scopes.acknowledgeReplay": (db: Db, completed: ScopeSourceGeneration) =>
+    acknowledgeScopeReplay(db, completed),
   "knowledge.canonicalMutation": guardedCanonicalMutation,
   ...knowledgeWriterHandlers,
   // ── db.ts ─────────────────────────────────────────────────────────
@@ -1466,6 +1471,8 @@ export const writerHandlers = {
   "sources.clearSourceRemoved": (db: Db, id: string) => clearSourceRemoved(db, SourceId(id)),
   "sources.clearSourceRemovedIfCleanupDone": (db: Db, id: string) =>
     clearSourceRemovedIfCleanupDone(db, SourceId(id)),
+  "sources.upsertScopes": (db: Db, entries: readonly SourceScopesEntry[], publishedAt: number) =>
+    upsertSourceScopes(db, entries, publishedAt),
   "sources.upsertDocumentProfiles": (
     db: Db,
     entries: readonly SourceDocumentProfileEntry[],
@@ -2015,6 +2022,8 @@ import type {
 } from "../transcribe/vocabulary/types.js";
 
 export const writerYieldableHandlers = {
+  "scopes.backfill": (db: Db, token: PreemptToken, batchSize: number) =>
+    backfillDocumentScopes(db, batchSize, { token }),
   "vocabulary.advanceRebuild": (db: Db, token: PreemptToken, settings: VocabularySettings) =>
     advanceTranscriptionVocabularyRebuild(db, settings, token),
   "vocabulary.applyBatch": (db: Db, token: PreemptToken, docs: ExtractedVocabularyDocument[]) => {
@@ -2038,6 +2047,7 @@ export const writerYieldableHandlers = {
     cursorRows?: Readonly<Record<string, string>>,
     streams?: Readonly<Record<string, string>>,
     replicaVersionPolicies?: Readonly<Record<string, "source-updated-at">>,
+    scopeRefreshActorId?: string,
     priorIgnoredReplicaDocuments: Array<{ sourceId: string; externalId: string }> = [],
     priorSuppressedDocuments: Array<{ sourceId: string; externalId: string }> = [],
   ) => {
@@ -2047,6 +2057,7 @@ export const writerYieldableHandlers = {
       cursorRows,
       streams,
       replicaVersionPolicies,
+      scopeRefreshActorId,
     });
     if (result.remaining.length > 0) {
       // Carry the specs into the continuation so yielded chunks
@@ -2059,6 +2070,7 @@ export const writerYieldableHandlers = {
           cursorRows,
           streams,
           replicaVersionPolicies,
+          scopeRefreshActorId,
           [...priorIgnoredReplicaDocuments, ...result.ignoredReplicaDocuments],
           [...priorSuppressedDocuments, ...result.suppressedDocuments],
         ],

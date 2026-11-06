@@ -5,6 +5,7 @@ import type { SyncCursor } from "@omnesis/source-sdk";
 import type { TranscriptionPlaceholderState } from "@omnesis/core";
 
 export interface WhatsAppSyncCursor extends SyncCursor {
+  scopeParticipantRefresh?: import("@omnesis/source-sdk").ScopeRefreshBookmark;
   phase: "bootstrap" | "incremental";
   /** Highest message timestamp we've processed */
   lastTimestamp: number;
@@ -21,6 +22,8 @@ export interface WhatsAppSyncCursor extends SyncCursor {
   committedSeq: number;
   /** Archive that emitted committedSeq; absent in legacy cursors (replay safely). */
   storeId?: string;
+  /** Membership updates acknowledged with this same atomic gateway page. */
+  scopeCommittedSeq?: number;
 }
 
 /**

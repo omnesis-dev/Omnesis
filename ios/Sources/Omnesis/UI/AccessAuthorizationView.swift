@@ -31,6 +31,8 @@ struct AccessAuthorizationSheet: View {
     @State private var actionChoiceRefresh = AccessAuthorizationChoiceRefresh.notAttempted
     @State private var deciding = false
     @State private var generation = 0
+    @State private var filterSource: AccessSourceInstance?
+    @State private var filterCapability = "answer"
     @State private var step = AccessAuthorizationStep.permissions
     @State private var outcome: AccessAuthorizationOutcome?
     /// The waiting request this sheet was opened for, when it was opened from
@@ -232,24 +234,37 @@ struct AccessAuthorizationSheet: View {
         case .permissions:
             permissionsStep(request: request)
         case .data:
+            if newFilteredAuthorityUnavailable(request: request, overview: overview) {
+                Section {
+                    Text(
+                        "New access with filters is unavailable. Choose an existing level or change the allowed capabilities."
+                    )
+                    .font(.footnote)
+                }
+            } else if overview.sourceFilters?.enabled != true, form.scopePolicies.values.contains(where: { !$0.isEmpty }) {
+                Section {
+                    Text("Saved filters are read-only while filter editing is unavailable. You can still revoke capabilities.")
+                        .font(.footnote)
+                }
+            }
             if form.answerActive(request: request), form.directEnabled {
                 sourceBoundaryChoice()
             }
             ForEach(form.sourceScopes(request: request), id: \.self) { scope in
-                AccessSourceRuleEditor(
-                    scope: scope,
-                    value: Binding(
-                        get: { form.sources(for: scope) },
-                        set: { form.setSources($0, for: scope) }
-                    ),
-                    sources: overview.sources,
-                    store: store
-                )
+                consentSourceSelector(scope, overview: overview)
             }
             if form.answerActive(request: request) {
                 AccessAnswerReleaseSection(form: $form, overview: overview)
             }
         case .review:
+            if newFilteredAuthorityUnavailable(request: request, overview: overview) {
+                Section {
+                    Text(
+                        "New access with filters is unavailable. Choose an existing level or change the allowed capabilities."
+                    )
+                    .font(.footnote)
+                }
+            }
             AccessAuthorizationReviewSection(
                 request: request,
                 overview: overview,
@@ -264,7 +279,7 @@ struct AccessAuthorizationSheet: View {
         Section("What should this connection be allowed to do?") {
             Toggle(isOn: Binding(
                 get: { form.answerActive(request: request) },
-                set: { form.answerEnabled = request.requiresAnswer ? true : $0 }
+                set: { form.setAnswerEnabled($0, requiresAnswer: request.requiresAnswer) }
             )) {
                 permissionLabel(
                     title: "Answer",
@@ -308,6 +323,60 @@ struct AccessAuthorizationSheet: View {
     /// One source list or two, as a plain pair of options worded as what they
     /// do — the same shape as the new-source choice inside each list, so the
     /// two read as siblings.
+    private func consentSourceSelector(_ scope: AccessSourceScope, overview: AccessOverview) -> some View {
+        AccessSourceRuleEditor(
+            scope: scope,
+            value: Binding(
+                get: { form.sources(for: scope) },
+                set: { proposed in
+                    form.setSources(
+                        proposed,
+                        for: scope,
+                        knownSourceIds: overview.availableSourceIds,
+                        authoringEnabled: overview.sourceFilters?.enabled
+                    )
+                }
+            ),
+            sources: overview.sources,
+            store: store,
+            editFilter: { source in
+                filterCapability = scope == .direct ? "direct" : "answer"
+                filterSource = source
+            },
+            filterAuthoringEnabled: overview.sourceFilters?.enabled,
+            savedFilterSourceIds: Set((form.scopePolicies[scope == .direct ? "direct" : "answer"] ?? []).map(\.sourceId)),
+            canUpdate: { proposed in
+                form.canSetSources(
+                    proposed,
+                    for: scope,
+                    knownSourceIds: overview.availableSourceIds,
+                    authoringEnabled: overview.sourceFilters?.enabled
+                )
+            }
+        )
+        .sheet(item: $filterSource) { source in
+            NavigationStack {
+                SourceFilterEditorView(
+                    source: source,
+                    levelId: "new",
+                    capability: filterCapability,
+                    initialPolicy: form.scopePolicies[filterCapability]?.first { $0.sourceId == source.id },
+                    authoringEnabled: overview.sourceFilters?.enabled == true
+                ) { policy in
+                    var policies = form.scopePolicies[filterCapability] ?? []
+                    policies.removeAll { $0.sourceId == source.id }
+                    if let policy { policies.append(policy) }
+                    form.scopePolicies[filterCapability] = policies
+                }
+            }
+        }
+    }
+
+    private func newFilteredAuthorityUnavailable(request: AccessAuthorizationRequest, overview: AccessOverview) -> Bool {
+        overview.sourceFilters?.enabled != true && (choice == nil || choice?.path == .newLevel)
+            && form.rules(request: request, overview: overview).contains { !$0.scopePolicies.isEmpty }
+    }
+
     private func sourceBoundaryChoice() -> some View {
         // No header: the two options name the object and the choice, and a
         // heading above them would only restate the list heading below.
@@ -315,7 +384,7 @@ struct AccessAuthorizationSheet: View {
             sourceBoundaryOption(
                 linked: true,
                 title: "Allow the same sources for Answer and Direct",
-                detail: "One selection controls both capabilities."
+                detail: "Use Answer's source selection and filters for both capabilities."
             )
             sourceBoundaryOption(
                 linked: false,
@@ -333,10 +402,7 @@ struct AccessAuthorizationSheet: View {
     )
         -> some View {
         Button {
-            // Unlinking starts Direct from the list the two shared, so the
-            // separate list opens where the shared one left off.
-            if !linked, form.linkSources { form.directSources = form.answerSources }
-            form.linkSources = linked
+            form.setLinkedSources(linked, authoringEnabled: overview?.sourceFilters?.enabled)
         } label: {
             HStack(alignment: .top, spacing: Theme.Spacing.sm) {
                 Image(
@@ -357,6 +423,7 @@ struct AccessAuthorizationSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(form.linkSources == linked ? .isSelected : [])
+        .disabled(linked && !form.canShareSources(authoringEnabled: overview?.sourceFilters?.enabled))
     }
 
     private func permissionLabel(
@@ -694,6 +761,16 @@ extension AccessAuthorizationSheet {
 #Preview("Request no longer waiting") {
     AccessAuthorizationSheet(previewLookupError: AccessAuthorizationLocalError.noLongerPending)
         .environment(AppStore.preview())
+}
+#endif
+
+#if DEBUG
+#Preview("Consent with filter authoring unavailable") {
+    AccessAuthorizationSheet(
+        previewRequest: PreviewMocks.accessAuthorizationRequest,
+        overview: PreviewMocks.scopeReadOnlyOverview,
+        mode: .sharedSources
+    ).environment(AppStore.preview())
 }
 #endif
 

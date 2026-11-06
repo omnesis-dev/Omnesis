@@ -30,6 +30,9 @@ import {
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
 import { setActivityMarker } from "@omnesis/agent";
+import { initializeScopeGenerationEpoch } from "./access/scope-generations.js";
+import { seedPackagedSourceScopes } from "./access/packaged-source-scopes.js";
+import { requireScopeRefreshForStoredHosts } from "./access/scope-refresh-requirements.js";
 import { dotEnvKeysAtBoot } from "./load-env.js";
 import {
   resolveAnthropicApiKey,
@@ -243,6 +246,7 @@ import { DERIVATION_STAGES, type DerivationStage } from "./domain/DocumentDeriva
 import { subscribeDerivationNudge } from "./scheduler/tasks/derivation-nudge.js";
 import { SubscriptionDeliveryService } from "./subscriptions/delivery.js";
 import { AnswerCompletionDeliveryService } from "./privacy/completion-delivery.js";
+import { assertAnswerTaskReleaseCurrent } from "./privacy/answer-scope.js";
 import { createWatchFiringThreadOpener } from "./watch/firing-thread.js";
 import { ApnsClient } from "./push/transports/direct-apns.js";
 import { FcmClient } from "./push/transports/direct-fcm.js";
@@ -497,6 +501,9 @@ const indexerStatus = new IndexerStatusReporter();
 // only connection with write access from this point on.
 {
   const bootDb = createDatabase(DB_PATH, { encryptionKey: storageEncryption.mainDbKey });
+  seedPackagedSourceScopes(bootDb);
+  requireScopeRefreshForStoredHosts(bootDb);
+  initializeScopeGenerationEpoch(bootDb);
   bootDb.close();
 }
 
@@ -1075,6 +1082,7 @@ searchPipeline.setGatewayDb(db);
 // search provenance, on the io worker.
 searchPipeline.setKnowledgeReadability(ioGate);
 searchPipeline.setProvenanceReads(ioGate);
+searchPipeline.setScopeAuthorizationReads(ioGate);
 
 // Dedicated search-worker pool (Slice 3B): relocate the heavy
 // candidate-generation block (BM25 + usearch + fusion/boost/diversity + hydrate)
@@ -1431,6 +1439,7 @@ const agentLifecycle = new AgentLifecycle({
   mentionWorthGateActive,
   // `temporal_query` reads its window's store half off the main loop.
   temporalStoreReads: ioGate,
+  scopeHistoryReads: ioGate,
   deleteDocumentIndexBatch: async (documentId, limit, sourceDeleted) => {
     return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);
   },
@@ -1683,6 +1692,7 @@ const recordCompleterSpend =
   };
 
 const indexerLifecycle = new IndexerLifecycle({
+  acknowledgeScopeReplay: (completed) => writeGate.acknowledgeScopeReplay(completed),
   inferenceRegistry,
   configStore,
   indexerStatus,
@@ -3573,6 +3583,7 @@ const answerCompletionDeliveryService = new AnswerCompletionDeliveryService({
   writeGate,
   transport: wsServer,
   getDevice: (id) => getDevice(db, id),
+  assertTaskScopeCurrent: (taskId) => assertAnswerTaskReleaseCurrent(db, taskId),
   log: log.child("privacy:completion-delivery"),
 });
 const answerCompletionDeliveryHandle = scheduler.schedule({

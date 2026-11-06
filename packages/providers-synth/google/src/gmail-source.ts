@@ -2,9 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
-import { syncPage, type SourceInstance } from "@omnesis/source-sdk";
+import { syncPage, SOURCE_SCOPE_MAX_PAGE_WORK, type SourceInstance } from "@omnesis/source-sdk";
 import {
   impairEntries,
+  withFixtureScopeRefresh,
   pageFromFixture,
   synthPartitionOf,
   type SynthCursor,
@@ -23,6 +24,7 @@ interface GmailFixtureCursor extends SynthCursor {
   /** Each observed parent records its attachment definition, including no-child outcomes. */
   binaryParents?: [string, string][];
 }
+const MAX_LABEL_FACTS = SOURCE_SCOPE_MAX_PAGE_WORK - 1;
 
 /** Keep expensive byte extraction on the current page, never the snapshot enumeration. */
 export function createGmailFixtureSource(
@@ -33,8 +35,8 @@ export function createGmailFixtureSource(
   const partitions = new Map(
     entries.map((entry, index) => [entry.externalId, synthPartitionOf(index)]),
   );
-  return {
-    async sync(cursor) {
+  const source: SourceInstance<GmailFixtureCursor> = {
+    async sync(cursor, opts) {
       if (
         cursor?.attachmentIds !== undefined &&
         (!Array.isArray(cursor.attachmentIds) ||
@@ -79,7 +81,11 @@ export function createGmailFixtureSource(
       const { batch, newCursor, hasMore, isFinalPage } = pageFromFixture(visible, cursor);
       const documents: DocumentInput[] = [];
       for (const entry of batch) {
-        const mapped = await mapEmailWithAssets(entry, context, extraction);
+        const mapped = await mapEmailWithAssets(
+          entry,
+          { ...context, scopeFactsSupported: opts?.scopeFactsSupported === true },
+          extraction,
+        );
         const docs = Array.isArray(mapped) ? mapped : [mapped];
         documents.push(
           ...docs.map((doc) => ({ ...doc, partitionKey: partitions.get(entry.externalId) ?? "" })),
@@ -110,6 +116,23 @@ export function createGmailFixtureSource(
         (entry) =>
           !hasBinaryAttachments(entry) || observed.get(entry.externalId) === signature(entry),
       );
+      const scopeUpdates =
+        opts?.scopeFactsSupported && isFinalPage
+          ? {
+              readiness: [
+                {
+                  kind: "label" as const,
+                  complete:
+                    snapshotAllowed &&
+                    !partitioned &&
+                    visible.every(
+                      (entry) =>
+                        entry.labelIds !== undefined && entry.labelIds.length <= MAX_LABEL_FACTS,
+                    ),
+                },
+              ],
+            }
+          : undefined;
       if (partitioned) {
         const claims = new Map<string, string[]>();
         for (const entry of visible) {
@@ -120,6 +143,7 @@ export function createGmailFixtureSource(
         }
         return syncPage(documents, next, {
           hasMore,
+          scopeUpdates,
           presentClaims:
             isFinalPage && inventoryKnown
               ? [...claims].map(([partition, ids]) => ({ partition, ids }))
@@ -128,9 +152,89 @@ export function createGmailFixtureSource(
       }
       return syncPage(documents, next, {
         hasMore,
+        scopeUpdates,
         presentExternalIds:
           isFinalPage && snapshotAllowed && inventoryKnown ? visible.flatMap(idsOf) : undefined,
       });
     },
   };
+  let native: EmailEntry[] = [];
+  let ready = false;
+  return withFixtureScopeRefresh(source, {
+    sourceId: context.sourceId,
+    kind: "label",
+    fingerprint() {
+      const visible = impairEntries(entries, context.sourceId, (entry) => entry.externalId);
+      native = visible.partitioned
+        ? []
+        : [...visible.visible].sort((a, b) => a.externalId.localeCompare(b.externalId));
+      ready =
+        visible.snapshotAllowed &&
+        !visible.partitioned &&
+        native.every(
+          (entry) => entry.labelIds !== undefined && entry.labelIds.length <= MAX_LABEL_FACTS,
+        );
+      return JSON.stringify({
+        native: native.map((entry) => [entry.externalId, entry.labelIds, entry.labels]),
+        ready,
+      });
+    },
+    rows(epoch) {
+      const labels = new Map<string, string>();
+      for (const entry of native)
+        for (const [index, id] of (entry.labelIds ?? []).entries())
+          labels.set(id, entry.labels[index] ?? id);
+      return [
+        ...[...labels]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([id, label]) => ({
+            work: 1,
+            updates: { entities: [{ kind: "label" as const, id, label }] },
+          })),
+        ...native.map((entry) => ({
+          work: 1 + Math.min(entry.labelIds?.length ?? 0, MAX_LABEL_FACTS),
+          updates: {
+            documents: [
+              {
+                externalId: entry.externalId,
+                kinds: ["label" as const],
+                facts: {
+                  kinds: ["label" as const],
+                  facts: (entry.labelIds ?? [])
+                    .slice(0, MAX_LABEL_FACTS)
+                    .map((id) => ({ kind: "label" as const, id })),
+                  complete:
+                    entry.labelIds && entry.labelIds.length <= MAX_LABEL_FACTS
+                      ? ["label" as const]
+                      : [],
+                  ...(epoch && entry.labelIds && entry.labelIds.length <= MAX_LABEL_FACTS
+                    ? { refreshEpochs: { label: epoch } }
+                    : {}),
+                },
+                tags: entry.labels,
+              },
+            ],
+          },
+        })),
+      ];
+    },
+    decorate(document, epoch) {
+      const facts = document.metadata.scopeFacts;
+      if (facts && facts.facts.length > MAX_LABEL_FACTS) {
+        document.metadata.scopeFacts = {
+          kinds: ["label"],
+          facts: facts.facts.slice(0, MAX_LABEL_FACTS),
+          complete: [],
+        };
+        return;
+      }
+      if (epoch && facts?.complete.includes("label"))
+        document.metadata.scopeFacts = {
+          ...facts,
+          refreshEpochs: { ...facts.refreshEpochs, label: epoch },
+        };
+    },
+    ready: () => ready,
+    replaceEntityKinds: ["label"],
+  });
 }

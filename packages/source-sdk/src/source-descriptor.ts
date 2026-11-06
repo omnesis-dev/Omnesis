@@ -12,7 +12,7 @@ import {
   type SerializedProviderCredentialsSpec,
   serializeCredentialsSpec,
 } from "@omnesis/core";
-import type { AccountId, SourceType, ProviderType } from "@omnesis/types";
+import type { AccountId, SourceType, ProviderType, SourceScopes } from "@omnesis/types";
 import type { AuthResult, AuthSession } from "./auth-session.js";
 import type { AccountDescriptor } from "./account-descriptor.js";
 import type { ExecutionMode } from "./execution-mode.js";
@@ -379,6 +379,8 @@ export interface SourceDescriptor {
    * Only meaningful for `authType: "link-widget"`. See `WidgetRendererSpec`.
    */
   widgetRenderer?: WidgetRendererSpec;
+  /** Items external-agent filters can name within one source account. */
+  scopes?: SourceScopes;
   /** Human-friendly name for the unit of data (e.g. "emails", "messages", "notes") */
   unitName?: string;
   /**
@@ -645,6 +647,8 @@ export interface SerializedDescriptor {
   name: string;
   description: string;
   unitName?: string;
+  /** See `SourceDescriptor.scopes`. Omitted when filtering is unsupported. */
+  scopes?: SourceScopes;
   /** See `SourceDescriptor.primaryCount`. */
   primaryCount?: "documents" | "analytics";
   /** See `SourceDescriptor.gatewayHosted`. */
@@ -753,6 +757,7 @@ export function serializeDescriptor(d: SourceDescriptor): SerializedDescriptor {
     name: d.name,
     description: d.description,
     unitName: d.unitName,
+    scopes: d.scopes,
     primaryCount: d.primaryCount,
     gatewayHosted: d.gatewayHosted,
     urlHub: d.urlHub,

@@ -125,6 +125,9 @@ export function AccessView({
   // way to the gateway. The disabled buttons only follow on the next render, so
   // a second press in the same moment is refused here rather than sent twice.
   const inFlightRef = useRef(false);
+  const activeAuthorization = useRef(authorizationId);
+  activeAuthorization.current = authorizationId;
+  const refreshSequence = useRef(0);
   // The connection the move dialog is open for, with the dialog's own state.
   const [moving, setMoving] = useState(null);
   // What a window opened only to finish one request says once there is
@@ -148,20 +151,23 @@ export function AccessView({
    * is typing into — and a successful one clears only a failed load's own
    * banner, never a removal's.
    */
-  async function refresh({ background = false } = {}) {
+  async function refresh({ background = false, expectedAuthorizationId } = {}) {
+    const sequence=++refreshSequence.current;
+    const current=()=>sequence===refreshSequence.current && (expectedAuthorizationId===undefined || activeAuthorization.current===expectedAuthorizationId);
     try {
       const loaded = await getAccessOverview();
+      if(!current()) return null;
       setOverview(loaded);
       setOverviewReady(true);
       if (!background || !overviewReady) setError("");
       return loaded;
     } catch (error) {
-      if (background) return null;
+      if (!current() || background) return null;
       setOverviewReady(false);
       setError(errorMessage(error, "Agent access could not be loaded."));
       return null;
     } finally {
-      setLoading(false);
+      if(current()) setLoading(false);
     }
   }
 
@@ -174,7 +180,9 @@ export function AccessView({
    * to saying the refreshed lookup cannot be reviewed.
    */
   async function reloadPending() {
-    const [result, loaded] = await Promise.all([getAccessAuthorization(authorizationId), refresh()]);
+    const id=authorizationId;
+    const [result, loaded] = await Promise.all([getAccessAuthorization(id), refresh({expectedAuthorizationId:id})]);
+    if(activeAuthorization.current!==id || result.request.approvalId!==id) return null;
     if (result.request.status !== "pending") {
       await finishDecision(result.request.status);
       return null;
@@ -524,7 +532,7 @@ export function AccessView({
   if (authorizationId && matchingRequest) {
     return html`<div class="access-view">
       <${RequestReview}
-        key=${matchingRequest.id}
+        key=${matchingRequest.approvalId}
         request=${matchingRequest}
         connection=${pending.connection}
         overview=${overview}
@@ -561,7 +569,7 @@ export function AccessView({
     }
     return html`<div class="access-view">
       <${LevelEditorPage}
-        key=${`${level.id}-${level.revision}`}
+        key=${level.id}
         level=${level}
         connections=${entries.filter((entry) => entry.levelId === level.id && isLiveConnection(entry))}
         overview=${overview}

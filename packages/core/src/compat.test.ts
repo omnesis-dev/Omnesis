@@ -28,6 +28,7 @@ describe("buildCompatManifest", () => {
   });
 
   test("reflects the live wire-protocol constants (not a hardcoded copy)", () => {
+    expect(manifest.protocols.sourceScopes).toEqual({ current: 2, min: 1, max: 2 });
     expect(manifest.protocols.ws).toBe(PROTOCOL_VERSION);
     expect(manifest.protocols.pairing).toBe(PAIRING_PROTOCOL_VERSION);
     expect(manifest.protocols.pairingAccepted).toEqual({

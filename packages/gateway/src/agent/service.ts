@@ -138,6 +138,7 @@ import type { ConversationReadStatePort } from "./conversation-read-state-servic
 import type { ConversationNotification } from "./conversation-notifier.js";
 import type { FiringAnswerEvidence } from "../privacy/firing-evidence.js";
 import type { CorpusAuthorization } from "../access/corpus-authorization.js";
+import type { AnswerScopeReadObserver } from "../privacy/answer-scope.js";
 import type { AnswerCitation } from "@omnesis/types/privacy";
 import { withActivity } from "../observability/main-activity.js";
 
@@ -274,7 +275,10 @@ export interface AgentServiceDeps {
     | string
     | ((profile: AgentPromptProfile, context: AgentPromptContext) => string | Promise<string>);
   /** Fail-closed model boundary for externally authorized Answer runs. */
-  externalAnswerScope?: (authorization: CorpusAuthorization) => Promise<{
+  externalAnswerScope?: (
+    authorization: CorpusAuthorization,
+    scopeReads?: AnswerScopeReadObserver,
+  ) => Promise<{
     tools: readonly ToolHandle[];
     systemPrompt: string;
   }>;
@@ -919,12 +923,7 @@ export class AgentService {
   private readonly systemPrompt:
     | string
     | ((profile: AgentPromptProfile, context: AgentPromptContext) => string | Promise<string>);
-  private readonly externalAnswerScope:
-    | ((authorization: CorpusAuthorization) => Promise<{
-        tools: readonly ToolHandle[];
-        systemPrompt: string;
-      }>)
-    | undefined;
+  private readonly externalAnswerScope: AgentServiceDeps["externalAnswerScope"];
   private readonly broadcastEvent: ((event: WsEvent) => void) | undefined;
   private readonly sessionIdGen: () => string;
   private readonly idleTimeoutMs: number;
@@ -2962,6 +2961,7 @@ export class AgentService {
       evidenceDocumentIds?: readonly string[];
       firingEvidence?: FiringAnswerEvidence;
       corpusAuthorization?: CorpusAuthorization;
+      scopeReads?: AnswerScopeReadObserver;
       /**
        * Profiling sink for the MCP Answer `profiling` flag. Absent for
        * every other caller (interactive sessions never profile).
@@ -2977,7 +2977,7 @@ export class AgentService {
     // for themselves rather than for a person at a device. The prompt falls back
     // to the host's zone and marks it as a default rather than as the reader's.
     const externalScope = options?.corpusAuthorization?.restricted
-      ? await this.externalAnswerScope?.(options.corpusAuthorization)
+      ? await this.externalAnswerScope?.(options.corpusAuthorization, options.scopeReads)
       : null;
     if (options?.corpusAuthorization?.restricted && !externalScope) {
       throw new AgentError("agent_unavailable", "restricted Answer scope is unavailable");
@@ -3004,7 +3004,19 @@ export class AgentService {
     // none of these tools can reach outside the sandbox, so what research adds
     // is what the answer may say rather than where it may go.
     const tools = externalScope?.tools
-      ? [...externalScope.tools]
+      ? externalScope.tools.map((handle): ToolHandle => {
+          const observer = options?.scopeReads;
+          if (!observer?.assertCurrent) return handle;
+          return {
+            ...handle,
+            async invoke(args, context) {
+              observer.assertCurrent?.();
+              const result = await handle.invoke(args, context);
+              observer.assertCurrent?.();
+              return result;
+            },
+          };
+        })
       : selectSharedTools(selectDocumentCitationTools(selectSubagentTools(this.tools)));
     const userMessage = privateEvidence
       ? [
@@ -3098,6 +3110,7 @@ export class AgentService {
       this.answerTraceSinks.set(sessionId, (event) => childTrace.capture(event));
       this.sessionRateLimitPatience.set(sessionId, BACKGROUND_RATE_LIMIT_PATIENCE);
       const profiler = options?.profiler;
+      options?.scopeReads?.assertCurrent?.();
       const started = session.send(userMessage, {
         signal,
         ...(profiler ? { llmProbe: (timing) => profiler.recordLlmCall("agent", timing) } : {}),

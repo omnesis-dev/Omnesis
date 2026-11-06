@@ -763,6 +763,28 @@ export default defineSource({
           fine. Both are optional; omit them when no reliable destination exists.
         </p>
 
+        <h3 id="source-scopes">Experimental source scope declarations</h3>
+        <p>
+          A source can declare the stable items an external access filter may name through
+          <code>scopes.items</code>: conversations, participant identifiers, labels or folders. Each
+          item declares how its relationship to a document changes. Shared consumers read this
+          declaration; they never infer source semantics from a source name or display label.
+          Sources without a declaration retain whole-source access boundaries.
+        </p>
+        <p>
+          Facts use source-native IDs and saved phone numbers or email addresses, rather than
+          mutable person records. Missing facts are unknown, not an empty list. A source-owned
+          <code>legacyProjection</code> recipe can derive conversation IDs and native participants
+          from stored metadata. Label names and display paths cannot substitute for label or folder
+          IDs. Keep declarations in a pure provider <code>scope-contracts.ts</code> module and
+          regenerate the packaged catalogue with
+          <code>node --import tsx scripts/generate-source-scopes.mjs</code>. Increase the
+          declaration revision when its projection meaning changes; an older collector cannot
+          replace a newer declaration. See
+          <a href="experimental#source-filters">experimental source filters</a>
+          for the operator-facing boundary.
+        </p>
+
         <h3 id="analytics-rows">Analytics rows</h3>
         <p>
           Analytics rows are typed tables in the analytics database (DuckDB), declared in

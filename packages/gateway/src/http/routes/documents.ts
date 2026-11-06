@@ -284,6 +284,7 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
         streams,
         replicaVersionPolicies,
         sourceService.sourceWireAuthority(Object.keys(cursorRows), auth),
+        auth.deviceId ?? undefined,
       );
       // `rejected` is omitted when empty so the common-path response stays
       // byte-identical; push clients treat an absent field as "no rejections".
@@ -1291,6 +1292,12 @@ export function mountSyncStateRoutes(
     // Read the legacy wipeEpoch field alongside the cursor for collectors
     // that predate per-attempt claims. New collectors use POST /begin.
     const wipeEpoch = documentService.getWipeEpoch(sourceId, row);
+    const { epochs: scopeRefreshEpochs, requestIds: scopeRefreshRequestIds } =
+      documentService.getScopeRefreshState(sourceId);
+    const scopeRefresh = {
+      ...(Object.keys(scopeRefreshEpochs).length ? { scopeRefreshEpochs } : {}),
+      ...(Object.keys(scopeRefreshRequestIds).length ? { scopeRefreshRequestIds } : {}),
+    };
     // A member's first read of its own row adopts the shared row: the
     // bookmark the source had before it became replicated is a valid
     // starting point for every replica. A row that exists but never
@@ -1304,6 +1311,7 @@ export function mountSyncStateRoutes(
       return c.json({
         cursor: null,
         lastSyncedAt: null,
+        ...scopeRefresh,
         wipeEpoch,
         initialInventory: documentService.getInitialSourceInventory(sourceId, row),
       });
@@ -1313,6 +1321,7 @@ export function mountSyncStateRoutes(
       cursor: syncStateCursorCodec.parseWithFallback(state.cursor, { rowId: sourceId }),
       lastSyncedAt: state.last_synced_at,
       hasMeta: !!(state.icon || state.label),
+      ...scopeRefresh,
       wipeEpoch,
     });
   });

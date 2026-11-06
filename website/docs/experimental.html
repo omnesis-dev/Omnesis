@@ -258,6 +258,56 @@
           page capture remains available without experimental mode. Notes in the portal and mobile
           apps remain available as usual.
         </p>
+        <h3 id="source-filters">Source filters for external agents</h3>
+        <p>
+          <code>OMNESIS_EXPERIMENTAL=1</code> is required to change source filters. This contract is
+          unstable. A filter belongs to one source account and one access-level capability: Direct
+          or Answer. It names a single list, either only those items or everything except those
+          items. No filter is added automatically to an existing access level.
+        </p>
+        <p>
+          The gateway decides access from stable source facts. When a required fact is missing or
+          unresolved, the document is hidden under either list mode. Source declarations and fact
+          backfill are independent of the indexing of document text. Older collectors do not widen
+          permissions, and older editors cannot overwrite a filtered boundary without its current
+          filter revision. Saved restrictions continue to apply when experimental mode is switched
+          off.
+        </p>
+
+        <p>
+          In Settings → Access, create or edit an access level and open Data &amp; privacy. Select
+          whole source accounts first, then add filters within each account. The editor previews
+          visible, hidden and unknown records before applying a draft. New Direct drafts can use
+          Answer's filters; saved capabilities stay independent unless you explicitly copy them.
+          Review lists the exact saved identifiers and source items. If another editor changes the
+          level, your draft stays visible until you explicitly reload and discard it.
+        </p>
+
+        <p>
+          WhatsApp and iMessage filters can select conversations or people. Gmail filters can select
+          people, exact email domains or native labels. Drive filters select folders and include
+          their descendants and files added later. Other sources retain whole-account access.
+          Conversation membership includes silent members; missing or unresolved membership hides
+          the affected records. Gmail label renames preserve a filter; a deleted label replaced with
+          one of the same name does not. Drive folder moves update which files match.
+        </p>
+        <p>
+          Search the stored catalogue or type a supported phone number, email address or domain.
+          Saved people are snapshots of those identifiers: merging contacts does not expand access.
+          Additional known addresses require an explicit addition. The editor shows item counts and
+          unknown records, and waits for stored-fact backfill and required native metadata refresh.
+          When a collector needs an update, its name appears beside the unavailable filter.
+        </p>
+
+        <p>
+          A filtered Answer keeps self-memory facts only when every live evidence document is
+          readable. Analytics remain available for whole, permitted source accounts; a filtered
+          account contributes no analytics tables. Shared tables that also contain a filtered
+          account are unavailable because their aggregates cannot be separated safely. Wiki context,
+          graph context, message counts and temporal queries are omitted while a filter applies.
+          Your standing instructions still reach every run.
+        </p>
+
         <h3 id="browser-extension-find">Find and reopen indexed content</h3>
         <p>
           On compatible gateways, an already paired browser enables

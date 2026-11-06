@@ -6,11 +6,11 @@ import { defineSource } from "@omnesis/source-sdk";
 import {
   fakeQrSession,
   preDiscoveredAccounts,
-  syncFromFixture,
   selfAccountId,
   type SynthCursor,
 } from "@omnesis/providers-synth-common";
-import { loadChats, mapChat } from "./fixtures.js";
+import { loadChats } from "./fixtures.js";
+import { createChatFixtureSource } from "./scope-source.js";
 import { universeHasFakeCorpus, createWrapsRealWhatsApp } from "./wraps-real.js";
 
 export {
@@ -56,12 +56,6 @@ export default defineSource<SynthCursor>({
     }
     const { sourceId, providerId } = opts;
     const entries = loadChats();
-    return {
-      async sync(cursor) {
-        return syncFromFixture(entries, cursor, (e) => mapChat(e, { sourceId, providerId }), {
-          sourceId,
-        });
-      },
-    };
+    return createChatFixtureSource(entries, { sourceId, providerId });
   },
 });

@@ -185,13 +185,11 @@ data class AccessConnectionChoice(
     ): AccessAuthorizationSelection? {
         if (!canContinue(request, overview)) return null
         return when (path) {
-            AccessConnectionPath.NEW_LEVEL -> AccessAuthorizationSelection.NewConnection(
-                name = name.trim(),
-                level = AccessConnectionLevel.New(
-                    name = levelName.trim(),
-                    rules = form.ownRules(request, overview) ?: return null,
-                ),
-            )
+            AccessConnectionPath.NEW_LEVEL -> {
+                val rules = form.ownRules(request, overview) ?: return null
+                if (overview.sourceFilters?.enabled != true && rules.any { it.scopePolicies.isNotEmpty() }) return null
+                AccessAuthorizationSelection.NewConnection(name = name.trim(), level = AccessConnectionLevel.New(name = levelName.trim(), rules = rules))
+            }
             AccessConnectionPath.EXISTING_LEVEL -> requireNotNull(level(overview)).let {
                 AccessAuthorizationSelection.NewConnection(
                     name = name.trim(),

@@ -371,6 +371,9 @@ export function boundedSelfAuthoredText(
  * source-specific fields go in `extra`.
  */
 export interface DocumentMetadata {
+  /** Negotiated source-native filter facts; absent from legacy collector writes. */
+  scopeFacts?: import("./source-scopes.js").DocumentScopeFacts;
+  scopeHierarchy?: import("./source-scope-updates.js").SourceScopeHierarchyParents[];
   /**
    * Bounded source-owned evidence of the operator's own words, excluding quoted
    * messages, presentation headers and generated/received content. Present

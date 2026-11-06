@@ -2161,6 +2161,7 @@ describe("AccessView", () => {
       });
       expect(api.updateAccessLevel).toHaveBeenCalledWith("level-research", {
         expectedRevision: 4,
+        expectedFilterRevisions: { answer: 0 },
         rules: [
           { capability: "answer", sources: { mode: "all", sourceIds: [] }, release: { mode: "reviewed", policyFamilyId: "policy-a" } },
           { capability: "notes", sources: { mode: "all", sourceIds: [] } },
@@ -2257,13 +2258,16 @@ describe("AccessView", () => {
       });
 
       expect(api.updateAccessLevel).toHaveBeenCalledWith("level-research", expect.objectContaining({ expectedRevision: 4 }));
+      expect(api.getAccessOverview).toHaveBeenCalledTimes(1);
+      expect(saveButton().disabled).toBe(true);
+      expect(router.replaceRoute).not.toHaveBeenCalled();
+      expect(host.textContent).toContain("Your draft is retained");
+      await act(async () => {button("Reload latest and discard draft").click();await new Promise(resolve=>setTimeout(resolve,0));});
       expect(api.getAccessOverview.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/access");
-      await act(async () => { render(h(AccessView, {}), host); });
-      expect(host.textContent).toContain("Your update was not applied");
-      const head = levelGroup("fictional research").querySelector(".access-level-terms")!;
-      expect(head.querySelector(".access-term-direct")?.classList.contains("access-term-off")).toBe(false);
-      expect(head.querySelector(".access-term-answer")?.classList.contains("access-term-off")).toBe(true);
+      expect(host.querySelector("[aria-current='step']")?.textContent).toContain("Permissions");
+      expect(capability("Direct").hasAttribute("checked")).toBe(true);
+      expect(capability("Answer").hasAttribute("checked")).toBe(false);
+      expect(router.replaceRoute).not.toHaveBeenCalled();
     });
 
     test("says a level that is gone is no longer available", async () => {
@@ -2953,6 +2957,9 @@ describe("AccessView", () => {
       await mount({ authorizationId: request.approvalId });
       await act(async () => continueButton().click());
       await allow();
+      expect(allowButton().disabled).toBe(true);
+      expect(api.getAccessAuthorization).toHaveBeenCalledTimes(1);
+      await act(async () => {button("Reload choices and discard draft").click();await new Promise(resolve=>setTimeout(resolve,0));});
 
       expect(api.getAccessAuthorization).toHaveBeenCalledTimes(2);
       expect(currentStep()).toBe("Connection");
@@ -2982,6 +2989,9 @@ describe("AccessView", () => {
       await act(async () => continueButton().click());
       expect(reviewRows().Notes).toBe("Save notes; the agent's name is recorded");
       await allow();
+      expect(allowButton().disabled).toBe(true);
+      expect(api.getAccessAuthorization).toHaveBeenCalledTimes(1);
+      await act(async () => {button("Reload choices and discard draft").click();await new Promise(resolve=>setTimeout(resolve,0));});
 
       expect(api.getAccessAuthorization).toHaveBeenCalledTimes(2);
       expect(currentStep()).toBe("Connection");
@@ -3004,10 +3014,13 @@ describe("AccessView", () => {
       await mount({ authorizationId: request.approvalId });
       await act(async () => continueButton().click());
       await allow();
+      expect(allowButton().disabled).toBe(true);
+      expect(api.getAccessAuthorization).toHaveBeenCalledTimes(1);
+      await act(async () => {button("Reload choices and discard draft").click();await new Promise(resolve=>setTimeout(resolve,0));});
 
       expect(host.querySelector(".access-authorization-page .access-error")?.textContent)
         .toBe("The authorization request could not be reloaded.");
-      expect(allowButton().disabled).toBe(false);
+      expect(allowButton().disabled).toBe(true);
       expect(button("Deny request").disabled).toBe(false);
       expect(router.replaceRoute).not.toHaveBeenCalled();
     });

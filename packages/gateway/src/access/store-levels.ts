@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { withScopePolicyMutation } from "./scope-storage-floor.js";
+import {
+  ScopePolicyEditError,
+  assertScopeEditRevisions,
+  nextScopeState,
+  conservativeSources,
+  writeScopeState,
+} from "./scope-policy-store.js";
 import { appendAudit, getActiveGrant } from "./store-helpers.js";
 import {
   getLiveLevelRow,
@@ -119,7 +127,9 @@ export function updateAccessLevel(
     if (renamed && levelNameTaken(db, name, level.id)) {
       return { ok: false, error: "level-name-taken" };
     }
-    const rulesChanged = rules ? applyLevelRules(db, level, rules, input.actorTokenId, now) : false;
+    const rulesChanged = rules
+      ? applyLevelRules(db, level, rules, input.actorTokenId, now, input.expectedFilterRevisions)
+      : false;
     if (renamed || rulesChanged) {
       advanceLevel(db, level, name, input.actorTokenId, now, rulesChanged ? rules : undefined);
     }
@@ -188,8 +198,25 @@ export function setConnectionLevel(
       if (levelNameTaken(db, name)) return { ok: false, error: "level-name-taken" };
       const capabilities = getGrantCapabilities(db, grant.id);
       if (capabilities.length === 0) return { ok: false, error: "invalid-selection" };
-      levelId = insertLevel(db, name, storedRuleShape(capabilities), input.actorTokenId, now).id;
-      updated = { grantId: grant.id, revision: grant.revision, capabilities };
+      levelId = insertLevel(
+        db,
+        name,
+        storedRuleShape(capabilities),
+        input.actorTokenId,
+        now,
+        true,
+      ).id;
+      const copied = getLevelCapabilities(db, levelId);
+      const applied = replaceGrantRules(
+        db,
+        grant,
+        storedRuleShape(copied),
+        input.actorTokenId,
+        now,
+        copied,
+      );
+      if (!applied.ok) throw new LevelChangeRefusedError(applied.error);
+      updated = applied.value;
     } else {
       const level = getLiveLevelRow(db, input.levelId);
       if (!level) return { ok: false, error: "inactive-grant" };
@@ -331,7 +358,7 @@ export function updateAccessGrant(
     if (!level || members.length !== 1 || members[0] !== grant.id) {
       return { ok: false, error: "level-managed" };
     }
-    if (applyLevelRules(db, level, rules, input.actorTokenId, now)) {
+    if (applyLevelRules(db, level, rules, input.actorTokenId, now, input.expectedFilterRevisions)) {
       advanceLevel(db, level, level.name, input.actorTokenId, now, rules);
     }
     return {
@@ -356,9 +383,24 @@ function applyLevelRules(
   rules: StoredGrantRules,
   actorTokenId: string,
   now: number,
+  expectedFilterRevisions?: Partial<Record<"direct" | "answer", number>>,
 ): boolean {
   const previous = getLevelCapabilities(db, level.id);
   try {
+    assertScopeEditRevisions(previous, rules, expectedFilterRevisions);
+    rules = rules.map((rule) => {
+      const state = nextScopeState(
+        previous.find((old) => old.capability === rule.capability),
+        rule,
+        level.id,
+      );
+      const {
+        filterRevision: _suppliedRevision,
+        scopePolicies: _suppliedPolicies,
+        ...plain
+      } = rule;
+      return state ? { ...plain, ...state } : plain;
+    });
     validateRetainingPrevious(db, rules, previous);
   } catch {
     throw new LevelChangeRefusedError("invalid-selection");
@@ -372,14 +414,19 @@ function applyLevelRules(
   ) {
     throw new LevelChangeRefusedError("level-in-use");
   }
-  writeLevelCapabilities(db, level.id, rules);
-  for (const grantId of liveLevelMemberGrantIds(db, level.id, now)) {
-    const member = getActiveGrant(db, grantId, now);
-    if (!member) continue;
-    const applied = replaceGrantRules(db, member, rules, actorTokenId, now, previous);
-    if (!applied.ok) throw new LevelChangeRefusedError(applied.error);
-  }
-  return true;
+  return withScopePolicyMutation(db, "level", level.id, () => {
+    db.prepare(
+      "DELETE FROM access_scope_capabilities WHERE owner_kind = 'level' AND owner_id = ?",
+    ).run(level.id);
+    writeLevelCapabilities(db, level.id, rules);
+    for (const grantId of liveLevelMemberGrantIds(db, level.id, now)) {
+      const member = getActiveGrant(db, grantId, now);
+      if (!member) continue;
+      const applied = replaceGrantRules(db, member, rules, actorTokenId, now, previous);
+      if (!applied.ok) throw new LevelChangeRefusedError(applied.error);
+    }
+    return true;
+  });
 }
 
 /** A rule may keep naming a source the level already named, even after it has gone. */
@@ -446,36 +493,56 @@ function replaceGrantRules(
     )
     .run(revision, now, grant.id, grant.revision);
   if (advanced.changes !== 1) return { ok: false, error: "stale-revision" };
-  db.prepare("DELETE FROM access_grant_capabilities WHERE grant_id = ?").run(grant.id);
-  const insert = db.prepare(
-    `INSERT INTO access_grant_capabilities
+  return withScopePolicyMutation(db, "grant", grant.id, () => {
+    db.prepare("DELETE FROM access_grant_capabilities WHERE grant_id = ?").run(grant.id);
+    db.prepare(
+      "DELETE FROM access_scope_capabilities WHERE owner_kind = 'grant' AND owner_id = ?",
+    ).run(grant.id);
+    const insert = db.prepare(
+      `INSERT INTO access_grant_capabilities
        (grant_id, capability, source_mode, source_ids, release_mode, policy_family_id)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  );
-  for (const rule of rules) {
-    insert.run(
-      grant.id,
-      rule.capability,
-      rule.sourceMode,
-      JSON.stringify(rule.sourceIds),
-      rule.releaseMode,
-      rule.policyFamilyId,
     );
-  }
-  const updatedCapabilities = getGrantCapabilities(db, grant.id);
-  appendAudit(db, {
-    eventType: "grant-updated",
-    principalId: grant.principal_id,
-    grantId: grant.id,
-    grantRevision: revision,
-    actorTokenId,
-    detail: { rules },
-    now,
+    for (const rule of rules) {
+      writeScopeState(
+        db,
+        "grant",
+        grant.id,
+        rule.capability,
+        rule.filterRevision
+          ? {
+              sourceMode: rule.sourceMode,
+              sourceIds: rule.sourceIds,
+              filterRevision: rule.filterRevision,
+              scopePolicies: rule.scopePolicies ?? [],
+            }
+          : null,
+      );
+      const legacy = conservativeSources({ ...rule, scopePolicies: rule.scopePolicies ?? [] });
+      insert.run(
+        grant.id,
+        rule.capability,
+        legacy.sourceMode,
+        JSON.stringify(legacy.sourceIds),
+        rule.releaseMode,
+        rule.policyFamilyId,
+      );
+    }
+    const updatedCapabilities = getGrantCapabilities(db, grant.id);
+    appendAudit(db, {
+      eventType: "grant-updated",
+      principalId: grant.principal_id,
+      grantId: grant.id,
+      grantRevision: revision,
+      actorTokenId,
+      detail: { rules },
+      now,
+    });
+    return {
+      ok: true,
+      value: { grantId: grant.id, revision, capabilities: updatedCapabilities },
+    };
   });
-  return {
-    ok: true,
-    value: { grantId: grant.id, revision, capabilities: updatedCapabilities },
-  };
 }
 
 /**
@@ -561,6 +628,7 @@ function inLevelTransaction<T>(
   try {
     return db.transaction(body)();
   } catch (error) {
+    if (error instanceof ScopePolicyEditError) return { ok: false, error: "invalid-selection" };
     if (error instanceof LevelChangeRefusedError) return { ok: false, error: error.code };
     if (isLevelNameConflict(error)) return { ok: false, error: "level-name-taken" };
     throw error;

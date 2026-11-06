@@ -396,7 +396,7 @@ The simulator inherits the macOS user's filesystem access, so reading host `/tmp
 
 TLS: the test uses a `URLSession` with an "accept any cert" delegate (`AcceptAnyCertDelegate` in the same file) since the synth gateway uses an auto-generated self-signed cert and the test bypasses pairing. Production stays on `OmnesisURLSession.shared` with its pinned trust path.
 
-Not covered by this suite (intentional follow-ups): pairing-flow E2E (the test uses the bootstrap admin token directly), DeviceSocket SSE subscription, and `AdminClient.listDescriptors` — that last one caught a real iOS bug (`SerializedDescriptor.importBased` / `pushBased` declared non-optional but the gateway doesn't emit those keys); the test is omitted with a TODO comment in the file pointing at the decoder fix.
+Not covered by this suite (intentional follow-ups): pairing UI E2E (the wrapper pairs a registered owner phone through the real API), and DeviceSocket SSE subscription.
 
 ## Remote deploy via TestFlight
 

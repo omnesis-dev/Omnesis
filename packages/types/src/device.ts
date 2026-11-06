@@ -478,6 +478,8 @@ export type DeviceTlsTrustMode = "system" | "pinned-leaf" | "pinned-ca" | "legac
 export interface DeviceCapability {
   /** Supported source sync wire revisions; absent on legacy collectors. */
   sourceContract?: { min: number; max: number };
+  /** Native source scope facts protocol; absent on legacy collectors. */
+  sourceScopes?: { min: number; max: number };
   /** Source types this device can host. */
   hostableSourceTypes?: SourceType[];
   /** Hostable source types whose data is pushed by an external runtime. */

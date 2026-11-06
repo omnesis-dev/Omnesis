@@ -330,6 +330,7 @@ data class AccessAuthorizationForm(
     val policyFamilyId: String = "",
     /** Whether one source list stands for both Answer and Direct. */
     val linkedSources: Boolean = true,
+    val scopePolicies: Map<String, List<dev.omnesis.android.transport.dto.ScopePolicy>> = emptyMap(),
     /**
      * The Connection step's answers, or null on a gateway that predates connections, where
      * the wizard opens on Permissions and approves with a `connect` selection.
@@ -347,8 +348,28 @@ data class AccessAuthorizationForm(
      * Split the two lists, or join them. Unlinking materializes the shared list as Direct's own,
      * so the two editors that appear next start from the boundary that was in force.
      */
-    fun withLinkedSources(linked: Boolean, answerOn: Boolean): AccessAuthorizationForm =
-        if (linked) copy(linkedSources = true) else copy(linkedSources = false, directSources = directBoundary(answerOn))
+    fun canShareSources(authoringEnabled: Boolean?): Boolean = authoringEnabled == true ||
+        (scopePolicies["answer"].isNullOrEmpty() && scopePolicies["direct"].isNullOrEmpty())
+
+    fun canSetSources(value: AccessSourceSelectionState, scope: AccessSourceScope, known: Set<String>, authoringEnabled: Boolean?): Boolean =
+        scopeBoundaryPreservesFilters(value.boundary(known), scopePolicies[if (scope == AccessSourceScope.DIRECT) "direct" else "answer"].orEmpty(), authoringEnabled)
+
+    fun withSources(value: AccessSourceSelectionState, scope: AccessSourceScope, known: Set<String>, authoringEnabled: Boolean?): AccessAuthorizationForm =
+        if (!canSetSources(value, scope, known, authoringEnabled)) this
+        else if (scope == AccessSourceScope.DIRECT) copy(directSources = value) else copy(answerSources = value)
+
+    fun withLinkedSources(linked: Boolean, answerOn: Boolean, authoringEnabled: Boolean? = true): AccessAuthorizationForm =
+        if (linked && !canShareSources(authoringEnabled)) this else if (linked) copy(linkedSources = true) else copy(linkedSources = false, directSources = directBoundary(answerOn),
+            scopePolicies = if (linkedSources && answerOn) scopePolicies + ("direct" to scopePolicies["answer"].orEmpty().map {
+                it.copy(audience = it.audience.copy(capability = "direct"))
+            }) else scopePolicies)
+
+    fun withAnswerEnabled(enabled: Boolean, requiresAnswer: Boolean): AccessAuthorizationForm {
+        val retained = if (!enabled && !requiresAnswer && answerEnabled && directEnabled && linkedSources)
+            withLinkedSources(false, true) else this
+        return retained.copy(answerEnabled = requiresAnswer || enabled)
+            .relinkSources(enabled || requiresAnswer, directEnabled)
+    }
 
     /**
      * Decide, as the second reading capability is switched on, whether one list can stand for
@@ -356,7 +377,7 @@ data class AccessAuthorizationForm(
      * capability would silently become the other's.
      */
     fun relinkSources(answerOn: Boolean, directOn: Boolean): AccessAuthorizationForm =
-        if (answerOn && directOn) copy(linkedSources = answerSources.sameAccessAs(directSources)) else this
+        if (answerOn && directOn) copy(linkedSources = answerSources.sameAccessAs(directSources) && scopePolicies["direct"].orEmpty().isEmpty() && scopePolicies["answer"].orEmpty().isEmpty()) else this
 
     /**
      * The source lists the review states, one row each, in the order the Data & privacy step
@@ -396,6 +417,7 @@ data class AccessAuthorizationForm(
     ): AccessAuthorizationSelection? {
         connection?.let { return it.selection(request, overview, this) }
         val rules = ownRules(request, overview) ?: return null
+        if (overview.sourceFilters?.enabled != true && rules.any { it.scopePolicies.isNotEmpty() }) return null
         return AccessAuthorizationSelection.Connect(rules = rules, credentialLabel = credentialLabel(request))
     }
 
@@ -431,7 +453,15 @@ data class AccessAuthorizationForm(
             if (boundary.sourceIds.size > MAX_ACCESS_SOURCE_IDS) return null
             result += AccessGrantRule.direct(boundary)
         }
-        return result
+        return result.map { rule ->
+            val capability = rule.capability.name.lowercase()
+            val key = if (capability == "direct" && linkedSources && answerOn) "answer" else capability
+            val policies = scopePolicies[key].orEmpty().filter { policy ->
+                rule.sources.mode == AccessSourceMode.ALL || if (rule.sources.mode == AccessSourceMode.ALLOWLIST)
+                    policy.sourceId in rule.sources.sourceIds else policy.sourceId !in rule.sources.sourceIds
+            }.map { it.copy(audience = dev.omnesis.android.transport.dto.ScopeAudience("new", capability)) }
+            if (rule.capability == AccessCapability.NOTES) rule else rule.copy(scopePolicies = policies, filterRevision = if (policies.isNotEmpty()) 0 else rule.filterRevision)
+        }
     }
 
     companion object {
@@ -498,7 +528,8 @@ data class AccessAuthorizationForm(
                 policyFamilyId = answer?.release?.policyFamilyId
                     ?.takeIf { id -> !publishedPolicyOnly || overview.policyFamilies.any { it.id == id } }
                     ?: defaultPolicy,
-                linkedSources = answer == null || direct == null || answerSources.sameAccessAs(directSources),
+                linkedSources = (answer == null || direct == null || answerSources.sameAccessAs(directSources)) && answer?.scopePolicies.isNullOrEmpty() && direct?.scopePolicies.isNullOrEmpty(),
+                scopePolicies = rules.associate { it.capability.name.lowercase() to it.scopePolicies },
             )
         }
 

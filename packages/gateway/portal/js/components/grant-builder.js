@@ -3,6 +3,8 @@
 
 import { html } from "htm/preact";
 import { useRef, useState } from "preact/hooks";
+import { SourceFilters, RuleFilterSummaries } from "./source-filters.js";
+import { copyRuleFilters } from "./source-filter-state.js";
 import { sourceIcon } from "../lib/format.js";
 import {
   copyRuleSources,
@@ -17,6 +19,8 @@ import {
   setFutureSourcesAllowed,
   setSourceAllowed,
   sourceBoundaryError,
+  sourceBoundaryBlocksSavedFilter,
+  SAVED_FILTER_SOURCE_MESSAGE,
   sourceId,
   sourceLabel,
   sourceScopeName,
@@ -82,7 +86,7 @@ function sourceInstanceIcon(source, id) {
   return safeIcon ? html`<img src=${icon} alt="" />` : sourceIcon(id, { size: 20 });
 }
 
-export function SourceBoundary({ capability, label, rule, sources, disabled, onChange, idPrefix }) {
+export function SourceBoundary({ capability, label, rule, sources, disabled, onChange, idPrefix, sourceFiltersEnabled = false, protectedFilterSourceIds }) {
   const [query, setQuery] = useState("");
   const ids = sources.map(sourceId).filter(Boolean);
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -93,6 +97,8 @@ export function SourceBoundary({ capability, label, rule, sources, disabled, onC
   const allowed = ids.filter((id) => isSourceAllowed(rule, id)).length;
   const title = label ?? `${capabilityName(capability)} sources`;
   const error = sourceBoundaryError(rule, sourceScopeName(capability), sources);
+  const protectedIds = protectedFilterSourceIds ?? (rule.scopePolicies ?? []).map((policy) => policy.sourceId);
+  const blocked = (candidate) => sourceBoundaryBlocksSavedFilter(candidate, sourceFiltersEnabled, protectedIds);
 
   return html`<fieldset class="grant-builder-boundary" disabled=${disabled}>
     <legend>${title}</legend>
@@ -107,8 +113,8 @@ export function SourceBoundary({ capability, label, rule, sources, disabled, onC
           </label>
           <span>${allowed} of ${ids.length} allowed</span>
           <div class="grant-builder-bulk" aria-label=${`${capability} source shortcuts`}>
-            <button type="button" class="btn-tiny" onClick=${() => onChange(setAllSourcesAllowed(rule, ids, true))}>Allow all</button>
-            <button type="button" class="btn-tiny" onClick=${() => onChange(setAllSourcesAllowed(rule, ids, false))}>Block all</button>
+            <button type="button" class="btn-tiny" disabled=${blocked(setAllSourcesAllowed(rule, ids, true))} title=${blocked(setAllSourcesAllowed(rule, ids, true)) ? SAVED_FILTER_SOURCE_MESSAGE : undefined} onClick=${() => onChange(setAllSourcesAllowed(rule, ids, true))}>Allow all</button>
+            <button type="button" class="btn-tiny" disabled=${blocked(setAllSourcesAllowed(rule, ids, false))} title=${blocked(setAllSourcesAllowed(rule, ids, false)) ? SAVED_FILTER_SOURCE_MESSAGE : undefined} onClick=${() => onChange(setAllSourcesAllowed(rule, ids, false))}>Block all</button>
           </div>
         </div>
         <div class="grant-builder-sources" aria-label=${`${capability} source selection`}>
@@ -118,7 +124,7 @@ export function SourceBoundary({ capability, label, rule, sources, disabled, onC
             const status = source.available === false ? "Retained" : isAllowed ? "Allowed" : "Blocked";
             const inputId = `${idPrefix}-${capability}-source-${index}`;
             return html`<label class="grant-builder-source" for=${inputId} key=${id}>
-              <input id=${inputId} type="checkbox" checked=${isAllowed} disabled=${disabled}
+              <input id=${inputId} type="checkbox" checked=${isAllowed} disabled=${disabled || blocked(setSourceAllowed(rule, id, !isAllowed))} title=${blocked(setSourceAllowed(rule, id, !isAllowed)) ? SAVED_FILTER_SOURCE_MESSAGE : undefined}
                 onChange=${(event) => onChange(setSourceAllowed(rule, id, event.currentTarget.checked))} />
               <span class="grant-builder-source-icon" aria-hidden="true">${sourceInstanceIcon(source, id)}</span>
               <span><strong>${sourceLabel(source)}</strong><code>${id}</code>${source.available === false && html`<small>Unavailable — decision retained</small>`}</span>
@@ -128,16 +134,17 @@ export function SourceBoundary({ capability, label, rule, sources, disabled, onC
           ${visibleSources.length === 0 && html`<p class="grant-builder-empty">No sources match that search.</p>`}
         </div>
       `}
+    ${sourceFiltersEnabled !== true && protectedIds.length > 0 && html`<p class="source-filter-notice" role="status">${SAVED_FILTER_SOURCE_MESSAGE}</p>`}
     ${error && html`<p class="access-field-error grant-builder-boundary-error" role="alert">${error}</p>`}
     <fieldset class="grant-builder-future" disabled=${disabled}>
       <legend>When you connect a new source</legend>
       <label>
-        <input type="radio" name=${`${idPrefix}-${capability}-future`} checked=${!futureAllowed}
+        <input type="radio" name=${`${idPrefix}-${capability}-future`} checked=${!futureAllowed} disabled=${blocked(setFutureSourcesAllowed(rule, false, ids))}
           onChange=${() => onChange(setFutureSourcesAllowed(rule, false, ids))} />
         <span><strong>Keep it blocked until I allow it</strong></span>
       </label>
       <label class=${futureAllowed ? "grant-builder-future-risk" : ""}>
-        <input type="radio" name=${`${idPrefix}-${capability}-future`} checked=${futureAllowed}
+        <input type="radio" name=${`${idPrefix}-${capability}-future`} checked=${futureAllowed} disabled=${blocked(setFutureSourcesAllowed(rule, true, ids))}
           onChange=${() => onChange(setFutureSourcesAllowed(rule, true, ids))} />
         <span><strong>Allow it automatically</strong></span>
       </label>
@@ -208,7 +215,7 @@ function withCapability(value, capability, enabled, fallbackPolicy) {
 // `hideLegend` is for a caller whose own section heading already asks the
 // question — the wizards. The legend still labels the fieldset for assistive
 // technology; only its on-screen duplicate goes away.
-export function CapabilityPicker({ value, onChange, policies = [], disabled = false, requiresAnswer = false, hideLegend = false, idPrefix = "capability" }) {
+export function CapabilityPicker({ value, onChange, policies = [], disabled = false, requiresAnswer = false, hideLegend = false, idPrefix = "capability", isNew = false, linkFilters = isNew, accessLevel = "new", sourceFiltersEnabled = false }) {
   const fallbackPolicy = defaultPolicyFamilyId(policies);
   // What a capability held when it was switched off, so switching it back on
   // restores the boundary the owner had chosen rather than inheriting the
@@ -256,11 +263,10 @@ export function CapabilityPicker({ value, onChange, policies = [], disabled = fa
           const enabled = event.currentTarget.checked;
           if (!enabled) removed.current[capability.id] = value[capability.id];
           const restored = enabled ? removed.current[capability.id] : null;
-          onChange(
-            restored
-              ? { ...value, [capability.id]: restored }
-              : withCapability(value, capability.id, enabled, fallbackPolicy),
-          );
+          const next = restored ? { ...value, [capability.id]: restored } : withCapability(value, capability.id, enabled, fallbackPolicy);
+          if (enabled && !restored && capability.id === "direct" && isNew && linkFilters && next.answer && sourceFiltersEnabled === true)
+            next.direct = copyRuleFilters(next.direct, next.answer, accessLevel);
+          onChange(next);
         }}
       />
       <span><strong>${capability.label}</strong><small>${capability.detail}${capability.warning && html` <b class="access-capability-warning">${capability.warning}</b>`}</small></span>
@@ -270,7 +276,7 @@ export function CapabilityPicker({ value, onChange, policies = [], disabled = fa
   </fieldset>`;
 }
 
-export function GrantDataPrivacy({ value, onChange, sources = [], policies = [], disabled = false, linkSources = true, onLinkSources = () => {}, idPrefix = "grant-data" }) {
+export function GrantDataPrivacy({ value, onChange, sources = [], policies = [], disabled = false, linkSources = true, onLinkSources = () => {}, idPrefix = "grant-data", sourceFiltersEnabled = false, accessLevel = "new", isNew = false, linkFilters = isNew, onLinkFilters = () => {} }) {
   const both = Boolean(value.answer && value.direct);
   const updateRule = (capability) => (rule) => onChange({ ...value, [capability]: rule });
   const updateShared = (rule) => onChange({
@@ -279,11 +285,13 @@ export function GrantDataPrivacy({ value, onChange, sources = [], policies = [],
     direct: copyRuleSources(value.direct, rule),
   });
   const sharedRule = value.answer ?? value.direct;
+  const sharedFilterSources = [value.answer, value.direct].flatMap((rule) => (rule?.scopePolicies ?? []).map((policy) => policy.sourceId));
+  const relinkBlocked = both && sourceBoundaryBlocksSavedFilter(copyRuleSources(value.direct, value.answer), sourceFiltersEnabled);
   return html`<div class="grant-data-privacy">
     ${both && html`<fieldset class="grant-builder-link-sources" disabled=${disabled}>
       <legend>Sources for Answer and Direct</legend>
       <label>
-        <input type="radio" name=${`${idPrefix}-link-sources`} checked=${linkSources}
+        <input type="radio" name=${`${idPrefix}-link-sources`} checked=${linkSources} disabled=${relinkBlocked} title=${relinkBlocked ? SAVED_FILTER_SOURCE_MESSAGE : undefined}
           onChange=${() => {
             // Re-linking adopts Answer's boundary for Direct, so the one list
             // shown next is the one both capabilities will actually use.
@@ -297,13 +305,15 @@ export function GrantDataPrivacy({ value, onChange, sources = [], policies = [],
           onChange=${() => onLinkSources(false)} />
         <span><strong>Allow different sources</strong><small>Direct may expose raw records, so a narrower boundary can be useful.</small></span>
       </label>
+      ${relinkBlocked && html`<p class="source-filter-notice" role="status">${SAVED_FILTER_SOURCE_MESSAGE}</p>`}
     </fieldset>`}
     ${both && linkSources
       ? html`<${SourceBoundary} capability="shared" label="Sources available to Answer and Direct"
-          rule=${sharedRule} sources=${sources} disabled=${disabled} onChange=${updateShared} idPrefix=${idPrefix} />`
+          rule=${sharedRule} sources=${sources} disabled=${disabled} onChange=${updateShared} idPrefix=${idPrefix} sourceFiltersEnabled=${sourceFiltersEnabled} protectedFilterSourceIds=${sharedFilterSources} />`
       : ["answer", "direct"].map((capability) => value[capability] && html`<${SourceBoundary} key=${capability}
           capability=${capability} rule=${value[capability]} sources=${sources} disabled=${disabled}
-          onChange=${updateRule(capability)} idPrefix=${idPrefix} />`)}
+          onChange=${updateRule(capability)} idPrefix=${idPrefix} sourceFiltersEnabled=${sourceFiltersEnabled} />`)}
+    <${SourceFilters} value=${value} onChange=${onChange} sources=${sources} enabled=${sourceFiltersEnabled} disabled=${disabled} accessLevel=${accessLevel} isNew=${isNew} linkFilters=${linkFilters} onLinkFilters=${onLinkFilters} />
     ${value.answer && html`<${AnswerRelease} rule=${value.answer} policies=${policies} disabled=${disabled}
       onChange=${updateRule("answer")} idPrefix=${idPrefix} />`}
   </div>`;
@@ -338,6 +348,7 @@ export function EffectiveAccessSummary({ rules, sources, policies, heading = "Ef
         <${CapabilityBadge} capability=${capability} unreviewed=${detail.privacyRisk} />
         <span>${detail.allowed.length} of ${detail.total} connected source${detail.total === 1 ? "" : "s"}. <span class=${detail.privacyRisk ? "grant-review-risk" : undefined}>${detail.privacy}</span></span>
         <small>${detail.future}</small>
+        <${RuleFilterSummaries} rule=${rule} sources=${sources} />
       </div>`];
     })}
     ${rules.notes && html`<div class="grant-review-row"><${CapabilityBadge} capability="notes" /><span>Save notes with the agent's name recorded.</span><small>Does not grant access to read existing notes.</small></div>`}

@@ -68,6 +68,7 @@ internal fun SourceRuleEditor(
     sources: List<AccessSourceInstance>,
     value: AccessSourceSelectionState,
     iconFor: (String) -> SourceIconModel,
+    canUpdate: (AccessSourceSelectionState) -> Boolean = { true },
     update: (AccessSourceSelectionState) -> Unit,
 ) {
     val known = sources.filter { it.available }.mapTo(mutableSetOf()) { it.id }
@@ -108,11 +109,11 @@ internal fun SourceRuleEditor(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.weight(1f))
-                OutlinedButton(onClick = { update(value.allowAll(known)) }) { Text("Allow all") }
-                OutlinedButton(onClick = { update(value.blockAll(known)) }) { Text("Block all") }
+                OutlinedButton(onClick = { update(value.allowAll(known)) }, enabled = canUpdate(value.allowAll(known))) { Text("Allow all") }
+                OutlinedButton(onClick = { update(value.blockAll(known)) }, enabled = canUpdate(value.blockAll(known))) { Text("Block all") }
             }
             shown.forEach { source ->
-                SourceSelectionRow(source, value, iconFor) { update(value.setAllowed(source.id, it)) }
+                SourceSelectionRow(source, value, iconFor, canChange = canUpdate(value.setAllowed(source.id, !value.allows(source.id)))) { update(value.setAllowed(source.id, it)) }
             }
             if (shown.isEmpty()) {
                 Text(
@@ -124,10 +125,10 @@ internal fun SourceRuleEditor(
         }
         sourceBoundaryError(value, known, scope)?.let { FieldError(it) }
         SubsectionTitle("When you connect a new source")
-        RadioRow("Keep it blocked until I allow it", null, !value.futureSourcesAllowed) {
+        RadioRow("Keep it blocked until I allow it", null, !value.futureSourcesAllowed, enabled = canUpdate(value.setFutureSourcesAllowed(false, known))) {
             update(value.setFutureSourcesAllowed(false, known))
         }
-        RadioRow("Allow it automatically", null, value.futureSourcesAllowed) {
+        RadioRow("Allow it automatically", null, value.futureSourcesAllowed, enabled = canUpdate(value.setFutureSourcesAllowed(true, known))) {
             update(value.setFutureSourcesAllowed(true, known))
         }
     }
@@ -138,9 +139,10 @@ private fun SourceSelectionRow(
     source: AccessSourceInstance,
     value: AccessSourceSelectionState,
     iconFor: (String) -> SourceIconModel,
+    canChange: Boolean = true,
     update: (Boolean) -> Unit,
 ) {
-    val enabled = source.available
+    val enabled = source.available && canChange
     val checked = source.available && value.allows(source.id)
     // Many rows of one list being picked from, so each is kept tight: the row
     // is the target, and the name carries it rather than the padding. iOS draws
@@ -275,6 +277,13 @@ internal fun ReviewStep(
         if (answerOn) {
             ReviewRow("Answer privacy", permissions.answerPrivacySummary(overview), warning = unreviewed)
         }
+        permissions.scopePolicies.forEach { (capability, policies) ->
+            policies.forEach { policy ->
+                val source = overview.sources.firstOrNull { it.id == policy.sourceId }?.name ?: policy.sourceId
+                val items = policy.rules.firstOrNull()?.match.orEmpty().joinToString { it.label ?: it.id ?: "Person" }
+                ReviewRow("${capability.replaceFirstChar { it.uppercase() }} · $source", "${if (policy.rules.firstOrNull()?.action == "share") "Only" else "Everything except"}: $items")
+            }
+        }
         if (permissions.notesEnabled) {
             ReviewRow("Notes", "Save notes; the agent\u2019s name is recorded")
         }
@@ -371,18 +380,19 @@ internal fun CapabilityCard(
  * belongs to Direct alone, and two dangers on one step means neither is read as one.
  */
 @Composable
-internal fun RadioCard(title: String, detail: String?, selected: Boolean, warning: Boolean = false, onClick: () -> Unit) {
+internal fun RadioCard(title: String, detail: String?, selected: Boolean, warning: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().selectable(
             selected = selected,
             role = Role.RadioButton,
+            enabled = enabled,
             onClick = onClick,
         ),
         colors = CardDefaults.cardColors(containerColor = OmTheme.colors.bgSecondary),
         shape = RoundedCornerShape(OmRadius.medium),
     ) {
         Row(Modifier.padding(OmSpacing.lg), verticalAlignment = Alignment.Top) {
-            RadioButton(selected, onClick = null)
+            RadioButton(selected, onClick = null, enabled = enabled)
             Column(Modifier.padding(start = OmSpacing.sm)) {
                 Text(title, fontWeight = FontWeight.SemiBold, color = if (warning) OmTheme.colors.warning else OmTheme.colors.textPrimary)
                 detail?.takeIf(String::isNotEmpty)?.let {
@@ -398,13 +408,13 @@ internal fun RadioCard(title: String, detail: String?, selected: Boolean, warnin
 }
 
 @Composable
-internal fun RadioRow(title: String, detail: String?, selected: Boolean, onClick: () -> Unit) {
+internal fun RadioRow(title: String, detail: String?, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().selectable(selected, role = Role.RadioButton, onClick = onClick)
+        Modifier.fillMaxWidth().selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
             .padding(vertical = OmSpacing.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected, onClick = null)
+        RadioButton(selected, onClick = null, enabled = enabled)
         Column(Modifier.padding(start = OmSpacing.sm)) {
             Text(title, fontWeight = FontWeight.Medium)
             detail?.let { Text(it, color = OmTheme.colors.textSecondary, style = MaterialTheme.typography.bodySmall) }

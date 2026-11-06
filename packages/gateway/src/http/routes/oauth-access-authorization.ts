@@ -563,7 +563,7 @@ export function mountOAuthAuthorizationRoutes(
   app.post(
     "/admin/access/levels",
     noStore,
-    scope.portalAdmin(),
+    scope.accessEditorAdmin((deviceId) => access.isNativeAccessEditorDevice(deviceId)),
     validateJson(accessLevelCreateBody),
     async (c) => {
       const result = await access.createLevel({
@@ -578,7 +578,7 @@ export function mountOAuthAuthorizationRoutes(
   app.patch(
     "/admin/access/levels/:id",
     noStore,
-    scope.portalAdmin(),
+    scope.accessEditorAdmin((deviceId) => access.isNativeAccessEditorDevice(deviceId)),
     validateJson(accessLevelUpdateBody),
     async (c) => {
       const levelId = oauthApprovalId.safeParse(c.req.param("id"));

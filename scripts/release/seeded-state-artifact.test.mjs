@@ -21,6 +21,15 @@ import { createDatabase } from "../../packages/gateway/src/db.js";
 import { LATEST_SCHEMA_VERSION } from "../../packages/gateway/src/data/schema-version.js";
 import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
 import { createIndexDatabase } from "../../packages/gateway/src/indexer/db.js";
+import { replayScopeMirror } from "../../packages/gateway/src/indexer/scope-mirror.js";
+import {
+  stageOrReplaceScopeFacts,
+  drainScopeFactRebuilds,
+  hasScopeFactRebuilds,
+} from "../../packages/gateway/src/access/scope-fact-rebuilds.js";
+import { replaceNativeScopeKindWitness } from "../../packages/gateway/src/access/scope-native-witnesses.js";
+import { sourceScopeInclusionSql } from "../../packages/gateway/src/access/scope-sql.js";
+import { drainConversationScopeRebuilds } from "../../packages/gateway/src/access/scope-conversation-rebuilds.js";
 import {
   createLiveVoiceUsageTable,
   recordLiveVoiceUsage,
@@ -353,6 +362,179 @@ describe("seeded-state artifacts", () => {
       });
       expect(unclassified).toEqual([]);
       database.close();
+    }
+  });
+
+  it("omits source-filter authority and Answer readsets even from explicit export requests", () => {
+    const paths = fixture();
+    const forbidden = [
+      "access_scope_capabilities",
+      "access_scope_legacy_denials",
+      "access_scope_policy_sources",
+      "scope_policy_mutation_context",
+      "scope_native_publication_context",
+      "answer_task_scope",
+      "answer_task_scope_documents",
+    ];
+    const source = new Database(paths.sourcePath);
+    for (const table of forbidden) {
+      source.exec(`CREATE TABLE ${table}(private_authority TEXT);`);
+      source.prepare(`INSERT INTO ${table} VALUES(?)`).run("must-not-ship");
+      expect(seededStateTableSpec(table, ["private_authority"])).toBeNull();
+    }
+    source.close();
+    createSeededStateArtifact(spec(paths), paths.artifact);
+    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    for (const table of forbidden) {
+      expect(output.prepare(`SELECT count(*) FROM ${table}`).pluck().get()).toBe(0);
+      expect(() =>
+        createSeededStateArtifact(spec(paths, ["documents", table]), join(paths.root, table)),
+      ).toThrow(/cannot be exported/);
+    }
+    output.close();
+  });
+
+  it("retains incomplete scope publication and freshness fences, rebuilding mirror authority in the clone", () => {
+    const paths = fixture();
+    rmSync(paths.sourcePath);
+    const source = createDatabase(paths.sourcePath);
+    const indexPath = join(paths.root, "source-index.db");
+    const index = createIndexDatabase(indexPath, { skipWal: true });
+    source.exec(`INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,source_created_at,source_updated_at,ingested_at,updated_at)
+      VALUES('scope-document','fictional','fictional:labels','item','Invented scope record','Body','hash','2026-01-01','2026-01-01','2026-01-01','2026-01-01');
+      INSERT INTO scope_fact_backfill(source_id,source_type,descriptor_json,ready) VALUES('fictional:labels','fictional','{}',1);
+      INSERT INTO source_scope_refresh_requirements VALUES('fictional:labels','label','fresh-cut',NULL);
+      INSERT INTO source_scope_refreshes VALUES('fictional:labels','folder',1);
+      INSERT INTO source_scope_host_support VALUES('fictional:labels','old-host','label',0,1);
+      INSERT INTO scope_hierarchy_dirty VALUES('fictional:labels','folder','moved-folder','revision','');
+      INSERT INTO scope_conversations(subject_document_id,source_id,provider_id,stream_id,conversation_id,mode,write_epoch,authority_id)
+        VALUES('native-subject','fictional:labels','fictional','','conversation','snapshot',7,'original-actor');
+      INSERT INTO scope_conversation_rebuilds(operation_id,subject_document_id,members_json,mode,phase,authority_required,authority_id,write_epoch)
+        VALUES('native-operation','native-subject','[]','snapshot','members',1,'original-actor',7);`);
+    stageOrReplaceScopeFacts(source, "fictional:labels", "scope-document", {
+      facts: Array.from({ length: 300 }, (_, i) => ({ kind: "label", id: `label-${i}` })),
+      complete: ["label"],
+    });
+    replaceNativeScopeKindWitness(source, "scope-document", "label", "fresh-cut");
+    index.exec(`INSERT INTO index_scope_documents VALUES('old-subject','fictional:labels');
+      INSERT INTO index_scope_generations VALUES('fictional:labels','old-epoch',123);
+      INSERT INTO index_scope_acknowledgements VALUES('fictional:labels','old-epoch',123);
+      INSERT INTO index_scope_replay VALUES('fictional:labels','old-epoch',123,'delta',123);
+      INSERT INTO index_scope_hierarchy_replay VALUES('fictional:labels','folder','old-folder');`);
+    const scopeTables = (database) =>
+      database
+        .prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")
+        .pluck()
+        .all()
+        .filter((name) => /^(?:document_scope_|scope_|source_scope_|index_scope_)/u.test(name))
+        .map((name) => seededStateTableSpec(name, []))
+        .filter(Boolean);
+    const schemaVersion = source.pragma("user_version", { simple: true });
+    const tables = scopeTables(source);
+    const indexTables = scopeTables(index);
+    source.close();
+    index.close();
+    createSeededStateArtifact(
+      {
+        ...spec(paths),
+        schemaVersion,
+        databases: [
+          { source: paths.sourcePath, target: "omnesis.db", tables: ["documents", ...tables] },
+          { source: indexPath, target: "index.db", tables: indexTables },
+        ],
+        expected: { rowCounts: { "omnesis.db": { documents: 1, scope_fact_rebuilds: 1 } } },
+      },
+      paths.artifact,
+    );
+    installSeededStateArtifact(
+      paths.artifact,
+      paths.state,
+      installOptions(paths, { maxSchemaVersion: schemaVersion }),
+    );
+    const copied = new Database(join(paths.state, "omnesis.db"));
+    const mirrored = new Database(join(paths.state, "index.db"));
+    try {
+      const policy = sourceScopeInclusionSql(
+        [
+          {
+            sourceId: "fictional:labels",
+            audience: { accessLevel: "level", capability: "direct" },
+            rules: [{ action: "share", match: [{ kind: "label", id: "label-0" }] }],
+            otherwise: "hide",
+          },
+        ],
+        "d.id",
+        "d.source_id",
+      );
+      const visible = () =>
+        !!copied.prepare(`SELECT 1 FROM documents d WHERE ${policy.sql}`).get(...policy.params);
+      expect(visible()).toBe(false);
+      expect(copied.prepare("SELECT active FROM source_scope_refreshes").get()).toEqual({
+        active: 1,
+      });
+      expect(copied.prepare("SELECT count(*) FROM scope_hierarchy_dirty").pluck().get()).toBe(1);
+      expect(copied.prepare("SELECT count(*) FROM source_scope_host_support").pluck().get()).toBe(
+        0,
+      );
+      for (const context of [
+        { authorityId: "original-actor", writeEpoch: 7, legacyOnly: true },
+        { authorityId: "different-actor", writeEpoch: 7 },
+        { authorityId: "original-actor", writeEpoch: 8 },
+      ])
+        expect(
+          drainConversationScopeRebuilds(
+            copied,
+            { sourceId: "fictional:labels", providerId: "fictional", streamId: "", ...context },
+            128,
+          ).processed,
+        ).toBe(0);
+      expect(
+        copied
+          .prepare("SELECT authority_id,write_epoch,phase FROM scope_conversation_rebuilds")
+          .get(),
+      ).toEqual({ authority_id: "original-actor", write_epoch: 7, phase: "members" });
+      for (const table of [
+        "index_scope_generations",
+        "index_scope_acknowledgements",
+        "index_scope_replay",
+        "index_scope_hierarchy_replay",
+      ])
+        expect(mirrored.prepare(`SELECT count(*) FROM ${table}`).pluck().get()).toBe(0);
+      expect(mirrored.prepare("SELECT document_id FROM index_scope_documents").get()).toEqual({
+        document_id: "old-subject",
+      });
+      for (let batch = 0; batch < 10 && hasScopeFactRebuilds(copied); batch++)
+        expect(drainScopeFactRebuilds(copied, undefined, 128).processed).toBeLessThanOrEqual(128);
+      expect(hasScopeFactRebuilds(copied)).toBe(false);
+      expect(visible()).toBe(true);
+      expect(copied.prepare("SELECT epoch FROM scope_native_refresh_witnesses").get()).toEqual({
+        epoch: "fresh-cut",
+      });
+      replayScopeMirror(copied, mirrored, { maxBatches: 20, batchSize: 128 });
+      expect(
+        mirrored.prepare("SELECT document_id FROM index_scope_documents").pluck().all(),
+      ).toEqual(expect.arrayContaining(["scope-document", "native-subject"]));
+      expect(
+        mirrored
+          .prepare("SELECT 1 FROM index_scope_documents WHERE document_id='old-subject'")
+          .get(),
+      ).toBeUndefined();
+      expect(
+        mirrored
+          .prepare(
+            "SELECT generation FROM index_scope_generations WHERE source_id='fictional:labels'",
+          )
+          .get(),
+      ).toEqual(
+        copied
+          .prepare(
+            "SELECT generation FROM scope_source_generations WHERE source_id='fictional:labels'",
+          )
+          .get(),
+      );
+    } finally {
+      copied.close();
+      mirrored.close();
     }
   });
 

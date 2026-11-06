@@ -54,12 +54,12 @@ extension AccessAnswerRelease: Codable {
 
 public enum AccessGrantRule: Equatable, Sendable {
     case notes
-    case direct(sources: AccessSourceBoundary)
-    case answer(sources: AccessSourceBoundary, release: AccessAnswerRelease)
+    case direct(sources: AccessSourceBoundary, filterRevision: Int? = nil, scopePolicies: [ScopePolicy] = [])
+    case answer(sources: AccessSourceBoundary, release: AccessAnswerRelease, filterRevision: Int? = nil, scopePolicies: [ScopePolicy] = [])
 }
 
 extension AccessGrantRule: Codable {
-    private enum CodingKeys: String, CodingKey { case capability, sources, release }
+    private enum CodingKeys: String, CodingKey { case capability, sources, release, filterRevision, scopePolicies }
     private enum Capability: String, Codable { case direct, answer, notes }
 
     public init(from decoder: Decoder) throws {
@@ -76,11 +76,17 @@ extension AccessGrantRule: Codable {
             }
             self = .notes
         case .direct:
-            self = .direct(sources: sources)
+            self = try .direct(
+                sources: sources,
+                filterRevision: values.decodeIfPresent(Int.self, forKey: .filterRevision),
+                scopePolicies: values.decodeIfPresent([ScopePolicy].self, forKey: .scopePolicies) ?? []
+            )
         case .answer:
             self = try .answer(
                 sources: sources,
-                release: values.decode(AccessAnswerRelease.self, forKey: .release)
+                release: values.decode(AccessAnswerRelease.self, forKey: .release),
+                filterRevision: values.decodeIfPresent(Int.self, forKey: .filterRevision),
+                scopePolicies: values.decodeIfPresent([ScopePolicy].self, forKey: .scopePolicies) ?? []
             )
         }
     }
@@ -91,12 +97,16 @@ extension AccessGrantRule: Codable {
         case .notes:
             try values.encode(Capability.notes, forKey: .capability)
             try values.encode(AccessSourceBoundary(mode: .all, sourceIds: []), forKey: .sources)
-        case .direct(let sources):
+        case .direct(let sources, let revision, let policies):
             try values.encode(Capability.direct, forKey: .capability)
             try values.encode(sources, forKey: .sources)
-        case .answer(let sources, let release):
+            try values.encodeIfPresent(revision ?? (policies.isEmpty ? nil : 0), forKey: .filterRevision)
+            if !policies.isEmpty { try values.encode(policies, forKey: .scopePolicies) }
+        case .answer(let sources, let release, let revision, let policies):
             try values.encode(Capability.answer, forKey: .capability)
             try values.encode(sources, forKey: .sources)
+            try values.encodeIfPresent(revision ?? (policies.isEmpty ? nil : 0), forKey: .filterRevision)
+            if !policies.isEmpty { try values.encode(policies, forKey: .scopePolicies) }
             try values.encode(release, forKey: .release)
         }
     }
@@ -107,6 +117,9 @@ public struct AccessSourceInstance: Codable, Equatable, Identifiable, Sendable {
     public let name: String
     public let icon: String?
     public let available: Bool
+    public var sourceType: String?
+    public var scopes: SourceScopes?
+    public var scopeReadiness: [ScopeKindReadiness]?
 
     public init(id: String, name: String, icon: String? = nil, available: Bool = true) {
         self.id = id
@@ -244,6 +257,8 @@ public struct AccessPendingRequest: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct AccessOverview: Equatable, Sendable {
+    public struct SourceFilters: Codable, Equatable, Sendable { public var enabled: Bool }
+    public var sourceFilters: SourceFilters?
     public let principals: [AccessPrincipalSummary]
     public let sources: [AccessSourceInstance]
     public let policyFamilies: [AccessPolicyFamilySummary]
@@ -280,7 +295,7 @@ public struct AccessOverview: Equatable, Sendable {
 
 extension AccessOverview: Codable {
     private enum CodingKeys: String, CodingKey {
-        case principals, sources, policyFamilies, privacyPolicies, defaultPolicyFamilyId, pendingRequests, levels
+        case principals, sources, policyFamilies, privacyPolicies, defaultPolicyFamilyId, pendingRequests, levels, sourceFilters
     }
 
     public init(from decoder: Decoder) throws {
@@ -297,6 +312,7 @@ extension AccessOverview: Codable {
         )
         pendingRequests = try values.decodeIfPresent([AccessPendingRequest].self, forKey: .pendingRequests)
         levels = try values.decodeIfPresent([AccessLevelSummary].self, forKey: .levels) ?? []
+        sourceFilters = try values.decodeIfPresent(SourceFilters.self, forKey: .sourceFilters)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -307,6 +323,7 @@ extension AccessOverview: Codable {
         try values.encodeIfPresent(defaultPolicyFamilyId, forKey: .defaultPolicyFamilyId)
         try values.encodeIfPresent(pendingRequests, forKey: .pendingRequests)
         try values.encode(levels, forKey: .levels)
+        try values.encodeIfPresent(sourceFilters, forKey: .sourceFilters)
     }
 }
 

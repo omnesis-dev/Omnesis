@@ -110,6 +110,7 @@ fun SettingsScreen(
     onOpenDevices: () -> Unit = {},
     onOpenPolicies: () -> Unit = {},
     onOpenAccessAuthorization: () -> Unit = {},
+    onOpenAccessHome: () -> Unit = {},
     onOpenPhoneSetup: () -> Unit = {},
     onOpenPhoneSetupStep: (String) -> Unit = {},
     vm: SettingsViewModel = hiltViewModel(),
@@ -156,6 +157,7 @@ fun SettingsScreen(
             onOpenDevices = onOpenDevices,
             onOpenPolicies = onOpenPolicies,
             onOpenAccessAuthorization = onOpenAccessAuthorization,
+            onOpenAccessHome = onOpenAccessHome,
             onOpenPrivacyPolicy = { openMobilePrivacyPolicy(context) },
             voice = voice,
             onSetTranscribeOnGateway = vm::setTranscribeOnGateway,
@@ -275,6 +277,7 @@ fun SettingsContent(
     onOpenDevices: () -> Unit = {},
     onOpenPolicies: () -> Unit = {},
     onOpenAccessAuthorization: () -> Unit = {},
+    onOpenAccessHome: () -> Unit = {},
     onOpenPrivacyPolicy: () -> Unit = {},
     /** The gateway-dictation switch; null hides the Voice section. */
     voice: VoiceSettingsState? = null,
@@ -373,6 +376,7 @@ fun SettingsContent(
                     // The rules an answer is judged by sit beside the grants that name them.
                     NavigationRow("Policies", onOpenPolicies)
                     RowDivider()
+                    NavigationRow("Access", onOpenAccessHome)
                     NavigationRow("Authorize an MCP connection", onOpenAccessAuthorization)
                     RowDivider()
                     ActionRow("Re-pair with gateway", c.accent) { showRepairConfirm = true }

@@ -1,0 +1,323 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright (c) 2026 Adrien Conrath */
+
+.source-filters {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+.source-filters > h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.source-filters > p,
+.source-filter-explanation {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.source-filter-capability {
+  margin-top: 20px;
+}
+.source-filter-capability h4 {
+  margin: 0 0 8px;
+}
+.source-filter-source,
+.source-filter-selected li,
+.source-filter-options li,
+.source-filter-proposals > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.source-filter-source > span,
+.source-filter-selected li > span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.source-filter-source code,
+.source-filter-account {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.source-filter-source small,
+.source-filter-selected small,
+.source-filter-options small {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.source-filter-link {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+}
+.source-filter-link label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex: 1 1 260px;
+  font-size: 13px;
+}
+.source-filter-link p {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.source-filter-editor {
+  display: grid;
+  gap: 18px;
+}
+.source-filter-editor h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.source-filter-editor p {
+  margin: 0;
+  line-height: 1.6;
+  font-size: 13px;
+}
+.source-filter-editor fieldset {
+  border: 1px solid var(--border);
+  padding: 14px;
+  border-radius: 8px;
+  min-width: 0;
+}
+.source-filter-editor legend {
+  padding: 0 5px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.source-filter-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.source-filter-mode label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+.source-filter-notice,
+.source-filter-readiness {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.source-filter-readiness {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.source-filter-readiness p {
+  margin: 0;
+}
+.source-filter-readiness small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+.source-filter-selected ul,
+.source-filter-options,
+.source-filter-samples {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.source-filter-selected li strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.source-filter-selected > p,
+.source-filter-proposals > p {
+  color: var(--text-secondary);
+}
+.source-filter-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.source-filter-counts span {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.source-filter-counts strong {
+  font-size: 22px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.source-filter-preview {
+  display: grid;
+  gap: 10px;
+}
+.source-filter-preview summary {
+  font-size: 13px;
+  cursor: pointer;
+}
+.source-filter-samples li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.source-filter-samples li span {
+  overflow-wrap: anywhere;
+}
+.source-filter-samples small {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.source-filter-kinds,
+.source-filter-breadcrumbs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.source-filter-kinds button {
+  text-transform: capitalize;
+}
+.source-filter-breadcrumbs button {
+  background: none;
+  border: 0;
+  padding: 4px;
+  color: var(--text-link);
+  cursor: pointer;
+  font-size: 12px;
+}
+.source-filter-breadcrumbs button + button::before {
+  content: "/ ";
+  color: var(--text-muted);
+}
+.source-filter-search {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  margin-top: 12px;
+}
+.source-filter-search input,
+.source-filter-typed input,
+.source-filter-typed select {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 10px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.source-filter-options {
+  max-height: 300px;
+  overflow-y: auto;
+}
+.source-filter-options label {
+  display: flex;
+  gap: 10px;
+  align-items: start;
+  flex: 1;
+  cursor: pointer;
+  font-size: 13px;
+}
+.source-filter-options label > span {
+  overflow-wrap: anywhere;
+}
+.source-filter-options input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.source-filter-typed {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.source-filter-proposals > div {
+  align-items: start;
+  font-size: 13px;
+}
+.source-filter-proposals span {
+  overflow-wrap: anywhere;
+}
+.source-filter-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.source-filter-actions .btn-danger {
+  margin-right: auto;
+  color: var(--danger);
+}
+.source-policy-summary {
+  grid-column: 1 / -1;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+.source-policy-summary > strong {
+  display: block;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+.source-policy-summary ul {
+  margin: 6px 0;
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+.source-policy-summary > small {
+  display: block;
+  margin: 8px 0;
+  color: var(--text-secondary);
+}
+.source-policy-summary .source-filter-counts strong {
+  font-size: 18px;
+}
+@media (max-width: 560px) {
+  .source-filter-source {
+    align-items: start;
+  }
+  .source-filter-source button {
+    flex-shrink: 0;
+    font-size: 12px;
+  }
+  .source-filter-mode {
+    display: grid;
+  }
+  .source-filter-counts {
+    gap: 6px;
+    padding: 12px;
+  }
+  .source-filter-actions > button {
+    flex: 1 1 auto;
+  }
+  .source-filter-samples li {
+    display: grid;
+    gap: 4px;
+  }
+}

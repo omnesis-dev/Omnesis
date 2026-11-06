@@ -14,6 +14,7 @@ import {
 } from "@omnesis/core";
 import { SyncError } from "@omnesis/types";
 import { DEFAULT_OCR_REQUEST_TIMEOUT_SECONDS, type OmnesisConfig } from "@omnesis/config";
+import { sourceScopeWireVersion, parseScopeRefreshEpochs } from "./source-scope-wire-version.js";
 import {
   DEFAULT_MAX_BACKPRESSURE_WAITS,
   DEFAULT_OCR_TIMEOUT_COOLDOWN_MS,
@@ -38,7 +39,6 @@ import type {
   ListedDocument,
   GatewaySearchQuery,
   GatewaySearchResponse,
-  AnalyticsTableSchema,
   AnalyticsCatalogEntry,
   DocumentEventProfile,
   DocumentTemporalProjectionSpec,
@@ -54,7 +54,14 @@ import type {
   UpsertWithCursorResponse,
   PendingStructuredPage,
 } from "@omnesis/source-sdk";
-import type { DocumentInput, AccountId, SourceId, SourceType, ProviderId } from "@omnesis/types";
+import type {
+  DocumentInput,
+  AccountId,
+  SourceId,
+  SourceType,
+  ProviderId,
+  SourceScopes,
+} from "@omnesis/types";
 import type {
   TranscriptionResult,
   AudioTranscribeFn,
@@ -188,7 +195,11 @@ export class HttpGatewayClient implements GatewayClient {
     );
   }
 
-  private async request(path: string, options: RequestInit = {}) {
+  private async request(
+    path: string,
+    options: RequestInit = {},
+    requireSourceScopes: boolean | 0 | 1 | 2 = false,
+  ) {
     let lastError: Error | null = null;
     // Cap backpressure waits separately from retries — at 10 waits
     // of up to 30s each, total cap ≈ 5 min before we give up and
@@ -208,6 +219,15 @@ export class HttpGatewayClient implements GatewayClient {
       // the host.
       try {
         await this.beforeRequest?.();
+        if (
+          requireSourceScopes &&
+          !(await this.supportsSourceScopes(requireSourceScopes === true ? 1 : requireSourceScopes))
+        ) {
+          throw new SyncError(
+            "transient",
+            "Gateway source-scope support changed; retry the source page after negotiation.",
+          );
+        }
       } catch (err) {
         const guardMessage = toErrorMessage(err);
         if (attempt < MAX_RETRIES && (isTransportFailure(guardMessage) || hasTimeoutCause(err))) {
@@ -766,6 +786,26 @@ export class HttpGatewayClient implements GatewayClient {
       hasMeta: data.hasMeta,
       initialInventory: data.initialInventory,
       wipeEpoch: data.wipeEpoch,
+      ...(data.scopeRefreshEpochs !== undefined
+        ? { scopeRefreshEpochs: parseScopeRefreshEpochs(data.scopeRefreshEpochs) }
+        : {}),
+      ...(data.scopeRefreshRequestIds !== undefined
+        ? { scopeRefreshRequestIds: parseScopeRefreshEpochs(data.scopeRefreshRequestIds) }
+        : {}),
+    };
+  }
+  async getScopeRefreshEpochs(
+    sourceId: SourceId,
+  ): Promise<import("@omnesis/types").ScopeRefreshEpochs> {
+    return (await this.getScopeRefreshState(sourceId)).epochs;
+  }
+  async getScopeRefreshState(
+    sourceId: SourceId,
+  ): Promise<import("@omnesis/types").SourceScopeRefreshState> {
+    const data = await this.request(`/sync-state/${encodeURIComponent(sourceId)}`);
+    return {
+      epochs: parseScopeRefreshEpochs(data.scopeRefreshEpochs),
+      requestIds: parseScopeRefreshEpochs(data.scopeRefreshRequestIds),
     };
   }
 
@@ -796,10 +836,14 @@ export class HttpGatewayClient implements GatewayClient {
     sourceId: SourceId,
     page: Omit<PendingStructuredPage, "cursorCommitted"> & { writeEpoch: number },
   ): Promise<PendingStructuredPage> {
-    return this.request(`/sync-state/${encodeURIComponent(sourceId)}/pending-page`, {
-      method: "POST",
-      body: JSON.stringify(page),
-    });
+    return this.request(
+      `/sync-state/${encodeURIComponent(sourceId)}/pending-page`,
+      {
+        method: "POST",
+        body: JSON.stringify(page),
+      },
+      sourceScopeWireVersion(page.result.scopeUpdates, page.result.documents),
+    );
   }
 
   async acknowledgeStructuredPage(
@@ -941,6 +985,44 @@ export class HttpGatewayClient implements GatewayClient {
     });
   }
 
+  /** Probe each publication: a gateway can be rolled back while this client stays running. */
+  async supportsSourceScopes(minimumVersion = 1): Promise<boolean> {
+    if (!Number.isSafeInteger(minimumVersion) || minimumVersion < 1) return false;
+    const response = await fetch(`${this.baseUrl}/health`, {
+      signal: AbortSignal.timeout(10_000),
+      cache: "no-store",
+    });
+    if (!response.ok) return false;
+    const body: unknown = await response.json();
+    if (typeof body !== "object" || body === null || !("compat" in body)) return false;
+    const compat = body.compat;
+    if (typeof compat !== "object" || compat === null || !("sourceScopes" in compat)) return false;
+    const range = compat.sourceScopes;
+    return (
+      typeof range === "object" &&
+      range !== null &&
+      "min" in range &&
+      "max" in range &&
+      typeof range.min === "number" &&
+      Number.isInteger(range.min) &&
+      range.min >= 1 &&
+      typeof range.max === "number" &&
+      Number.isInteger(range.max) &&
+      range.min <= minimumVersion &&
+      range.max >= minimumVersion
+    );
+  }
+
+  async setSourceScopes(
+    entries: Array<{ sourceType: string; scopes: SourceScopes }>,
+  ): Promise<void> {
+    if (!(await this.supportsSourceScopes())) return;
+    await this.request("/admin/source-scopes", {
+      method: "POST",
+      body: JSON.stringify({ entries }),
+    });
+  }
+
   /**
    * Push the `documentEventProfile` of every KNOWN source type (every loaded
    * source definition's declaration), not just the added ones. Sent at
@@ -998,6 +1080,7 @@ export class HttpGatewayClient implements GatewayClient {
   }
 
   async upsertWithCursor(args: {
+    scopeUpdates?: import("@omnesis/types").SourceScopeUpdates;
     initialInventory?: InitialSourceInventory;
     pendingPageId?: string;
     providerId: ProviderId;
@@ -1020,10 +1103,15 @@ export class HttpGatewayClient implements GatewayClient {
     watermark?: SourceWatermark;
     meta?: Omit<SourceSyncMeta, "contentRetention">;
   }): Promise<UpsertWithCursorResponse> {
-    return (await this.request("/documents/with-cursor", {
-      method: "POST",
-      body: JSON.stringify(args),
-    })) as UpsertWithCursorResponse;
+    const requiresScopes = sourceScopeWireVersion(args.scopeUpdates, args.documents);
+    return (await this.request(
+      "/documents/with-cursor",
+      {
+        method: "POST",
+        body: JSON.stringify(args),
+      },
+      requiresScopes,
+    )) as UpsertWithCursorResponse;
   }
 
   async listDocuments(

@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { decideAccessAuthorization } from "../../api.js";
 import { CopyValue } from "../../components/copy-button.js";
+import { RuleFilterSummaries } from "../../components/source-filters.js";
 import { CapabilityTriad } from "../../components/grant-builder.js";
 import { QrCanvas } from "../../components/qr-canvas.js";
 import {
@@ -24,7 +25,8 @@ import {
   isSourceAllowed,
   newGrantRule,
   rulesShareSources,
-  serializeGrantRules,
+  serializeNewAuthorityRules,
+  newAuthorityFilterError,
   sourceId,
   sourceScopeName,
   validateGrantRules,
@@ -56,14 +58,22 @@ export function buildAuthorizationSelection(approval) {
     return {
       kind: "new-connection",
       name: approval.name.trim(),
-      level: { kind: "new", name: approval.levelName.trim(), rules: serializeGrantRules(approval.rules) },
+      level: {
+        kind: "new",
+        name: approval.levelName.trim(),
+        rules: serializeNewAuthorityRules(approval.rules),
+      },
     };
   }
   if (approval.kind === "existing-level") {
     return {
       kind: "new-connection",
       name: approval.name.trim(),
-      level: { kind: "existing", levelId: approval.level.id, expectedLevelRevision: approval.level.revision },
+      level: {
+        kind: "existing",
+        levelId: approval.level.id,
+        expectedLevelRevision: approval.level.revision,
+      },
     };
   }
   return {
@@ -175,17 +185,26 @@ function PhoneHandoff({ userCode, disabled }) {
       aria-controls=${open ? "access-phone-panel" : undefined}
       disabled=${disabled}
       onClick=${() => setOpen((value) => !value)}
-    >${open ? "▾" : "▸"} Use your phone instead</button>
-    ${open && html`<div id="access-phone-panel" class="access-phone-panel">
-      <${QrCanvas} payload=${authorizationQrPayload(userCode)} width=${160} class="access-phone-qr" />
-      <div class="access-phone-copy">
-        <p>Scan with the Omnesis app on your phone, or enter this code there.</p>
-        <${CopyValue} text=${userCode} title="Copy code">
-          <code class="access-phone-code">${userCode}</code>
-        <//>
-        <p>The request stays open here until it is decided on either.</p>
-      </div>
-    </div>`}
+    >
+      ${open ? "▾" : "▸"} Use your phone instead
+    </button>
+    ${
+      open &&
+      html`<div id="access-phone-panel" class="access-phone-panel">
+        <${QrCanvas}
+          payload=${authorizationQrPayload(userCode)}
+          width=${160}
+          class="access-phone-qr"
+        />
+        <div class="access-phone-copy">
+          <p>Scan with the Omnesis app on your phone, or enter this code there.</p>
+          <${CopyValue} text=${userCode} title="Copy code">
+            <code class="access-phone-code">${userCode}</code>
+          <//>
+          <p>The request stays open here until it is decided on either.</p>
+        </div>
+      </div>`
+    }
   </div>`;
 }
 
@@ -196,7 +215,8 @@ function PhoneHandoff({ userCode, disabled }) {
  */
 function otherConnectionsOnLevel(approval) {
   if (approval.kind === "existing-level") return approval.level.connectionCount ?? 0;
-  if (approval.kind === "replace" && approval.level) return Math.max((approval.level.connectionCount ?? 1) - 1, 0);
+  if (approval.kind === "replace" && approval.level)
+    return Math.max((approval.level.connectionCount ?? 1) - 1, 0);
   return 0;
 }
 
@@ -207,32 +227,81 @@ function otherConnectionsOnLevel(approval) {
 function ConnectionReview({ approval, sources, policies }) {
   const { rules } = approval;
   const unreviewed = rules.answer?.release.mode === "unreviewed";
-  const connectionName = approval.kind === "replace" ? approval.connection.name : approval.name.trim();
-  const levelName = approval.kind === "new-level"
-    ? `${approval.levelName.trim()} (new)`
-    : approval.level?.name ?? null;
+  const connectionName =
+    approval.kind === "replace" ? approval.connection.name : approval.name.trim();
+  const levelName =
+    approval.kind === "new-level"
+      ? `${approval.levelName.trim()} (new)`
+      : (approval.level?.name ?? null);
   const others = otherConnectionsOnLevel(approval);
   return html`
     <dl class="access-review-rows" aria-label="Access to approve">
-      <div><dt>Connection</dt><dd>${connectionName}</dd></div>
-      ${levelName ? html`<div><dt>Access level</dt><dd>${levelName}</dd></div>` : null}
-      ${approval.kind === "replace"
-        ? html`<div><dt>Replaces</dt><dd>${`The current sign-in of ${approval.connection.name}`}</dd></div>`
-        : null}
-      <div><dt>Permissions</dt><dd><${CapabilityTriad} rules=${rules} /></dd></div>
-      ${reviewSourceScopes(rules).map((scope) => html`<div key=${scope.name}>
-        <dt>${scope.name} sources</dt><dd>${sourceSummary(scope.rule, sources)}</dd>
-      </div>`)}
-      ${rules.answer && html`<div>
-        <dt>Answer privacy</dt>
-        <dd class=${unreviewed ? "grant-review-risk" : undefined}>${answerPrivacySummary(rules.answer, policies)}</dd>
-      </div>`}
-      ${rules.notes && html`<div><dt>Notes</dt><dd>Save notes; the agent's name is recorded</dd></div>`}
+      <div>
+        <dt>Connection</dt>
+        <dd>${connectionName}</dd>
+      </div>
+      ${
+        levelName
+          ? html`<div>
+              <dt>Access level</dt>
+              <dd>${levelName}</dd>
+            </div>`
+          : null
+      }
+      ${
+        approval.kind === "replace"
+          ? html`<div>
+              <dt>Replaces</dt>
+              <dd>${`The current sign-in of ${approval.connection.name}`}</dd>
+            </div>`
+          : null
+      }
+      <div>
+        <dt>Permissions</dt>
+        <dd><${CapabilityTriad} rules=${rules} /></dd>
+      </div>
+      ${reviewSourceScopes(rules).map(
+        (scope) =>
+          html`<div key=${scope.name}>
+            <dt>${scope.name} sources</dt>
+            <dd>${sourceSummary(scope.rule, sources)}</dd>
+          </div>`,
+      )}
+      ${["answer", "direct"].map((capability) =>
+        rules[capability]?.scopePolicies?.length
+          ? html`<div>
+              <dt>${capability === "answer" ? "Answer" : "Direct"} filters</dt>
+              <dd><${RuleFilterSummaries} rule=${rules[capability]} sources=${sources} /></dd>
+            </div>`
+          : null,
+      )}
+      ${
+        rules.answer &&
+        html`<div>
+          <dt>Answer privacy</dt>
+          <dd class=${unreviewed ? "grant-review-risk" : undefined}>
+            ${answerPrivacySummary(rules.answer, policies)}
+          </dd>
+        </div>`
+      }
+      ${
+        rules.notes &&
+        html`<div>
+          <dt>Notes</dt>
+          <dd>Save notes; the agent's name is recorded</dd>
+        </div>`
+      }
     </dl>
-    ${others > 0
-      ? html`<p class="access-review-note">${`Also used by ${others} other connection${others === 1 ? "" : "s"}. Changing this access level later changes all of them.`}</p>`
-      : null}
-    <p class="access-review-foot">Access can be edited or revoked later from Settings → Access in the Omnesis Portal.</p>
+    ${
+      others > 0
+        ? html`<p class="access-review-note">
+            ${`Also used by ${others} other connection${others === 1 ? "" : "s"}. Changing this access level later changes all of them.`}
+          </p>`
+        : null
+    }
+    <p class="access-review-foot">
+      Access can be edited or revoked later from Settings → Access in the Omnesis Portal.
+    </p>
   `;
 }
 
@@ -243,13 +312,22 @@ function ConnectionReview({ approval, sources, policies }) {
 function approvalFor(choice, options) {
   if (choice.mode === "replace") {
     const target = options.replaceable.find((option) => option.entry.id === choice.replaceId);
-    return target ? { kind: "replace", connection: target.entry, level: target.level, rules: target.rules } : null;
+    return target
+      ? { kind: "replace", connection: target.entry, level: target.level, rules: target.rules }
+      : null;
   }
   if (choice.levelChoice === NEW_LEVEL) {
-    return { kind: "new-level", name: choice.name, levelName: choice.levelName, rules: choice.rules };
+    return {
+      kind: "new-level",
+      name: choice.name,
+      levelName: choice.levelName,
+      rules: choice.rules,
+    };
   }
   const option = options.levels.find((candidate) => candidate.level.id === choice.levelChoice);
-  return option ? { kind: "existing-level", name: choice.name, level: option.level, rules: option.rules } : null;
+  return option
+    ? { kind: "existing-level", name: choice.name, level: option.level, rules: option.rules }
+    : null;
 }
 
 /**
@@ -260,7 +338,10 @@ function approvalFor(choice, options) {
  */
 function samePath(current, reloaded) {
   if (current.mode !== reloaded.mode) return false;
-  return current.mode === "replace" || (current.levelChoice === NEW_LEVEL) === (reloaded.levelChoice === NEW_LEVEL);
+  return (
+    current.mode === "replace" ||
+    (current.levelChoice === NEW_LEVEL) === (reloaded.levelChoice === NEW_LEVEL)
+  );
 }
 
 /**
@@ -281,22 +362,32 @@ export function RequestReview({
   const policies = overviewPolicies(overview);
   const sources = overview.sources ?? [];
   const fallbackPolicy = defaultPolicyFamilyId(policies, overview.defaultPolicyFamilyId);
-  const [choice, setChoice] = useState(() => initialConnectionChoice(request, connection, overview));
+  const [choice, setChoice] = useState(() =>
+    initialConnectionChoice(request, connection, overview),
+  );
   const [step, setStep] = useState(0);
   const [linkSources, setLinkSources] = useState(() => rulesShareSources(choice.rules));
+  const [linkFilters, setLinkFilters] = useState(true);
+  const [stale, setStale] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Set the moment a decision starts. The disabled buttons only follow on the
   // next render, so a second press in the same moment is refused here rather
   // than sent twice.
   const inFlightRef = useRef(false);
+  const mounted = useRef(true);
   // The header prints how long the request still has. A pending request lives
   // minutes, so a remainder frozen at first render would go stale while the
   // owner is still reading the page; half a minute is fine-grained enough for
   // a label counted in whole minutes.
   const [now, setNow] = useState(() => Date.now());
 
-  useEffect(() => { headingRef?.current?.focus(); }, []);
+  useEffect(() => {
+    headingRef?.current?.focus();
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 30_000);
@@ -306,7 +397,10 @@ export function RequestReview({
   const options = connectionOptions(request, connection, overview);
   const approval = approvalFor(choice, options);
   const effectiveRules = approval?.rules ?? choice.rules;
-  const valid = Boolean(approval) && !validateGrantRules(effectiveRules, sources);
+  const creationError = choice.mode !== "replace" && choice.levelChoice === NEW_LEVEL
+    ? newAuthorityFilterError(choice.rules, overview.sourceFilters?.enabled === true)
+    : null;
+  const valid = Boolean(approval) && !creationError && !validateGrantRules(effectiveRules, sources);
 
   // A taken level name is the owner's to fix by typing another, so the refusal
   // goes as soon as they do.
@@ -314,12 +408,14 @@ export function RequestReview({
     if ("levelName" in patch && error === LEVEL_NAME_TAKEN_MESSAGE) setError("");
     setChoice((current) => ({ ...current, ...patch }));
   };
-  const updateRules = (next) => setChoice((current) => ({
-    ...current,
-    rules: request.requiresAnswer && !next.answer
-      ? { ...next, answer: current.rules.answer ?? newGrantRule("answer", fallbackPolicy) }
-      : next,
-  }));
+  const updateRules = (next) =>
+    setChoice((current) => ({
+      ...current,
+      rules:
+        request.requiresAnswer && !next.answer
+          ? { ...next, answer: current.rules.answer ?? newGrantRule("answer", fallbackPolicy) }
+          : next,
+    }));
 
   function capabilityAction() {
     const permissions = [
@@ -339,8 +435,12 @@ export function RequestReview({
     let fresh;
     try {
       fresh = await onConflict();
+      if (!mounted.current) return;
     } catch (failure) {
-      setError(authorizationErrorMessage(failure, "The authorization request could not be reloaded."));
+      if (!mounted.current) return;
+      setError(
+        authorizationErrorMessage(failure, "The authorization request could not be reloaded."),
+      );
       setBusy(false);
       return;
     }
@@ -349,34 +449,43 @@ export function RequestReview({
       return;
     }
     const reloaded = initialConnectionChoice(fresh.request, fresh.connection, fresh.overview);
-    setChoice((current) => samePath(current, reloaded)
-      ? { ...reloaded, name: current.name, levelName: current.levelName }
-      : reloaded);
+    setChoice((current) =>
+      samePath(current, reloaded)
+        ? { ...reloaded, name: current.name, levelName: current.levelName }
+        : reloaded,
+    );
     setLinkSources(rulesShareSources(reloaded.rules));
     setStep(0);
     setError(REFRESHED_MESSAGE);
+    setStale(false);
     setBusy(false);
   }
 
   async function decide(decision) {
-    if (inFlightRef.current) return;
+    if (inFlightRef.current || (stale && decision === "approve")) return;
     inFlightRef.current = true;
     setBusy(true);
     setError("");
     try {
-      const body = decision === "deny"
-        ? { decision: "deny" }
-        : { decision: "approve", selection: buildAuthorizationSelection(approval) };
+      const body =
+        decision === "deny"
+          ? { decision: "deny" }
+          : { decision: "approve", selection: buildAuthorizationSelection(approval) };
       await decideAccessAuthorization(request.approvalId, body);
-      onDone(decision);
+      if (mounted.current) onDone(decision);
     } catch (error) {
+      if (!mounted.current) return;
       const refusal = error?.serverMessage;
       if (["already-decided", "expired"].includes(refusal)) {
         await onDone(refusal);
         return;
       }
       if (REFRESH_REFUSALS.has(refusal)) {
-        await reloadChoices();
+        setStale(true);
+        setError(
+          "The access choices changed. Your draft is retained. Reload the latest choices before approving.",
+        );
+        setBusy(false);
         return;
       }
       if (refusal === "level-name-taken") {
@@ -400,7 +509,7 @@ export function RequestReview({
     blurb: replacing
       ? "The new sign-in takes over the chosen connection's name and access level. Its old sign-in stops working."
       : "Name this connection and choose the access level it uses.",
-    canContinue: connectionStepReady(choice, options),
+    canContinue: connectionStepReady(choice, options) && !creationError,
     skipsToReview: replacing || choice.levelChoice !== NEW_LEVEL,
     content: html`<${ConnectionStep}
       choice=${choice}
@@ -414,15 +523,26 @@ export function RequestReview({
 
   return html`<div class="access-authorization-page">
     <header class="access-page-header">
-      <button type="button" class="doc-back access-page-back" disabled=${busy} onClick=${onClose}>← Back to access</button>
+      <button type="button" class="doc-back access-page-back" disabled=${busy} onClick=${onClose}>
+        ← Back to access
+      </button>
       <div>
         <span class="access-eyebrow">Pending connection</span>
-        <h2 id="access-request-title" ref=${headingRef} tabIndex="-1">Approve a connection</h2>
+        <h2 id="access-request-title" ref=${headingRef} tabindex="-1">Approve a connection</h2>
       </div>
-      <p><strong>${request.clientName}</strong> is the client-reported name · ${expiresInLabel(request.expiresAt, now)}</p>
+      <p>
+        <strong>${request.clientName}</strong> is the client-reported name ·
+        ${expiresInLabel(request.expiresAt, now)}
+      </p>
       <dl class="access-request-facts" aria-label="Connection destinations">
-        <div><dt>Omnesis gateway</dt><dd>${authorizationEndpointLabel(request.resource, "This gateway")}</dd></div>
-        <div><dt>Returns to</dt><dd>${authorizationEndpointLabel(request.redirectOrigin)}</dd></div>
+        <div>
+          <dt>Omnesis gateway</dt>
+          <dd>${authorizationEndpointLabel(request.resource, "This gateway")}</dd>
+        </div>
+        <div>
+          <dt>Returns to</dt>
+          <dd>${authorizationEndpointLabel(request.redirectOrigin)}</dd>
+        </div>
       </dl>
       ${request.userCode && html`<${PhoneHandoff} userCode=${request.userCode} disabled=${busy} />`}
     </header>
@@ -432,6 +552,10 @@ export function RequestReview({
       step=${step}
       onStep=${setStep}
       rules=${choice.rules}
+      isNew=${choice.levelChoice === NEW_LEVEL}
+      sourceFiltersEnabled=${overview.sourceFilters?.enabled === true}
+      linkFilters=${linkFilters}
+      onLinkFilters=${setLinkFilters}
       onRules=${updateRules}
       sources=${sources}
       policies=${policies}
@@ -440,7 +564,7 @@ export function RequestReview({
       disabled=${busy}
       requiresAnswer=${request.requiresAnswer}
       idPrefix=${idPrefix}
-      error=${error}
+      error=${error || creationError}
       copy=${{
         one: {
           heading: "Choose permissions",
@@ -449,11 +573,17 @@ export function RequestReview({
         two: { heading: "Choose data and privacy" },
         three: { heading: "Review and allow" },
       }}
-      review=${approval
-        ? html`<${ConnectionReview} approval=${approval} sources=${sources} policies=${policies} />`
-        : null}
-      leadAction=${html`<button type="button" class="btn-ghost danger" disabled=${busy} onClick=${() => decide("deny")}>Deny request</button>`}
-      finalAction=${html`<button type="button" class=${effectiveRules.direct ? "btn-primary access-risk-action" : "btn-primary"} disabled=${busy || !valid} onClick=${() => decide("approve")}>${busy ? "Saving…" : capabilityAction()}</button>`}
+      review=${
+        approval
+          ? html`<${ConnectionReview}
+              approval=${approval}
+              sources=${sources}
+              policies=${policies}
+            />`
+          : null
+      }
+      leadAction=${html`<span><button type="button" class="btn-ghost danger" disabled=${busy} onClick=${() => decide("deny")}>Deny request</button>${stale ? html`<button type="button" class="btn-secondary" disabled=${busy} onClick=${reloadChoices}>Reload choices and discard draft</button>` : null}</span>`}
+      finalAction=${html`<button type="button" class=${effectiveRules.direct ? "btn-primary access-risk-action" : "btn-primary"} disabled=${busy || stale || !valid} onClick=${() => decide("approve")}>${busy ? "Saving…" : capabilityAction()}</button>`}
     />
   </div>`;
 }

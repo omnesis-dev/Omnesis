@@ -10,7 +10,8 @@
     "sentAt": "2025-08-29T17:30:00Z",
     "scheduledAt": "2025-09-01T17:00:00Z",
     "threadId": "t_q3_kickoff",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-002",
@@ -23,7 +24,8 @@
     "sentAt": "2025-09-01T07:00:00Z",
     "dueAt": "2025-09-07T23:59:00Z",
     "threadId": "t_marathon_w6",
-    "labels": ["INBOX", "Personal", "Running"]
+    "labels": ["INBOX", "Personal", "Running"],
+    "labelIds": ["INBOX", "Label_synthetic_004", "Label_synthetic_007"]
   },
   {
     "externalId": "synth-gmail-003",
@@ -37,7 +39,8 @@
     "scheduledAt": "2025-09-03T18:00:00Z",
     "dueAt": "2025-09-05T17:00:00Z",
     "threadId": "t_vendor_eval_acme_personal",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   },
   {
     "externalId": "synth-gmail-004",
@@ -49,7 +52,8 @@
     "body": "Pinnacle trail Sunday? Forecast looks great. 9 AM.",
     "sentAt": "2025-09-04T20:30:00Z",
     "threadId": "t_hike_pinnacle",
-    "labels": ["INBOX", "Personal"]
+    "labels": ["INBOX", "Personal"],
+    "labelIds": ["INBOX", "Label_synthetic_004"]
   },
   {
     "externalId": "synth-gmail-005",
@@ -61,7 +65,8 @@
     "body": "In. 9 AM, Pinnacle trail head. I'll bring extra water.",
     "sentAt": "2025-09-04T20:45:00Z",
     "threadId": "t_hike_pinnacle",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   },
   {
     "externalId": "synth-gmail-006",
@@ -73,7 +78,8 @@
     "body": "Forwarded by Dave — confirmation of your keyboard order. Expected delivery Friday.",
     "sentAt": "2025-09-10T20:00:00Z",
     "threadId": "t_keyboard_order",
-    "labels": ["INBOX", "Personal", "Receipts"]
+    "labels": ["INBOX", "Personal", "Receipts"],
+    "labelIds": ["INBOX", "Label_synthetic_004", "Label_synthetic_006"]
   },
   {
     "externalId": "synth-gmail-007",
@@ -85,7 +91,8 @@
     "body": "Solid week — 75 km, peak at the 25k Saturday. Pacing right on for plan.",
     "sentAt": "2025-09-13T11:00:00Z",
     "threadId": "t_week_recap",
-    "labels": ["INBOX", "Personal", "Running"]
+    "labels": ["INBOX", "Personal", "Running"],
+    "labelIds": ["INBOX", "Label_synthetic_004", "Label_synthetic_007"]
   },
   {
     "externalId": "synth-gmail-008",
@@ -97,7 +104,8 @@
     "body": "Reminder: ortiz.studio is up for renewal mid-Sep. (Thanks for the nudge.)",
     "sentAt": "2025-09-08T13:00:00Z",
     "threadId": "t_domain_renewal",
-    "labels": ["INBOX", "Personal"]
+    "labels": ["INBOX", "Personal"],
+    "labelIds": ["INBOX", "Label_synthetic_004"]
   },
   {
     "externalId": "synth-gmail-009",
@@ -109,7 +117,8 @@
     "body": "Sunday dinner at the usual place, 6 PM. Confirm if you can make it.",
     "sentAt": "2025-09-12T17:00:00Z",
     "threadId": "t_family_dinner",
-    "labels": ["INBOX", "Personal"]
+    "labels": ["INBOX", "Personal"],
+    "labelIds": ["INBOX", "Label_synthetic_004"]
   },
   {
     "externalId": "synth-gmail-010",
@@ -121,7 +130,8 @@
     "body": "Confirmed for both. See you there.",
     "sentAt": "2025-09-12T17:30:00Z",
     "threadId": "t_family_dinner",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   },
   {
     "externalId": "synth-gmail-claire-001",
@@ -133,7 +143,8 @@
     "body": "hey, you keep asking, so here you go — a few ideas:\n\nI really like Marlowe & Finch — found this one: https://example.com/marlowe-finch/interlock-pendant\n\nI found this vase on amazon, it would go well with our dining table :)\nhttps://example.com/p/wren-glass-vase\n\nSteph told me about Lumen Baths, apparently they do great massages :)\nhttps://example.com/lumen-baths\n\nany of these would be amazing. love you x\n\nC",
     "sentAt": "2024-04-22T19:14:00Z",
     "threadId": "t_claire_gift_ideas",
-    "labels": ["INBOX", "Personal"]
+    "labels": ["INBOX", "Personal"],
+    "labelIds": ["INBOX", "Label_synthetic_004"]
   },
   {
     "externalId": "synth-gmail-claire-002",
@@ -145,7 +156,8 @@
     "body": "Hello John Smith,\n\nThank you for your order. We'll send a confirmation when your item ships.\n\nDetails:\nOrder #112-4480913-7762250\nPlaced on Wednesday, 24 April 2024\n\n1 x Faceted Glass Vase 'Wren' — Etched Bird Botanical Design Flower Vase — 25cm  £64.00\nDelivery: Friday, 26 April 2024\n\nDispatch to: John Smith, [redacted]\n\nOrder total: £64.00 (incl. delivery)\n\nManage your order at amazon.co.uk/your-orders\n\nThanks for shopping with us.",
     "sentAt": "2024-04-24T09:42:00Z",
     "threadId": "t_amazon_vase_order",
-    "labels": ["INBOX", "Receipts", "Personal"]
+    "labels": ["INBOX", "Receipts", "Personal"],
+    "labelIds": ["INBOX", "Label_synthetic_006", "Label_synthetic_004"]
   },
   {
     "externalId": "synth-gmail-claire-003",
@@ -157,7 +169,8 @@
     "body": "Booking closes tomorrow — are we still on for the cabin the weekend of the 18th? Sam and Lila are in if we are. Let me know.\n\nC",
     "sentAt": "2025-07-09T11:20:00Z",
     "threadId": "t_cabin_weekend",
-    "labels": ["INBOX", "Personal"]
+    "labels": ["INBOX", "Personal"],
+    "labelIds": ["INBOX", "Label_synthetic_004"]
   },
   {
     "externalId": "synth-gmail-claire-004",
@@ -169,7 +182,8 @@
     "body": "Yes — in. Book it. I'll grab the wine on the way up.",
     "sentAt": "2025-07-09T11:48:00Z",
     "threadId": "t_cabin_weekend",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   },
   {
     "externalId": "synth-gmail-claire-005",
@@ -181,7 +195,8 @@
     "body": "Tess turns 6 next month. She is OBSESSED with dinosaurs right now. I'm leaning toward the big dino dig kit from the toy shop in town but open to ideas. Don't overthink it.\n\nC",
     "sentAt": "2025-11-03T20:05:00Z",
     "threadId": "t_tess_birthday_idea",
-    "labels": ["INBOX", "Personal"]
+    "labels": ["INBOX", "Personal"],
+    "labelIds": ["INBOX", "Label_synthetic_004"]
   },
   {
     "externalId": "synth-gmail-property-001",
@@ -193,7 +208,8 @@
     "body": "Hi John,\n\nWelcome to Flat 4, 27 Eaton Square. Keys ready for collection Friday from our office. Bring photo ID.\n\nAny questions, my mobile is +44 7700 900123.\n\nBest,\nDaniel Harper\nAcme Property Management",
     "sentAt": "2024-12-27T10:14:00Z",
     "threadId": "t_property_keys",
-    "labels": ["INBOX", "Property"]
+    "labels": ["INBOX", "Property"],
+    "labelIds": ["INBOX", "Label_synthetic_005"]
   },
   {
     "externalId": "synth-gmail-property-002",
@@ -205,7 +221,8 @@
     "body": "Hi John,\n\nAnnual boiler service booked for Thursday 18 Sep, 9 AM – 11 AM window. The engineer will need access; will you be in or shall I bring the spare set?\n\nDaniel",
     "sentAt": "2025-09-08T08:42:00Z",
     "threadId": "t_property_boiler",
-    "labels": ["INBOX", "Property"]
+    "labels": ["INBOX", "Property"],
+    "labelIds": ["INBOX", "Label_synthetic_005"]
   },
   {
     "externalId": "synth-gmail-property-003",
@@ -217,7 +234,8 @@
     "body": "Quick reminder — October rent £3,200 due 1 Oct on the usual monthly standing order. Two more instalments after this (1 Nov, 1 Dec) before the term ends.\n\nDaniel",
     "sentAt": "2025-09-22T15:30:00Z",
     "threadId": "t_property_rent_q4",
-    "labels": ["INBOX", "Property"]
+    "labels": ["INBOX", "Property"],
+    "labelIds": ["INBOX", "Label_synthetic_005"]
   },
   {
     "externalId": "synth-gmail-property-council-001",
@@ -229,7 +247,8 @@
     "body": "Account holder: John Smith\nProperty: Flat 4, 27 Eaton Square, London SW1W 9DG\n\nYour Q4 council tax statement is available. Amount due: £481.50 payable by direct debit on 1 October.\n\nWestminster City Council",
     "sentAt": "2025-09-19T07:12:00Z",
     "threadId": "t_council_tax_q4",
-    "labels": ["INBOX", "Property", "Bills"]
+    "labels": ["INBOX", "Property", "Bills"],
+    "labelIds": ["INBOX", "Label_synthetic_005", "Label_synthetic_001"]
   },
   {
     "externalId": "synth-gmail-maria-001",
@@ -241,7 +260,8 @@
     "body": "Sharing the trimmed forecast you asked for — attached the v3 model. The CAC line is the one I'd flag (running 18% above the H1 baseline). Happy to walk through on the Thursday call before the board sees it.\n\nMaria",
     "sentAt": "2025-09-25T14:30:20Z",
     "threadId": "t_q4_forecast_review",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-maria-002",
@@ -253,7 +273,8 @@
     "body": "They came back at $84k for the annual seat (was $96k). Worth a 15min sync before we counter — Tuesday afternoon works for me. Carol on the Bluestone side mentioned they could throw in priority support if we close before end of October.\n\nMaria",
     "sentAt": "2025-09-23T21:35:00Z",
     "threadId": "t_bluestone_negotiation",
-    "labels": ["INBOX", "Work", "Vendor"]
+    "labels": ["INBOX", "Work", "Vendor"],
+    "labelIds": ["INBOX", "Label_synthetic_011", "Label_synthetic_010"]
   },
   {
     "externalId": "synth-gmail-maria-003",
@@ -265,7 +286,8 @@
     "body": "Auditor flagged two findings on the access-review evidence. Both are paperwork (missing manager sign-off on three quarterly reviews) — no real control gaps. I'll fix and push the updated bundle to you Monday so we can re-submit.\n\nMaria",
     "sentAt": "2025-09-22T01:15:00Z",
     "threadId": "t_soc2_readiness",
-    "labels": ["INBOX", "Work", "Compliance"]
+    "labels": ["INBOX", "Work", "Compliance"],
+    "labelIds": ["INBOX", "Label_synthetic_011", "Label_synthetic_002"]
   },
   {
     "externalId": "synth-gmail-023",
@@ -285,7 +307,8 @@
         "sizeBytes": 245760,
         "extractedText": "Q4 Vendor Assessment Report — Prepared by Jane Doe, October 2025.\n\nExecutive Summary: This report evaluates three enterprise vendors (Bluestone Analytics, Greenfield SaaS, Apex Platform) against Acme Corp's procurement criteria for the upcoming fiscal year. Evaluation dimensions include total cost of ownership, SOC2 compliance readiness, API integration depth, and customer support responsiveness. Bluestone offers the strongest API surface but trails on compliance timelines. Greenfield leads on cost but lacks SSO federation. Apex scores highest overall but at a 22% premium. Recommendation: proceed with Bluestone subject to a November SOC2 gap analysis, with Apex as fallback."
       }
-    ]
+    ],
+    "labelIds": ["INBOX", "Label_synthetic_011", "Label_synthetic_010"]
   },
   {
     "externalId": "synth-gmail-024",
@@ -297,7 +320,8 @@
     "body": "Thanks Jane. Reviewed the assessment — agree on Bluestone as first choice. The API surface is exactly what we need for the integration sprint. Emma, can you loop in legal for the SOC2 gap analysis timeline? We need that locked down before end of November.\n\n-John",
     "sentAt": "2025-10-15T17:30:00Z",
     "threadId": "t_q4_vendor_assessment",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   },
   {
     "externalId": "synth-gmail-025",
@@ -309,7 +333,8 @@
     "body": "Hi John,\n\nSharing my independent take on the Q4 vendor assessment. This report evaluates three enterprise vendors (Bluestone Analytics, Greenfield SaaS, Apex Platform) against Acme Corp's procurement criteria for the upcoming fiscal year. Evaluation dimensions include total cost of ownership, SOC2 compliance readiness, API integration depth, and customer support quality. Bluestone offers the strongest API surface but trails on compliance timelines. Greenfield leads on cost but lacks SSO. Apex scores highest overall but at a premium. My recommendation: proceed with Bluestone subject to a November SOC2 gap analysis.\n\nEmma",
     "sentAt": "2025-10-16T09:00:00Z",
     "threadId": "t_q4_vendor_emma",
-    "labels": ["INBOX", "Work", "Vendor"]
+    "labels": ["INBOX", "Work", "Vendor"],
+    "labelIds": ["INBOX", "Label_synthetic_011", "Label_synthetic_010"]
   },
   {
     "externalId": "synth-gmail-maya-001",
@@ -321,7 +346,8 @@
     "body": "Hi John,\n\nExcited to start on the Atlas redesign. I've put a rough scope doc together — can we sync this week?\n\nMaya",
     "sentAt": "2025-10-18T08:15:00Z",
     "threadId": "t_atlas_redesign",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-maya-002",
@@ -333,7 +359,8 @@
     "body": "Sounds great, Maya. Thursday 2pm works for me. I'll review the scope doc beforehand.\n\nJohn",
     "sentAt": "2025-10-18T16:40:00Z",
     "threadId": "t_atlas_redesign",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   },
   {
     "externalId": "synth-gmail-maya-003",
@@ -345,7 +372,8 @@
     "body": "First cut of the mocks attached. Keen for your thoughts on the navigation layout especially.\n\nMaya",
     "sentAt": "2025-10-21T09:30:00Z",
     "threadId": "t_atlas_mocks",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-maya-004",
@@ -357,7 +385,8 @@
     "body": "These look strong. One note: let's tighten the spacing on the sidebar. Otherwise ship it.\n\nJohn",
     "sentAt": "2025-10-22T11:05:00Z",
     "threadId": "t_atlas_mocks",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   },
   {
     "externalId": "synth-gmail-maya-005",
@@ -369,7 +398,8 @@
     "body": "Notes from today: nav locked, colour pass next, launch target end of month. Thanks for the quick turnaround.\n\nMaya",
     "sentAt": "2025-10-24T17:20:00Z",
     "threadId": "t_atlas_sync",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-maya-006",
@@ -381,7 +411,8 @@
     "body": "Perfect summary. I'll line up the launch comms for end of month.\n\nJohn",
     "sentAt": "2025-10-25T10:00:00Z",
     "threadId": "t_atlas_sync",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   },
   {
     "externalId": "synth-gmail-maya-007",
@@ -393,7 +424,8 @@
     "body": "Final assets exported and in the shared drive. Let me know if anything's missing before we go live.\n\nMaya",
     "sentAt": "2025-10-27T14:45:00Z",
     "threadId": "t_atlas_final",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-maya-008",
@@ -405,7 +437,8 @@
     "body": "Got them — all looks complete. Great work on this, Maya. Launching Friday.\n\nJohn",
     "sentAt": "2025-10-28T09:10:00Z",
     "threadId": "t_atlas_final",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   },
   {
     "externalId": "synth-gmail-cole-001",
@@ -417,7 +450,8 @@
     "body": "Hi John,\n\nRecap of the Q3 logistics review attached. Let's sync Thursday.\n\nSam",
     "sentAt": "2025-10-21T09:10:00Z",
     "threadId": "t_cole_001",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-cole-002",
@@ -429,7 +463,8 @@
     "body": "Hi John,\n\nReaching out from my Brightpath address about the vendor onboarding.\n\nSam",
     "sentAt": "2025-10-22T14:30:00Z",
     "threadId": "t_cole_002",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-cole-003",
@@ -441,7 +476,8 @@
     "body": "Hi John,\n\nThe updated design tokens are ready for review.\n\nAlex",
     "sentAt": "2025-10-23T11:05:00Z",
     "threadId": "t_cole_003",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-cole-004",
@@ -453,7 +489,8 @@
     "body": "Hi John,\n\nFirst pass at the Q4 budget is in the shared folder.\n\nJordan",
     "sentAt": "2025-10-24T16:20:00Z",
     "threadId": "t_cole_004",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-cole-005",
@@ -465,7 +502,8 @@
     "body": "Hi John,\n\nConfirming the travel window for the spring conference.\n\nSam",
     "sentAt": "2025-10-27T08:45:00Z",
     "threadId": "t_cole_005",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-cole-006",
@@ -477,7 +515,8 @@
     "body": "Hi John,\n\nRedlines on the partnership contract are back from legal.\n\nSam",
     "sentAt": "2025-10-28T13:15:00Z",
     "threadId": "t_cole_006",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_011"]
   },
   {
     "externalId": "synth-gmail-trip-flight",
@@ -489,7 +528,8 @@
     "body": "Hello John Smith,\n\nYour booking is confirmed. Thank you for flying Meridian Air.\n\nBooking reference: MA7F2K9\nPassengers: John Smith, Alex Chen\n\nOutbound: Thu 12 Jun 2025 — London LHR 07:20 → Lisbon LIS 09:55 (MA218)\nReturn:   Sun 15 Jun 2025 — Lisbon LIS 18:40 → London LHR 21:20 (MA219)\n\n2 x return fare (incl. taxes & 1 checked bag each)\nTotal charged: EUR 318.60 to card ending 4471\n\nManage your booking at meridian-air.example.com/manage\n\nSafe travels,\nMeridian Air",
     "sentAt": "2025-05-20T18:12:00Z",
     "threadId": "t_trip_flight",
-    "labels": ["INBOX", "Receipts", "Travel"]
+    "labels": ["INBOX", "Receipts", "Travel"],
+    "labelIds": ["INBOX", "Label_synthetic_006", "Label_synthetic_009"]
   },
   {
     "externalId": "synth-gmail-trip-stay",
@@ -501,7 +541,8 @@
     "body": "Dear John,\n\nWe're delighted to confirm your reservation.\n\nReservation: CA-58817\nApartment: One-bedroom, Alfama district\nCheck-in: Thu 12 Jun 2025 (from 15:00)\nCheck-out: Sun 15 Jun 2025 (by 11:00)\n3 nights\n\nTotal: EUR 440.00 (paid in full)\n\nWe look forward to welcoming you and Mr Chen to Lisbon.\n\nWarm regards,\nCasa Alfama Stays",
     "sentAt": "2025-05-22T10:05:00Z",
     "threadId": "t_trip_stay",
-    "labels": ["INBOX", "Receipts", "Travel"]
+    "labels": ["INBOX", "Receipts", "Travel"],
+    "labelIds": ["INBOX", "Label_synthetic_006", "Label_synthetic_009"]
   },
   {
     "externalId": "synth-gmail-property-004",
@@ -513,6 +554,7 @@
     "body": "Hi John,\n\nAs we're approaching the end of your term (31 December), a quick note on your deposit so there are no surprises.\n\nYour deposit of £4,800 is protected with the Deposit Custody Service (scheme reference DCS-4471-EAT). Provided there's no damage beyond fair wear and tear and the rent is clear, you'll receive the full amount back within 10 working days of check-out. I'll send the check-out inventory form in early December so we can book the final inspection.\n\nIf you'd like to discuss the fabric of the flat before then, happy to.\n\nBest,\nDaniel Harper\nAcme Property Management",
     "sentAt": "2025-10-02T09:20:00Z",
     "threadId": "t_property_deposit",
-    "labels": ["INBOX", "Property"]
+    "labels": ["INBOX", "Property"],
+    "labelIds": ["INBOX", "Label_synthetic_005"]
   }
 ]

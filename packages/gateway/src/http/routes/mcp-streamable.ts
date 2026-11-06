@@ -343,6 +343,11 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
                         : {}),
                     },
                   );
+                  if (answerAuthorization?.scopePolicies.length)
+                    answerService.assertTaskScopeCurrent(
+                      egress.response.taskId,
+                      answerAuthorization,
+                    );
                   return { response: egress.response, profile };
                 } catch (error) {
                   throw asAnswerHttpError(error);
@@ -375,6 +380,11 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
                         : {}),
                     },
                   );
+                  if (answerAuthorization?.scopePolicies.length)
+                    answerService.assertTaskScopeCurrent(
+                      egress.response.taskId,
+                      answerAuthorization,
+                    );
                   return egress.response;
                 } catch (error) {
                   throw asAnswerHttpError(error);
@@ -406,6 +416,7 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
                 ...(grouping.conversationId ? { conversationId: grouping.conversationId } : {}),
                 ...(grouping.workflowId ? { workflowId: grouping.workflowId } : {}),
               };
+              const scopeCapture = deps.directBoundary!.captureScope(directAuthorization!);
               try {
                 const result = await auditedInvocation(
                   deps,
@@ -424,6 +435,7 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
                       ...(options?.timeZone ? { timeZone: options.timeZone } : {}),
                       rateAlreadyCharged: false,
                       authorization: directAuthorization!,
+                      ...(scopeCapture ? { scopeReads: scopeCapture.observer } : {}),
                     }),
                   (result) => (result.kind === "error" ? "refused" : "ok"),
                 );
@@ -432,6 +444,7 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
                   outcome: result.kind === "error" ? "refused" : "ok",
                   result,
                 });
+                scopeCapture?.assertCurrent();
                 return result;
               } catch (error) {
                 await recordDirectTranscript(deps, auth, {
