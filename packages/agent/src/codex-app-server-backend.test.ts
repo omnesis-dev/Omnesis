@@ -905,6 +905,44 @@ describe("CodexAppServerBackend", () => {
     }
   });
 
+  it("completes consecutive tool turns on the same app-server process", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-consecutive-")));
+    const logPath = join(dir, "fake-codex.jsonl");
+    const backend = makeBackend({
+      codexHome: join(dir, "home"),
+      logPath,
+      turnIdleTimeoutMs: 2_000,
+    });
+    const result: ToolResult = {
+      kind: "search.results",
+      query: "synthetic budget review",
+      durationMs: 0,
+      results: [],
+    };
+    const tools = [fakeToolHandle("search_documents", () => result)];
+
+    try {
+      for (const messageId of ["message_first", "message_follow_up"]) {
+        const events = await collect(backend.runTurn(baseInput({ messageId, tools })));
+        expect(events.find((event) => event.type === "agent.tool.result")?.payload.result).toEqual(
+          result,
+        );
+        expect(events.some((event) => event.type === "agent.error")).toBe(false);
+        expect(events.find((event) => event.type === "agent.message.end")?.payload).toMatchObject({
+          messageId,
+          stopReason: "end_turn",
+        });
+      }
+      const logs = readLog(logPath);
+      expect(logs.filter((entry) => entry.event === "startup")).toHaveLength(1);
+      expect(logs.filter((entry) => entry.event === "thread_start")).toHaveLength(2);
+      expect(logs.filter((entry) => entry.event === "tool_call_response")).toHaveLength(2);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("accepts tool calls that arrive immediately after turn/start before the await resumes", async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-early-events-")));
     const codexHome = join(dir, "codex-home");
