@@ -46,7 +46,6 @@ import {
 } from "./backfill-helpers.js";
 import type { TokenLabelRow } from "../../merge-candidates.js";
 import type { PeopleCountRow } from "../../data/repositories/PersonRepository.js";
-import type { SqliteTableStatsRow } from "../../sqlite-catalog.js";
 import type { PeriodicTask } from "../types.js";
 import type { BackfillTaskOptsInternal } from "./backfill.js";
 
