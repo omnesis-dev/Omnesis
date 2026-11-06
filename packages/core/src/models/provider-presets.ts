@@ -131,6 +131,15 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     capabilities: ["agent", "embed"],
   },
   {
+    id: "cheaperinference",
+    name: "Cheaper Inference",
+    // Gateway — one key routes to models from several labs. OpenAI-compatible
+    // Chat Completions and embeddings (e.g. `text-embedding-3-small`) under
+    // `/v1`. It is not in the Models.dev catalog, so it has no `modelsDevId`.
+    defaultUrl: "https://api.cheaperinference.com",
+    capabilities: ["agent", "embed"],
+  },
+  {
     id: "openrouter",
     name: "OpenRouter",
     // Aggregator — one key routes to many upstream providers. The OpenAI

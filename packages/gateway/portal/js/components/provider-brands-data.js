@@ -21,6 +21,7 @@ export const PORTAL_PROVIDER_BRANDS = {
   meta: { id: "meta", label: "Meta" },
   moonshot: { id: "moonshot", label: "Moonshot AI" },
   regolo: { id: "regolo", label: "Regolo AI" },
+  cheaperinference: { id: "cheaperinference", label: "Cheaper Inference" },
   openrouter: { id: "openrouter", label: "OpenRouter" },
   ollama: { id: "ollama", label: "Ollama" },
   local: { id: "local", label: "Local" },

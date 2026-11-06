@@ -41,6 +41,26 @@ describe("resolveModelDisplay", () => {
     });
   });
 
+  it("labels a Cheaper Inference HTTP assignment without catalog metadata", () => {
+    expect(
+      resolveModelDisplay({
+        role: "agent",
+        kind: "http",
+        backendKey: "cheaperinference",
+        url: "https://api.cheaperinference.com",
+        model: "gpt-5.4-mini",
+        allowRemoteInference: true,
+        available: true,
+      }),
+    ).toMatchObject({
+      providerId: "cheaperinference",
+      providerLabel: "Cheaper Inference",
+      modelName: "gpt-5.4-mini",
+      available: true,
+      configured: true,
+    });
+  });
+
   it("projects an Anthropic assignment to its catalog name + brand", () => {
     const a: ResolvedAssignment = {
       role: "agent",
