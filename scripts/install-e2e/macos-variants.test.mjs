@@ -172,6 +172,14 @@ exit 23
 tail() { printf 'TAIL-PRIVATE-CANARY\\n' >&2; command tail "$@"; }`);
       expect(noisy.status).toBe(23);
       expect(noisy.stderr).toBe(allowed.stderr);
+      const crashed = execute(`ulimit -c 0
+redact() { local data; data="$(cat)"; if [ -z "$data" ]; then return 0; fi; exec bash -c 'kill -SEGV $$'; }`);
+      expect(crashed.status).toBe(23);
+      expect(crashed.stdout).toBe("");
+      expect(crashed.stderr).toBe(
+        "[install-e2e] redacted gateway pre-readiness tail\n" +
+          "[install-e2e] startup diagnostic filtering unavailable\n",
+      );
       rmSync(gateway);
       symlinkSync(join(directory, "collector.private.log"), gateway);
       expect(execute().stderr).toBe("");
@@ -637,6 +645,22 @@ tail() { printf 'TAIL-PRIVATE-CANARY\\n' >&2; command tail "$@"; }`,
         assertPrivate(failed, ["client", "absence"]);
         expect(failed.stderr).toContain(
           "[install-e2e] installer diagnostic filtering unavailable\n",
+        );
+      }
+      for (const stub of [
+        `redact() { local data; data="$(cat)"; if [ -z "$data" ]; then return 0; fi; exec bash -c 'kill -SEGV $$'; }`,
+        `tail() { exec bash -c 'kill -SEGV $$'; }`,
+      ]) {
+        const crashed = execute("1", `ulimit -c 0\n${stub}`);
+        assertPrivate(crashed, ["client", "absence"]);
+        expect(crashed.stderr).toBe(
+          ["client", "absence"]
+            .map(
+              (label) =>
+                `[install-e2e] redacted ${label} installer tail\n` +
+                "[install-e2e] installer diagnostic filtering unavailable\n",
+            )
+            .join(""),
         );
       }
     } finally {

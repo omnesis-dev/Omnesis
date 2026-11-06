@@ -90,11 +90,11 @@ installer_failure_diagnostics() {
   local label
   # Redact complete lines before byte truncation, which must never expose a
   # token fragment stripped of its field name. Post-setup daemon logs stay private.
-  # Tool stderr is private too: only filtered stdout and fixed failures are public.
+  # Save the console on fd3; tool and pipeline-coordinator stderr stay private.
   for label in client absence no-service; do
     if [ -s "$SESSION/$label.private.log" ] && [ ! -L "$SESSION/$label.private.log" ]; then
       printf '[install-e2e] redacted %s installer tail\n' "$label" >&2
-      if ! tail -n 50 "$SESSION/$label.private.log" 2>/dev/null | redact 2>/dev/null | tail -c 8192 >&2 2>/dev/null; then
+      if ! { tail -n 50 "$SESSION/$label.private.log" | redact | tail -c 8192 >&3; } 3>&2 2>/dev/null; then
         printf '[install-e2e] installer diagnostic filtering unavailable\n' >&2
       fi
     fi
@@ -113,7 +113,7 @@ PYDIAG
   then
     if [ -f "$SESSION/gateway.private.log" ] && [ ! -L "$SESSION/gateway.private.log" ]; then
       printf '[install-e2e] redacted gateway pre-readiness tail\n' >&2
-      if ! tail -n 50 "$SESSION/gateway.private.log" 2>/dev/null | redact 2>/dev/null | tail -c 8192 >&2 2>/dev/null; then
+      if ! { tail -n 50 "$SESSION/gateway.private.log" | redact | tail -c 8192 >&3; } 3>&2 2>/dev/null; then
         printf '[install-e2e] startup diagnostic filtering unavailable\n' >&2
       fi
     fi
