@@ -148,6 +148,8 @@ rl.on("line", (line) => {
   }
 
   if (msg.method === "thread/start") {
+    // Each backend run creates an ephemeral thread on the reusable process.
+    turnStarted = false;
     dynamicTools = Array.isArray(msg.params?.dynamicTools) ? msg.params.dynamicTools : [];
     log("thread_start", {
       params: msg.params,
