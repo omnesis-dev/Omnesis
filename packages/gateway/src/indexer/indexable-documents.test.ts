@@ -277,7 +277,7 @@ describe("query plans", () => {
       const detail = plan(sql);
       expect(detail, sql).not.toMatch(/SCAN documents/);
       expect(detail, sql).toMatch(
-        /SEARCH documents USING (COVERING )?INDEX idx_documents_(source_id|source_id_created_at|contact_type)\b/,
+        /SEARCH documents USING (COVERING )?INDEX idx_documents_(source_id|source_created_revision|contact_type)\b/,
       );
     }
   });
@@ -285,13 +285,13 @@ describe("query plans", () => {
   test("the pre-cutoff page follows the index order with no sort, and its count is covering", () => {
     listPreCutoffDocumentIdsForSource(reader, NOTES, CUTOFF, 1);
     indexableCountsBySource(reader, fullCounts(), notesMaxAge, NOW);
-    const keyset = plan(statements.find((sql) => sql.includes("rowid <= ?"))!);
+    const keyset = plan(statements.find((sql) => sql.includes("id <= ?"))!);
     expect(keyset).toContain(
-      "SEARCH documents USING INDEX idx_documents_source_id_created_at (source_id=? AND source_created_at>? AND source_created_at<?)",
+      "SEARCH documents USING COVERING INDEX idx_documents_source_created_revision (source_id=? AND source_created_at>? AND source_created_at<?)",
     );
     expect(keyset).not.toContain("TEMP B-TREE");
     expect(plan(statements.find((sql) => sql.includes("COUNT(*)"))!)).toContain(
-      "SEARCH documents USING COVERING INDEX idx_documents_source_id_created_at (source_id=? AND source_created_at<?)",
+      "SEARCH documents USING COVERING INDEX idx_documents_source_created_revision (source_id=? AND source_created_at<?)",
     );
   });
 });

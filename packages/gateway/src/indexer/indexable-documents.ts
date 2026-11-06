@@ -16,7 +16,7 @@
  *
  * Both forms work by subtraction: every document, less those created before
  * their source's cutoff, less again the exempt contacts among those. The
- * excluded range is read through `idx_documents_source_id_created_at` and the
+ * excluded range is read through `idx_documents_source_created_revision` and the
  * contacts through the partial `idx_documents_contact_type`, each pinned with
  * `INDEXED BY` so losing an index is an error rather than a scan of every
  * document's metadata. A source without a cutoff costs nothing beyond the
@@ -140,7 +140,7 @@ function listExemptDocuments(db: Db): ExemptDocument[] {
  * Ids of `sourceId`'s documents created before `cutoff`, exempt ones
  * included — the range the cutoff can exclude.
  *
- * Read by keyset on `(source_created_at, rowid)`, which is the index's own
+ * Read by keyset on `(source_created_at, id)`, which is the index's own
  * order, so a page never sorts and a large run of equal dates costs no more
  * than any other page; `pageRows` per statement, so a large range does not
  * hold one WAL snapshot open (see `docs/conventions.md`, "A long read holds
@@ -156,20 +156,20 @@ export function listPreCutoffDocumentIdsForSource(
   pageRows: number = DOCUMENT_ID_PAGE_ROWS,
 ): string[] {
   const limit = Math.max(1, Math.floor(pageRows));
-  type Row = { r: number; id: string; created: string };
+  type Row = { id: string; created: string };
   const first = db.prepare<[string, string, number], Row>(
-    `SELECT rowid AS r, id, source_created_at AS created
-       FROM documents INDEXED BY idx_documents_source_id_created_at
+    `SELECT id, source_created_at AS created
+       FROM documents INDEXED BY idx_documents_source_created_revision
       WHERE source_id = ? AND source_created_at < ?
-      ORDER BY source_created_at, rowid
+      ORDER BY source_created_at, id
       LIMIT ?`,
   );
-  const next = db.prepare<[string, string, string, string, number, number], Row>(
-    `SELECT rowid AS r, id, source_created_at AS created
-       FROM documents INDEXED BY idx_documents_source_id_created_at
+  const next = db.prepare<[string, string, string, string, string, number], Row>(
+    `SELECT id, source_created_at AS created
+       FROM documents INDEXED BY idx_documents_source_created_revision
       WHERE source_id = ? AND source_created_at < ? AND source_created_at >= ?
-        AND NOT (source_created_at = ? AND rowid <= ?)
-      ORDER BY source_created_at, rowid
+        AND NOT (source_created_at = ? AND id <= ?)
+      ORDER BY source_created_at, id
       LIMIT ?`,
   );
   const ids: string[] = [];
@@ -178,7 +178,7 @@ export function listPreCutoffDocumentIdsForSource(
     for (const row of rows) ids.push(row.id);
     if (rows.length < limit) return ids;
     const last = rows[rows.length - 1]!;
-    rows = next.all(sourceId, cutoff, last.created, last.created, last.r, limit);
+    rows = next.all(sourceId, cutoff, last.created, last.created, last.id, limit);
   }
 }
 
@@ -218,7 +218,7 @@ function countExcludedForSource(
   const before =
     db
       .prepare<[string, string], number>(
-        `SELECT COUNT(*) FROM documents INDEXED BY idx_documents_source_id_created_at
+        `SELECT COUNT(*) FROM documents INDEXED BY idx_documents_source_created_revision
           WHERE source_id = ? AND source_created_at < ?`,
       )
       .pluck()
