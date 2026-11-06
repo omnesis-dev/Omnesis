@@ -376,7 +376,8 @@ process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`,
         const stat = readFileSync(`/proc/${gatePid}/stat`, "utf8");
         running = !["Z", "X"].includes(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0]);
       } catch (error) {
-        if (error.code !== "ENOENT") throw error;
+        // A task reaped between opening its procfs entry and reading it reports ESRCH.
+        if (error.code !== "ENOENT" && error.code !== "ESRCH") throw error;
         running = false;
       }
       expect(running).toBe(false);
