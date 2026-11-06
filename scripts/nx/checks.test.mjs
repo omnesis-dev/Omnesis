@@ -25,7 +25,7 @@ import {
   repositoryE2ETests,
 } from "./bundles.mjs";
 import { assertTreeFingerprint, treeFingerprint } from "./tree-state.mjs";
-import { buildPlan } from "./checks.mjs";
+import { buildPlan, jsonCommand } from "./checks.mjs";
 
 const originalCwd = process.cwd();
 const roots = [];
@@ -435,4 +435,109 @@ fs.writeFileSync(process.env.OMNESIS_ARGS_OUTPUT, JSON.stringify(process.argv.sl
       ]);
     },
   );
+});
+
+describe("Nx query failures", () => {
+  /** A command that behaves as `script` says, with `runs` counting its starts. */
+  function command(script) {
+    const root = mkdtempSync(join(tmpdir(), "omnesis-nx-query-"));
+    roots.push(root);
+    const count = join(root, "runs");
+    writeFileSync(count, "");
+    const path = join(root, "query.mjs");
+    writeFileSync(
+      path,
+      `#!${process.execPath}
+import { appendFileSync, readFileSync } from "node:fs";
+appendFileSync(${JSON.stringify(count)}, "x");
+const run = readFileSync(${JSON.stringify(count)}, "utf8").length;
+${script}
+`,
+    );
+    chmodSync(path, 0o755);
+    return { path, runs: () => readFileSync(count, "utf8").length };
+  }
+
+  /** What `fn` throws, with stderr held back from the test output. */
+  function failure(fn) {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+    throw new Error("expected the query to fail");
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("a process that dies without a word gets one more try, and the log keeps how it ended", () => {
+    const query = command(`
+if (run === 1) process.kill(process.pid, "SIGKILL");
+console.log(JSON.stringify(["alpha"]));
+`);
+    const warned = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    expect(jsonCommand(query.path, ["show"])).toEqual(["alpha"]);
+
+    expect(query.runs()).toBe(2);
+    const warning = warned.mock.calls.map(([text]) => String(text)).join("");
+    expect(warning).toContain(`${query.path} show was killed by SIGKILL`);
+    expect(warning).toContain("Trying once more.");
+  });
+
+  test("a second silent death fails, naming how it ended on the first line", () => {
+    const query = command(`process.exit(7);`);
+
+    const error = failure(() => jsonCommand(query.path, ["show"]));
+
+    expect(query.runs()).toBe(2);
+    expect(error.message.split("\n")[0]).toBe(`${query.path} show exited 7`);
+  });
+
+  test("what a failure printed on stdout reaches the error", () => {
+    const query = command(`
+console.log("The current directory is not part of a workspace.");
+process.exit(1);
+`);
+
+    const error = failure(() => jsonCommand(query.path, ["show"]));
+
+    expect(error.message).toContain("stdout:\nThe current directory is not part of a workspace.");
+  });
+
+  test("a failure the command explains on stderr is not tried again", () => {
+    const query = command(`
+console.error("Failed to process project graph.");
+process.exit(1);
+`);
+
+    const error = failure(() => jsonCommand(query.path, ["show"]));
+
+    expect(query.runs()).toBe(1);
+    expect(error.message).toContain("stderr:\nFailed to process project graph.");
+  });
+
+  test("a command that cannot start says so and is not tried again", () => {
+    const missing = join(tmpdir(), "omnesis-nx-query-missing", "nx");
+
+    const error = failure(() => jsonCommand(missing, ["show"]));
+
+    expect(error.message).toContain(`${missing} show could not run:`);
+    expect(error.message).toContain("ENOENT");
+    expect(process.stderr.write).not.toHaveBeenCalledWith(
+      expect.stringContaining("Trying once more."),
+    );
+  });
+
+  test("output that is not JSON is not tried again", () => {
+    const query = command(`console.log("not json");`);
+
+    const error = failure(() => jsonCommand(query.path, ["show"]));
+
+    expect(error).toBeInstanceOf(SyntaxError);
+    expect(query.runs()).toBe(1);
+  });
 });
