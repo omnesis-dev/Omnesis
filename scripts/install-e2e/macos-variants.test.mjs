@@ -628,6 +628,18 @@ tail() { printf 'TAIL-PRIVATE-CANARY\\n' >&2; command tail "$@"; }`,
           );
         }
       }
+      const lastLine = "0123456789".repeat(2000) + "\n";
+      for (const label of labels)
+        writeFileSync(join(directory, `${label}.private.log`), log + lastLine);
+      const chunked = execute("1");
+      assertPrivate(chunked, labels);
+      expect(chunked.stderr).toBe(
+        labels
+          .map(
+            (label) => `[install-e2e] redacted ${label} installer tail\n` + lastLine.slice(-8192),
+          )
+          .join(""),
+      );
       writeFileSync(join(directory, "forbidden-log"), "SYMLINK-LOG-CANARY-NEVER-PRINT");
       rmSync(join(directory, "no-service.private.log"));
       symlinkSync(join(directory, "forbidden-log"), join(directory, "no-service.private.log"));
