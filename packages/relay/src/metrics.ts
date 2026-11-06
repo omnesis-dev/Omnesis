@@ -25,6 +25,7 @@ export type AbuseRejectionReason =
 
 export interface RelayMetricStoreSnapshot {
   activeCredentials: Record<RelayPlatform, number>;
+  activeCredentials24h: Record<RelayPlatform, number>;
 }
 
 const VERSION = readPackageVersion(import.meta.url);
@@ -100,6 +101,10 @@ export class RelayMetrics {
       "# TYPE relay_active_credentials gauge",
       `relay_active_credentials{platform="ios"} ${store.activeCredentials.ios}`,
       `relay_active_credentials{platform="android"} ${store.activeCredentials.android}`,
+      "# HELP relay_active_credentials_24h Unrevoked credentials used for an admitted authenticated wake in the last 24 hours, regardless of delivery outcome.",
+      "# TYPE relay_active_credentials_24h gauge",
+      `relay_active_credentials_24h{platform="ios"} ${store.activeCredentials24h.ios}`,
+      `relay_active_credentials_24h{platform="android"} ${store.activeCredentials24h.android}`,
       "# TYPE relay_wake_total counter",
       ...counterLines("relay_wake_total", this.wakes, ["platform", "result"]),
       "# TYPE relay_enrolments_total counter",
