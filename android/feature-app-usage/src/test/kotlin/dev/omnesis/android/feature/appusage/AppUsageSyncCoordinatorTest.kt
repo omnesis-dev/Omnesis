@@ -180,6 +180,29 @@ class AppUsageSyncCoordinatorTest {
     }
 
     @Test
+    fun `a pass that finds nothing new still records the sync`() = runTest {
+        // First pass: the gateway's never-synced answer is 200 with null fields, not 404.
+        enqueueOk("""{"cursor":null,"lastSyncedAt":null,"wipeEpoch":0}""")
+        enqueueOk()
+        val c = coordinator()
+        assertEquals(AppUsageSyncCoordinator.SyncResult.Success(0), c.syncNow())
+        server.takeRequest()
+        val first = server.takeRequest()
+        assertEquals("POST", first.method)
+        val cursor = body(first)["cursor"]!!
+
+        // Second pass at the same instant: the gateway holds exactly that cursor, nothing moved.
+        enqueueOk("""{"cursor":$cursor,"lastSyncedAt":"2026-03-05T00:00:00Z"}""")
+        enqueueOk()
+        assertEquals(AppUsageSyncCoordinator.SyncResult.Success(0), c.syncNow())
+        assertEquals("GET", server.takeRequest().method)
+        val second = server.takeRequest()
+        assertEquals("POST", second.method)
+        assertEquals("/sync-state/android-app-usage:local", second.path)
+        assertEquals(cursor, body(second)["cursor"])
+    }
+
+    @Test
     fun `a rebuilt day with no sessions left still clears what the gateway held for it`() = runTest {
         addEvent("android", day1Start + 1_000, UsageEvents.Event.SCREEN_INTERACTIVE)
 
