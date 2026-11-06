@@ -279,17 +279,31 @@ export class RelayStore {
     return prune.immediate();
   }
 
-  operationalSnapshot(): RelayMetricStoreSnapshot {
+  operationalSnapshot(now = Date.now()): RelayMetricStoreSnapshot {
     const active = this.db
       .prepare(
-        `SELECT platform, COUNT(*) AS count FROM relay_credentials
+        `SELECT platform, COUNT(*) AS count,
+                SUM(CASE WHEN EXISTS (
+                  SELECT 1 FROM relay_rate_events AS event
+                   WHERE event.credential_hash = credential.credential_hash
+                     AND event.occurred_at > ? AND event.occurred_at <= ?
+                ) THEN 1 ELSE 0 END) AS recent
+           FROM relay_credentials AS credential
           WHERE revoked_at IS NULL GROUP BY platform`,
       )
-      .all() as Array<{ platform: RelayPlatform; count: number }>;
+      .all(now - RELAY_RATE_WINDOW_DAY_MS, now) as Array<{
+      platform: RelayPlatform;
+      count: number;
+      recent: number;
+    }>;
     return {
       activeCredentials: {
         ios: active.find((row) => row.platform === "ios")?.count ?? 0,
         android: active.find((row) => row.platform === "android")?.count ?? 0,
+      },
+      activeCredentials24h: {
+        ios: active.find((row) => row.platform === "ios")?.recent ?? 0,
+        android: active.find((row) => row.platform === "android")?.recent ?? 0,
       },
     };
   }
