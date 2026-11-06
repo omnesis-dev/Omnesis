@@ -1,0 +1,3783 @@
+{
+ "sweeps": {
+  "default": {
+   "result": {
+    "fired": true,
+    "enqueued": 5
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-183",
+       "loop-203",
+       "loop-345",
+       "loop-48"
+      ],
+      "matchedBy": [
+       "person:person-168"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-183,loop-203,loop-345,loop-48",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-162",
+       "loop-173",
+       "loop-33",
+       "loop-343"
+      ],
+      "matchedBy": [
+       "person:person-103"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-162,loop-173,loop-33,loop-343",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p3",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-192",
+       "loop-296",
+       "loop-32"
+      ],
+      "matchedBy": [
+       "doc:doc-450"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-192,loop-296,loop-32",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p4",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-126",
+       "da-285",
+       "da-457",
+       "da-479",
+       "da-8"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-126,da-285,da-457,da-479,da-8",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p5",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-109",
+       "da-217"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-109,da-217",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "loops only": {
+   "result": {
+    "fired": true,
+    "enqueued": 3
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-183",
+       "loop-203",
+       "loop-345",
+       "loop-48"
+      ],
+      "matchedBy": [
+       "person:person-168"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-183,loop-203,loop-345,loop-48",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-162",
+       "loop-173",
+       "loop-33",
+       "loop-343"
+      ],
+      "matchedBy": [
+       "person:person-103"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-162,loop-173,loop-33,loop-343",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p3",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-192",
+       "loop-296",
+       "loop-32"
+      ],
+      "matchedBy": [
+       "doc:doc-450"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-192,loop-296,loop-32",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "contradictions only": {
+   "result": {
+    "fired": true,
+    "enqueued": 2
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-126",
+       "da-285",
+       "da-457",
+       "da-479",
+       "da-8"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-126,da-285,da-457,da-479,da-8",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-109",
+       "da-217"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-109,da-217",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "both off": {
+   "result": {
+    "fired": true,
+    "enqueued": 0
+   },
+   "runs": [],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "cap of one": {
+   "result": {
+    "fired": true,
+    "enqueued": 2
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-183",
+       "loop-203",
+       "loop-345",
+       "loop-48"
+      ],
+      "matchedBy": [
+       "person:person-168"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-183,loop-203,loop-345,loop-48",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-126",
+       "da-285",
+       "da-457",
+       "da-479",
+       "da-8"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-126,da-285,da-457,da-479,da-8",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "under the cap": {
+   "result": {
+    "fired": true,
+    "enqueued": 120
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-183",
+       "loop-203",
+       "loop-345",
+       "loop-48"
+      ],
+      "matchedBy": [
+       "person:person-168"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-183,loop-203,loop-345,loop-48",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-162",
+       "loop-173",
+       "loop-33",
+       "loop-343"
+      ],
+      "matchedBy": [
+       "person:person-103"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-162,loop-173,loop-33,loop-343",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p3",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-192",
+       "loop-296",
+       "loop-32"
+      ],
+      "matchedBy": [
+       "doc:doc-450"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-192,loop-296,loop-32",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p4",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-1",
+       "loop-187",
+       "loop-37"
+      ],
+      "matchedBy": [
+       "doc:doc-127"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-1,loop-187,loop-37",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p5",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-103",
+       "loop-149",
+       "loop-37"
+      ],
+      "matchedBy": [
+       "person:person-178"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-103,loop-149,loop-37",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p6",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-103",
+       "loop-156"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-07-04"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-103,loop-156",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p7",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-103",
+       "loop-212"
+      ],
+      "matchedBy": [
+       "person:person-183"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-103,loop-212",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p8",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-103",
+       "loop-214"
+      ],
+      "matchedBy": [
+       "doc:doc-366"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-103,loop-214",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p9",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-19"
+      ],
+      "matchedBy": [
+       "doc:doc-175"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-19",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p10",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-192",
+       "loop-373"
+      ],
+      "matchedBy": [
+       "doc:doc-115"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-192,loop-373",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p11",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-353",
+       "loop-373"
+      ],
+      "matchedBy": [
+       "person:person-120"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-353,loop-373",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p12",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-37",
+       "loop-395"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-07-20"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-37,loop-395",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p13",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-138",
+       "loop-222",
+       "loop-323",
+       "loop-330",
+       "loop-389"
+      ],
+      "matchedBy": [
+       "person:person-142"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-138,loop-222,loop-323,loop-330,loop-389",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p14",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-175",
+       "loop-258",
+       "loop-270",
+       "loop-390",
+       "loop-63"
+      ],
+      "matchedBy": [
+       "person:person-21"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-175,loop-258,loop-270,loop-390,loop-63",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p15",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-262",
+       "loop-330",
+       "loop-332",
+       "loop-47",
+       "loop-92"
+      ],
+      "matchedBy": [
+       "person:person-33"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-262,loop-330,loop-332,loop-47,loop-92",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p16",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-150",
+       "loop-215",
+       "loop-232",
+       "loop-26"
+      ],
+      "matchedBy": [
+       "person:person-127"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-150,loop-215,loop-232,loop-26",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p17",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-162",
+       "loop-328",
+       "loop-339",
+       "loop-371"
+      ],
+      "matchedBy": [
+       "person:person-24"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-162,loop-328,loop-339,loop-371",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p18",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-163",
+       "loop-168",
+       "loop-250",
+       "loop-341"
+      ],
+      "matchedBy": [
+       "doc:doc-544"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-163,loop-168,loop-250,loop-341",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p19",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-165",
+       "loop-185",
+       "loop-274",
+       "loop-377"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-08-03"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-165,loop-185,loop-274,loop-377",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p20",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-201",
+       "loop-221",
+       "loop-292",
+       "loop-303"
+      ],
+      "matchedBy": [
+       "person:person-69"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-201,loop-221,loop-292,loop-303",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p21",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-225",
+       "loop-254",
+       "loop-274",
+       "loop-318"
+      ],
+      "matchedBy": [
+       "person:person-100"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-225,loop-254,loop-274,loop-318",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p22",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-29",
+       "loop-303",
+       "loop-40",
+       "loop-54"
+      ],
+      "matchedBy": [
+       "person:person-35"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-29,loop-303,loop-40,loop-54",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p23",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-341",
+       "loop-35",
+       "loop-387",
+       "loop-90"
+      ],
+      "matchedBy": [
+       "person:person-47"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-341,loop-35,loop-387,loop-90",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p24",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-111",
+       "loop-265",
+       "loop-82"
+      ],
+      "matchedBy": [
+       "person:person-194"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-111,loop-265,loop-82",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p25",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-111",
+       "loop-369",
+       "loop-71"
+      ],
+      "matchedBy": [
+       "person:person-109"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-111,loop-369,loop-71",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p26",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-130",
+       "loop-209",
+       "loop-253"
+      ],
+      "matchedBy": [
+       "doc:doc-352"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-130,loop-209,loop-253",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p27",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-161",
+       "loop-236",
+       "loop-250"
+      ],
+      "matchedBy": [
+       "person:person-60"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-161,loop-236,loop-250",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p28",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-235",
+       "loop-340",
+       "loop-53"
+      ],
+      "matchedBy": [
+       "person:person-76"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-235,loop-340,loop-53",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p29",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-236",
+       "loop-308",
+       "loop-336"
+      ],
+      "matchedBy": [
+       "doc:doc-49"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-236,loop-308,loop-336",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p30",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-240",
+       "loop-303",
+       "loop-377"
+      ],
+      "matchedBy": [
+       "doc:doc-88"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-240,loop-303,loop-377",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p31",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-100",
+       "loop-162"
+      ],
+      "matchedBy": [
+       "doc:doc-148"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-100,loop-162",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p32",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-111",
+       "loop-20"
+      ],
+      "matchedBy": [
+       "doc:doc-267"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-111,loop-20",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p33",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-111",
+       "loop-209"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-07-29"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-111,loop-209",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p34",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-127",
+       "loop-341"
+      ],
+      "matchedBy": [
+       "person:person-65"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-127,loop-341",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p35",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-130",
+       "loop-30"
+      ],
+      "matchedBy": [
+       "person:person-91"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-130,loop-30",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p36",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-130",
+       "loop-55"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-07-30"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-130,loop-55",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p37",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-162",
+       "loop-179"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-09-01"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-162,loop-179",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p38",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-175",
+       "loop-42"
+      ],
+      "matchedBy": [
+       "person:person-66"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-175,loop-42",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p39",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-187",
+       "loop-225"
+      ],
+      "matchedBy": [
+       "person:person-149"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-187,loop-225",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p40",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-192",
+       "loop-385"
+      ],
+      "matchedBy": [
+       "person:person-59"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-192,loop-385",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p41",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-213",
+       "loop-215"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-06-16"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-213,loop-215",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p42",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-235",
+       "loop-40"
+      ],
+      "matchedBy": [
+       "doc:doc-456"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-235,loop-40",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p43",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-236",
+       "loop-92"
+      ],
+      "matchedBy": [
+       "doc:doc-440"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-236,loop-92",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p44",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-283",
+       "loop-79"
+      ],
+      "matchedBy": [
+       "person:person-106"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-283,loop-79",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p45",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-112",
+       "loop-165",
+       "loop-17",
+       "loop-217",
+       "loop-277",
+       "loop-309",
+       "loop-393",
+       "loop-85"
+      ],
+      "matchedBy": [
+       "person:person-141"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-112,loop-165,loop-17,loop-217,loop-277,loop-309,loop-393,loop-85",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p46",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-0",
+       "loop-129",
+       "loop-161",
+       "loop-295",
+       "loop-342",
+       "loop-365"
+      ],
+      "matchedBy": [
+       "person:person-72"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-0,loop-129,loop-161,loop-295,loop-342,loop-365",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p47",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-100",
+       "loop-290",
+       "loop-298",
+       "loop-44",
+       "loop-75"
+      ],
+      "matchedBy": [
+       "person:person-145"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-100,loop-290,loop-298,loop-44,loop-75",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p48",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-302",
+       "loop-31",
+       "loop-318",
+       "loop-398",
+       "loop-62"
+      ],
+      "matchedBy": [
+       "person:person-0"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-302,loop-31,loop-318,loop-398,loop-62",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p49",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-116",
+       "loop-271",
+       "loop-312",
+       "loop-372"
+      ],
+      "matchedBy": [
+       "person:person-11"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-116,loop-271,loop-312,loop-372",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p50",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-133",
+       "loop-32",
+       "loop-6",
+       "loop-65"
+      ],
+      "matchedBy": [
+       "person:person-14"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-133,loop-32,loop-6,loop-65",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p51",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-14",
+       "loop-15",
+       "loop-154",
+       "loop-297"
+      ],
+      "matchedBy": [
+       "person:person-102"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-14,loop-15,loop-154,loop-297",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p52",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-180",
+       "loop-302",
+       "loop-368",
+       "loop-69"
+      ],
+      "matchedBy": [
+       "person:person-146"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-180,loop-302,loop-368,loop-69",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p53",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-196",
+       "loop-218",
+       "loop-280",
+       "loop-284"
+      ],
+      "matchedBy": [
+       "person:person-3"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-196,loop-218,loop-280,loop-284",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p54",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-0",
+       "loop-269",
+       "loop-340"
+      ],
+      "matchedBy": [
+       "doc:doc-380"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-0,loop-269,loop-340",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p55",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-160",
+       "loop-209",
+       "loop-99"
+      ],
+      "matchedBy": [
+       "person:person-119"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-160,loop-209,loop-99",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p56",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-180",
+       "loop-337",
+       "loop-39"
+      ],
+      "matchedBy": [
+       "person:person-163"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-180,loop-337,loop-39",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p57",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-0",
+       "loop-64"
+      ],
+      "matchedBy": [
+       "person:person-191"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-0,loop-64",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p58",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-116",
+       "loop-321"
+      ],
+      "matchedBy": [
+       "doc:doc-328"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-116,loop-321",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p59",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-116",
+       "loop-372"
+      ],
+      "matchedBy": [
+       "doc:doc-442"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-116,loop-372",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p60",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-15",
+       "loop-75"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-09-03"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-15,loop-75",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p61",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-126",
+       "da-285",
+       "da-457",
+       "da-479",
+       "da-8"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-126,da-285,da-457,da-479,da-8",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p62",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-109",
+       "da-217"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-109,da-217",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p63",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-2",
+       "da-323"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-2,da-323",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p64",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-23",
+       "da-316",
+       "da-461"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-23,da-316,da-461",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p65",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-127",
+       "da-214",
+       "da-441"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-127,da-214,da-441",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p66",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-162",
+       "da-191",
+       "da-349"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-162,da-191,da-349",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p67",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-440",
+       "da-469"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-440,da-469",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p68",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-435",
+       "da-499",
+       "da-61"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-435,da-499,da-61",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p69",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-290",
+       "da-385"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-290,da-385",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p70",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-124",
+       "da-314",
+       "da-433"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-124,da-314,da-433",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p71",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-157",
+       "da-413"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-157,da-413",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p72",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-106",
+       "da-77"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-106,da-77",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p73",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-107",
+       "da-474",
+       "da-62"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-107,da-474,da-62",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p74",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-412",
+       "da-49"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-412,da-49",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p75",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-324",
+       "da-381",
+       "da-436"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-324,da-381,da-436",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p76",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-144",
+       "da-287"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-144,da-287",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p77",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-237",
+       "da-462"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-237,da-462",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p78",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-140",
+       "da-39",
+       "da-459"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-140,da-39,da-459",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p79",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-246",
+       "da-466",
+       "da-84"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-246,da-466,da-84",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p80",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-115",
+       "da-33",
+       "da-394",
+       "da-498"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-115,da-33,da-394,da-498",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p81",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-332",
+       "da-335"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-332,da-335",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p82",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-170",
+       "da-171"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-170,da-171",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p83",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-404",
+       "da-473"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-404,da-473",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p84",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-230",
+       "da-311"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-230,da-311",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p85",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-27",
+       "da-298",
+       "da-308",
+       "da-59"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-27,da-298,da-308,da-59",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p86",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-198",
+       "da-340"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-198,da-340",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p87",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-417",
+       "da-89"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-417,da-89",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p88",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-110",
+       "da-25"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-110,da-25",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p89",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-253",
+       "da-273",
+       "da-318"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-253,da-273,da-318",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p90",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-193",
+       "da-242",
+       "da-389",
+       "da-81"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-193,da-242,da-389,da-81",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p91",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-270",
+       "da-370"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-270,da-370",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p92",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-216",
+       "da-444"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-216,da-444",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p93",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-195",
+       "da-29",
+       "da-451"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-195,da-29,da-451",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p94",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-215",
+       "da-222"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-215,da-222",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p95",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-95",
+       "da-99"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-95,da-99",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p96",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-30",
+       "da-437"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-30,da-437",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p97",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-192",
+       "da-453",
+       "da-467"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-192,da-453,da-467",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p98",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-227",
+       "da-276",
+       "da-407"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-227,da-276,da-407",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p99",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-138",
+       "da-259"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-138,da-259",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p100",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-352",
+       "da-489"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-352,da-489",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p101",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-405",
+       "da-65"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-405,da-65",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p102",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-19",
+       "da-9"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-19,da-9",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p103",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-226",
+       "da-286"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-226,da-286",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p104",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-219",
+       "da-393"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-219,da-393",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p105",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-238",
+       "da-252"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-238,da-252",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p106",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-250",
+       "da-37"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-250,da-37",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p107",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-442",
+       "da-458"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-442,da-458",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p108",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-399",
+       "da-495"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-399,da-495",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p109",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-142",
+       "da-206",
+       "da-243"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-142,da-206,da-243",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p110",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-208",
+       "da-86"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-208,da-86",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p111",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-131",
+       "da-82"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-131,da-82",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p112",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-13",
+       "da-221"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-13,da-221",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p113",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-133",
+       "da-313"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-133,da-313",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p114",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-299",
+       "da-40",
+       "da-423"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-299,da-40,da-423",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p115",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-15",
+       "da-44"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-15,da-44",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p116",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-260",
+       "da-475"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-260,da-475",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p117",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-136",
+       "da-228"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-136,da-228",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p118",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-497",
+       "da-55"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-497,da-55",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p119",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-28",
+       "da-88"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-28,da-88",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p120",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-391",
+       "da-460"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-391,da-460",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "one-day horizon": {
+   "result": {
+    "fired": true,
+    "enqueued": 62
+   },
+   "runs": [
+    {
+     "id": "run_p1",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-183",
+       "loop-203",
+       "loop-345",
+       "loop-48"
+      ],
+      "matchedBy": [
+       "person:person-168"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-183,loop-203,loop-345,loop-48",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p2",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-162",
+       "loop-173",
+       "loop-33",
+       "loop-343"
+      ],
+      "matchedBy": [
+       "person:person-103"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-162,loop-173,loop-33,loop-343",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p3",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-192",
+       "loop-296",
+       "loop-32"
+      ],
+      "matchedBy": [
+       "doc:doc-450"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-192,loop-296,loop-32",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p4",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-1",
+       "loop-187",
+       "loop-37"
+      ],
+      "matchedBy": [
+       "doc:doc-127"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-1,loop-187,loop-37",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p5",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-103",
+       "loop-149",
+       "loop-37"
+      ],
+      "matchedBy": [
+       "person:person-178"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-103,loop-149,loop-37",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p6",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-103",
+       "loop-156"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-07-04"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-103,loop-156",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p7",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-103",
+       "loop-212"
+      ],
+      "matchedBy": [
+       "person:person-183"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-103,loop-212",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p8",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-103",
+       "loop-214"
+      ],
+      "matchedBy": [
+       "doc:doc-366"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-103,loop-214",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p9",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-173",
+       "loop-19"
+      ],
+      "matchedBy": [
+       "doc:doc-175"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-173,loop-19",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p10",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-192",
+       "loop-373"
+      ],
+      "matchedBy": [
+       "doc:doc-115"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-192,loop-373",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p11",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-353",
+       "loop-373"
+      ],
+      "matchedBy": [
+       "person:person-120"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-353,loop-373",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p12",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-37",
+       "loop-395"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-07-20"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-37,loop-395",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p13",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-138",
+       "loop-222",
+       "loop-323",
+       "loop-330",
+       "loop-389"
+      ],
+      "matchedBy": [
+       "person:person-142"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-138,loop-222,loop-323,loop-330,loop-389",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p14",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-175",
+       "loop-258",
+       "loop-270",
+       "loop-390",
+       "loop-63"
+      ],
+      "matchedBy": [
+       "person:person-21"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-175,loop-258,loop-270,loop-390,loop-63",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p15",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-262",
+       "loop-330",
+       "loop-332",
+       "loop-47",
+       "loop-92"
+      ],
+      "matchedBy": [
+       "person:person-33"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-262,loop-330,loop-332,loop-47,loop-92",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p16",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-150",
+       "loop-215",
+       "loop-232",
+       "loop-26"
+      ],
+      "matchedBy": [
+       "person:person-127"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-150,loop-215,loop-232,loop-26",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p17",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-162",
+       "loop-328",
+       "loop-339",
+       "loop-371"
+      ],
+      "matchedBy": [
+       "person:person-24"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-162,loop-328,loop-339,loop-371",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p18",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-163",
+       "loop-168",
+       "loop-250",
+       "loop-341"
+      ],
+      "matchedBy": [
+       "doc:doc-544"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-163,loop-168,loop-250,loop-341",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p19",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-165",
+       "loop-185",
+       "loop-274",
+       "loop-377"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-08-03"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-165,loop-185,loop-274,loop-377",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p20",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-201",
+       "loop-221",
+       "loop-292",
+       "loop-303"
+      ],
+      "matchedBy": [
+       "person:person-69"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-201,loop-221,loop-292,loop-303",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p21",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-225",
+       "loop-254",
+       "loop-274",
+       "loop-318"
+      ],
+      "matchedBy": [
+       "person:person-100"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-225,loop-254,loop-274,loop-318",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p22",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-29",
+       "loop-303",
+       "loop-40",
+       "loop-54"
+      ],
+      "matchedBy": [
+       "person:person-35"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-29,loop-303,loop-40,loop-54",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p23",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-341",
+       "loop-35",
+       "loop-387",
+       "loop-90"
+      ],
+      "matchedBy": [
+       "person:person-47"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-341,loop-35,loop-387,loop-90",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p24",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-111",
+       "loop-265",
+       "loop-82"
+      ],
+      "matchedBy": [
+       "person:person-194"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-111,loop-265,loop-82",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p25",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-111",
+       "loop-369",
+       "loop-71"
+      ],
+      "matchedBy": [
+       "person:person-109"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-111,loop-369,loop-71",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p26",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-130",
+       "loop-209",
+       "loop-253"
+      ],
+      "matchedBy": [
+       "doc:doc-352"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-130,loop-209,loop-253",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p27",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-161",
+       "loop-236",
+       "loop-250"
+      ],
+      "matchedBy": [
+       "person:person-60"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-161,loop-236,loop-250",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p28",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-235",
+       "loop-340",
+       "loop-53"
+      ],
+      "matchedBy": [
+       "person:person-76"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-235,loop-340,loop-53",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p29",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-236",
+       "loop-308",
+       "loop-336"
+      ],
+      "matchedBy": [
+       "doc:doc-49"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-236,loop-308,loop-336",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p30",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-240",
+       "loop-303",
+       "loop-377"
+      ],
+      "matchedBy": [
+       "doc:doc-88"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-240,loop-303,loop-377",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p31",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-100",
+       "loop-162"
+      ],
+      "matchedBy": [
+       "doc:doc-148"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-100,loop-162",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p32",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-111",
+       "loop-20"
+      ],
+      "matchedBy": [
+       "doc:doc-267"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-111,loop-20",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p33",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-111",
+       "loop-209"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-07-29"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-111,loop-209",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p34",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-127",
+       "loop-341"
+      ],
+      "matchedBy": [
+       "person:person-65"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-127,loop-341",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p35",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-130",
+       "loop-30"
+      ],
+      "matchedBy": [
+       "person:person-91"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-130,loop-30",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p36",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-130",
+       "loop-55"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-07-30"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-130,loop-55",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p37",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-162",
+       "loop-179"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-09-01"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-162,loop-179",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p38",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-175",
+       "loop-42"
+      ],
+      "matchedBy": [
+       "person:person-66"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-175,loop-42",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p39",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-187",
+       "loop-225"
+      ],
+      "matchedBy": [
+       "person:person-149"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-187,loop-225",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p40",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-192",
+       "loop-385"
+      ],
+      "matchedBy": [
+       "person:person-59"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-192,loop-385",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p41",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-213",
+       "loop-215"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-06-16"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-213,loop-215",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p42",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-235",
+       "loop-40"
+      ],
+      "matchedBy": [
+       "doc:doc-456"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-235,loop-40",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p43",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-236",
+       "loop-92"
+      ],
+      "matchedBy": [
+       "doc:doc-440"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-236,loop-92",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p44",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-283",
+       "loop-79"
+      ],
+      "matchedBy": [
+       "person:person-106"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-283,loop-79",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p45",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-112",
+       "loop-165",
+       "loop-17",
+       "loop-217",
+       "loop-277",
+       "loop-309",
+       "loop-393",
+       "loop-85"
+      ],
+      "matchedBy": [
+       "person:person-141"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-112,loop-165,loop-17,loop-217,loop-277,loop-309,loop-393,loop-85",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p46",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-0",
+       "loop-129",
+       "loop-161",
+       "loop-295",
+       "loop-342",
+       "loop-365"
+      ],
+      "matchedBy": [
+       "person:person-72"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-0,loop-129,loop-161,loop-295,loop-342,loop-365",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p47",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-100",
+       "loop-290",
+       "loop-298",
+       "loop-44",
+       "loop-75"
+      ],
+      "matchedBy": [
+       "person:person-145"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-100,loop-290,loop-298,loop-44,loop-75",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p48",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-302",
+       "loop-31",
+       "loop-318",
+       "loop-398",
+       "loop-62"
+      ],
+      "matchedBy": [
+       "person:person-0"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-302,loop-31,loop-318,loop-398,loop-62",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p49",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-116",
+       "loop-271",
+       "loop-312",
+       "loop-372"
+      ],
+      "matchedBy": [
+       "person:person-11"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-116,loop-271,loop-312,loop-372",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p50",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-133",
+       "loop-32",
+       "loop-6",
+       "loop-65"
+      ],
+      "matchedBy": [
+       "person:person-14"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-133,loop-32,loop-6,loop-65",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p51",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-14",
+       "loop-15",
+       "loop-154",
+       "loop-297"
+      ],
+      "matchedBy": [
+       "person:person-102"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-14,loop-15,loop-154,loop-297",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p52",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-180",
+       "loop-302",
+       "loop-368",
+       "loop-69"
+      ],
+      "matchedBy": [
+       "person:person-146"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-180,loop-302,loop-368,loop-69",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p53",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-196",
+       "loop-218",
+       "loop-280",
+       "loop-284"
+      ],
+      "matchedBy": [
+       "person:person-3"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-196,loop-218,loop-280,loop-284",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p54",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-0",
+       "loop-269",
+       "loop-340"
+      ],
+      "matchedBy": [
+       "doc:doc-380"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-0,loop-269,loop-340",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p55",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-160",
+       "loop-209",
+       "loop-99"
+      ],
+      "matchedBy": [
+       "person:person-119"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-160,loop-209,loop-99",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p56",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-180",
+       "loop-337",
+       "loop-39"
+      ],
+      "matchedBy": [
+       "person:person-163"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-180,loop-337,loop-39",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p57",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-0",
+       "loop-64"
+      ],
+      "matchedBy": [
+       "person:person-191"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-0,loop-64",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p58",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-116",
+       "loop-321"
+      ],
+      "matchedBy": [
+       "doc:doc-328"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-116,loop-321",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p59",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-116",
+       "loop-372"
+      ],
+      "matchedBy": [
+       "doc:doc-442"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-116,loop-372",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p60",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "collision",
+      "loopIds": [
+       "loop-15",
+       "loop-75"
+      ],
+      "matchedBy": [
+       "deadline-day:2026-09-03"
+      ]
+     },
+     "dedupeKey": "synthesis:collision:loop-15,loop-75",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p61",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-126",
+       "da-285",
+       "da-457",
+       "da-479",
+       "da-8"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-126,da-285,da-457,da-479,da-8",
+     "now": 1782986400000
+    },
+    {
+     "id": "run_p62",
+     "kind": "synthesis",
+     "payload": {
+      "focus": "annotation-contradiction",
+      "annotationIds": [
+       "da-109",
+       "da-217"
+      ],
+      "store": "doc"
+     },
+     "dedupeKey": "synthesis:anno-contradiction:da-109,da-217",
+     "now": 1782986400000
+    }
+   ],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  }
+ },
+ "finders": {
+  "loops": {
+   "count": 251,
+   "sha256": "70edbcd58df2e716a35657bca1e36b71b98135af7f78baffcdc6a0c1540611d2",
+   "head": [
+    {
+     "loopIds": [
+      "loop-173",
+      "loop-183",
+      "loop-203",
+      "loop-345",
+      "loop-48"
+     ],
+     "matchedBy": [
+      "person:person-168"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-162",
+      "loop-173",
+      "loop-33",
+      "loop-343"
+     ],
+     "matchedBy": [
+      "person:person-103"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-173",
+      "loop-192",
+      "loop-296",
+      "loop-32"
+     ],
+     "matchedBy": [
+      "doc:doc-450"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-1",
+      "loop-187",
+      "loop-37"
+     ],
+     "matchedBy": [
+      "doc:doc-127"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-103",
+      "loop-149",
+      "loop-37"
+     ],
+     "matchedBy": [
+      "person:person-178"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-103",
+      "loop-156"
+     ],
+     "matchedBy": [
+      "deadline-day:2026-07-04"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-103",
+      "loop-212"
+     ],
+     "matchedBy": [
+      "person:person-183"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-103",
+      "loop-214"
+     ],
+     "matchedBy": [
+      "doc:doc-366"
+     ],
+     "score": 1
+    }
+   ]
+  },
+  "loopsWithoutSelf": {
+   "count": 252,
+   "sha256": "48dd66464e08976d60ee88b51d677e1a8e17ea06b31a9736b7b50fdba69bda11",
+   "head": [
+    {
+     "loopIds": [
+      "loop-103",
+      "loop-111",
+      "loop-130",
+      "loop-162",
+      "loop-173",
+      "loop-175",
+      "loop-37",
+      "loop-373"
+     ],
+     "matchedBy": [
+      "person:person-self"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-173",
+      "loop-183",
+      "loop-203",
+      "loop-345",
+      "loop-48"
+     ],
+     "matchedBy": [
+      "person:person-168"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-162",
+      "loop-173",
+      "loop-33",
+      "loop-343"
+     ],
+     "matchedBy": [
+      "person:person-103"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-173",
+      "loop-192",
+      "loop-296",
+      "loop-32"
+     ],
+     "matchedBy": [
+      "doc:doc-450"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-1",
+      "loop-187",
+      "loop-37"
+     ],
+     "matchedBy": [
+      "doc:doc-127"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-103",
+      "loop-149",
+      "loop-37"
+     ],
+     "matchedBy": [
+      "person:person-178"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-103",
+      "loop-156"
+     ],
+     "matchedBy": [
+      "deadline-day:2026-07-04"
+     ],
+     "score": 1
+    },
+    {
+     "loopIds": [
+      "loop-103",
+      "loop-212"
+     ],
+     "matchedBy": [
+      "person:person-183"
+     ],
+     "score": 1
+    }
+   ]
+  },
+  "temporal": {
+   "horizon 1d": {
+    "count": 58,
+    "sha256": "083c142de0b0eadcd99dc484df5ad71b245516be616830146bb43958c099c4e7",
+    "head": [
+     {
+      "temporalAnnotationIds": [
+       "ta-396",
+       "ta-432"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-06-24..2026-07-06"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-396"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-06-28..2026-07-06"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-432"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-06-28..2026-07-22"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-821"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-07"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-396",
+       "ta-821"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-06"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-432",
+       "ta-821"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-07"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-1381"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-02"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1381",
+       "ta-396"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-02"
+      ]
+     }
+    ]
+   },
+   "horizon 60d": {
+    "count": 1259,
+    "sha256": "d4d9d266a6786e09e9caedd4c88e5fa632b0fbd59aafdac7fd65e06373c13974",
+    "head": [
+     {
+      "temporalAnnotationIds": [
+       "ta-396",
+       "ta-432"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-06-24..2026-07-06"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-396"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-06-28..2026-07-06"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-432"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-06-28..2026-07-22"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-821"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-07"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-396",
+       "ta-821"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-06"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-432",
+       "ta-821"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-07"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-1381"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-02"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1381",
+       "ta-396"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-02"
+      ]
+     }
+    ]
+   },
+   "horizon 400d": {
+    "count": 1620,
+    "sha256": "2b6bd17bf63ad078ad55a8715681648d7d199eda147718710dacce1753fe79c5",
+    "head": [
+     {
+      "temporalAnnotationIds": [
+       "ta-396",
+       "ta-432"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-06-24..2026-07-06"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-396"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-06-28..2026-07-06"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-432"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-06-28..2026-07-22"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-821"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-07"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-396",
+       "ta-821"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-06"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-432",
+       "ta-821"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-07"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1242",
+       "ta-1381"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-02"
+      ]
+     },
+     {
+      "temporalAnnotationIds": [
+       "ta-1381",
+       "ta-396"
+      ],
+      "matchedBy": [
+       "time-overlap:2026-07-01..2026-07-02"
+      ]
+     }
+    ]
+   }
+  },
+  "contradictions": {
+   "count": 101,
+   "sha256": "3c603c10012120b82fcaf8a63393d76d81b57dbf43928e06a7c638bce918179f",
+   "head": [
+    {
+     "store": "doc",
+     "annotationIds": [
+      "da-126",
+      "da-285",
+      "da-457",
+      "da-479",
+      "da-8"
+     ],
+     "subjectId": "doc-44",
+     "claimType": "Status"
+    },
+    {
+     "store": "doc",
+     "annotationIds": [
+      "da-109",
+      "da-217"
+     ],
+     "subjectId": "doc-38",
+     "claimType": "amount"
+    },
+    {
+     "store": "doc",
+     "annotationIds": [
+      "da-2",
+      "da-323"
+     ],
+     "subjectId": "doc-45",
+     "claimType": "owner"
+    },
+    {
+     "store": "doc",
+     "annotationIds": [
+      "da-23",
+      "da-316",
+      "da-461"
+     ],
+     "subjectId": "doc-97",
+     "claimType": "amount"
+    },
+    {
+     "store": "doc",
+     "annotationIds": [
+      "da-127",
+      "da-214",
+      "da-441"
+     ],
+     "subjectId": "doc-11",
+     "claimType": "Status"
+    },
+    {
+     "store": "doc",
+     "annotationIds": [
+      "da-162",
+      "da-191",
+      "da-349"
+     ],
+     "subjectId": "doc-92",
+     "claimType": "Status"
+    },
+    {
+     "store": "doc",
+     "annotationIds": [
+      "da-440",
+      "da-469"
+     ],
+     "subjectId": "doc-3",
+     "claimType": "amount"
+    },
+    {
+     "store": "doc",
+     "annotationIds": [
+      "da-435",
+      "da-499",
+      "da-61"
+     ],
+     "subjectId": "doc-98",
+     "claimType": "owner"
+    }
+   ]
+  }
+ }
+}

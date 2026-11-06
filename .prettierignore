@@ -51,3 +51,7 @@ signatures/
 
 # Preserve bundled upstream copyright and license text byte for byte.
 ios/Resources/ThirdParty/
+
+# The collision sweep's parity goldens are its test's file snapshots; the test
+# owns their serialization.
+packages/gateway/src/brain/rhythm/__fixtures__/collision-sweep-parity.*.json

@@ -44,6 +44,7 @@ import {
 } from "./provenance-recheck-sweep.js";
 import { runReverificationSweepPass, type ReverificationSettings } from "./reverification-sweep.js";
 import { runSweepEnqueuePass } from "./sweep-enqueuer.js";
+import type { CollisionSweepReads } from "./collision-sweep-reads.js";
 import type { PruneObservationsResult } from "../storage/observations.js";
 import type { SweepDef } from "../sweeps/types.js";
 import type { Logger } from "@omnesis/core";
@@ -102,6 +103,8 @@ export interface CognitionRhythmOpts {
   /** Annotation-contradiction arm of the collision sweep (its own gate + budget). */
   getAnnotationContradictionsEnabled?: () => boolean;
   getAnnotationContradictionsMaxPerSweep?: () => number;
+  /** Read worker for the collision sweep's candidate selection. Absent, it reads `db`. */
+  collisionReads?: CollisionSweepReads;
   /** Master switch + the declared themes for the scheduled sweep registry. */
   getSweepsEnabled?: () => boolean;
   /**
@@ -372,6 +375,7 @@ export function createCognitionRhythmTasks(
         const result = await runWithPriority("background", () =>
           runCollisionSweepPass({
             db: opts.db,
+            ...(opts.collisionReads ? { reads: opts.collisionReads } : {}),
             writeGate: opts.writeGate,
             clock,
             getCadenceHours: opts.getCollisionCadenceHours ?? (() => 24),

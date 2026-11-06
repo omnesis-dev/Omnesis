@@ -301,6 +301,43 @@ export function collisionDedupeSuffix(memberIds: readonly string[]): string {
  */
 const TEMPORAL_ANNOTATION_MAX_SPAN_DAYS = 35;
 
+/**
+ * Overlapping pairs of the forward window's fine-grained live entries, soonest
+ * overlap first. Binds: now, horizon end, max span, limit. The window CTE
+ * seeks `idx_temporal_annotations_end` (pinned, and asserted by a plan test):
+ * without it the planner may walk every entry by start time, and pairing that
+ * walk is quadratic in the whole history.
+ */
+export const TEMPORAL_COLLISION_PAIRS_SQL = `WITH window_entries AS MATERIALIZED (
+    SELECT id, interval_start_ms, interval_end_ms, updated_at
+      FROM temporal_annotations INDEXED BY idx_temporal_annotations_end
+     WHERE invalidated_at IS NULL
+       AND interval_end_ms >= ?
+       AND interval_start_ms <= ?
+       AND precision NOT IN ('year', 'month')
+       AND (interval_end_ms - interval_start_ms) <= ?
+  )
+  SELECT a.id AS a_id, b.id AS b_id,
+         MAX(a.interval_start_ms, b.interval_start_ms) AS overlap_start,
+         MIN(a.interval_end_ms, b.interval_end_ms) AS overlap_end
+    FROM window_entries a
+    JOIN window_entries b ON a.id < b.id
+   WHERE a.interval_start_ms <= b.interval_end_ms
+     AND a.interval_end_ms >= b.interval_start_ms
+     AND NOT EXISTS (
+       SELECT 1 FROM temporal_annotation_documents da
+         JOIN temporal_annotation_documents dbx ON dbx.document_id = da.document_id
+        WHERE da.annotation_id = a.id AND dbx.annotation_id = b.id
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM cognition_runs r
+        WHERE r.kind = 'synthesis' AND r.status = 'completed'
+          AND r.dedupe_key = 'synthesis:collision:' || a.id || ',' || b.id
+          AND r.completed_at >= MAX(a.updated_at, b.updated_at)
+     )
+   ORDER BY overlap_start ASC, a.id ASC, b.id ASC
+   LIMIT ?`;
+
 export interface TemporalAnnotationCollisionCandidate {
   /** The overlapping annotations (2 ids), sorted — a stable identity for the pair. */
   temporalAnnotationIds: string[];
@@ -340,49 +377,26 @@ export function findTemporalAnnotationCollisionCandidates(
   const horizonEndMs = now + horizonDays * 24 * 3_600_000;
   const maxSpanMs = TEMPORAL_ANNOTATION_MAX_SPAN_DAYS * 24 * 3_600_000;
 
-  // The settled-verdict exclusion lives INSIDE the query (not a post-LIMIT
-  // JS filter) so a dense stretch of already-judged pairs at the head of
-  // the window can never starve a fresh pair further out. `a.id < b.id`
-  // makes `a.id||','||b.id` exactly the sorted dedupe suffix.
+  // An overlap that ends at or after `now` and starts by the horizon needs
+  // BOTH entries to end at or after `now` and start by the horizon, so the
+  // window's entries are read first, through the live end-time index, and
+  // only they are paired: the cost follows the entries near the clock, never
+  // the years of history behind it. The settled-verdict exclusion lives
+  // INSIDE the query (not a post-LIMIT JS filter) so a dense stretch of
+  // already-judged pairs at the head of the window can never starve a fresh
+  // pair further out. `a.id < b.id` makes `a.id||','||b.id` exactly the
+  // sorted dedupe suffix.
   const rows = db
     .prepare<
-      [number, number, number, number, number],
+      [number, number, number, number],
       {
         a_id: string;
         b_id: string;
         overlap_start: number;
         overlap_end: number;
       }
-    >(
-      `SELECT a.id AS a_id, b.id AS b_id,
-              MAX(a.interval_start_ms, b.interval_start_ms) AS overlap_start,
-              MIN(a.interval_end_ms, b.interval_end_ms) AS overlap_end
-         FROM temporal_annotations a
-         JOIN temporal_annotations b ON a.id < b.id
-        WHERE a.invalidated_at IS NULL AND b.invalidated_at IS NULL
-          AND a.precision NOT IN ('year', 'month')
-          AND b.precision NOT IN ('year', 'month')
-          AND (a.interval_end_ms - a.interval_start_ms) <= ?
-          AND (b.interval_end_ms - b.interval_start_ms) <= ?
-          AND a.interval_start_ms <= b.interval_end_ms
-          AND a.interval_end_ms >= b.interval_start_ms
-          AND MIN(a.interval_end_ms, b.interval_end_ms) >= ?
-          AND MAX(a.interval_start_ms, b.interval_start_ms) <= ?
-          AND NOT EXISTS (
-            SELECT 1 FROM temporal_annotation_documents da
-              JOIN temporal_annotation_documents dbx ON dbx.document_id = da.document_id
-             WHERE da.annotation_id = a.id AND dbx.annotation_id = b.id
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM cognition_runs r
-             WHERE r.kind = 'synthesis' AND r.status = 'completed'
-               AND r.dedupe_key = 'synthesis:collision:' || a.id || ',' || b.id
-               AND r.completed_at >= MAX(a.updated_at, b.updated_at)
-          )
-        ORDER BY overlap_start ASC, a.id ASC, b.id ASC
-        LIMIT ?`,
-    )
-    .all(maxSpanMs, maxSpanMs, now, horizonEndMs, limit);
+    >(TEMPORAL_COLLISION_PAIRS_SQL)
+    .all(now, horizonEndMs, maxSpanMs, limit);
 
   return rows.map((r) => ({
     temporalAnnotationIds: [r.a_id, r.b_id].sort(),
@@ -480,6 +494,21 @@ export function findAnnotationContradictionCandidates(
   if (opts.max <= 0) return [];
   const settledAt = loadSettledAnnotationContradictionRunTimes(db);
   const out: AnnotationContradictionCandidate[] = [];
+  const liveClause = `a.invalidated_at IS NULL
+          AND EXISTS (SELECT 1 FROM documents WHERE documents.id = a.evidence_doc_id)`;
+  // Rank the freshest row of each distinct claim text ahead of the rest
+  // (freshness_rank = 1), then fill by recency: the cap can never emit a
+  // group whose kept members all share one claim text.
+  const membersSql = (table: string, subjectClause: string): string =>
+    `SELECT id, touched FROM (
+       SELECT a.id AS id, COALESCE(a.updated_at, a.created_at) AS touched,
+              ROW_NUMBER() OVER (
+                PARTITION BY a.claim_text
+                ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.id ASC
+              ) AS freshness_rank
+         FROM ${table} a
+        WHERE ${subjectClause} AND a.claim_type = ? COLLATE NOCASE AND ${liveClause})
+      ORDER BY (freshness_rank = 1) DESC, touched DESC, id ASC LIMIT ?`;
   for (const store of ["doc", "person"] as const) {
     if (out.length >= opts.max) break;
     const table = store === "doc" ? "doc_annotations" : "person_annotations";
@@ -489,8 +518,6 @@ export function findAnnotationContradictionCandidates(
     const withClause = store === "doc" ? "" : `WITH ${PERSON_ROOTS_CTE} `;
     const subjectExpr = store === "doc" ? "a.doc_id" : "pr.root_id";
     const joinClause = store === "doc" ? "" : " JOIN person_roots pr ON pr.person_id = a.person_id";
-    const liveClause = `a.invalidated_at IS NULL
-          AND EXISTS (SELECT 1 FROM documents WHERE documents.id = a.evidence_doc_id)`;
     // Group heads first (most recently touched leads); members per group in a
     // second bounded query.
     const groups = db
@@ -503,24 +530,27 @@ export function findAnnotationContradictionCandidates(
           ORDER BY MAX(COALESCE(a.updated_at, a.created_at)) DESC, subject ASC, claim_type ASC`,
       )
       .all();
+    if (groups.length === 0) continue;
+    // A person group's members are the rows of every person id whose root is
+    // the group's subject. Resolving the roots once and reading each group
+    // through the person index keeps a sweep that walks many settled groups
+    // from re-walking every merge chain per group.
+    const classes = store === "person" ? readPersonClasses(db) : null;
+    const subjectParam = (subject: string): string =>
+      classes ? JSON.stringify(classes.get(subject) ?? []) : subject;
+    const membersStmt = db.prepare<[string, string, number], { id: string; touched: number }>(
+      membersSql(
+        table,
+        store === "doc" ? "a.doc_id = ?" : "a.person_id IN (SELECT value FROM json_each(?))",
+      ),
+    );
     for (const g of groups) {
       if (out.length >= opts.max) break;
-      // Rank the freshest row of each distinct claim text ahead of the rest
-      // (freshness_rank = 1), then fill by recency: the cap can never emit a
-      // group whose kept members all share one claim text.
-      const members = db
-        .prepare<[string, string, number], { id: string; touched: number }>(
-          `${withClause}SELECT id, touched FROM (
-             SELECT a.id AS id, COALESCE(a.updated_at, a.created_at) AS touched,
-                    ROW_NUMBER() OVER (
-                      PARTITION BY a.claim_text
-                      ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.id ASC
-                    ) AS freshness_rank
-               FROM ${table} a${joinClause}
-              WHERE ${subjectExpr} = ? AND a.claim_type = ? COLLATE NOCASE AND ${liveClause})
-            ORDER BY (freshness_rank = 1) DESC, touched DESC, id ASC LIMIT ?`,
-        )
-        .all(g.subject, g.claim_type, MAX_CONTRADICTION_GROUP_MEMBERS);
+      const members = membersStmt.all(
+        subjectParam(g.subject),
+        g.claim_type,
+        MAX_CONTRADICTION_GROUP_MEMBERS,
+      );
       const ids = members.map((m) => m.id).sort();
       const at = settledAt.get(ids.join(","));
       if (at !== undefined && Math.max(...members.map((m) => m.touched)) <= at) continue;
@@ -528,6 +558,21 @@ export function findAnnotationContradictionCandidates(
     }
   }
   return out;
+}
+
+/** Every annotated person id, by the root of its merge chain ({@link PERSON_ROOTS_CTE}). */
+function readPersonClasses(db: Db): Map<string, string[]> {
+  const classes = new Map<string, string[]>();
+  for (const r of db
+    .prepare<[], { person_id: string; root_id: string }>(
+      `WITH ${PERSON_ROOTS_CTE} SELECT person_id, root_id FROM person_roots`,
+    )
+    .all()) {
+    const members = classes.get(r.root_id);
+    if (members) members.push(r.person_id);
+    else classes.set(r.root_id, [r.person_id]);
+  }
+  return classes;
 }
 
 /**

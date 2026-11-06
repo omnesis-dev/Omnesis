@@ -1,0 +1,129 @@
+{
+ "sweeps": {
+  "default": {
+   "result": {
+    "fired": true,
+    "enqueued": 0
+   },
+   "runs": [],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "loops only": {
+   "result": {
+    "fired": true,
+    "enqueued": 0
+   },
+   "runs": [],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "contradictions only": {
+   "result": {
+    "fired": true,
+    "enqueued": 0
+   },
+   "runs": [],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "both off": {
+   "result": {
+    "fired": true,
+    "enqueued": 0
+   },
+   "runs": [],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "cap of one": {
+   "result": {
+    "fired": true,
+    "enqueued": 0
+   },
+   "runs": [],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "under the cap": {
+   "result": {
+    "fired": true,
+    "enqueued": 0
+   },
+   "runs": [],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  },
+  "one-day horizon": {
+   "result": {
+    "fired": true,
+    "enqueued": 0
+   },
+   "runs": [],
+   "markers": [
+    [
+     "collision_last_run_at",
+     "1782986400000"
+    ]
+   ]
+  }
+ },
+ "finders": {
+  "loops": {
+   "count": 0,
+   "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "head": []
+  },
+  "loopsWithoutSelf": {
+   "count": 0,
+   "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "head": []
+  },
+  "temporal": {
+   "horizon 1d": {
+    "count": 0,
+    "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "head": []
+   },
+   "horizon 60d": {
+    "count": 0,
+    "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "head": []
+   },
+   "horizon 400d": {
+    "count": 0,
+    "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "head": []
+   }
+  },
+  "contradictions": {
+   "count": 0,
+   "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "head": []
+  }
+ }
+}

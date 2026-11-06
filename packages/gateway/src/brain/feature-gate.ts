@@ -71,6 +71,7 @@ import type { SearchPipeline } from "../search/pipeline.js";
 import type { SyncStatusRegistry } from "../sync-status.js";
 import type { PersonLookupGate } from "../domain/person-lookup.js";
 import type { KnowledgeSelectionReads } from "./knowledge/selection-reads.js";
+import type { CollisionSweepReads } from "./rhythm/collision-sweep-reads.js";
 import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
 import type { ResolvedBrainSettings } from "./config.js";
 import type { InterestLookup } from "./interest/engine.js";
@@ -245,6 +246,11 @@ export interface BriefsRunQueueBootDeps {
      * run synchronously on the main handle.
      */
     knowledgeSelectionReads?: KnowledgeSelectionReads;
+    /**
+     * Read worker for the collision sweep's candidate selection. Absent, it
+     * runs synchronously on the main handle.
+     */
+    collisionSweepReads?: CollisionSweepReads;
     /**
      * Read worker for the store half of the background agent's temporal reads,
      * which the steward enqueues at background priority. Absent, they run
@@ -781,6 +787,9 @@ export async function bootBriefs(deps: {
             rq.getSettings().collision.annotationContradictions.enabled,
           getAnnotationContradictionsMaxPerSweep: () =>
             rq.getSettings().collision.annotationContradictions.maxPerSweep,
+          ...(rq.cognition?.collisionSweepReads
+            ? { collisionReads: rq.cognition.collisionSweepReads }
+            : {}),
           getDigestEnabled: () => rq.getSettings().digest.enabled,
           getDigestHour: () => rq.getSettings().digest.hour,
           getDigestGraceMinutes: () => rq.getSettings().digest.graceMinutes,
