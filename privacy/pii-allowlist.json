@@ -2891,7 +2891,6 @@
         "packages/collector/src/e2e/immich-sync.e2e.test.ts",
         "packages/providers/discord/src/normalizer.test.ts",
         "packages/providers/discord/src/source.test.ts",
-        "packages/providers/github/src/broker.test.ts",
         "packages/providers/granola/src/broker.test.ts",
         "packages/providers/immich/src/document-event-profile.test.ts",
         "packages/providers/immich/src/provider.test.ts",
