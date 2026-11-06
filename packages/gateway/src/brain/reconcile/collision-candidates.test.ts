@@ -33,6 +33,7 @@ import {
   findTemporalAnnotationCollisionCandidates,
   findAnnotationContradictionCandidates,
   collisionDedupeSuffix,
+  TEMPORAL_COLLISION_PAIRS_SQL,
 } from "./collision-candidates.js";
 import type Database from "better-sqlite3";
 
@@ -900,5 +901,72 @@ describe("runCollisionSweepPass annotation-contradiction arm", () => {
       (r) => (r.payload as { focus: string }).focus,
     );
     expect(payloads.sort()).toEqual(["annotation-contradiction", "collision"]);
+  });
+});
+
+// ── what the selection costs ───────────────────────────────────────────────
+
+describe("collision candidate selection reads only what it needs", () => {
+  let path: string;
+  let db: Db;
+  beforeEach(() => {
+    path = testDbPath();
+    db = createDatabase(path);
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(path);
+  });
+
+  test("the temporal pairs are drawn from the window's entries, sought through the live end-time index", () => {
+    const plan = db
+      .prepare<number[], { detail: string }>(`EXPLAIN QUERY PLAN ${TEMPORAL_COLLISION_PAIRS_SQL}`)
+      .all(NOW, NOW + 60 * DAY, 35 * DAY, 3)
+      .map((row) => row.detail);
+    expect(plan).toContain("MATERIALIZE window_entries");
+    expect(plan).toContain(
+      "SEARCH temporal_annotations USING INDEX idx_temporal_annotations_end (interval_end_ms>?)",
+    );
+    // History is never walked, and the pairs join only the materialized window.
+    expect(plan.filter((d) => /temporal_annotations\b/.test(d) && !d.startsWith("SEARCH"))).toEqual(
+      [],
+    );
+  });
+
+  test("the person arm resolves merge chains once, however many settled groups it walks", () => {
+    // Twelve settled person groups, each a merged pair disagreeing on a claim.
+    for (let i = 0; i < 12; i++) {
+      person(db, `p_root_${i}`);
+      person(db, `p_alias_${i}`, `p_root_${i}`);
+      personAnno(db, `pa_${i}_a`, {
+        personId: `p_root_${i}`,
+        claimType: "role",
+        claimText: "chair",
+      });
+      personAnno(db, `pa_${i}_b`, {
+        personId: `p_alias_${i}`,
+        claimType: "role",
+        claimText: "host",
+      });
+      markAnnoJudged(db, [`pa_${i}_a`, `pa_${i}_b`], NOW + 1000);
+    }
+    const sql: string[] = [];
+    const recording = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "prepare")
+          return (text: string) => {
+            sql.push(text);
+            return target.prepare(text);
+          };
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        return typeof value === "function"
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
+    expect(findAnnotationContradictionCandidates(recording, { max: 2 })).toEqual([]);
+    // One read finds the groups and one resolves every chain; each group's
+    // members are then read through the person index.
+    expect(sql.filter((text) => text.includes("RECURSIVE walk"))).toHaveLength(2);
   });
 });

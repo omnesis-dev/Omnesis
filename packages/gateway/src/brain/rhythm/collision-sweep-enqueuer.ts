@@ -13,6 +13,9 @@
  *     disagreeing on the claim — the "annotation-contradiction" focus, its
  *     own budget, gated by `brain.collision.annotationContradictions`.
  * Over-produce cheaply here; the judge grounds against the source documents.
+ * Each arm's candidate selection reads a whole ledger, so it runs through
+ * `CollisionSweepReads` (an io read worker in the gateway) and the pass itself
+ * only enqueues what comes back.
  *
  * Independent of the noticing producer — all ride the `synthesis` kind.
  * Bounded per sweep; a candidate already covered by an active brief is
@@ -20,12 +23,7 @@
  * re-detected group.
  */
 
-import {
-  findCollisionCandidates,
-  findTemporalAnnotationCollisionCandidates,
-  findAnnotationContradictionCandidates,
-  collisionDedupeSuffix,
-} from "../reconcile/collision-candidates.js";
+import { collisionDedupeSuffix } from "../reconcile/collision-candidates.js";
 import {
   synthesisCollisionDedupeKey,
   synthesisAnnotationContradictionDedupeKey,
@@ -34,6 +32,8 @@ import {
   getCognitionEngineState,
   COGNITION_COLLISION_LAST_RUN_KEY,
 } from "../storage/engine-state.js";
+import { directReadPort } from "../../scheduler/read-port.js";
+import { COLLISION_SWEEP_READS, type CollisionSweepReads } from "./collision-sweep-reads.js";
 import type Database from "better-sqlite3";
 import type { Logger } from "@omnesis/core";
 import type { DailyEnqueuerWriteOps } from "./daily-enqueuer.js";
@@ -42,7 +42,13 @@ import type { Clock } from "../storage/types.js";
 type Db = Database.Database;
 
 export interface CollisionSweepDeps {
+  /** The handle the cadence marker is read from, and the candidates when `reads` is absent. */
   db: Db;
+  /**
+   * Where the arms' candidate selection runs: the gateway passes its io read
+   * worker. Absent, the selection reads `db` directly.
+   */
+  reads?: CollisionSweepReads;
   writeGate: DailyEnqueuerWriteOps;
   clock: Clock;
   /** Minimum hours between sweeps. */
@@ -82,10 +88,11 @@ export async function runCollisionSweepPass(
   if (Number.isFinite(last) && now - last < cadenceMs) return { fired: false, enqueued: 0 };
 
   const idGen = deps.idGen ?? (() => crypto.randomUUID());
+  const reads = deps.reads ?? directReadPort(COLLISION_SWEEP_READS, deps.db);
   let enqueued = 0;
   if (deps.getLoopCollisionsEnabled?.() ?? true) {
     const maxPerSweep = Math.max(1, deps.getMaxPerSweep());
-    const candidates = findCollisionCandidates(deps.db, {
+    const candidates = await reads.collisionLoopCandidates({
       limit: maxPerSweep,
       selfPersonId: deps.getSelfPersonId(),
       now,
@@ -108,7 +115,7 @@ export async function runCollisionSweepPass(
     // only by soonness), one shared per-sweep cap.
     const timeCandidates =
       enqueued < maxPerSweep
-        ? findTemporalAnnotationCollisionCandidates(deps.db, {
+        ? await reads.collisionTemporalCandidates({
             limit: maxPerSweep - enqueued,
             now,
             horizonDays: Math.max(1, deps.getTimeHorizonDays()),
@@ -138,7 +145,7 @@ export async function runCollisionSweepPass(
   // settled false positive from being re-paid every sweep.
   if (deps.getAnnotationContradictionsEnabled?.() ?? false) {
     const annoMax = Math.max(1, deps.getAnnotationContradictionsMaxPerSweep?.() ?? 2);
-    for (const c of findAnnotationContradictionCandidates(deps.db, { max: annoMax })) {
+    for (const c of await reads.collisionAnnotationContradictions({ max: annoMax })) {
       await deps.writeGate.enqueueCognitionRun(
         {
           id: `run_${idGen()}`,

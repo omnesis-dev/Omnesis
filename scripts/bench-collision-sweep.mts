@@ -14,8 +14,10 @@
  * people with merge chains, open and resolved loops with their people and
  * documents, observations over loops, a long history of temporal annotations
  * with a short future, doc and person annotations with disagreeing groups,
- * and a run queue holding settled collision verdicts. `scale` multiplies every
- * count.
+ * and a run queue holding settled collision verdicts. It then settles every
+ * loop group but one and every contradiction group, the state months of daily
+ * sweeps leave behind: the loop arm leaves room for the temporal arm, and the
+ * contradiction arm walks every group. `scale` multiplies every count.
  *
  * `measure` runs the sweep the way the gateway's rhythm task does: the main
  * handle is read-only with the default page cache, the reads the sweep may
@@ -50,7 +52,10 @@ import {
   findTemporalAnnotationCollisionCandidates,
   findAnnotationContradictionCandidates,
 } from "../packages/gateway/src/brain/reconcile/collision-candidates.js";
-import { synthesisCollisionDedupeKey } from "../packages/gateway/src/brain/run-payloads.js";
+import {
+  synthesisAnnotationContradictionDedupeKey,
+  synthesisCollisionDedupeKey,
+} from "../packages/gateway/src/brain/run-payloads.js";
 import type Database from "better-sqlite3";
 
 const [mode, dir, arg] = process.argv.slice(2);
@@ -261,7 +266,7 @@ function build(scale: number): void {
       VALUES (?, ?, ?, ?, ?, ?, 0.7, 'run-seed', ?, ?, ?)`);
     for (let i = 0; i < counts.docAnnotations; i++) {
       const subject = `doc-${pad(int(Math.round(counts.documents / 4)))}`;
-      const at = NOW - int(300) * DAY;
+      const at = NOW - (2 + int(300)) * DAY;
       insDocAnno.run(
         `da-${pad(i)}`,
         subject,
@@ -280,7 +285,7 @@ function build(scale: number): void {
         evidence_quote, confidence, created_by_run, created_at, updated_at, invalidated_at)
       VALUES (?, ?, ?, ?, ?, ?, 0.7, 'run-seed', ?, ?, ?)`);
     for (let i = 0; i < counts.personAnnotations; i++) {
-      const at = NOW - int(300) * DAY;
+      const at = NOW - (2 + int(300)) * DAY;
       insPersonAnno.run(
         `pa-${pad(i)}`,
         `person-${pad(int(counts.people))}`,
@@ -337,7 +342,41 @@ function build(scale: number): void {
       }
     }
   })();
+
+  // Months of daily sweeps leave most groups judged. Settle every loop group
+  // but the most important one and every contradiction group, so the loop arm
+  // leaves room for the temporal arm and the contradiction arm walks every
+  // group it finds, as a sweep on a long-running install does.
+  const settle = db.prepare(`
+    INSERT INTO cognition_runs (id, kind, payload_json, dedupe_key, status, next_attempt_at,
+      enqueued_at, completed_at) VALUES (?, 'synthesis', '{}', ?, 'completed', 0, ?, ?)`);
+  const loopGroups = findCollisionCandidates(db, {
+    limit: 1_000_000,
+    selfPersonId: SELF,
+    now: NOW,
+  }).slice(1);
+  const contradictionGroups = findAnnotationContradictionCandidates(db, { max: 1_000_000 });
+  db.transaction(() => {
+    let i = 0;
+    for (const group of loopGroups)
+      settle.run(
+        `run-settled-${i++}`,
+        synthesisCollisionDedupeKey(group.loopIds.join(",")),
+        NOW,
+        NOW,
+      );
+    for (const group of contradictionGroups)
+      settle.run(
+        `run-settled-${i++}`,
+        synthesisAnnotationContradictionDedupeKey(group.annotationIds.join(",")),
+        NOW,
+        NOW,
+      );
+  })();
   db.close();
+  console.log(
+    `settled ${loopGroups.length} loop and ${contradictionGroups.length} contradiction groups`,
+  );
   console.log(
     `built ${dbPath} in ${((performance.now() - started) / 1000).toFixed(1)}s: ${JSON.stringify(counts)}`,
   );
@@ -481,3 +520,5 @@ else {
   console.error(`unknown mode ${mode}`);
   process.exit(2);
 }
+// A disposed io worker can leave a handle that keeps the process alive.
+process.exit(0);

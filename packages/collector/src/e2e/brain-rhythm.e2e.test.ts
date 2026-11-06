@@ -824,6 +824,10 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
             flavour: "synthesis.collision.loops",
             plan: { calls: [], finalText: "No real relationship." },
           },
+          {
+            flavour: "synthesis.collision.temporal",
+            plan: { calls: [], finalText: "Same-day but unrelated." },
+          },
         ],
       },
     });
@@ -982,6 +986,54 @@ describe("rhythm: synthesis noticing and the collision sweep", () => {
       expect(payload.batchId).toEqual(expect.any(String));
       expect(payload.batchId!.length).toBeGreaterThan(0);
     }
+  }, 240_000);
+
+  test("the sweep pairs temporal annotations overlapping in the window, never history", async () => {
+    // The loop pair stays settled, so the temporal arm has the sweep's budget.
+    // Its read runs on the gateway's io worker over the live end-time index:
+    // only the pair inside the forward window is offered.
+    const at = localHour(bootDayNoon + 3 * DAY, 12);
+    const entries: Array<[string, number, number]> = [
+      ["ta-bench-trip", at + 5 * DAY, at + 8 * DAY],
+      ["ta-bench-deadline", at + 6 * DAY, at + 6 * DAY + HOUR],
+      ["ta-bench-history-a", at - 400 * DAY, at - 399 * DAY],
+      ["ta-bench-history-b", at - 400 * DAY, at - 399 * DAY],
+      ["ta-bench-later-a", at + 61 * DAY, at + 62 * DAY],
+      ["ta-bench-later-b", at + 61 * DAY, at + 62 * DAY],
+    ];
+    bench.withWriteHandle((db) => {
+      const insert = db.prepare(
+        `INSERT INTO temporal_annotations
+           (id, interval_start_ms, interval_end_ms, precision, canonical, sentence, kind,
+            created_by_run, created_at, updated_at, invalidated_at)
+         VALUES (?, ?, ?, 'range', NULL, 'An invented booking.', NULL, 'run_e2e_rhythm', ?, ?, NULL)`,
+      );
+      for (const [id, start, end] of entries) insert.run(id, start, end, at - DAY, at - DAY);
+    });
+    await bench.clock.set(at);
+    const key = "synthesis:collision:ta-bench-deadline,ta-bench-trip";
+    await waitFor(
+      "the collision sweep to seed a time-overlap judge run",
+      () => (runRows(bench, "synthesis").some((r) => r.dedupe_key === key) ? true : null),
+      60_000,
+    );
+    await bench.drainUntilQuiet();
+
+    const collisions = runRows(bench, "synthesis").filter((r) =>
+      r.dedupe_key?.startsWith("synthesis:collision:"),
+    );
+    expect(collisions.map((r) => r.dedupe_key).sort()).toEqual(
+      [`synthesis:collision:${loopIds.join(",")}`, key].sort(),
+    );
+    const temporal = collisions.find((r) => r.dedupe_key === key)!;
+    const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+    expect(bench.runPayload(temporal.id)).toEqual({
+      focus: "collision",
+      temporalAnnotationIds: ["ta-bench-deadline", "ta-bench-trip"],
+      matchedBy: [`time-overlap:${day(at + 6 * DAY)}..${day(at + 6 * DAY + HOUR)}`],
+    });
+    expect(temporal.status).toBe("completed");
+    expect(await bench.obs.promptFor(temporal.id)).toContain("Time-overlap check.");
   }, 240_000);
 });
 

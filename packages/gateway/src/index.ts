@@ -2984,6 +2984,8 @@ await bootBriefs({
       personLookupGate: ioGate,
       // The knowledge engine's per-tick ledger scans, off the main event loop.
       knowledgeSelectionReads: ioGate,
+      // The collision sweep's ledger-wide candidate selection, off the main event loop.
+      collisionSweepReads: ioGate,
       // The background agent's temporal window reads, off the main event loop.
       temporalStoreReads: ioGate,
       getEntailmentVerifier: (signal) => entailmentService.get(signal),

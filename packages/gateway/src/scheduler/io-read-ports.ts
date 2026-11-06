@@ -4,6 +4,7 @@
 import { STATUS_CACHE_READS } from "../http/services/status-cache-reads.js";
 import { ANALYTICS_REPLICA_READS } from "../http/services/analytics-replica-reads.js";
 import { KNOWLEDGE_ENGINE_READS } from "../brain/knowledge/selection-reads.js";
+import { COLLISION_SWEEP_READS } from "../brain/rhythm/collision-sweep-reads.js";
 import { mergeReadPorts } from "./read-port.js";
 
 /**
@@ -14,4 +15,5 @@ export const IO_READS = mergeReadPorts(
   STATUS_CACHE_READS,
   KNOWLEDGE_ENGINE_READS,
   ANALYTICS_REPLICA_READS,
+  COLLISION_SWEEP_READS,
 );
