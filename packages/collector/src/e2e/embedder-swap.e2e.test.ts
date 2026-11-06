@@ -481,18 +481,24 @@ describe("Live double-buffered embedder swap keeps vector search live (headline)
 
     // 6. After the flip, search serves vector candidates from the NEW model's
     //    index — all without a gateway restart (this is the same process the
-    //    whole test ran against). Three searches visit every default-pool
-    //    worker so each reader adopts the new generation.
-    for (let worker = 0; worker < 3; worker++) {
+    //    whole test ran against). A worker adopts the new generation when it
+    //    next serves a search, and no fixed number of searches reaches them
+    //    all: every pool call shares one rotation, so temporal readings and
+    //    background searches can skip a worker. Search until the old mappings
+    //    are gone; a mapping that adoption fails to release never clears, so
+    //    the assertions below still catch it after the bounded wait.
+    const adoptionDeadline = Date.now() + 30_000;
+    let mappings: ReturnType<typeof usearchMappings>;
+    do {
       const afterSearch = await search(h, PROBE_QUERY);
       expect(afterSearch.stages?.vector?.status).toBe("ran");
       expect(afterSearch.stages?.vector?.candidates ?? 0).toBeGreaterThan(0);
-    }
+      mappings = usearchMappings(h.gatewayPid);
+    } while (mappings !== null && mappings.deleted > 1 && Date.now() < adoptionDeadline);
 
     // Each worker owns one live mapping. The idle main-thread fallback may
     // retain its one prior-generation mapping until it next serves a request,
     // but repeated publications must not leave an unbounded mmap chain.
-    const mappings = usearchMappings(h.gatewayPid);
     if (process.platform === "linux") {
       expect(mappings, "gateway USearch mappings were not observable").not.toBeNull();
       expect(
