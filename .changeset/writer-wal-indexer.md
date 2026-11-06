@@ -1,0 +1,5 @@
+---
+"omnesis": patch
+---
+
+The gateway's writer holds the database for shorter stretches on a large install. The knowledge cascade, the near-duplicate apply, the people backfill and the collapsed merge-candidate sweep stop after a short time slice and resume, and the sweep finds its candidates on a read worker. The WAL is checkpointed between writes once 2,000 frames wait, rewound once it passes 64 MiB and cut back to that size, so it no longer grows without bound while readers run back to back; `GET /admin/scheduler-metrics` reports the checkpoints as `walCheckpoints`. Long reads that pinned the WAL (source statistics, the near-duplicate DF table, document id lists) now read in chunks. The indexer resumes an interrupted scan after a restart, paces its catch-up to the backlog, and no longer counts documents older than a source's cutoff as missing. Keyset cursors are row values, so their next-page queries stay index seeks. A new, off-by-default task refreshes SQLite planner statistics one index at a time; turn it on with `gateway.backfill.plannerStatistics.interval`.
