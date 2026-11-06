@@ -200,6 +200,13 @@ export interface DeviceWsOptions {
 export class DeviceWsServer {
   private connections = new Map<WsHandle, ConnectionState>();
   private byDevice = new Map<DeviceId, Set<WsHandle>>();
+  /**
+   * A number per connected device that changes whenever its set of sockets
+   * does. Drawn from one counter for the whole server, so a value is never
+   * reused: a device that disconnects and comes back gets a new one.
+   */
+  private epochs = new Map<DeviceId, number>();
+  private lastEpoch = 0;
   private pending = new Map<WsCorrelationId, PendingOutbound>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly db: Db;
@@ -495,8 +502,10 @@ export class DeviceWsServer {
       const set = this.byDevice.get(state.deviceId);
       if (set) {
         set.delete(ws);
+        if (set.size > 0) this.epochs.set(state.deviceId, ++this.lastEpoch);
         if (set.size === 0) {
           this.byDevice.delete(state.deviceId);
+          this.epochs.delete(state.deviceId);
           if (state.deviceKind === "collector" && this.onCollectorDisconnected) {
             void this.onCollectorDisconnected(state.deviceId).catch((err: unknown) => {
               log.warn(
@@ -628,6 +637,17 @@ export class DeviceWsServer {
       const state = this.connections.get(socket);
       return !!state && state.scopes.includes(requiredScope);
     });
+  }
+
+  /**
+   * Identifies a device's current set of sockets: 0 when it has none, and a
+   * different positive number after any socket of it connects or closes. State
+   * learned from a device over one connection is current only while this
+   * returns the number it was learned under; a collector that restarts, for
+   * an update say, always comes back under a new one.
+   */
+  connectionEpoch(deviceId: DeviceId): number {
+    return this.epochs.get(deviceId) ?? 0;
   }
 
   /**
@@ -768,6 +788,7 @@ export class DeviceWsServer {
     const existing = this.byDevice.get(auth.deviceId) ?? new Set<WsHandle>();
     existing.add(ws);
     this.byDevice.set(auth.deviceId, existing);
+    this.epochs.set(auth.deviceId, ++this.lastEpoch);
 
     // If the client declared capabilities, update the device record.
     // touchDevice on the no-caps branch is fire-and-forget — it's a

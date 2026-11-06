@@ -23,6 +23,7 @@ import type { DeviceService } from "../../services/DeviceService.js";
 import type { PushRegistrationService } from "../../services/PushRegistrationService.js";
 import type { DoctorService } from "../../services/DoctorService.js";
 import type { DeviceDoctorService } from "../../services/DeviceDoctorService.js";
+import type { CollectorDescriptorCache } from "../../services/CollectorDescriptorCache.js";
 import type { PairingService } from "../../services/PairingService.js";
 import type { WatermarkService } from "../../services/WatermarkService.js";
 import type { SourceUrlRecanonicalizationService } from "../../../domain/SourceUrlRecanonicalization.js";
@@ -61,6 +62,8 @@ export interface AdminRoutesDeps {
   pushRegistrationService: PushRegistrationService;
   indexDb?: Db;
   wsServer?: DeviceWsServer;
+  /** Each connected collector's source descriptors; backs `/admin/source-descriptors`. */
+  collectorDescriptors: CollectorDescriptorCache;
   authFlows?: AuthFlowRegistry;
   importFlows?: ImportFlowRegistry;
   metrics?: MetricsRegistry;
