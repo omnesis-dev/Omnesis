@@ -94,6 +94,15 @@ describe("PROVIDER_PRESETS", () => {
     expect(moonshot?.capabilities).not.toContain("embed");
   });
 
+  it("Cheaper Inference uses its OpenAI-compatible host on the default /v1 surface", () => {
+    expect(getPreset("cheaperinference")).toEqual({
+      id: "cheaperinference",
+      name: "Cheaper Inference",
+      defaultUrl: "https://api.cheaperinference.com",
+      capabilities: ["agent", "embed"],
+    });
+  });
+
   it("OpenRouter keeps the /api path segment in the base URL", () => {
     // The OpenAI-compatible surface is `https://openrouter.ai/api/v1/…`: the
     // `/api` path segment belongs in defaultUrl and the default `/v1` prefix

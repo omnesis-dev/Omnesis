@@ -34,6 +34,7 @@ export const PROVIDER_BRANDS: Readonly<Record<string, ProviderBrand>> = {
   meta: { id: "meta", label: "Meta" },
   moonshot: { id: "moonshot", label: "Moonshot AI" },
   regolo: { id: "regolo", label: "Regolo AI" },
+  cheaperinference: { id: "cheaperinference", label: "Cheaper Inference" },
   openrouter: { id: "openrouter", label: "OpenRouter" },
   ollama: { id: "ollama", label: "Ollama" },
   local: { id: "local", label: "Local" },
