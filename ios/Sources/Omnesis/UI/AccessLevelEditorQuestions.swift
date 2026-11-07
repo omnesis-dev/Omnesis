@@ -63,7 +63,7 @@ extension AccessLevelEditorView {
     var futureContent: some View {
         ForEach(["answer", "direct"], id: \.self) { capability in
             if let rule = draft.rule(capability), !(capability == "direct" && draft.directSameAsAnswer && draft.rule("answer") != nil) {
-                Section(futureSectionTitle(capability)) {
+                Section {
                     Toggle("Include future sources", isOn: Binding(get: { rule.boundary.mode != .allowlist }, set: { allowed in
                         var selection = AccessSourceSelectionState(boundary: rule.boundary, knownSourceIds: overview.availableSourceIds)
                         selection.setFutureSourcesAllowed(allowed, knownSourceIds: overview.availableSourceIds)
@@ -75,7 +75,7 @@ extension AccessLevelEditorView {
                     }))
                     Text("When off, sources connected later stay blocked until you choose them.").font(.subheadline)
                         .foregroundStyle(Theme.textSecondary)
-                }
+                } header: { Text(futureSectionTitle(capability)).foregroundStyle(Theme.textSecondary) }
             }
         }
     }
@@ -110,7 +110,7 @@ extension AccessLevelEditorView {
                 }
             }
             if case .reviewed(let family) = rule.release {
-                Section("Privacy policy") {
+                Section {
                     Picker(
                         "Policy",
                         selection: Binding(get: { family }, set: { draft.setRule(rule.replacing(release: .reviewed(policyFamilyId: $0))) })
@@ -119,7 +119,7 @@ extension AccessLevelEditorView {
                         ForEach(overview.policyFamilies) { Text($0.name).tag($0.id) }
                     }
                     if !validRelease { Text("Choose an available policy before saving.").foregroundStyle(Theme.danger) }
-                }
+                } header: { Text("Privacy policy").foregroundStyle(Theme.textSecondary) }
             }
         }
     }

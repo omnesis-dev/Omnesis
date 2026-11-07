@@ -8111,70 +8111,61 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
-    func testScopePickerRestoresVisibleRegionAndResetsForAnotherSearch() throws {
+    func testScopePickerConsumesProvidedBookmarkAndStartsAnotherSearchAtTop() throws {
         let source = PreviewMocks.scopeFolderSource
         let (firstPage, secondPage) = scopePickerPageFixtures()
         try assertProviderFixtureWireRefs(firstPage.items.map(\.ref) + secondPage.items.map(\.ref))
-        // This is an accumulated navigation snapshot after two provider pages, not an oversized API page.
+        // Consume an explicit bookmark over two accumulated provider pages.
+        // Recording that bookmark from a real swipe is covered by the UI journey.
         let options = try appendScopeOptions(secondPage, to: firstPage)
+        let last = try XCTUnwrap(options.items.last)
         for scheme in [ColorScheme.light, .dark] {
-            var saved = ScopePickerSession()
             let name = scheme == .dark ? "dark" : "light"
-            var scrollProxy: ScrollViewProxy?
-            let first = try mountScopePicker(
-                source: source,
-                options: options,
-                scheme: scheme,
-                scrollReady: { scrollProxy = $0 },
-                changed: { saved = $0 }
-            )
-            let scroll = try XCTUnwrap(scopePickerScroll(in: first.1.view))
-            try XCTUnwrap(scrollProxy).scrollTo(try ScopePickerAnchor.item(.init(XCTUnwrap(options.items.last).ref)), anchor: .bottom)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-            let beforeOffset = scroll.contentOffset.y
-            try captureScopePicker(first.0, name: "scope-picker-before-\(name)")
-            first.1.rootView = AnyView(EmptyView())
-            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
-            first.0.isHidden = true
+            var saved = ScopePickerSession(kind: "folder", sourceId: source.id)
             let location = saved.location(for: source.id)
-            let position = try XCTUnwrap(saved.positions[location], "A visible row must be recorded after scrolling")
-            XCTAssertGreaterThanOrEqual(position.index, 50)
-            XCTAssertEqual(saved.catalogues[location]?.items.count, 65)
-            XCTAssertNil(saved.catalogues[location]?.nextCursor)
-            var restored = ScopePickerSession()
-            let second = try mountScopePicker(source: source, session: saved, scheme: scheme, changed: { restored = $0 })
+            saved.catalogues[location] = options
+            saved.positions[location] = .init(itemId: .item(.init(last.ref)), index: options.items.count - 1)
+            let restored = try mountScopePicker(source: source, session: saved, scheme: scheme)
+            defer {
+                restored.1.rootView = AnyView(EmptyView())
+                restored.0.isHidden = true
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.6))
-            let actualRestoredScroll = try XCTUnwrap(scopePickerScroll(in: second.1.view))
+            let scroll = try XCTUnwrap(scopePickerScroll(in: restored.1.view))
+            XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height * 2, "The fixture must require scrolling")
+            let bottom = max(
+                -scroll.adjustedContentInset.top,
+                scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
+            )
+            XCTAssertGreaterThan(scroll.contentOffset.y, 0, "A page-two bookmark must not render at the top")
             XCTAssertEqual(
-                actualRestoredScroll.contentOffset.y,
-                beforeOffset,
-                accuracy: 8,
-                "The rendered list must return to the same region, not only retain its saved model"
+                scroll.contentOffset.y,
+                bottom,
+                accuracy: 16,
+                "The supplied final-row bookmark must render the final visible region"
             )
-            try captureScopePicker(second.0, name: "scope-picker-restored-\(name)")
-            second.1.rootView = AnyView(EmptyView())
-            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
-            second.0.isHidden = true
-            let returned = try XCTUnwrap(restored.positions[location])
-            XCTAssertEqual(returned.itemId, position.itemId, "Back/reopen must retain the same first visible match")
+            try captureScopePicker(restored.0, name: "scope-picker-provided-bookmark-\(name)")
+            restored.1.rootView = AnyView(EmptyView())
+            restored.0.isHidden = true
+
             var anotherSearch = saved
-            anotherSearch.query = "archive"
-            var searchResults = secondPage
-            searchResults.items = [.init(
-                ref: .init(kind: "folder", id: "archive-example"),
-                label: "Archive folder",
-                count: 8
-            )]
-            let third = try mountScopePicker(source: source, options: searchResults, session: anotherSearch, scheme: scheme)
-            let reset = try XCTUnwrap(scopePickerScroll(in: third.1.view))
-            XCTAssertLessThanOrEqual(reset.contentOffset.y, 0, "A different search must start with its search field and first results")
-            try captureScopePicker(third.0, name: "scope-picker-new-search-\(name)")
-            third.1.rootView = AnyView(EmptyView())
-            third.0.isHidden = true
-            print(
-                "PICKER_SCROLL_EVIDENCE \(name) page2Index=\(position.index) "
-                    + "actualBefore=\(beforeOffset) actualAfter=\(actualRestoredScroll.contentOffset.y)"
+            anotherSearch.query = "Example folder"
+            // The same rows also match this query, so a leaked old anchor would still resolve.
+            anotherSearch.catalogues[anotherSearch.location(for: source.id)] = options
+            let fresh = try mountScopePicker(source: source, session: anotherSearch, scheme: scheme)
+            defer {
+                fresh.1.rootView = AnyView(EmptyView())
+                fresh.0.isHidden = true
+            }
+            let reset = try XCTUnwrap(scopePickerScroll(in: fresh.1.view))
+            XCTAssertGreaterThan(reset.contentSize.height, reset.bounds.height * 2, "The new query must still require scrolling")
+            XCTAssertEqual(
+                reset.contentOffset.y,
+                -reset.adjustedContentInset.top,
+                accuracy: 1,
+                "A supplied different query has no bookmark and must render its first results"
             )
+            try captureScopePicker(fresh.0, name: "scope-picker-new-search-\(name)")
         }
     }
 
@@ -8206,18 +8197,13 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     private func mountScopePicker(
-        source: AccessSourceInstance, options: ScopeOptions? = nil, session: ScopePickerSession = .init(),
-        scheme: ColorScheme, scrollReady: @escaping (ScrollViewProxy) -> Void = { _ in },
-        changed: @escaping (ScopePickerSession) -> Void = { _ in }
+        source: AccessSourceInstance, session: ScopePickerSession, scheme: ColorScheme
     ) throws
         -> (UIWindow, UIHostingController<AnyView>) {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let view = NavigationStack {
-            ScrollViewReader { proxy in
-                SourceFilterPickerView(source: source, options: options, session: session, sessionChanged: changed, selected: { _ in })
-                    .onAppear { scrollReady(proxy) }
-            }
+            SourceFilterPickerView(source: source, session: session, selected: { _ in })
         }.environment(AppStore.preview()).preferredColorScheme(scheme)
         let host = UIHostingController(rootView: AnyView(view))
         let window = UIWindow(windowScene: scene)

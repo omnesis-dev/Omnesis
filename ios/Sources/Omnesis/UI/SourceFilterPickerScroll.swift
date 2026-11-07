@@ -36,9 +36,9 @@ extension SourceFilterPickerView {
         scrollAnchor = retainedAnchor ?? .top
         await load()
         guard !Task.isCancelled, requested == location else { return }
-        // A target ID stays bound while SwiftUI mounts refreshed page contents.
+        // Reapply the saved leading row after refreshing its catalogue.
         scrollAnchor = retainedAnchor ?? .top
-        if retainedAnchor == nil { proxy.scrollTo(ScopePickerAnchor.top, anchor: .top) }
+        proxy.scrollTo(retainedAnchor ?? .top, anchor: .top)
     }
 }
 

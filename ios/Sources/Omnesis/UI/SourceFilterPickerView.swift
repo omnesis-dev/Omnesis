@@ -234,6 +234,7 @@ struct SourceFilterPickerView: View {
                     }
                 }.scrollTargetLayout().padding(16)
             }
+            .accessibilityIdentifier("scope-picker.results")
             .background(Color(uiColor: .systemGroupedBackground))
             .coordinateSpace(name: "scope-picker-scroll")
             .scrollPosition(id: scrollPosition, anchor: .top)

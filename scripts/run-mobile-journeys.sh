@@ -16,8 +16,8 @@
 # `default` universe's recorded scenarios, so no model runs. It listens on a
 # high port with its own config dir and is stopped on exit.
 #
-# iOS runs `MobileJourneyUITests` on the simulator named by
-# OMNESIS_JOURNEY_IOS_SIMULATOR. Android needs an emulator already booted and
+# iOS runs `MobileJourneyUITests` and `SourceFilterFolderGestureUITests` on
+# the simulator named by OMNESIS_JOURNEY_IOS_SIMULATOR. Android needs an emulator already booted and
 # visible to adb — the CI lane boots one; locally, start your AVD first — and
 # runs `:app:connectedPlayDebugAndroidTest`, which holds only the journeys.
 #
@@ -186,7 +186,7 @@ import json, os
 print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"], "fingerprint": os.environ["FINGERPRINT"]}))
 ')"
 
-  local classes=(MobileJourneyUITests)
+  local classes=(MobileJourneyUITests SourceFilterFolderGestureUITests)
   local tests=()
   local expected=0
   if [[ -n "${OMNESIS_JOURNEY_ONLY:-}" ]]; then
@@ -420,8 +420,14 @@ if [[ -d "$OMNESIS_CONFIG_DIR" ]]; then
   "$ROOT/scripts/synth-gateway.sh" stop >/dev/null 2>&1 || true
   find "$OMNESIS_CONFIG_DIR" -mindepth 1 -maxdepth 1 -not -name models -exec rm -rf {} +
 fi
+# Filter authoring is experimental; enable it only in the iOS journeys' throwaway gateway.
+JOURNEY_EXPERIMENTAL="${OMNESIS_EXPERIMENTAL:-0}"
+if [[ "$PLATFORM" == ios ]]; then
+  JOURNEY_EXPERIMENTAL=1
+fi
 # OAuth-backed synthetic sources sync without waiting on an add-source wizard.
-OMNESIS_SYNTH_UNIVERSE=e2e-minimal \
+OMNESIS_EXPERIMENTAL="$JOURNEY_EXPERIMENTAL" \
+  OMNESIS_SYNTH_UNIVERSE=e2e-minimal \
   OMNESIS_SYNTH_PRE_DISCOVERED=1 \
   OMNESIS_AGENT_FIXTURE="$ROOT/evals/universes/default/agent-demos" \
   "$ROOT/scripts/synth-gateway.sh" start >"$ARTIFACTS/gateway-start.log" 2>&1 || {

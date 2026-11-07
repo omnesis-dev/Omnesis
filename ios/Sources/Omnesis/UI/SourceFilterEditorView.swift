@@ -130,9 +130,9 @@ struct SourceFilterEditorView: View {
                         )
                     }.disabled(!writable)
                 }
-                if !writable { Section("Saved restriction") { Text(accessRestrictionSummary(initialPolicy, hints: visibleLabelHints))
+                if !writable { Section { Text(accessRestrictionSummary(initialPolicy, hints: visibleLabelHints))
                     ForEach(Array(refs.enumerated()), id: \.offset) { index, ref in selectedItem(index, ref: ref) }
-                } }
+                } header: { Text("Saved restriction").foregroundStyle(Theme.textSecondary) } }
             } else if step == .matches {
                 Section {
                     if writable { Button("Add matches…") { picking = true }.frame(minHeight: 44) }
@@ -190,10 +190,10 @@ struct SourceFilterEditorView: View {
                     }
                 }
                 if let preview, previewedPolicy == policy, preview.sourceId == source.id, !loading, error == nil, mode != .all {
-                    Section(policy.readyToSave(preview.readiness) ? "Current preview" : "Preview during preparation") {
-                        LabeledContent("Allowed", value: "\(preview.visible)")
-                        LabeledContent("Hidden", value: "\(preview.hidden)")
-                        LabeledContent("Unknown · hidden", value: "\(preview.unknown)")
+                    Section {
+                        LabeledContent("Allowed") { Text("\(preview.visible)").foregroundStyle(Theme.textPrimary) }
+                        LabeledContent("Hidden") { Text("\(preview.hidden)").foregroundStyle(Theme.textPrimary) }
+                        LabeledContent("Unknown · hidden") { Text("\(preview.unknown)").foregroundStyle(Theme.textPrimary) }
                         Text("Content with uncertain required facts stays hidden.").font(.subheadline)
                         DisclosureGroup("Examples") {
                             ForEach(preview.samples, id: \.documentId) { sample in
@@ -204,6 +204,9 @@ struct SourceFilterEditorView: View {
                                 }
                             }
                         }
+                    } header: {
+                        Text(policy.readyToSave(preview.readiness) ? "Current preview" : "Preview during preparation")
+                            .foregroundStyle(Theme.textSecondary)
                     }
                 }
                 if let preview, previewedPolicy == policy, !loading, error == nil, writable, mode != .all {

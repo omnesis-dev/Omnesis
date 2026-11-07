@@ -38,14 +38,14 @@ extension AccessLevelEditorView {
         if !isEditing {
             Section { Button("Change permissions") { edit(.permissions) }.frame(minHeight: 44) }
         }
-        Section("Name") {
+        Section {
             TextField(
                 "Access level name",
                 text: $draft.name,
                 prompt: Text("Access level name").foregroundStyle(Theme.textSecondary)
             ).submitLabel(.done)
             if let nameProblem { Text(nameProblem).font(.subheadline).foregroundStyle(Theme.danger) }
-        }
+        } header: { Text("Name").foregroundStyle(Theme.textSecondary) }
         if isEditing {
             changeRow(
                 "Permissions",
@@ -55,7 +55,7 @@ extension AccessLevelEditorView {
             ForEach(["answer", "direct"], id: \.self) { capability in
                 ForEach(reviewSources) { source in
                     if accountDecision(original, capability, source.id) != accountDecision(draft, capability, source.id) {
-                        Section("\(capability.capitalized) · \(accessSourceDisplayName(source))") {
+                        Section {
                             Text("Before: \(accountSummary(original, capability, source))")
                             Text("After: \(accountSummary(draft, capability, source))")
                             if accountSummary(original, capability, source) == accountSummary(draft, capability, source) {
@@ -65,6 +65,8 @@ extension AccessLevelEditorView {
                                     referenceDetails(draft, capability: capability, source: source, heading: "After")
                                 }
                             }
+                        } header: {
+                            Text("\(capability.capitalized) · \(accessSourceDisplayName(source))").foregroundStyle(Theme.textSecondary)
                         }
                     }
                 }
@@ -75,7 +77,10 @@ extension AccessLevelEditorView {
                 before: original.rule("answer") == nil ? "Not allowed" : releaseSummary(original),
                 after: draft.rule("answer") == nil ? "Not allowed" : releaseSummary(draft)
             )
-            if draft.name != original.name { Section("Name change") { Text("\(original.name) → \(draft.name)") } }
+            if draft.name != original
+                .name {
+                Section { Text("\(original.name) → \(draft.name)") } header: { Text("Name change").foregroundStyle(Theme.textSecondary) }
+            }
             Section {
                 DisclosureGroup("Unchanged settings") {
                     ForEach(["answer", "direct", "notes"].filter { !draft.changedCapabilities(from: original).contains($0) }, id: \.self) {
@@ -88,7 +93,7 @@ extension AccessLevelEditorView {
             }
         } else {
             ForEach(draft.serializedRules, id: \.capability) { rule in
-                Section(rule.capability.capitalized) {
+                Section {
                     if rule.capability == "notes" {
                         Text("Create new notes only. Existing notes cannot be read.")
                     } else {
@@ -107,19 +112,19 @@ extension AccessLevelEditorView {
                             .disabled(rule.capability == "direct" && draft.directSameAsAnswer
                                 && !draft.canCopyAnswer(authoringEnabled: overview.sourceFilters?.enabled))
                     }
-                }
+                } header: { Text(rule.capability.capitalized).foregroundStyle(Theme.textSecondary) }
             }
             if draft.rule("answer") != nil || draft.rule("direct") != nil {
-                Section("Future sources") {
+                Section {
                     Text(futureSummary(draft))
                     Button("Change future sources") { edit(.future) }.frame(minHeight: 44)
-                }
+                } header: { Text("Future sources").foregroundStyle(Theme.textSecondary) }
             }
             if draft.rule("answer") != nil {
-                Section("Answer release") {
+                Section {
                     Text(releaseSummary(draft))
                     Button("Change Answer release") { edit(.release) }.frame(minHeight: 44)
-                }
+                } header: { Text("Answer release").foregroundStyle(Theme.textSecondary) }
             }
         }
         Section {
@@ -133,9 +138,9 @@ extension AccessLevelEditorView {
     }
 
     @ViewBuilder func changeRow(_ title: String, before: String, after: String) -> some View {
-        if before != after { Section(title) { Text("Before: \(before)")
+        if before != after { Section { Text("Before: \(before)")
             Text("After: \(after)")
-        } }
+        } header: { Text(title).foregroundStyle(Theme.textSecondary) } }
     }
 
     func referenceDetailsBinding(_ capability: String, _ sourceId: String) -> Binding<Bool> {
@@ -160,7 +165,11 @@ extension AccessLevelEditorView {
                 Text(source.scopes?.items.first { $0.kind == ref.kind }?.noun?.one ?? ref.kind.capitalized)
                     .font(.subheadline).foregroundStyle(Theme.textSecondary)
                 if let identifiers = ref.identifiers { Text(identifiers.map(\.value).joined(separator: ", ")).font(.caption) }
-                if let id = ref.id { LabeledContent("Saved identifier", value: id).font(.caption).textSelection(.enabled) }
+                if let id = ref
+                    .id {
+                    LabeledContent("Saved identifier") { Text(id).foregroundStyle(Theme.textPrimary) }.font(.caption)
+                        .textSelection(.enabled)
+                }
             }
         }
     }
