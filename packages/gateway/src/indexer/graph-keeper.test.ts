@@ -11,6 +11,7 @@ import {
   EMBEDDING_DIM,
   createIndexDatabase,
   getUsearchBackfillCursor,
+  getUsearchEncoding,
   getUsearchSavedChangeSeq,
   getVectorChangeHead,
   setIndexEmbedModel,
@@ -48,6 +49,7 @@ describe("planGraphAdmission", () => {
       budget,
       headroom: 2 * GIB,
       loading: false,
+      encoding: "f32",
     });
     expect(plan.admitted).toBe(false);
     expect(!plan.admitted && plan.reason).toMatch(
@@ -57,9 +59,23 @@ describe("planGraphAdmission", () => {
 
   it("sizes a graph loaded from a complete file at its load cost, not its build cost", () => {
     // 1.8 GiB to load plus the 819 MiB reserve fits in 3 GiB; the 2.3 GiB build does not.
-    const fits = { vectors: 400_000, dim: 1024, budget, headroom: 3 * GIB };
+    const fits = {
+      vectors: 400_000,
+      dim: 1024,
+      budget,
+      headroom: 3 * GIB,
+      encoding: "f32" as const,
+    };
     expect(planGraphAdmission({ ...fits, loading: true })).toEqual({ admitted: true });
     expect(planGraphAdmission({ ...fits, loading: false }).admitted).toBe(false);
+  });
+
+  it("sizes a binary graph by its bit codes, so one that floats could not hold fits", () => {
+    // 5.6M vectors at 768 dims: about 24 GiB built as floats, 2.6 GiB as one bit a dimension.
+    const corpus = { vectors: 5_600_000, dim: 768, budget, headroom: 3.8 * GIB, loading: false };
+    expect(planGraphAdmission({ ...corpus, encoding: "f32" }).admitted).toBe(false);
+    expect(planGraphAdmission({ ...corpus, encoding: "b1" })).toEqual({ admitted: true });
+    expect(planGraphAdmission(corpus)).toEqual({ admitted: true });
   });
 
   it("keeps a bounded reserve on a large host instead of a fifth of its memory", () => {
@@ -145,6 +161,15 @@ describe("GraphKeeper", () => {
     });
     return { keeper, handle };
   }
+
+  it("stamps the saved graph's encoding, which reads as floats until a save", async () => {
+    seed(0, 5);
+    expect(getUsearchEncoding(db)).toBe("f32");
+    const { keeper, handle } = start();
+    await keeper.open();
+    expect(getUsearchEncoding(db)).toBe(handle.encoding);
+    expect(getUsearchEncoding(db)).toBe("b1");
+  });
 
   it("sheds the graph when headroom runs short, and a restart catches it up", async () => {
     seed(0, 20);

@@ -50,8 +50,12 @@ import {
   completeDocumentIndexPurges,
   getChunkCount,
   getUsearchBackfillCursor,
+  getUsearchEncoding,
 } from "../indexer/db.js";
-import { invalidateSemanticIndex } from "../indexer/invalidate-semantic-index.js";
+import {
+  invalidateSemanticIndex,
+  invalidateVectorGraph,
+} from "../indexer/invalidate-semantic-index.js";
 import { GraphKeeper, planGraphAdmission } from "../indexer/graph-keeper.js";
 import { memoryHeadroom } from "../memory-budget.js";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
@@ -665,7 +669,16 @@ async function handleInit(init: IndexerInit): Promise<void> {
     let usearchHandle: import("../indexer/usearch-index.js").UsearchWriteHandle | undefined;
     let keeper: GraphKeeper | undefined;
     if (!init.lexicalOnly) {
-      const { UsearchWriteHandle } = await import("../indexer/usearch-index.js");
+      const { UsearchWriteHandle, VECTOR_ENCODING } = await import("../indexer/usearch-index.js");
+      const savedEncoding = getUsearchEncoding(indexDb);
+      if (savedEncoding !== VECTOR_ENCODING && existsSync(init.usearchIndexPath)) {
+        log(
+          "info",
+          "indexer-worker",
+          `vector graph was saved as ${savedEncoding}, this build keeps ${VECTOR_ENCODING}: rebuilding it from the stored embeddings`,
+        );
+        invalidateVectorGraph(indexDb, init.usearchIndexPath);
+      }
       const graphFileExisted = existsSync(init.usearchIndexPath);
       const admission = init.memoryBudget
         ? planGraphAdmission({

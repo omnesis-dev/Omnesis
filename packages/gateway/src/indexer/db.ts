@@ -768,6 +768,28 @@ export function getUsearchBackfillCursor(db: Db): number | null {
   return getMetaInt(db, USEARCH_BACKFILL_CURSOR_KEY);
 }
 
+/**
+ * `index_meta` key: how the saved graph stores its vectors (`f32` or `b1`, see
+ * `VECTOR_ENCODING` in usearch-index.ts). Absent on a graph saved before the
+ * key existed, which held floats. The indexer rebuilds a graph saved under an
+ * encoding other than the one it runs, since usearch adopts a file's own.
+ */
+const USEARCH_ENCODING_KEY = "usearch_encoding";
+
+export function getUsearchEncoding(db: Db): string {
+  const row = db
+    .prepare<[string], { value: string }>("SELECT value FROM index_meta WHERE key = ?")
+    .get(USEARCH_ENCODING_KEY);
+  return row?.value ?? "f32";
+}
+
+export function setUsearchEncoding(db: Db, encoding: string): void {
+  db.prepare(
+    `INSERT INTO index_meta (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(USEARCH_ENCODING_KEY, encoding, new Date().toISOString());
+}
+
 export function setUsearchBackfillCursor(db: Db, rowid: number | null): void {
   setMetaInt(db, USEARCH_BACKFILL_CURSOR_KEY, rowid);
 }

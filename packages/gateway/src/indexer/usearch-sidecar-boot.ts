@@ -11,6 +11,7 @@ import {
   setUsearchSavedChangeSeq,
   setUsearchSavedSeq,
 } from "./db.js";
+import { VECTOR_ENCODING } from "./usearch-index.js";
 import { resolveActiveUsearchTarget } from "./usearch-read-registry.js";
 import { purgeSidecarTemps, restoreActiveSidecar } from "./usearch-sidecar-crypto.js";
 import type Database from "better-sqlite3";
@@ -49,6 +50,7 @@ export function prepareEncryptedGraphForBoot(
     indexDbKey,
     expectedSeq: getVectorWriteSeq(indexDb),
     expectedModel: getIndexEmbedModel(indexDb),
+    expectedEncoding: VECTOR_ENCODING,
     changesPrunedThrough: getVectorChangesPrunedThrough(indexDb),
   });
   if (restore.restored) {
