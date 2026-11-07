@@ -238,6 +238,11 @@ Things that have bitten agents working in this module. Read before testing.
   helper sets it and another's doesn't, the second class hangs on its first loading/animated
   state even though identical components render fine in the first. When adding a new
   screenshot test class, copy the helper shape from an existing one and keep the wrapper.
+- **Timed transitions race the capture.** The capture runs on the wall clock, so a `delay` in
+  a captured composable fires if the runner stalls, and the PNG shows a later state than the
+  golden. Route such a delay through `agentHold()` and set `LocalAgentTimersFrozen provides true`
+  in any `capture()` helper that renders the agent transcript. `LocalInspectionMode` can't gate
+  these: tests that drive the timers with a manual frame clock run under it too.
 - To **find** a hanging test, don't record the whole class — bisect with a method-level
   filter. **Use the Kotlin method name, not the `capture("…")` PNG name** (a wrong name
   fails fast with `No tests found for given includes`, which masquerades as a build error):

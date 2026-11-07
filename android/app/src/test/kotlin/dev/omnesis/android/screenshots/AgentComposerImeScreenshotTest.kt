@@ -38,6 +38,7 @@ import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.ui.agent.AgentComposer
 import dev.omnesis.android.ui.agent.AgentContent
 import dev.omnesis.android.ui.agent.AgentCoordinator
+import dev.omnesis.android.ui.agent.LocalAgentTimersFrozen
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -100,7 +101,7 @@ class AgentComposerImeScreenshotTest {
         compose.setContent {
             composeView = LocalView.current
             density = LocalDensity.current.density
-            CompositionLocalProvider(LocalInspectionMode provides true) {
+            CompositionLocalProvider(LocalInspectionMode provides true, LocalAgentTimersFrozen provides true) {
                 OmnesisTheme(darkTheme = dark) {
                     Box(Modifier.fillMaxSize()) {
                         AgentContent(

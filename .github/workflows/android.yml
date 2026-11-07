@@ -92,12 +92,15 @@ jobs:
 
       # Unit tests (JVM / Robolectric): the ported transport / pairing / reducer
       # / DTO-decode suites. Fast deterministic logic signal.
+      # This lane compiles both app flavours in parallel in one Kotlin daemon, which runs out of
+      # heap now and then at the 2g it inherits from gradle.properties.
       - name: lane [android-jvm]
         run: |
           ./gradlew \
             :app:testPlayDebugUnitTest \
             :app:testFullDebugUnitTest \
             testDebugUnitTest \
+            -Pkotlin.daemon.jvmargs=-Xmx3g \
             --no-daemon --max-workers=2
 
       - name: Upload Android JVM failure reports
