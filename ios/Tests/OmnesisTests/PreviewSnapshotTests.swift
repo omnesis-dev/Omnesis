@@ -6,6 +6,7 @@ import Observation
 @testable import Omnesis
 import SwiftUI
 import UIKit
+import Vision
 import XCTest
 
 // This catalogue holds one test per screen state, and the app has hundreds of
@@ -8133,18 +8134,12 @@ final class PreviewSnapshotTests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.6))
             let scroll = try XCTUnwrap(scopePickerScroll(in: restored.1.view))
             XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height * 2, "The fixture must require scrolling")
-            let bottom = max(
-                -scroll.adjustedContentInset.top,
-                scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
-            )
             XCTAssertGreaterThan(scroll.contentOffset.y, 0, "A page-two bookmark must not render at the top")
-            XCTAssertEqual(
-                scroll.contentOffset.y,
-                bottom,
-                accuracy: 16,
-                "The supplied final-row bookmark must render the final visible region"
+            try captureScopePicker(
+                restored.0,
+                name: "scope-picker-provided-bookmark-\(name)",
+                visibleLabel: last.label
             )
-            try captureScopePicker(restored.0, name: "scope-picker-provided-bookmark-\(name)")
             restored.1.rootView = AnyView(EmptyView())
             restored.0.isHidden = true
 
@@ -8165,7 +8160,11 @@ final class PreviewSnapshotTests: XCTestCase {
                 accuracy: 1,
                 "A supplied different query has no bookmark and must render its first results"
             )
-            try captureScopePicker(fresh.0, name: "scope-picker-new-search-\(name)")
+            try captureScopePicker(
+                fresh.0,
+                name: "scope-picker-new-search-\(name)",
+                visibleLabel: XCTUnwrap(options.items.first).label
+            )
         }
     }
 
@@ -8223,11 +8222,28 @@ final class PreviewSnapshotTests: XCTestCase {
         }
     }
 
-    private func captureScopePicker(_ window: UIWindow, name: String) throws {
+    private func captureScopePicker(_ window: UIWindow, name: String, visibleLabel: String) throws {
         let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
         try writeSnapshotPNG(image, to: Self.outputDir.appendingPathComponent(name + ".png"))
+        // Lazy scroll offsets are estimates. Recognize the actual captured pixels
+        // so a viewport showing earlier rows cannot pass as the final row.
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage), options: [:]).perform([request])
+        let observations = request.results ?? []
+        func normalized(_ value: String) -> String {
+            String(value.lowercased().filter { $0.isLetter || $0.isNumber })
+        }
+        let visible = observations.contains { observation in
+            CGRect(x: 0, y: 0, width: 1, height: 1).contains(observation.boundingBox)
+                && observation.topCandidates(1).first.map { normalized($0.string) == normalized(visibleLabel) } == true
+        }
+        let recognized = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
+        XCTAssertTrue(visible, "The captured viewport must visibly contain \(visibleLabel): \(recognized)")
     }
 
     func testAccessScopePreviewsKeepProviderContractsSeparate() throws {

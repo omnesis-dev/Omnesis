@@ -10,6 +10,10 @@ extension SourceFilterPickerView {
         .init(sourceId: source.id, kind: kind, query: query, parentId: parentId, trail: ancestors.map { $0.ref.id ?? "" })
     }
 
+    var folderScopeText: String {
+        (["All folders"] + ancestors.map(\.label)).joined(separator: " › ")
+    }
+
     var pickerRows: [ScopePickerRow] {
         (options?.items ?? []).map { .init(option: $0) }
     }
@@ -18,6 +22,7 @@ extension SourceFilterPickerView {
         Binding(get: { scrollAnchor }, set: { anchor in
             guard let anchor else { return }
             scrollAnchor = anchor
+            guard restoringLocation != location, optionsLocation == location else { return }
             if anchor == .top {
                 positions[location] = nil
             } else if let index = pickerRows.firstIndex(where: { $0.id == anchor }) {
@@ -26,19 +31,75 @@ extension SourceFilterPickerView {
         })
     }
 
-    func openLocation(proxy: ScrollViewProxy) async {
+    func openLocation() async {
         let requested = location
-        let retainedAnchor = positions[requested]?.itemId
+        let retainedAnchor = positions[requested]?.itemId ?? .top
+        restoringLocation = requested
+        pendingRestore = nil
         if let cached = catalogues[requested], cached.sourceId == source.id {
             options = cached
             optionsLocation = requested
+            catalogueRevision += 1
         } else if optionsLocation != requested { options = nil }
-        scrollAnchor = retainedAnchor ?? .top
         await load()
-        guard !Task.isCancelled, requested == location else { return }
-        // Reapply the saved leading row after refreshing its catalogue.
-        scrollAnchor = retainedAnchor ?? .top
-        proxy.scrollTo(retainedAnchor ?? .top, anchor: .top)
+        guard !Task.isCancelled, requested == location, restoringLocation == requested else { return }
+        let target = retainedAnchor == .top || pickerRows.contains(where: { $0.id == retainedAnchor }) ? retainedAnchor : .top
+        pendingRestore = .init(
+            revision: UUID(),
+            location: requested,
+            catalogueRevision: catalogueRevision,
+            loadGeneration: loadGeneration,
+            target: target
+        )
+    }
+
+    func consumeRestore(layout: ScopePickerLayout, proxy: ScrollViewProxy) {
+        guard let request = pendingRestore, issuedRestoreRevision != request.revision,
+              request.location == location, request.catalogueRevision == catalogueRevision,
+              request.loadGeneration == loadGeneration, optionsLocation == location,
+              openedClient?.baseURL == store.access?.baseURL, openedClient?.token == store.access?.token,
+              layout.viewport.width > 0, layout.viewport.height > 0,
+              let catalogue = layout.catalogue, catalogue.size.width > 0, catalogue.size.height > 0,
+              catalogue.requestRevision == request.revision, catalogue.location == request.location,
+              catalogue.catalogueRevision == request.catalogueRevision else { return }
+        // Layout acknowledges this exact catalogue/request, even when a seeded load did not suspend.
+        // Keep the stamp stable after issuance; geometry feedback must not issue another scroll.
+        issuedRestoreRevision = request.revision
+        restoringLocation = nil
+        scrollAnchor = request.target
+        proxy.scrollTo(request.target, anchor: .top)
+    }
+}
+
+struct ScopePickerRestoreRequest {
+    let revision: UUID
+    let location: ScopePickerLocation
+    let catalogueRevision: Int
+    let loadGeneration: Int
+    let target: ScopePickerAnchor
+}
+
+struct ScopePickerCatalogueLayout: Equatable {
+    var requestRevision: UUID?
+    var catalogueRevision: Int
+    var location: ScopePickerLocation
+    var size: CGSize
+}
+
+struct ScopePickerLayout: Equatable {
+    var viewport: CGSize = .zero
+    var catalogue: ScopePickerCatalogueLayout?
+}
+
+struct ScopePickerLayoutKey: PreferenceKey {
+    static var defaultValue: ScopePickerLayout {
+        .init()
+    }
+
+    static func reduce(value: inout ScopePickerLayout, nextValue: () -> ScopePickerLayout) {
+        let next = nextValue()
+        if next.viewport != .zero { value.viewport = next.viewport }
+        if let catalogue = next.catalogue { value.catalogue = catalogue }
     }
 }
 

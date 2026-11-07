@@ -27,6 +27,11 @@ struct SourceFilterPickerView: View {
     @State var optionsLocation: ScopePickerLocation?
     @State var scrollAnchor: ScopePickerAnchor?
     @State var loadGeneration = 0
+    @State var catalogueRevision = 0
+    @State var pendingRestore: ScopePickerRestoreRequest?
+    @State var issuedRestoreRevision: UUID?
+    @State var restoringLocation: ScopePickerLocation?
+    @FocusState var searchFocused: Bool
 
     var searchKey: String {
         "\(source.id):\(kind):\(query):\(parentId ?? "")"
@@ -81,7 +86,7 @@ struct SourceFilterPickerView: View {
         _options = State(initialValue: initialOptions)
         _optionsLocation = State(initialValue: initialOptions == nil ? nil : location)
         _positions = State(initialValue: session.positions)
-        _scrollAnchor = State(initialValue: session.positions[location]?.itemId)
+        _restoringLocation = State(initialValue: location)
         _catalogues = State(initialValue: session.catalogues)
         _kind = State(initialValue: initialKind)
         _query = State(initialValue: session.query)
@@ -163,8 +168,20 @@ struct SourceFilterPickerView: View {
                                 TextField("Search", text: $query, prompt: Text("Search").foregroundStyle(Theme.textPrimary))
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled()
+                                    .focused($searchFocused)
+                                    .submitLabel(.search)
+                                    .onSubmit { searchFocused = false }
                                     .accessibilityLabel("Search matches")
                                     .frame(minHeight: 44)
+                                if !query.isEmpty {
+                                    Button {
+                                        query = ""
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundStyle(Theme.textSecondary)
+                                            .frame(minWidth: 44, minHeight: 44)
+                                    }.buttonStyle(.borderless).accessibilityLabel("Clear search")
+                                }
                             }.padding(.horizontal, 12)
                                 .background(Color(uiColor: .tertiarySystemFill), in: .rect(cornerRadius: 10))
                             if !(declaration?.identifiers ?? []).isEmpty {
@@ -173,20 +190,31 @@ struct SourceFilterPickerView: View {
                         }
                         .id(ScopePickerAnchor.top)
                         if declaration?.picker == "tree" {
-                            GroupBox("Location") {
-                                Text((["All folders"] + ancestors.map(\.label)).joined(separator: " › "))
-                                    .accessibilityLabel("Current folder: " + (ancestors.last?.label ?? "All folders"))
-                                if parentId != nil {
-                                    Button("Back to parent folder") { var updated = session
-                                        updated.goToParent()
-                                        ancestors = updated.ancestors
-                                        parentId = updated.parentId
-                                    }.frame(minHeight: 44)
-                                    if let folder = ancestors
-                                        .last { Button("Select this folder") { select(folder.ref) }.frame(minHeight: 44).disabled(!ready) }
-                                }
-                                Text("Selected folders include descendants and files added later.").font(.subheadline)
+                            if searchFocused || !query.isEmpty {
+                                Text("Location: " + folderScopeText)
+                                    .font(.subheadline)
                                     .foregroundStyle(Theme.textSecondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .accessibilityLabel("Current folder: " + folderScopeText)
+                            } else {
+                                GroupBox("Location") {
+                                    Text(folderScopeText)
+                                        .accessibilityLabel("Current folder: " + folderScopeText)
+                                    if parentId != nil {
+                                        Button("Back to parent folder") { var updated = session
+                                            updated.goToParent()
+                                            ancestors = updated.ancestors
+                                            parentId = updated.parentId
+                                        }.frame(minHeight: 44)
+                                        if let folder = ancestors
+                                            .last {
+                                            Button("Select this folder") { select(folder.ref) }.frame(minHeight: 44).disabled(!ready)
+                                        }
+                                    }
+                                    Text("Selected folders include descendants and files added later.").font(.subheadline)
+                                        .foregroundStyle(Theme.textSecondary)
+                                }
                             }
                         }
                         Text("Results").font(.headline)
@@ -230,15 +258,40 @@ struct SourceFilterPickerView: View {
                     }
                     if loading { GroupBox { ProgressView("Loading items…") } }
                     if let error {
-                        GroupBox { GatewayErrorView(context: "load matching items", error: error, onRetry: { Task { await load() } }) }
+                        GroupBox {
+                            GatewayErrorView(context: "load matching items", error: error, onRetry: { Task { await openLocation() } })
+                        }
                     }
-                }.scrollTargetLayout().padding(16)
+                }
+                .scrollTargetLayout()
+                .padding(16)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(key: ScopePickerLayoutKey.self, value: .init(catalogue: .init(
+                            requestRevision: pendingRestore?.revision,
+                            catalogueRevision: catalogueRevision,
+                            location: location,
+                            size: geometry.size
+                        )))
+                    }
+                }
             }
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(key: ScopePickerLayoutKey.self, value: .init(viewport: geometry.size))
+                }
+            }
+            .onPreferenceChange(ScopePickerLayoutKey.self) { consumeRestore(layout: $0, proxy: proxy) }
+            .scrollDismissesKeyboard(.interactively)
+            .simultaneousGesture(DragGesture().onChanged { _ in
+                pendingRestore = nil
+                restoringLocation = nil
+            })
             .accessibilityIdentifier("scope-picker.results")
             .background(Color(uiColor: .systemGroupedBackground))
             .coordinateSpace(name: "scope-picker-scroll")
             .scrollPosition(id: scrollPosition, anchor: .top)
-            .task(id: key) { await openLocation(proxy: proxy) }
+            .task(id: key) { await openLocation() }
         }
         .safeAreaInset(edge: .top) {
             Text((capability.map { $0.capitalized + " · " } ?? "") + accessSourceDisplayName(source))
@@ -334,6 +387,7 @@ struct SourceFilterPickerView: View {
             guard searchKey == requestKey, requestedLocation == location, generation == loadGeneration,
                   value.sourceId == source.id else { return }
             options = value
+            catalogueRevision += 1
             optionsLocation = requestedLocation
             catalogues[requestedLocation] = value
             error = nil
