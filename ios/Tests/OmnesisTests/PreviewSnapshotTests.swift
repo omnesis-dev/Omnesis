@@ -8221,12 +8221,11 @@ final class PreviewSnapshotTests: XCTestCase {
             )
             let reset = try XCTUnwrap(scopePickerScroll(in: fresh.1.view))
             XCTAssertGreaterThan(reset.contentSize.height, reset.bounds.height * 2, "The new query must still require scrolling")
-            XCTAssertEqual(
-                reset.contentOffset.y,
-                -reset.adjustedContentInset.top,
-                accuracy: 1,
-                "A supplied different query has no bookmark and must render its first results"
-            )
+            // The top target is the search GroupBox inside the stack's padding,
+            // not the absolute content origin. Verify the current query's target
+            // and the actual first result pixels instead of an inset-only offset.
+            XCTAssertEqual(installedFresh?.pendingRestore?.location, freshLocation)
+            XCTAssertEqual(installedFresh?.pendingRestore?.target, .top)
             try captureScopePicker(
                 fresh.0,
                 name: "scope-picker-new-search-\(name)",
