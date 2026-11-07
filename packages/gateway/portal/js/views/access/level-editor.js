@@ -100,7 +100,7 @@ export function LevelEditorPage({
   const reloadController = useRef(null);
   const inFlightRef = useRef(false);
   const validationError = validateGrantRules(value, sources);
-  const exit = useLevelExitGuard(!sameDecision(initial, value), busy, onClose);
+  const exit = useLevelExitGuard(!sameDecision(initial, value), busy, onClose, inFlightRef);
 
   useEffect(() => {
     return () => {
@@ -119,6 +119,7 @@ export function LevelEditorPage({
 
   async function reloadLatest() {
     if (inFlightRef.current) return;
+    inFlightRef.current = true;
     const controller = new AbortController();
     reloadController.current?.abort();
     reloadController.current = controller;
@@ -149,6 +150,7 @@ export function LevelEditorPage({
           ),
         );
     } finally {
+      inFlightRef.current = false;
       if (mounted.current && !controller.signal.aborted) setBusy(false);
     }
   }
@@ -202,18 +204,27 @@ export function LevelEditorPage({
     <${LevelFlow}
       initial=${initial}
       step=${step}
-      onStep=${setStep}
+      onStep=${(next) => {
+        if (!inFlightRef.current && !busy) setStep(next);
+      }}
       rules=${value}
       sourceFiltersEnabled=${overview.sourceFilters?.enabled === true}
       accessLevel=${level.id}
       linkFilters=${linkFilters}
-      onLinkFilters=${setLinkFilters}
-      onRules=${setValue}
+      onLinkFilters=${(next) => {
+        if (!inFlightRef.current && !busy) setLinkFilters(next);
+      }}
+      onRules=${(next) => {
+        if (!inFlightRef.current && !busy) setValue(next);
+      }}
       sources=${sources}
       policies=${policies}
       linkSources=${linkSources}
-      onLinkSources=${setLinkSources}
+      onLinkSources=${(next) => {
+        if (!inFlightRef.current && !busy) setLinkSources(next);
+      }}
       disabled=${busy}
+      isLocked=${() => inFlightRef.current || busy}
       error=${error}
       impact=${html` <section
         class="access-impact"
@@ -233,7 +244,8 @@ export function LevelEditorPage({
           reconnect.${devices.length ? " An integration's next question uses them." : ""}
         </p>
       </section>`}
-      leadAction=${html`<span><button type="button" class="btn-ghost" disabled=${busy} onClick=${exit.close}>Cancel</button>${stale ? html`<button type="button" class="btn-secondary" disabled=${busy} onClick=${reloadLatest}>Reload latest and discard draft</button>` : null}</span>`}
+      recovery=${stale ? html`<button type="button" class="btn-secondary guided-conflict-recovery" disabled=${busy} onClick=${reloadLatest}>Reload latest and discard draft</button>` : null}
+      leadAction=${html`<button type="button" class="btn-ghost" disabled=${busy} onClick=${exit.close}>Cancel</button>`}
       finalAction=${html`<button type="button" class="btn-primary" disabled=${busy || stale || sameDecision(initial, value) || Boolean(validationError)} onClick=${save}>${busy ? "Saving…" : saveChangesLabel(count, devices.length)}</button>`}
     />
     ${exit.confirmation}
@@ -267,6 +279,7 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
     Boolean(name.trim()) || !sameDecision(initialDraft.current, value),
     busy,
     onClose,
+    inFlightRef,
   );
 
   useEffect(() => {
@@ -277,6 +290,7 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
 
   // Navigation preserves the draft; name validation belongs to its final step.
   const moveTo = (next) => {
+    if (inFlightRef.current || busy) return;
     setStep(next);
   };
 
@@ -325,13 +339,20 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
       isNew
       sourceFiltersEnabled=${overview.sourceFilters?.enabled === true}
       linkFilters=${linkFilters}
-      onLinkFilters=${setLinkFilters}
-      onRules=${setValue}
+      onLinkFilters=${(next) => {
+        if (!inFlightRef.current && !busy) setLinkFilters(next);
+      }}
+      onRules=${(next) => {
+        if (!inFlightRef.current && !busy) setValue(next);
+      }}
       sources=${sources}
       policies=${policies}
       linkSources=${linkSources}
-      onLinkSources=${setLinkSources}
+      onLinkSources=${(next) => {
+        if (!inFlightRef.current && !busy) setLinkSources(next);
+      }}
       disabled=${busy}
+      isLocked=${() => inFlightRef.current || busy}
       error=${error || creationError || (step === "review" ? validateGrantRules(value, sources) : "")}
       review=${html`<div class="access-level-name-form">
         <${NameField}
@@ -339,6 +360,7 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
           label="Access level name"
           value=${name}
           onInput=${(next) => {
+            if (inFlightRef.current || busy) return;
             setName(next);
             setNameTouched(true);
           }}

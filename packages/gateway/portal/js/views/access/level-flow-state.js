@@ -17,6 +17,20 @@ export function levelDecisionPath(rules, separateDirect = false) {
   path.push("review");
   return path;
 }
+/** Include saved account boundaries even when their source is no longer connected. */
+export function levelSourceInventory(sources, ...rules) {
+  const result = new Map(sources.map((source) => [sourceId(source), source]));
+  for (const rule of rules) {
+    const retained = [
+      ...(rule?.sources?.sourceIds ?? []),
+      ...(rule?.scopePolicies ?? []).map((policy) => policy.sourceId),
+    ];
+    for (const id of retained)
+      if (!result.has(id))
+        result.set(id, { id, displayName: "Unavailable account", available: false });
+  }
+  return [...result.values()];
+}
 export function sourceBoundarySummary(rule, source) {
   if (!isSourceAllowed(rule, sourceId(source))) return "Not shared";
   const policy = sourcePolicy(rule, sourceId(source));

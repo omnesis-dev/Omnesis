@@ -16,7 +16,8 @@ import {
   sourceBoundaryBlocksSavedFilter,
   SAVED_FILTER_SOURCE_MESSAGE,
 } from "../../components/grant-builder-state.js";
-import { sourceBoundarySummary } from "./level-flow-state.js";
+import { levelSourceInventory } from "./level-flow-state.js";
+import { ReadableBoundary } from "./level-review.js";
 
 export function LevelDataDecision({
   capability,
@@ -30,14 +31,7 @@ export function LevelDataDecision({
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState(null);
   const ids = sources.map(sourceId);
-  const retained = (rule.scopePolicies ?? [])
-    .filter((policy) => !ids.includes(policy.sourceId))
-    .map((policy) => ({
-      id: policy.sourceId,
-      displayName: "Unavailable account",
-      available: false,
-    }));
-  const all = [...sources, ...retained];
+  const all = levelSourceInventory(sources, rule);
   const visible = all.filter((source) =>
     `${sourceLabel(source)} ${sourceAccountOf(sourceId(source))}`
       .toLocaleLowerCase()
@@ -106,8 +100,10 @@ export function LevelDataDecision({
             ></label
           >
           <div class="guided-source-boundary">
-            <span>${sourceBoundarySummary(rule, source)}</span
-            >${(allowed && enabled && source.scopes?.items?.length) || policy ? html`<button type="button" class="btn-secondary" disabled=${disabled} aria-label=${`${enabled ? "Change" : "Inspect"} ${sourceLabel(source)} content`} onClick=${() => setEditing(source)}>${enabled ? "Change" : "Inspect"}</button>` : null}
+            <${ReadableBoundary}
+              rule=${rule}
+              source=${source}
+            />${(allowed && enabled && source.scopes?.items?.length) || policy ? html`<button type="button" class="btn-secondary" disabled=${disabled} aria-label=${`${enabled ? "Change" : "Inspect"} ${sourceLabel(source)} content`} onClick=${() => setEditing(source)}>${enabled ? "Change" : "Inspect"}</button>` : null}
           </div>
           ${locked ? html`<p class="source-filter-notice">${SAVED_FILTER_SOURCE_MESSAGE}</p>` : null}
         </article>`;

@@ -15,7 +15,12 @@ import {
 } from "../../components/grant-builder-state.js";
 import { copyRuleFilters } from "../../components/source-filter-state.js";
 import { LevelDataDecision } from "./level-data-decision.js";
-import { LevelDecisionSummary, LevelReview, DECISION_TITLES } from "./level-review.js";
+import {
+  LevelDecisionSummary,
+  LevelReview,
+  DECISION_TITLES,
+  LevelTopicSummary,
+} from "./level-review.js";
 import { levelDecisionPath, sameDecision } from "./level-flow-state.js";
 
 const QUESTIONS = {
@@ -78,13 +83,16 @@ export function LevelFlow({
   linkFilters,
   onLinkFilters,
   disabled,
+  isLocked,
   review,
   finalAction,
   leadAction,
   error = "",
+  recovery = null,
   impact = null,
 }) {
   const [attempted, setAttempted] = useState(false);
+  const correction = useRef(null);
   const heading = useRef(null),
     alert = useRef(null);
   const path = levelDecisionPath(rules, !linkSources || !linkFilters);
@@ -99,10 +107,32 @@ export function LevelFlow({
   useEffect(() => {
     if (error) alert.current?.focus?.();
   }, [error]);
+  const locked = () => disabled || isLocked?.() === true;
   const move = (next) => {
+    if (locked()) return;
     onStep(next);
   };
+  const changeFromReview = (target) => {
+    if (locked()) return;
+    if (isNew)
+      correction.current = {
+        path: [...path],
+        capabilities: Object.keys(rules),
+        visited: new Set(),
+      };
+    move(
+      target === "direct-data" &&
+        isNew &&
+        rules.answer &&
+        rules.direct &&
+        linkSources &&
+        linkFilters
+        ? "direct-choice"
+        : target,
+    );
+  };
   const update = (capability, next) => {
+    if (locked()) return;
     const value = { ...rules, [capability]: next };
     if (isNew && capability === "answer" && value.direct && linkSources && linkFilters)
       value.direct = copyRuleFilters(copyRuleSources(value.direct, next), next, accessLevel);
@@ -112,7 +142,7 @@ export function LevelFlow({
     !sourceFiltersEnabled &&
     [rules.answer, rules.direct].some((rule) => rule?.scopePolicies?.length);
   const reuse = () => {
-    if (copyBlocked) return;
+    if (locked() || copyBlocked) return;
     onRules({
       ...rules,
       direct: copyRuleFilters(
@@ -125,10 +155,12 @@ export function LevelFlow({
     onLinkFilters(true);
   };
   const separate = () => {
+    if (locked()) return;
     onLinkSources(false);
     onLinkFilters(false);
   };
   const next = () => {
+    if (locked()) return;
     setAttempted(true);
     if (decisionValidation) {
       alert.current?.focus?.();
@@ -138,9 +170,34 @@ export function LevelFlow({
       move(current === "overview" ? "changes" : "overview");
       return;
     }
+    if (correction.current) {
+      const returning = correction.current;
+      returning.visited.add(current);
+      const addedReading = ["answer", "direct"].some(
+        (key) => rules[key] && !returning.capabilities.includes(key),
+      );
+      const required = path.filter(
+        (key) =>
+          key !== "review" &&
+          (!returning.path.includes(key) || (key === "future" && addedReading)) &&
+          !returning.visited.has(key),
+      );
+      if (required.length) move(required[0]);
+      else {
+        correction.current = null;
+        move("review");
+      }
+      return;
+    }
     move(path[position + 1] ?? "review");
   };
-  const back = () => move(isNew ? path[Math.max(position - 1, 0)] : "overview");
+  const back = () => {
+    if (locked()) return;
+    if (correction.current) {
+      correction.current = null;
+      move("review");
+    } else move(isNew ? path[Math.max(position - 1, 0)] : "overview");
+  };
   const decisions = [
     "permissions",
     ...(rules.answer ? ["answer-data"] : []),
@@ -150,15 +207,31 @@ export function LevelFlow({
   ];
   return html`<section class="guided-level-flow">
     <div class="guided-progress" aria-label="Progress">
-      ${isNew ? `Step ${Math.max(position + 1, 1)} of ${path.length}` : current === "overview" ? "Edit access level" : current === "changes" ? "Final review" : "Edit decision"}
+      ${isNew ? (current === "review" ? "Final review" : correction.current ? "Update your decision" : "Create access level") : current === "overview" ? "Edit access level" : current === "changes" ? "Final review" : "Edit decision"}
     </div>
     <header class="guided-question">
       <h3 ref=${heading} tabindex="-1">${title[0]}</h3>
       <p>${title[1]}</p>
     </header>
-    ${error ? html`<div class="access-error guided-task-error" role="alert" tabindex="-1" ref=${alert}>${error}</div>` : attempted && decisionValidation ? html`<p class="access-field-error" role="alert" tabindex="-1" ref=${alert}>${decisionValidation}</p>` : null}
+    ${error ? html`<div class="access-error guided-task-error" role="alert" tabindex="-1" ref=${alert}>${error}${recovery}</div>` : attempted && decisionValidation ? html`<p class="access-field-error" role="alert" tabindex="-1" ref=${alert}>${decisionValidation}</p>` : null}
     <div class="guided-decision-body">
-      ${current === "permissions" ? html`<${CapabilityPicker} value=${rules} onChange=${onRules} policies=${policies} disabled=${disabled} hideLegend isNew=${isNew} linkFilters=${linkFilters} accessLevel=${accessLevel} sourceFiltersEnabled=${sourceFiltersEnabled} />` : null}
+      ${
+        current === "permissions"
+          ? html`<${CapabilityPicker}
+              value=${rules}
+              onChange=${(value) => {
+                if (!locked()) onRules(value);
+              }}
+              policies=${policies}
+              disabled=${disabled}
+              hideLegend
+              isNew=${isNew}
+              linkFilters=${linkFilters}
+              accessLevel=${accessLevel}
+              sourceFiltersEnabled=${sourceFiltersEnabled}
+            />`
+          : null
+      }
       ${current === "answer-data" || current === "direct-data" ? html`<${LevelDataDecision} capability=${current === "answer-data" ? "answer" : "direct"} rule=${rules[current === "answer-data" ? "answer" : "direct"]} onChange=${(value) => update(current === "answer-data" ? "answer" : "direct", value)} sources=${sources} enabled=${sourceFiltersEnabled} disabled=${disabled} accessLevel=${accessLevel} />` : null}
       ${
         current === "direct-choice"
@@ -179,6 +252,7 @@ export function LevelFlow({
                   type="radio"
                   name="direct-data-choice"
                   checked=${!linkSources || !linkFilters}
+                  disabled=${disabled}
                   onChange=${separate}
                 /><span
                   ><strong>Choose Direct data separately</strong
@@ -237,22 +311,27 @@ export function LevelFlow({
                   html`<section class="guided-overview-decision">
                     <header>
                       <h4>${DECISION_TITLES[key]}</h4>
-                      <button type="button" class="btn-secondary" onClick=${() => move(key)}>
+                      <button
+                        type="button"
+                        class="btn-secondary"
+                        disabled=${disabled}
+                        onClick=${() => move(key)}
+                      >
                         Change
                       </button>
                     </header>
-                    <${LevelDecisionSummary}
+                    <${LevelTopicSummary}
                       decision=${key}
                       rules=${rules}
                       sources=${sources}
                       policies=${policies}
-                    />${key === "direct-data" && rules.answer ? html`<button type="button" class="btn-secondary" onClick=${() => move("direct-choice")}>Use Answer’s data once</button>` : null}
+                    />${key === "direct-data" && rules.answer ? html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${() => move("direct-choice")}>Use Answer’s data once</button>` : null}
                   </section>`,
               )}
             </div>`
           : null
       }
-      ${current === "review" || current === "changes" ? html`${review}<${LevelReview} rules=${rules} initial=${initial ?? rules} sources=${sources} policies=${policies} isNew=${isNew} onChange=${move} />${impact}` : null}
+      ${current === "review" || current === "changes" ? html`${review}<${LevelReview} rules=${rules} initial=${initial ?? rules} sources=${sources} policies=${policies} isNew=${isNew} disabled=${disabled} onChange=${changeFromReview} />${impact}` : null}
     </div>
     <footer class="guided-task-footer">
       <div>${leadAction}</div>

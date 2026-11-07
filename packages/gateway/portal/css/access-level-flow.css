@@ -781,3 +781,181 @@
     align-items: stretch;
   }
 }
+
+/* Pale accent fills need dark labels in both application themes and states. */
+.guided-level-flow .btn-primary,
+.guided-filter-editor .btn-primary {
+  color: #0d2137;
+  background: #79c0ff;
+  border-color: #79c0ff;
+}
+.guided-level-flow .btn-primary:hover:not(:disabled),
+.guided-filter-editor .btn-primary:hover:not(:disabled) {
+  color: #0d2137;
+  background: #a2d3ff;
+  border-color: #a2d3ff;
+}
+.guided-level-flow .btn-primary:active:not(:disabled),
+.guided-filter-editor .btn-primary:active:not(:disabled) {
+  color: #0d2137;
+  background: #58a6ff;
+  border-color: #58a6ff;
+}
+.guided-level-flow .btn-primary:disabled,
+.guided-filter-editor .btn-primary:disabled {
+  opacity: 0.5;
+}
+.guided-question h3:focus {
+  outline: none;
+}
+.guided-conflict-recovery {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  white-space: normal;
+  line-height: 1.5;
+}
+.guided-task-error:has(.guided-conflict-recovery) {
+  max-height: 35dvh;
+}
+.guided-readable-boundary {
+  overflow-wrap: anywhere;
+}
+.guided-source-boundary > span {
+  min-width: 0;
+}
+.guided-source-boundary > button {
+  flex-shrink: 0;
+}
+.guided-account-delta {
+  padding: 16px 0;
+}
+.guided-account-delta > header small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+.guided-account-delta .guided-change-pair > section > span {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.guided-unchanged-accounts {
+  margin-top: 12px;
+}
+.modal-panel:has(.guided-filter-editor) .modal-subtitle {
+  overflow-wrap: anywhere;
+}
+.guided-overview-decision {
+  padding: 12px 0;
+}
+@media (max-height: 560px) {
+  .access-task-shell .access-editor-page {
+    overflow-y: auto;
+  }
+  .guided-level-flow {
+    flex: none;
+  }
+  .guided-decision-body {
+    overflow: visible;
+    flex: none;
+  }
+  .guided-task-footer {
+    position: sticky;
+    bottom: 0;
+  }
+}
+
+/* One scroll surface owns the catalogue and its restored position. */
+.guided-filter-editor .source-filter-options {
+  max-height: none;
+  overflow: visible;
+}
+
+@container guided-task (max-width: 300px) {
+  .guided-task-footer,
+  .guided-filter-footer {
+    flex-wrap: wrap;
+  }
+  .guided-task-footer > span,
+  .guided-filter-footer > span {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+  }
+}
+
+@container guided-task (max-width: 300px) {
+  .access-task-shell .access-page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .access-task-shell .access-page-header > div {
+    text-align: left;
+  }
+  .access-task-shell .access-page-header h2 {
+    max-width: none;
+  }
+}
+@media (max-height: 560px) {
+  .guided-task-error:has(.guided-conflict-recovery) {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@container guided-task (max-width: 300px) {
+  .guided-task-footer > div {
+    flex: 1;
+  }
+  .guided-task-footer > span,
+  .guided-filter-footer > span {
+    display: contents;
+  }
+  .guided-task-footer .btn-primary,
+  .guided-filter-footer .btn-primary {
+    flex: 1 0 100%;
+    width: 100%;
+  }
+  .guided-overview-decision > header,
+  .guided-review-decision > header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .guided-overview-decision h4,
+  .guided-review-decision h4 {
+    flex: 1 0 100%;
+  }
+  .guided-source-boundary {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* Reflow follows the space available to a task, including enlarged text. */
+.access-task-shell .access-editor-page,
+.guided-filter-editor {
+  container-type: inline-size;
+  container-name: guided-task;
+}
+.access-task-shell .access-editor-page {
+  overflow-y: auto;
+}
+@container guided-task (max-width: 300px) {
+  .guided-level-flow {
+    flex: none;
+  }
+  .guided-decision-body {
+    flex: none;
+    overflow: visible;
+  }
+  .guided-task-footer {
+    position: sticky;
+    bottom: 0;
+  }
+  .guided-task-error:has(.guided-conflict-recovery) {
+    max-height: none;
+    overflow: visible;
+  }
+}

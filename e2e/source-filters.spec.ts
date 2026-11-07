@@ -212,7 +212,7 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByRole("button", { name: "Review changes", exact: true }).click();
   await expect(page.locator(".guided-review-decision")).toHaveCount(2);
-  await expect(page.locator(".guided-match-names").last()).toContainText("person@example.com");
+  await expect(page.locator(".guided-account-delta").last()).toContainText("person@example.com");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.getByText(/Your draft is retained/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeDisabled();

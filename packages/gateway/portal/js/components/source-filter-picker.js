@@ -2,19 +2,32 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useScopeLabelGeneration } from "./source-filter-labels.js";
 import { readFilterOptions } from "./source-filter-requests.js";
 import { filterApiError, FilterReadiness } from "./source-filter-preview.js";
 import { requestIdentity, scopeRefKey, typedParticipant } from "./source-filter-state.js";
 
-export function SourceFilterPicker({ source, kind, selected, onToggle, disabled = false }) {
-  const [query, setQuery] = useState("");
-  const [trail, setTrail] = useState([]);
+export function SourceFilterPicker({
+  source,
+  kind,
+  selected,
+  onToggle,
+  disabled = false,
+  active = true,
+  scrollContainer,
+  memory,
+}) {
+  const sourceKey = `${source.id ?? source.sourceId}:${kind}`;
+  const saved = memory?.get(sourceKey);
+  const [query, setQuery] = useState(saved?.query ?? "");
+  const [trail, setTrail] = useState(saved?.trail ?? []);
+  const positions = useRef(saved?.positions ?? new Map());
   const parentId = query ? undefined : trail.at(-1)?.id;
   const sourceId = source.id ?? source.sourceId;
   const generation = useScopeLabelGeneration();
   const identity = JSON.stringify([generation, requestIdentity(sourceId, kind, query, parentId)]);
+  const scrollKey = JSON.stringify([identity, trail.map((item) => item.id)]);
   const current = useRef(identity);
   current.current = identity;
   const requests = useRef(new Set());
@@ -87,6 +100,26 @@ export function SourceFilterPicker({ source, kind, selected, onToggle, disabled 
       inFlight.current = false;
     };
   }, [identity]);
+  // The owner keeps one scroll container across the picker and review. Save
+  // offsets by exact catalogue context; a new query starts at its own position.
+  useLayoutEffect(() => {
+    const element = scrollContainer?.current;
+    if (!element || !active) return;
+    const restore = () => {
+      element.scrollTop = positions.current.get(scrollKey) ?? 0;
+    };
+    restore();
+    const remember = () => positions.current.set(scrollKey, element.scrollTop);
+    element.addEventListener("scroll", remember);
+    return () => {
+      element.removeEventListener("scroll", remember);
+      memory?.set(sourceKey, { query, trail, positions: positions.current });
+    };
+  }, [scrollKey, active]);
+  useLayoutEffect(() => {
+    if (active && state.identity === identity && !state.pending && scrollContainer?.current)
+      scrollContainer.current.scrollTop = positions.current.get(scrollKey) ?? 0;
+  }, [scrollKey, active, state.pending]);
   const visible = state.identity === identity ? state : { items: [], pending: true };
   const keys = new Set(selected.map(scopeRefKey));
   return html`<section

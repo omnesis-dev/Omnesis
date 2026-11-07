@@ -3,6 +3,7 @@
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { sourceAccountOf } from "../lib/source-id.js";
 import { Modal } from "./modal.js";
 import { SourceFilterPicker } from "./source-filter-picker.js";
 import { FilterPreview, FilterReadiness, useSourceFilterPreview } from "./source-filter-preview.js";
@@ -38,13 +39,17 @@ export function SourceFilterEditor({
     savedPolicy ? cloneFilter(savedPolicy) : newSourcePolicy(sourceId, capability, accessLevel),
   );
   const [step, setStep] = useState("mode");
-  const [mode, setMode] = useState(savedPolicy?.rules?.[0]?.action === "hide" ? "except" : "only");
+  const [mode, setMode] = useState(
+    savedPolicy ? (savedPolicy.rules?.[0]?.action === "hide" ? "except" : "only") : "all",
+  );
   const [kind, setKind] = useState(
     source.scopes?.items?.[0]?.kind ?? savedPolicy?.rules?.[0]?.match?.[0]?.kind ?? "conversation",
   );
   const [attempted, setAttempted] = useState(false);
   const [pickerVisited, setPickerVisited] = useState(false);
   const heading = useRef(null);
+  const scroll = useRef(null);
+  const pickerMemory = useRef(new Map());
   const initialSource = useRef(sourceId);
   const generation = useScopeLabelGeneration();
   const initialGeneration = useRef(generation);
@@ -96,7 +101,8 @@ export function SourceFilterEditor({
     open
     onClose=${onClose}
     title=${title}
-    subtitle=${`${source.displayName || source.name || "Source account"} · ${capability === "answer" ? "Answer" : "Direct"}`}
+    subtitle=${`${source.displayName || source.name || "Source account"} · ${sourceAccountOf(sourceId) || "Connected account"} · ${capability === "answer" ? "Answer" : "Direct"}`}
+    ariaLabel=${`${title}: ${source.displayName || source.name || "Source"}, ${sourceAccountOf(sourceId) || "Connected account"}, ${capability === "answer" ? "Answer" : "Direct"}`}
     size="lg"
   >
     <div class="source-filter-editor guided-filter-editor">
@@ -105,7 +111,7 @@ export function SourceFilterEditor({
           >${readOnly ? "Saved restriction" : `Step ${mode === "all" && step === "review" ? 2 : progress} of ${mode === "all" ? 2 : 3}`}</span
         >
       </div>
-      <div class="filter-task-scroll">
+      <div class="filter-task-scroll" ref=${scroll}>
         <h3 ref=${heading} tabindex="-1" class="sr-only">${title}</h3>
         ${readOnly ? html`<p class="source-filter-notice" role="status">${!enabled ? "Source filter editing requires experimental mode. This saved restriction remains enforced and can be inspected here." : "This filter uses settings this editor cannot change. The complete saved policy is preserved."}</p>` : null}
         ${
@@ -158,6 +164,9 @@ export function SourceFilterEditor({
                     setDraft(toggleScopeRef(draft, ref));
                   }}
                   disabled=${readOnly}
+                  active=${step === "picker"}
+                  scrollContainer=${scroll}
+                  memory=${pickerMemory.current}
                 />`
               : !kinds.length
                 ? html`<p>The source descriptor is unavailable. Saved decisions are retained.</p>`
@@ -191,10 +200,14 @@ export function SourceFilterEditor({
                               </li>`;
                             })}
                           </ul>
-                          <p>
-                            Any selected item may match. Required facts must be known for every
-                            selected kind.
-                          </p>
+                          <p>Records with uncertain matching information stay hidden.</p>
+                          <details>
+                            <summary>How matching works</summary>
+                            <p>
+                              Any selected item may match. Every selected kind needs known matching
+                              information.
+                            </p>
+                          </details>
                         </div>
                         <${FilterPreview} preview=${preview} /><${FilterReadiness}
                           readiness=${preview.data?.readiness ?? source.scopeReadiness}

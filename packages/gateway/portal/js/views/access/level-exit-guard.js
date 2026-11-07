@@ -6,14 +6,17 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ConfirmModal } from "../../components/confirm-modal.js";
 import { setRouteLeaveGuard } from "../../lib/router.js";
 
-export function useLevelExitGuard(dirty, busy, onClose) {
+export function useLevelExitGuard(dirty, busy, onClose, inFlight) {
   const active = useRef(dirty);
+  const pending = useRef(busy);
+  pending.current = busy;
+  const blocked = () => pending.current || inFlight?.current === true;
   const cleared = useRef(false);
   const [confirm, setConfirm] = useState(false);
   active.current = dirty && !cleared.current;
   useEffect(() => {
     setRouteLeaveGuard(() =>
-      active.current ? "Discard your unsaved access-level changes?" : null,
+      blocked() ? false : active.current ? "Discard your unsaved access-level changes?" : null,
     );
     const warn = (event) => {
       if (active.current) {
@@ -28,7 +31,7 @@ export function useLevelExitGuard(dirty, busy, onClose) {
     };
   }, []);
   const leave = () => {
-    if (cleared.current) return;
+    if (blocked() || cleared.current) return;
     cleared.current = true;
     active.current = false;
     setRouteLeaveGuard(null);
@@ -36,7 +39,7 @@ export function useLevelExitGuard(dirty, busy, onClose) {
   };
   return {
     close: () => {
-      if (busy) return;
+      if (blocked()) return;
       if (dirty) setConfirm(true);
       else leave();
     },
@@ -51,6 +54,8 @@ export function useLevelExitGuard(dirty, busy, onClose) {
       body="Your saved access level will not change. Unsaved choices in this draft will be lost."
       confirmLabel="Discard draft"
       cancelLabel="Keep editing"
+      confirmDisabled=${busy}
+      cancelDisabled=${busy}
       onCancel=${() => setConfirm(false)}
       onConfirm=${leave}
     />`,

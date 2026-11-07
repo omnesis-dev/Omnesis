@@ -111,14 +111,20 @@ async function mount(props: Record<string, unknown> = {}) {
       host,
     );
   });
-  if (props.enabled !== false && props.savedPolicy !== null && host.textContent?.includes("What should be shared?")) {
+  if (
+    props.enabled !== false &&
+    props.savedPolicy !== null &&
+    host.textContent?.includes("What should be shared?")
+  ) {
     await act(async () => button("Continue").click());
     await act(async () => button("Review filter").click());
     await flushUI();
   }
 }
 async function flushUI() {
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 async function waitOptions() {
   await act(async () => {
@@ -194,7 +200,9 @@ test.each([false, null, undefined])(
     await act(async () => render(h(SourceFilters, { ...props, enabled: true }), host));
     expect(host.querySelectorAll(".source-filter-source")).toHaveLength(4);
     expect(
-      [...host.querySelectorAll("button")].filter((entry) => entry.textContent?.trim() === "Add filter"),
+      [...host.querySelectorAll("button")].filter(
+        (entry) => entry.textContent?.trim() === "Add filter",
+      ),
     ).toHaveLength(3);
   },
 );
@@ -341,7 +349,10 @@ test("participant additions require an explicit accepted typed identifier and ex
     [...host.querySelectorAll("option")].map((option) => option.getAttribute("value")),
   ).toEqual(["email", "phone"]);
   const disclosure = host.querySelector<HTMLDetailsElement>(".source-filter-typed-disclosure")!;
-  await act(async () => { disclosure.open = true; disclosure.dispatchEvent(new window.Event("toggle")); });
+  await act(async () => {
+    disclosure.open = true;
+    disclosure.dispatchEvent(new window.Event("toggle"));
+  });
   const input = host.querySelector<HTMLInputElement>("input[aria-label='Exact identifier']")!;
   await act(async () => {
     input.value = "person@example.com";
@@ -636,4 +647,24 @@ test("removing and restoring a capability preserves its own filtered draft witho
     input().dispatchEvent(new window.Event("change", { bubbles: true }));
   });
   expect(onChange.mock.lastCall![0].direct).toBe(direct);
+});
+
+test("an unfiltered account opens as All content and continuing cannot imply a new restriction", async () => {
+  const onApply = vi.fn(),
+    onRemove = vi.fn(),
+    onClose = vi.fn();
+  await mount({ savedPolicy: null, onApply, onRemove, onClose });
+  expect(onClose).not.toHaveBeenCalled();
+  const all = [...host.querySelectorAll<HTMLLabelElement>(".guided-choice")].find((row) =>
+    row.textContent?.includes("All content"),
+  )!;
+  expect(all.querySelector<HTMLInputElement>("input")!.hasAttribute("checked")).toBe(true);
+  await act(async () => button("Continue").click());
+  expect(host.textContent).toContain("All content in this account");
+  expect(api.previewSourceFilter).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+  await act(async () => button("Share all content").click());
+  expect(onClose).toHaveBeenCalled();
+  expect(onApply).not.toHaveBeenCalled();
+  expect(onRemove).not.toHaveBeenCalled();
 });

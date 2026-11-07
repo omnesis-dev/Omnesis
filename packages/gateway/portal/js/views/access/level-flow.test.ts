@@ -171,7 +171,7 @@ test("a targeted release edit shows only its before/after delta and preserves so
     ),
   );
   const section = [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")].find(
-    (element) => element.querySelector("h4")?.textContent === "Answer privacy",
+    (element) => element.querySelector("h4")?.textContent === "Answer release",
   )!;
   await act(async () => section.querySelector<HTMLButtonElement>("button")!.click());
   expect(host.textContent).toContain("How should answers be released?");
@@ -180,7 +180,7 @@ test("a targeted release edit shows only its before/after delta and preserves so
   await click("Done");
   await click("Review changes");
   expect(host.querySelectorAll(".guided-review-decision")).toHaveLength(1);
-  expect(host.querySelector(".guided-review-decision h4")?.textContent).toBe("Answer privacy");
+  expect(host.querySelector(".guided-review-decision h4")?.textContent).toBe("Answer release");
   expect(host.textContent).toContain("Before");
   expect(host.textContent).toContain("After");
   await click("Save changes");
@@ -193,4 +193,278 @@ test("a targeted release edit shows only its before/after delta and preserves so
   expect(
     body.rules.find((rule: { capability: string }) => rule.capability === "direct").scopePolicies,
   ).toEqual([]);
+});
+
+async function createReview() {
+  await act(async () =>
+    render(h(NewLevelPage, { overview, onCreated: vi.fn(), onClose: vi.fn() }), host),
+  );
+  await click("Continue");
+  await change(host.querySelector(".guided-source-select input")!);
+  await click("Continue");
+  await click("Continue");
+  await click("Continue");
+}
+async function changeReview(title: string) {
+  const section = [...host.querySelectorAll<HTMLElement>(".guided-review-decision")].find(
+    (element) => element.querySelector("h4")?.textContent === title,
+  )!;
+  await act(async () => section.querySelector<HTMLButtonElement>("button")!.click());
+}
+test("correcting release or source data from create review returns immediately without replaying other decisions", async () => {
+  await createReview();
+  await changeReview("Answer release");
+  await change([...host.querySelectorAll<HTMLInputElement>(".grant-builder-release input")][1]!);
+  await click("Continue");
+  expect(host.textContent).toContain("Ready to create this access level?");
+  expect(host.textContent).toContain("Answers are released without privacy review.");
+  await changeReview("Answer data");
+  await click("Continue");
+  expect(host.textContent).toContain("Ready to create this access level?");
+  expect(host.textContent).toContain("Answers are released without privacy review.");
+});
+test("adding Direct from create review visits only newly required decisions and retains earlier answers", async () => {
+  await createReview();
+  await changeReview("Permissions");
+  const direct = [...host.querySelectorAll<HTMLElement>(".access-capability-preset")].find((row) =>
+    row.textContent?.includes("Direct"),
+  )!;
+  await change(direct.querySelector("input")!);
+  await click("Continue");
+  expect(host.textContent).toContain("What may Direct read?");
+  await click("Continue");
+  expect(host.textContent).toContain("What about new sources?");
+  await click("Continue");
+  expect(host.textContent).toContain("Ready to create this access level?");
+  expect(host.textContent).toContain("Answers are reviewed with Invented policy.");
+});
+test("data change review pairs the changed account and collapses unchanged accounts", async () => {
+  const other = { ...source, id: "fictional:two" };
+  const answer = {
+    ...newGrantRule("answer", "invented-policy"),
+    sources: { mode: "allowlist", sourceIds: [source.id, other.id] },
+  };
+  const level = { id: "invented-level", name: "Project assistant", revision: 1, rules: [answer] };
+  await act(async () =>
+    render(
+      h(LevelEditorPage, {
+        level,
+        overview: { ...overview, sources: [source, other] },
+        connections: [],
+        onSaved: vi.fn(),
+        onConflict: vi.fn(),
+        onGone: vi.fn(),
+        onClose: vi.fn(),
+      }),
+      host,
+    ),
+  );
+  const section = [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")].find(
+    (row) => row.querySelector("h4")?.textContent === "Answer data",
+  )!;
+  await act(async () => section.querySelector<HTMLButtonElement>("button")!.click());
+  await change(host.querySelector(".guided-source-select input")!);
+  await click("Done");
+  await click("Review changes");
+  expect(host.querySelectorAll(".guided-account-delta")).toHaveLength(1);
+  expect(host.querySelector(".guided-account-delta")?.textContent).toContain(
+    "BeforeAll contentAfterNot shared",
+  );
+  expect(host.querySelector(".guided-unchanged-accounts summary")?.textContent).toContain(
+    "1 unchanged account",
+  );
+});
+
+test("a delayed creation freezes review navigation, the name and dismissal until the request settles", async () => {
+  let reject!: (error: Error) => void;
+  api.createAccessLevel.mockReturnValue(
+    new Promise((_resolve, fail) => {
+      reject = fail;
+    }),
+  );
+  const onClose = vi.fn();
+  await act(async () => render(h(NewLevelPage, { overview, onCreated: vi.fn(), onClose }), host));
+  await click("Continue");
+  await change(host.querySelector(".guided-source-select input")!);
+  await click("Continue");
+  await click("Continue");
+  await click("Continue");
+  await change(host.querySelector("#access-new-level-name")!, "Frozen draft");
+  const changes = [...host.querySelectorAll<HTMLButtonElement>(".guided-review-decision button")];
+  const back = button("Back"),
+    cancel = button("Cancel"),
+    name = host.querySelector<HTMLInputElement>("#access-new-level-name")!;
+  await act(async () => {
+    button("Create access level").click();
+    changes[1]!.click();
+    back.click();
+    cancel.click();
+    name.value = "Attempted later name";
+    name.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+  expect(host.textContent).toContain("Ready to create this access level?");
+  expect(host.querySelector(".guided-source-list")).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(host.querySelector(".confirm-modal-backdrop")).toBeNull();
+  expect(changes.every((element) => element.disabled)).toBe(true);
+  expect(back.disabled && cancel.disabled && name.disabled).toBe(true);
+  expect(api.createAccessLevel).toHaveBeenCalledOnce();
+  expect(api.createAccessLevel.mock.calls[0]![0].name).toBe("Frozen draft");
+  await act(async () => reject(new Error("A deliberate fixture failure")));
+  await click("Back");
+  await click("Continue");
+  expect(host.querySelector<HTMLInputElement>("#access-new-level-name")!.value).toBe(
+    "Frozen draft",
+  );
+});
+test("a delayed save keeps all review controls frozen and closes only the submitted draft", async () => {
+  let resolve!: () => void;
+  api.updateAccessLevel.mockReturnValue(
+    new Promise<void>((done) => {
+      resolve = done;
+    }),
+  );
+  const onSaved = vi.fn(),
+    onClose = vi.fn();
+  const answer = {
+    ...newGrantRule("answer", "invented-policy"),
+    sources: { mode: "allowlist", sourceIds: [source.id] },
+  };
+  await act(async () =>
+    render(
+      h(LevelEditorPage, {
+        level: { id: "invented-level", name: "Project assistant", revision: 4, rules: [answer] },
+        connections: [],
+        overview,
+        onSaved,
+        onClose,
+        onConflict: vi.fn(),
+        onGone: vi.fn(),
+      }),
+      host,
+    ),
+  );
+  const release = [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")].find(
+    (row) => row.querySelector("h4")?.textContent === "Answer release",
+  )!;
+  await act(async () => release.querySelector<HTMLButtonElement>("button")!.click());
+  await change([...host.querySelectorAll<HTMLInputElement>(".grant-builder-release input")][1]!);
+  await click("Done");
+  await click("Review changes");
+  const changeButton = host.querySelector<HTMLButtonElement>(".guided-review-decision button")!,
+    back = button("Back"),
+    cancel = button("Cancel");
+  await act(async () => {
+    button("Save changes").click();
+    changeButton.click();
+    back.click();
+    cancel.click();
+  });
+  expect(changeButton.disabled && back.disabled && cancel.disabled).toBe(true);
+  expect(host.textContent).toContain("Review your changes");
+  expect(host.querySelector(".grant-builder-release")).toBeNull();
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(api.updateAccessLevel).toHaveBeenCalledOnce();
+  await act(async () => resolve());
+  expect(onSaved).toHaveBeenCalledOnce();
+  expect(onClose).toHaveBeenCalledOnce();
+});
+
+test("linked Direct correction opens its reuse choice and saves independent refs without changing Answer", async () => {
+  api.getSourceFilterOptions.mockResolvedValue({
+    sourceId: source.id,
+    readiness: source.scopeReadiness,
+    items: [{ ref: { kind: "label", id: "direct-only" }, label: "Independent label", count: 1 }],
+  });
+  await act(async () =>
+    render(h(NewLevelPage, { overview, onCreated: vi.fn(), onClose: vi.fn() }), host),
+  );
+  const direct = [...host.querySelectorAll<HTMLElement>(".access-capability-preset")].find(
+    (row) => row.querySelector("strong")?.textContent === "Direct",
+  )!;
+  await change(direct.querySelector("input")!);
+  await click("Continue");
+  await change(host.querySelector(".guided-source-select input")!);
+  await click("Continue");
+  await click("Continue");
+  await click("Continue");
+  await click("Continue");
+  await changeReview("Direct data");
+  expect(host.textContent).toContain("What may Direct read?");
+  expect(host.textContent).not.toContain("What may this connection do?");
+  const separate = [...host.querySelectorAll<HTMLElement>(".guided-choice")].find((row) =>
+    row.textContent?.includes("data separately"),
+  )!;
+  await change(separate.querySelector("input")!);
+  await click("Continue");
+  expect(host.textContent).toContain("Which originals may Direct read?");
+  await click("Change");
+  const only = [...host.querySelectorAll<HTMLElement>(".guided-choice")].find((row) =>
+    row.textContent?.includes("Only matching content"),
+  )!;
+  await change(only.querySelector("input")!);
+  await click("Continue");
+  await vi.waitFor(() => expect(host.querySelector(".source-filter-options input")).not.toBeNull());
+  await change(host.querySelector(".source-filter-options input")!);
+  await click("Review filter");
+  await vi.waitFor(() => expect(button("Apply filter").disabled).toBe(false));
+  await click("Apply filter");
+  await click("Continue");
+  expect(host.textContent).toContain("Ready to create this access level?");
+  await change(host.querySelector("#access-new-level-name")!, "Independent draft");
+  await click("Create access level");
+  const rules = api.createAccessLevel.mock.calls[0]![0].rules;
+  expect(
+    rules.find((rule: { capability: string }) => rule.capability === "answer").scopePolicies ?? [],
+  ).toEqual([]);
+  expect(
+    rules.find((rule: { capability: string }) => rule.capability === "direct").scopePolicies[0]
+      .rules[0].match,
+  ).toEqual([{ kind: "label", id: "direct-only" }]);
+});
+
+test("an unavailable unfiltered account remains visible in the overview, data decision and review", async () => {
+  const missing = "fictional:missing@example.org";
+  const answer = {
+    ...newGrantRule("answer", "invented-policy"),
+    sources: { mode: "allowlist", sourceIds: [missing] },
+  };
+  await act(async () =>
+    render(
+      h(LevelEditorPage, {
+        level: { id: "invented-level", name: "Retained boundary", revision: 1, rules: [answer] },
+        overview,
+        connections: [],
+        onSaved: vi.fn(),
+        onConflict: vi.fn(),
+        onGone: vi.fn(),
+        onClose: vi.fn(),
+      }),
+      host,
+    ),
+  );
+  expect(host.textContent).toContain("1 account selected");
+  const sections = () => [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")];
+  const data = sections().find((row) => row.querySelector("h4")?.textContent === "Answer data")!;
+  await act(async () => data.querySelector<HTMLButtonElement>("button")!.click());
+  const retained = [...host.querySelectorAll<HTMLElement>(".guided-source-row")].find((row) =>
+    row.textContent?.includes("missing@example.org"),
+  )!;
+  expect(retained.textContent).toContain("Unavailable account");
+  expect(retained.textContent).toContain("All content");
+  expect(retained.querySelector<HTMLInputElement>("input")!.hasAttribute("checked")).toBe(true);
+  await click("Back");
+  const permissions = sections().find(
+    (row) => row.querySelector("h4")?.textContent === "Permissions",
+  )!;
+  await act(async () => permissions.querySelector<HTMLButtonElement>("button")!.click());
+  const notes = [...host.querySelectorAll<HTMLElement>(".access-capability-preset")].find(
+    (row) => row.querySelector("strong")?.textContent === "Notes",
+  )!;
+  await change(notes.querySelector("input")!);
+  await click("Done");
+  await click("Review changes");
+  expect(host.querySelector(".guided-unchanged")?.textContent).toContain("missing@example.org");
+  expect(host.querySelector(".guided-unchanged")?.textContent).toContain("All content");
 });
