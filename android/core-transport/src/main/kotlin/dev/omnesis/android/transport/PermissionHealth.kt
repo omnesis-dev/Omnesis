@@ -105,11 +105,14 @@ data class PermissionHealthEntry(
  * A source the gateway answers "source not found" for is checked against the
  * gateway's source list: when this device neither owns nor joins it, its
  * phone-side opt-in is stale and [forgetSource] turns it off; when the device
- * does host it, it is reported again once. Any other 404 — a gateway that
- * predates permission health — simply stops reporting the source. Reporting
- * resumes on a new session, when the source is turned back on, or on
- * [resetReporting]. Local snapshots are always read, so the phone keeps
- * showing what needs fixing.
+ * does host it, it is reported again once. A source whose activation ran
+ * across that report — the opt-in registering it this very moment — is never
+ * turned off: its missing row is the registration still under way, so it is
+ * left to be reported again. Any other 404 — a gateway that predates
+ * permission health — simply stops reporting the source. Reporting resumes on
+ * a new session, when the source is turned back on, or on [resetReporting].
+ * Local snapshots are always read, so the phone keeps showing what needs
+ * fixing.
  */
 class PermissionHealthCoordinator(
     private val reporters: () -> Collection<PermissionHealthReporter>,
@@ -119,6 +122,8 @@ class PermissionHealthCoordinator(
     private val deviceId: () -> String? = { null },
     /** Turns a source's phone-side opt-in off when the gateway has no such source for this device. */
     private val forgetSource: (String) -> Unit = {},
+    /** The opt-ins under way, which a missing row must not overrule. */
+    private val activations: SourceRemovalReconciler? = null,
 ) {
     private val _state = MutableStateFlow<List<PermissionHealthEntry>>(emptyList())
     val state: StateFlow<List<PermissionHealthEntry>> = _state.asStateFlow()
@@ -227,10 +232,12 @@ class PermissionHealthCoordinator(
             val snapshot = reporter.permissionHealth()
             admin()?.let { current ->
                 if (!isRegisteredOn(current, reporter.sourceId)) return@let
+                // Taken before the report, so an opt-in that starts while it is on the wire still counts.
+                val activationMark = activations?.activationMark(reporter.sourceId)
                 try {
                     current.putPermissionHealth(reporter.sourceId, snapshot)
                 } catch (notFound: GatewayException.NotFound) {
-                    settleNotFound(current, reporter.sourceId, notFound)
+                    settleNotFound(current, reporter.sourceId, notFound, activationMark)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
@@ -251,8 +258,14 @@ class PermissionHealthCoordinator(
      * The gateway has no [sourceId] to report against. Only its own "source not
      * found" answer is worth one look at the source list; the answer decides
      * between a stale phone-side opt-in and a source this device does host.
+     * [activationMark] is where the source's activations stood before the report.
      */
-    private suspend fun settleNotFound(client: AdminClient, sourceId: String, error: GatewayException.NotFound) {
+    private suspend fun settleNotFound(
+        client: AdminClient,
+        sourceId: String,
+        error: GatewayException.NotFound,
+        activationMark: Long?,
+    ) {
         val device = deviceId()
         val sourceMissing = error.body?.contains(SOURCE_NOT_FOUND, ignoreCase = true) == true
         val firstLook = synchronized(unregisteredLock) { membershipChecked.add(sourceId) }
@@ -270,9 +283,24 @@ class PermissionHealthCoordinator(
         }
         when (hosted) {
             false -> {
-                markUnregistered(sourceId)
-                runCatching { forgetSource(sourceId) }
-                    .onFailure { Log.w("Omnesis:permissions", "Could not turn off the stale opt-in for $sourceId: $it") }
+                val forget = {
+                    markUnregistered(sourceId)
+                    runCatching { forgetSource(sourceId) }
+                        .onFailure { Log.w("Omnesis:permissions", "Could not turn off the stale opt-in for $sourceId: $it") }
+                    Unit
+                }
+                val forgot = if (activations != null && activationMark != null) {
+                    activations.ifNotActivatedSince(sourceId, activationMark, forget)
+                } else {
+                    forget()
+                    true
+                }
+                if (!forgot) {
+                    // Being turned on right now: the row is the registration still under way.
+                    // Leave the source to be reported, and looked up, again.
+                    synchronized(unregisteredLock) { membershipChecked.remove(sourceId) }
+                    Log.i("Omnesis:permissions", "Kept $sourceId on: its opt-in ran while the gateway had no row for it")
+                }
             }
             true -> synchronized(unregisteredLock) { unregistered.remove(sourceId) }
             null -> markUnregistered(sourceId)

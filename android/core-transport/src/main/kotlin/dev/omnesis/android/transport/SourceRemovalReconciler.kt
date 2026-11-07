@@ -66,6 +66,23 @@ class SourceRemovalReconciler(
         }
     }
 
+    /** Where [sourceId]'s activations stand now, for a later [ifNotActivatedSince]. */
+    fun activationMark(sourceId: String): Long = synchronized(lock) { epochs[sourceId] ?: 0L }
+
+    /**
+     * Runs [action] — turning [sourceId] off because the gateway has no row for
+     * this device — only when no activation of it started, finished or is under
+     * way since [mark], and no resume of it is queued. A missing row read across
+     * an activation proves nothing: that activation may be creating it.
+     * Returns whether [action] ran.
+     */
+    fun ifNotActivatedSince(sourceId: String, mark: Long, action: () -> Unit): Boolean = synchronized(lock) {
+        readPendingResumes?.let { updatePendingResumes(it()) }
+        val quiet = (active[sourceId] ?: 0) == 0 && (epochs[sourceId] ?: 0L) == mark && sourceId !in pendingResumes
+        if (quiet) action()
+        quiet
+    }
+
     suspend fun reconcile(fetchRemoved: suspend () -> List<String>) {
         pendingAuthorityReady.await()
         val (observedSession, observed) = synchronized(lock) {

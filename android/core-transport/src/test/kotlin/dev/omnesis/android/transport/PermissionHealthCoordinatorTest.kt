@@ -10,11 +10,13 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -193,6 +195,102 @@ class PermissionHealthCoordinatorTest {
             repeat(3) { coordinator.refreshNow() }
             assertEquals("the stale source is never reported again", 1, gateway.count(activity))
             assertTrue(coordinator.state.value.isEmpty())
+        } finally { server.shutdown() }
+    }
+
+    private class NoopOptIn(override val sourceId: String) : HostedSourceOptIn {
+        override fun forget() {}
+        override fun withdraw() {}
+    }
+
+    @Test fun a_source_whose_opt_in_is_registering_it_is_never_turned_off() = runTest {
+        // The user just turned Call Log on: the switch is on and its registration is on the wire,
+        // so the gateway has no row yet when the setup page's own report reaches it.
+        val callLog = "android-call-log:local"
+        val unregistered = ConcurrentHashMap.newKeySet<String>().apply { add(callLog) }
+        val gateway = CountingGateway(missing = unregistered)
+        val server = MockWebServer().also { it.dispatcher = gateway; it.start() }
+        val activations = SourceRemovalReconciler { listOf(NoopOptIn(callLog)) }
+        val registration = CompletableDeferred<Unit>()
+        val activation = CoroutineScope(Dispatchers.Default).launch {
+            activations.activating(callLog) { registration.await() }
+        }
+        try {
+            while (activations.activationMark(callLog) == 0L) Thread.sleep(1)
+            val reporter = Reporter(sourceId = callLog)
+            val forgotten = mutableListOf<String>()
+            val admin = server.admin()
+            val coordinator = PermissionHealthCoordinator(
+                { listOf(reporter) }, { admin }, TestScope(testScheduler),
+                deviceId = { "phone-58" },
+                forgetSource = { forgotten += it },
+                activations = activations,
+            )
+
+            coordinator.refreshNow()
+            assertTrue("an opt-in under way is not overruled by its missing row", forgotten.isEmpty())
+
+            // The registration lands: the gateway now has the row.
+            unregistered.remove(callLog)
+            registration.complete(Unit)
+            activation.join()
+            coordinator.refreshNow()
+            assertTrue(forgotten.isEmpty())
+            assertEquals("still reported, not written off as unregistered", 2, gateway.count(callLog))
+            assertEquals(1, gateway.sourceLists.get())
+        } finally {
+            activation.cancel()
+            server.shutdown()
+        }
+    }
+
+    @Test fun an_opt_in_that_ran_while_the_report_was_on_the_wire_is_not_turned_off() = runTest {
+        // The registration starts and lands between the report and its source-list look,
+        // which a slow read still answers without the new row.
+        val appUsage = "android-app-usage:local"
+        val gateway = CountingGateway(missing = setOf(appUsage))
+        val server = MockWebServer().also { it.dispatcher = gateway; it.start() }
+        val activations = SourceRemovalReconciler { listOf(NoopOptIn(appUsage)) }
+        gateway.beforeAnswer = { id -> if (id == appUsage) runBlocking { activations.activating(appUsage) {} } }
+        try {
+            val reporter = Reporter(sourceId = appUsage)
+            val forgotten = mutableListOf<String>()
+            val admin = server.admin()
+            val coordinator = PermissionHealthCoordinator(
+                { listOf(reporter) }, { admin }, TestScope(testScheduler),
+                deviceId = { "phone-58" },
+                forgetSource = { forgotten += it },
+                activations = activations,
+            )
+
+            coordinator.refreshNow()
+
+            assertTrue(forgotten.isEmpty())
+            assertEquals(1, gateway.sourceLists.get())
+        } finally { server.shutdown() }
+    }
+
+    @Test fun a_stale_opt_in_is_still_turned_off_when_no_activation_ran() = runTest {
+        val activity = "android-activity-segments:local"
+        val gateway = CountingGateway(missing = setOf(activity))
+        val server = MockWebServer().also { it.dispatcher = gateway; it.start() }
+        try {
+            val reporter = Reporter(sourceId = activity)
+            val forgotten = mutableListOf<String>()
+            val admin = server.admin()
+            val coordinator = PermissionHealthCoordinator(
+                { listOf(reporter) }, { admin }, TestScope(testScheduler),
+                deviceId = { "phone-58" },
+                forgetSource = { id ->
+                    forgotten += id
+                    reporter.active = false
+                },
+                activations = SourceRemovalReconciler { listOf(NoopOptIn(activity)) },
+            )
+
+            coordinator.refreshNow()
+
+            assertEquals(listOf(activity), forgotten)
         } finally { server.shutdown() }
     }
 

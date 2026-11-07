@@ -40,6 +40,39 @@ class SourceRemovalReconcilerTest {
         assertEquals(0, neverAdded.withdrawals)
     }
 
+    @Test fun a_missing_row_decision_runs_only_when_no_activation_crossed_it() = runTest {
+        val source = OptIn("notes:local")
+        val reconciler = SourceRemovalReconciler { listOf(source) }
+        var ran = 0
+
+        val quiet = reconciler.activationMark(source.sourceId)
+        assertEquals(true, reconciler.ifNotActivatedSince(source.sourceId, quiet) { ran++ })
+        assertEquals(1, ran)
+
+        val before = reconciler.activationMark(source.sourceId)
+        reconciler.activating(source.sourceId) {}
+        assertEquals(false, reconciler.ifNotActivatedSince(source.sourceId, before) { ran++ })
+
+        val release = CompletableDeferred<Unit>()
+        val running = async { reconciler.activating(source.sourceId) { release.await() } }
+        runCurrent()
+        val during = reconciler.activationMark(source.sourceId)
+        assertEquals("an activation under way", false, reconciler.ifNotActivatedSince(source.sourceId, during) { ran++ })
+        release.complete(Unit)
+        running.await()
+        assertEquals(1, ran)
+    }
+
+    @Test fun a_queued_resume_keeps_a_missing_row_from_turning_the_source_off() = runTest {
+        val source = OptIn("notes:local")
+        val reconciler = SourceRemovalReconciler { listOf(source) }
+        reconciler.pendingResumesFrom { setOf(source.sourceId) }
+        val mark = reconciler.activationMark(source.sourceId)
+        var ran = 0
+        assertEquals(false, reconciler.ifNotActivatedSince(source.sourceId, mark) { ran++ })
+        assertEquals(0, ran)
+    }
+
     @Test fun stale_removal_read_cannot_withdraw_an_explicit_reactivation() = runTest {
         val source = OptIn("notes:local")
         val reconciler = SourceRemovalReconciler { listOf(source) }
