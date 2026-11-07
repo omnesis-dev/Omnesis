@@ -9,6 +9,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { bm25Search } from "../search/bm25.js";
 import {
+  CHUNK_STATS_INDEX,
   EMBEDDING_DIM,
   createIndexDatabase,
   getWatermark,
@@ -92,6 +93,47 @@ describe("schema", () => {
       .all()
       .map((r) => r.name);
     expect(cols).toContain("embedding");
+  });
+
+  test("the per-source stats scan reads the covering index, never the chunk rows", () => {
+    const plan = db
+      .prepare<[], { detail: string }>(
+        `EXPLAIN QUERY PLAN SELECT source_id,
+              COUNT(DISTINCT document_id) AS docs,
+              COUNT(*) AS chunks,
+              MIN(source_created_at) AS earliest,
+              MAX(source_created_at) AS latest
+       FROM chunks GROUP BY source_id`,
+      )
+      .all()
+      .map((r) => r.detail);
+    expect(plan.some((d) => d.includes(`COVERING INDEX ${CHUNK_STATS_INDEX}`))).toBe(true);
+    expect(plan.some((d) => /SCAN chunks$/.test(d))).toBe(false);
+  });
+
+  test("an index database that predates the stats index gets it on reopen", () => {
+    const path = `/tmp/omnesis-indexer-test-${randomUUID()}.db`;
+    const older = createIndexDatabase(path);
+    upsertChunks(older, [makeChunk("doc-1", 0), makeChunk("doc-2", 0)]);
+    older.exec(`DROP INDEX ${CHUNK_STATS_INDEX}`);
+    older.close();
+
+    const reopened = createIndexDatabase(path);
+    try {
+      const index = reopened
+        .prepare<[string], { name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+        )
+        .get(CHUNK_STATS_INDEX);
+      expect(index?.name).toBe(CHUNK_STATS_INDEX);
+      refreshIndexStats(reopened);
+      expect(getIndexStatsBySource(reopened)["test-source"]).toEqual({
+        indexedDocs: 2,
+        chunks: 2,
+      });
+    } finally {
+      reopened.close();
+    }
   });
 });
 

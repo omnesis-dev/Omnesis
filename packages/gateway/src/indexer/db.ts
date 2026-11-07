@@ -105,6 +105,35 @@ function ensureColumn(db: Db, table: string, column: string, ddl: string): void 
   }
 }
 
+/**
+ * The index `refreshIndexStats` scans instead of the table. Every chunk row
+ * carries its content and embedding, so a scan of the table reads the whole
+ * store; the index holds only the three columns the per-source stats need, so
+ * the scan reads a small fraction of it. Built once, which reads the table in
+ * full on an index database that predates it.
+ */
+export const CHUNK_STATS_INDEX = "idx_chunks_source_document_date";
+
+function ensureChunkStatsIndex(db: Db): void {
+  const present = db
+    .prepare<[string], { present: number }>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = ?",
+    )
+    .get(CHUNK_STATS_INDEX);
+  if (present) return;
+  const chunks = db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM chunks").get();
+  const startMs = Date.now();
+  if (chunks && chunks.count > 0) {
+    log.info(`Building ${CHUNK_STATS_INDEX} over ${chunks.count} chunks (one-time)`);
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS ${CHUNK_STATS_INDEX} ON chunks(source_id, document_id, source_created_at)`,
+  );
+  if (chunks && chunks.count > 0) {
+    log.info(`Built ${CHUNK_STATS_INDEX} in ${Date.now() - startMs}ms`);
+  }
+}
+
 export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {}): Db {
   const db = openIndexDb(path, opts);
 
@@ -137,6 +166,7 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
   db.exec("CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_chunks_type ON chunks(document_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_chunks_date ON chunks(source_created_at)");
+  ensureChunkStatsIndex(db);
 
   // Queue of chunk rowids whose HNSW vectors still need removing. The HTTP
   // delete cascade runs on the main thread, which holds only a *read*
