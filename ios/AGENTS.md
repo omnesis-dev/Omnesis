@@ -394,7 +394,9 @@ The wrapper boots a synth gateway on port 17601 with the `e2e-minimal` universe,
 
 The simulator inherits the macOS user's filesystem access, so reading host `/tmp` from inside the test works. Env vars passed via `xcodebuild test FOO=bar` don't propagate into the simulator-side test runner — that's why the file-handoff exists instead.
 
-TLS: the test uses a `URLSession` with an "accept any cert" delegate (`AcceptAnyCertDelegate` in the same file) since the synth gateway uses an auto-generated self-signed cert and the test bypasses pairing. Production stays on `OmnesisURLSession.shared` with its pinned trust path.
+TLS: the test uses a `URLSession` with an "accept any cert" delegate (`LiveSessionDelegate` in the same file) since the synth gateway uses an auto-generated self-signed cert and the test bypasses pairing. Production stays on `OmnesisURLSession.shared` with its pinned trust path.
+
+Timings: the same delegate logs a `[live-e2e]` line per request with its DNS, connect, TLS, first-byte and body phases. When a request is slow or times out, read those lines first: `unfinished` names the phase it was stuck in.
 
 Not covered by this suite (intentional follow-ups): pairing-flow E2E (the test uses the bootstrap admin token directly), DeviceSocket SSE subscription, and `AdminClient.listDescriptors` — that last one caught a real iOS bug (`SerializedDescriptor.importBased` / `pushBased` declared non-optional but the gateway doesn't emit those keys); the test is omitted with a TODO comment in the file pointing at the decoder fix.
 
