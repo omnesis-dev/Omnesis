@@ -254,7 +254,7 @@ export function LevelEditorPage({
   <//>`;
 }
 
-/** A new access level: its name, then the permissions it holds. `onCreated(level)` follows a save. */
+/** Guided decisions, followed by naming and review. `onCreated(level)` follows a save. */
 export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
   const policies = overviewPolicies(overview);
   const sources = overview.sources ?? [];
