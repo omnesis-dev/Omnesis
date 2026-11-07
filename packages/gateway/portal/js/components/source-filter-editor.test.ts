@@ -282,6 +282,9 @@ test("readiness returned by the preview fences Use even if the overview was read
   expect(button("Apply filter").disabled).toBe(true);
   expect(host.textContent).toContain("Refresh required");
   expect(host.textContent).toContain("Fictional collector");
+  expect(host.querySelectorAll(".source-filter-readiness")).toHaveLength(1);
+  expect(host.textContent).toContain("Provisional counts");
+  expect(host.textContent!.indexOf("Refresh required")).toBeLessThan(host.textContent!.indexOf("visible"));
 });
 
 test("a late picker response from another account is aborted and never displayed", async () => {
@@ -795,4 +798,14 @@ test("an explicit option refresh can recover readiness while Apply still waits f
   expect(host.textContent).toContain("Review this filter");
   expect(api.previewSourceFilter).toHaveBeenCalled();
   expect(button("Apply filter").disabled).toBe(false);
+});
+
+test("an unresolved saved name is loading until the exact preview resolves, never declared missing", async () => {
+  const response = deferred<unknown>();
+  api.previewSourceFilter.mockReturnValue(response.promise);
+  await mount({ savedPolicy: { ...policy, rules: [{ action: "share", match: [{ kind: "label", id: "unresolved-label-47" }] }] } });
+  expect(host.textContent).toContain("Loading saved selection name");
+  expect(host.textContent).not.toContain("Name unavailable");
+  expect(host.textContent).not.toContain("Missing —");
+  expect(button("Apply filter").disabled).toBe(true);
 });

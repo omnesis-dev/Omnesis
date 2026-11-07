@@ -196,7 +196,7 @@ export function SourceFilterEditor({
                             ${selected.map((ref) => {
                               const label = scopeDisplayLabel(sourceId, ref, source);
                               return html`<li key=${scopeRefKey(ref)}>
-                                ${label.label}${label.missing ? " · Missing — decision retained" : label.unavailable ? " · Name unavailable; restriction retained" : ""}
+                                ${label.label}${label.missing ? " · Missing — decision retained" : label.unavailable ? (preview.pending ? " · Loading saved selection name…" : " · Name unavailable; restriction retained") : ""}
                               </li>`;
                             })}
                           </ul>
@@ -210,7 +210,7 @@ export function SourceFilterEditor({
                           </details>
                         </div>
                         <${FilterPreview} preview=${preview} /><${FilterReadiness}
-                          readiness=${preview.data?.readiness ?? source.scopeReadiness}
+                          readiness=${preview.data ? [] : source.scopeReadiness}
                         />${
                           preview.data?.identifierProposals?.length
                             ? html`<details class="source-filter-proposals">
@@ -226,6 +226,7 @@ export function SourceFilterEditor({
         }
       </div>
       <footer class="source-filter-actions guided-filter-footer">
+        ${!readOnly && step === "review" && preview.data?.readiness?.some((item) => !item.ready) ? html`<p class="guided-filter-blocked" role="status">Source metadata is preparing. Apply is unavailable until it is ready.</p>` : null}
         <button type="button" class="btn-secondary" onClick=${onClose}>
           ${readOnly ? "Close" : "Cancel"}
         </button>

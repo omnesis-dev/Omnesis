@@ -983,3 +983,22 @@
 .guided-filter-editor select {
   border-color: var(--text-muted);
 }
+
+@media (max-width: 300px) {
+  .guided-exit-confirmation .confirm-modal {
+    box-sizing: border-box;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .guided-exit-confirmation .confirm-modal-actions {
+    flex-direction: column;
+  }
+  .guided-exit-confirmation .confirm-modal-actions button {
+    width: 100%;
+  }
+}
+
+.guided-filter-footer:has(.guided-filter-blocked) { flex-wrap: wrap; }
+.guided-filter-blocked { flex: 1 0 100%; margin: 0; color: var(--text-secondary); font-size: 13px; }

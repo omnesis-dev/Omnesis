@@ -5,6 +5,7 @@
 // Focused decision components render the create path and targeted edits.
 
 import { html } from "htm/preact";
+import { Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { expectedFilterRevisions } from "../../components/source-filter-state.js";
@@ -194,7 +195,7 @@ export function LevelEditorPage({
 
   const count = connections.length;
   const devices = levelDevices(level);
-  return html`<div class="access-editor-page">
+  return html`<${Fragment}><div class="access-editor-page">
     <${PageHeader}
       title=${`Edit ${level.name}`}
       busy=${busy}
@@ -225,7 +226,7 @@ export function LevelEditorPage({
       }}
       disabled=${busy}
       isLocked=${() => inFlightRef.current || busy}
-      error=${error}
+      error=${error || (step === "changes" ? validationError : "")}
       impact=${html` <section
         class="access-impact"
         aria-label="Affected connections and integrations"
@@ -248,8 +249,9 @@ export function LevelEditorPage({
       leadAction=${html`<button type="button" class="btn-ghost" disabled=${busy} onClick=${exit.close}>Cancel</button>`}
       finalAction=${html`<button type="button" class="btn-primary" disabled=${busy || stale || sameDecision(initial, value) || Boolean(validationError)} onClick=${save}>${busy ? "Saving…" : saveChangesLabel(count, devices.length)}</button>`}
     />
+  </div>
     ${exit.confirmation}
-  </div>`;
+  <//>`;
 }
 
 /** A new access level: its name, then the permissions it holds. `onCreated(level)` follows a save. */
@@ -325,7 +327,7 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
     }
   }
 
-  return html`<div class="access-editor-page">
+  return html`<${Fragment}><div class="access-editor-page">
     <${PageHeader}
       title="New access level"
       busy=${busy}
@@ -372,6 +374,7 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
       leadAction=${html`<button type="button" class="btn-ghost" disabled=${busy} onClick=${exit.close}>Cancel</button>`}
       finalAction=${html`<button type="button" class="btn-primary" disabled=${busy || !ready} onClick=${create}>${busy ? "Creating…" : "Create access level"}</button>`}
     />
+  </div>
     ${exit.confirmation}
-  </div>`;
+  <//>`;
 }

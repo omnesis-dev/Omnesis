@@ -13,6 +13,12 @@ export function useLevelExitGuard(dirty, busy, onClose, inFlight) {
   const blocked = () => pending.current || inFlight?.current === true;
   const cleared = useRef(false);
   const [confirm, setConfirm] = useState(false);
+  const opener = useRef(null);
+  const keepEditing = () => {
+    if (blocked()) return;
+    setConfirm(false);
+    opener.current?.focus?.();
+  };
   active.current = dirty && !cleared.current;
   useEffect(() => {
     setRouteLeaveGuard(() =>
@@ -40,7 +46,10 @@ export function useLevelExitGuard(dirty, busy, onClose, inFlight) {
   return {
     close: () => {
       if (blocked()) return;
-      if (dirty) setConfirm(true);
+      if (dirty) {
+        opener.current = document.activeElement;
+        setConfirm(true);
+      }
       else leave();
     },
     saved: () => {
@@ -57,7 +66,7 @@ export function useLevelExitGuard(dirty, busy, onClose, inFlight) {
         cancelLabel="Keep editing"
         confirmDisabled=${busy}
         cancelDisabled=${busy}
-        onCancel=${() => setConfirm(false)}
+        onCancel=${keepEditing}
         onConfirm=${leave}
       />
     </div>`,

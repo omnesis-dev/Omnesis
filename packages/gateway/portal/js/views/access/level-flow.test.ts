@@ -35,6 +35,13 @@ beforeEach(() => {
   const dom = parseHTML("<html><body><div id='root'></div></body></html>");
   vi.stubGlobal("window", dom.window);
   vi.stubGlobal("document", dom.document);
+  // Browsers reject HTM's unsupported empty-element fragment spelling;
+  // linkedom otherwise accepts it and conceals a production render crash.
+  const createElementNS = dom.document.createElementNS.bind(dom.document);
+  dom.document.createElementNS = (namespace, qualifiedName, options) => {
+    if (!qualifiedName) throw new Error("Invalid empty DOM element name");
+    return createElementNS(namespace, qualifiedName, options);
+  };
   host = dom.document.querySelector("#root") as unknown as HTMLElement;
   for (const fn of Object.values(api)) fn.mockReset();
   api.createAccessLevel.mockResolvedValue({ level: { name: "Project assistant" } });
@@ -121,6 +128,7 @@ test("Back preserves a data draft and Cancel requires an explicit discard only a
   ).toBe(true);
   await click("Cancel");
   expect(host.textContent).toContain("Discard this draft?");
+  expect(host.querySelector(".guided-exit-confirmation")?.closest(".access-editor-page")).toBeNull();
   await click("Keep editing");
   expect(onClose).not.toHaveBeenCalled();
   expect(
@@ -467,6 +475,10 @@ test("an unavailable unfiltered account remains visible in the overview, data de
   await click("Review changes");
   expect(host.querySelector(".guided-unchanged")?.textContent).toContain("missing@example.org");
   expect(host.querySelector(".guided-unchanged")?.textContent).toContain("All content");
+  expect(button("Save changes").disabled).toBe(true);
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("would not be able to read any source");
+  await act(async () => button("Save changes").click());
+  expect(api.updateAccessLevel).not.toHaveBeenCalled();
 });
 
 test("applying an unchanged filter on the first of two accounts keeps review disabled and wire order intact", async () => {

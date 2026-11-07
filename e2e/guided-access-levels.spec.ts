@@ -146,12 +146,39 @@ async function assertInputAffordance(page: Page) {
     });
   for (const ratio of ratios) expect(ratio).toBeGreaterThanOrEqual(3);
 }
+async function assertExitConfirmationInViewport(page: Page) {
+  const modal = page.locator(".guided-exit-confirmation .confirm-modal");
+  if (!(await modal.count())) return;
+  const bounds = await modal.evaluate((element) => {
+    const controls = [element, ...element.querySelectorAll("button")];
+    return controls.map((control) => {
+      const rect = control.getBoundingClientRect();
+      return (
+        rect.left >= 0 &&
+        rect.top >= 0 &&
+        rect.right <= window.innerWidth &&
+        rect.bottom <= window.innerHeight
+      );
+    });
+  });
+  expect(bounds.every(Boolean)).toBe(true);
+}
 async function capture(
   page: Page,
   testInfo: { outputPath: (name: string) => string },
   name: string,
   captureScale = 1,
 ) {
+  // Capture the settled UI, while leaving perpetual progress animations running.
+  await page.evaluate(async () => {
+    await Promise.allSettled(
+      document
+        .getAnimations()
+        .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+        .map((animation) => animation.finished),
+    );
+  });
+  await assertExitConfirmationInViewport(page);
   const root = process.env.OMNESIS_ACCESS_FLOW_CAPTURE_DIR;
   if (root) mkdirSync(root, { recursive: true, mode: 0o700 });
   const path = root ? join(root, name + ".png") : testInfo.outputPath(name + ".png");
@@ -579,6 +606,17 @@ for (const theme of ["dark", "light"])
       );
       await expect(page.locator(".guided-account-delta")).not.toContainText("Google Drive");
       await shot("edit-03-data-delta");
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Keep editing", exact: true })).toBeFocused();
+      await shot("edit-03b-discard-confirmation");
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+      await expect(
+        page.getByRole("dialog", { name: "Discard this draft?", exact: true }),
+      ).toHaveCount(0);
+      await expect(page.locator(".guided-account-delta")).toContainText(
+        "Everything except label: Planning",
+      );
       await page.getByRole("button", { name: "Save changes", exact: true }).click();
       await expect(page.getByRole("alert")).toContainText("Your draft is retained");
       await expect(page.getByRole("alert")).toBeInViewport();
@@ -770,8 +808,19 @@ for (const theme of ["dark", "light"])
       await expect(
         page.getByRole("dialog", { name: "Discard this draft?", exact: true }),
       ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Keep editing", exact: true })).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(page.getByRole("button", { name: "Discard draft", exact: true })).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(page.getByRole("button", { name: "Keep editing", exact: true })).toBeFocused();
       await shot("stress-06-discard-confirmation");
+      if (width === 390) {
+        await page.setViewportSize({ width: 195, height: 422 });
+        await capture(page, testInfo, `${theme}-${width}-stress-06b-discard-200percent`, 2);
+        await page.setViewportSize({ width, height: 844 });
+      }
       await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
       await expect(account.locator(".guided-readable-boundary")).toContainText("and 18 more");
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Discard draft", exact: true }).click();
@@ -1027,6 +1076,8 @@ for (const theme of ["dark", "light"])
       await page.getByRole("button", { name: "Review changes", exact: true }).click();
       await page.locator(".guided-unchanged > summary").click();
       await page.getByText("missing@example.org", { exact: true }).scrollIntoViewIfNeeded();
+      await expect(page.getByRole("alert")).toContainText("would not be able to read any source");
+      await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeDisabled();
       await shot("supplement-21-unavailable-account-review");
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Discard draft", exact: true }).click();

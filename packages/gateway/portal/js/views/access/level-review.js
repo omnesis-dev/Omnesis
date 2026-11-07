@@ -40,18 +40,21 @@ function OptionalCounts({ rule, sources }) {
 function useRuleLabels(rule) {
   useScopeLabelVersion();
   const identity = JSON.stringify(rule?.scopePolicies ?? []);
+  const [settled, setSettled] = useState(null);
   useEffect(() => {
     const controller = new AbortController();
     // Display labels never validate an editable filter or authorize Apply.
-    for (const policy of rule?.scopePolicies ?? [])
-      readFilterPreview(policy.sourceId, policy, controller.signal).catch(() => {});
+    Promise.allSettled((rule?.scopePolicies ?? []).map((policy) =>
+      readFilterPreview(policy.sourceId, policy, controller.signal)
+    )).then(() => { if (!controller.signal.aborted) setSettled(identity); });
     return () => controller.abort();
   }, [identity]);
+  return settled !== identity;
 }
 export function ReadableBoundary({ rule, source }) {
   const id = sourceId(source),
     policy = rule?.scopePolicies?.find((item) => item.sourceId === id);
-  useRuleLabels({ scopePolicies: policy ? [policy] : [] });
+  const loadingNames = useRuleLabels({ scopePolicies: policy ? [policy] : [] });
   if (!rule || !isSourceAllowed(rule, id) || !policy || !editableSourcePolicy(policy))
     return html`<span>${rule ? sourceBoundarySummary(rule, source) : "Not granted"}</span>`;
   const refs = policy.rules[0].match;
@@ -59,7 +62,7 @@ export function ReadableBoundary({ rule, source }) {
     const kind =
       source.scopes?.items?.find((item) => item.kind === ref.kind)?.noun?.one || ref.kind;
     const display = scopeDisplayLabel(id, ref, source);
-    return `${kind}: ${display.unavailable ? "name unavailable (saved restriction retained)" : display.label}`;
+    return `${kind}: ${display.unavailable ? (loadingNames ? "loading saved selection name…" : "name unavailable (saved restriction retained)") : display.label}`;
   });
   return html`<span class="guided-readable-boundary"
     >${policy.rules[0].action === "share" ? "Only " : "Everything except "}${names.join("; ")}${refs.length > 2 ? `; and ${refs.length - 2} more` : ""}</span

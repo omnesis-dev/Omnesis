@@ -84,7 +84,10 @@ export function FilterPreview({ preview, showSamples = true }) {
     </div>`;
   if (!preview.data) return null;
   const data = preview.data;
+  const preparing = data.readiness?.some((item) => !item.ready);
   return html`<section class="source-filter-preview" aria-label="Filter preview">
+    <${FilterReadiness} readiness=${data.readiness} />
+    ${preparing ? html`<p role="status">Provisional counts — source metadata is still preparing. Applying this filter is blocked until it is ready.</p>` : null}
     <div class="source-filter-counts">
       <span><strong>${data.visible}</strong> visible</span
       ><span><strong>${data.hidden}</strong> hidden</span
@@ -94,7 +97,6 @@ export function FilterPreview({ preview, showSamples = true }) {
       Unknown records are included in hidden. A record without the required source facts is never
       shared.
     </p>
-    <${FilterReadiness} readiness=${data.readiness} />
     ${
       showSamples && data.samples?.length
         ? html`<details>
