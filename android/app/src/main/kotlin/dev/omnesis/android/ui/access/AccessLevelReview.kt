@@ -50,7 +50,7 @@ internal fun AccessLevelReview(draft: AccessLevelDraft, overview: AccessOverview
     val nameError = draft.nameError(overview)
     OutlinedTextField(draft.name, { update(draft.copy(name = it)) }, label = { Text("Access level name") },
         enabled = LocalAccessEditingEnabled.current, isError = nameError != null, supportingText = { Text(nameError ?: "${draft.name.trim().length}/120") },
-        singleLine = true, modifier = Modifier.fillMaxWidth())
+        singleLine = true, colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant), modifier = Modifier.fillMaxWidth())
     if (draft.id == "new") AccessGrantSummary(draft.serializedRules, overview, session, change, linked = draft.directSameAsAnswer && draft.rule(AccessCapability.ANSWER) != null && draft.rule(AccessCapability.DIRECT) != null)
     else {
         val changes = draft.changes(overview)

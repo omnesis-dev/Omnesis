@@ -102,7 +102,7 @@ internal fun SourceFilterPicker(
                             types.forEach { type -> FilterChip(selected = picker.identifierType == type, onClick = { picker.identifierType = type; picker.typed = "" }, label = { Text(identifierTitle(type)) }) }
                         }
                     }
-                    OutlinedTextField(picker.typed, { picker.typed = it }, label = { Text(identifierTitle(picker.identifierType)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(picker.typed, { picker.typed = it }, label = { Text(identifierTitle(picker.identifierType)) }, singleLine = true, colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant), modifier = Modifier.fillMaxWidth())
                     Text(when {
                         duplicate -> "This identifier is already selected."
                         typedId != null -> "Matches ${typedId.type}: ${typedId.value}"
@@ -115,7 +115,7 @@ internal fun SourceFilterPicker(
                     if (kinds.size > 1) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         kinds.forEach { item -> FilterChip(selected = picker.kind == item.kind, onClick = { picker.chooseKind(item.kind) }, label = { Text(scopeKindTitle(item.kind, source)) }) }
                     }
-                    OutlinedTextField(picker.query, { picker.query = it }, label = { Text("Search ${scopeKindTitle(picker.kind, source).lowercase()}") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(picker.query, { picker.query = it }, label = { Text("Search ${scopeKindTitle(picker.kind, source).lowercase()}") }, singleLine = true, colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant), modifier = Modifier.fillMaxWidth())
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("${refs.size} selected", style = MaterialTheme.typography.bodyLarge)
                         TextButton(onClick = { picker.refresh() }, enabled = !picker.loading) { Text("Refresh") }
