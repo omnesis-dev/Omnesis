@@ -15,6 +15,7 @@
 
 import { Worker } from "node:worker_threads";
 import { createLogger, resolveWorkerEntry } from "@omnesis/core";
+import { UNLIMITED_MAX_AGE } from "@omnesis/config";
 import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { PendingRequest } from "./pending-request.js";
 import type { BackgroundJob, JobObservation, JobState } from "../background-jobs/types.js";
@@ -23,6 +24,7 @@ import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { Embedder } from "../indexer/types.js";
 import type { MemoryBudget } from "../memory-budget.js";
 import type {
+  IndexerCatchUpSettings,
   IndexerCutoffMap,
   IndexerInit,
   IndexerJobUpdate,
@@ -33,6 +35,9 @@ import type {
 
 const log = createLogger("gateway:indexer-worker");
 
+/** How often the main thread samples user activity for the scan's backpressure. */
+const PRESSURE_POLL_MS = 250;
+
 /**
  * Build the worker's per-source cutoff map from an OmnesisConfig.
  * `default` resolves to sources.default.maxAge ?? dataRetention.maxAge.
@@ -40,21 +45,21 @@ const log = createLogger("gateway:indexer-worker");
  * writes them — a descriptor id or an account-qualified instance id — since
  * the map is built without knowing which sources exist. Which of them applies
  * to a given document is decided by `resolveIndexerCutoffMaxAge`. A `null`
- * value means "explicitly disabled" (currently the schema doesn't allow null,
- * so this stays in sync with absence-as-fallback semantics — only present keys
- * override).
+ * value means "explicitly disabled": a key set to `"unlimited"`, which lifts
+ * the limit there instead of falling back. Absent keys fall back.
  */
 export function buildIndexerCutoffMap(config: {
   dataRetention?: { maxAge?: string };
   sources?: Record<string, { maxAge?: string }>;
 }): IndexerCutoffMap {
-  const fallback = config.sources?.default?.maxAge ?? config.dataRetention?.maxAge ?? null;
+  const limit = (maxAge: string) => (maxAge === UNLIMITED_MAX_AGE ? null : maxAge);
+  const fallback = config.sources?.default?.maxAge || config.dataRetention?.maxAge;
   const perSource: Record<string, string | null> = {};
   for (const [key, val] of Object.entries(config.sources ?? {})) {
     if (key === "default") continue;
-    if (val?.maxAge) perSource[key] = val.maxAge;
+    if (val?.maxAge) perSource[key] = limit(val.maxAge);
   }
-  return { default: fallback, perSource };
+  return { default: fallback ? limit(fallback) : null, perSource };
 }
 
 export interface IndexerWorkerOptions {
@@ -80,6 +85,13 @@ export interface IndexerWorkerOptions {
   embedConcurrency: number;
   indexerPageSize: number;
   indexerBetweenPageSleepMs: number;
+  indexerCatchUp: IndexerCatchUpSettings;
+  /**
+   * Whether a user request is in flight on the gateway. Polled on the main
+   * thread; a change is posted to the worker, whose scan returns to its
+   * configured pace while it is true.
+   */
+  isUserActive?: () => boolean;
   reindexMissingAtBoot: boolean;
   /** Chunker / embedder tunables. Resolved from `indexer.{chunker,embedder}.*`. */
   chunkerChunkSize: number;
@@ -223,6 +235,8 @@ export class IndexerWorkerProxy implements Embedder {
    * to serve a server-side ETA on first page load — no client warm-up.
    */
   private _indexRatePerSec: number | null = null;
+  private pressureCheck: ReturnType<typeof setInterval> | null = null;
+  private lastUserActive = false;
   private _vectorIndex: SemanticSearchStatus | null = null;
   private _bootProgress: {
     stage: "hnsw-backfill" | "loading-model" | "warmup" | "initial-cycle";
@@ -279,6 +293,7 @@ export class IndexerWorkerProxy implements Embedder {
       embedConcurrency: opts.embedConcurrency,
       indexerPageSize: opts.indexerPageSize,
       indexerBetweenPageSleepMs: opts.indexerBetweenPageSleepMs,
+      indexerCatchUp: opts.indexerCatchUp,
       reindexMissingAtBoot: opts.reindexMissingAtBoot,
       chunkerChunkSize: opts.chunkerChunkSize,
       chunkerOverlap: opts.chunkerOverlap,
@@ -320,6 +335,23 @@ export class IndexerWorkerProxy implements Embedder {
       Math.max(warnGap / 2, 5_000),
     );
     this.heartbeatCheck.unref?.();
+
+    const isUserActive = opts.isUserActive;
+    if (isUserActive) {
+      this.pressureCheck = setInterval(() => {
+        if (this.workerExited) return;
+        let active: boolean;
+        try {
+          active = isUserActive();
+        } catch {
+          active = false;
+        }
+        if (active === this.lastUserActive) return;
+        this.lastUserActive = active;
+        this.post({ type: "pressure", userActive: active });
+      }, PRESSURE_POLL_MS);
+      this.pressureCheck.unref?.();
+    }
   }
 
   /** Wait for the embedder to finish loading. */
@@ -548,6 +580,7 @@ export class IndexerWorkerProxy implements Embedder {
     }
     this.shutdownPromise = (async () => {
       if (this.heartbeatCheck) clearInterval(this.heartbeatCheck);
+      if (this.pressureCheck) clearInterval(this.pressureCheck);
       try {
         if (!this.workerExited) this.post({ type: "shutdown" });
       } catch {

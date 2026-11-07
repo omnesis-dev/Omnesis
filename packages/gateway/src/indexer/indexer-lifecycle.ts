@@ -174,6 +174,11 @@ export interface IndexerLifecycleDeps {
   /** The gateway's memory budget; the indexer worker keeps the HNSW graph within it. */
   memoryBudget?: MemoryBudget;
   /**
+   * Whether a user request is in flight (the scheduler's admission control is
+   * engaged). The indexing scan returns to its configured pace while it is.
+   */
+  isUserActive?: () => boolean;
+  /**
    * Boot-time seed for the mutable model-info snapshot. The lifecycle copies
    * these into its own stable internal object exposed by `modelInfo`; that
    * object is then mutated in place (never replaced) — its identity is
@@ -684,6 +689,8 @@ export class IndexerLifecycle {
       embedConcurrency: this.deps.runtime.embedConcurrency,
       indexerPageSize: this.deps.runtime.indexerPageSize,
       indexerBetweenPageSleepMs: this.deps.runtime.indexerBetweenPageSleepMs,
+      indexerCatchUp: this.deps.runtime.indexerCatchUp,
+      ...(this.deps.isUserActive ? { isUserActive: this.deps.isUserActive } : {}),
       reindexMissingAtBoot: this.deps.runtime.reindexMissingAtBoot,
       chunkerChunkSize: this.deps.runtime.chunkerChunkSize,
       chunkerOverlap: this.deps.runtime.chunkerOverlap,

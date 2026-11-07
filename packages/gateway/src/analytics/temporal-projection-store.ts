@@ -19,6 +19,7 @@ import {
   TEMPORAL_STATUSES,
   temporalVocabularyCheck,
 } from "@omnesis/core";
+import { sourceAccountOf } from "@omnesis/types";
 import { stableProjectionId } from "../enrichment/temporal-projections/derive.js";
 import { escapeStr, formatValue, parseSchemaJson, quoteIdent } from "./internal.js";
 import {
@@ -34,6 +35,13 @@ const log = createLogger("gateway:analytics:temporal-projections");
 
 export const TEMPORAL_PROJECTIONS_TABLE = "_temporal_projections";
 export const TEMPORAL_PROJECTION_SOURCES_TABLE = "_temporal_projection_sources";
+export const TEMPORAL_PROJECTION_MOVES_TABLE = "_temporal_projection_moves";
+
+/** One projection whose id changed: the id it had, and the one it has now. */
+export interface TemporalProjectionMove {
+  from: string;
+  to: string;
+}
 
 export interface AnalyticsTemporalProjectionRow {
   id: string;
@@ -80,6 +88,7 @@ export interface AnalyticsTemporalProjectionQuery {
 }
 
 export class AnalyticsTemporalProjectionStore {
+  private movesRecorded = false;
   constructor(private readonly pool: AnalyticsConnectionPool) {}
 
   /** Internal projection storage is deliberately absent from the user catalog. */
@@ -127,6 +136,13 @@ export class AnalyticsTemporalProjectionStore {
     // these indexes; dropping them also repairs one in that state.
     await conn.run(`DROP INDEX IF EXISTS idx_temporal_projections_window`);
     await conn.run(`DROP INDEX IF EXISTS idx_temporal_projections_source`);
+    await conn.run(`
+      CREATE TABLE IF NOT EXISTS ${TEMPORAL_PROJECTION_MOVES_TABLE} (
+        from_id VARCHAR PRIMARY KEY,
+        to_id VARCHAR NOT NULL,
+        generation BIGINT NOT NULL
+      )
+    `);
     await conn.run(`
       CREATE TABLE IF NOT EXISTS ${TEMPORAL_PROJECTION_SOURCES_TABLE} (
         source_id VARCHAR NOT NULL,
@@ -307,6 +323,12 @@ export class AnalyticsTemporalProjectionStore {
     const mapping = moves
       .map((move) => `('${escapeStr(move.from)}', '${escapeStr(move.to)}')`)
       .join(", ");
+    // A projection the new source already holds absorbs the moved one, so an
+    // annotation linking either ends up on the one that stays.
+    await this.recordMoves(
+      conn,
+      `SELECT from_id, to_id FROM (VALUES ${mapping}) AS moved(from_id, to_id)`,
+    );
     await conn.run(
       `DELETE FROM ${TEMPORAL_PROJECTIONS_TABLE}
         WHERE id IN (${moves.map((move) => `'${escapeStr(move.from)}'`).join(", ")})
@@ -319,6 +341,176 @@ export class AnalyticsTemporalProjectionStore {
       `UPDATE ${TEMPORAL_PROJECTIONS_TABLE} SET id = moved.to_id, source_id = '${escapeStr(sourceId)}'
         FROM (VALUES ${mapping}) AS moved(from_id, to_id)
         WHERE ${TEMPORAL_PROJECTIONS_TABLE}.id = moved.from_id`,
+    );
+  }
+
+  /**
+   * Re-key one table's projections after its primary key gained columns, so
+   * the projections already derived keep their facts under the key the table
+   * now names its rows by, rather than lingering under the old one beside
+   * fresh duplicates. A gained column is filled from what the projection
+   * already knows: its old key, or — for the account column — the account of
+   * the source that recorded it. A projection that cannot be named that way is
+   * dropped; its row re-derives it the next time it is written.
+   *
+   * The new ids are derived here, by the same functions every write uses, and
+   * appended to one temporary table, so the projections move in one bulk
+   * insert and one bulk delete whatever their number, rather than a statement
+   * per batch that each scans the projection table. Every move is recorded in
+   * the move ledger in the same transaction, for the annotations that link a
+   * projection by id. Returns how many moved.
+   */
+  async rekeyTable(
+    conn: DuckDBConnection,
+    tableName: string,
+    primaryKey: readonly string[],
+    accountColumn: string | undefined,
+    streamColumn: string,
+  ): Promise<number> {
+    const reader = await conn.runAndReadAll(
+      `SELECT id, source_id, record_key, slot FROM ${TEMPORAL_PROJECTIONS_TABLE}
+        WHERE table_name = '${escapeStr(tableName)}'`,
+    );
+    const staged: Array<{ from: string; to: string | null; key: string | null }> = [];
+    let moved = 0;
+    for (const row of reader.getRows() as unknown[][]) {
+      const [id, sourceId, recordKey, slot] = row.map(String) as [string, string, string, string];
+      let previous: Record<string, unknown>;
+      try {
+        previous = JSON.parse(recordKey) as Record<string, unknown>;
+      } catch {
+        staged.push({ from: id, to: null, key: null });
+        continue;
+      }
+      const columns = [...primaryKey, ...(streamColumn in previous ? [streamColumn] : [])];
+      const next: Record<string, unknown> = {};
+      for (const column of columns) {
+        next[column] =
+          previous[column] ?? (column === accountColumn ? sourceAccountOf(sourceId) : undefined);
+      }
+      if (columns.some((column) => next[column] === undefined || next[column] === "")) {
+        staged.push({ from: id, to: null, key: null });
+        continue;
+      }
+      const key = serializeRecordKey(columns, next);
+      if (key === recordKey) continue;
+      staged.push({ from: id, to: stableProjectionId(sourceId, tableName, key, slot), key });
+      moved += 1;
+    }
+    if (staged.length === 0) return 0;
+    const stage = "_temporal_projection_rekey";
+    await conn.run(
+      `CREATE OR REPLACE TEMP TABLE ${stage} (from_id VARCHAR NOT NULL, to_id VARCHAR, to_key VARCHAR)`,
+    );
+    const appender = await conn.createAppender(stage, "main", "temp");
+    try {
+      for (const move of staged) {
+        appender.appendVarchar(move.from);
+        if (move.to === null) appender.appendNull();
+        else appender.appendVarchar(move.to);
+        if (move.key === null) appender.appendNull();
+        else appender.appendVarchar(move.key);
+        appender.endRow();
+      }
+      appender.flushSync();
+    } finally {
+      appender.closeSync();
+    }
+    await this.recordMoves(conn, `SELECT from_id, to_id FROM ${stage} WHERE to_id IS NOT NULL`);
+    // Inserted under the new ids, then the old rows deleted: DuckDB updates a
+    // primary-key column as a delete and an insert per row, which is several
+    // times slower than doing both in bulk.
+    const columns = await conn.runAndReadAll(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = '${TEMPORAL_PROJECTIONS_TABLE}' ORDER BY ordinal_position`,
+    );
+    const names = (columns.getRows() as unknown[][]).map((row) => String(row[0]));
+    const projected = names.map((name) =>
+      name === "id"
+        ? "moved.to_id"
+        : name === "record_key"
+          ? "moved.to_key"
+          : `p.${quoteIdent(name)}`,
+    );
+    await conn.run(
+      `INSERT INTO ${TEMPORAL_PROJECTIONS_TABLE} (${names.map(quoteIdent).join(", ")})
+        SELECT ${projected.join(", ")} FROM ${TEMPORAL_PROJECTIONS_TABLE} p
+          JOIN ${stage} AS moved ON p.id = moved.from_id
+         WHERE moved.to_id IS NOT NULL`,
+    );
+    await conn.run(
+      `DELETE FROM ${TEMPORAL_PROJECTIONS_TABLE} WHERE id IN (SELECT from_id FROM ${stage})`,
+    );
+    await conn.run(`DROP TABLE ${stage}`);
+    const dropped = staged.length - moved;
+    log.info(
+      `Re-keyed ${moved} temporal projection(s) of ${tableName} to (${primaryKey.join(", ")})` +
+        (dropped > 0 ? `; dropped ${dropped} that could not be re-keyed` : ""),
+    );
+    return moved;
+  }
+
+  /**
+   * Record projection id changes in the move ledger, as one generation, inside
+   * the caller's transaction. `moves` is a query yielding `(from_id, to_id)`;
+   * it must run before the projections themselves move.
+   *
+   * The ledger exists because an annotation in the main store links a
+   * projection by id, and that store is written by the SQLite writer, which
+   * cannot commit with this transaction. A move stays in the ledger until the annotation links
+   * have followed it, so a crash between the two commits leaves the work
+   * replayable rather than lost.
+   */
+  async recordMoves(conn: DuckDBConnection, moves: string): Promise<void> {
+    const generation = await conn.runAndReadAll(
+      `SELECT COALESCE(MAX(generation), 0) + 1 FROM ${TEMPORAL_PROJECTION_MOVES_TABLE}`,
+    );
+    const next = Number((generation.getRows() as unknown[][])[0]?.[0] ?? 1);
+    await conn.run(
+      `INSERT OR REPLACE INTO ${TEMPORAL_PROJECTION_MOVES_TABLE} (from_id, to_id, generation)
+        SELECT from_id, to_id, ${next} FROM (${moves}) AS moved(from_id, to_id)
+         WHERE from_id <> to_id`,
+    );
+    this.movesRecorded = true;
+  }
+
+  /** Whether a write since the last call recorded moves; clears the flag. */
+  takeMovesRecorded(): boolean {
+    const recorded = this.movesRecorded;
+    this.movesRecorded = false;
+    return recorded;
+  }
+
+  /** The oldest generation of projection moves annotation links have not yet followed. */
+  async nextMoves(): Promise<{ generation: number; moves: TemporalProjectionMove[] } | null> {
+    return this.pool.withConn(async ({ conn }) => {
+      const oldest = await conn.runAndReadAll(
+        `SELECT MIN(generation) FROM ${TEMPORAL_PROJECTION_MOVES_TABLE}`,
+      );
+      const generation = (oldest.getRows() as unknown[][])[0]?.[0];
+      if (generation === null || generation === undefined) return null;
+      const reader = await conn.runAndReadAll(
+        `SELECT from_id, to_id FROM ${TEMPORAL_PROJECTION_MOVES_TABLE}
+          WHERE generation = ${Number(generation)} ORDER BY from_id`,
+      );
+      return {
+        generation: Number(generation),
+        moves: (reader.getRows() as unknown[][]).map((row) => ({
+          from: String(row[0]),
+          to: String(row[1]),
+        })),
+      };
+    });
+  }
+
+  /** Forget a generation of moves once every annotation link has followed it. */
+  async settleMoves(generation: number): Promise<void> {
+    await this.pool.serializeWrite(() =>
+      this.pool.withConn(({ conn }) =>
+        conn.run(
+          `DELETE FROM ${TEMPORAL_PROJECTION_MOVES_TABLE} WHERE generation = ${Math.trunc(generation)}`,
+        ),
+      ),
     );
   }
 

@@ -22,8 +22,9 @@ import {
   documentExistsForSource,
   getDocumentSourceIds,
 } from "../db.js";
-import type { DocumentSource, IndexableDocument, LightweightDocumentHeader } from "./types.js";
 import { toListedDocument } from "../data/document-mappers.js";
+import { listIndexableDocumentIds } from "./indexable-documents.js";
+import type { DocumentSource, IndexableDocument, LightweightDocumentHeader } from "./types.js";
 
 export class DirectDocumentSource implements DocumentSource {
   constructor(private db: Db) {}
@@ -75,6 +76,10 @@ export class DirectDocumentSource implements DocumentSource {
 
   async listAllIds(): Promise<string[]> {
     return listDocumentIds(this.db);
+  }
+
+  async listIndexableIds(cutoffFor: (sourceId: string) => string | null): Promise<string[]> {
+    return listIndexableDocumentIds(this.db, cutoffFor);
   }
 
   async getByIds(ids: string[]): Promise<IndexableDocument[]> {

@@ -813,12 +813,13 @@ export function backfillOnePerson(
  * alias-lookup cache across them. Returns the number of documents
  * actually processed this cycle.
  *
- * Yieldable: when `options.token` is supplied, each doc commits in its
- * own transaction and the loop polls the preempt token between docs.
- * If a higher-priority op enqueues mid-batch, the loop breaks and we
- * return early with whatever's been processed — the next periodic
- * tick picks up the remainder. Without a token, all docs go in one
- * outer transaction (legacy behavior, faster for boot-time bulk runs).
+ * Yieldable: when `options.shouldStop` is supplied, each doc commits in its
+ * own transaction and the loop asks it between docs. The writer passes the
+ * preempt token combined with a time slice, so the loop stops both for a
+ * higher-priority op and once its slice is spent — a same-priority write
+ * queued behind it never waits out the whole batch. `stopped` tells the
+ * caller the batch ended early with documents still owed. Without it, all
+ * docs go in one outer transaction (faster for boot-time bulk runs).
  *
  * Why batching helps: each bare `db.run` / `db.query.get` is its own
  * implicit transaction; the shared AliasLookupCache skips redundant
@@ -827,8 +828,8 @@ export function backfillOnePerson(
 export function backfillManyPeople(
   db: Db,
   batchSize: number = 50,
-  options: { token?: { requested(): boolean } } = {},
-): { processed: number; resolved: number; skipped: number } {
+  options: { shouldStop?: () => boolean } = {},
+): { processed: number; resolved: number; skipped: number; stopped: boolean } {
   let processed = 0;
   let resolved = 0;
   let skipped = 0;
@@ -836,10 +837,9 @@ export function backfillManyPeople(
   // Loaded once per batch — the table is tiny and effectively static across
   // a batch (only the demotion sweep writes it, on its own cadence).
   const blocklist = loadNonIdentifyingEmails(db);
-  const token = options.token;
+  const shouldStop = options.shouldStop;
 
-  if (!token) {
-    // Legacy fast path: one outer transaction over the whole batch.
+  if (!shouldStop) {
     const txn = db.transaction(() => {
       for (let i = 0; i < batchSize; i++) {
         const r = backfillOnePerson(db, cache, blocklist);
@@ -850,13 +850,12 @@ export function backfillManyPeople(
       }
     });
     txn();
-    return { processed, resolved, skipped };
+    return { processed, resolved, skipped, stopped: false };
   }
 
-  // Yieldable path: per-doc transactions so we can break cleanly when
-  // the preempt atomic flips. Per-doc commits cost a few ms each
-  // versus one big commit — acceptable trade for sub-second
-  // preemption latency on user-priority ops.
+  // Per-doc commits cost a few ms each versus one big commit — acceptable
+  // trade for a bounded writer hold.
+  let stopped = false;
   for (let i = 0; i < batchSize; i++) {
     const oneDocTxn = db.transaction(() => backfillOnePerson(db, cache, blocklist));
     const r = oneDocTxn();
@@ -864,9 +863,12 @@ export function backfillManyPeople(
     processed += 1;
     resolved += r.resolved;
     skipped += r.skipped;
-    if (token.requested() && i + 1 < batchSize) break;
+    if (i + 1 < batchSize && shouldStop()) {
+      stopped = true;
+      break;
+    }
   }
   // Note: per-doc dirty bumps fire inside `resolveDocumentPeople` —
   // no batch-end bump needed.
-  return { processed, resolved, skipped };
+  return { processed, resolved, skipped, stopped };
 }

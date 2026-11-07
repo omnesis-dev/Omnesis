@@ -29,6 +29,7 @@ import {
   algoSweepStep,
   generationSweepStep,
   bumpNearDupAlgo,
+  APPLY_CHUNK_ROW_BUDGET,
   APPLY_CHUNK_SIZE,
   BUCKET_DELETE_FOR_DOC_SQL,
   DF_APPLY_CHUNK_SIZE,
@@ -454,6 +455,115 @@ describe("applyNearDupBatch", () => {
     expect(plan).toEqual([
       "SEARCH near_dup_lsh_buckets USING INDEX idx_near_dup_lsh_doc (doc_id=?)",
     ]);
+  });
+});
+
+describe("applyNearDupBatch — bounded holds", () => {
+  /** `n` docs, each signed and carrying `edgesPerDoc` edges to one corpus doc each. */
+  function heavyBatch(prefix: string, n: number, edgesPerDoc: number): NearDupApplyBatch {
+    setActiveAlgoVersion(db, "v1");
+    const ids = Array.from({ length: n }, (_, i) => `${prefix}${String(i).padStart(3, "0")}`);
+    const corpus = Array.from({ length: edgesPerDoc }, (_, i) => `corpus-${i}`);
+    for (const id of [...ids, ...corpus]) seedDoc(id);
+    enqueueNearDupInbox(db, ids, "insert");
+    return {
+      algoVersion: "v1",
+      processedInboxIds: peekNearDupInbox(db, n).map((r) => r.id),
+      signatureDeletes: [...ids],
+      signatures: ids.map((docId) => ({
+        docId,
+        algoVersion: "v1",
+        signature: Buffer.from([1]),
+        shingleCount: 1,
+      })),
+      bucketRows: ids.flatMap((docId) =>
+        Array.from({ length: 16 }, (_, bandIdx) => ({
+          algoVersion: "v1",
+          bandIdx,
+          bucketHash: bandIdx,
+          docId,
+        })),
+      ),
+      edgeUpserts: ids.flatMap((id) =>
+        corpus.map((other) => ({
+          docA: other < id ? other : id,
+          docB: other < id ? id : other,
+          algoVersion: "v1",
+          jaccard: 0.9,
+          pairUniqueDf2: 5,
+          pairUniqueDf5: 10,
+          containmentMin: 0.95,
+          gateFamily: "file-like",
+        })),
+      ),
+      edgeDeletes: [],
+    };
+  }
+
+  test("a chunk closes on its row budget, not only on its doc count", () => {
+    // Each doc plans 1 signature + 16 buckets + 200 edges = 217 rows, so the
+    // budget fits nine of them where the doc count would allow twenty-five.
+    const perDoc = 1 + 16 + 200;
+    const batch = heavyBatch("h", APPLY_CHUNK_SIZE, 200);
+    let polls = 0;
+    const r = applyNearDupBatch(db, batch, { token: { requested: () => ++polls > 1 } });
+    expect(r.remaining).not.toBeNull();
+    const applied = APPLY_CHUNK_SIZE - r.remaining!.signatureDeletes.length;
+    expect(applied).toBe(Math.floor(APPLY_CHUNK_ROW_BUDGET / perDoc));
+  });
+
+  test("a doc bigger than the row budget is still written, alone in its chunk", () => {
+    const batch = heavyBatch("big", 2, 50);
+    let polls = 0;
+    const r = applyNearDupBatch(db, batch, {
+      token: { requested: () => ++polls > 1 },
+      chunkRowBudget: 10,
+    });
+    expect(r.remaining!.signatureDeletes).toEqual(["big001"]);
+    const done = applyNearDupBatch(db, r.remaining!, { chunkRowBudget: 10 });
+    expect(done.remaining).toBeNull();
+    expect(done.edgesUpserted).toBe(100);
+    expect(done.inboxConsumed).toBe(2);
+  });
+
+  test("yields once its time slice is spent, with no preemption request", () => {
+    const batch = heavyBatch("t", APPLY_CHUNK_SIZE * 3, 2);
+    const token = { requested: () => false };
+    let pending: NearDupApplyBatch = batch;
+    let calls = 0;
+    for (;;) {
+      calls++;
+      const r = applyNearDupBatch(db, pending, { token, maxSliceMs: 0 });
+      if (r.remaining === null) {
+        expect(r.signaturesUpserted).toBe(APPLY_CHUNK_SIZE * 3);
+        expect(r.edgesUpserted).toBe(APPLY_CHUNK_SIZE * 3 * 2);
+        expect(r.inboxConsumed).toBe(APPLY_CHUNK_SIZE * 3);
+        break;
+      }
+      // Every call writes at least one chunk, so a spent slice never stalls it.
+      expect(r.remaining.signatureDeletes.length).toBeLessThan(pending.signatureDeletes.length);
+      pending = r.remaining;
+    }
+    expect(calls).toBe(3);
+    expect(peekNearDupInbox(db, 1_000)).toHaveLength(0);
+  });
+
+  test("the production writer handler supplies the time slice", () => {
+    const batch = heavyBatch("p", APPLY_CHUNK_SIZE + 1, 1);
+    const now = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(101);
+    try {
+      const outcome = writerYieldableHandlers["nearDup.applyBatch"](
+        db,
+        new PreemptToken(new PreemptBuffer().share()),
+        batch,
+      );
+      expect(outcome).toMatchObject({
+        kind: "yield",
+        resume: [{ signatureDeletes: [`p${String(APPLY_CHUNK_SIZE).padStart(3, "0")}`] }],
+      });
+    } finally {
+      now.mockRestore();
+    }
   });
 });
 

@@ -41,12 +41,13 @@ export interface PreemptToken {
 }
 
 /**
- * Apply a NearDupApplyBatch — `APPLY_CHUNK_SIZE` docs per transaction, with a
- * preempt-token poll between chunks. Mirrors the yieldable patterns in
+ * Apply a NearDupApplyBatch — at most `APPLY_CHUNK_SIZE` docs and
+ * `APPLY_CHUNK_ROW_BUDGET` planned rows per transaction, with a preempt-token
+ * poll between chunks. Mirrors the yieldable patterns in
  * `links.upsertExtractedLinksBatch` and `tokens.touchTokenUsageBatch`: when
- * the token requests yield, we commit the chunks done so far, return the
- * un-applied tail via `remaining`, and let the scheduler dispatch
- * higher-priority work before resuming.
+ * the token requests yield, or the call's `maxSliceMs` has run out, we commit
+ * the chunks done so far, return the un-applied tail via `remaining`, and let
+ * the scheduler dispatch other work before resuming.
  */
 export interface NearDupApplyResultWithRemaining extends NearDupApplyResult {
   remaining: NearDupApplyBatch | null;
@@ -78,6 +79,14 @@ export function stripRemaining(result: NearDupApplyResultWithRemaining): NearDup
 export const APPLY_CHUNK_SIZE = 25;
 
 /**
+ * Rows a chunk may plan to write before it closes, whatever its doc count. A
+ * doc that matched hundreds of candidates carries hundreds of edge rows, so a
+ * chunk counted only in docs holds the writer for however many rows its docs
+ * happen to bring.
+ */
+export const APPLY_CHUNK_ROW_BUDGET = 2_000;
+
+/**
  * How many DF rows move from staging into the live table per transaction.
  * Bounds both the write lock held at once and the largest set of rows this
  * process holds while moving a table of several million.
@@ -103,9 +112,11 @@ export const BUCKET_DELETE_FOR_DOC_SQL = `DELETE FROM near_dup_lsh_buckets INDEX
 export function applyNearDupBatch(
   db: Db,
   batch: NearDupApplyBatch,
-  options: { token?: PreemptToken } = {},
+  options: { token?: PreemptToken; maxSliceMs?: number; chunkRowBudget?: number } = {},
 ): NearDupApplyResultWithRemaining {
   const token = options.token;
+  const sliceStartedAt = Date.now();
+  const chunkRowBudget = options.chunkRowBudget ?? APPLY_CHUNK_ROW_BUDGET;
   // Seeded from the remainder so a batch that took several continuations
   // reports what the whole batch wrote, not what its last slice did.
   const result: NearDupApplyResult = {
@@ -286,9 +297,20 @@ export function applyNearDupBatch(
   // higher-priority writer op (e.g. collector upsertDocuments) interleaves
   // without waiting for the whole batch — see
   // near-dup.preempt.e2e.
+  const plannedRows = (docId: string): number =>
+    1 +
+    (bucketsByDoc.get(docId)?.length ?? 0) +
+    (edgeUpsertsByDoc.get(docId)?.length ?? 0) +
+    (edgeDeletesByDoc.get(docId)?.length ?? 0);
+
   let i = 0;
+  let chunks = 0;
   while (i < touchedDocs.length) {
-    if (token?.requested()) {
+    const sliceExpired =
+      chunks > 0 &&
+      options.maxSliceMs !== undefined &&
+      Date.now() - sliceStartedAt >= options.maxSliceMs;
+    if (token?.requested() || sliceExpired) {
       // Docs the continuation still has to write. Each of them starts by
       // deleting every edge that touches it, so an edge with a pending
       // endpoint must travel in the remainder for that endpoint to
@@ -333,12 +355,21 @@ export function applyNearDupBatch(
       };
       break;
     }
-    const chunkDocs = touchedDocs.slice(i, i + APPLY_CHUNK_SIZE);
+    let end = i + 1;
+    let rows = plannedRows(touchedDocs[i]);
+    while (end < touchedDocs.length && end - i < APPLY_CHUNK_SIZE) {
+      const next = plannedRows(touchedDocs[end]);
+      if (rows + next > chunkRowBudget) break;
+      rows += next;
+      end++;
+    }
+    const chunkDocs = touchedDocs.slice(i, end);
     const tx = db.transaction((): void => {
       for (const docId of chunkDocs) writeDoc(docId);
     });
     tx();
-    i += APPLY_CHUNK_SIZE;
+    i = end;
+    chunks++;
   }
 
   if (!remaining) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createHash } from "node:crypto";
 import { unlinkSync, existsSync } from "node:fs";
 import { DuckDBInstance } from "@duckdb/node-api";
 import Database from "better-sqlite3";
@@ -5601,4 +5602,328 @@ describe("AnalyticsDb — internal tables carry no non-unique index", () => {
 
     expect(await nonUniqueIndexes()).toEqual([]);
   });
+});
+
+describe("a shared table whose ids repeat across accounts", () => {
+  const accountA = "calendar:maya@example.com";
+  const accountB = "calendar:maya.reeves@example.org";
+  const window = {
+    fromMs: Date.parse("2026-09-14T00:00:00.000Z"),
+    toMs: Date.parse("2026-09-15T00:00:00.000Z"),
+    limit: 10,
+  };
+  const idKeyed = sharedProjectedCalendarSchema;
+  const accountKeyed: AnalyticsTableSchema = {
+    ...sharedProjectedCalendarSchema,
+    primaryKey: ["source_account", "id"],
+    deleteKey: ["id"],
+    boundDocument: { externalIdColumns: ["id"], sourceKeyColumns: ["source_account"] },
+  };
+  const event = (id: string, sourceAccount: string, title = "Quarterly planning") => ({
+    id,
+    source_account: sourceAccount,
+    title,
+    start_time: "2026-09-14T15:00:00.000Z",
+    end_time: "2026-09-14T16:00:00.000Z",
+    all_day: false,
+    eligible: true,
+    status: "confirmed",
+  });
+  const table = idKeyed.tableName;
+  const rows = async () =>
+    (await db.executeQuery(`SELECT source_account, id, title FROM ${table} ORDER BY 1, 2`)).rows;
+  const physicalKey = async () =>
+    (
+      await db.executeQuery(
+        `SELECT constraint_column_names FROM duckdb_constraints() WHERE table_name = '${table}' AND constraint_type = 'PRIMARY KEY'`,
+      )
+    ).rows[0]?.[0];
+
+  test("both accounts ingest the same event id once the account is part of the key", async () => {
+    await db.ingestPage({
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountA,
+      records: [event("team:evt-1", "maya@example.com")],
+    });
+    await db.ingestPage({
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountB,
+      records: [event("team:evt-1", "maya.reeves@example.org", "Quarterly planning (tentative)")],
+    });
+    expect(await rows()).toEqual([
+      ["maya.reeves@example.org", "team:evt-1", "Quarterly planning (tentative)"],
+      ["maya@example.com", "team:evt-1", "Quarterly planning"],
+    ]);
+    expect((await db.queryTemporalProjections(window)).map((row) => row.sourceId).sort()).toEqual(
+      [accountB, accountA].sort(),
+    );
+
+    await db.ingestPage({
+      tableName: table,
+      sourceId: accountB,
+      records: [],
+      deletedIds: ["team:evt-1"],
+    });
+    expect(await rows()).toEqual([["maya@example.com", "team:evt-1", "Quarterly planning"]]);
+    expect((await db.queryTemporalProjections(window)).map((row) => row.sourceId)).toEqual([
+      accountA,
+    ]);
+  });
+
+  test("a table keyed by id alone is rebuilt with the account in its key, keeping its rows and projections", async () => {
+    await db.ingestPage({
+      tableName: table,
+      schema: idKeyed,
+      sourceId: accountA,
+      records: [event("team:evt-1", "maya@example.com"), event("team:evt-2", "maya@example.com")],
+    });
+    await expect(
+      db.ingestPage({
+        tableName: table,
+        schema: idKeyed,
+        sourceId: accountB,
+        records: [event("team:evt-1", "maya.reeves@example.org")],
+      }),
+    ).rejects.toThrow(/primary key belongs to a different source account/);
+    const before = await db.queryTemporalProjections(window);
+    expect(before).toHaveLength(2);
+
+    await db.ensureTable(accountKeyed, accountB);
+    expect(await physicalKey()).toEqual(["source_account", "id"]);
+    expect(await rows()).toEqual([
+      ["maya@example.com", "team:evt-1", "Quarterly planning"],
+      ["maya@example.com", "team:evt-2", "Quarterly planning"],
+    ]);
+    const rekeyed = await db.queryTemporalProjections(window);
+    expect(rekeyed).toHaveLength(2);
+    expect(rekeyed.map((row) => row.documentExternalId).sort()).toEqual([
+      "team:evt-1",
+      "team:evt-2",
+    ]);
+
+    await db.ingestPage({
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountA,
+      records: [event("team:evt-1", "maya@example.com", "Quarterly planning, moved")],
+    });
+    await db.ingestPage({
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountB,
+      records: [event("team:evt-1", "maya.reeves@example.org")],
+    });
+    expect(await rows()).toEqual([
+      ["maya.reeves@example.org", "team:evt-1", "Quarterly planning"],
+      ["maya@example.com", "team:evt-1", "Quarterly planning, moved"],
+      ["maya@example.com", "team:evt-2", "Quarterly planning"],
+    ]);
+    const after = await db.queryTemporalProjections(window);
+    expect(after).toHaveLength(3);
+    expect(
+      after
+        .filter((row) => row.sourceId === accountA)
+        .map((row) => row.id)
+        .sort(),
+    ).toEqual(rekeyed.map((row) => row.id).sort());
+
+    await ingestAndSweep(db, {
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountA,
+      records: [],
+      presentIds: ["team:evt-1"],
+    });
+    expect(await rows()).toEqual([
+      ["maya.reeves@example.org", "team:evt-1", "Quarterly planning"],
+      ["maya@example.com", "team:evt-1", "Quarterly planning, moved"],
+    ]);
+    expect(await db.queryTemporalProjections(window)).toHaveLength(2);
+
+    await db.ensureTable(accountKeyed, accountA);
+    expect(await rows()).toHaveLength(2);
+  });
+
+  test("a table keyed by device stream keeps the stream at the end of its widened key", async () => {
+    await db.ingestPage({
+      tableName: table,
+      schema: idKeyed,
+      sourceId: accountA,
+      streamId: "phone-1",
+      records: [event("team:evt-1", "maya@example.com")],
+    });
+    expect(await physicalKey()).toEqual(["id", ANALYTICS_STREAM_COLUMN]);
+    const before = await db.queryTemporalProjections(window);
+    await db.ingestPage({
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountA,
+      streamId: "phone-1",
+      records: [event("team:evt-1", "maya@example.com", "Quarterly planning, moved")],
+    });
+    expect(await physicalKey()).toEqual(["source_account", "id", ANALYTICS_STREAM_COLUMN]);
+    const after = await db.queryTemporalProjections(window);
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ label: "Quarterly planning, moved" });
+    expect(after[0]!.id).not.toBe(before[0]!.id);
+  });
+
+  test("an older declaration keyed by a subset of the widened key keeps ingesting under it", async () => {
+    await db.ingestPage({
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountA,
+      records: [event("team:evt-1", "maya@example.com")],
+    });
+    const rolledBack = { ...idKeyed, deleteKey: undefined };
+    await db.ensureTable(rolledBack, accountB);
+    await db.ingestPage({
+      tableName: table,
+      schema: rolledBack,
+      sourceId: accountB,
+      records: [event("team:evt-1", "maya.reeves@example.org", "Quarterly planning (B)")],
+    });
+    expect(await physicalKey()).toEqual(["source_account", "id"]);
+    const entry = (await db.getCatalog()).find((candidate) => candidate.tableName === table);
+    expect(entry?.primaryKey).toEqual(["source_account", "id"]);
+    expect(await rows()).toEqual([
+      ["maya.reeves@example.org", "team:evt-1", "Quarterly planning (B)"],
+      ["maya@example.com", "team:evt-1", "Quarterly planning"],
+    ]);
+
+    await db.ingestPage({
+      tableName: table,
+      schema: rolledBack,
+      sourceId: accountB,
+      records: [],
+      deletedIds: ["team:evt-1"],
+    });
+    expect(await rows()).toEqual([["maya@example.com", "team:evt-1", "Quarterly planning"]]);
+  });
+
+  test("a key that would replace a column is refused, and the table keeps its key", async () => {
+    await db.ingestPage({
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountA,
+      records: [event("team:evt-1", "maya@example.com")],
+    });
+    await expect(
+      db.ensureTable(
+        {
+          ...accountKeyed,
+          primaryKey: ["source_account", "title"],
+          deleteKey: undefined,
+          boundDocument: undefined,
+        },
+        accountA,
+      ),
+    ).rejects.toThrow(/declared physical primary key/);
+    expect(await physicalKey()).toEqual(["source_account", "id"]);
+    expect((await db.getCatalog()).find((entry) => entry.tableName === table)?.primaryKey).toEqual([
+      "source_account",
+      "id",
+    ]);
+  });
+
+  test("rows without an account defer the widening, and pages keep landing under the old key", async () => {
+    const unowned: AnalyticsTableSchema = {
+      ...projectedCalendarSchema,
+      tableName: table,
+    };
+    const unattributed = (id: string) => {
+      const { source_account: _unknown, ...record } = event(id, "");
+      return record;
+    };
+    await db.ingestPage({
+      tableName: table,
+      schema: unowned,
+      sourceId: accountA,
+      records: [unattributed("team:evt-1"), unattributed("team:evt-2")],
+    });
+    await db.ingestPage({
+      tableName: table,
+      schema: unowned,
+      sourceId: accountB,
+      records: [unattributed("team:evt-3")],
+    });
+    await db.ensureTable(idKeyed, accountA);
+    expect(
+      (await db.executeQuery(`SELECT count(*) FROM ${table} WHERE source_account IS NULL`))
+        .rows[0]?.[0],
+    ).toBe(3);
+
+    await db.ensureTable(accountKeyed, accountA);
+    expect(await physicalKey()).toEqual(["id"]);
+    expect((await db.getCatalog()).find((entry) => entry.tableName === table)?.primaryKey).toEqual([
+      "id",
+    ]);
+    await db.ingestPage({
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountA,
+      records: [event("team:evt-1", "maya@example.com", "Quarterly planning, moved")],
+    });
+    await expect(
+      db.ingestPage({
+        tableName: table,
+        schema: accountKeyed,
+        sourceId: accountB,
+        records: [event("team:evt-1", "maya.reeves@example.org")],
+      }),
+    ).rejects.toThrow(/primary key belongs to a different source account/);
+
+    await db.settleLegacyRows(accountA, "claim");
+    await db.ensureTable(accountKeyed, accountA);
+    expect(await physicalKey()).toEqual(["source_account", "id"]);
+    await db.ingestPage({
+      tableName: table,
+      schema: accountKeyed,
+      sourceId: accountB,
+      records: [event("team:evt-1", "maya.reeves@example.org")],
+    });
+    expect(await rows()).toEqual([
+      ["maya.reeves@example.org", "team:evt-1", "Quarterly planning"],
+      ["maya@example.com", "team:evt-1", "Quarterly planning, moved"],
+      ["maya@example.com", "team:evt-2", "Quarterly planning"],
+      ["maya@example.com", "team:evt-3", "Quarterly planning"],
+    ]);
+  });
+
+  test("a key widened to two VARCHAR columns over well past 60k rows checkpoints and reopens", async () => {
+    // DuckDB 1.5.0 aborted the whole process (`free(): corrupted unsorted
+    // chunks`) checkpointing an ART index on two VARCHAR columns above roughly
+    // 60k rows — duckdb/duckdb#21246, fixed by duckdb/duckdb#21270 in 1.5.1.
+    // A widened account key is exactly that index, at the size a calendar
+    // with a few years of history reaches.
+    const bulk = { ...testSchema, tableName: "test_widened_bulk", exampleQueries: [] };
+    const count = 80_000;
+    await db.ensureTable(bulk, "fictional:local");
+    const records = Array.from({ length: count }, (_, i) => ({
+      id: `primary:${createHash("md5").update(String(i)).digest("hex")}`,
+      date: "2026-01-01",
+      metric_type: i % 3 === 0 ? "maya@example.org" : "maya.reeves@example.com",
+      value: i,
+      unit: null,
+    }));
+    for (let offset = 0; offset < count; offset += 20_000)
+      await db.insertRecords(bulk.tableName, records.slice(offset, offset + 20_000), ["id"]);
+    await db.ensureTable({ ...bulk, primaryKey: ["metric_type", "id"] }, "fictional:local");
+    await db.close();
+
+    const raw = await DuckDBInstance.create(TEST_DB);
+    const conn = await raw.connect();
+    await conn.run("CHECKPOINT");
+    const stored = await conn.runAndReadAll(
+      `SELECT count(*), count(DISTINCT (metric_type, id)) FROM ${bulk.tableName}`,
+    );
+    conn.closeSync();
+    raw.closeSync();
+    expect(stored.getRows()[0]?.map(Number)).toEqual([count, count]);
+
+    db = new AnalyticsDb(TEST_DB);
+    await db.open();
+  }, 60_000);
 });

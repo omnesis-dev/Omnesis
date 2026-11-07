@@ -200,8 +200,8 @@ export class FsCognitionTranscriptStore {
     }
     conditions.push("state = 'committed'");
     if (opts.before) {
-      conditions.push("(finished_at < ? OR (finished_at = ? AND file_name < ?))");
-      params.push(opts.before.finishedAt, opts.before.finishedAt, opts.before.fileName);
+      conditions.push("(finished_at, file_name) < (?, ?)");
+      params.push(opts.before.finishedAt, opts.before.fileName);
     }
     params.push(limit);
     const db = this.index();

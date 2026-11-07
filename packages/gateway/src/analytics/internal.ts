@@ -235,6 +235,7 @@ export const ANALYTICS_INTERNAL_TABLES = [
   "_analytics_absence_observations",
   "_temporal_projections",
   "_temporal_projection_sources",
+  "_temporal_projection_moves",
 ] as const;
 
 export const STREAM_COLUMN = ANALYTICS_STREAM_COLUMN;

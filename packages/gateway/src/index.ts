@@ -37,7 +37,12 @@ import {
   resolveTypeSafeApiKey,
 } from "./model-credentials.js";
 import { DecisionService } from "./inference/decision/decision-service.js";
-import { createDatabase, getDocumentTitlesAndSources, openReadOnlyDatabase } from "./db.js";
+import {
+  closeDrainingWal,
+  createDatabase,
+  getDocumentTitlesAndSources,
+  openReadOnlyDatabase,
+} from "./db.js";
 import { createServer } from "./server.js";
 import { GATEWAY_VERSION } from "./version.js";
 import { ReleaseCheckService } from "./release-check/service.js";
@@ -90,6 +95,7 @@ import { drainTranscriptEvictions } from "./brain/transcript-eviction.js";
 import { createActivityRetentionTask } from "./activity-retention/task.js";
 import { createAbsenceSweepTask } from "./absence/task.js";
 import { createOwnershipRepairTask } from "./analytics/ownership-repair-task.js";
+import { createTemporalProjectionRelinker } from "./analytics/projection-relink.js";
 import { directIndexWriteGate } from "./indexer/index-write-gate.js";
 import { cascadeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { resolveRelaySettings } from "./push/relay-settings.js";
@@ -240,6 +246,7 @@ import { BackgroundJobsRegistry } from "./background-jobs/index.js";
 import { periodicJob } from "./background-jobs/scheduler-job.js";
 import { StatelessTracker } from "./background-jobs/trackers.js";
 import { derivationSlaTasks } from "./scheduler/tasks/derivation-sla.js";
+import { sweepCollapsedCandidates } from "./scheduler/tasks/backfill-helpers.js";
 import { DERIVATION_STAGES, type DerivationStage } from "./domain/DocumentDerivation.js";
 import { subscribeDerivationNudge } from "./scheduler/tasks/derivation-nudge.js";
 import { SubscriptionDeliveryService } from "./subscriptions/delivery.js";
@@ -498,7 +505,10 @@ const indexerStatus = new IndexerStatusReporter();
 // only connection with write access from this point on.
 {
   const bootDb = createDatabase(DB_PATH, { encryptionKey: storageEncryption.mainDbKey });
-  bootDb.close();
+  const drained = closeDrainingWal(bootDb, (frames) =>
+    log.info(`draining ${frames}-frame WAL before start`),
+  );
+  if (drained.frames > 0) log.info(`drained ${drained.frames}-frame WAL in ${drained.ms}ms`);
 }
 
 // Scheduler is the single brain for "an IO task that needs to be done"
@@ -1212,6 +1222,23 @@ const analyticsDb = new AnalyticsDb(analyticsDbPath, {
   onFatal: () => requestShutdown(1),
 });
 await analyticsDb.open();
+// A rekey changes temporal projection ids in DuckDB; the annotations linking
+// them live in SQLite and follow through the move ledger. Draining it at boot
+// finishes any rekey whose links a crash left behind.
+const temporalProjectionRelinker = createTemporalProjectionRelinker({
+  ledger: analyticsDb,
+  relink: (moves) => writeGate.relinkTemporalAnnotationProjections(moves),
+  log: log.child("analytics"),
+});
+const relinkMovedTemporalProjections = (): void => {
+  temporalProjectionRelinker.drain().catch((err: unknown) => {
+    log.warn(
+      `Temporal annotation relink failed; it retries at the next projection move or boot: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+};
+analyticsDb.onTemporalProjectionsMoved(relinkMovedTemporalProjections);
+relinkMovedTemporalProjections();
 // Cross-store search hydration: a hit whose source declares a
 // `boundDocument` carries its co-described analytics row when the request sets
 // `includeBoundRow`. Wired here (not at pipeline construction) because the
@@ -1703,6 +1730,7 @@ const indexerLifecycle = new IndexerLifecycle({
   indexDb,
   configDir,
   memoryBudget,
+  isUserActive: () => scheduler.isAdmissionPaused(),
   initialModelInfo: {
     name: embeddingModelName,
     path: embeddingModelPath,
@@ -2603,7 +2631,7 @@ const app = createServer(db, DB_PATH, {
         if (result.added + result.changed + result.removed > 0) {
           scheduler.kickPeriodic("backfill.interactionScoresRefresh");
           scheduler.kickPeriodic("backfill.peopleCountsRefresh");
-          await writeGate.sweepCollapsedMergeCandidates();
+          await sweepCollapsedCandidates(ioGate, writeGate);
         }
       }),
   },

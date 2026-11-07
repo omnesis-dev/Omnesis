@@ -73,6 +73,35 @@ export function listDirtyStatsSourceIds(db: Db): string[] {
   return rows.map((r) => r.source_id);
 }
 
+/** Documents each statement of the per-source aggregation reads. */
+export const SOURCE_STATS_CHUNK_ROWS = 500;
+
+interface SourceStatsChunk {
+  count: number;
+  lastRowid: number | null;
+  earliest: string | null;
+  latest: string | null;
+  dataSize: number | null;
+  totalUnits: number | null;
+}
+
+/** SQLite's BINARY collation: byte order of the UTF-8 text. */
+function binaryLess(a: string, b: string): boolean {
+  return Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0;
+}
+
+function pick(a: string | null, b: string | null, keepA: (a: string, b: string) => boolean) {
+  if (a === null) return b;
+  if (b === null) return a;
+  return keepA(a, b) ? a : b;
+}
+
+function addNullable(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return a + b;
+}
+
 /**
  * Pure-read aggregation over `documents` for one source. Designed to
  * run on a read-only handle (the backfill worker's `openReadConn`)
@@ -84,18 +113,29 @@ export function listDirtyStatsSourceIds(db: Db): string[] {
  * — will be detected by `upsertSourceStatsRow` and prevent us from
  * (a) overwriting fresher data and (b) clearing `needs_refresh`.
  *
- * Single aggregation statement; plan-driven by
- * `idx_documents_source_created_revision` — measured at ~1.15s for
- * Gmail's 146k docs against the live gateway DB. That's well under
- * the writer's `busy_timeout = 5000ms`, so concurrent commits on the
- * writer connection queue past it cleanly without `SQLITE_BUSY`.
+ * The aggregation reads every byte of the source's content, so one
+ * statement over a large source held a single WAL snapshot for tens of
+ * seconds (see `docs/conventions.md`, "A long read holds the WAL open").
+ * It reads `chunkRows` documents per statement instead, walking
+ * `idx_documents_source_id` by rowid: that index is `(source_id, rowid)`,
+ * so each chunk is a seek and a range, with no sort. (Chunking by `id`
+ * needed a sort per chunk and was ~44× slower.) Count, sums, minimum and
+ * maximum combine exactly across chunks.
  *
- * (A previous version chunked by id in 500-doc batches to release
- * SHARED between iterations. Without a `(source_id, id)` compound
- * index, each chunk did a full source-id index scan + sort, making
- * the aggregation ~44× slower on Gmail. Single statement won.)
+ * Statements in separate snapshots can mix states. The captured version
+ * is what makes that safe: every write to a source's documents bumps
+ * `dirty_version`, so a result `upsertSourceStatsRow` accepts saw no
+ * write between the capture and the upsert, and is the result one
+ * snapshot would have given. A source with no stats row has no version
+ * to check, so a result read in more than one statement outside a
+ * transaction is `provisional`: it is stored with `needs_refresh` still
+ * set, and the next pass, which has a version, computes it again.
  */
-export function computeSourceStatsRow(db: Db, sourceId: string): SourceStatsAggregation {
+export function computeSourceStatsRow(
+  db: Db,
+  sourceId: string,
+  chunkRows: number = SOURCE_STATS_CHUNK_ROWS,
+): SourceStatsAggregation {
   // Capture the dirty_version FIRST. If the row doesn't exist yet
   // (brand-new source the worker hasn't materialized) the captured
   // value is 0 and the matching INSERT path in upsertSourceStatsRow
@@ -107,38 +147,59 @@ export function computeSourceStatsRow(db: Db, sourceId: string): SourceStatsAggr
     .get(sourceId);
   const capturedVersion = versionRow?.dirty_version ?? 0;
 
-  const row = db
-    .prepare<
-      [string],
-      {
-        count: number;
-        earliest: string | null;
-        latest: string | null;
-        dataSize: number | null;
-        totalUnits: number | null;
-      }
-    >(
-      `SELECT
-         COUNT(*) AS count,
-         MIN(source_created_at) AS earliest,
-         MAX(source_created_at) AS latest,
-         SUM(LENGTH(content) + LENGTH(title) + LENGTH(metadata)) AS dataSize,
-         SUM(COALESCE(
-           json_extract(metadata, '$.extra.unitCount'),
-           json_extract(metadata, '$.extra.messageCount')
-         )) AS totalUnits
-       FROM documents
-       WHERE source_id = ?`,
-    )
-    .get(sourceId);
+  const chunk = db.prepare<[string, number, number], SourceStatsChunk>(
+    `SELECT
+       COUNT(*) AS count,
+       MAX(rid) AS lastRowid,
+       MIN(created) AS earliest,
+       MAX(created) AS latest,
+       SUM(size) AS dataSize,
+       SUM(units) AS totalUnits
+     FROM (
+       SELECT rowid AS rid,
+              source_created_at AS created,
+              LENGTH(content) + LENGTH(title) + LENGTH(metadata) AS size,
+              COALESCE(
+                json_extract(metadata, '$.extra.unitCount'),
+                json_extract(metadata, '$.extra.messageCount')
+              ) AS units
+         FROM documents INDEXED BY idx_documents_source_id
+        WHERE source_id = ? AND rowid > ?
+        ORDER BY rowid
+        LIMIT ?
+     )`,
+  );
+
+  const limit = Math.max(1, Math.floor(chunkRows));
+  let count = 0;
+  let earliest: string | null = null;
+  let latest: string | null = null;
+  let dataSize: number | null = null;
+  let totalUnits: number | null = null;
+  let statements = 0;
+  let afterRowid = 0;
+  for (;;) {
+    const row = chunk.get(sourceId, afterRowid, limit)!;
+    statements += 1;
+    count += row.count;
+    earliest = pick(earliest, row.earliest, (a, b) => !binaryLess(b, a));
+    latest = pick(latest, row.latest, (a, b) => !binaryLess(a, b));
+    dataSize = addNullable(dataSize, row.dataSize);
+    totalUnits = addNullable(totalUnits, row.totalUnits);
+    if (row.count < limit || row.lastRowid === null) break;
+    afterRowid = row.lastRowid;
+  }
 
   return {
-    count: row?.count ?? 0,
-    earliest: row?.earliest ?? null,
-    latest: row?.latest ?? null,
-    dataSize: row?.dataSize ?? 0,
-    totalUnits: row?.totalUnits ?? null,
+    count,
+    earliest,
+    latest,
+    dataSize: dataSize ?? 0,
+    totalUnits,
     capturedVersion,
+    ...(versionRow === undefined && statements > 1 && !db.inTransaction
+      ? { provisional: true }
+      : {}),
   };
 }
 
@@ -164,14 +225,14 @@ export function upsertSourceStatsRow(db: Db, sourceId: string, agg: SourceStatsA
        source_id, doc_count, data_size_bytes, total_units,
        earliest_source_date, latest_source_date,
        needs_refresh, last_computed_at, dirty_version
-     ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(source_id) DO UPDATE SET
        doc_count = excluded.doc_count,
        data_size_bytes = excluded.data_size_bytes,
        total_units = excluded.total_units,
        earliest_source_date = excluded.earliest_source_date,
        latest_source_date = excluded.latest_source_date,
-       needs_refresh = 0,
+       needs_refresh = excluded.needs_refresh,
        last_computed_at = excluded.last_computed_at
      WHERE source_stats.dirty_version = excluded.dirty_version`,
   ).run(
@@ -181,6 +242,7 @@ export function upsertSourceStatsRow(db: Db, sourceId: string, agg: SourceStatsA
     agg.totalUnits,
     agg.earliest,
     agg.latest,
+    agg.provisional ? 1 : 0,
     now,
     agg.capturedVersion,
   );
@@ -194,10 +256,13 @@ export function upsertSourceStatsRow(db: Db, sourceId: string, agg: SourceStatsA
  * first-read fallback). The backfill worker should split into
  * `computeSourceStatsRow` (read handle) + `upsertSourceStatsRow`
  * (writer worker) instead, so the heavy aggregation doesn't park the
- * writer.
+ * writer. One transaction, so the chunks read one snapshot and the
+ * result is never provisional.
  */
 export function refreshSourceStatsRow(db: Db, sourceId: string): void {
-  upsertSourceStatsRow(db, sourceId, computeSourceStatsRow(db, sourceId));
+  db.transaction(() => {
+    upsertSourceStatsRow(db, sourceId, computeSourceStatsRow(db, sourceId));
+  })();
 }
 
 export function getSourceStats(db: Db, sourceId: string): SourceStats {

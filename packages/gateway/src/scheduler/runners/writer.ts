@@ -29,9 +29,9 @@
  *     `{kind:"yield", resume}` and this runner will pass it through
  *     unchanged (we detect the discriminator).
  *
- *   - **No internal heartbeat/checkpoint logic** — both stay in the
- *     existing writer-worker.ts unchanged. The runner just spawns the
- *     worker and forwards messages.
+ *   - **No internal heartbeat/checkpoint logic** — both stay in
+ *     writer-worker.ts. The runner spawns the worker, forwards messages
+ *     and keeps the checkpoint counts the worker reports.
  *
  *   - **Preempt** — the runner attaches a SharedArrayBuffer to the
  *     worker via init message (when Scheduler enables preemption).
@@ -47,8 +47,21 @@ import type { TaskRunner } from "../runner.js";
 import type { Task, TaskContext, TaskOutcome } from "../types.js";
 import type { PreemptBuffer } from "../preempt.js";
 import type { MainToWriter, WriterToMain, WriterInit } from "../../workers/protocol.js";
+import type { WalCheckpointRun } from "../../workers/wal-checkpoint.js";
+import type { WalCheckpointMetrics } from "../metrics.js";
 
 const log = createLogger("gateway:scheduler:writer");
+
+/** A checkpoint that held the writer this long is logged. */
+const SLOW_CHECKPOINT_MS = 250;
+/** Recent checkpoints kept for the windowed metrics: an hour at several a second. */
+const CHECKPOINT_SAMPLES = 16_384;
+
+interface CheckpointSample {
+  ts: number;
+  ms: number;
+  outcome: WalCheckpointRun["outcome"];
+}
 
 export interface WriterTaskRunnerOptions {
   gatewayDbPath: string;
@@ -108,6 +121,17 @@ export class WriterTaskRunner implements TaskRunner {
   private unresponsiveSince: number | null = null;
   private disposed = false;
   private shutdownResolve: (() => void) | null = null;
+  private readonly checkpointLifetime: WalCheckpointMetrics["lifetime"] = {
+    runs: 0,
+    totalMs: 0,
+    maxMs: 0,
+    rewinds: 0,
+    deferredRewinds: 0,
+    maxDeferredStreak: 0,
+  };
+  private readonly checkpointSamples: CheckpointSample[] = [];
+  private lastCheckpoint: WalCheckpointRun | null = null;
+  private deferredSinceRewind = 0;
   /**
    * Shared atomic flag for cooperative preemption. Set by Scheduler
    * (via `attachPreemptBuffer`) when this runner is registered; passed
@@ -257,7 +281,66 @@ export class WriterTaskRunner implements TaskRunner {
     });
   }
 
+  walCheckpointMetrics(windowSeconds: number): WalCheckpointMetrics | undefined {
+    if (this.opts.journalMode !== "WAL") return undefined;
+    const since = Date.now() - windowSeconds * 1_000;
+    const recent = this.checkpointSamples.filter((s) => s.ts >= since);
+    const durations = recent.map((s) => s.ms).sort((a, b) => a - b);
+    const at = (q: number) =>
+      durations.length === 0
+        ? 0
+        : durations[Math.min(durations.length - 1, Math.floor(q * durations.length))]!;
+    let streak = 0;
+    let maxDeferredStreak = 0;
+    for (const s of recent) {
+      if (s.outcome === "rewound") streak = 0;
+      else if (s.outcome === "deferred") maxDeferredStreak = Math.max(maxDeferredStreak, ++streak);
+    }
+    return {
+      runs: recent.length,
+      p95Ms: at(0.95),
+      maxMs: durations.at(-1) ?? 0,
+      totalMs: durations.reduce((sum, ms) => sum + ms, 0),
+      rewinds: recent.filter((s) => s.outcome === "rewound").length,
+      deferredRewinds: recent.filter((s) => s.outcome === "deferred").length,
+      maxDeferredStreak,
+      lastLogFrames: this.lastCheckpoint?.log ?? null,
+      lastCheckpointedFrames: this.lastCheckpoint?.checkpointed ?? null,
+      lifetime: { ...this.checkpointLifetime },
+    };
+  }
+
   // ────────────────────────────────────────────────────────────────────
+
+  private recordCheckpoint(run: WalCheckpointRun): void {
+    const stats = this.checkpointLifetime;
+    stats.runs += 1;
+    stats.totalMs += run.ms;
+    stats.maxMs = Math.max(stats.maxMs, run.ms);
+    this.lastCheckpoint = run;
+    this.checkpointSamples.push({
+      ts: Date.now(),
+      ms: run.ms,
+      outcome: run.outcome,
+    });
+    if (this.checkpointSamples.length > CHECKPOINT_SAMPLES) this.checkpointSamples.shift();
+    if (run.outcome === "rewound") {
+      stats.rewinds += 1;
+      if (this.deferredSinceRewind > 0)
+        log.info(
+          `WAL rewound from ${run.rewoundFrames ?? 0} frames after ${this.deferredSinceRewind} deferred attempts`,
+        );
+      this.deferredSinceRewind = 0;
+    } else if (run.outcome === "deferred") {
+      stats.deferredRewinds += 1;
+      this.deferredSinceRewind += 1;
+      stats.maxDeferredStreak = Math.max(stats.maxDeferredStreak, this.deferredSinceRewind);
+    }
+    if (run.ms > SLOW_CHECKPOINT_MS)
+      log.info(
+        `wal_checkpoint(${run.mode}) log=${run.log} checkpointed=${run.checkpointed} in ${run.ms.toFixed(0)}ms`,
+      );
+  }
 
   /** What the worker is executing, for the watchdog warning. */
   private describeInflight(): string {
@@ -306,6 +389,7 @@ export class WriterTaskRunner implements TaskRunner {
           const outcome = asOutcome(msg.value);
           outcome.cpuUserUs = msg.cpuUserUs;
           outcome.cpuSystemUs = msg.cpuSystemUs;
+          outcome.workerQueueMs = msg.queueMs;
           pending.resolve(outcome);
         } else {
           const cause = new Error(msg.errorMessage ?? msg.error);
@@ -321,6 +405,9 @@ export class WriterTaskRunner implements TaskRunner {
         }
         break;
       }
+      case "checkpoint":
+        this.recordCheckpoint(msg.run);
+        break;
       case "shutdownComplete":
         this.shutdownResolve?.();
         break;

@@ -12,6 +12,7 @@ type Db = Database.Database;
 
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { useImmediateTransactions } from "../sqlite-transactions.js";
+import { DEFAULT_WAL_CHECKPOINT_POLICY, WAL_SIZE_LIMIT_BYTES } from "./wal-checkpoint.js";
 
 export function openWriteConn(
   path: string,
@@ -35,18 +36,25 @@ export function openWriteConn(
   // omnesis.json. Use it if a SIGBUS reappears under WAL.
   db.exec(`PRAGMA journal_mode = ${journalMode}`);
   db.exec("PRAGMA foreign_keys = ON");
-  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec(`PRAGMA busy_timeout = ${DEFAULT_WAL_CHECKPOINT_POLICY.busyTimeoutMs}`);
   // mmap_size=0 belt-and-suspenders against the residual Crash B
   // mmap class (disables DB-file mmap reads). Cheap; keep set in
   // both journal modes. TRUNCATE has no DB-file mmap risk; harmless.
   db.exec("PRAGMA mmap_size = 0");
   if (journalMode === "WAL") {
-    // No per-commit autocheckpoint — let an explicit PASSIVE timer
-    // drive checkpoints (see handleInit). PASSIVE never truncates
-    // `-shm`, only copies frames back to the main DB; that's the
-    // pattern that survived the chaos test. NEVER use a TRUNCATE
+    // No per-commit autocheckpoint: the writer checkpoints between ops
+    // (`wal-checkpoint.ts`), so no commit carries a checkpoint's cost. No
+    // mode it uses truncates or resizes `-shm`. NEVER use a TRUNCATE
     // checkpoint here — that's the SIGBUS-prone op.
     db.exec("PRAGMA wal_autocheckpoint = 0");
+    // A rewound WAL is cut back to this size at its first commit; without a
+    // limit the file keeps its largest size forever. The WAL is read with
+    // pread, never mapped.
+    db.exec(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES}`);
+    // On macOS a plain fsync leaves writes in the drive's cache. A rewind lets
+    // new frames overwrite copied ones, so the copy must be on the medium
+    // first: F_FULLFSYNC for checkpoint syncs (a no-op elsewhere).
+    db.exec("PRAGMA checkpoint_fullfsync = ON");
   }
   // synchronous = FULL narrows the fsync window. Mozilla belt-and-
   // suspenders recipe; useful in both modes.

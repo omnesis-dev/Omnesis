@@ -87,14 +87,35 @@ const duration = z
     durationRegex,
     'expected a duration like "30s", "5m", "1h", "30d", "6M", "1y", "500ms", or a plain number (ms)',
   );
+
+/**
+ * The data-retention `maxAge` that sets no age limit. Removing a `maxAge` key
+ * inherits the next broader setting (the source type, then `sources.default`,
+ * then `dataRetention`); this value instead lifts the limit at that level
+ * whatever a broader one says.
+ */
+export const UNLIMITED_MAX_AGE = "unlimited";
+
+/** A data-retention age: a duration, or {@link UNLIMITED_MAX_AGE}. */
+export const maxAgeRegex = new RegExp(`^${UNLIMITED_MAX_AGE}$|${durationRegex.source}`);
+
+const maxAge = z
+  .string()
+  .regex(
+    maxAgeRegex,
+    `expected a duration like "30d", "6M", "2y", or "${UNLIMITED_MAX_AGE}" for no age limit`,
+  );
+
 const positiveDuration = duration.refine((value) => Number.parseFloat(value) > 0, {
   message: "duration must be greater than zero",
 });
 
 const dataRetention = z
   .object({
-    maxAge: duration
-      .describe("Oldest allowed timestamp for ingested + indexed data, e.g. 30d, 6M, 1y.")
+    maxAge: maxAge
+      .describe(
+        'Oldest allowed timestamp for ingested + indexed data, e.g. 30d, 6M, 1y; "unlimited" or omitted for no limit.',
+      )
       .optional(),
   })
   .strict();
@@ -648,6 +669,34 @@ const indexer = z
       .describe("Pause between consecutive pages in a backlogged cycle. Default 500ms.")
       .optional(),
     /**
+     * Catch-up pacing for a backlogged scan. `pageSize` and
+     * `betweenPageSleep` stay the pace whenever a user request is in flight
+     * or index.db's WAL is backing up; otherwise pages the hash check
+     * finishes quickly grow up to `maxPageSize`, the pause drops to
+     * `minBetweenPageSleep`, and the documents one page embeds adapt to keep
+     * each page near one second.
+     */
+    catchUp: z
+      .object({
+        enabled: z
+          .boolean()
+          .describe(
+            "Grow pages and shorten the pause while a backlog drains and nothing else needs the machine. Default true.",
+          )
+          .optional(),
+        maxPageSize: z
+          .number()
+          .int()
+          .positive()
+          .describe("Largest indexer scan page while catching up. Default 1000.")
+          .optional(),
+        minBetweenPageSleep: duration
+          .describe("Pause between pages while catching up. Default 10ms.")
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    /**
      * Document chunker tunables. The chunker splits long content into
      * embedding-sized windows; these knobs balance recall vs. embedding
      * cost. Defaults match `DocumentChunker`'s built-in fallbacks
@@ -1118,6 +1167,21 @@ const backfillCatalog = z
   })
   .strict();
 
+const backfillPlannerStatistics = z
+  .object({
+    /**
+     * Cadence for refreshing SQLite planner statistics (`sqlite_stat1`), or
+     * `"off"`. Default `"off"`; `"0"` is also off.
+     */
+    interval: z
+      .union([duration, z.literal("off")])
+      .describe(
+        'Cadence for refreshing SQLite planner statistics (sqlite_stat1), or "off". Default off.',
+      )
+      .optional(),
+  })
+  .strict();
+
 const backfillLinkStats = z
   .object({
     /** Active reconcile cadence for `/links/stats` materialization. Default `"1h"`. */
@@ -1194,6 +1258,9 @@ const gatewayBackfill = z
     mergePass: backfillPeopleCounts.describe("Deprecated alias for peopleCounts.").optional(),
     sourceStats: backfillSourceStats.describe("Source-stats refresh.").optional(),
     catalog: backfillCatalog.describe("Catalog-stats refresh.").optional(),
+    plannerStatistics: backfillPlannerStatistics
+      .describe("SQLite planner statistics (ANALYZE) refresh.")
+      .optional(),
     linkStats: backfillLinkStats.describe("Link-stats materialization.").optional(),
     interactionScores: backfillInteractionScores.describe("Interaction-score refresh.").optional(),
     mergeRulesEval: backfillMergeRulesEval.describe("Merge-rules evaluation.").optional(),
@@ -2122,11 +2189,12 @@ const sourceSettings = z
      * Per-source override of `dataRetention.maxAge`. Documents older than this
      * are rejected at ingest and skipped during indexing for this specific
      * source. Falls back to `sources.default.maxAge`, then to the global
-     * `dataRetention.maxAge` when unset. Resolved via getSourceCutoffDate().
+     * `dataRetention.maxAge` when unset; `"unlimited"` lifts the limit for this
+     * source whatever those say. Resolved via getSourceCutoffDate().
      */
-    maxAge: duration
+    maxAge: maxAge
       .describe(
-        "Per-source retention cutoff. Falls back to sources.default.maxAge, then dataRetention.maxAge.",
+        'Per-source retention cutoff. Falls back to sources.default.maxAge, then dataRetention.maxAge; "unlimited" sets no limit.',
       )
       .optional(),
   })
@@ -4056,6 +4124,40 @@ export function pickSourceSettings(input: Record<string, unknown>): SourceSettin
   const out: Record<string, unknown> = {};
   for (const key of SOURCE_SETTINGS_KEYS) {
     if (key in input) out[key] = input[key];
+  }
+  return out as SourceSettings;
+}
+
+/**
+ * The settings a source's own `sources.<id>` block holds so that it resolves
+ * to `effective` — the source row's settings, which carry what that source
+ * inherits from `sources.default` and its source-type block as well as its
+ * own. A field the block already sets stays; any other field is kept only
+ * where it differs from what the broader blocks give.
+ *
+ * Writing the row back whole would copy every inherited value into the
+ * source's own block, where it outranks the block it came from: the source
+ * would keep a `maxAge` the operator later removes from `sources.gmail`, and
+ * the limit would never lift.
+ */
+export function ownSourceSettings(
+  config: OmnesisConfig,
+  sourceId: string,
+  effective: SourceSettings,
+): SourceSettings {
+  const own = (config.sources?.[sourceId] ?? {}) as Record<string, unknown>;
+  const { [sourceId]: _own, ...broader } = config.sources ?? {};
+  const inherited = resolveSourceSettings({ ...config, sources: broader }, sourceId) as Record<
+    string,
+    unknown
+  >;
+  const values = effective as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of SOURCE_SETTINGS_KEYS) {
+    if (!(key in values)) continue;
+    if (key in own || JSON.stringify(values[key]) !== JSON.stringify(inherited[key])) {
+      out[key] = values[key];
+    }
   }
   return out as SourceSettings;
 }

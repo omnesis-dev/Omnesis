@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join } from "node:path";
-import { sourceSettingKeys } from "@omnesis/config";
+import { sourceSettingKeys, UNLIMITED_MAX_AGE } from "@omnesis/config";
 import { DEFAULT_CONFIG_DIR } from "./utils.js";
 import { createLogger } from "./logger.js";
 import { ensurePrivateDirSync } from "./security-files.js";
@@ -218,7 +218,8 @@ export function parseDuration(value: string): number {
  * `sources.*` key that addresses the source wins — an instance-id block
  * (`google-drive:maya@example.com`) over a descriptor-id block
  * (`google-drive`) — then `sources.default.maxAge`, then the global
- * `dataRetention.maxAge`. Returns undefined when none is configured.
+ * `dataRetention.maxAge`. Returns undefined when no limit applies: none is
+ * configured, or the setting that wins is `"unlimited"`.
  */
 export function resolveSourceMaxAge(
   config: {
@@ -228,13 +229,13 @@ export function resolveSourceMaxAge(
   sourceId: string,
 ): string | undefined {
   const keys = sourceSettingKeys(sourceId);
-  for (let i = keys.length - 1; i >= 0; i--) {
-    const perSource = config.sources?.[keys[i]]?.maxAge;
-    if (perSource) return perSource;
-  }
-  const perDefault = config.sources?.default?.maxAge;
-  if (perDefault) return perDefault;
-  return config.dataRetention?.maxAge;
+  const levels = [
+    ...[...keys].reverse().map((key) => config.sources?.[key]?.maxAge),
+    config.sources?.default?.maxAge,
+    config.dataRetention?.maxAge,
+  ];
+  const maxAge = levels.find((value) => !!value);
+  return maxAge === UNLIMITED_MAX_AGE ? undefined : maxAge;
 }
 
 /**
@@ -263,7 +264,7 @@ export function getSourceCutoffDate(
  */
 export function getDataCutoffDate(config: { dataRetention?: DataRetentionConfig }): string | null {
   const maxAge = config.dataRetention?.maxAge;
-  if (!maxAge) return null;
+  if (!maxAge || maxAge === UNLIMITED_MAX_AGE) return null;
 
   const maxAgeMs = parseDuration(maxAge);
   return new Date(Date.now() - maxAgeMs).toISOString();

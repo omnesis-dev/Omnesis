@@ -26,6 +26,8 @@ import { isBackpressure } from "../backpressure.js";
 import type { Logger } from "@omnesis/core";
 import type { ScanTracker } from "../../background-jobs/trackers.js";
 import type { PeriodicTask, TaskOutcome } from "../types.js";
+import type { IoGate } from "../io-ops.js";
+import type { WriteGate } from "../../write-gate.js";
 
 export interface IdleResult {
   /** True if the tick had no work; Scheduler waits idlePeriodMs next. */
@@ -225,4 +227,19 @@ export function occRefreshTask<S>(cfg: OccRefreshTaskConfig<S>): PeriodicTask<un
       });
     },
   };
+}
+
+/**
+ * Accept the pending merge candidates whose sides now collapse to one
+ * identity: found on an io reader, re-checked and accepted on the writer, so
+ * the writer's share is proportional to what collapsed rather than to every
+ * pending candidate.
+ */
+export async function sweepCollapsedCandidates(
+  ioGate: Pick<IoGate, "collapsedMergeCandidates">,
+  writeGate: Pick<WriteGate, "acceptCollapsedMergeCandidates">,
+): Promise<{ swept: number }> {
+  const ids = await ioGate.collapsedMergeCandidates();
+  if (ids.length === 0) return { swept: 0 };
+  return writeGate.acceptCollapsedMergeCandidates(ids);
 }

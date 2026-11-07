@@ -323,12 +323,16 @@ export class Scheduler {
         inFlight: state.inflight.size,
       });
     }
-    return this.metrics.snapshot(
+    const snapshot = this.metrics.snapshot(
       windowSeconds,
       runnerInputs,
       (name) => this.findTaskDefinition(name),
       this.core.preemptRequestCount,
     );
+    const walCheckpoints = this.core.runners
+      .get("writer")
+      ?.runner.walCheckpointMetrics?.(windowSeconds);
+    return walCheckpoints ? { ...snapshot, walCheckpoints } : snapshot;
   }
 
   /** Walk the periodic + wakeable registries to enrich a metrics row. */

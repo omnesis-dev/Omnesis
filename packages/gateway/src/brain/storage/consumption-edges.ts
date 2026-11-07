@@ -306,19 +306,16 @@ export function listLiveDependentsForAnnotation(
     before?: { createdAt: number; kind: ConsumptionDependentKind; id: string };
   } = {},
 ): ConsumptionDependentRow[] {
+  // Mixed directions, so no single row-value comparison: bound the leading
+  // column, then exclude the cursor's own tie and what precedes it.
   const cursor = options.before
-    ? `AND (
-         e.created_at < ?
-         OR (e.created_at = ? AND e.dependent_kind > ?)
-         OR (e.created_at = ? AND e.dependent_kind = ? AND e.dependent_id > ?)
-       )`
+    ? `AND e.created_at <= ?
+       AND NOT (e.created_at = ? AND (e.dependent_kind, e.dependent_id) <= (?, ?))`
     : "";
   const params: Array<string | number> = [store, annotationId];
   if (options.before) {
     params.push(
       options.before.createdAt,
-      options.before.createdAt,
-      options.before.kind,
       options.before.createdAt,
       options.before.kind,
       options.before.id,

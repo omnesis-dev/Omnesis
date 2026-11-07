@@ -126,7 +126,6 @@ export const knowledgeWriterHandlers = {
   "knowledge.save": saveKnowledgeNode,
   "knowledge.evidence": registerKnowledgeEvidence,
   "knowledge.sourceChanged": recordKnowledgeSourceChange,
-  "knowledge.advanceCascade": advanceKnowledgeCascade,
   "knowledge.invalidate": invalidateKnowledgeDependents,
   "knowledge.ackChanges": ackKnowledgeChanges,
   "knowledge.enqueue": enqueueKnowledgeWork,
@@ -147,8 +146,17 @@ export const knowledgeWriterHandlers = {
 type Handlers = typeof knowledgeWriterHandlers;
 type Args<F> = F extends (db: Database.Database, ...args: infer A) => unknown ? A : never;
 type Result<F> = F extends (...args: never[]) => infer R ? R : never;
+/**
+ * The cascade is dispatched yieldably (`writerYieldableHandlers`), so it is not
+ * in the plain handler map; its gate entry takes the same two arguments.
+ */
 export type KnowledgeWriteGate = {
   [K in keyof Handlers]: (...args: Args<Handlers[K]>) => Promise<Result<Handlers[K]>>;
+} & {
+  "knowledge.advanceCascade": (
+    limit: number,
+    now: number,
+  ) => Promise<ReturnType<typeof advanceKnowledgeCascade>>;
 };
 export type KnowledgeWriterCall = <K extends keyof Handlers>(
   op: K,
@@ -235,7 +243,7 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
     "knowledge.save": async (...args) => saveKnowledgeNode(db, ...args),
     "knowledge.evidence": async (...args) => registerKnowledgeEvidence(db, ...args),
     "knowledge.sourceChanged": async (...args) => recordKnowledgeSourceChange(db, ...args),
-    "knowledge.advanceCascade": async (...args) => advanceKnowledgeCascade(db, ...args),
+    "knowledge.advanceCascade": async (limit, now) => advanceKnowledgeCascade(db, limit, now),
     "knowledge.invalidate": async (...args) => invalidateKnowledgeDependents(db, ...args),
     "knowledge.ackChanges": async (...args) => ackKnowledgeChanges(db, ...args),
     "knowledge.enqueue": async (...args) => enqueueKnowledgeWork(db, ...args),

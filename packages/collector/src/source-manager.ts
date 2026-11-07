@@ -8,6 +8,7 @@ import {
   DEFAULT_CONFIG_DIR,
   toErrorMessage,
   parseSourceKey,
+  resolveSourceMaxAge,
   WsInvalidInputError,
 } from "@omnesis/core";
 import { AccountId, SourceId, SourceType, trySourceType } from "@omnesis/types";
@@ -1318,7 +1319,7 @@ export class SourceManager {
 
   private configChangeChain: Promise<void> = Promise.resolve();
 
-  private applyConfigChange(newConfig: CollectorInternalConfig): void {
+  private async applyConfigChange(newConfig: CollectorInternalConfig): Promise<void> {
     // `config.changed` carries the gateway-global file. Its source blocks are
     // not addressed to this collector and may contain a sibling member's
     // machine-local paths. Per-device `sources.snapshot` / `source.updated`
@@ -1326,9 +1327,20 @@ export class SourceManager {
     // view while adopting global retention, search, indexer and interval
     // settings here. Source-setting edits are projected into the DB and
     // delivered separately as recipient-specific snapshots.
+    //
+    // A source's own `maxAge` arrives in its snapshot record, and a changed
+    // record rebuilds the source. The global `dataRetention.maxAge` arrives
+    // only here, and a source captured its cutoff when it was built, so a
+    // source whose effective cutoff moved with it is rebuilt now rather than
+    // at the next restart.
+    const before = this.config;
     const effectiveSources = this.config.sources;
     this.config = { ...newConfig, sources: effectiveSources };
     this.engine.updateSyncIntervals(this.config);
+    const moved = [...this.registeredSourceKeys].filter(
+      (key) => resolveSourceMaxAge(before, key) !== resolveSourceMaxAge(this.config, key),
+    );
+    if (moved.length > 0) await this.reconciler.rebuild(moved);
   }
 
   // ---------------------------------------------------------------------------

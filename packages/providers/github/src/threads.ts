@@ -372,6 +372,12 @@ export class GithubThreadsSource {
     let budget = MAX_LANE_PAGES_PER_CALL;
     while (budget > 0) {
       if (!cur.lane) {
+        // Between repositories is where discovery yields to materialization.
+        // The cap is checked here and not only on entry: a snapshot cycle
+        // returns with a lane open after almost every page, and an open lane
+        // re-enters discovery, so an entry-only check never fires and the
+        // whole account is enumerated before a single thread is fetched.
+        if (pending.length >= MAX_PENDING_BEFORE_MATERIALIZE) return;
         const repo = cur.discoveryQueue?.shift();
         if (!repo) return;
         this.startLane(cur, repo, "issues");

@@ -208,6 +208,54 @@ export class SourceConfigReconciler {
     return next;
   }
 
+  /**
+   * Rebuild registered, enabled sources from the settings they already have,
+   * for an input a provider captured in `create()` that changed outside their
+   * snapshot record — the global `dataRetention.maxAge` behind their data
+   * cutoff. Serialized with snapshot applications.
+   */
+  async rebuild(keys: string[]): Promise<void> {
+    const next = this.applyChain
+      .catch(() => undefined)
+      .then(async () => {
+        const config = this.ctx.getConfig();
+        const registered = this.ctx.getRegisteredKeys();
+        const replacements: Record<string, SourceConfig> = {};
+        for (const key of keys) {
+          const cfg = config.sources?.[key];
+          if (registered.has(key) && cfg && cfg.enabled !== false) replacements[key] = cfg;
+        }
+        if (Object.keys(replacements).length === 0) return;
+        await this.replaceInstances(replacements);
+        log.info(`Rebuilt ${Object.keys(replacements).join(", ")} for a changed retention cutoff`);
+      });
+    this.applyChain = next.catch(() => undefined);
+    return next;
+  }
+
+  /**
+   * Replace each instance with one built from `replacements` and restart its
+   * loop: a provider instance captures its effective config in `create()`.
+   * The loops start without waiting for their first sync, which can page for
+   * as long as a sync may take: this runs on the chain every later snapshot
+   * and config change waits behind.
+   */
+  private async replaceInstances(replacements: Record<string, SourceConfig>): Promise<void> {
+    const { ctx } = this;
+    const keys = Object.keys(replacements);
+    for (const failure of await ctx.setupSources(replacements, keys)) {
+      log.warn(`${failure.key} was not rebuilt: ${failure.error}`);
+    }
+    const refreshed = ctx.findSourcesForKeys(keys, replacements);
+    if (refreshed.length > 0) {
+      ctx.engine.startSourceSyncLoops(refreshed, ctx.getConfig()).catch((err) => {
+        log.error(
+          `Failed to start sync loops for rebuilt ${keys.join(", ")}: ${toErrorMessage(err)}`,
+        );
+      });
+    }
+  }
+
   private async applySnapshotInner(
     records: SourceSnapshotRecord[],
     opts: { merge?: boolean } = {},
@@ -358,13 +406,7 @@ export class SourceConfigReconciler {
         config.sources[key] = cfg;
         replacements[key] = cfg;
       }
-      for (const failure of await ctx.setupSources(replacements, toReplace)) {
-        log.warn(`applySnapshot: ${failure.key} was not rebuilt: ${failure.error}`);
-      }
-      const refreshed = ctx.findSourcesForKeys(toReplace, replacements);
-      if (refreshed.length > 0) {
-        await ctx.engine.startSourceSyncLoops(refreshed, config);
-      }
+      await this.replaceInstances(replacements);
     }
 
     // Even settings that do not require provider replacement (including a

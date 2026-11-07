@@ -28,6 +28,7 @@ import { writerHandlers, writerYieldableHandlers } from "../scheduler/writer-han
 
 import { PreemptToken } from "../scheduler/preempt.js";
 import { openWriteConn } from "./writer-connection.js";
+import { WalCheckpointer } from "./wal-checkpoint.js";
 import type Database from "better-sqlite3";
 import type { MainToWriter, WriterInit, WriterToMain, LogLevel } from "./protocol.js";
 type Db = Database.Database;
@@ -57,6 +58,8 @@ function log(level: LogLevel, component: string, message: string): void {
 let state: {
   db: Db;
   journalMode: "WAL" | "TRUNCATE";
+  /** Null under TRUNCATE, which has no WAL. */
+  checkpointer: WalCheckpointer | null;
   heartbeatInterval: ReturnType<typeof setInterval>;
   checkpointInterval: ReturnType<typeof setInterval>;
   shuttingDown: boolean;
@@ -64,44 +67,34 @@ let state: {
   preemptToken: PreemptToken;
 } | null = null;
 
-// Explicit PASSIVE checkpoint cadence. Only fires in WAL mode — a
-// no-op under TRUNCATE since there's no WAL to checkpoint.
-//
-// The checkpoint runs on this thread, so every write waits while it copies
-// the frames written since the previous one; its cost follows that backlog.
-// A short interval keeps each pause to a few seconds' worth of writes for the
-// same total work, and a checkpoint that copies every frame allows the
-// next write to restart the WAL from its start instead of growing the file. One
-// with nothing to copy returns at once.
-const CHECKPOINT_INTERVAL_MS = 10_000;
+// Between ops the writer checkpoints once enough frames wait; this tick
+// copies whatever is left, so a quiet writer leaves nothing waiting.
+const CHECKPOINT_IDLE_INTERVAL_MS = 1_000;
 
-function runPassiveCheckpoint(db: Db): void {
+/** A failing checkpoint is reported at most this often. */
+const CHECKPOINT_WARN_INTERVAL_MS = 60_000;
+let lastCheckpointWarnMs = Number.NEGATIVE_INFINITY;
+let unreportedCheckpointFailures = 0;
+
+/**
+ * Run what the WAL needs and report it; the runner keeps the counts and logs.
+ * The checkpointer backs off after a throw; the warning is rate-limited too.
+ */
+function runCheckpoint(checkpointer: WalCheckpointer, minPending?: number): void {
   try {
-    // wal_checkpoint returns (busy, log_frames, checkpointed_frames).
-    // PASSIVE never blocks on readers; the worst case is it copies 0
-    // frames because a reader holds the oldest WAL frame. We don't
-    // need the result — just log when it moves enough to be interesting.
-    const startMs = Date.now();
-    const res = db.pragma("wal_checkpoint(PASSIVE)") as Array<{
-      busy: number;
-      log: number;
-      checkpointed: number;
-    }>;
-    const row = res[0];
-    const tookMs = Date.now() - startMs;
-    if (row && row.log > 0 && tookMs > 250) {
-      log(
-        "info",
-        "writer-worker",
-        `wal_checkpoint(PASSIVE) busy=${row.busy} log=${row.log} checkpointed=${row.checkpointed} in ${tookMs}ms`,
-      );
-    }
+    const run = checkpointer.maintain(minPending);
+    if (run) post({ type: "checkpoint", run });
   } catch (err) {
+    unreportedCheckpointFailures += 1;
+    const now = Date.now();
+    if (now - lastCheckpointWarnMs < CHECKPOINT_WARN_INTERVAL_MS) return;
     log(
       "warn",
       "writer-worker",
-      `wal_checkpoint failed: ${err instanceof Error ? err.message : String(err)}`,
+      `wal_checkpoint failed (${unreportedCheckpointFailures} since the last report): ${err instanceof Error ? err.message : String(err)}`,
     );
+    lastCheckpointWarnMs = now;
+    unreportedCheckpointFailures = 0;
   }
 }
 
@@ -118,15 +111,12 @@ async function handleInit(init: WriterInit): Promise<void> {
       post({ type: "heartbeat", ts: Date.now() });
     }, init.heartbeatIntervalMs);
 
-    // Timer-driven PASSIVE checkpoint replaces the autocheckpoint we
-    // disabled in openWriteConn (WAL mode only; under TRUNCATE this
-    // interval is installed but effectively a no-op — wal_checkpoint
-    // on a non-WAL DB returns quickly with no effect).
+    // Replaces the autocheckpoint openWriteConn disables (WAL mode only).
+    const checkpointer = journalMode === "WAL" ? new WalCheckpointer(db) : null;
     const checkpointInterval = setInterval(() => {
-      if (!state || state.shuttingDown) return;
-      if (state.journalMode !== "WAL") return;
-      runPassiveCheckpoint(state.db);
-    }, CHECKPOINT_INTERVAL_MS);
+      if (!state || state.shuttingDown || !state.checkpointer) return;
+      runCheckpoint(state.checkpointer, 1);
+    }, CHECKPOINT_IDLE_INTERVAL_MS);
 
     const preemptToken = init.preemptBuffer
       ? new PreemptToken(init.preemptBuffer)
@@ -135,6 +125,7 @@ async function handleInit(init: WriterInit): Promise<void> {
     state = {
       db,
       journalMode,
+      checkpointer,
       heartbeatInterval,
       checkpointInterval,
       shuttingDown: false,
@@ -307,15 +298,9 @@ async function handleShutdown(): Promise<void> {
 
   clearInterval(state.heartbeatInterval);
   clearInterval(state.checkpointInterval);
-  // Final PASSIVE checkpoint (WAL mode only) so the next boot doesn't
-  // have a giant WAL to replay. Best-effort.
-  if (state.journalMode === "WAL") {
-    try {
-      runPassiveCheckpoint(state.db);
-    } catch {
-      /* best-effort */
-    }
-  }
+  // Final checkpoint (WAL mode only) so the next boot doesn't have a
+  // giant WAL to replay. Best-effort.
+  if (state.checkpointer) runCheckpoint(state.checkpointer, 1);
   try {
     state.db.close();
   } catch {
@@ -332,6 +317,8 @@ parentPort.on("message", (msg: MainToWriter) => {
       break;
     case "call":
       handleCall(msg.id, msg.op, msg.args, msg.enqueueMs);
+      // After the result is posted, so no op's own time carries it.
+      if (state?.checkpointer && !state.shuttingDown) runCheckpoint(state.checkpointer);
       break;
     case "shutdown":
       void handleShutdown();

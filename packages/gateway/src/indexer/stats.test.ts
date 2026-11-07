@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
 import { createIndexDatabase, upsertChunksAndMarkIndexed } from "./db.js";
 import { computeIndexStats } from "./stats.js";
+import { writeScanProgress } from "./scan-progress.js";
 import type Database from "better-sqlite3";
 import type { OmnesisConfig } from "@omnesis/config";
 
@@ -288,5 +289,50 @@ describe("semantic search state", () => {
       getSemanticSearch: () => null,
     });
     expect(stats).not.toHaveProperty("semanticSearch");
+  });
+});
+
+describe("computeIndexStats — a scan in progress", () => {
+  test("reports the durable scan record, and its rate stands in for a cycle rate that has none", () => {
+    seedGatewaySource("demo-notes:user@example.com", 40);
+    seedIndexedSource("demo-notes:user@example.com", 10, 10);
+    writeScanProgress(indexDb, {
+      version: 1,
+      since: null,
+      boundary: "2026-08-01T12:00:00.000Z",
+      afterId: "40000000-0000-4000-8000-000000000000",
+      maxSeen: "2026-08-01T11:00:00.000Z",
+      startedAt: "2026-08-01T12:00:00.000Z",
+      resumes: 2,
+      runStartedAt: "2026-08-01T13:00:00.000Z",
+      scanned: 9000,
+      indexed: 3000,
+      runScanned: 1200,
+      runIndexed: 600,
+      pageSize: 640,
+      sleepMs: 10,
+      pressure: "none",
+      updatedAt: "2026-08-01T13:01:00.000Z",
+    });
+    const stats = computeIndexStats({ db, indexDb, indexerModel: MODEL, getIndexRate: () => null });
+    expect(stats.scan).toMatchObject({
+      active: true,
+      full: true,
+      resumes: 2,
+      scanned: 9000,
+      indexed: 3000,
+      position: 0.25,
+      scannedPerSec: 20,
+      indexedPerSec: 10,
+      pageSize: 640,
+      pressure: "none",
+    });
+    expect(stats.indexRatePerSec).toBe(10);
+    expect(stats.etaSeconds).toBe(Math.round((stats.totalGatewayDocs! - stats.totalIndexed!) / 10));
+  });
+
+  test("no scan record, no scan", () => {
+    const stats = computeIndexStats({ db, indexDb, indexerModel: MODEL });
+    expect(stats.scan).toBeNull();
   });
 });

@@ -292,6 +292,7 @@ export const CONFIG_DEFAULTS = {
       peopleCounts: { interval: "10m" },
       sourceStats: { interval: "30s" },
       catalog: { interval: "5m" },
+      plannerStatistics: { interval: "off" },
       linkStats: { interval: "1h", idleDelay: "6h" },
       interactionScores: { interval: "60s", idleDelay: "5m" },
       mergeRulesEval: { interval: "60s", idleDelay: "5m" },
@@ -373,6 +374,11 @@ export const CONFIG_DEFAULTS = {
     embedConcurrency: 2,
     pageSize: 200,
     betweenPageSleep: "500ms",
+    catchUp: {
+      enabled: true,
+      maxPageSize: 1000,
+      minBetweenPageSleep: "10ms",
+    },
     chunker: {
       chunkSize: 2048,
       overlap: 512,
@@ -591,7 +597,7 @@ const SOURCE_UNSET_DESCRIPTIONS: Readonly<Record<string, string>> = {
   attachmentMaxTextLength:
     "Effective precedence: account setting, source-type setting, sources.default.attachmentMaxTextLength, then 512000 characters.",
   maxAge:
-    "Effective precedence: account setting, source-type setting, sources.default.maxAge, then dataRetention.maxAge; without any of them, there is no age limit.",
+    'Effective precedence: account setting, source-type setting, sources.default.maxAge, then dataRetention.maxAge; without any of them, there is no age limit. "unlimited" sets no age limit whatever a broader setting says.',
 };
 
 export function configUnsetDescriptionAt(path: readonly string[]): string | undefined {
