@@ -79,7 +79,9 @@ class AccessLevelDraftTest {
         assertFalse(draft.valid)
         val answer = draft.rule(AccessCapability.ANSWER)!!
         draft = draft.setRule(answer.copy(release = AccessAnswerRelease.unreviewed())).copy(requireAnswerPolicySelection = false)
-        assertTrue(draft.valid)
+        assertFalse(draft.valid)
+        draft = draft.setBoundary(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("scope-chat:one")), AccessCapability.ANSWER, true)
+        assertTrue(draft.validFor(overview))
     }
 
     @Test fun unlinkingANewDraftMaterializesTheWholeAnswerPolicy() {

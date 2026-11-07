@@ -29,8 +29,9 @@ class AccessManagementViewModel @Inject constructor(private val session: Session
     }
     private val mutable = MutableStateFlow(AccessManagementState())
     val state = mutable.asStateFlow()
-    val scopeGateway: ScopeEditorGateway get() = PairedScopeEditorGateway(session)
+    val scopeGateway: ScopeEditorGateway = ScopePreviewSession(PairedScopeEditorGateway(session))
     fun sourceIcon(sourceId: String) = sourceCatalog.iconModel(sourceId)
+    fun sourceName(sourceId: String) = sourceCatalog.familyLabel(sourceId)
     fun refresh(reloadDraft: Boolean = false) {
         viewModelScope.launch {
             mutable.update { it.copy(loading = true) }
@@ -38,11 +39,12 @@ class AccessManagementViewModel @Inject constructor(private val session: Session
                 val owner = activeOwner()
                 val identity = owner.pairing.accessAuthorizationIdentity()
                 val overview = owner.admin.accessOverview()
+                if (reloadDraft) check(state.value.draft?.id == "new" || overview.levels.any { it.id == state.value.draft?.id }) { "This access level is no longer available. Your unsaved draft is retained; close it to return to Access." }
                 sourceCatalog.ensureLoaded(owner.admin)
                 check(session.requireSession().pairing.accessAuthorizationIdentity() == identity) { "Gateway pairing changed" }
                 mutable.update { old -> old.copy(overview = overview, loading = false, error = null,
                     draft = if (reloadDraft) overview.levels.firstOrNull { it.id == old.draft?.id }?.let { AccessLevelDraft.opening(it, overview) } else old.draft,
-                    conflict = if (reloadDraft) false else old.conflict) }
+                    conflict = if (reloadDraft) false else old.conflict || (old.draft?.expectedRevision != null && overview.levels.firstOrNull { it.id == old.draft.id }?.revision != old.draft.expectedRevision)) }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { mutable.update { it.copy(loading = false, error = accessManagementError(error)) } }
         }
@@ -51,10 +53,11 @@ class AccessManagementViewModel @Inject constructor(private val session: Session
         val overview = state.value.overview ?: return
         mutable.update { it.copy(draft = AccessLevelDraft.opening(level, overview), error = null, conflict = false) }
     }
-    fun update(draft: AccessLevelDraft) = mutable.update { it.copy(draft = draft) }
-    fun closeEditor() = mutable.update { it.copy(draft = null, error = null, conflict = false) }
+    fun update(draft: AccessLevelDraft) = mutable.update { if (it.loading) it else it.copy(draft = draft) }
+    fun closeEditor() = mutable.update { if (it.loading) it else it.copy(draft = null, error = null, conflict = false) }
     fun save() {
-        val draft = state.value.draft?.takeIf { it.valid && !state.value.loading && !state.value.conflict } ?: return
+        val overview = state.value.overview ?: return
+        val draft = state.value.draft?.takeIf { it.validFor(overview) && !state.value.loading && !state.value.conflict } ?: return
         viewModelScope.launch {
             mutable.update { it.copy(loading = true, error = null) }
             try {
@@ -78,6 +81,6 @@ class AccessManagementViewModel @Inject constructor(private val session: Session
 internal fun accessManagementError(error: Exception): String = when(error) {
     is GatewayException.Unauthorized -> "Authentication failed. Re-pair with this gateway."
     is GatewayException.Forbidden -> "This device cannot manage access levels."
-    is GatewayException.ServerError -> error.body ?: "The gateway could not save these changes."
+    is GatewayException.ServerError -> if (listOfNotNull(error.code, error.body).any { it.contains("level-name-taken") }) "An access level already uses this name. Choose another." else "The gateway could not save these changes. Try again."
     else -> error.message ?: "Could not connect to the gateway. Try again."
 }

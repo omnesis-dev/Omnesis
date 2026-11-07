@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -35,7 +36,7 @@ class SourceFilterEditorTest {
     private fun show(enabled: Boolean, result: ScopePreview = preview, changed: (ScopePolicy?) -> Unit = {}) {
         val gateway = object : ScopeEditorGateway {
             override suspend fun preview(policy: ScopePolicy) = result
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = error("No picker request expected")
+            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = ScopeOptions(sourceId, "scope-chat", source.scopes!!, ready, emptyList())
         }
         compose.setContent {
             CompositionLocalProvider(LocalInspectionMode provides true) {
@@ -44,36 +45,46 @@ class SourceFilterEditorTest {
         }
         compose.waitForIdle()
     }
+    private fun reviewFilter() {
+        compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("Review filter").performClick()
+        compose.waitForIdle()
+    }
     @Test fun reopeningNeverAddsNewAddressesByItself() {
         var saved: ScopePolicy? = null
         show(true) { saved = it }
-        compose.onNodeWithText("Done").performClick()
+        reviewFilter()
+        compose.onNodeWithText("Apply filter").performClick()
         assertEquals(listOf(original), saved!!.rules.single().match.single().identifiers)
     }
     @Test fun anExplicitAddCapturesOnlyTheOfferedAddresses() {
         var saved: ScopePolicy? = null
         show(true) { saved = it }
-        compose.onNodeWithText("Add these addresses").performScrollTo().performClick()
+        reviewFilter()
+        compose.onNodeWithText("Other known identifiers").performScrollTo().performClick()
+        compose.onNodeWithText("Add these identifiers").performScrollTo().performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("Apply filter").performClick()
         assertEquals(listOf(original, extra), saved!!.rules.single().match.single().identifiers)
     }
     @Test fun savedRestrictionsRemainVisibleWhenAuthoringIsDisabled() {
         show(false)
-        compose.onNodeWithText("Done").assertIsNotEnabled()
+        compose.onNodeWithText("Apply filter").assertDoesNotExist()
+        compose.onAllNodesWithText("Close")[0].assertIsEnabled()
         compose.onNodeWithText("Add item").assertDoesNotExist()
         compose.onNodeWithText("Remove filter").assertDoesNotExist()
     }
     @Test fun sourcePreparationDisablesSaving() {
         show(true, preview.copy(readiness = listOf(ScopeKindReadiness("participant", false, reason = "backfill"))))
-        compose.onNodeWithText("Done").assertIsNotEnabled()
+        reviewFilter()
+        compose.onNodeWithText("Apply filter").assertIsNotEnabled()
     }
     @Test fun aChangedPolicyCannotBeSavedBeforeItsOwnPreviewReturns() {
         val pending = kotlinx.coroutines.CompletableDeferred<ScopePreview>()
         var calls = 0
         val gateway = object : ScopeEditorGateway {
             override suspend fun preview(policy: ScopePolicy): ScopePreview = if (++calls == 1) preview else pending.await()
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = error("No picker expected")
+            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = ScopeOptions(sourceId, "scope-chat", source.scopes!!, ready, emptyList())
         }
         compose.setContent {
             CompositionLocalProvider(LocalInspectionMode provides true) {
@@ -81,13 +92,15 @@ class SourceFilterEditorTest {
             }
         }
         compose.waitForIdle()
-        compose.onNodeWithText("Add these addresses").performScrollTo().performClick()
+        reviewFilter()
+        compose.onNodeWithText("Other known identifiers").performScrollTo().performClick()
+        compose.onNodeWithText("Add these identifiers").performScrollTo().performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("Done").assertIsNotEnabled()
-        compose.onNodeWithText("Add these addresses").assertDoesNotExist()
+        compose.onNodeWithText("Apply filter").assertIsNotEnabled()
+        compose.onNodeWithText("Add these identifiers").assertDoesNotExist()
         pending.complete(preview)
         compose.waitForIdle()
-        compose.onNodeWithText("Done").assertIsEnabled()
+        compose.onNodeWithText("Apply filter").assertIsEnabled()
     }
 
     private fun showConsent(answer: Boolean, linked: Boolean, enabled: Boolean = true, saved: Boolean = false, edit: (AccessSourceInstance, String) -> Unit) {
@@ -177,16 +190,18 @@ class SourceFilterEditorTest {
         val overview = AccessOverview(principals = emptyList(), sources = listOf(source), levels = listOf(level), sourceFilters = SourceFiltersAvailability(false))
         val gateway = object : ScopeEditorGateway {
             override suspend fun preview(policy: ScopePolicy): ScopePreview = error("No editor expected")
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = error("No picker expected")
+            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = ScopeOptions(sourceId, "scope-chat", source.scopes!!, ready, emptyList())
         }
         compose.setContent { OmnesisTheme {
             AccessHomeContent(AccessManagementState(overview, AccessLevelDraft.opening(level, overview)), gateway, onClose = {})
         } }
         compose.waitForIdle()
-        compose.onNodeWithText("Copy Answer settings to Direct").assertIsNotEnabled()
-        compose.onNodeWithText("Filter Cedar account: Filtered").assertIsEnabled()
-        compose.onNodeWithText("Filter Cedar account: All content").assertDoesNotExist()
-        compose.onNodeWithText("Saved filters are read-only while filter editing is unavailable. You can still revoke capabilities.").assertExists()
+        compose.onNodeWithContentDescription("Change Direct data").performClick()
+        compose.onNodeWithText("Copy Answer’s data once").assertIsNotEnabled()
+        compose.onNodeWithText("Change").assertDoesNotExist()
+        compose.onNodeWithText("Back").performClick()
+        compose.onNodeWithContentDescription("Change Answer data").performClick()
+        compose.onNodeWithText("Change").assertIsEnabled()
     }
 
 }

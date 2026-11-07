@@ -17,6 +17,7 @@ data class AccessLevelDraft(
     val expectedRevision: Int?, val expectedFilterRevisions: Map<String, Int>,
     val directSameAsAnswer: Boolean,
     val requireAnswerPolicySelection: Boolean = false,
+    val originalLevel: AccessLevelSummary? = null,
 ) {
     fun rule(capability: AccessCapability) = rules.firstOrNull { it.capability == capability }
     fun setRule(rule: AccessGrantRule) = copy(rules = rules.filterNot { it.capability == rule.capability } + rule)
@@ -62,7 +63,31 @@ data class AccessLevelDraft(
     val serializedRules: List<AccessGrantRule> get() = (if (directSameAsAnswer) copyAnswer().rules else rules).map {
         if (it.scopePolicies.isNotEmpty() && it.filterRevision == null) it.copy(filterRevision = 0) else it
     }
-    val valid: Boolean get() = name.trim().isNotEmpty() && name.length <= 120 && rules.isNotEmpty() && !(requireAnswerPolicySelection && rule(AccessCapability.ANSWER) != null)
+    val valid: Boolean get() = name.trim().isNotEmpty() && name.trim().length <= 120 && rules.isNotEmpty() &&
+        !(requireAnswerPolicySelection && rule(AccessCapability.ANSWER) != null) && serializedRules.all {
+            it.capability == AccessCapability.NOTES || it.sources.mode != AccessSourceMode.ALLOWLIST || it.sources.sourceIds.isNotEmpty()
+        }
+    fun validFor(overview: AccessOverview): Boolean = valid && nameError(overview) == null && readingCapabilities.all { dataError(it, overview) == null } && releaseValid(overview)
+    val readingCapabilities: List<AccessCapability> get() = listOf(AccessCapability.ANSWER, AccessCapability.DIRECT).filter { rule(it) != null }
+    fun knownSourceIds(overview: AccessOverview): Set<String> = overview.sources.mapTo(mutableSetOf()) { it.id }.also { ids ->
+        rules.forEach { rule -> ids.addAll(rule.sources.sourceIds); ids.addAll(rule.scopePolicies.map { it.sourceId }) }
+    }
+    fun dataError(capability: AccessCapability, overview: AccessOverview): String? {
+        val current = serializedRules.firstOrNull { it.capability == capability } ?: return null
+        val known = overview.sources.mapTo(mutableSetOf()) { it.id }
+        val selection = AccessSourceSelectionState.from(current.sources, known)
+        val saved = (originalLevel ?: overview.levels.firstOrNull { it.id == id })?.rules?.firstOrNull { it.capability == capability }
+        return if (selection.permitsAnyKnownSource(known) || (saved != null && saved.sources == current.sources && current.sources.mode == AccessSourceMode.ALLOWLIST && current.sources.sourceIds.isNotEmpty() && current.sources.sourceIds.none(known::contains))) null
+        else "Choose at least one source for ${capability.title}."
+    }
+    fun releaseValid(overview: AccessOverview): Boolean {
+        val answer = rule(AccessCapability.ANSWER) ?: return true
+        if (requireAnswerPolicySelection) return false
+        if (answer.release?.mode == AccessAnswerReleaseMode.UNREVIEWED) return true
+        val release = answer.release ?: return false
+        val saved = (originalLevel ?: overview.levels.firstOrNull { it.id == id })?.rules?.firstOrNull { it.capability == AccessCapability.ANSWER }?.release
+        return overview.policyFamilies.any { it.id == release.policyFamilyId } || (saved != null && saved == release)
+    }
     fun setPolicy(policy: ScopePolicy?, sourceId: String, capability: AccessCapability): AccessLevelDraft {
         val rule = rule(capability) ?: return this
         return setRule(rule.copy(scopePolicies = rule.scopePolicies.filterNot { it.sourceId == sourceId } + listOfNotNull(policy)))
@@ -76,7 +101,7 @@ data class AccessLevelDraft(
             return AccessLevelDraft(level?.id ?: "new", level?.name.orEmpty(), rules, level?.revision,
                 rules.filter { it.capability != AccessCapability.NOTES }.associate {
                     it.capability.name.lowercase() to (it.filterRevision ?: 0)
-                }, level == null, level == null && overview.defaultPolicyFamilyId == null && overview.policyFamilies.isEmpty())
+                }, level == null, level == null && overview.defaultPolicyFamilyId == null && overview.policyFamilies.isEmpty(), level)
         }
     }
 }
