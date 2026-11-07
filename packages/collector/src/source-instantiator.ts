@@ -5,6 +5,7 @@ import {
   createLogger,
   DEFAULT_CONFIG_DIR,
   getSourceCutoffDate,
+  hasBrokerBinding,
   parseSourceKey,
   toErrorMessage,
 } from "@omnesis/core";
@@ -1033,11 +1034,15 @@ async function setupProviderDefinition(
         continue;
       }
 
+      const brokerFileKey = def.broker?.fileKey;
       const registeredProvider: RegisteredProvider = {
         id: providerId,
         name: def.provider.name,
         credentialState: credentialStateFn,
         renewableCredential: def.authType !== "local",
+        ...(brokerFileKey
+          ? { brokered: () => hasBrokerBinding(brokerFileKey, String(accountId), configDir) }
+          : {}),
         sources: registeredSources,
       };
 

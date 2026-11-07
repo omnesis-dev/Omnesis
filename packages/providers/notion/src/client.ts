@@ -342,11 +342,23 @@ export class NotionClient {
   private client: Client;
   private sleepFn: (ms: number) => Promise<void>;
 
-  constructor(accessToken: string, opts: NotionClientOptions = {}) {
-    this.client = new Client({
-      auth: accessToken,
-      timeoutMs: NOTION_REQUEST_TIMEOUT_MS,
-    });
+  /**
+   * `accessToken` is the workspace's token, or — for a workspace whose grant
+   * the credential broker holds — a function asked for the current one before
+   * every request, so a token the broker rotates is picked up mid-run.
+   */
+  constructor(accessToken: string | (() => Promise<string>), opts: NotionClientOptions = {}) {
+    this.client =
+      typeof accessToken === "string"
+        ? new Client({ auth: accessToken, timeoutMs: NOTION_REQUEST_TIMEOUT_MS })
+        : new Client({
+            timeoutMs: NOTION_REQUEST_TIMEOUT_MS,
+            fetch: async (url, init) => {
+              const headers = new Headers(init?.headers);
+              headers.set("authorization", `Bearer ${await accessToken()}`);
+              return fetch(url, { ...init, headers });
+            },
+          });
     this.sleepFn = opts.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 

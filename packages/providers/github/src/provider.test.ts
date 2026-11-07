@@ -61,7 +61,7 @@ describe("authFlow re-auth guard", () => {
   const configDir = () => mkdtempSync(join(tmpdir(), "omnesis-github-auth-"));
 
   function withProbe(login: string) {
-    vi.spyOn(GithubClient.prototype, "getUser").mockResolvedValue({ login });
+    vi.spyOn(GithubClient.prototype, "getUser").mockResolvedValue({ login, id: 4101 });
   }
 
   afterEach(() => {
@@ -147,7 +147,7 @@ describe("connecting through the typed session", () => {
     // The token is asked for rather than handed in, which is what lets a
     // re-authentication offer a fresh one instead of failing on the stored
     // credential that is the very thing that stopped working.
-    vi.spyOn(GithubClient.prototype, "getUser").mockResolvedValue({ login: "Octocat" });
+    vi.spyOn(GithubClient.prototype, "getUser").mockResolvedValue({ login: "Octocat", id: 4101 });
     const { session: s, asked, shown } = session({ token: "ghp_abcdefghijklmnop" });
 
     const result = await authenticate(s);
@@ -158,7 +158,7 @@ describe("connecting through the typed session", () => {
   });
 
   it("names the account when it is renewing one", async () => {
-    vi.spyOn(GithubClient.prototype, "getUser").mockResolvedValue({ login: "Octocat" });
+    vi.spyOn(GithubClient.prototype, "getUser").mockResolvedValue({ login: "Octocat", id: 4101 });
     const { session: s, asked } = session(
       { token: "ghp_abcdefghijklmnop" },
       { accountId: "octocat@acme-org" },
@@ -171,7 +171,10 @@ describe("connecting through the typed session", () => {
   });
 
   it("refuses a token belonging to somebody else, and says what to do instead", async () => {
-    vi.spyOn(GithubClient.prototype, "getUser").mockResolvedValue({ login: "Someone-Else" });
+    vi.spyOn(GithubClient.prototype, "getUser").mockResolvedValue({
+      login: "Someone-Else",
+      id: 5202,
+    });
     const { session: s } = session({ token: "ghp_abcdefghijklmnop" }, { accountId: "octocat" });
 
     const failure = await authenticate(s).catch((e: unknown) => e);

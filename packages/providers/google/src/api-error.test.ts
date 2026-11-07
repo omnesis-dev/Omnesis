@@ -162,15 +162,15 @@ describe("mapGoogleApiError", () => {
     expect(e.quota).toBeUndefined();
   });
 
-  test("userRateLimitExceeded reason → rate-limit with an account-scoped quota bucket", () => {
-    // Google documents this reason as the per-user limit specifically.
+  test("userRateLimitExceeded reason → rate-limit, no quota bucket: the per-user limit is per API", () => {
+    // A user's Gmail limit leaves their Calendar, Drive and Contacts sources running.
     const e = mapGoogleApiError({
       code: 429,
       errors: [{ reason: "userRateLimitExceeded" }],
       message: "quota",
     });
     expect(e.kind).toBe("rate-limit");
-    expect(e.quota).toEqual({ kind: "account" });
+    expect(e.quota).toBeUndefined();
   });
 
   test("403 with rateLimitExceeded reason → rate-limit", () => {
@@ -180,7 +180,7 @@ describe("mapGoogleApiError", () => {
       message: "quota",
     });
     expect(e.kind).toBe("rate-limit");
-    expect(e.quota).toEqual({ kind: "account" });
+    expect(e.quota).toBeUndefined();
   });
 
   test("403 plain → permission, default source scope, no quota bucket", () => {

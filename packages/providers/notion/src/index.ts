@@ -2,7 +2,16 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join } from "node:path";
-import { DEFAULT_CONFIG_DIR, createLogger } from "@omnesis/core";
+import {
+  BrokerCredentialError,
+  BrokeredCredentials,
+  DEFAULT_CONFIG_DIR,
+  createLogger,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
+  readBrokerBinding,
+  type BrokerCredentialResult,
+} from "@omnesis/core";
 import { defineProvider, emptySync, readConnectionState } from "@omnesis/source-sdk";
 import {
   authenticate as notionAuthenticate,
@@ -28,6 +37,24 @@ export { notionCredentialsSpec } from "./credentials-spec.js";
 
 const log = createLogger("provider:notion");
 
+/**
+ * The token response names the workspace; one re-authorised at the broker for
+ * another workspace must not sync under this one's id.
+ */
+export function verifyNotionWorkspace(
+  accountId: string,
+): (purpose: string, result: BrokerCredentialResult) => void {
+  return (_purpose, { credential }) => {
+    const raw = credential.type === "oauth2" ? credential.raw : {};
+    if (typeof raw.workspace_id === "string" && raw.workspace_id !== accountId) {
+      throw new BrokerCredentialError(
+        "identity-changed",
+        `The broker's Notion connection now belongs to another workspace, not ${accountId}; link it again with \`omnesis broker link\``,
+      );
+    }
+  };
+}
+
 // ── Provider Definition ──────────────────────────────────────────────
 
 export default defineProvider<NotionContext>({
@@ -35,8 +62,29 @@ export default defineProvider<NotionContext>({
   authType: "oauth",
   credentials: notionCredentialsSpec,
 
+  broker: {
+    fileKey: "notion",
+    purposes: [{ id: "default", label: "Notion", brokerProviders: ["notion"] }],
+    // Notion's token response names the workspace the integration was
+    // installed in, and the broker keeps that response as it was given.
+    async resolveAccount(credentials) {
+      const { credential } = await credentials.get();
+      const raw = credential.type === "oauth2" ? credential.raw : {};
+      const workspaceId = typeof raw.workspace_id === "string" ? raw.workspace_id : "";
+      if (!workspaceId) {
+        throw new Error("The broker's Notion connection does not name its workspace");
+      }
+      const workspaceName = typeof raw.workspace_name === "string" ? raw.workspace_name : "";
+      const params: Record<string, string> = workspaceName ? { workspaceName } : {};
+      return { accountId: workspaceId, params };
+    },
+    verify: (accountId) => verifyNotionWorkspace(accountId),
+  },
+
   async discover(ctx) {
-    return discoverAccounts(ctx?.configDir).map(String);
+    const ids = new Set(discoverAccounts(ctx?.configDir).map(String));
+    for (const id of listBrokeredAccountIds("notion", ctx?.configDir)) ids.add(id);
+    return [...ids];
   },
 
   async authFlow(_params, callbacks, ctx) {
@@ -59,8 +107,15 @@ export default defineProvider<NotionContext>({
   },
 
   async createContext({ accountId, dataCutoff, host }) {
-    const tokens = loadTokens(accountId, host?.configDir);
-    const client = new NotionClient(tokens.access_token);
+    let client: NotionClient;
+    if (hasBrokerBinding("notion", accountId, host?.configDir)) {
+      const credentials = await BrokeredCredentials.load("notion", accountId, host?.configDir, {
+        verify: verifyNotionWorkspace(accountId),
+      });
+      client = new NotionClient(() => credentials.token());
+    } else {
+      client = new NotionClient(loadTokens(accountId, host?.configDir).access_token);
+    }
 
     // Build user ID → name map for author resolution
     const userMap: UserMap = new Map();
@@ -91,7 +146,14 @@ export default defineProvider<NotionContext>({
     // account was never connected rather than that something withdrew it —
     // the remedy differs: one asks the operator to connect, the other to
     // authenticate again.
-    return readConnectionState(() => {
+    return readConnectionState(async () => {
+      if (hasBrokerBinding("notion", ctx.accountId, ctx.configDir)) {
+        // The broker holds the grant and refreshes it; a binding that reads
+        // is the stored answer. A connection the broker has lost surfaces on
+        // the next sync as an `auth` failure.
+        await readBrokerBinding("notion", ctx.accountId, ctx.configDir);
+        return { status: "connected" };
+      }
       if (!hasTokens(ctx.accountId, ctx.configDir)) return { status: "never-connected" };
       const tokens = loadTokens(ctx.accountId, ctx.configDir);
       if (!tokens.access_token) throw new Error("Unreadable Notion token");

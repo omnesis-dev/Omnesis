@@ -583,6 +583,28 @@ export {
   validateCredentialFields,
 } from "./credentials.js";
 
+export {
+  DEFAULT_BROKER_PURPOSE,
+  BrokerCredentialError,
+  BrokeredCredentials,
+  brokerBearerToken,
+  brokerBindingPath,
+  brokerConnectionFor,
+  credentialBrokerConfigPath,
+  fetchBrokerCredential,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
+  readBrokerBinding,
+  readCredentialBrokerConfig,
+  writeBrokerBinding,
+  writeCredentialBrokerConfig,
+  type BrokerBinding,
+  type BrokerConnectionRef,
+  type BrokerCredential,
+  type BrokerCredentialResult,
+  type CredentialBrokerConfig,
+} from "./credential-broker.js";
+
 export { AUTH_ERROR_CODES, isAuthErrorCode, type AuthErrorCode } from "./auth-error-codes.js";
 
 export type {

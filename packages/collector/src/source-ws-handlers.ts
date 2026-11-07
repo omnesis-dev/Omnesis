@@ -24,6 +24,8 @@ import {
   writeProviderCredentials,
   clearProviderAccountCredentials,
   clearProviderCredentials,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
   listProviderAccountIds,
   serializeCredentialsSpec,
   redactSecrets,
@@ -297,6 +299,20 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     if (!descriptor) throw new Error(`Unknown source: ${body.sourceType}`);
     if (!descriptor.authFlow && !descriptor.authenticate) {
       throw new Error(`Source ${body.sourceType} does not support auth flow`);
+    }
+    // Renewing a brokered account here would store a credential its binding
+    // then overrides, so the operator's sign-in would be silently ignored. The
+    // grant is the broker's to renew.
+    const fileKey = descriptor.credentials?.fileKey;
+    if (
+      body.accountId &&
+      fileKey &&
+      hasBrokerBinding(fileKey, body.accountId, sourceManager.getConfigDir())
+    ) {
+      throw new Error(
+        `${descriptor.provider.name} account ${body.accountId} takes its credential from the credential broker. ` +
+          `Sign it in again at the broker, or run \`omnesis broker unlink ${descriptor.provider.id} ${body.accountId}\` to sign it in here instead.`,
+      );
     }
 
     const flowId = body.flowId;
@@ -825,6 +841,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     providerName: string;
     spec: ReturnType<typeof serializeCredentialsSpec>;
     configured: boolean;
+    brokeredAccounts: string[];
   }> {
     const seen = new Map<
       string,
@@ -854,6 +871,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
         ? listProviderAccountIds(fileKey, configDir).length > 0 ||
           hasProviderCredentials(fileKey, configDir)
         : hasProviderCredentials(fileKey, configDir),
+      brokeredAccounts: listBrokeredAccountIds(fileKey, configDir),
     }));
   }
 
@@ -897,7 +915,14 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     // the shared file would report success while every source kept syncing —
     // a revocation that does not revoke.
     if (entry.spec.perAccount) {
-      const accounts = listProviderAccountIds(body.fileKey, configDir);
+      // Brokered accounts too: their binding is this provider's credential
+      // here, and leaving it would keep them syncing past the clear.
+      const accounts = [
+        ...new Set([
+          ...listProviderAccountIds(body.fileKey, configDir),
+          ...listBrokeredAccountIds(body.fileKey, configDir),
+        ]),
+      ];
       for (const accountId of accounts) {
         await clearProviderAccountCredentials(body.fileKey, accountId, configDir);
       }

@@ -1709,6 +1709,106 @@
           Don't submit the app for verification.
         </p>
 
+        <h3 id="credential-broker">Credentials from a broker</h3>
+        <p>
+          When the accounts you want to index are already signed in to a self-hosted
+          <a href="https://nango.dev">Nango</a> that other software on your machines uses, Omnesis
+          can take their credentials from it instead of signing them in again. A linked account
+          stores only which Nango connection holds its credential; the collector asks Nango for a
+          current token whenever it needs one, and Nango refreshes the grant. Revoking the
+          connection in Nango cuts Omnesis off with everything else that uses it, and removing the
+          source in Omnesis removes only the link, never the grant.
+        </p>
+        <p>
+          Google, Notion, Outlook, GitHub, Strava and Granola link to the matching Nango
+          integrations. Lunch Flow and Coinbase keys and IMAP logins, which Nango does not
+          catalogue, link to a generic <code>private-api-bearer</code> or
+          <code>private-api-basic</code> integration that holds them. A Google account links one
+          connection per API (Gmail, Calendar, Drive, Contacts), because Nango keeps a separate
+          grant for each; every connection must belong to the same Google account. Gmail, Calendar
+          and Drive each report which account they belong to and are checked against each other.
+          Contacts usually cannot, so linking it needs <code>--param account=&lt;address&gt;</code>,
+          which is checked against the others, and records the id Google gives the account; a
+          Contacts connection Google will not identify at all cannot be linked.
+        </p>
+        <p>
+          Run these on the machine whose collector syncs the account, as the collector's user: the
+          broker settings and each link are files in that collector's configuration directory,
+          encrypted at rest like its other credentials. Give Omnesis a Nango API key that can read
+          connection credentials; Nango cannot limit a key to particular connections, so the key
+          reaches every connection in its environment.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p class="t-dim"># once: where Nango is, and a file holding its API key</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis broker set --url http://127.0.0.1:3003 --key-file ~/nango-key</span
+              >
+            </p>
+            <p class="t-dim">
+              # link an account: &lt;integration&gt;/&lt;connection id&gt; from Nango
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis broker link notion notion/3f2a9c1e-0000-4000-8000-000000000001</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis broker link google gmail=gmail/3f2a9c1e-0000-4000-8000-000000000002
+                calendar=calendar/3f2a9c1e-0000-4000-8000-000000000003</span
+              >
+            </p>
+            <p class="t-dim"># then add its sources as usual; the add offers the linked account</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis sources add notion-pages</span>
+            </p>
+            <p class="t-dim">
+              # linked accounts, each credential checked against Nango and its account
+            </p>
+            <p><span class="t-prompt">❯</span> <span class="t-cmd">omnesis broker status</span></p>
+          </div>
+        </div>
+        <p>
+          <code>omnesis broker link</code> asks the service which account the credential belongs to
+          and stores the link under that account, so a link always names the account its sources
+          sync. <code>omnesis broker unlink &lt;provider&gt; &lt;account&gt;</code> forgets a link
+          and leaves the Nango connection in place. A link to a connection Nango no longer holds, or
+          can no longer refresh, shows as needing sign-in, and its hint says so: sign the connection
+          in again in Nango, or unlink the account to sign it in through Omnesis instead. Omnesis
+          refuses to sign in an account while it is linked.
+        </p>
+        <p>
+          Adding a source, in the portal or with <code>omnesis sources add</code>, skips the
+          credential setup while a linked account of that provider is not added yet, and offers that
+          account. A linked account counts as added once one of its sources is added on any device,
+          enabled or paused. Once every linked account is added, connecting another account of the
+          provider asks for its credentials as usual.
+        </p>
+        <p>
+          Each credential Nango hands out is checked again before Omnesis uses it, because a
+          connection can be signed in again in Nango as someone else, or its key replaced with
+          another person's. Notion checks the workspace, Strava the athlete, Outlook the mailbox and
+          IMAP the login. Each Google connection asks Google which account its token belongs to
+          (Contacts compares the account id recorded when it was linked, or, on the same connection
+          as Gmail, asks Gmail with its token), once per token. GitHub compares the user id recorded
+          when it was linked, so a renamed user still matches. A Coinbase key other than the one
+          linked must still be View-only and read the same portfolio, and a Lunch Flow key other
+          than the one linked must reach one of the bank accounts it reached when it was linked.
+          When the check fails, the source stops with an error that says the connection now belongs
+          to another account, and nothing from that credential is indexed; link the connection again
+          with
+          <code>omnesis broker link</code>, which names the account it now belongs to. When the
+          service cannot be reached to check, the sync fails and is retried like any other outage.
+          <code>omnesis broker status</code> runs the same check on every link.
+        </p>
+
         <h3 id="day-to-day">Day-to-day tasks</h3>
         <p>
           Each task names the portal action on the <strong>Sources</strong> page first, then the CLI

@@ -23,13 +23,97 @@ export interface ImapConnectionCredentials {
   password: string;
 }
 
+/**
+ * A server whose login is asked for each time a connection opens, for an
+ * account whose password the credential broker holds: a password replaced
+ * there reaches the next connection without a restart. `fresh` asks past any
+ * cached copy, after the server refused the one in hand.
+ */
+export interface ImapDeferredCredentials {
+  host: string;
+  login(opts?: { fresh?: boolean }): Promise<{ username: string; password: string }>;
+}
+
 interface ImapReadableSocket {
   prependListener(event: "data", listener: (chunk: Buffer) => void): void;
   removeListener(event: "data", listener: (chunk: Buffer) => void): void;
 }
 
-export function createImapClient(credentials: ImapConnectionCredentials): ImapClient {
-  return new ImapFlowAdapter(credentials);
+export function createImapClient(
+  credentials: ImapConnectionCredentials | ImapDeferredCredentials,
+): ImapClient {
+  return "login" in credentials
+    ? new DeferredImapClient(credentials)
+    : new ImapFlowAdapter(credentials);
+}
+
+/**
+ * An {@link ImapClient} that learns its login in `connect()`.
+ *
+ * ImapFlow takes the password when it is built, and the source builds its
+ * client synchronously, so the connection is built here once the login is in
+ * hand. A refused login is tried once more only when the broker now holds a
+ * different one: repeating a rejected password counts toward the lockouts
+ * some providers impose, and gains nothing.
+ */
+class DeferredImapClient implements ImapClient {
+  private adapter?: ImapFlowAdapter;
+
+  constructor(private readonly credentials: ImapDeferredCredentials) {}
+
+  async connect(): Promise<void> {
+    const login = await this.credentials.login();
+    try {
+      await this.start(login);
+    } catch (error) {
+      if (!(error instanceof SyncError) || error.kind !== "auth") throw error;
+      const fresh = await this.credentials.login({ fresh: true });
+      if (fresh.username === login.username && fresh.password === login.password) throw error;
+      await this.start(fresh);
+    }
+  }
+
+  async list(maxEntries: number, maxBytes: number): Promise<ImapMailbox[]> {
+    return this.connected().list(maxEntries, maxBytes);
+  }
+
+  async open(path: string): Promise<{ uidValidity: string; uidNext: number }> {
+    return this.connected().open(path);
+  }
+
+  async search(query: { since?: Date; uid?: string }): Promise<number[]> {
+    return this.connected().search(query);
+  }
+
+  async fetch(uids: number[], maxBytes: number): Promise<ImapMessage[]> {
+    return this.connected().fetch(uids, maxBytes);
+  }
+
+  async fetchMetadata(
+    uids: number[],
+    opts?: { attachments?: boolean },
+  ): Promise<ImapMessageMetadata[]> {
+    return this.connected().fetchMetadata(uids, opts);
+  }
+
+  async fetchAttachment(uid: number, part: string, maxBytes: number): Promise<Uint8Array> {
+    return this.connected().fetchAttachment(uid, part, maxBytes);
+  }
+
+  async close(): Promise<void> {
+    await this.adapter?.close();
+  }
+
+  private async start(login: { username: string; password: string }): Promise<void> {
+    await this.adapter?.close().catch(() => undefined);
+    this.adapter = new ImapFlowAdapter({ host: this.credentials.host, ...login });
+    await this.adapter.connect();
+  }
+
+  private connected(): ImapFlowAdapter {
+    if (!this.adapter) throw new SyncError("network", "IMAP connection is not open");
+    return this.adapter;
+  }
 }
 
 class ImapFlowAdapter implements ImapClient {

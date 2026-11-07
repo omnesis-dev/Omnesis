@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { SyncError, type SyncErrorKind, type FailureScope, type QuotaBucket } from "@omnesis/types";
+import { SyncError, type SyncErrorKind, type FailureScope } from "@omnesis/types";
 import { toErrorMessage } from "@omnesis/core";
 
 /**
@@ -141,14 +141,16 @@ function getOAuthErrorBody(e: GaxiosLikeError): string {
  * Calendar, Drive, Contacts) is built from the one `OAuth2Client` the
  * provider's `createContext` mints for the account, so a rejected token
  * fails all of them identically, not just the source that happened to make
- * the next request.
+ * the next request. A brokered account's sources each hold their own
+ * connection's client instead, and there the scope is that one connection.
  *
- * `rate-limit` carries `quota: { kind: "account" }` only for the
- * `userRateLimitExceeded` reason — Google's API error reference documents
- * that reason as the per-user limit specifically. The bare `rateLimitExceeded`
- * reason (and a 429/403 with no reason at all) is documented ambiguously as
- * "per project, per client, or an interaction of both", so it is left
- * unclassified rather than guessed.
+ * `rate-limit` declares no quota bucket. Google counts a per-user limit
+ * (`userRateLimitExceeded`) per API, and each of this provider's sources calls
+ * a different one (Gmail, Calendar, Drive, People), so one source's limit
+ * never means its siblings on the account are spent; the bare
+ * `rateLimitExceeded` reason (and a 429/403 with no reason) is documented
+ * ambiguously as "per project, per client, or an interaction of both" and is
+ * not guessed either. Only the source that hit a limit waits it out.
  */
 export function mapGoogleApiError(err: unknown): SyncError {
   if (err instanceof SyncError) return err;
@@ -201,8 +203,6 @@ export function mapGoogleApiError(err: unknown): SyncError {
   if (kind !== "rate-limit" && kind !== "transient") retryAfterMs = undefined;
 
   const scope: FailureScope | undefined = kind === "auth" ? "connection" : undefined;
-  const quota: QuotaBucket | undefined =
-    kind === "rate-limit" && reason === "userRateLimitExceeded" ? { kind: "account" } : undefined;
 
   // A transport failure's own message is a category ("fetch failed") and its
   // stack holds only undici internals, so an unnamed one reaches the operator
@@ -214,5 +214,5 @@ export function mapGoogleApiError(err: unknown): SyncError {
       ? `Google API request failed${request ? ` (${request})` : ""}: ${chain}`
       : message;
 
-  return new SyncError(kind, text, { retryAfterMs, scope, quota, cause: err });
+  return new SyncError(kind, text, { retryAfterMs, scope, cause: err });
 }

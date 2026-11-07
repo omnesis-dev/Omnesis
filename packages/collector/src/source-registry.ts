@@ -122,6 +122,7 @@ export class SourceRegistry {
       // instances with the new ones so the new credentials propagate
       // without a collector restart.
       existing.credentialState = provider.credentialState;
+      existing.brokered = provider.brokered;
       existing.name = provider.name;
       const newIds = new Set(provider.sources.map((s) => s.id));
       const replacedIds: string[] = [];
@@ -584,7 +585,8 @@ export class SourceRegistry {
       };
       this.sourceStatuses.set(source.id, status);
     }
-    SourceLifecycle.toNeedsAuth(status, buildReauthHint(source.id, providerId), log);
+    const brokered = this.providers.get(providerId)?.brokered?.() ?? false;
+    SourceLifecycle.toNeedsAuth(status, buildReauthHint(source.id, providerId, { brokered }), log);
     this.emitStatusChange({
       event: "sync.error",
       sourceId: source.id,
