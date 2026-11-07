@@ -8181,13 +8181,12 @@ final class PreviewSnapshotTests: XCTestCase {
                 restored.0.isHidden = true
                 installedRestored = nil
             }
-            try await awaitScopePicker("The mounted picker must issue its retained bookmark after catalogue layout") {
-                guard let picker = installedRestored, let request = picker.pendingRestore,
-                      let scroll = self.scopePickerScroll(in: restored.1.view) else { return false }
-                return picker.issuedRestoreRevision == request.revision && picker.activeRestoreRevision == nil
-                    && picker.restoringLocation == nil && picker.optionsLocation == location
-                    && scroll.bounds.height > 0 && scroll.contentOffset.y > 0
-            }
+            try await awaitScopePickerLayout(
+                { installedRestored },
+                window: restored.0,
+                location: location,
+                name: "scope-picker-provided-readiness-failed-\(name)"
+            )
             let scroll = try XCTUnwrap(scopePickerScroll(in: restored.1.view))
             XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height * 2, "The fixture must require scrolling")
             XCTAssertGreaterThan(scroll.contentOffset.y, 0, "A page-two bookmark must not render at the top")
@@ -8213,14 +8212,13 @@ final class PreviewSnapshotTests: XCTestCase {
                 installedFresh = nil
             }
             let freshLocation = anotherSearch.location(for: source.id)
-            try await awaitScopePicker("A different search must issue its own top request after catalogue layout") {
-                guard let picker = installedFresh, let request = picker.pendingRestore,
-                      let scroll = self.scopePickerScroll(in: fresh.1.view) else { return false }
-                return request.target == .top && picker.issuedRestoreRevision == request.revision
-                    && picker.activeRestoreRevision == nil && picker.restoringLocation == nil
-                    && picker.optionsLocation == freshLocation && scroll.bounds.height > 0
-                    && abs(scroll.contentOffset.y + scroll.adjustedContentInset.top) <= 1
-            }
+            try await awaitScopePickerLayout(
+                { installedFresh },
+                window: fresh.0,
+                location: freshLocation,
+                target: .top,
+                name: "scope-picker-fresh-readiness-failed-\(name)"
+            )
             let reset = try XCTUnwrap(scopePickerScroll(in: fresh.1.view))
             XCTAssertGreaterThan(reset.contentSize.height, reset.bounds.height * 2, "The new query must still require scrolling")
             XCTAssertEqual(
@@ -8310,14 +8308,57 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
-    private func awaitScopePicker(_ message: String, condition: () async -> Bool) async throws {
+    private func awaitScopePickerLayout(
+        _ installed: @escaping () -> SourceFilterPickerView?,
+        window: UIWindow,
+        location: ScopePickerLocation,
+        target: ScopePickerAnchor? = nil,
+        name: String
+    ) async throws {
+        try await awaitScopePicker(
+            "The mounted picker must issue its matching catalogue layout: \(name)",
+            diagnostic: { self.scopePickerReadinessDiagnostic(installed(), window: window, name: name) },
+            condition: {
+                guard let picker = installed(), let request = picker.pendingRestore,
+                      let scroll = self.scopePickerScroll(in: window) else { return false }
+                return (target == nil || request.target == target)
+                    && picker.issuedRestoreRevision == request.revision && picker.activeRestoreRevision == nil
+                    && picker.restoringLocation == nil && picker.optionsLocation == location
+                    && scroll.bounds.width > 0 && scroll.bounds.height > 0
+            }
+        )
+    }
+
+    private func awaitScopePicker(
+        _ message: String,
+        diagnostic: (() -> String)? = nil,
+        condition: () async -> Bool
+    ) async throws {
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline {
             if await condition() { return }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        XCTFail(message)
+        XCTFail(message + (diagnostic.map { " | " + $0() } ?? ""))
         throw CancellationError()
+    }
+
+    private func scopePickerReadinessDiagnostic(_ picker: SourceFilterPickerView?, window: UIWindow, name: String) -> String {
+        let scroll = scopePickerScroll(in: window)
+        let state = "pending=\(String(describing: picker?.pendingRestore)) "
+            + "issued=\(String(describing: picker?.issuedRestoreRevision)) active=\(String(describing: picker?.activeRestoreRevision)) "
+            + "restoring=\(String(describing: picker?.restoringLocation)) location=\(String(describing: picker?.location)) "
+            + "catalogueLocation=\(String(describing: picker?.optionsLocation)) "
+            + "offset=\(String(describing: scroll?.contentOffset)) inset=\(String(describing: scroll?.adjustedContentInset))"
+        let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        do {
+            try writeSnapshotPNG(image, to: Self.outputDir.appendingPathComponent(name + ".png"))
+            return state + " diagnosticFrame=\(name).png"
+        } catch {
+            return state + " diagnosticFrameError=\(error)"
+        }
     }
 
     private func scopePickerPageFixtures() -> (ScopeOptions, ScopeOptions) {
