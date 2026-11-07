@@ -38,15 +38,24 @@ internal fun SourceFilterPicker(
     val compact = WindowInsets.ime.getBottom(LocalDensity.current) > 0 || LocalDensity.current.fontScale > 1.3f
     val session = remember(gateway) { if (gateway is ScopePreviewSession) gateway else ScopePreviewSession(gateway) }
     val labels by session.labels.collectAsState()
-    fun label(ref: ScopeRef) = labels[source.id to ref] ?: ref.label
+    fun label(ref: ScopeRef) = labels[source.id to scopeRefKey(ref)] ?: ref.label
     val picker = remember(source.id, capability) { state ?: SourceFilterPickerState(source.scopes?.items?.firstOrNull()?.kind ?: "participant", source.scopes?.items?.firstOrNull { it.kind == "participant" }?.identifiers?.firstOrNull().orEmpty()) }
-    var refs by remember(source.id, capability) { mutableStateOf(initialSelection) }
+    val original = remember(source.id, capability) { initialSelection.distinctBy(::scopeRefKey).associateBy(::scopeRefKey) }
+    val originalOrder = remember(source.id, capability) { original.keys.withIndex().associate { it.value to it.index } }
+    var refs by remember(source.id, capability) { mutableStateOf(initialSelection.distinctBy(::scopeRefKey)) }
     var managing by remember { mutableStateOf(false) }
     val kinds = (source.scopes ?: picker.options?.scopes)?.items.orEmpty()
     val declaration = kinds.firstOrNull { it.kind == picker.kind }
     val ready = (picker.options?.readiness ?: source.scopeReadiness.orEmpty()).firstOrNull { it.kind == picker.kind }?.ready == true
-    fun setRefs(value: List<ScopeRef>) { refs = value; onSelectionChange?.invoke(value) }
-    fun toggle(ref: ScopeRef) { setRefs(if (ref in refs) refs - ref else refs + ref) }
+    fun setRefs(value: List<ScopeRef>) {
+        val selection = value.distinctBy(::scopeRefKey).sortedBy { originalOrder[scopeRefKey(it)] ?: Int.MAX_VALUE }
+        refs = selection; onSelectionChange?.invoke(selection)
+    }
+    fun isSelected(ref: ScopeRef) = refs.any { scopeRefKey(it) == scopeRefKey(ref) }
+    fun toggle(ref: ScopeRef) {
+        val key = scopeRefKey(ref)
+        setRefs(if (isSelected(ref)) refs.filterNot { scopeRefKey(it) == key } else refs + (original[key] ?: ref))
+    }
     fun back() { if (picker.enteringIdentifier) picker.enteringIdentifier = false else (onBack ?: onClose)() }
     val typedId = picker.identifierType.takeIf { it in declaration?.identifiers.orEmpty() }?.let { scopeTypedIdentifier(picker.typed, it) }
     val duplicate = typedId != null && refs.any { typedId in it.identifiers.orEmpty() }
@@ -71,7 +80,7 @@ internal fun SourceFilterPicker(
             val value = session.options(source.id, picker.kind, picker.query, picker.parent, picker.cursor)
             coroutineContext.ensureActive()
             if (picker.request !== token) return@LaunchedEffect
-            picker.options = if (picker.cursor == null) value else value.copy(items = (picker.options?.items.orEmpty() + value.items).distinctBy { it.ref })
+            picker.options = value.copy(items = mergeScopeOptions(if (picker.cursor == null) emptyList() else picker.options?.items.orEmpty(), value.items))
             picker.error = null
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) { coroutineContext.ensureActive(); picker.error = accessManagementError(error) }
@@ -134,11 +143,11 @@ internal fun SourceFilterPicker(
                     picker.error?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error); TextButton(onClick = { picker.retry++ }) { Text("Retry choices") } }
                     if (picker.loading) OmSpinner(Modifier.size(24.dp))
                     LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = picker.listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        items(picker.options?.items.orEmpty(), key = { it.ref.toString() }) { item ->
+                        items(picker.options?.items.orEmpty(), key = { scopeRefKey(it.ref) }) { item ->
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Row(Modifier.weight(1f).toggleable(value = item.ref in refs, enabled = ready, role = Role.Checkbox, onValueChange = { toggle(item.ref) })
+                                Row(Modifier.weight(1f).toggleable(value = isSelected(item.ref), enabled = ready, role = Role.Checkbox, onValueChange = { toggle(item.ref) })
                                     .padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Checkbox(item.ref in refs, onCheckedChange = null, enabled = ready)
+                                    Checkbox(isSelected(item.ref), onCheckedChange = null, enabled = ready)
                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Text(item.label, style = MaterialTheme.typography.bodyLarge)
                                         Text("${item.count} matching records", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -160,7 +169,7 @@ internal fun SourceFilterPicker(
             Text("${capability.replaceFirstChar { it.uppercase() }} · ${source.name}" + source.accountLabel()?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             refs.forEach { ref -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(label(ref) ?: ref.identifiers?.joinToString { it.value } ?: "${scopeKindTitle(ref.kind, source)} · saved selection", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                TextButton(onClick = { setRefs(refs - ref) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Remove") }
+                TextButton(onClick = { setRefs(refs.filterNot { scopeRefKey(it) == scopeRefKey(ref) }) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Remove") }
             } }
         } }, confirmButton = { TextButton(onClick = { managing = false }) { Text("Back to choices") } })
 }

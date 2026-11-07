@@ -48,7 +48,7 @@ internal fun AccessLevelDraft.pageError(page: AccessLevelPage, overview: AccessO
     }
     else -> null
 }
-internal fun AccessLevelDraft.isChangedFrom(level: AccessLevelSummary?): Boolean = level == null || name.trim() != level.name || serializedRules.associateBy { it.capability } != level.rules.associateBy { it.capability }
+internal fun AccessLevelDraft.isChangedFrom(level: AccessLevelSummary?): Boolean = level == null || name.trim() != level.name || !sameGrantSettings(serializedRules, level.rules)
 internal fun sourceAllowed(boundary: AccessSourceBoundary, id: String): Boolean = when (boundary.mode) {
     AccessSourceMode.ALL -> true
     AccessSourceMode.ALLOWLIST -> id in boundary.sourceIds
@@ -93,10 +93,10 @@ internal fun AccessLevelDraft.changes(overview: AccessOverview): List<AccessLeve
         listOf(AccessCapability.ANSWER, AccessCapability.DIRECT).forEach { cap ->
             val before = previous.rules.firstOrNull { it.capability == cap }
             val after = serializedRules.firstOrNull { it.capability == cap }
-            val known = knownSourceIds(overview)
+            val known = knownSourceIds(overview) + before?.sources?.sourceIds.orEmpty() + after?.sources?.sourceIds.orEmpty()
             val beforeIds = before?.let { AccessSourceSelectionState.from(it.sources, known).allowedSourceIds }
             val afterIds = after?.let { AccessSourceSelectionState.from(it.sources, known).allowedSourceIds }
-            if (beforeIds != afterIds || before?.scopePolicies != after?.scopePolicies) {
+            if (beforeIds != afterIds || !sameScopeSettings(before?.scopePolicies.orEmpty(), after?.scopePolicies.orEmpty())) {
                 fun detail(rule: AccessGrantRule) = ruleDataSummary(rule, overview)
                 add(AccessLevelChange("${cap.title} data", before?.let(::detail) ?: "Not allowed", after?.let(::detail) ?: "Not allowed"))
             }

@@ -14,11 +14,11 @@ import kotlinx.coroutines.sync.withPermit
 /** Labels are presentation-only; counts and Apply validation always require a fresh response. */
 internal class ScopePreviewSession(private val delegate: ScopeEditorGateway) : ScopeEditorGateway {
     private val admission = Semaphore(2)
-    private val mutableLabels = MutableStateFlow<Map<Pair<String, ScopeRef>, String>>(emptyMap())
+    private val mutableLabels = MutableStateFlow<Map<Pair<String, String>, String>>(emptyMap())
     val labels = mutableLabels.asStateFlow()
-    fun label(sourceId: String, ref: ScopeRef): String? = labels.value[sourceId to ref] ?: ref.label
+    fun label(sourceId: String, ref: ScopeRef): String? = labels.value[sourceId to scopeRefKey(ref)] ?: ref.label
     private fun rememberLabels(sourceId: String, values: List<Pair<ScopeRef, String>>) {
-        mutableLabels.update { previous -> previous + values.associate { (ref, label) -> (sourceId to ref) to label } }
+        mutableLabels.update { previous -> previous + values.associate { (ref, label) -> (sourceId to scopeRefKey(ref)) to label } }
     }
     override suspend fun preview(policy: ScopePolicy): ScopePreview = admission.withPermit {
         withContext(NonCancellable) { delegate.preview(policy) }.also { result ->

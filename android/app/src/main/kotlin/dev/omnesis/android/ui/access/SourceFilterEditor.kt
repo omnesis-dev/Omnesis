@@ -123,7 +123,7 @@ fun SourceFilterEditor(
                     if (!writable) AccessNotice(if (!policy.editable) "This saved rule uses settings this editor cannot change. The complete restriction is retained." else "Filter editing is unavailable. This saved restriction remains active.")
                     Text(scopePolicySummary(policy, source), style = MaterialTheme.typography.titleMedium)
                     policy.rules.flatMap { it.match }.forEach { ref ->
-                        val item = preview?.items?.firstOrNull { it.ref == ref }
+                        val item = preview?.items?.firstOrNull { scopeRefKey(it.ref) == scopeRefKey(ref) }
                         val label = session.label(source.id, ref) ?: ref.label ?: ref.identifiers?.joinToString { it.value }
                             ?: "${scopeKindTitle(ref.kind, source)} · ${if (item?.missing == true) "no longer available" else "label unavailable"}"
                         Text(label + if (item?.missing == true) " · saved selection retained" else "", style = MaterialTheme.typography.bodyLarge)

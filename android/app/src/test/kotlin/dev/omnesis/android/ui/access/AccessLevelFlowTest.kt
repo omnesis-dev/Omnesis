@@ -133,4 +133,29 @@ class AccessLevelFlowTest {
         val excluded = rule.copy(sources = AccessSourceBoundary(AccessSourceMode.DENYLIST, listOf("mail:unavailable@example.org")))
         assertEquals("0 sources · all content", ruleDataSummary(excluded, overview.copy(sources = emptyList())))
     }
+    @Test fun applyingAnUnchangedPolicyRetainsExactWireOrderAndIsNotADraftChange() {
+        val first = ScopePolicy(source.id, ScopeAudience("saved", "direct"), listOf(ScopeRule(listOf(ScopeRef("label", "first")), "share")), "hide")
+        val second = first.copy(sourceId = "mail:other@example.org")
+        val direct = draft(AccessCapability.DIRECT).rules.single().copy(sources = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id, second.sourceId)), scopePolicies = listOf(first, second), filterRevision = 3)
+        val level = AccessLevelSummary("saved", "Helper", 1, listOf(direct), 0)
+        val state = overview.copy(sources = overview.sources + AccessSourceInstance(second.sourceId, "Other mail"), levels = listOf(level))
+        val unchanged = AccessLevelDraft.opening(level, state).setPolicy(first, source.id, AccessCapability.DIRECT)
+        assertFalse(unchanged.isChangedFrom(level))
+        assertEquals(listOf(first, second), unchanged.serializedRules.single().scopePolicies)
+        assertTrue(unchanged.changes(state).isEmpty())
+    }
+    @Test fun presentationAndSetOrderAreNotAuthorityChangesButAdvancedRuleOrderIsPreserved() {
+        val refs = listOf(ScopeRef("label", "first", "Before"), ScopeRef("label", "second", "Same"))
+        val policy = ScopePolicy(source.id, ScopeAudience("saved", "direct"), listOf(ScopeRule(refs, "share")), "hide")
+        val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALL, emptyList())).copy(scopePolicies = listOf(policy), filterRevision = 3)
+        val level = AccessLevelSummary("saved", "Helper", 1, listOf(direct), 0)
+        val state = overview.copy(levels = listOf(level))
+        val currentPolicy = policy.copy(rules = listOf(ScopeRule(refs.reversed().map { it.copy(label = "Renamed") }, "share")))
+        val current = AccessLevelDraft.opening(level, state).setRule(direct.copy(sources = AccessSourceBoundary(AccessSourceMode.DENYLIST, emptyList()), scopePolicies = listOf(currentPolicy)))
+        assertFalse(current.isChangedFrom(level))
+        assertTrue(current.changes(state).isEmpty())
+        assertEquals(currentPolicy, current.serializedRules.single().scopePolicies.single())
+        val advanced = policy.copy(rules = listOf(policy.rules.single(), ScopeRule(listOf(refs.first()), "hide")))
+        assertFalse(sameScopeSettings(listOf(advanced), listOf(advanced.copy(rules = advanced.rules.reversed()))))
+    }
 }

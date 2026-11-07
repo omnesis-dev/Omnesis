@@ -90,7 +90,14 @@ data class AccessLevelDraft(
     }
     fun setPolicy(policy: ScopePolicy?, sourceId: String, capability: AccessCapability): AccessLevelDraft {
         val rule = rule(capability) ?: return this
-        return setRule(rule.copy(scopePolicies = rule.scopePolicies.filterNot { it.sourceId == sourceId } + listOfNotNull(policy)))
+        val previous = rule.scopePolicies.firstOrNull { it.sourceId == sourceId }
+        if (previous == policy) return this
+        val policies = when {
+            policy == null -> rule.scopePolicies.filterNot { it.sourceId == sourceId }
+            previous != null -> rule.scopePolicies.map { if (it.sourceId == sourceId) policy else it }
+            else -> rule.scopePolicies + policy
+        }
+        return setRule(rule.copy(scopePolicies = policies))
     }
     companion object {
         fun opening(level: AccessLevelSummary?, overview: AccessOverview): AccessLevelDraft {

@@ -111,4 +111,40 @@ class SourceFilterFlowInteractionTest {
         assertEquals(0, saves)
         assertEquals(listOf(labelRef, person), saved.rules.single().match)
     }
+    @Test fun aRenamedSavedFolderStaysCheckedAndCanBeRemovedWithoutDuplication() {
+        val before = folder.copy(label = "Before")
+        val renamed = folder.copy(label = "Renamed folder")
+        var selection: List<ScopeRef>? = null
+        val reader = object : ScopeEditorGateway {
+            override suspend fun preview(policy: ScopePolicy) = gateway.preview(policy)
+            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = ScopeOptions(sourceId, "files", scopes, source.scopeReadiness!!, listOf(ScopeOption(renamed, "Renamed folder", 3)))
+        }
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            SourceFilterPicker(source, reader, onClose = {}, initialSelection = listOf(before)) { selection = it }
+        } } }
+        compose.onNode(hasText("Renamed folder") and isToggleable()).assertIsOn().performClick()
+        compose.onNodeWithText("0 selected").assertExists()
+        compose.onNodeWithText("Review filter").assertIsNotEnabled()
+        compose.onNode(hasText("Renamed folder") and isToggleable()).performClick()
+        compose.onNodeWithText("1 selected").assertExists()
+        compose.onNodeWithText("Review filter").performClick()
+        assertEquals(listOf(before), selection)
+    }
+    @Test fun equalFolderNamesWithDifferentIdsRemainIndependentSelections() {
+        val first = folder.copy(label = "Workspace")
+        val second = first.copy(id = "workspace-copy")
+        var selection: List<ScopeRef>? = null
+        val reader = object : ScopeEditorGateway {
+            override suspend fun preview(policy: ScopePolicy) = gateway.preview(policy)
+            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = ScopeOptions(sourceId, "files", scopes, source.scopeReadiness!!, listOf(ScopeOption(first, "Workspace", 3), ScopeOption(second, "Workspace", 3)))
+        }
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            SourceFilterPicker(source, reader, onClose = {}, initialSelection = listOf(first)) { selection = it }
+        } } }
+        compose.onAllNodes(isToggleable())[0].assertIsOn()
+        compose.onAllNodes(isToggleable())[1].assertIsOff().performClick()
+        compose.onNodeWithText("2 selected").assertExists()
+        compose.onNodeWithText("Review filter").performClick()
+        assertEquals(listOf(first, second), selection)
+    }
 }

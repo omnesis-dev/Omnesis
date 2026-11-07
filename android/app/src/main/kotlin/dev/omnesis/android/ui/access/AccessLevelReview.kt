@@ -81,20 +81,20 @@ internal fun AccessLevelReview(draft: AccessLevelDraft, overview: AccessOverview
 private fun ChangedSourcePolicies(draft: AccessLevelDraft, overview: AccessOverview, capability: AccessCapability, session: ScopePreviewSession) {
     val before = (draft.originalLevel ?: overview.levels.firstOrNull { it.id == draft.id })?.rules?.firstOrNull { it.capability == capability }
     val after = draft.serializedRules.firstOrNull { it.capability == capability }
-    val ids = (overview.sources.map { it.id } + before?.scopePolicies.orEmpty().map { it.sourceId } + after?.scopePolicies.orEmpty().map { it.sourceId }).distinct()
+    val ids = (overview.sources.map { it.id } + before?.sources?.sourceIds.orEmpty() + after?.sources?.sourceIds.orEmpty() + before?.scopePolicies.orEmpty().map { it.sourceId } + after?.scopePolicies.orEmpty().map { it.sourceId }).distinct()
     ids.forEach { id ->
         val oldPolicy = before?.scopePolicies?.firstOrNull { it.sourceId == id }
         val newPolicy = after?.scopePolicies?.firstOrNull { it.sourceId == id }
         val oldAllowed = before?.let { sourceAllowed(it.sources, id) } == true
         val newAllowed = after?.let { sourceAllowed(it.sources, id) } == true
-        if (oldPolicy != newPolicy || oldAllowed != newAllowed) {
+        if (!sameScopeSettings(listOfNotNull(oldPolicy), listOfNotNull(newPolicy)) || oldAllowed != newAllowed) {
             val source = overview.sources.firstOrNull { it.id == id } ?: AccessSourceInstance(id, "Unavailable account", available = false)
-            Text(source.name, style = MaterialTheme.typography.titleSmall)
+            Text(source.name + source.accountLabel()?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.titleSmall)
             Text("Before: ${if (oldAllowed) scopePolicySummary(oldPolicy, source) else "Not allowed"}", style = MaterialTheme.typography.bodyLarge)
             if (oldPolicy != null && oldAllowed) AccessPolicySummary(oldPolicy, source, session)
             Text("After: ${if (newAllowed) scopePolicySummary(newPolicy, source) else "Not allowed"}", style = MaterialTheme.typography.bodyLarge)
             if (newPolicy != null && newAllowed) AccessPolicySummary(newPolicy, source, session)
-            if (oldPolicy != null && newPolicy != null && oldPolicy != newPolicy) {
+            if (oldPolicy != null && newPolicy != null && oldPolicy.rules.flatMap { it.match }.map(::scopeRefKey).toSet() != newPolicy.rules.flatMap { it.match }.map(::scopeRefKey).toSet()) {
                 var identifiers by remember(oldPolicy, newPolicy) { mutableStateOf(false) }
                 TextButton(onClick = { identifiers = !identifiers }) { Text(if (identifiers) "Hide selection identifiers" else "Inspect selection identifiers") }
                 if (identifiers) {
@@ -171,7 +171,7 @@ internal fun AccessPolicySummary(policy: ScopePolicy, source: AccessSourceInstan
     val refs = policy.rules.flatMap { it.match }
     var allItems by remember(policy) { mutableStateOf(false) }
     (if (allItems) refs else refs.take(3)).forEach { ref ->
-        val label = session.label(source.id, ref) ?: preview?.items?.firstOrNull { it.ref == ref }?.label
+        val label = session.label(source.id, ref) ?: preview?.items?.firstOrNull { scopeRefKey(it.ref) == scopeRefKey(ref) }?.label
             ?: ref.identifiers?.joinToString { it.value } ?: "${scopeKindTitle(ref.kind, source)} · label unavailable"
         Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

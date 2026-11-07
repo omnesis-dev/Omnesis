@@ -249,7 +249,7 @@ class AccessLevelFlowInteractionTest {
         compose.onNodeWithText("Review changes").performClick()
         compose.onNodeWithText("Other mail", substring = true).assertDoesNotExist()
         compose.onNodeWithText("Outside", substring = true).assertDoesNotExist()
-        compose.onNodeWithText("Mail", substring = false).assertExists()
+        compose.onNodeWithText("Mail · reader@example.org", substring = false).assertExists()
         compose.onNodeWithText("Project", substring = false).assertExists()
         compose.onNodeWithText("Receipts", substring = false).assertExists()
         compose.onNodeWithText("Inspect selection identifiers").performScrollTo().performClick()
