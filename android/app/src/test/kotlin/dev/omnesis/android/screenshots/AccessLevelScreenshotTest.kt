@@ -95,12 +95,20 @@ class AccessLevelScreenshotTest {
             override suspend fun preview(policy: ScopePolicy) = result.copy(sourceId = policy.sourceId).also { assertProviderWirePolicy(policy); it.items.forEach { item -> assertProviderWireRef(item.ref) } }
             override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions {
                 val chosen = overview.sources.first { it.id == sourceId }
+                val declaration = checkNotNull(chosen.scopes?.items?.firstOrNull { it.kind == kind })
                 val options = when (kind) {
                     "folder" -> listOf(ScopeOption(ScopeRef("folder", "workspace"), "Workspace", 18, hasChildren = true), ScopeOption(ScopeRef("folder", "archive"), "Archive", 9))
                     "label" -> listOf(ScopeOption(ScopeRef("label", "Label_41"), "Project", 12))
-                    else -> refs.filter { it.kind == kind }.map { ref -> ScopeOption(ref, if (ref.kind == "conversation") "Workshop planning" else "Maya Reeves", 24) }
+                    "participant" -> when {
+                        "email" in declaration.identifiers.orEmpty() -> listOf(ScopeOption(ScopeRef("participant", label = "reader@example.org", identifiers = listOf(ScopeIdentifier("email", "reader@example.org"))), "reader@example.org", 17))
+                        "phone" in declaration.identifiers.orEmpty() -> refs.filter { it.kind == "participant" }.map { ScopeOption(it, "Maya Reeves", 17) }
+                        "domain" in declaration.identifiers.orEmpty() -> listOf(ScopeOption(ScopeRef("participant", label = "example.org", identifiers = listOf(ScopeIdentifier("domain", "example.org"))), "example.org", 17))
+                        else -> error("The participant fixture requires declared identifier types")
+                    }
+                    "conversation" -> refs.filter { it.kind == kind }.map { ScopeOption(it, "Workshop planning", 24) }
+                    else -> error("The fixture has no options for this declared kind")
                 }.filter { query.isBlank() || it.label.contains(query, ignoreCase = true) }
-                return assertProviderWireOptions(ScopeOptions(chosen.id, chosen.sourceType!!, chosen.scopes!!, if (chosen.id == result.sourceId) result.readiness else chosen.scopeReadiness!!, options))
+                return assertProviderWireOptions(ScopeOptions(chosen.id, chosen.sourceType!!, chosen.scopes!!, if (chosen.id == result.sourceId) result.readiness else chosen.scopeReadiness!!, options), chosen, kind)
             }
         }
         internal val gateway = gatewayFor(preview)
