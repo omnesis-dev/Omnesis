@@ -679,7 +679,7 @@ export class SearchPipeline {
       });
       [queryVector, laneVector] = await Promise.all([
         timed(() => embedder.embedQuery(effectiveText)).catch((err: unknown) => {
-          embedFailure = `query not embedded: ${err instanceof Error ? err.message : String(err)}`;
+          embedFailure = `query not embedded (${err instanceof Error ? err.message : String(err)})`;
           log.warn(`Search: ${embedFailure}; this search answers off BM25 alone`);
           return null;
         }),
@@ -728,9 +728,10 @@ export class SearchPipeline {
       prefixLastToken: options?.prefixLastToken,
       embedderPresent: !!this.embedder && !this.vectorUnavailableReason && !embedFailure,
       queryVector,
-      ...((this.vectorUnavailableReason ?? embedFailure)
-        ? { vectorUnavailableReason: this.vectorUnavailableReason ?? embedFailure }
+      ...(this.vectorUnavailableReason
+        ? { vectorUnavailableReason: this.vectorUnavailableReason }
         : {}),
+      ...(embedFailure ? { queryEmbedFailure: embedFailure } : {}),
       embedMs,
       // The query-model / active-generation compare that closes the
       // same-dimension embedder-swap hole is wired through the core (see

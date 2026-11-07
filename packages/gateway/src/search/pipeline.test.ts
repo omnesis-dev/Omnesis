@@ -802,7 +802,9 @@ describe("SearchPipeline (embedder attached, query embedding fails)", () => {
       expect(failed.results.length).toBeGreaterThan(0);
       expect(failed.stages?.bm25?.status).toBe("ran");
       expect(failed.stages?.vector?.status).toBe("skipped");
-      expect(failed.stages?.vector?.reason).toContain("embedQuery timed out");
+      expect(failed.stages?.vector?.reason).toBe(
+        "Semantic search skipped for this query — results are BM25-only: query not embedded (embedQuery timed out after 30000ms)",
+      );
       expect(failed.stages?.fusion?.method).toBe("bm25-only");
 
       const recovered = await pipeline.search({ text: "budget" });
