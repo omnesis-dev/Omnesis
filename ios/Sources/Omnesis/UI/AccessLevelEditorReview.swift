@@ -39,7 +39,11 @@ extension AccessLevelEditorView {
             Section { Button("Change permissions") { edit(.permissions) }.frame(minHeight: 44) }
         }
         Section("Name") {
-            TextField("Access level name", text: $draft.name).submitLabel(.done)
+            TextField(
+                "Access level name",
+                text: $draft.name,
+                prompt: Text("Access level name").foregroundStyle(Theme.textSecondary)
+            ).submitLabel(.done)
             if let nameProblem { Text(nameProblem).font(.subheadline).foregroundStyle(Theme.danger) }
         }
         if isEditing {

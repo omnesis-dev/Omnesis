@@ -155,11 +155,11 @@ struct AccessLevelEditorView: View {
                 .disabled(primaryDisabled)
             }.padding().background(.bar).disabled(saving || reloading)
         }
-        .confirmationDialog("Discard your changes?", isPresented: $confirmExit, titleVisibility: .visible) {
+        .alert("Discard your changes?", isPresented: $confirmExit) {
             Button("Discard changes", role: .destructive) { dismiss() }
             Button("Keep editing", role: .cancel) {}
         }
-        .confirmationDialog("Replace your draft with the latest version?", isPresented: $confirmReload, titleVisibility: .visible) {
+        .alert("Replace your draft with the latest version?", isPresented: $confirmReload) {
             Button("Discard draft and reload", role: .destructive) { Task { await reload() } }
             Button("Keep draft", role: .cancel) {}
         } message: { Text("Your unsaved decisions will be discarded. Review the latest settings before making changes again.") }

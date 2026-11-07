@@ -243,7 +243,7 @@ struct SourceFilterEditorView: View {
                 .disabled(!writable || (step == .review && !canApply))
             }.padding().background(.bar)
         }
-        .confirmationDialog("Discard restriction changes?", isPresented: $confirmExit, titleVisibility: .visible) {
+        .alert("Discard restriction changes?", isPresented: $confirmExit) {
             Button("Discard changes", role: .destructive) { dismiss() }
             Button("Keep editing", role: .cancel) {}
         }

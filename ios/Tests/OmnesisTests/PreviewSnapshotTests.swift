@@ -8113,40 +8113,23 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testScopePickerRestoresVisibleRegionAndResetsForAnotherSearch() throws {
         let source = PreviewMocks.scopeFolderSource
-        let items = (0 ..< 65).map { index in
-            ScopeOption(
-                ref: .init(kind: "folder", id: "example-folder-\(index)"),
-                label: "Example folder \(index)",
-                count: index + 1
-            )
-        }
-        let firstPage = ScopeOptions(
-            sourceId: source.id,
-            sourceType: "google-drive",
-            scopes: PreviewMocks.scopeDriveContract,
-            readiness: [.init(kind: "folder", ready: true)],
-            items: Array(items.prefix(50)),
-            nextCursor: "second"
-        )
-        let secondPage = ScopeOptions(
-            sourceId: source.id,
-            sourceType: "google-drive",
-            scopes: PreviewMocks.scopeDriveContract,
-            readiness: [.init(kind: "folder", ready: true)],
-            items: Array(items.suffix(15))
-        )
+        let (firstPage, secondPage) = scopePickerPageFixtures()
         try assertProviderFixtureWireRefs(firstPage.items.map(\.ref) + secondPage.items.map(\.ref))
         // This is an accumulated navigation snapshot after two provider pages, not an oversized API page.
         let options = try appendScopeOptions(secondPage, to: firstPage)
         for scheme in [ColorScheme.light, .dark] {
             var saved = ScopePickerSession()
             let name = scheme == .dark ? "dark" : "light"
-            let first = try mountScopePicker(source: source, options: options, scheme: scheme, changed: { saved = $0 })
-            let scroll = try XCTUnwrap(scopePickerScroll(in: first.1.view))
-            scroll.setContentOffset(
-                CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom),
-                animated: false
+            var scrollProxy: ScrollViewProxy?
+            let first = try mountScopePicker(
+                source: source,
+                options: options,
+                scheme: scheme,
+                scrollReady: { scrollProxy = $0 },
+                changed: { saved = $0 }
             )
+            let scroll = try XCTUnwrap(scopePickerScroll(in: first.1.view))
+            try XCTUnwrap(scrollProxy).scrollTo(try ScopePickerAnchor.item(.init(XCTUnwrap(options.items.last).ref)), anchor: .bottom)
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
             let beforeOffset = scroll.contentOffset.y
             try captureScopePicker(first.0, name: "scope-picker-before-\(name)")
@@ -8195,15 +8178,46 @@ final class PreviewSnapshotTests: XCTestCase {
         }
     }
 
+    private func scopePickerPageFixtures() -> (ScopeOptions, ScopeOptions) {
+        let source = PreviewMocks.scopeFolderSource
+        let items = (0 ..< 65).map { index in
+            ScopeOption(
+                ref: .init(kind: "folder", id: "example-folder-\(index)"),
+                label: "Example folder \(index)",
+                count: index + 1
+            )
+        }
+        let firstPage = ScopeOptions(
+            sourceId: source.id,
+            sourceType: "google-drive",
+            scopes: PreviewMocks.scopeDriveContract,
+            readiness: [.init(kind: "folder", ready: true)],
+            items: Array(items.prefix(50)),
+            nextCursor: "second"
+        )
+        let secondPage = ScopeOptions(
+            sourceId: source.id,
+            sourceType: "google-drive",
+            scopes: PreviewMocks.scopeDriveContract,
+            readiness: [.init(kind: "folder", ready: true)],
+            items: Array(items.suffix(15))
+        )
+        return (firstPage, secondPage)
+    }
+
     private func mountScopePicker(
         source: AccessSourceInstance, options: ScopeOptions? = nil, session: ScopePickerSession = .init(),
-        scheme: ColorScheme, changed: @escaping (ScopePickerSession) -> Void = { _ in }
+        scheme: ColorScheme, scrollReady: @escaping (ScrollViewProxy) -> Void = { _ in },
+        changed: @escaping (ScopePickerSession) -> Void = { _ in }
     ) throws
         -> (UIWindow, UIHostingController<AnyView>) {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let view = NavigationStack {
-            SourceFilterPickerView(source: source, options: options, session: session, sessionChanged: changed, selected: { _ in })
+            ScrollViewReader { proxy in
+                SourceFilterPickerView(source: source, options: options, session: session, sessionChanged: changed, selected: { _ in })
+                    .onAppear { scrollReady(proxy) }
+            }
         }.environment(AppStore.preview()).preferredColorScheme(scheme)
         let host = UIHostingController(rootView: AnyView(view))
         let window = UIWindow(windowScene: scene)

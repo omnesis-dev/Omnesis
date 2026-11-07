@@ -44,6 +44,10 @@ struct SourceFilterPickerView: View {
             (options?.readiness ?? source.scopeReadiness ?? []).first { $0.kind == kind }?.ready == true
     }
 
+    var identifierPlaceholder: String {
+        identifierType == "phone" ? "International phone number" : identifierType == "domain" ? "example.org" : "person@example.org"
+    }
+
     var typedId: ScopeIdentifier? {
         guard declaration?.identifiers?.contains(identifierType) == true else { return nil }
         return scopeTypedIdentifier(typed, type: identifierType)
@@ -113,7 +117,7 @@ struct SourceFilterPickerView: View {
         let key = location
         return ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                LazyVStack(alignment: .leading, spacing: 16) {
                     if enteringIdentifier {
                         Text("Enter an exact identifier").font(.title2.bold()).accessibilityAddTraits(.isHeader)
                     }
@@ -127,9 +131,9 @@ struct SourceFilterPickerView: View {
                             Text(identifierType == "phone" ? "Phone number" : identifierType == "domain" ? "Domain" : "Email address")
                                 .font(.subheadline.bold())
                             TextField(
-                                identifierType == "phone" ? "International phone number" : identifierType == "domain" ? "example.org" :
-                                    "person@example.org",
-                                text: $typed
+                                identifierPlaceholder,
+                                text: $typed,
+                                prompt: Text(identifierPlaceholder).foregroundStyle(Theme.textSecondary)
                             )
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel(identifierType == "phone" ? "Phone number" : identifierType == "domain" ? "Domain" :
@@ -156,7 +160,7 @@ struct SourceFilterPickerView: View {
                             }
                             HStack(spacing: 8) {
                                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.textSecondary).accessibilityHidden(true)
-                                TextField("Search", text: $query)
+                                TextField("Search", text: $query, prompt: Text("Search").foregroundStyle(Theme.textPrimary))
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled()
                                     .accessibilityLabel("Search matches")
@@ -185,40 +189,38 @@ struct SourceFilterPickerView: View {
                                     .foregroundStyle(Theme.textSecondary)
                             }
                         }
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Results").font(.headline)
-                            ForEach(pickerRows) { row in
-                                let item = row.option
-                                HStack(spacing: 12) {
-                                    Button { select(item.ref) } label: {
-                                        HStack(alignment: .top, spacing: 12) {
-                                            Image(systemName: selectedRefs
-                                                .contains { scopeRefIdentityMatches($0, item.ref) } ? "checkmark.square.fill" : "square")
-                                                .accessibilityHidden(true)
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                Text(item.label).foregroundStyle(Color.primary)
-                                                Text("\(item.count) matches").font(.subheadline).foregroundStyle(Theme.textSecondary)
-                                            }
-                                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    }.buttonStyle(.borderless).disabled(!ready).accessibilityLabel("Select \(item.label)")
-                                    if item.hasChildren == true {
-                                        Button { ancestors.append(item)
-                                            parentId = item.ref.id
-                                        } label: {
-                                            Image(systemName: "chevron.right").frame(minWidth: 44, minHeight: 44)
-                                        }.buttonStyle(.borderless).accessibilityLabel("Browse inside \(item.label)")
-                                    }
+                        Text("Results").font(.headline)
+                        ForEach(pickerRows) { row in
+                            let item = row.option
+                            HStack(spacing: 12) {
+                                Button { select(item.ref) } label: {
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Image(systemName: selectedRefs
+                                            .contains { scopeRefIdentityMatches($0, item.ref) } ? "checkmark.square.fill" : "square")
+                                            .accessibilityHidden(true)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(item.label).foregroundStyle(Color.primary)
+                                            Text("\(item.count) matches").font(.subheadline).foregroundStyle(Theme.textSecondary)
+                                        }
+                                    }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                }.buttonStyle(.borderless).disabled(!ready).accessibilityLabel("Select \(item.label)")
+                                if item.hasChildren == true {
+                                    Button { ancestors.append(item)
+                                        parentId = item.ref.id
+                                    } label: {
+                                        Image(systemName: "chevron.right").frame(minWidth: 44, minHeight: 44)
+                                    }.buttonStyle(.borderless).accessibilityLabel("Browse inside \(item.label)")
                                 }
-                                .padding(12)
-                                .background(.background, in: .rect(cornerRadius: 12))
-                                .id(row.id)
                             }
-                            if let next = options?
-                                .nextCursor {
-                                Button("Load more") { Task { await load(cursor: next) } }.frame(minHeight: 44).disabled(loading)
-                            }
-                            if !loading, options?.items.isEmpty == true { Text("No matching items. Try another search.") }
-                        }.scrollTargetLayout()
+                            .padding(12)
+                            .background(.background, in: .rect(cornerRadius: 12))
+                            .id(row.id)
+                        }
+                        if let next = options?
+                            .nextCursor {
+                            Button("Load more") { Task { await load(cursor: next) } }.frame(minHeight: 44).disabled(loading)
+                        }
+                        if !loading, options?.items.isEmpty == true { Text("No matching items. Try another search.") }
                     }
                     if !ready {
                         GroupBox {
