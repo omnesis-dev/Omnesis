@@ -6,18 +6,27 @@ import SwiftUI
 
 @available(iOS 17.0, *)
 struct AccessLevelEditorView: View {
-    @Environment(AppStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
+    @Environment(AppStore.self) var store
+    @Environment(\.dismiss) var dismiss
     let level: AccessLevelSummary?
-    @State private var overview: AccessOverview
+    @State var overview: AccessOverview
     let saved: () -> Void
-    @State private var draft: AccessLevelDraft
-    @State private var openedClient: AccessClient?
-    @State private var saving = false
-    @State private var error: Error?
-    @State private var conflict = false
-    @State private var filter: FilterRoute?
-    private struct FilterRoute: Identifiable {
+    @State var baseline: AccessLevelDraft
+    @State var draft: AccessLevelDraft
+    @State var openedClient: AccessClient?
+    @State var saving = false
+    @State var reloading = false
+    @State var recoveryFailure: Error?
+    @State var missingLevel = false
+    @State var impactConnectionCount = 0
+    @State var labelCredential: String?
+    @State var scopeLabels: [String: [ScopePreview.Item]] = [:]
+    @State var error: Error?
+    @State var nameTaken = false
+    @State var levelInUse = false
+    @State var conflict = false
+    @State var filter: FilterRoute?
+    struct FilterRoute: Identifiable {
         let source: AccessSourceInstance
         let capability: String
         var id: String {
@@ -27,95 +36,135 @@ struct AccessLevelEditorView: View {
 
     init(level: AccessLevelSummary?, overview: AccessOverview, previewConflict: Bool = false, saved: @escaping () -> Void = {}) {
         self.level = level
+        _impactConnectionCount = State(initialValue: level?.connectionCount ?? 0)
         _overview = State(initialValue: overview)
         self.saved = saved
         _draft = State(initialValue: AccessLevelDraft(level: level, overview: overview))
+        _baseline = State(initialValue: AccessLevelDraft(level: level, overview: overview))
         _conflict = State(initialValue: previewConflict)
         _error = State(initialValue: previewConflict ? GatewayClient.Error.serverError(status: 409, body: "stale-revision") : nil)
     }
 
+    @State var navigation = AccessFlowNavigation()
+    @State var confirmExit = false
+    @State var answerDetailsExpanded = false
+    @State var referenceDetailsExpanded: Set<String> = []
+    @State var confirmReload = false
+    @AccessibilityFocusState var questionFocused: Bool
+    var original: AccessLevelDraft {
+        baseline
+    }
+
+    var isEditing: Bool {
+        level != nil
+    }
+
+    var changedDraft: Bool {
+        draft.hasChanges(from: original)
+    }
+
+    var current: AccessFlowStep {
+        navigation.current(isEditing: isEditing)
+    }
+
     var body: some View {
         Form {
-            Section { TextField("Access level name", text: $draft.name) }
-            Section("Permissions") {
-                ForEach(["answer", "direct", "notes"], id: \.self) { capability in
-                    Toggle(capability.capitalized, isOn: Binding(
-                        get: { draft.rule(capability) != nil },
-                        set: { draft.setEnabled(capability, $0, overview: overview) }
-                    ))
-                }
-                if draft.rule("direct") != nil, draft.rule("answer") != nil {
-                    if level == nil {
-                        Toggle(
-                            "Direct: same as Answer",
-                            isOn: Binding(
-                                get: { draft.directSameAsAnswer },
-                                set: { draft.setDirectSameAsAnswer($0, authoringEnabled: overview.sourceFilters?.enabled) }
-                            )
-                        )
-                        .disabled(!draft.directSameAsAnswer && !draft.canCopyAnswer(authoringEnabled: overview.sourceFilters?.enabled))
-                    } else {
-                        Button("Copy Answer settings to Direct") { draft.copyAnswer(authoringEnabled: overview.sourceFilters?.enabled) }
-                            .disabled(!draft.canCopyAnswer(authoringEnabled: overview.sourceFilters?.enabled))
-                        Text("Copies sources and filters once. Later changes stay separate.").font(.caption)
-                    }
+            Section {
+                if isEditing { Text(original.name).font(.subheadline).foregroundStyle(Theme.textSecondary) }
+                Text(question).font(.title2.bold()).accessibilityAddTraits(.isHeader).accessibilityFocused($questionFocused)
+                if !isEditing, let index = draft.creationSteps.firstIndex(of: current) {
+                    Text("Step \(index + 1) of \(draft.creationSteps.count)").font(.subheadline).foregroundStyle(Theme.textSecondary)
                 }
             }
-            if overview.sourceFilters?.enabled != true, draft.rules.contains(where: { !$0.scopePolicies.isEmpty }) {
+            switch current {
+            case .overview: overviewContent
+            case .permissions: permissionsContent
+            case .answerData: dataContent("answer")
+            case .directData: dataContent("direct")
+            case .directChoice: directChoiceContent
+            case .future: futureContent
+            case .release: releaseContent
+            case .review: reviewContent
+            }
+            if let error, !conflict {
                 Section {
-                    Text("Saved filters are read-only while filter editing is unavailable. You can still revoke capabilities.")
-                        .font(.footnote)
-                }
-            }
-            ForEach(["answer", "direct"], id: \.self) { capability in
-                if let rule = draft.rule(capability), !(capability == "direct" && draft.directSameAsAnswer && draft.rule("answer") != nil) {
-                    sourceSection(capability: capability, rule: rule)
-                }
-            }
-            if let rule = draft.rule("answer") {
-                Section("Privacy for Answer") {
-                    Toggle("Review answers with a privacy policy", isOn: Binding(
-                        get: { if case .reviewed = rule.release { true } else { false } },
-                        set: { reviewed in
-                            draft.setRule(rule.replacing(release: reviewed
-                                    ? .reviewed(policyFamilyId: overview.defaultPolicyFamilyId ?? overview.policyFamilies.first?.id ?? "")
-                                    : .unreviewed))
-                        }
-                    ))
-                    if case .reviewed(let family) = rule.release {
-                        Picker(
-                            "Policy",
-                            selection: Binding(
-                                get: { family },
-                                set: { draft.setRule(rule.replacing(release: .reviewed(policyFamilyId: $0))) }
-                            )
-                        ) {
-                            ForEach(overview.policyFamilies) { Text($0.name).tag($0.id) }
-                        }
-                    } else { Text("No privacy reviewer checks these answers.").foregroundStyle(Theme.warning) }
-                }
-            }
-            if let level = overview.levels
-                .first(where: { $0.id == draft.id }) {
-                Section { Text("Saving changes access for \(level.connectionCount) connections using this level.") }
-            }
-            if let error {
-                Section {
-                    Text(conflict ? "This level changed on the gateway. Your draft is retained. Reload and review before saving." :
-                        GatewayErrorView.classify(error).title)
-                        .foregroundStyle(Theme.danger)
-                    if conflict { Button("Reload latest") { Task { await reload() } } }
+                    GatewayErrorView(context: "save this access level", error: error, onRetry: {
+                        navigation.step = .review
+                        navigation.started = true
+                    })
                 }
             }
         }
-        .navigationTitle(level == nil ? "New access level" : "Edit access level")
+        .id(current)
+        .tint(Theme.accent)
+        .navigationTitle(isEditing ? "Edit access level" : "New access level")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden()
+        .disabled(saving || reloading)
+        .interactiveDismissDisabled(changedDraft || saving || reloading)
         .onAppear { if openedClient == nil { openedClient = store.access } }
+        .task(id: labelContextKey) { await resolveLabels() }
+        .onChange(of: draft.name) { _, _ in nameTaken = false }
+        .onChange(of: draft.rule("answer") != nil) { _, enabled in if enabled { levelInUse = false } }
+        .onChange(of: current) { _, _ in questionFocused = true }
         .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button(saving ? "Saving…" : "Save") { Task { await save() } }
-                    .disabled(!draft.valid || saving || conflict)
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { if changedDraft { confirmExit = true } else { dismiss() } }.disabled(saving || reloading)
             }
         }
+        .safeAreaInset(edge: .top) {
+            if conflict {
+                VStack(alignment: .leading, spacing: 8) {
+                    if missingLevel {
+                        Text("This level was deleted. This draft cannot be saved.").font(.headline)
+                        Text("Your comparison stays available here until you leave.").font(.subheadline)
+                        Button("Return to access levels") {
+                            if changedDraft { confirmExit = true } else { dismiss() }
+                        }.frame(minHeight: 44)
+                    } else if let recoveryFailure {
+                        Text(recoveryFailure as? GatewayClient.Error == .invalidResponse
+                            ? "The gateway returned an unreadable response. Your draft is kept."
+                            : "The latest version could not be loaded. Your draft is kept.").font(.headline)
+                        Button("Try loading latest again") { confirmReload = true }.frame(minHeight: 44)
+                    } else {
+                        Text("This level changed elsewhere. Your draft is kept.").font(.headline)
+                        Button("Review latest version…") { confirmReload = true }.frame(minHeight: 44)
+                    }
+                }.padding().frame(maxWidth: .infinity, alignment: .leading).background(.bar).disabled(saving || reloading)
+            } else if levelInUse {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Move integrations to another access level before removing Answer.").font(.headline)
+                    if original.rule("answer") != nil {
+                        Button("Restore Answer access") {
+                            if draft.restoreAnswer(from: original) { levelInUse = false }
+                        }.frame(minHeight: 44)
+                    }
+                }.padding().frame(maxWidth: .infinity, alignment: .leading).background(.bar).disabled(saving || reloading)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            HStack(spacing: 16) {
+                if current != .overview, current != .permissions || isEditing {
+                    Button("Back") { navigation.back(draft: draft, isEditing: isEditing) }
+                        .frame(minWidth: 60, minHeight: 44)
+                }
+                Button(action: advance) {
+                    Text(primaryTitle).frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accessPrimary)
+                .foregroundStyle(Color.white)
+                .disabled(primaryDisabled)
+            }.padding().background(.bar).disabled(saving || reloading)
+        }
+        .confirmationDialog("Discard your changes?", isPresented: $confirmExit, titleVisibility: .visible) {
+            Button("Discard changes", role: .destructive) { dismiss() }
+            Button("Keep editing", role: .cancel) {}
+        }
+        .confirmationDialog("Replace your draft with the latest version?", isPresented: $confirmReload, titleVisibility: .visible) {
+            Button("Discard draft and reload", role: .destructive) { Task { await reload() } }
+            Button("Keep draft", role: .cancel) {}
+        } message: { Text("Your unsaved decisions will be discarded. Review the latest settings before making changes again.") }
         .sheet(item: $filter) { route in
             NavigationStack {
                 SourceFilterEditorView(
@@ -123,63 +172,120 @@ struct AccessLevelEditorView: View {
                     levelId: draft.id,
                     capability: route.capability,
                     initialPolicy: draft.rule(route.capability)?.scopePolicies.first { $0.sourceId == route.source.id },
-                    authoringEnabled: overview.sourceFilters?.enabled == true
-                ) { policy in
-                    draft.setPolicy(policy, sourceId: route.source.id, capability: route.capability)
-                }
+                    authoringEnabled: overview.sourceFilters?.enabled == true,
+                    client: openedClient
+                ) { policy in draft.setPolicy(policy, sourceId: route.source.id, capability: route.capability) }
             }
         }
     }
 
-    private func sourceSection(capability: String, rule: AccessGrantRule) -> some View {
-        Section("\(capability.capitalized) sources") {
-            Picker("Source list", selection: Binding(get: { rule.boundary.mode }, set: { mode in
-                var selection = AccessSourceSelectionState(boundary: rule.boundary, knownSourceIds: overview.availableSourceIds)
-                selection.setMode(mode, knownSourceIds: overview.availableSourceIds)
-                draft.setBoundary(
-                    selection.boundary(knownSourceIds: overview.availableSourceIds),
-                    capability: capability,
-                    authoringEnabled: overview.sourceFilters?.enabled
-                )
-            })) {
-                Text("All sources").tag(AccessSourceMode.all).disabled(!canSetMode(.all, rule: rule))
-                Text("Only selected").tag(AccessSourceMode.allowlist).disabled(!canSetMode(.allowlist, rule: rule))
-                Text("All except blocked").tag(AccessSourceMode.denylist).disabled(!canSetMode(.denylist, rule: rule))
-            }
-            ForEach(sources(for: rule)) { source in
-                let allowed = AccessSourceSelectionState(boundary: rule.boundary, knownSourceIds: overview.availableSourceIds)
-                    .allowedSourceIds.contains(source.id)
-                Toggle(source.name, isOn: Binding(get: { allowed }, set: { enabled in
-                    var selection = AccessSourceSelectionState(boundary: rule.boundary, knownSourceIds: overview.availableSourceIds)
-                    if selection.mode == .all { selection.setMode(.denylist, knownSourceIds: overview.availableSourceIds) }
-                    selection.setAllowed(enabled, sourceId: source.id)
-                    draft.setBoundary(
-                        selection.boundary(knownSourceIds: overview.availableSourceIds),
-                        capability: capability,
-                        authoringEnabled: overview.sourceFilters?.enabled
-                    )
-                })).disabled(!source.available || !canToggleSource(source.id, allowed: allowed, rule: rule))
-                if accessFilterEntryVisible(
-                    authoringEnabled: overview.sourceFilters?.enabled,
-                    sourceAllowed: allowed,
-                    hasDeclaration: source.scopes != nil,
-                    hasSavedPolicy: rule.scopePolicies.contains { $0.sourceId == source.id }
-                ) {
-                    Button {
-                        filter = FilterRoute(source: source, capability: capability)
-                    } label: {
-                        HStack { Text("Filter \(source.name)")
-                            Spacer()
-                            Text(rule.scopePolicies.contains { $0.sourceId == source.id } ? "Filtered" : "All content")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
+    var question: String {
+        switch current {
+        case .overview: "What would you like to change?"
+        case .permissions: "What can this connection do?"
+        case .answerData: "What can Answer use?"
+        case .directData: "What can Direct read?"
+        case .directChoice: "Use the same data for Direct?"
+        case .future: "Allow sources connected later?"
+        case .release: "How should answers be released?"
+        case .review: isEditing ? "Review your changes" : "Review and name this access level"
         }
     }
 
-    private func canToggleSource(_ sourceId: String, allowed: Bool, rule: AccessGrantRule) -> Bool {
+    var primaryTitle: String {
+        if current == .review { return saving ? "Saving…" : "Save access level" }
+        if current == .overview { return "Review changes" }
+        return isEditing ? "Done" : "Continue"
+    }
+
+    var primaryDisabled: Bool {
+        saving || reloading || !draft.questionIsValid(current, overview: overview, original: original)
+            || (current == .overview && !changedDraft)
+            || (current == .review && isEditing && !changedDraft)
+            || (current == .review && (!draft.valid || conflict || !validRelease || nameProblem != nil || allSourceProblems != nil))
+    }
+
+    var validRelease: Bool {
+        draft.releaseIsValid(overview: overview)
+    }
+
+    func advance() {
+        guard !primaryDisabled else { return }
+        if current == .review { Task { await save() }
+            return
+        }
+        navigation.advance(draft: draft, isEditing: isEditing)
+    }
+
+    func edit(_ destination: AccessFlowStep) {
+        if destination == .directData, !draft.prepareDirectEditing(authoringEnabled: overview.sourceFilters?.enabled) { return }
+        navigation.open(destination, isEditing: isEditing, draft: draft)
+    }
+
+    var reviewSources: [AccessSourceInstance] {
+        let rules = original.serializedRules + draft.serializedRules
+        let missing = Set(rules.flatMap { $0.boundary.sourceIds + $0.scopePolicies.map(\.sourceId) })
+            .subtracting(Set(overview.sources.map(\.id)))
+        return overview.sources + missing.sorted().map { AccessSourceInstance(id: $0, name: "Unavailable saved account", available: false) }
+    }
+
+    func accountDecision(_ value: AccessLevelDraft, _ capability: String, _ sourceId: String) -> AccessAccountDecision {
+        AccessAccountDecision(draft: value, capability: capability, sourceId: sourceId, knownIds: overview.availableSourceIds)
+    }
+
+    func accountSummary(_ value: AccessLevelDraft, _ capability: String, _ source: AccessSourceInstance) -> String {
+        let decision = accountDecision(value, capability, source.id)
+        guard decision.capabilityEnabled else { return "Capability not allowed" }
+        guard decision.allowed else { return "Not shared" }
+        guard let rule = value.serializedRules.first(where: { $0.capability == capability }) else { return "Not shared" }
+        return restrictionSummary(rule, source.id)
+    }
+
+    func restrictionSummary(_ rule: AccessGrantRule, _ sourceId: String) -> String {
+        guard var policy = rule.scopePolicies.first(where: { $0.sourceId == sourceId }) else { return "All content" }
+        let labels = scopeLabels[rule.capability + ":" + sourceId] ?? []
+        for index in policy.rules.indices {
+            for match in policy.rules[index].match.indices {
+                let ref = policy.rules[index].match[match]
+                if let item = labels.first(where: { scopeRefIdentityMatches($0.ref, ref) }) {
+                    policy.rules[index].match[match].label = scopeDisplayLabel(ref, previewItem: item)
+                }
+            }
+        }
+        return accessRestrictionSummary(policy)
+    }
+
+    struct LabelContext: Hashable {
+        var credential: String
+        var policies: Set<ScopePolicy>
+    }
+
+    var labelContextKey: LabelContext {
+        LabelContext(
+            credential: (store.access?.baseURL.absoluteString ?? "") + ":" + (store.access?.token ?? ""),
+            policies: Set(original.serializedRules.flatMap(\.scopePolicies) + draft.serializedRules.flatMap(\.scopePolicies))
+        )
+    }
+
+    func resolveLabels() async {
+        let context = labelContextKey
+        if labelCredential != context.credential { scopeLabels = [:]
+            labelCredential = context.credential
+        }
+        guard let client = try? (openedClient ?? store.access)?.authorized(for: store.access) else { return }
+        for policy in context.policies.sorted(by: { ($0.audience.capability + $0.sourceId) < ($1.audience.capability + $1.sourceId) }) {
+            guard !Task.isCancelled else { return }
+            do {
+                let preview = try await client.scopePreview(policy)
+                guard !Task.isCancelled, store.access?.baseURL == client.baseURL, store.access?.token == client.token,
+                      preview.sourceId == policy.sourceId else { return }
+                let key = policy.audience.capability + ":" + policy.sourceId
+                scopeLabels[key] = mergingScopeLabelHints(scopeLabels[key] ?? [], preview.items)
+            } catch { /* Saved labels remain readable when optional lookup fails. */ }
+        }
+    }
+
+    func canToggleSource(_ sourceId: String, allowed: Bool, rule: AccessGrantRule) -> Bool {
         var selection = AccessSourceSelectionState(boundary: rule.boundary, knownSourceIds: overview.availableSourceIds)
         if selection.mode == .all { selection.setMode(.denylist, knownSourceIds: overview.availableSourceIds) }
         selection.setAllowed(!allowed, sourceId: sourceId)
@@ -190,27 +296,30 @@ struct AccessLevelEditorView: View {
         )
     }
 
-    private func canSetMode(_ mode: AccessSourceMode, rule: AccessGrantRule) -> Bool {
-        var selection = AccessSourceSelectionState(boundary: rule.boundary, knownSourceIds: overview.availableSourceIds)
-        selection.setMode(mode, knownSourceIds: overview.availableSourceIds)
-        return draft.canSetBoundary(
-            selection.boundary(knownSourceIds: overview.availableSourceIds),
-            capability: rule.capability,
-            authoringEnabled: overview.sourceFilters?.enabled
-        )
-    }
-
-    private func sources(for rule: AccessGrantRule) -> [AccessSourceInstance] {
-        let missingPolicies = rule.scopePolicies.filter { policy in
-            !overview.sources.contains { $0.id == policy.sourceId }
-        }
-        let missing = missingPolicies.map {
-            AccessSourceInstance(id: $0.sourceId, name: $0.sourceId, available: false)
+    func sources(for rule: AccessGrantRule) -> [AccessSourceInstance] {
+        let referenced = Set(rule.boundary.sourceIds + rule.scopePolicies.map(\.sourceId))
+        let missing = referenced.subtracting(Set(overview.sources.map(\.id))).sorted().map {
+            AccessSourceInstance(id: $0, name: "Unavailable saved account", available: false)
         }
         return overview.sources + missing
     }
 
-    private func save() async {
+    func sourceProblem(_ capability: String) -> String? {
+        draft.sourceProblem(capability, overview: overview, original: original)
+    }
+
+    var allSourceProblems: String? {
+        ["answer", "direct"].compactMap { sourceProblem($0) }.first
+    }
+
+    var nameProblem: String? {
+        if nameTaken { return "This name was just taken. Choose another." }
+        return accessLevelNameProblem(draft.name, id: draft.id, levels: overview.levels)
+    }
+
+    func save() async {
+        guard current == .review, !saving, !reloading, !conflict, draft.valid, validRelease, nameProblem == nil, allSourceProblems == nil,
+              !isEditing || changedDraft else { return }
         guard let client = openedClient, store.access?.baseURL == client.baseURL, store.access?.token == client.token else {
             error = GatewayClient.Error.unauthorized
             return
@@ -233,25 +342,46 @@ struct AccessLevelEditorView: View {
             guard store.access?.baseURL == client.baseURL, store.access?.token == client.token else { return }
             saved()
             dismiss()
-        } catch { self.error = error
+        } catch {
+            guard store.access?.baseURL == client.baseURL, store.access?.token == client.token else { return }
+            switch accessLevelMutationCode(error) {
+            case "level-name-taken": nameTaken = true
+                self.error = nil
+            case "level-in-use": levelInUse = true
+                self.error = nil
+            default: self.error = error
+            }
             conflict = error.isAccessRevisionConflict
         }
     }
 
-    private func reload() async {
+    func reload() async {
+        guard !saving, !reloading else { return }
+        reloading = true
+        defer { reloading = false }
         guard let client = openedClient, store.access?.baseURL == client.baseURL, store.access?.token == client.token else {
-            error = GatewayClient.Error.unauthorized
+            recoveryFailure = GatewayClient.Error.unauthorized
             return
         }
         do {
             let latest = try await client.overview()
-            guard let level = latest.levels.first(where: { $0.id == draft.id }) else { return }
+            guard let level = latest.levels.first(where: { $0.id == draft.id }) else {
+                missingLevel = true
+                recoveryFailure = GatewayClient.Error.notFound
+                return
+            }
             guard store.access?.baseURL == client.baseURL, store.access?.token == client.token else { return }
             overview = latest
             draft = AccessLevelDraft(level: level, overview: latest)
+            baseline = draft
+            impactConnectionCount = level.connectionCount
+            recoveryFailure = nil
+            missingLevel = false
+            levelInUse = false
             conflict = false
+            navigation = AccessFlowNavigation(step: .overview, started: true)
             error = nil
-        } catch { self.error = error }
+        } catch { recoveryFailure = error }
     }
 }
 

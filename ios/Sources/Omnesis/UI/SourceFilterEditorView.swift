@@ -18,17 +18,15 @@ struct SourceFilterEditorView: View {
     @State private var openedClient: AccessClient?
     @State private var error: Error?
     @State private var loading = false
+    @State private var previewGeneration = 0
     @State private var picking = false
+    @State private var retainedRefs: [ScopeRef] = []
     private var refs: [ScopeRef] {
         policy.rules.first?.match ?? []
     }
 
     private var writable: Bool {
         authoringEnabled && policy.editable
-    }
-
-    private var ready: Bool {
-        policy.readyToSave(preview?.readiness ?? source.scopeReadiness ?? [])
     }
 
     private var previewKey: ScopePolicy {
@@ -42,8 +40,16 @@ struct SourceFilterEditorView: View {
         initialPolicy: ScopePolicy?,
         authoringEnabled: Bool,
         preview: ScopePreview? = nil,
+        client: AccessClient? = nil,
         changed: @escaping (ScopePolicy?) -> Void
     ) {
+        _openedClient = State(initialValue: client)
+        self.initialPolicy = initialPolicy
+        self.capability = capability
+        _mode = State(initialValue: ScopeFilterMode(
+            policy: initialPolicy ?? .empty(sourceId: source.id, levelId: levelId, capability: capability),
+            hasSavedPolicy: initialPolicy != nil
+        ))
         self.source = source
         self.authoringEnabled = authoringEnabled
         self.changed = changed
@@ -54,110 +60,244 @@ struct SourceFilterEditorView: View {
         _preview = State(initialValue: preview)
     }
 
+    @State private var step: ScopeFilterStep = .mode
+    @State private var mode: ScopeFilterMode
+    @State private var pickerSession = ScopePickerSession()
+    @State private var confirmExit = false
+    private let initialPolicy: ScopePolicy?
+    private let capability: String
+    private var dirty: Bool {
+        mode == .all ? initialPolicy != nil : policy != initialPolicy
+    }
+
+    private var commit: ScopeFilterCommit {
+        ScopeFilterCommitState(
+            mode: mode,
+            policy: policy,
+            sourceId: source.id,
+            authoringEnabled: authoringEnabled,
+            preview: preview,
+            previewedPolicy: previewedPolicy,
+            loading: loading,
+            hasError: error != nil
+        ).decision
+    }
+
+    private var canApply: Bool {
+        commit != .blocked
+    }
+
     var body: some View {
         Form {
             Section {
-                Text(source.name).font(.headline)
-                if !writable { Text("This saved restriction remains active. Filter editing is unavailable on this gateway.") }
-                if policy.editable {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        modePicker.pickerStyle(.inline)
-                    } else {
-                        modePicker
-                    }
-                    Text(refs
-                        .isEmpty ?
-                        (policy.otherwise == "share" ? "Shares all content from this source." : "Shares nothing from this source.") :
-                        (policy.rules[0].action == "share" ? "Shares content matching any item in this list." :
-                            "Shares everything except content matching any item in this list."))
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
+                Text("\(capability.capitalized) · \(accessSourceDisplayName(source))").font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+                Text(!writable ? "Saved restriction" : step == .mode ? "What should be shared?" : step == .matches ? "Choose what matches" :
+                    "Review this restriction")
+                    .font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                if !writable { Text("This saved restriction remains active. Editing is unavailable.") }
             }
-            Section("Selected items") {
-                ForEach(Array(refs.enumerated()), id: \.offset) { index, ref in
-                    selectedItem(index, ref: ref)
-                }
-                if writable { Button("Add item") { picking = true } }
-            }
-            ForEach(Array((preview?.readiness ?? source.scopeReadiness ?? []).enumerated()), id: \.offset) { _, item in
-                if !item.ready || !(item.behindCollectors ?? []).isEmpty {
+            if step == .mode {
+                if writable {
                     Section {
-                        Text(item.message ?? "Preparing \(item.kind) filters")
-                        if let processed = item
-                            .processed { Text("\(processed) processed\(item.pending.map { ", \($0) pending" } ?? "")").font(.caption) }
-                        ForEach(item.behindCollectors ?? [], id: \.deviceId) { Text("Update collector: \($0.name)").font(.caption) }
+                        modeOption(
+                            .all,
+                            title: "All content",
+                            detail: "Remove the restriction. All content in this account becomes available."
+                        )
+                        modeOption(.only, title: "Only matching content", detail: "Share content that matches any selected item.")
+                        modeOption(
+                            .except,
+                            title: "Everything except matching content",
+                            detail: "Hide content that matches any selected item."
+                        )
+                    }.disabled(!writable)
+                }
+                if !writable { Section("Saved restriction") { Text(accessRestrictionSummary(initialPolicy))
+                    ForEach(Array(refs.enumerated()), id: \.offset) { index, ref in selectedItem(index, ref: ref) }
+                } }
+            } else if step == .matches {
+                Section {
+                    if writable { Button("Add matches…") { picking = true }.frame(minHeight: 44) }
+                    if refs
+                        .isEmpty {
+                        Text(mode == .only ? "No content will be shared until you add a match." :
+                            "No exceptions selected. All content will be shared.").font(.subheadline)
+                    }
+                    DisclosureGroup("View selected matches (\(refs.count))") {
+                        ForEach(Array(refs.enumerated()), id: \.offset) { index, ref in selectedItem(index, ref: ref) }
                     }
                 }
-            }
-            if let preview {
-                Section("Preview") {
-                    LabeledContent("Visible", value: "\(preview.visible)")
-                    LabeledContent("Hidden", value: "\(preview.hidden)")
-                    LabeledContent("Unknown, hidden", value: "\(preview.unknown)")
-                    Text("Documents with uncertain required facts stay hidden.").font(.caption)
-                    ForEach(preview.samples, id: \.documentId) { sample in
-                        VStack(alignment: .leading) {
-                            Text(sample.title)
-                            Text(sample.unknown ? "Unknown · hidden" : sample.visible ? "Visible" : "Hidden").font(.caption)
-                                .foregroundStyle(.secondary)
+                Section {
+                    Text(
+                        "Content matching any selection \(mode == .only ? "is shared" : "is hidden"). "
+                            + "Other content \(mode == .only ? "stays hidden" : "remains shared")."
+                    )
+                    .font(.subheadline)
+                }
+            } else {
+                Section {
+                    Text(mode == .all ? "All content · this removes the account’s restriction" : accessRestrictionSummary(policy))
+                    if policy.rules.first?.match
+                        .contains(where: { ref in source.scopes?.items.first { $0.kind == ref.kind }?.picker == "tree" }) == true {
+                        Text("Selected folders include descendants and files added later. Moving content can change whether it matches.")
+                            .font(.subheadline)
+                    }
+                }
+                ForEach(
+                    Array((mode == .all ? [] : preview?.readiness ?? source.scopeReadiness ?? []).enumerated()),
+                    id: \.offset
+                ) { _, item in
+                    if !item.ready || !(item.behindCollectors ?? []).isEmpty {
+                        Section {
+                            Text(item.message ?? "Preparing \(item.kind) filters")
+                            if let processed = item
+                                .processed { Text("\(processed) processed\(item.pending.map { ", \($0) pending" } ?? "")") }
+                            ForEach(item.behindCollectors ?? [], id: \.deviceId) { Text("Update collector: \($0.name)") }
+                            Button("Check again") { Task { await refresh() } }.frame(minHeight: 44).disabled(loading)
                         }
                     }
                 }
-                if writable, previewedPolicy == policy, !loading {
+                if !policy.withinLimits { Section { Text("Choose at most 256 identifiers or items.").foregroundStyle(Theme.danger) } }
+                if mode != .all, let preview, preview.sourceId != source.id {
+                    Section { Text("This preview belongs to another account. Refresh before applying.")
+                        Button("Refresh preview") { Task { await refresh() } }.frame(minHeight: 44)
+                    }
+                }
+                if loading, mode != .all { Section { ProgressView("Checking current content…") } }
+                if let error, mode != .all {
+                    Section { GatewayErrorView(context: "preview this restriction", error: error, onRetry: { Task { await refresh() } }) }
+                }
+                if let preview, previewedPolicy == policy, preview.sourceId == source.id, mode != .all {
+                    Section(policy.readyToSave(preview.readiness) ? "Current preview" : "Preview during preparation") {
+                        LabeledContent("Allowed", value: "\(preview.visible)")
+                        LabeledContent("Hidden", value: "\(preview.hidden)")
+                        LabeledContent("Unknown · hidden", value: "\(preview.unknown)")
+                        Text("Content with uncertain required facts stays hidden.").font(.subheadline)
+                        DisclosureGroup("Examples") {
+                            ForEach(preview.samples, id: \.documentId) { sample in
+                                VStack(alignment: .leading) {
+                                    Text(sample.title)
+                                    Text(sample.unknown ? "Unknown · hidden" : sample.visible ? "Allowed" : "Hidden").font(.subheadline)
+                                        .foregroundStyle(Theme.textSecondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                if let preview, previewedPolicy == policy, !loading, writable, mode != .all {
                     ForEach(Array((preview.identifierProposals ?? []).enumerated()), id: \.offset) { _, proposal in
-                        let count = proposal.identifiers.count
                         Section {
-                            Text("Omnesis knows \(count) more \(count == 1 ? "address" : "addresses") for \(proposal.label).")
-                            Text(proposal.identifiers.map(\.value).joined(separator: ", ")).font(.caption)
-                            Button("Add these addresses") {
-                                guard policy.rules[0].match.indices.contains(proposal.itemIndex),
-                                      policy.rules[0].match[proposal.itemIndex].kind == "participant" else { return }
-                                let old = policy.rules[0].match[proposal.itemIndex].identifiers ?? []
-                                policy.rules[0].match[proposal.itemIndex].identifiers = Array(Set(old + proposal.identifiers))
-                                    .sorted { $0.value < $1.value }
+                            DisclosureGroup("Additional identifiers for \(proposal.label)") {
+                                Text(proposal.identifiers.map(\.value).joined(separator: ", "))
+                                Button("Include these identifiers") {
+                                    guard policy.rules[0].match.indices.contains(proposal.itemIndex),
+                                          policy.rules[0].match[proposal.itemIndex].kind == "participant" else { return }
+                                    let old = policy.rules[0].match[proposal.itemIndex].identifiers ?? []
+                                    policy.rules[0].match[proposal.itemIndex].identifiers = Array(Set(old + proposal.identifiers))
+                                        .sorted { $0.value < $1.value }
+                                }.frame(minHeight: 44)
                             }
                         }
                     }
                 }
             }
-            if !policy
-                .withinLimits { Section { Text("A filter can contain at most 256 identifiers or items.").foregroundStyle(Theme.danger) } }
-            if loading { Section { ProgressView("Updating preview…") } }
-            if let error { Section { Text(GatewayErrorView.classify(error).title)
-                Button("Retry preview") { Task { await refresh() } }
-            } }
-            if writable { Section { Button("Remove filter", role: .destructive) { finish(nil) } } }
         }
-        .navigationTitle("Source filter")
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { finish(policy) }
-                    .disabled(!writable || !ready || !policy.withinLimits || previewedPolicy != policy || loading || error != nil)
-            }
+        .onAppear { if openedClient == nil { openedClient = store.access } }
+        .tint(Theme.accent)
+        .navigationTitle("\(capability.capitalized) restriction")
+        .navigationBarTitleDisplayMode(.inline)
+        .interactiveDismissDisabled(dirty)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { if dirty { confirmExit = true } else { dismiss() } } } }
+        .safeAreaInset(edge: .bottom) {
+            HStack(spacing: 16) {
+                if step != .mode {
+                    Button("Back") { step = step == .review && mode != .all ? .matches : .mode }
+                        .frame(minWidth: 60, minHeight: 44)
+                }
+                Button(action: advance) {
+                    Text(primaryTitle).frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accessPrimary)
+                .foregroundStyle(Color.white)
+                .disabled(!writable || (step == .review && !canApply))
+            }.padding().background(.bar)
         }
-        .task(id: previewKey) { await refresh() }
+        .confirmationDialog("Discard restriction changes?", isPresented: $confirmExit, titleVisibility: .visible) {
+            Button("Discard changes", role: .destructive) { dismiss() }
+            Button("Keep editing", role: .cancel) {}
+        }
+        .onChange(of: store.access?.baseURL) { _, _ in pickerSession = .init()
+            picking = false
+        }
+        .onChange(of: store.access?.token) { _, _ in pickerSession = .init()
+            picking = false
+        }
+        .onChange(of: policy) { _, _ in previewedPolicy = nil }
+        .id(step)
+        .task(id: step == .review && mode != .all ? previewKey : nil) { if step == .review, mode != .all { await refresh() } }
         .sheet(isPresented: $picking) {
-            NavigationStack { SourceFilterPickerView(source: source) { ref in
-                if !refs.contains(ref) { policy.rules[0].match.append(ref) }
-            }
+            NavigationStack {
+                SourceFilterPickerView(
+                    source: source,
+                    capability: capability,
+                    client: openedClient,
+                    selectedRefs: refs,
+                    session: pickerSession,
+                    sessionChanged: { value in
+                        pickerSession = (try? openedClient?.authorized(for: store.access)) == nil ? .init() : value
+                    },
+                    selected: { ref in
+                        policy.appendMatchIfMissing(ref)
+                    }
+                )
             }
         }
     }
 
-    private func finish(_ value: ScopePolicy?) {
+    private var primaryTitle: String {
+        guard step == .review else { return "Continue" }
+        if mode == .all { return "Apply all content" }
+        return mode == .only && refs.isEmpty ? "Block all content" : "Apply restriction"
+    }
+
+    private func advance() {
+        if step == .review {
+            finish()
+        } else if step == .mode {
+            if mode == .all {
+                retainedRefs = refs
+            } else if refs.isEmpty, !retainedRefs.isEmpty {
+                policy.rules[0].match = retainedRefs
+            }
+            policy = mode.applying(to: policy)
+            step = mode == .all ? .review : .matches
+        } else {
+            step = .review
+        }
+    }
+
+    private func modeOption(_ value: ScopeFilterMode, title: String, detail: String) -> some View {
+        Button { mode = value } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: mode == value ? "checkmark.circle.fill" : "circle").accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title).foregroundStyle(Color.primary)
+                    Text(detail).font(.subheadline).foregroundStyle(Theme.textSecondary)
+                }
+            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(.vertical, 8)
+        }.accessibilityAddTraits(mode == value ? .isSelected : [])
+    }
+
+    private func finish() {
+        guard case .apply(let value) = commit else { return }
+        guard let client = openedClient, store.access?.baseURL == client.baseURL, store.access?.token == client.token else {
+            error = GatewayClient.Error.unauthorized
+            return
+        }
         changed(value)
         dismiss()
-    }
-
-    private var modePicker: some View {
-        Picker("Share", selection: Binding(get: { policy.rules[0].action }, set: { action in
-            policy.rules[0].action = action
-            policy.otherwise = action == "share" ? "hide" : "share"
-        })) {
-            Text("Only these").tag("share")
-            Text("Everything except these").tag("hide")
-        }.disabled(!writable)
     }
 
     @ViewBuilder
@@ -178,12 +318,12 @@ struct SourceFilterEditorView: View {
 
     private func itemDetails(_ index: Int, ref: ScopeRef) -> some View {
         VStack(alignment: .leading) {
-            Text(previewItem(index)?.label ?? ref.label ?? ref.id ?? "Person")
+            Text(scopeDisplayLabel(ref, previewItem: previewItem(index)))
             if let identifiers = ref.identifiers {
-                Text(identifiers.map(\.value).joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                Text(identifiers.map(\.value).joined(separator: ", ")).font(.caption).foregroundStyle(Theme.textSecondary)
             }
             if let item = previewItem(index) {
-                Text(item.missing == true ? "No longer available · saved ID retained" : "\(item.count) matching documents")
+                Text(item.missing == true ? "Unavailable · selection kept" : "\(item.count) matching documents")
                     .font(.caption)
             }
         }
@@ -197,7 +337,8 @@ struct SourceFilterEditorView: View {
     }
 
     private func previewItem(_ index: Int) -> ScopePreview.Item? {
-        guard previewedPolicy == policy, let items = preview?.items, items.indices.contains(index) else { return nil }
+        guard previewedPolicy == policy, preview?.sourceId == source.id, let items = preview?.items,
+              items.indices.contains(index) else { return nil }
         return items[index]
     }
 
@@ -209,25 +350,31 @@ struct SourceFilterEditorView: View {
             return
         }
         let requestedPolicy = policy
+        previewGeneration += 1
+        let generation = previewGeneration
+        previewedPolicy = nil
         loading = true
-        defer { loading = false }
+        defer { if generation == previewGeneration { loading = false } }
         do {
             let value = try await client.scopePreview(requestedPolicy)
             try Task.checkCancellation()
             guard store.access?.baseURL == client.baseURL, store.access?.token == client.token else { return }
-            guard policy == requestedPolicy else { return }
+            guard policy == requestedPolicy, generation == previewGeneration else { return }
+            guard value.sourceId == source.id else { error = GatewayClient.Error.invalidResponse
+                return
+            }
             previewedPolicy = requestedPolicy
             preview = value
             error = nil
         } catch is CancellationError {} catch {
-            guard !Task.isCancelled, policy == requestedPolicy else { return }
+            guard !Task.isCancelled, policy == requestedPolicy, generation == previewGeneration else { return }
             self.error = error
         }
     }
 }
 
 #if DEBUG
-#Preview("Filter") {
+#Preview("Choose a restriction") {
     NavigationStack {
         SourceFilterEditorView(
             source: PreviewMocks.scopeEditorSource,
@@ -240,14 +387,14 @@ struct SourceFilterEditorView: View {
     }.environment(AppStore.preview())
 }
 
-#Preview("Preparing") {
+#Preview("Read-only restriction") {
     NavigationStack {
         SourceFilterEditorView(
             source: PreviewMocks.scopeEditorSource,
             levelId: "scope-level",
             capability: "answer",
             initialPolicy: PreviewMocks.scopeEditorPolicy,
-            authoringEnabled: true,
+            authoringEnabled: false,
             preview: PreviewMocks.scopePreparingPreview
         ) { _ in }
     }.environment(AppStore.preview())

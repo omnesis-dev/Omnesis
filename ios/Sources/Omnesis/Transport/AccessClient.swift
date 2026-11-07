@@ -20,6 +20,12 @@ public final class AccessClient: Sendable {
         self.session = session
     }
 
+    /// Keep a nested editor bound to the authorization that opened its draft.
+    func authorized(for current: AccessClient?) throws -> AccessClient {
+        guard current?.baseURL == baseURL, current?.token == token else { throw GatewayClient.Error.unauthorized }
+        return self
+    }
+
     /// The pending request behind a code, with the access the gateway proposes
     /// reconnecting the client to when it already holds some.
     public func lookup(code: String) async throws -> AccessAuthorizationLookupEnvelope {
@@ -111,17 +117,27 @@ public final class AccessClient: Sendable {
         components.queryItems = [URLQueryItem(name: "kind", value: kind), URLQueryItem(name: "q", value: query)]
         if let parentId { components.queryItems?.append(URLQueryItem(name: "parentId", value: parentId)) }
         if let cursor { components.queryItems?.append(URLQueryItem(name: "cursor", value: cursor)) }
-        return try await decodeOrThrow(ScopeOptions.self, from: dispatch(method: "GET", path: components.string!, body: nil))
+        return try await decodeOrThrow(ScopeOptions.self, from: scopeRead(method: "GET", path: components.string!, body: nil))
     }
 
     public func scopePreview(_ policy: ScopePolicy) async throws -> ScopePreview {
         struct Body: Encodable { let policy: ScopePolicy }
         let path = "/admin/access/source-filters/\(percentEncode(policy.sourceId))/preview"
-        return try await decodeOrThrow(ScopePreview.self, from: dispatch(
+        return try await decodeOrThrow(ScopePreview.self, from: scopeRead(
             method: "POST",
             path: path,
             body: encoder.encode(Body(policy: policy))
         ))
+    }
+
+    private func scopeRead(method: String, path: String, body: Data?) async throws -> Data {
+        let canonical: Data = if let body {
+            try JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: body), options: [.sortedKeys])
+        } else { Data() }
+        let key = [baseURL.absoluteString, token, method, path, canonical.base64EncodedString()].joined(separator: "\n")
+        return try await ScopeReadCoordinator.shared.read(key: key) { [self] in
+            try await dispatch(method: method, path: path, body: body)
+        }
     }
 
     private func dispatch(method: String, path: String, body: Data?) async throws -> Data {

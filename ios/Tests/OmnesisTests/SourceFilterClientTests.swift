@@ -15,6 +15,26 @@ final class AccessSourceFilterClientTests: XCTestCase {
         }
     }
 
+    func testOldEditorCannotReadOptionsThroughChangedPairing() async throws {
+        let oldSession = Session(), newSession = Session()
+        let old = try AccessClient(baseURL: XCTUnwrap(URL(string: "https://old.example.org")), token: "old-owner", session: oldSession)
+        let changedGateway = try AccessClient(
+            baseURL: XCTUnwrap(URL(string: "https://new.example.org")),
+            token: "new-owner",
+            session: newSession
+        )
+        let changedToken = AccessClient(baseURL: old.baseURL, token: "new-owner", session: newSession)
+        for current in [changedGateway, changedToken] {
+            do {
+                _ = try await old.authorized(for: current).scopeOptions(sourceId: "gmail:mail@example.org", kind: "label", query: "Design")
+                XCTFail("An old source draft must not cross a pairing boundary")
+            } catch GatewayClient.Error.unauthorized {} catch { XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertTrue(oldSession.requests.isEmpty)
+        XCTAssertTrue(newSession.requests.isEmpty)
+        XCTAssertTrue(try old.authorized(for: old) === old)
+    }
+
     func testPickerEncodesAccountAndQueryAsSeparateComponents() async throws {
         let session = Session()
         session.body = """
@@ -89,5 +109,129 @@ final class AccessSourceFilterClientTests: XCTestCase {
         XCTAssertEqual(body["expectedRevision"] as? Int, 7)
         XCTAssertEqual(body["expectedFilterRevisions"] as? [String: Int], ["answer": 4, "direct": 2])
         XCTAssertEqual(session.requests.count, 1)
+    }
+}
+
+private actor ScopeReadProbe {
+    private var continuations: [CheckedContinuation<Data, Never>] = []
+    private(set) var starts = 0
+    private(set) var active = 0
+    private(set) var peak = 0
+    let firstTwo: XCTestExpectation
+    let allThree: XCTestExpectation
+    init(firstTwo: XCTestExpectation, allThree: XCTestExpectation) {
+        self.firstTwo = firstTwo
+        self.allThree = allThree
+    }
+
+    func run() async -> Data {
+        starts += 1
+        active += 1
+        peak = max(peak, active)
+        if starts <= 2 { firstTwo.fulfill() }
+        allThree.fulfill()
+        let result = await withCheckedContinuation { continuations.append($0) }
+        active -= 1
+        return result
+    }
+
+    func completePending() {
+        let pending = continuations
+        continuations = []
+        pending.forEach { $0.resume(returning: Data("result".utf8)) }
+    }
+}
+
+extension AccessSourceFilterClientTests {
+    func testCancelledConsumersKeepPhysicalReadBudgetUntilTransportCompletes() async throws {
+        let coordinator = ScopeReadCoordinator()
+        let firstTwo = expectation(description: "two physical reads")
+        firstTwo.expectedFulfillmentCount = 2
+        let allThree = expectation(description: "third starts after capacity is released")
+        allThree.expectedFulfillmentCount = 3
+        let probe = ScopeReadProbe(firstTwo: firstTwo, allThree: allThree)
+        let first = Task { try await coordinator.read(key: "gateway-a/owner/source/options") { await probe.run() } }
+        let duplicate = Task { try await coordinator.read(key: "gateway-a/owner/source/options") { await probe.run() } }
+        let second = Task { try await coordinator.read(key: "gateway-a/owner/source/preview") { await probe.run() } }
+        let third = Task { try await coordinator.read(key: "gateway-b/other/source/options") { await probe.run() } }
+        await fulfillment(of: [firstTwo], timeout: 3)
+        first.cancel()
+        let startsBeforeRelease = await probe.starts
+        XCTAssertEqual(startsBeforeRelease, 2)
+        await probe.completePending()
+        await fulfillment(of: [allThree], timeout: 3)
+        await probe.completePending()
+        do { _ = try await first.value
+            XCTFail("Cancelled consumer should not accept a result")
+        } catch is CancellationError {}
+        _ = try await duplicate.value
+        _ = try await second.value
+        _ = try await third.value
+        let peak = await probe.peak
+        let starts = await probe.starts
+        XCTAssertEqual(peak, 2)
+        XCTAssertEqual(starts, 3)
+    }
+}
+
+private actor ScopeReadCounter {
+    private(set) var count = 0
+    func next() -> Data {
+        count += 1
+        return Data([UInt8(count)])
+    }
+}
+
+extension AccessSourceFilterClientTests {
+    func testImmediateFollowupReadNeverReusesCompletedValidation() async throws {
+        let coordinator = ScopeReadCoordinator()
+        let counter = ScopeReadCounter()
+        for _ in 0 ..< 20 {
+            async let first = coordinator.read(key: "same-gateway-and-source") { await counter.next() }
+            async let duplicate = coordinator.read(key: "same-gateway-and-source") { await counter.next() }
+            let completed = try await duplicate
+            let fresh = try await coordinator.read(key: "same-gateway-and-source") { await counter.next() }
+            _ = try await first
+            XCTAssertGreaterThan(try XCTUnwrap(fresh.first), try XCTUnwrap(completed.first))
+        }
+    }
+}
+
+extension AccessSourceFilterClientTests {
+    func testCancelledQueuedSearchNeverReachesTransportBeforeCurrentSearch() async throws {
+        let coordinator = ScopeReadCoordinator()
+        let firstTwo = expectation(description: "physical slots occupied")
+        firstTwo.expectedFulfillmentCount = 2
+        let allThree = expectation(description: "current fourth request starts")
+        allThree.expectedFulfillmentCount = 3
+        let probe = ScopeReadProbe(firstTwo: firstTwo, allThree: allThree)
+        let first = Task { try await coordinator.read(key: "first") { await probe.run() } }
+        let second = Task { try await coordinator.read(key: "second") { await probe.run() } }
+        await fulfillment(of: [firstTwo], timeout: 3)
+        let cancelled = Task {
+            try await coordinator.read(key: "obsolete-query") {
+                XCTFail("Cancelled queued request reached transport")
+                return Data()
+            }
+        }
+        for _ in 0 ..< 1000 {
+            if await coordinator.queuedCount == 1 { break }
+            await Task.yield()
+        }
+        let queued = await coordinator.queuedCount
+        XCTAssertEqual(queued, 1)
+        cancelled.cancel()
+        do { _ = try await cancelled.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {}
+        let current = Task { try await coordinator.read(key: "current-query") { await probe.run() } }
+        await probe.completePending()
+        await fulfillment(of: [allThree], timeout: 3)
+        await probe.completePending()
+        _ = try await first.value
+        _ = try await second.value
+        _ = try await current.value
+        let starts = await probe.starts
+        XCTAssertEqual(starts, 3)
     }
 }

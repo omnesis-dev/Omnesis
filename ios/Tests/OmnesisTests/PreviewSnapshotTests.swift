@@ -8111,6 +8111,116 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testScopePickerRestoresVisibleRegionAndResetsForAnotherSearch() throws {
+        let source = PreviewMocks.scopeFolderSource
+        let items = (0 ..< 80).map { index in
+            ScopeOption(
+                ref: .init(kind: "folder", id: "example-folder-\(index)", label: "Example folder \(index)"),
+                label: "Example folder \(index)",
+                count: index + 1
+            )
+        }
+        let options = ScopeOptions(
+            sourceId: source.id,
+            sourceType: "google-drive",
+            scopes: PreviewMocks.scopeDriveContract,
+            readiness: [.init(kind: "folder", ready: true)],
+            items: items
+        )
+        for scheme in [ColorScheme.light, .dark] {
+            var saved = ScopePickerSession()
+            let name = scheme == .dark ? "dark" : "light"
+            let first = try mountScopePicker(source: source, options: options, scheme: scheme, changed: { saved = $0 })
+            let scroll = try XCTUnwrap(scopePickerScroll(in: first.1.view))
+            scroll.setContentOffset(CGPoint(x: 0, y: 1450), animated: false)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            let beforeOffset = scroll.contentOffset.y
+            try captureScopePicker(first.0, name: "scope-picker-before-\(name)")
+            first.1.rootView = AnyView(EmptyView())
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            first.0.isHidden = true
+            let location = saved.location(for: source.id)
+            let position = try XCTUnwrap(saved.positions[location], "A visible row must be recorded after scrolling")
+            XCTAssertGreaterThan(position.index, 5)
+            var restored = ScopePickerSession()
+            let second = try mountScopePicker(source: source, session: saved, scheme: scheme, changed: { restored = $0 })
+            RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+            let actualRestoredScroll = try XCTUnwrap(scopePickerScroll(in: second.1.view))
+            XCTAssertEqual(
+                actualRestoredScroll.contentOffset.y,
+                beforeOffset,
+                accuracy: 8,
+                "The rendered list must return to the same region, not only retain its saved model"
+            )
+            try captureScopePicker(second.0, name: "scope-picker-restored-\(name)")
+            second.1.rootView = AnyView(EmptyView())
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            second.0.isHidden = true
+            let returned = try XCTUnwrap(restored.positions[location])
+            XCTAssertEqual(returned.itemId, position.itemId, "Back/reopen must retain the same first visible match")
+            XCTAssertEqual(returned.offset, position.offset, accuracy: 8, "The visible region should keep its row offset")
+            var anotherSearch = saved
+            anotherSearch.query = "archive"
+            let third = try mountScopePicker(source: source, options: options, session: anotherSearch, scheme: scheme)
+            let reset = try XCTUnwrap(scopePickerScroll(in: third.1.view))
+            XCTAssertEqual(
+                reset.contentOffset.y,
+                -reset.adjustedContentInset.top,
+                accuracy: 4,
+                "A different search must not inherit the old scroll offset"
+            )
+            try captureScopePicker(third.0, name: "scope-picker-new-search-\(name)")
+            third.1.rootView = AnyView(EmptyView())
+            third.0.isHidden = true
+            print("PICKER_SCROLL_EVIDENCE \(name) index=\(position.index) before=\(position.offset) after=\(returned.offset)")
+        }
+    }
+
+    private func mountScopePicker(
+        source: AccessSourceInstance, options: ScopeOptions? = nil, session: ScopePickerSession = .init(),
+        scheme: ColorScheme, changed: @escaping (ScopePickerSession) -> Void = { _ in }
+    ) throws
+        -> (UIWindow, UIHostingController<AnyView>) {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let view = NavigationStack {
+            SourceFilterPickerView(source: source, options: options, session: session, sessionChanged: changed, selected: { _ in })
+        }.environment(AppStore.preview()).preferredColorScheme(scheme)
+        let host = UIHostingController(rootView: AnyView(view))
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        host.view.layoutIfNeeded()
+        return (window, host)
+    }
+
+    private func scopePickerScroll(in view: UIView) -> UIScrollView? {
+        let nested = view.subviews.compactMap { scopePickerScroll(in: $0) }
+        return ([view as? UIScrollView].compactMap { $0 } + nested).max {
+            $0.contentSize.height < $1.contentSize.height
+        }
+    }
+
+    private func captureScopePicker(_ window: UIWindow, name: String) throws {
+        let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        try writeSnapshotPNG(image, to: Self.outputDir.appendingPathComponent(name + ".png"))
+    }
+
+    func testAccessScopePreviewsKeepProviderContractsSeparate() {
+        XCTAssertEqual(PreviewMocks.scopeEditorSource.sourceType, "gmail")
+        XCTAssertEqual(PreviewMocks.scopeEditorSource.scopes?.items.map(\.kind), ["participant", "label"])
+        XCTAssertEqual(PreviewMocks.scopeEditorSource.scopes?.items.first?.identifiers, ["email", "domain"])
+        XCTAssertEqual(PreviewMocks.scopeParticipantSource.sourceType, "whatsapp-messages")
+        XCTAssertEqual(PreviewMocks.scopeParticipantSource.scopes?.items.last?.identifiers, ["phone"])
+        XCTAssertEqual(PreviewMocks.scopeFolderSource.sourceType, "google-drive")
+        XCTAssertEqual(PreviewMocks.scopeFolderSource.scopes?.items.map(\.kind), ["folder"])
+    }
+
     func testAccessScopeEditors() {
         let overview = PreviewMocks.scopeEditorOverview
         snapshot(

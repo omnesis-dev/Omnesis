@@ -49,6 +49,8 @@ enum Theme {
     /// Primary accent — links, focus, tab highlight. Light: `#0969da`.
     /// Dark: `#58a6ff`.
     static let accent = Color(light: 0x0969DA, dark: 0x58A6FF)
+    /// Darker tint preserves white-label contrast through native prominent-button materials.
+    static let accessPrimary = Color(light: 0x004A99, dark: 0x004A99)
     /// Emphasis lift on the accent. Light: `#0860ca`. Dark: `#79c0ff`.
     static let accentHover = Color(light: 0x0860CA, dark: 0x79C0FF)
 

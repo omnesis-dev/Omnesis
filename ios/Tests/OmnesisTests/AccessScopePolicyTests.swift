@@ -384,3 +384,412 @@ final class AccessScopePolicyTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ScopePolicy.self, from: JSONEncoder().encode(future)), future)
     }
 }
+
+extension AccessScopePolicyTests {
+    func testGuidedCreateSkipsIrrelevantQuestionsAndBackDoesNotMutateRules() {
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        draft.setEnabled("answer", false, overview: overview)
+        draft.setEnabled("notes", true, overview: overview)
+        XCTAssertEqual(draft.creationSteps, [.permissions, .review])
+        let before = draft.serializedRules
+        XCTAssertEqual(draft.nextStep(after: .permissions), .review)
+        XCTAssertEqual(draft.previousStep(before: .review), .permissions)
+        XCTAssertEqual(draft.serializedRules, before)
+        draft.setEnabled("direct", true, overview: overview)
+        XCTAssertEqual(draft.creationSteps, [.permissions, .directData, .future, .review])
+        draft.setEnabled("answer", true, overview: overview)
+        XCTAssertTrue(draft.creationSteps.contains(.directChoice))
+        draft.setDirectSameAsAnswer(false)
+        XCTAssertTrue(draft.creationSteps.contains(.directData))
+    }
+
+    func testTargetedEditKeepsIndependentDirectAndRevisionGuards() throws {
+        let answer = AccessGrantRule.answer(
+            sources: .init(mode: .allowlist, sourceIds: ["scope-chat:one"]),
+            release: .unreviewed,
+            filterRevision: 3,
+            scopePolicies: [policy]
+        )
+        let direct = AccessGrantRule.direct(sources: .init(mode: .denylist, sourceIds: ["scope-chat:two"]), filterRevision: 5)
+        let original = AccessLevelDraft(level: level([answer, direct]), overview: overview)
+        var draft = original
+        draft.setRule(answer.replacing(release: .reviewed(policyFamilyId: "review-policy")))
+        XCTAssertEqual(draft.changedCapabilities(from: original), ["answer"])
+        XCTAssertEqual(draft.rule("direct"), direct)
+        XCTAssertEqual(draft.expectedRevision, 7)
+        XCTAssertEqual(draft.expectedFilterRevisions, ["answer": 3, "direct": 5])
+        let encoded = try JSONEncoder().encode(draft.serializedRules)
+        XCTAssertEqual(try JSONDecoder().decode([AccessGrantRule].self, from: encoded), draft.serializedRules)
+    }
+
+    func testFilterModeAllContentIsExplicitAndDoesNotMutateSavedPolicy() {
+        let original = policy
+        let all = ScopeFilterMode.all.applying(to: original)
+        XCTAssertTrue(all.rules[0].match.isEmpty)
+        XCTAssertEqual(all.otherwise, "share")
+        XCTAssertEqual(original, policy)
+        let only = ScopeFilterMode.only.applying(to: original)
+        XCTAssertEqual(only.rules[0].match, original.rules[0].match)
+        XCTAssertEqual(only.otherwise, "hide")
+        XCTAssertEqual(ScopeFilterMode(policy: original, hasSavedPolicy: true), .except)
+    }
+
+    func testSavedRuleSummarySurvivesUnavailableCountsWithoutRawKeys() {
+        XCTAssertEqual(accessRestrictionSummary(nil), "All content")
+        let summary = accessRestrictionSummary(policy)
+        XCTAssertTrue(summary.hasPrefix("Except:"))
+        XCTAssertTrue(summary.contains("Maya"))
+        XCTAssertTrue(summary.contains("Unavailable saved item"))
+        XCTAssertFalse(summary.contains("cedar"))
+    }
+
+    func testFolderNavigationKeepsSearchAndMethodUntilAnExplicitKindChange() {
+        let folder = ScopeOption(ref: .init(kind: "folder", id: "design", label: "Design"), label: "Design", count: 8)
+        var session = ScopePickerSession(kind: "folder", query: "plan", parentId: "design", ancestors: [folder])
+        session.changeKind("folder", scopes: nil)
+        XCTAssertEqual(session.parentId, "design")
+        XCTAssertEqual(session.ancestors, [folder])
+        session.goToParent()
+        XCTAssertNil(session.parentId)
+        XCTAssertTrue(session.ancestors.isEmpty)
+        XCTAssertEqual(session.query, "plan")
+        XCTAssertEqual(session.kind, "folder")
+        session.parentId = "design"
+        session.ancestors = [folder]
+        session.changeKind("label", scopes: nil)
+        XCTAssertNil(session.parentId)
+        XCTAssertTrue(session.ancestors.isEmpty)
+        XCTAssertEqual(session.query, "plan")
+        XCTAssertEqual(session.kind, "label")
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testReviewNameValidationTrimsChecksLengthAndExemptsOwnLevel() {
+        let saved = level([.notes])
+        XCTAssertNotNil(accessLevelNameProblem("  ", id: "new", levels: [saved]))
+        XCTAssertNotNil(accessLevelNameProblem(String(repeating: "x", count: 121), id: "new", levels: []))
+        XCTAssertNotNil(accessLevelNameProblem("  RESEARCH ASSISTANT ", id: "new", levels: [saved]))
+        XCTAssertNil(accessLevelNameProblem("  RESEARCH ASSISTANT ", id: saved.id, levels: [saved]))
+        XCTAssertNil(accessLevelNameProblem("Library helper", id: "new", levels: [saved]))
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testDataQuestionsRejectEmptySelectionsButRetainUnavailableSavedAuthority() {
+        let new = AccessLevelDraft(level: nil, overview: overview)
+        XCTAssertNotNil(new.sourceProblem("answer", overview: overview, original: new))
+        var selected = new
+        selected.setBoundary(.init(mode: .allowlist, sourceIds: ["scope-chat:one"]), capability: "answer", authoringEnabled: true)
+        XCTAssertNil(selected.sourceProblem("answer", overview: overview, original: new))
+        let missing = AccessLevelDraft(
+            level: level([.direct(sources: .init(mode: .allowlist, sourceIds: ["scope-chat:retained"]))]),
+            overview: overview
+        )
+        XCTAssertNil(missing.sourceProblem("direct", overview: overview, original: missing))
+        var changedMode = missing
+        changedMode.setBoundary(.init(mode: .denylist, sourceIds: ["scope-chat:retained"]), capability: "direct", authoringEnabled: true)
+        XCTAssertNotNil(changedMode.sourceProblem("direct", overview: overview, original: missing))
+        var blocked = selected
+        blocked.setBoundary(.init(mode: .denylist, sourceIds: overview.sources.map(\.id)), capability: "answer", authoringEnabled: true)
+        XCTAssertNotNil(blocked.sourceProblem("answer", overview: overview, original: new))
+    }
+
+    func testCanonicalAccountChangesDetectDifferentReferencesWithIdenticalLabels() {
+        let source = "scope-chat:one"
+        var first = AccessLevelDraft(
+            level: level([.direct(sources: .init(mode: .allowlist, sourceIds: [source]), scopePolicies: [policy])]),
+            overview: overview
+        )
+        var second = first
+        var changed = policy
+        changed.rules[0].match[1].id = "different-stable-selection"
+        second.setPolicy(changed, sourceId: source, capability: "direct")
+        let known = overview.availableSourceIds
+        XCTAssertNotEqual(
+            AccessAccountDecision(draft: first, capability: "direct", sourceId: source, knownIds: known),
+            AccessAccountDecision(draft: second, capability: "direct", sourceId: source, knownIds: known)
+        )
+        changed = policy
+        changed.rules[0].match[0].label = "Updated display label"
+        first.setPolicy(changed, sourceId: source, capability: "direct")
+        XCTAssertEqual(
+            AccessAccountDecision(draft: first, capability: "direct", sourceId: source, knownIds: known),
+            AccessAccountDecision(
+                draft: AccessLevelDraft(level: level([.direct(
+                    sources: .init(mode: .allowlist, sourceIds: [source]),
+                    scopePolicies: [policy]
+                )]), overview: overview),
+                capability: "direct",
+                sourceId: source,
+                knownIds: known
+            )
+        )
+    }
+
+    func testAccountPresentationDistinguishesAccountsWithSameProviderName() {
+        XCTAssertEqual(accessSourceDisplayName(.init(id: "mail:team@example.org", name: "Mail")), "Mail · team@example.org")
+        XCTAssertEqual(
+            accessSourceDisplayName(.init(id: "mail:team@example.org", name: "Mail · team@example.org")),
+            "Mail · team@example.org"
+        )
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testAllContentCommitRemovesRestrictionDuringBackfillWithoutInventingHiddenFacts() {
+        let all = ScopeFilterMode.all.applying(to: policy)
+        XCTAssertEqual(
+            ScopeFilterCommitState(
+                mode: .all,
+                policy: all,
+                sourceId: all.sourceId,
+                authoringEnabled: true,
+                preview: nil,
+                previewedPolicy: nil,
+                loading: true,
+                hasError: true
+            ).decision,
+            .apply(nil)
+        )
+        XCTAssertEqual(
+            ScopeFilterCommitState(
+                mode: .all,
+                policy: all,
+                sourceId: all.sourceId,
+                authoringEnabled: false,
+                preview: nil,
+                previewedPolicy: nil,
+                loading: false,
+                hasError: false
+            ).decision,
+            .blocked
+        )
+        XCTAssertEqual(
+            ScopeFilterCommitState(
+                mode: .all,
+                policy: all,
+                sourceId: "other-source",
+                authoringEnabled: true,
+                preview: nil,
+                previewedPolicy: nil,
+                loading: false,
+                hasError: false
+            ).decision,
+            .blocked
+        )
+        let pending = ScopePreview(
+            sourceId: policy.sourceId,
+            total: 3,
+            visible: 0,
+            hidden: 3,
+            unknown: 3,
+            items: [],
+            samples: [],
+            readiness: [.init(kind: "participant", ready: false, reason: "backfill")]
+        )
+        XCTAssertEqual(
+            ScopeFilterCommitState(
+                mode: .except,
+                policy: policy,
+                sourceId: policy.sourceId,
+                authoringEnabled: true,
+                preview: pending,
+                previewedPolicy: policy,
+                loading: false,
+                hasError: false
+            ).decision,
+            .blocked
+        )
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testTargetedReviewChangeReturnsToReviewAndRetainsDraftWithoutReplayingQuestions() {
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        draft.name = "Library helper"
+        draft.setBoundary(.init(mode: .allowlist, sourceIds: ["scope-chat:one"]), capability: "answer", authoringEnabled: true)
+        var navigation = AccessFlowNavigation(step: .review, started: true)
+        navigation.open(.answerData, isEditing: false, draft: draft)
+        let before = draft.serializedRules
+        navigation.advance(draft: draft, isEditing: false)
+        XCTAssertEqual(navigation.step, .review)
+        XCTAssertEqual(draft.serializedRules, before)
+        navigation.open(.release, isEditing: false, draft: draft)
+        navigation.back(draft: draft, isEditing: false)
+        XCTAssertEqual(navigation.step, .review)
+        var editing = AccessFlowNavigation()
+        XCTAssertEqual(editing.current(isEditing: true), .overview)
+        editing.open(.future, isEditing: true, draft: draft)
+        editing.advance(draft: draft, isEditing: true)
+        XCTAssertEqual(editing.current(isEditing: true), .overview)
+        XCTAssertEqual(draft.serializedRules, before)
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testLabelHydrationKeepsBeforeAndAfterIdentitiesWithoutBecomingAuthority() {
+        let before = ScopeRef(kind: "folder", id: "old-folder")
+        let after = ScopeRef(kind: "folder", id: "new-folder")
+        let first = ScopePreview.Item(ref: before, label: "Design", count: 7)
+        let second = ScopePreview.Item(ref: after, label: "Archive", count: 7)
+        let hints = mergingScopeLabelHints([first], [second])
+        XCTAssertEqual(hints.map(\.label), ["Design", "Archive"])
+        XCTAssertFalse(scopeRefIdentityMatches(before, after))
+        let updated = ScopePreview.Item(ref: before, label: "Design plans", count: 8)
+        XCTAssertEqual(mergingScopeLabelHints(hints, [updated]).map(\.label), ["Design plans", "Archive"])
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testRevertingReleaseAndWhitespaceNameRestoresOriginalAuthorityWithoutDirtyReview() throws {
+        let original = AccessLevelDraft(level: level([
+            .answer(sources: .init(mode: .allowlist, sourceIds: ["scope-chat:one"]), release: .unreviewed),
+            .direct(sources: .init(mode: .allowlist, sourceIds: ["scope-chat:two"])), .notes,
+        ]), overview: overview)
+        var draft = original
+        try draft.setRule(XCTUnwrap(draft.rule("answer")?.replacing(release: .reviewed(policyFamilyId: "review-policy"))))
+        XCTAssertTrue(draft.hasChanges(from: original))
+        try draft.setRule(XCTUnwrap(draft.rule("answer")?.replacing(release: .unreviewed)))
+        draft.name = "  " + original.name + "  "
+        XCTAssertFalse(draft.hasChanges(from: original))
+        XCTAssertTrue(draft.changedCapabilities(from: original).isEmpty)
+        XCTAssertEqual(draft.expectedRevision, original.expectedRevision)
+        XCTAssertEqual(draft.expectedFilterRevisions, original.expectedFilterRevisions)
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testMissingSelectionKeepsFriendlyNameAndNeverPromotesOpaqueIdToPrimaryLabel() {
+        let ref = ScopeRef(kind: "folder", id: "opaque-selection-key", label: "Blueprints")
+        let missing = ScopePreview.Item(ref: ref, label: "opaque-selection-key", count: 0, missing: true)
+        XCTAssertEqual(scopeDisplayLabel(ref, previewItem: missing), "Blueprints (unavailable)")
+        let unlabelled = ScopeRef(kind: "folder", id: "opaque-selection-key")
+        XCTAssertEqual(scopeDisplayLabel(unlabelled, previewItem: missing), "Saved item (unavailable)")
+        let current = ScopePreview.Item(ref: ref, label: "Updated blueprints", count: 8)
+        XCTAssertEqual(scopeDisplayLabel(ref, previewItem: current), "Updated blueprints")
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testReleaseQuestionRequiresAnAvailablePolicyOrExplicitAutomaticRelease() throws {
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        XCTAssertFalse(draft.releaseIsValid(overview: overview))
+        try draft.setRule(XCTUnwrap(draft.rule("answer")?.replacing(release: .reviewed(policyFamilyId: "retired-policy"))))
+        XCTAssertFalse(draft.releaseIsValid(overview: overview))
+        try draft.setRule(XCTUnwrap(draft.rule("answer")?.replacing(release: .unreviewed)))
+        XCTAssertTrue(draft.releaseIsValid(overview: overview))
+    }
+
+    func testFormattedPhoneAccountIsNotRepeatedInCanonicalForm() {
+        let source = AccessSourceInstance(id: "messaging:+15550100111", name: "Messaging · +1 (555) 010-0111")
+        XCTAssertEqual(accessSourceDisplayName(source), source.name)
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testAddingAnswerFromNotesOnlyReviewVisitsOnlyNewRequiredQuestions() throws {
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        draft.setEnabled("answer", false, overview: overview)
+        draft.setEnabled("notes", true, overview: overview)
+        var navigation = AccessFlowNavigation(step: .review, started: true)
+        navigation.open(.permissions, isEditing: false, draft: draft)
+        draft.setEnabled("answer", true, overview: overview)
+        navigation.advance(draft: draft, isEditing: false)
+        XCTAssertEqual(navigation.step, .answerData)
+        draft.setBoundary(.init(mode: .allowlist, sourceIds: ["scope-chat:one"]), capability: "answer", authoringEnabled: true)
+        navigation.advance(draft: draft, isEditing: false)
+        XCTAssertEqual(navigation.step, .future)
+        navigation.advance(draft: draft, isEditing: false)
+        XCTAssertEqual(navigation.step, .release)
+        try draft.setRule(XCTUnwrap(draft.rule("answer")?.replacing(release: .unreviewed)))
+        navigation.advance(draft: draft, isEditing: false)
+        XCTAssertEqual(navigation.step, .review)
+    }
+
+    func testLinkedReviewDirectEditMaterializesExactRulesAndKeepsAnswerUnchanged() {
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        draft.setRule(.answer(
+            sources: .init(mode: .allowlist, sourceIds: ["scope-chat:one"]),
+            release: .unreviewed,
+            scopePolicies: [policy]
+        ))
+        draft.setEnabled("direct", true, overview: overview)
+        let answer = draft.rule("answer")
+        XCTAssertTrue(draft.prepareDirectEditing(authoringEnabled: true))
+        XCTAssertFalse(draft.directSameAsAnswer)
+        var navigation = AccessFlowNavigation(step: .review, started: true)
+        navigation.open(.directData, isEditing: false, draft: draft)
+        draft.setBoundary(.init(mode: .allowlist, sourceIds: ["scope-chat:two"]), capability: "direct", authoringEnabled: true)
+        var directPolicy = policy
+        directPolicy.sourceId = "scope-chat:two"
+        directPolicy.audience = .init(accessLevel: draft.id, capability: "direct")
+        draft.setPolicy(directPolicy, sourceId: directPolicy.sourceId, capability: "direct")
+        navigation.advance(draft: draft, isEditing: false)
+        XCTAssertEqual(navigation.step, .review)
+        XCTAssertEqual(draft.serializedRules.first { $0.capability == "answer" }, answer)
+        XCTAssertEqual(draft.serializedRules.first { $0.capability == "direct" }?.boundary.sourceIds, ["scope-chat:two"])
+        XCTAssertEqual(draft.serializedRules.first { $0.capability == "direct" }?.scopePolicies, [directPolicy])
+    }
+
+    func testUnsupportedLinkedRestrictionCannotBeSilentlyDroppedDuringDirectCustomization() {
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        draft.setRule(.answer(
+            sources: .init(mode: .allowlist, sourceIds: ["scope-chat:one"]),
+            release: .unreviewed,
+            scopePolicies: [policy]
+        ))
+        draft.setEnabled("direct", true, overview: overview)
+        let before = draft.serializedRules
+        XCTAssertFalse(draft.prepareDirectEditing(authoringEnabled: false))
+        XCTAssertTrue(draft.directSameAsAnswer)
+        XCTAssertEqual(draft.serializedRules, before)
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testLevelInUseRemediationRestoresOnlyOriginalAnswerAndKeepsDirectDraft() {
+        let original = AccessLevelDraft(level: level([
+            .answer(sources: .init(mode: .allowlist, sourceIds: ["scope-chat:one"]), release: .unreviewed, scopePolicies: [policy]),
+            .direct(sources: .init(mode: .allowlist, sourceIds: ["scope-chat:two"])),
+        ]), overview: overview)
+        var draft = original
+        draft.setEnabled("answer", false, overview: overview)
+        let direct = draft.rule("direct")
+        let error = GatewayClient.Error.serverError(status: 409, body: #"{"error":"level-in-use"}"#)
+        XCTAssertEqual(accessLevelMutationCode(error), "level-in-use")
+        XCTAssertTrue(draft.restoreAnswer(from: original))
+        XCTAssertEqual(draft.rule("answer"), original.rule("answer"))
+        XCTAssertEqual(draft.rule("direct"), direct)
+        XCTAssertEqual(draft.expectedFilterRevisions, original.expectedFilterRevisions)
+        XCTAssertNil(accessLevelMutationCode(GatewayClient.Error.serverError(status: 500, body: #"{"error":"level-in-use"}"#)))
+    }
+}
+
+extension AccessScopePolicyTests {
+    func testContinueValidationUsesCurrentQuestionAndCanResolveMissingPolicyWithoutRestarting() throws {
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        let original = draft
+        XCTAssertFalse(draft.questionIsValid(.answerData, overview: overview, original: original))
+        XCTAssertFalse(draft.questionIsValid(.release, overview: overview, original: original))
+        try draft.setRule(XCTUnwrap(draft.rule("answer")?.replacing(release: .unreviewed)))
+        XCTAssertTrue(draft.questionIsValid(.release, overview: overview, original: original))
+        draft.setEnabled("answer", false, overview: overview)
+        XCTAssertFalse(draft.questionIsValid(.permissions, overview: overview, original: original))
+        draft.setEnabled("notes", true, overview: overview)
+        XCTAssertTrue(draft.questionIsValid(.permissions, overview: overview, original: original))
+    }
+
+    func testSeparatingDirectFromReviewVisitsNewDataQuestionThenReturnsToReview() {
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        draft.setBoundary(.init(mode: .allowlist, sourceIds: ["scope-chat:one"]), capability: "answer", authoringEnabled: true)
+        draft.setEnabled("direct", true, overview: overview)
+        var navigation = AccessFlowNavigation(step: .review, started: true)
+        navigation.open(.directChoice, isEditing: false, draft: draft)
+        draft.setDirectSameAsAnswer(false)
+        navigation.advance(draft: draft, isEditing: false)
+        XCTAssertEqual(navigation.step, .directData)
+        navigation.advance(draft: draft, isEditing: false)
+        XCTAssertEqual(navigation.step, .review)
+    }
+}
