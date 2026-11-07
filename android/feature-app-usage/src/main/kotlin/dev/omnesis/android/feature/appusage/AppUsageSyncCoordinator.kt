@@ -223,12 +223,10 @@ class AppUsageSyncCoordinator(
             pushed = null
             settings.pushRefusals.clearRun(windowKey(loaded))
 
-            // Elide the write only when nothing moved AND a state row already
-            // exists — the first pass always writes so the gateway learns the
-            // source's label/icon even if there's no usage history at all yet.
-            if (!(existing != null && outcome.cursor == loaded)) {
-                persistCursor(outcome.cursor)
-            }
+            // The gateway's last-synced time and the source's label/icon come
+            // from this row, so a pass that moved nothing still writes it —
+            // otherwise a phone with no usage history yet reads as never synced.
+            persistCursor(outcome.cursor)
 
             emitStatus {
                 put("state", "completed")

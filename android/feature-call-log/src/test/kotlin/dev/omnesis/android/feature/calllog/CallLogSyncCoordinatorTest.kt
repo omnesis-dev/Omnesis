@@ -165,6 +165,22 @@ class CallLogSyncCoordinatorTest {
     }
 
     @Test
+    fun `an empty call log still records the first sync and the source identity`() = runTest {
+        // The gateway answers a source that never synced with 200 and null fields, not 404.
+        enqueueOk("""{"cursor":null,"lastSyncedAt":null,"wipeEpoch":0}""")
+        repeat(3) { enqueueOk("""{"ok":true,"deleted":0,"deletedIds":[]}""") }
+
+        val result = coordinator().syncNow()
+
+        assertEquals(CallLogSyncCoordinator.SyncResult.Success(0), result)
+        val requests = List(server.requestCount) { server.takeRequest() }
+        val writes = requests.filter { it.method == "POST" && it.path == "/sync-state/android-call-log:local" }
+        assertEquals(1, writes.size)
+        assertEquals("Android Call Log", body(writes.single())["label"]!!.jsonPrimitive.content)
+        assertEquals(listOf("syncing", "completed"), eventStates())
+    }
+
+    @Test
     fun `a paused source stops the drain without disabling local syncing`() = runTest {
         insertCall("+14155552671", 1_772_618_400_000L)
         val settings = enabledSettings()

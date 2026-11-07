@@ -250,13 +250,11 @@ class CallLogSyncCoordinator(
                 )
             }
 
-            // Elide the write only when nothing moved AND a state row already
-            // exists — the first pass always writes so the gateway learns the
-            // source's label/icon (carried only on this call, never on
-            // `POST /admin/sources`) even if the call log is completely empty.
-            if (!(existing != null && outcome.cursor == loaded)) {
-                persistCursor(outcome.cursor)
-            }
+            // The gateway's last-synced time and the source's label/icon (carried
+            // only on this call, never on `POST /admin/sources`) come from this
+            // row, so a pass that moved nothing still writes it — otherwise an
+            // empty call log reads as never synced, and a quiet one as stale.
+            persistCursor(outcome.cursor)
 
             emitStatus {
                 put("state", "completed")
