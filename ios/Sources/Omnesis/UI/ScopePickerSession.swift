@@ -14,8 +14,6 @@ struct ScopePickerLocation: Hashable {
 struct ScopePickerPosition: Equatable {
     var itemId: ScopePickerAnchor
     var index: Int
-    var offset: Double
-    var rowHeight: Double
 }
 
 struct ScopePickerSession: Equatable {
@@ -52,18 +50,6 @@ struct ScopePickerSession: Equatable {
     mutating func goToParent() {
         _ = ancestors.popLast()
         parentId = ancestors.last?.ref.id
-    }
-}
-
-struct ScopePickerItemIdentity: Hashable {
-    var kind: String
-    var id: String?
-    var identifiers: [ScopeIdentifier]?
-
-    init(_ ref: ScopeRef) {
-        kind = ref.kind
-        id = ref.id
-        identifiers = ref.identifiers?.sorted { ($0.type, $0.value) < ($1.type, $1.value) }
     }
 }
 

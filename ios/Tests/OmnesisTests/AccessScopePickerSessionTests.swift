@@ -17,9 +17,7 @@ final class AccessScopePickerSessionTests: XCTestCase {
         let key = session.location(for: "drive:team@example.org")
         let position = ScopePickerPosition(
             itemId: .item(.init(.init(kind: "folder", id: "visible-item"))),
-            index: 24,
-            offset: 8,
-            rowHeight: 60
+            index: 24
         )
         session.positions[key] = position
         XCTAssertEqual(session.retained(for: "drive:team@example.org").positions[key], position)

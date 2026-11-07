@@ -40,4 +40,36 @@ final class AccessFlowComparisonTests: XCTestCase {
         XCTAssertEqual(policy, advanced, "Unsupported saved policies must remain untouched")
         XCTAssertNotEqual(policy, before)
     }
+
+    func testParticipantIdentityUsesIdentifierSetsWithoutDiscardingDifferentIdentifiers() {
+        let email = ScopeIdentifier(type: "email", value: "jamie@example.org")
+        let domain = ScopeIdentifier(type: "domain", value: "example.org")
+        let original = ScopeRef(kind: "participant", label: "Jamie Lopez", identifiers: [email, domain])
+        let repeated = ScopeRef(kind: "participant", label: "Renamed", identifiers: [domain, email, email])
+        XCTAssertTrue(scopeRefIdentityMatches(original, repeated))
+        var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "example", capability: "answer")
+        policy.appendMatchIfMissing(original)
+        let before = policy
+        policy.appendMatchIfMissing(repeated)
+        XCTAssertEqual(policy, before)
+        var equivalent = before
+        equivalent.rules[0].match = [repeated]
+        XCTAssertEqual(canonicalAccessPolicy(before), canonicalAccessPolicy(equivalent))
+        XCTAssertFalse(scopeRefIdentityMatches(original, .init(kind: "participant", identifiers: [email])))
+    }
+
+    func testChangingOnlyRestrictionModeStillRequiresExplicitDiscard() {
+        let policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "example", capability: "answer")
+        XCTAssertFalse(scopeFilterHasChanges(initial: policy, policy: policy, mode: .except))
+        XCTAssertTrue(scopeFilterHasChanges(initial: policy, policy: policy, mode: .only))
+        XCTAssertFalse(scopeFilterHasChanges(initial: nil, policy: policy, mode: .all))
+        XCTAssertTrue(scopeFilterHasChanges(initial: nil, policy: policy, mode: .only))
+    }
+
+    func testPreviewRecoveryDoesNotOfferIdenticalRetryForMissingAccountOrExpiredPairing() {
+        XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.unauthorized))
+        XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.notFound))
+        XCTAssertTrue(scopePreviewCanRetry(GatewayClient.Error.invalidResponse))
+        XCTAssertTrue(scopePreviewFailureMessage(GatewayClient.Error.invalidResponse).contains("selections are kept"))
+    }
 }

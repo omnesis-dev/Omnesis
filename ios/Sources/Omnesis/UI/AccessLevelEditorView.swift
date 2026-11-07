@@ -151,9 +151,7 @@ struct AccessLevelEditorView: View {
                 Button(action: advance) {
                     Text(primaryTitle).frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accessPrimary)
-                .foregroundStyle(Color.white)
+                .buttonStyle(AccessPrimaryButtonStyle())
                 .disabled(primaryDisabled)
             }.padding().background(.bar).disabled(saving || reloading)
         }

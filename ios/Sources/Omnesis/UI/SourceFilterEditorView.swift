@@ -67,7 +67,7 @@ struct SourceFilterEditorView: View {
     private let initialPolicy: ScopePolicy?
     private let capability: String
     private var dirty: Bool {
-        mode == .all ? initialPolicy != nil : policy != initialPolicy
+        scopeFilterHasChanges(initial: initialPolicy, policy: policy, mode: mode)
     }
 
     private var commit: ScopeFilterCommit {
@@ -166,9 +166,14 @@ struct SourceFilterEditorView: View {
                 }
                 if loading, mode != .all { Section { ProgressView("Checking current content…") } }
                 if let error, mode != .all {
-                    Section { GatewayErrorView(context: "preview this restriction", error: error, onRetry: { Task { await refresh() } }) }
+                    Section {
+                        Text(scopePreviewFailureMessage(error))
+                        if scopePreviewCanRetry(error) {
+                            Button("Retry preview") { Task { await refresh() } }.frame(minHeight: 44).disabled(loading)
+                        }
+                    }
                 }
-                if let preview, previewedPolicy == policy, preview.sourceId == source.id, mode != .all {
+                if let preview, previewedPolicy == policy, preview.sourceId == source.id, !loading, error == nil, mode != .all {
                     Section(policy.readyToSave(preview.readiness) ? "Current preview" : "Preview during preparation") {
                         LabeledContent("Allowed", value: "\(preview.visible)")
                         LabeledContent("Hidden", value: "\(preview.hidden)")
@@ -185,7 +190,7 @@ struct SourceFilterEditorView: View {
                         }
                     }
                 }
-                if let preview, previewedPolicy == policy, !loading, writable, mode != .all {
+                if let preview, previewedPolicy == policy, !loading, error == nil, writable, mode != .all {
                     ForEach(Array((preview.identifierProposals ?? []).enumerated()), id: \.offset) { _, proposal in
                         Section {
                             DisclosureGroup("Additional identifiers for \(proposal.label)") {
@@ -218,9 +223,7 @@ struct SourceFilterEditorView: View {
                 Button(action: advance) {
                     Text(primaryTitle).frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accessPrimary)
-                .foregroundStyle(Color.white)
+                .buttonStyle(AccessPrimaryButtonStyle())
                 .disabled(!writable || (step == .review && !canApply))
             }.padding().background(.bar)
         }

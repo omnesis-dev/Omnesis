@@ -25,10 +25,7 @@ struct SourceFilterPickerView: View {
     @State var positions: [ScopePickerLocation: ScopePickerPosition] = [:]
     @State var catalogues: [ScopePickerLocation: ScopeOptions] = [:]
     @State var optionsLocation: ScopePickerLocation?
-    @State var viewport = CGRect.zero
-    @State var visibleFrames: [ScopePickerAnchor: CGRect] = [:]
-    @State var restoringPosition = false
-    @State var restorationIssued = false
+    @State var scrollAnchor: ScopePickerAnchor?
     @State var loadGeneration = 0
 
     var searchKey: String {
@@ -80,7 +77,7 @@ struct SourceFilterPickerView: View {
         _options = State(initialValue: initialOptions)
         _optionsLocation = State(initialValue: initialOptions == nil ? nil : location)
         _positions = State(initialValue: session.positions)
-        _restoringPosition = State(initialValue: session.positions[location] != nil)
+        _scrollAnchor = State(initialValue: session.positions[location]?.itemId)
         _catalogues = State(initialValue: session.catalogues)
         _kind = State(initialValue: initialKind)
         _query = State(initialValue: session.query)
@@ -118,7 +115,7 @@ struct SourceFilterPickerView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if enteringIdentifier {
-                        GroupBox { Text("Enter an exact identifier").font(.title2.bold()).accessibilityAddTraits(.isHeader) }
+                        Text("Enter an exact identifier").font(.title2.bold()).accessibilityAddTraits(.isHeader)
                     }
                     if enteringIdentifier {
                         GroupBox {
@@ -127,11 +124,16 @@ struct SourceFilterPickerView: View {
                                     ForEach(declaration?.identifiers ?? [], id: \.self) { Text($0.capitalized).tag($0) }
                                 }.frame(minHeight: 44)
                             } else { Text(identifierType.capitalized) }
+                            Text(identifierType == "phone" ? "Phone number" : identifierType == "domain" ? "Domain" : "Email address")
+                                .font(.subheadline.bold())
                             TextField(
                                 identifierType == "phone" ? "International phone number" : identifierType == "domain" ? "example.org" :
                                     "person@example.org",
                                 text: $typed
                             )
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel(identifierType == "phone" ? "Phone number" : identifierType == "domain" ? "Domain" :
+                                "Email address")
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(identifierType == "phone" ? .phonePad : .emailAddress)
@@ -152,23 +154,20 @@ struct SourceFilterPickerView: View {
                                     }
                                 }.frame(minHeight: 44)
                             }
-                            TextField("Search", text: $query)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .frame(minHeight: 44)
+                            HStack(spacing: 8) {
+                                Image(systemName: "magnifyingglass").foregroundStyle(Theme.textSecondary).accessibilityHidden(true)
+                                TextField("Search", text: $query)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .accessibilityLabel("Search matches")
+                                    .frame(minHeight: 44)
+                            }.padding(.horizontal, 12)
+                                .background(Color(uiColor: .tertiarySystemFill), in: .rect(cornerRadius: 10))
                             if !(declaration?.identifiers ?? []).isEmpty {
                                 Button("Enter an exact identifier instead") { enteringIdentifier = true }.frame(minHeight: 44)
                             }
                         }
                         .id(ScopePickerAnchor.top)
-                        .background {
-                            GeometryReader { geometry in
-                                Color.clear.preference(
-                                    key: ScopePickerFramesKey.self,
-                                    value: [key: [.top: geometry.frame(in: .named("scope-picker-scroll"))]]
-                                )
-                            }
-                        }
                         if declaration?.picker == "tree" {
                             GroupBox("Location") {
                                 Text((["All folders"] + ancestors.map(\.label)).joined(separator: " › "))
@@ -213,21 +212,13 @@ struct SourceFilterPickerView: View {
                                 .padding(12)
                                 .background(.background, in: .rect(cornerRadius: 12))
                                 .id(row.id)
-                                .background {
-                                    GeometryReader { geometry in
-                                        Color.clear.preference(
-                                            key: ScopePickerFramesKey.self,
-                                            value: [key: [row.id: geometry.frame(in: .named("scope-picker-scroll"))]]
-                                        )
-                                    }
-                                }
                             }
                             if let next = options?
                                 .nextCursor {
                                 Button("Load more") { Task { await load(cursor: next) } }.frame(minHeight: 44).disabled(loading)
                             }
                             if !loading, options?.items.isEmpty == true { Text("No matching items. Try another search.") }
-                        }
+                        }.scrollTargetLayout()
                     }
                     if !ready {
                         GroupBox {
@@ -239,28 +230,11 @@ struct SourceFilterPickerView: View {
                     if let error {
                         GroupBox { GatewayErrorView(context: "load matching items", error: error, onRetry: { Task { await load() } }) }
                     }
-                }.padding(16)
+                }.scrollTargetLayout().padding(16)
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .coordinateSpace(name: "scope-picker-scroll")
-            .background {
-                GeometryReader { geometry in
-                    Color.clear.preference(key: ScopePickerViewportKey.self, value: [key: CGRect(
-                        x: 0,
-                        y: geometry.safeAreaInsets.top,
-                        width: geometry.size.width,
-                        height: geometry.size.height - geometry.safeAreaInsets.top - geometry.safeAreaInsets.bottom
-                    )])
-                }
-            }
-            .onPreferenceChange(ScopePickerViewportKey.self) { values in
-                if let value = values[key] { viewport = value
-                    restorePosition(proxy: proxy)
-                }
-            }
-            .onPreferenceChange(ScopePickerFramesKey.self) { values in
-                if let frames = values[key] { observeFrames(frames, proxy: proxy) }
-            }
+            .scrollPosition(id: scrollPosition, anchor: .top)
             .task(id: key) { await openLocation(proxy: proxy) }
         }
         .safeAreaInset(edge: .top) {
@@ -272,6 +246,7 @@ struct SourceFilterPickerView: View {
                 .padding(.vertical, 8)
                 .background(.bar)
         }
+        .groupBoxStyle(AccessInputGroupStyle())
         .tint(Theme.accent)
         .navigationTitle("Choose a match")
         .navigationBarTitleDisplayMode(.inline)
@@ -289,9 +264,7 @@ struct SourceFilterPickerView: View {
                 } label: {
                     Text("Add identifier").frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.accessPrimary)
-                .foregroundStyle(Color.white)
+                .buttonStyle(AccessPrimaryButtonStyle())
                 .padding()
                 .background(.bar)
                 .disabled(!ready || typedId == nil)
@@ -345,33 +318,18 @@ struct SourceFilterPickerView: View {
         loading = true
         defer { if generation == loadGeneration { loading = false } }
         do {
-            var value = try await client.scopeOptions(
-                sourceId: source.id,
-                kind: requestedKind,
-                query: requestedQuery,
-                parentId: requestedParent,
-                cursor: cursor
+            let request = ScopePickerRequest(sourceId: source.id, kind: requestedKind, query: requestedQuery, parentId: requestedParent)
+            let value = try await loadScopePickerPages(
+                client: client,
+                request: request,
+                previous: options,
+                cursor: cursor,
+                restoreCount: cachedCount
             )
-            var visitedCursors: Set<String> = []
-            while cursor == nil, value.items.count < cachedCount, let next = value.nextCursor {
-                try Task.checkCancellation()
-                guard visitedCursors.insert(next).inserted else { throw GatewayClient.Error.invalidResponse }
-                let more = try await client.scopeOptions(
-                    sourceId: source.id,
-                    kind: requestedKind,
-                    query: requestedQuery,
-                    parentId: requestedParent,
-                    cursor: next
-                )
-                guard more.sourceId == source.id else { throw GatewayClient.Error.invalidResponse }
-                value.items += more.items
-                value.nextCursor = more.nextCursor
-            }
             try Task.checkCancellation()
             guard store.access?.baseURL == client.baseURL, store.access?.token == client.token else { return }
             guard searchKey == requestKey, requestedLocation == location, generation == loadGeneration,
                   value.sourceId == source.id else { return }
-            if cursor != nil { value.items = (options?.items ?? []) + value.items }
             options = value
             optionsLocation = requestedLocation
             catalogues[requestedLocation] = value

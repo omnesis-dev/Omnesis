@@ -8113,26 +8113,39 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testScopePickerRestoresVisibleRegionAndResetsForAnotherSearch() throws {
         let source = PreviewMocks.scopeFolderSource
-        let items = (0 ..< 80).map { index in
+        let items = (0 ..< 65).map { index in
             ScopeOption(
                 ref: .init(kind: "folder", id: "example-folder-\(index)", label: "Example folder \(index)"),
                 label: "Example folder \(index)",
                 count: index + 1
             )
         }
-        let options = ScopeOptions(
+        let firstPage = ScopeOptions(
             sourceId: source.id,
             sourceType: "google-drive",
             scopes: PreviewMocks.scopeDriveContract,
             readiness: [.init(kind: "folder", ready: true)],
-            items: items
+            items: Array(items.prefix(50)),
+            nextCursor: "second"
         )
+        let secondPage = ScopeOptions(
+            sourceId: source.id,
+            sourceType: "google-drive",
+            scopes: PreviewMocks.scopeDriveContract,
+            readiness: [.init(kind: "folder", ready: true)],
+            items: Array(items.suffix(15))
+        )
+        // This is an accumulated navigation snapshot after two provider pages, not an oversized API page.
+        let options = try appendScopeOptions(secondPage, to: firstPage)
         for scheme in [ColorScheme.light, .dark] {
             var saved = ScopePickerSession()
             let name = scheme == .dark ? "dark" : "light"
             let first = try mountScopePicker(source: source, options: options, scheme: scheme, changed: { saved = $0 })
             let scroll = try XCTUnwrap(scopePickerScroll(in: first.1.view))
-            scroll.setContentOffset(CGPoint(x: 0, y: 1450), animated: false)
+            scroll.setContentOffset(
+                CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom),
+                animated: false
+            )
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
             let beforeOffset = scroll.contentOffset.y
             try captureScopePicker(first.0, name: "scope-picker-before-\(name)")
@@ -8141,7 +8154,9 @@ final class PreviewSnapshotTests: XCTestCase {
             first.0.isHidden = true
             let location = saved.location(for: source.id)
             let position = try XCTUnwrap(saved.positions[location], "A visible row must be recorded after scrolling")
-            XCTAssertGreaterThan(position.index, 5)
+            XCTAssertGreaterThanOrEqual(position.index, 50)
+            XCTAssertEqual(saved.catalogues[location]?.items.count, 65)
+            XCTAssertNil(saved.catalogues[location]?.nextCursor)
             var restored = ScopePickerSession()
             let second = try mountScopePicker(source: source, session: saved, scheme: scheme, changed: { restored = $0 })
             RunLoop.current.run(until: Date().addingTimeInterval(0.6))
@@ -8158,21 +8173,24 @@ final class PreviewSnapshotTests: XCTestCase {
             second.0.isHidden = true
             let returned = try XCTUnwrap(restored.positions[location])
             XCTAssertEqual(returned.itemId, position.itemId, "Back/reopen must retain the same first visible match")
-            XCTAssertEqual(returned.offset, position.offset, accuracy: 8, "The visible region should keep its row offset")
             var anotherSearch = saved
             anotherSearch.query = "archive"
-            let third = try mountScopePicker(source: source, options: options, session: anotherSearch, scheme: scheme)
+            var searchResults = secondPage
+            searchResults.items = [.init(
+                ref: .init(kind: "folder", id: "archive-example", label: "Archive folder"),
+                label: "Archive folder",
+                count: 8
+            )]
+            let third = try mountScopePicker(source: source, options: searchResults, session: anotherSearch, scheme: scheme)
             let reset = try XCTUnwrap(scopePickerScroll(in: third.1.view))
-            XCTAssertEqual(
-                reset.contentOffset.y,
-                -reset.adjustedContentInset.top,
-                accuracy: 4,
-                "A different search must not inherit the old scroll offset"
-            )
+            XCTAssertLessThanOrEqual(reset.contentOffset.y, 0, "A different search must start with its search field and first results")
             try captureScopePicker(third.0, name: "scope-picker-new-search-\(name)")
             third.1.rootView = AnyView(EmptyView())
             third.0.isHidden = true
-            print("PICKER_SCROLL_EVIDENCE \(name) index=\(position.index) before=\(position.offset) after=\(returned.offset)")
+            print(
+                "PICKER_SCROLL_EVIDENCE \(name) page2Index=\(position.index) "
+                    + "actualBefore=\(beforeOffset) actualAfter=\(actualRestoredScroll.contentOffset.y)"
+            )
         }
     }
 

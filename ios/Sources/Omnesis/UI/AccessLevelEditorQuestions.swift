@@ -60,10 +60,10 @@ extension AccessLevelEditorView {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    @ViewBuilder var futureContent: some View {
+    var futureContent: some View {
         ForEach(["answer", "direct"], id: \.self) { capability in
             if let rule = draft.rule(capability), !(capability == "direct" && draft.directSameAsAnswer && draft.rule("answer") != nil) {
-                Section(capability.capitalized) {
+                Section(futureSectionTitle(capability)) {
                     Toggle("Include future sources", isOn: Binding(get: { rule.boundary.mode != .allowlist }, set: { allowed in
                         var selection = AccessSourceSelectionState(boundary: rule.boundary, knownSourceIds: overview.availableSourceIds)
                         selection.setFutureSourcesAllowed(allowed, knownSourceIds: overview.availableSourceIds)
@@ -78,9 +78,10 @@ extension AccessLevelEditorView {
                 }
             }
         }
-        if draft.directSameAsAnswer, draft.rule("direct") != nil, draft.rule("answer") != nil {
-            Section { Text("This choice applies to both Answer and Direct in this new access level.") }
-        }
+    }
+
+    func futureSectionTitle(_ capability: String) -> String {
+        capability == "answer" && draft.directSameAsAnswer && draft.rule("direct") != nil ? "Answer and Direct" : capability.capitalized
     }
 
     @ViewBuilder var releaseContent: some View {

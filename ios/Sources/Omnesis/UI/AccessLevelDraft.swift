@@ -422,10 +422,6 @@ struct AccessFlowNavigation: Equatable {
     }
 }
 
-func scopeRefIdentityMatches(_ lhs: ScopeRef, _ rhs: ScopeRef) -> Bool {
-    ScopePickerItemIdentity(lhs) == ScopePickerItemIdentity(rhs)
-}
-
 func mergingScopeLabelHints(_ existing: [ScopePreview.Item], _ incoming: [ScopePreview.Item]) -> [ScopePreview.Item] {
     var result = existing
     for item in incoming {
@@ -444,7 +440,7 @@ func canonicalAccessPolicy(_ value: ScopePolicy) -> ScopePolicy {
         let references = result.rules[index].match.map { reference in
             var ref = reference
             ref.label = nil
-            ref.identifiers = ref.identifiers?.sorted { ($0.type, $0.value) < ($1.type, $1.value) }
+            ref.identifiers = ref.identifiers.map { Array(Set($0)) }?.sorted { ($0.type, $0.value) < ($1.type, $1.value) }
             return ref
         }
         result.rules[index].match = references.sorted(by: scopeReferenceLessThan)
@@ -537,4 +533,26 @@ extension ScopePolicy {
         guard editable, !rules[0].match.contains(where: { scopeRefIdentityMatches($0, ref) }) else { return }
         rules[0].match.append(ref)
     }
+}
+
+func scopeFilterHasChanges(initial: ScopePolicy?, policy: ScopePolicy, mode: ScopeFilterMode) -> Bool {
+    let openingMode = initial.map { ScopeFilterMode(policy: $0, hasSavedPolicy: true) } ?? .all
+    if mode != openingMode { return true }
+    return mode == .all ? initial != nil : policy != initial
+}
+
+func scopePreviewCanRetry(_ error: Error) -> Bool {
+    if case GatewayClient.Error.unauthorized = error { return false }
+    if case GatewayClient.Error.notFound = error { return false }
+    return true
+}
+
+func scopePreviewFailureMessage(_ error: Error) -> String {
+    if case GatewayClient.Error.unauthorized = error {
+        return "Your gateway connection changed. Check your connection, then close and reopen this restriction."
+    }
+    if case GatewayClient.Error.notFound = error {
+        return "This account is unavailable. Close this restriction and return to data selection."
+    }
+    return "Couldn’t check this restriction. Your selections are kept."
 }
