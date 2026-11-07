@@ -69,22 +69,20 @@ internal fun SourceFilterPicker(
     LaunchedEffect(picker.kind, declaration?.identifiers) {
         if (picker.identifierType !in declaration?.identifiers.orEmpty()) picker.identifierType = declaration?.identifiers?.firstOrNull().orEmpty()
     }
-    LaunchedEffect(session, picker.kind, picker.query, picker.parent, picker.cursor, picker.retry) {
-        val location = Triple(picker.kind, picker.query, picker.parent)
-        if (picker.location != location) {
-            picker.options = null; picker.location = location
-            if (picker.listState.firstVisibleItemIndex != 0 || picker.listState.firstVisibleItemScrollOffset != 0) picker.listState.scrollToItem(0)
-        }
-        val token = Any(); picker.request = token; picker.loading = true
+    val page = picker.page
+    LaunchedEffect(session, picker.location, page.cursor, page.retry) {
+        if (page.loaded && page.loadedCursor == page.cursor) return@LaunchedEffect
+        val token = Any(); page.request = token; page.loading = true
+        if (!page.loaded) page.listState.scrollToItem(0)
         try {
-            val value = session.options(source.id, picker.kind, picker.query, picker.parent, picker.cursor)
+            val value = session.options(source.id, picker.kind, picker.query, picker.parent, page.cursor)
             coroutineContext.ensureActive()
-            if (picker.request !== token) return@LaunchedEffect
-            picker.options = value.copy(items = mergeScopeOptions(if (picker.cursor == null) emptyList() else picker.options?.items.orEmpty(), value.items))
-            picker.error = null
+            if (page.request !== token) return@LaunchedEffect
+            page.options = value.copy(items = mergeScopeOptions(if (page.cursor == null) emptyList() else page.options?.items.orEmpty(), value.items))
+            page.loaded = true; page.loadedCursor = page.cursor; page.error = null
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { coroutineContext.ensureActive(); picker.error = accessManagementError(error) }
-        finally { if (picker.request === token) picker.loading = false }
+        catch (error: Exception) { coroutineContext.ensureActive(); page.error = accessManagementError(error) }
+        finally { if (page.request === token) page.loading = false }
     }
     Dialog(onDismissRequest = ::back, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) {
@@ -117,9 +115,10 @@ internal fun SourceFilterPicker(
                     if (kinds.size > 1) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         kinds.forEach { item -> FilterChip(selected = picker.kind == item.kind, onClick = { picker.chooseKind(item.kind) }, label = { Text(scopeKindTitle(item.kind, source)) }) }
                     }
-                    OutlinedTextField(picker.query, { picker.query = it; picker.cursor = null }, label = { Text("Search ${scopeKindTitle(picker.kind, source).lowercase()}") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(picker.query, { picker.query = it }, label = { Text("Search ${scopeKindTitle(picker.kind, source).lowercase()}") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("${refs.size} selected", style = MaterialTheme.typography.bodyLarge)
+                        TextButton(onClick = { picker.refresh() }, enabled = !picker.loading) { Text("Refresh") }
                         TextButton(onClick = { managing = true }, enabled = refs.isNotEmpty(), modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Manage selection") }
                     }
                     if (refs.isNotEmpty()) Text(refs.take(2).joinToString(" · ") { ref ->
@@ -140,7 +139,7 @@ internal fun SourceFilterPicker(
                     }
                     if (picker.kind == "participant" && !declaration?.identifiers.isNullOrEmpty()) TextButton(onClick = { picker.enteringIdentifier = true }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Enter an exact identifier instead") }
                     if (!ready && !picker.loading) Text(picker.options?.readiness?.firstOrNull { it.kind == picker.kind }?.message ?: "These filter facts are being prepared. Existing selections are preserved.", style = MaterialTheme.typography.bodyLarge)
-                    picker.error?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error); TextButton(onClick = { picker.retry++ }) { Text("Retry choices") } }
+                    picker.error?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error); TextButton(onClick = { page.retry++ }) { Text("Retry choices") } }
                     if (picker.loading) OmSpinner(Modifier.size(24.dp))
                     LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = picker.listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         items(picker.options?.items.orEmpty(), key = { scopeRefKey(it.ref) }) { item ->
@@ -158,7 +157,7 @@ internal fun SourceFilterPicker(
                             HorizontalDivider()
                         }
                         if (!picker.loading && picker.error == null && picker.options?.items.isNullOrEmpty()) item { Text("No matches. Try another search.", style = MaterialTheme.typography.bodyLarge) }
-                        picker.options?.nextCursor?.let { next -> item { OutlinedButton(onClick = { picker.cursor = next }, enabled = !picker.loading, modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp)) { Text("Load more") } } }
+                        picker.options?.nextCursor?.let { next -> item { OutlinedButton(onClick = { page.cursor = next }, enabled = !picker.loading, modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp)) { Text("Load more") } } }
                     }
                 }
             }

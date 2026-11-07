@@ -99,6 +99,7 @@ internal fun accessManagementError(error: Exception): String = when(error) {
 internal fun accessManagementErrorCode(error: Exception): String? {
     if (error !is GatewayException.ServerError) return null
     return error.code ?: error.body?.let { body ->
+        if (body in setOf("level-in-use", "level-name-taken")) return@let body
         runCatching { Json.parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.contentOrNull }.getOrNull()
     }
 }

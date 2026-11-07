@@ -28,6 +28,7 @@ internal fun AccessLevelEditor(
     var requiredReviewPages by remember { mutableStateOf<List<AccessLevelPage>>(emptyList()) }
     var attempted by remember(page) { mutableStateOf(false) }
     val session = remember(gateway) { if (gateway is ScopePreviewSession) gateway else ScopePreviewSession(gateway) }
+    val filterNavigation = remember(session, draft.id, draft.expectedRevision) { mutableMapOf<Triple<String, AccessCapability, Int?>, SourceFilterPickerState>() }
     val original = draft.originalLevel ?: overview.levels.firstOrNull { it.id == draft.id }
     val conflict = state.conflict || (!creating && overview.levels.firstOrNull { it.id == draft.id }?.revision != draft.expectedRevision)
     val changed = if (creating) draft != AccessLevelDraft.opening(null, overview) else draft.isChangedFrom(original)
@@ -66,7 +67,7 @@ internal fun AccessLevelEditor(
     val error = draft.pageError(page, overview)
     val primary = when (page) {
         AccessLevelPage.OVERVIEW -> "Review changes"
-        AccessLevelPage.REVIEW -> if (creating) "Create access level" else "Save changes"
+        AccessLevelPage.REVIEW -> if (state.error != null && !conflict && state.errorCode != "level-in-use") "Retry save" else if (creating) "Create access level" else "Save changes"
         else -> if (returnToReview && requiredReviewPages.isEmpty()) "Back to review" else if (creating) "Continue" else "Done"
     }
     val footer = when {
@@ -123,7 +124,6 @@ internal fun AccessLevelEditor(
                 }
                 TextButton(enabled = !state.loading && draft.validFor(overview), onClick = save) { Text("Retry save after moving integrations") }
             }
-            else if (page == AccessLevelPage.REVIEW) TextButton(onClick = { if (draft.pageError(page, overview) == null) save() }, enabled = !state.loading && draft.validFor(overview)) { Text("Retry save") }
         }
         if (attempted && error != null) AccessNotice(error, error = true)
         CompositionLocalProvider(LocalAccessEditingEnabled provides !state.loading) {
@@ -132,7 +132,7 @@ internal fun AccessLevelEditor(
             AccessLevelPage.OVERVIEW -> AccessLevelOverview(draft, overview) { if (!state.loading) page = it }
             AccessLevelPage.PERMISSIONS -> AccessPermissionsQuestion(draft, overview, edit)
             AccessLevelPage.ANSWER_DATA, AccessLevelPage.DIRECT_DATA -> AccessDataQuestion(draft, overview, page.capability()!!, iconFor, nameFor, edit, session) { source, capability -> if (!state.loading) filter = source to capability }
-            AccessLevelPage.DIRECT_CHOICE -> AccessDirectQuestion(draft, overview, edit)
+            AccessLevelPage.DIRECT_CHOICE -> AccessDirectQuestion(draft, overview, session, edit)
             AccessLevelPage.FUTURE -> AccessFutureQuestion(draft, overview, edit)
             AccessLevelPage.RELEASE -> AccessReleaseQuestion(draft, overview, edit)
             AccessLevelPage.REVIEW -> AccessLevelReview(draft, overview, session, edit) { target ->
@@ -143,7 +143,8 @@ internal fun AccessLevelEditor(
     }
     filter?.let { (source, capability) ->
         SourceFilterEditor(source, draft.id, capability.name.lowercase(), draft.rule(capability)?.scopePolicies?.firstOrNull { it.sourceId == source.id },
-            overview.sourceFilters?.enabled == true && source.available, session, onClose = { filter = null }) { policy -> update(draft.setPolicy(policy, source.id, capability)); filter = null }
+            overview.sourceFilters?.enabled == true && source.available, session, onClose = { filter = null },
+            navigation = filterNavigation.getOrPut(Triple(source.id, capability, source.scopes?.revision)) { SourceFilterPickerState(source.scopes?.items?.firstOrNull()?.kind ?: "participant", source.scopes?.items?.firstOrNull { it.kind == "participant" }?.identifiers?.firstOrNull().orEmpty()) }) { policy -> update(draft.setPolicy(policy, source.id, capability)); filter = null }
     }
     if (discard) AlertDialog(onDismissRequest = { discard = false }, title = { Text("Discard these changes?") },
         text = { Text("Your saved access level will stay unchanged.") },

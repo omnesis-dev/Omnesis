@@ -4,6 +4,8 @@ package dev.omnesis.android.ui.access
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -82,11 +84,28 @@ internal fun AccessDataQuestion(
 }
 
 @Composable
-internal fun AccessDirectQuestion(draft: AccessLevelDraft, overview: AccessOverview, update: (AccessLevelDraft) -> Unit) {
+internal fun AccessDirectQuestion(draft: AccessLevelDraft, overview: AccessOverview, session: ScopePreviewSession, update: (AccessLevelDraft) -> Unit) {
     val answer = draft.rule(AccessCapability.ANSWER) ?: return
     AccessChoice("Use Answer’s data", ruleDataSummary(answer, overview) + ". Sources and filters follow Answer while this new draft is linked.", draft.directSameAsAnswer,
         enabled = draft.directSameAsAnswer || draft.canCopyAnswer(overview.sourceFilters?.enabled)) { update(draft.withDirectSameAsAnswer(true, overview.sourceFilters?.enabled)) }
     AccessChoice("Choose separate data", "Start from Answer’s current boundary, then change Direct independently.", !draft.directSameAsAnswer) { update(draft.withDirectSameAsAnswer(false, overview.sourceFilters?.enabled)) }
+    Text("Direct reads originals without Answer’s privacy review.", style = MaterialTheme.typography.bodyLarge)
+    var inspecting by remember { mutableStateOf(false) }
+    TextButton(onClick = { inspecting = !inspecting }) { Text(if (inspecting) "Hide Answer’s data" else "View Answer’s data") }
+    if (inspecting) {
+        val retained = (answer.sources.sourceIds + answer.scopePolicies.map { it.sourceId }).distinct().filter { id -> overview.sources.none { it.id == id } }
+        (overview.sources + retained.map { AccessSourceInstance(it, "Unavailable account", available = false) }).forEach { source ->
+            if (sourceAllowed(answer.sources, source.id)) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(source.name + source.accountLabel()?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.titleSmall)
+                    val policy = answer.scopePolicies.firstOrNull { it.sourceId == source.id }
+                    Text(scopePolicySummary(policy, source), style = MaterialTheme.typography.bodyLarge)
+                    if (policy != null) AccessPolicySummary(policy, source, session)
+                }
+            }
+        }
+        Text("New accounts: " + if (futureAllowed(answer.sources)) "allowed automatically" else "blocked until you allow them", style = MaterialTheme.typography.bodyLarge)
+    }
 }
 
 @Composable
@@ -118,9 +137,12 @@ internal fun AccessReleaseQuestion(draft: AccessLevelDraft, overview: AccessOver
         if (overview.policyFamilies.isEmpty()) AccessNotice("No published privacy policy is available. Publish one in Privacy, then return to this draft. Automatic release is a separate choice below.")
         else {
             var choosingPolicy by remember { mutableStateOf(false) }
+            Text("Privacy policy", style = MaterialTheme.typography.bodyMedium)
             Box {
                 OutlinedButton(enabled = LocalAccessEditingEnabled.current, onClick = { choosingPolicy = true }, modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp)) {
                     Text(overview.policyFamilies.firstOrNull { it.id == answer.release?.policyFamilyId }?.name ?: "Choose a privacy policy")
+                    Spacer(Modifier.width(8.dp))
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
                 }
                 DropdownMenu(expanded = choosingPolicy, onDismissRequest = { choosingPolicy = false }) {
                     overview.policyFamilies.forEach { family -> DropdownMenuItem(text = { Text(family.name) }, onClick = {

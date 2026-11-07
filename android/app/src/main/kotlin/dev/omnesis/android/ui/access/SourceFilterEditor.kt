@@ -19,10 +19,10 @@ internal enum class SourceFilterBoundary { ALL, ONLY, EXCEPT }
 private enum class SourceFilterStage { MODE, MATCHES, REVIEW }
 
 @Composable
-fun SourceFilterEditor(
+internal fun SourceFilterEditor(
     source: AccessSourceInstance, levelId: String, capability: String, initialPolicy: ScopePolicy?,
     authoringEnabled: Boolean, gateway: ScopeEditorGateway, onClose: () -> Unit,
-    initialPreview: ScopePreview? = null, changed: (ScopePolicy?) -> Unit,
+    initialPreview: ScopePreview? = null, navigation: SourceFilterPickerState? = null, changed: (ScopePolicy?) -> Unit,
 ) {
     val session = remember(gateway) { if (gateway is ScopePreviewSession) gateway else ScopePreviewSession(gateway) }
     var policy by remember(source.id, levelId, capability) { mutableStateOf((initialPolicy ?: ScopePolicy.empty(source.id, levelId, capability)).copy(audience = ScopeAudience(levelId, capability))) }
@@ -41,7 +41,7 @@ fun SourceFilterEditor(
     var error by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
     var request by remember { mutableStateOf<Any?>(null) }
-    val picker = remember(source.id, capability) { SourceFilterPickerState(source.scopes?.items?.firstOrNull()?.kind ?: "participant", source.scopes?.items?.firstOrNull { it.kind == "participant" }?.identifiers?.firstOrNull().orEmpty()) }
+    val picker = remember(session, source.id, capability) { navigation ?: SourceFilterPickerState(source.scopes?.items?.firstOrNull()?.kind ?: "participant", source.scopes?.items?.firstOrNull { it.kind == "participant" }?.identifiers?.firstOrNull().orEmpty()) }
     val refs = policy.rules.firstOrNull()?.match.orEmpty()
     fun setRefs(value: List<ScopeRef>) { if (writable) policy = policy.copy(rules = listOf(policy.rules.single().copy(match = value))) }
     fun choose(value: SourceFilterBoundary) {

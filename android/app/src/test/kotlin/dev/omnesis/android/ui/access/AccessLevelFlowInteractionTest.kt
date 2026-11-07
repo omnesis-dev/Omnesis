@@ -159,6 +159,21 @@ class AccessLevelFlowInteractionTest {
         compose.onNodeWithText("Save changes").assertIsNotEnabled()
         assertEquals(0, saved)
     }
+    @Test fun directReuseCanInspectAnswerAccountsWithoutChangingTheDecision() {
+        val answer = AccessGrantRule.answer(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id)), AccessAnswerRelease.unreviewed())
+        val initial = AccessLevelDraft.opening(null, overview).copy(rules = listOf(answer, AccessGrantRule.direct(answer.sources)), directSameAsAnswer = true)
+        show(initial)
+        compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("Direct reads originals without Answer’s privacy review.").assertExists()
+        compose.onNodeWithText("View Answer’s data").performClick()
+        compose.onNodeWithText("Mail · reader@example.org", substring = false).assertExists()
+        compose.onNodeWithText("Hide Answer’s data").performClick()
+        compose.onNodeWithText("Use Answer’s data", substring = false).assertExists()
+        compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("Answer and Direct", substring = false).assertExists()
+        assertEquals(0, saved)
+    }
     @Test fun linkedReviewCorrectionVisitsSeparateDirectDataAndPersistsItsExactBoundary() {
         val scopes = SourceScopes(listOf(SourceScopeItem("label", "changes", noun = SourceScopeNoun("label", "labels"), picker = "search")))
         val ready = listOf(ScopeKindReadiness("label", true))
