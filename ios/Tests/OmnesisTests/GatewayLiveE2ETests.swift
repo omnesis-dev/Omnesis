@@ -60,7 +60,7 @@ final class GatewayLiveE2ETests: XCTestCase {
         config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         session = URLSession(
             configuration: config,
-            delegate: AcceptAnyCertDelegate(),
+            delegate: LiveSessionDelegate(),
             delegateQueue: nil
         )
     }
@@ -208,10 +208,16 @@ final class GatewayLiveE2ETests: XCTestCase {
 
 // MARK: - Helpers
 
-/// `URLSessionDelegate` that accepts any server TLS cert. Test-only —
-/// production uses `OmnesisURLSession.shared`, which pins the gateway's
-/// leaf fingerprint via Keychain.
-private final class AcceptAnyCertDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+/// The live suite's session delegate. Test-only — production uses
+/// `OmnesisURLSession.shared`, which pins the gateway's leaf fingerprint via
+/// Keychain.
+///
+/// It accepts any server TLS cert, and logs where each request spent its time.
+/// A request that times out says nothing about how far it got, so this line is
+/// what separates a client that never connected from a gateway that never
+/// answered: a phase that started and did not finish reads `unfinished`, and one
+/// never reached reads `-`.
+private final class LiveSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(
         _ session: URLSession,
         didReceive challenge: URLAuthenticationChallenge,
@@ -222,5 +228,32 @@ private final class AcceptAnyCertDelegate: NSObject, URLSessionDelegate, @unchec
         } else {
             completionHandler(.performDefaultHandling, nil)
         }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didFinishCollecting metrics: URLSessionTaskMetrics
+    ) {
+        let request = "\(task.originalRequest?.httpMethod ?? "?") \(task.originalRequest?.url?.path ?? "?")"
+        let total = String(format: "%.2fs", metrics.taskInterval.duration)
+        for transaction in metrics.transactionMetrics {
+            let phases = [
+                "reused=\(transaction.isReusedConnection)",
+                "dns=\(span(transaction.domainLookupStartDate, transaction.domainLookupEndDate))",
+                "connect=\(span(transaction.connectStartDate, transaction.connectEndDate))",
+                "tls=\(span(transaction.secureConnectionStartDate, transaction.secureConnectionEndDate))",
+                "wait=\(span(transaction.requestEndDate, transaction.responseStartDate))",
+                "body=\(span(transaction.responseStartDate, transaction.responseEndDate))",
+                "peer=\(transaction.remoteAddress ?? "-")",
+            ].joined(separator: " ")
+            NSLog("[live-e2e] %@ total=%@ %@", request, total, phases)
+        }
+    }
+
+    private func span(_ start: Date?, _ end: Date?) -> String {
+        guard let start else { return "-" }
+        guard let end else { return "unfinished" }
+        return String(format: "%.2fs", end.timeIntervalSince(start))
     }
 }
