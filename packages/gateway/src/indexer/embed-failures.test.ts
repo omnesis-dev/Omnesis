@@ -22,6 +22,14 @@ describe("classifyEmbedError", () => {
     expect(classifyEmbedError(err)).toBe("overflow");
   });
 
+  test("node-llama-cpp 3.22 usable-context overflow → overflow", () => {
+    const err = new Error(
+      "Input is longer than the usable context size. Try to increase the context size or use " +
+        "another model that supports longer contexts.",
+    );
+    expect(classifyEmbedError(err)).toBe("overflow");
+  });
+
   test("HTTP embedder TextEncodeInput tokenizer reject → malformed", () => {
     const err = new Error(
       'HTTP embedder 400: {"error":{"message":"TextEncodeInput must be ' +

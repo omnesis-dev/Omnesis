@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {
   DEFAULT_PUSH_RELAY_URL,
   DEFAULT_SYNC_LEASE_TTL,
+  ownSourceSettings,
   pickSourceSettings,
   type OmnesisConfig,
 } from "@omnesis/config";
@@ -1177,7 +1178,10 @@ export function createServer(
         // may have committed since SQLite finalization returned.
         const resolvedConfig =
           dbConfig === undefined ? (getSource(db, SourceId(id))?.config ?? null) : dbConfig;
-        const settings = resolvedConfig === null ? null : pickSourceSettings(resolvedConfig);
+        const settings =
+          resolvedConfig === null
+            ? null
+            : ownSourceSettings(current, id, pickSourceSettings(resolvedConfig));
         const sources = { ...current.sources };
         if (settings === null) {
           delete sources[id];

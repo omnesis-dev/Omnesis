@@ -1022,3 +1022,46 @@ describe("mailPeopleMentions", () => {
     expect(mailPeopleMentions({ to }, "", 3)).toHaveLength(3);
   });
 });
+
+describe("text that once made address extraction backtrack", () => {
+  const MEGABYTE = 1_000_000;
+  const elapsedMs = (fn: () => unknown) => {
+    const start = performance.now();
+    fn();
+    return performance.now() - start;
+  };
+
+  test.each([
+    ["a megabyte of dots", ".".repeat(MEGABYTE)],
+    ["a megabyte of hyphens", "-".repeat(MEGABYTE)],
+    ["a megabyte of escaped dots", "\\.".repeat(MEGABYTE / 2)],
+    ["a megabyte-long local part with no @", "x".repeat(MEGABYTE)],
+    [
+      "a long local part before a domain that never ends in a TLD",
+      `${"x".repeat(MEGABYTE / 2)}@${"1.".repeat(MEGABYTE / 4)}`,
+    ],
+  ])("extracts from %s in linear time", (_label, text) => {
+    let emails: string[] = [];
+    expect(elapsedMs(() => (emails = extractEmailsFromText(text)))).toBeLessThan(2_000);
+    expect(emails).toEqual([]);
+  });
+
+  test("still finds the address after a pathological run", () => {
+    const text = `${".".repeat(MEGABYTE)} reach sarah.mendez@example.io`;
+    expect(extractEmailsFromText(text)).toEqual(["sarah.mendez@example.io"]);
+  });
+
+  test.each([
+    ["a header full of <", `Maya${"<".repeat(MEGABYTE / 4)}x`],
+    ["a header full of @", `${"@".repeat(MEGABYTE / 4)}x`],
+  ])("parses %s in linear time", (_label, header) => {
+    expect(elapsedMs(() => parseEmailHeader(header))).toBeLessThan(2_000);
+  });
+
+  test("recovers a sender from a header line full of > in linear time", () => {
+    const address = `maya@example.com${">".repeat(MEGABYTE / 4)}\nx`;
+    expect(
+      elapsedMs(() => mailPeopleMentions({ from: [{ name: "Maya Reeves", address }] }, "", 10)),
+    ).toBeLessThan(2_000);
+  });
+});

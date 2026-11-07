@@ -241,7 +241,11 @@ export class HttpEmbedder implements Embedder {
         // permanently pending on an opaque 400.
         const body = await res.text().catch(() => "");
         const contentType = res.headers.get("content-type") ?? "?";
-        const marker = embedErrorMarkerFromBody(body);
+        // Only a 4xx says the input itself was refused. A 5xx is the server's
+        // own failure and stays retryable whatever its body says, so it can
+        // never shrink or drop a chunk.
+        const marker =
+          res.status >= 400 && res.status < 500 ? embedErrorMarkerFromBody(body) : null;
         throw new Error(
           `HTTP embedder ${res.status} (model=${this.model}, ${body.length} bytes, ${contentType})` +
             (marker ? ` [${marker}]` : ""),

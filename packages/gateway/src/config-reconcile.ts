@@ -2,7 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createLogger } from "@omnesis/core";
-import { resolveSourceSettings, sourceSettingKeys, type OmnesisConfig } from "@omnesis/config";
+import {
+  resolveSourceSettings,
+  sourceSettingKeys,
+  SOURCE_SETTINGS_KEYS,
+  type OmnesisConfig,
+} from "@omnesis/config";
 import { listSources } from "./data/repositories/SourceRepository.js";
 import { getSourceMemberConfigContract } from "./data/repositories/SourceMemberConfigContractRepository.js";
 import { splitMemberScopedParams } from "./multi-device-mode.js";
@@ -84,7 +89,8 @@ export async function reconcileConfig(
     const current = source.config ?? {};
     const next = { ...current, ...settings };
     // Drop fields that used to be in `settings` but are now unset — otherwise
-    // removing `extractAttachments` from the file wouldn't propagate.
+    // removing `extractAttachments` or `maxAge` from the file wouldn't
+    // propagate, and the value last copied onto the row would stay in force.
     for (const key of Object.keys(current)) {
       if (key in settings) continue;
       // Only prune keys that the schema owns; leave unknown legacy keys alone.
@@ -103,18 +109,12 @@ export async function reconcileConfig(
 }
 
 /**
- * Fields the new schema "owns" on the per-source settings block. A row's DB
+ * Fields the schema "owns" on the per-source settings block: exactly the
+ * schema's own list, so a setting added there is pruned here too. A row's DB
  * config column may carry additional keys written by legacy code paths —
  * those pass through reconciliation untouched until a follow-up cleanup.
  */
-const SCHEMA_OWNED_KEYS: ReadonlySet<string> = new Set([
-  "params",
-  "syncInterval",
-  "extractAttachments",
-  "attachmentMaxSizeBytes",
-  "attachmentTypes",
-  "attachmentMaxTextLength",
-]);
+const SCHEMA_OWNED_KEYS: ReadonlySet<string> = new Set(SOURCE_SETTINGS_KEYS);
 
 function shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
   const ak = Object.keys(a);

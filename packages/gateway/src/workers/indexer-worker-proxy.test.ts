@@ -6,6 +6,23 @@ import { buildIndexerCutoffMap } from "./indexer-worker-proxy.js";
 import { resolveIndexerCutoffMaxAge } from "./protocol.js";
 
 describe("buildIndexerCutoffMap", () => {
+  test("an unlimited maxAge is an explicit no-cutoff, not a fallback", () => {
+    const map = buildIndexerCutoffMap({
+      dataRetention: { maxAge: "1y" },
+      sources: { default: { maxAge: "6M" }, "google-drive": { maxAge: "unlimited" } },
+    });
+    expect(map.perSource["google-drive"]).toBeNull();
+    expect(resolveIndexerCutoffMaxAge(map, "google-drive:maya@example.com")).toBeNull();
+    expect(resolveIndexerCutoffMaxAge(map, "gmail:maya@example.com")).toBe("6M");
+    expect(buildIndexerCutoffMap({ dataRetention: { maxAge: "unlimited" } }).default).toBeNull();
+    expect(
+      buildIndexerCutoffMap({
+        dataRetention: { maxAge: "1y" },
+        sources: { default: { maxAge: "unlimited" } },
+      }).default,
+    ).toBeNull();
+  });
+
   test("empty config produces empty map", () => {
     const map = buildIndexerCutoffMap({});
     expect(map).toEqual({ default: null, perSource: {} });
