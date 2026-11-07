@@ -6,22 +6,26 @@ import SwiftUI
 
 @available(iOS 17.0, *)
 struct SourceFilterEditorView: View {
-    @Environment(AppStore.self) private var store
+    @Environment(AppStore.self) var store
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let source: AccessSourceInstance
     let authoringEnabled: Bool
     let changed: (ScopePolicy?) -> Void
-    @State private var policy: ScopePolicy
-    @State private var preview: ScopePreview?
-    @State private var previewedPolicy: ScopePolicy?
-    @State private var openedClient: AccessClient?
-    @State private var error: Error?
-    @State private var loading = false
+    let displayHints: [ScopePreview.Item]
+    let hintsChanged: ([ScopePreview.Item]) -> Void
+    let parentClient: AccessClient?
+    @State var labelHints: [ScopePreview.Item] = []
+    @State var policy: ScopePolicy
+    @State var preview: ScopePreview?
+    @State var previewedPolicy: ScopePolicy?
+    @State var openedClient: AccessClient?
+    @State var error: Error?
+    @State var loading = false
     @State private var previewGeneration = 0
     @State private var picking = false
     @State private var retainedRefs: [ScopeRef] = []
-    private var refs: [ScopeRef] {
+    var refs: [ScopeRef] {
         policy.rules.first?.match ?? []
     }
 
@@ -41,9 +45,15 @@ struct SourceFilterEditorView: View {
         authoringEnabled: Bool,
         preview: ScopePreview? = nil,
         client: AccessClient? = nil,
+        displayHints: [ScopePreview.Item] = [],
+        hintsChanged: @escaping ([ScopePreview.Item]) -> Void = { _ in },
         changed: @escaping (ScopePolicy?) -> Void
     ) {
         _openedClient = State(initialValue: client)
+        self.parentClient = client
+        self.displayHints = displayHints
+        self.hintsChanged = hintsChanged
+        _labelHints = State(initialValue: mergingScopeLabelHints(displayHints, preview?.sourceId == source.id ? preview?.items ?? [] : []))
         self.initialPolicy = initialPolicy
         self.capability = capability
         _mode = State(initialValue: ScopeFilterMode(
@@ -62,7 +72,7 @@ struct SourceFilterEditorView: View {
 
     @State private var step: ScopeFilterStep = .mode
     @State private var mode: ScopeFilterMode
-    @State private var pickerSession = ScopePickerSession()
+    @State var pickerSession = ScopePickerSession()
     @State private var confirmExit = false
     private let initialPolicy: ScopePolicy?
     private let capability: String
@@ -100,6 +110,9 @@ struct SourceFilterEditorView: View {
                     "Review this restriction")
                     .font(.title2.bold()).accessibilityAddTraits(.isHeader)
                 if !writable { Text("This saved restriction remains active. Editing is unavailable.") }
+                if writable, step != .review, mode != .all, !refs.isEmpty {
+                    Text(accessRestrictionSummary(mode.applying(to: policy), hints: visibleLabelHints)).font(.subheadline)
+                }
             }
             if step == .mode {
                 if writable {
@@ -117,7 +130,7 @@ struct SourceFilterEditorView: View {
                         )
                     }.disabled(!writable)
                 }
-                if !writable { Section("Saved restriction") { Text(accessRestrictionSummary(initialPolicy))
+                if !writable { Section("Saved restriction") { Text(accessRestrictionSummary(initialPolicy, hints: visibleLabelHints))
                     ForEach(Array(refs.enumerated()), id: \.offset) { index, ref in selectedItem(index, ref: ref) }
                 } }
             } else if step == .matches {
@@ -141,7 +154,10 @@ struct SourceFilterEditorView: View {
                 }
             } else {
                 Section {
-                    Text(mode == .all ? "All content · this removes the account’s restriction" : accessRestrictionSummary(policy))
+                    Text(mode == .all ? "All content · this removes the account’s restriction" : accessRestrictionSummary(
+                        policy,
+                        hints: visibleLabelHints
+                    ))
                     if policy.rules.first?.match
                         .contains(where: { ref in source.scopes?.items.first { $0.kind == ref.kind }?.picker == "tree" }) == true {
                         Text("Selected folders include descendants and files added later. Moving content can change whether it matches.")
@@ -167,7 +183,7 @@ struct SourceFilterEditorView: View {
                 if loading, mode != .all { Section { ProgressView("Checking current content…") } }
                 if let error, mode != .all {
                     Section {
-                        Text(scopePreviewFailureMessage(error))
+                        Text(scopePreviewFailureMessage(error, classifiedFallbackTitle: GatewayErrorView.classify(error).title))
                         if scopePreviewCanRetry(error) {
                             Button("Retry preview") { Task { await refresh() } }.frame(minHeight: 44).disabled(loading)
                         }
@@ -233,10 +249,20 @@ struct SourceFilterEditorView: View {
         }
         .onChange(of: store.access?.baseURL) { _, _ in pickerSession = .init()
             picking = false
+            labelHints = []
+            previewedPolicy = nil
+            error = GatewayClient.Error.unauthorized
         }
         .onChange(of: store.access?.token) { _, _ in pickerSession = .init()
             picking = false
+            labelHints = []
+            previewedPolicy = nil
+            error = GatewayClient.Error.unauthorized
         }
+        .onChange(of: displayHints) { _, hints in
+            if (try? openedClient?.authorized(for: store.access)) != nil { labelHints = mergingScopeLabelHints(labelHints, hints) }
+        }
+        .task(id: step == .review ? nil : policy) { if step != .review { await resolveDisplayHints() } }
         .onChange(of: policy) { _, _ in previewedPolicy = nil }
         .id(step)
         .task(id: step == .review && mode != .all ? previewKey : nil) { if step == .review, mode != .all { await refresh() } }
@@ -248,9 +274,7 @@ struct SourceFilterEditorView: View {
                     client: openedClient,
                     selectedRefs: refs,
                     session: pickerSession,
-                    sessionChanged: { value in
-                        pickerSession = (try? openedClient?.authorized(for: store.access)) == nil ? .init() : value
-                    },
+                    sessionChanged: { adoptPickerSession($0) },
                     selected: { ref in
                         policy.appendMatchIfMissing(ref)
                     }
@@ -299,6 +323,7 @@ struct SourceFilterEditorView: View {
             error = GatewayClient.Error.unauthorized
             return
         }
+        hintsChanged(visibleLabelHints)
         changed(value)
         dismiss()
     }
@@ -319,30 +344,11 @@ struct SourceFilterEditorView: View {
         }
     }
 
-    private func itemDetails(_ index: Int, ref: ScopeRef) -> some View {
-        VStack(alignment: .leading) {
-            Text(scopeDisplayLabel(ref, previewItem: previewItem(index)))
-            if let identifiers = ref.identifiers {
-                Text(identifiers.map(\.value).joined(separator: ", ")).font(.caption).foregroundStyle(Theme.textSecondary)
-            }
-            if let item = previewItem(index) {
-                Text(item.missing == true ? "Unavailable · selection kept" : "\(item.count) matching documents")
-                    .font(.caption)
-            }
-        }
-    }
-
     @ViewBuilder
     private func removeItem(_ index: Int) -> some View {
         if writable {
             Button("Remove", role: .destructive) { policy.rules[0].match.remove(at: index) }.buttonStyle(.borderless)
         }
-    }
-
-    private func previewItem(_ index: Int) -> ScopePreview.Item? {
-        guard previewedPolicy == policy, preview?.sourceId == source.id, let items = preview?.items,
-              items.indices.contains(index) else { return nil }
-        return items[index]
     }
 
     private func refresh() async {
@@ -368,6 +374,7 @@ struct SourceFilterEditorView: View {
             }
             previewedPolicy = requestedPolicy
             preview = value
+            labelHints = mergingScopeLabelHints(labelHints, value.items)
             error = nil
         } catch is CancellationError {} catch {
             guard !Task.isCancelled, policy == requestedPolicy, generation == previewGeneration else { return }

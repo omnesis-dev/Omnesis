@@ -6,7 +6,7 @@ import XCTest
 
 final class AccessScopePickerSessionTests: XCTestCase {
     func testPickerBookmarksAreBoundToAccountKindQueryAndFullFolderTrail() {
-        let parent = ScopeOption(ref: .init(kind: "folder", id: "project-root", label: "Projects"), label: "Projects", count: 20)
+        let parent = ScopeOption(ref: .init(kind: "folder", id: "project-root"), label: "Projects", count: 20)
         var session = ScopePickerSession(
             kind: "folder",
             query: "plan",

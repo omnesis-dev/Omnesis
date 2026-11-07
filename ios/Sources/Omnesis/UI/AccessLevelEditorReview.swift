@@ -152,7 +152,7 @@ extension AccessLevelEditorView {
         let refs = value.rule(capability)?.scopePolicies.first { $0.sourceId == source.id }?.rules.flatMap(\.match) ?? []
         ForEach(Array(refs.enumerated()), id: \.offset) { _, ref in
             VStack(alignment: .leading, spacing: 4) {
-                Text(scopeDisplayLabel(ref, previewItem: nil))
+                Text(scopeDisplayLabel(ref, previewItem: scopeLabelHint(for: ref, in: scopeLabels[capability + ":" + source.id] ?? [])))
                 Text(source.scopes?.items.first { $0.kind == ref.kind }?.noun?.one ?? ref.kind.capitalized)
                     .font(.subheadline).foregroundStyle(Theme.textSecondary)
                 if let identifiers = ref.identifiers { Text(identifiers.map(\.value).joined(separator: ", ")).font(.caption) }

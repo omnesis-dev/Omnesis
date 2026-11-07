@@ -229,11 +229,11 @@ extension AccessLevelDraft {
     }
 }
 
-func accessRestrictionSummary(_ policy: ScopePolicy?) -> String {
+func accessRestrictionSummary(_ policy: ScopePolicy?, hints: [ScopePreview.Item] = []) -> String {
     guard let policy else { return "All content" }
     guard policy.editable else { return "Saved advanced restriction" }
     let refs = policy.rules[0].match
-    let labels = refs.map { $0.label ?? $0.identifiers?.map(\.value).joined(separator: ", ") ?? "Unavailable saved item" }
+    let labels = refs.map { scopeDisplayLabel($0, previewItem: scopeLabelHint(for: $0, in: hints)) }
     if labels.isEmpty { return policy.otherwise == "share" ? "All content" : "No content" }
     let prefix = policy.rules[0].action == "share" ? "Only: " : "Except: "
     return prefix + labels.prefix(3).joined(separator: ", ") + (labels.count > 3 ? " and \(labels.count - 3) more" : "")
@@ -422,18 +422,6 @@ struct AccessFlowNavigation: Equatable {
     }
 }
 
-func mergingScopeLabelHints(_ existing: [ScopePreview.Item], _ incoming: [ScopePreview.Item]) -> [ScopePreview.Item] {
-    var result = existing
-    for item in incoming {
-        if let index = result.firstIndex(where: { scopeRefIdentityMatches($0.ref, item.ref) }) {
-            result[index] = item
-        } else {
-            result.append(item)
-        }
-    }
-    return result
-}
-
 func canonicalAccessPolicy(_ value: ScopePolicy) -> ScopePolicy {
     var result = value
     for index in result.rules.indices {
@@ -463,12 +451,6 @@ extension AccessLevelDraft {
         name.trimmingCharacters(in: .whitespacesAndNewlines) != original.name.trimmingCharacters(in: .whitespacesAndNewlines)
             || comparisonRules != original.comparisonRules
     }
-}
-
-func scopeDisplayLabel(_ ref: ScopeRef, previewItem: ScopePreview.Item?) -> String {
-    let saved = ref.label ?? ref.identifiers?.map(\.value).joined(separator: ", ") ?? "Saved item"
-    guard let previewItem else { return saved }
-    return previewItem.missing == true ? saved + " (unavailable)" : previewItem.label
 }
 
 extension AccessLevelDraft {
@@ -547,14 +529,14 @@ func scopePreviewCanRetry(_ error: Error) -> Bool {
     return true
 }
 
-func scopePreviewFailureMessage(_ error: Error) -> String {
+func scopePreviewFailureMessage(_ error: Error, classifiedFallbackTitle: String) -> String {
     if case GatewayClient.Error.unauthorized = error {
         return "Your gateway connection changed. Check your connection, then close and reopen this restriction."
     }
     if case GatewayClient.Error.notFound = error {
         return "This account is unavailable. Close this restriction and return to data selection."
     }
-    return "Couldn’t check this restriction. Your selections are kept."
+    return classifiedFallbackTitle + ". Your selections are kept."
 }
 
 /// Presentation follows only the selected kinds, in first-reference order across all saved rules.

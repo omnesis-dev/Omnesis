@@ -439,12 +439,12 @@ extension AccessScopePolicyTests {
         let summary = accessRestrictionSummary(policy)
         XCTAssertTrue(summary.hasPrefix("Except:"))
         XCTAssertTrue(summary.contains("Maya"))
-        XCTAssertTrue(summary.contains("Unavailable saved item"))
+        XCTAssertTrue(summary.contains("Saved item"))
         XCTAssertFalse(summary.contains("cedar"))
     }
 
     func testFolderNavigationKeepsSearchAndMethodUntilAnExplicitKindChange() {
-        let folder = ScopeOption(ref: .init(kind: "folder", id: "design", label: "Design"), label: "Design", count: 8)
+        let folder = ScopeOption(ref: .init(kind: "folder", id: "design"), label: "Design", count: 8)
         var session = ScopePickerSession(kind: "folder", query: "plan", parentId: "design", ancestors: [folder])
         session.changeKind("folder", scopes: nil)
         XCTAssertEqual(session.parentId, "design")
@@ -660,14 +660,19 @@ extension AccessScopePolicyTests {
 }
 
 extension AccessScopePolicyTests {
-    func testMissingSelectionKeepsFriendlyNameAndNeverPromotesOpaqueIdToPrimaryLabel() {
-        let ref = ScopeRef(kind: "folder", id: "opaque-selection-key", label: "Blueprints")
-        let missing = ScopePreview.Item(ref: ref, label: "opaque-selection-key", count: 0, missing: true)
-        XCTAssertEqual(scopeDisplayLabel(ref, previewItem: missing), "Blueprints (unavailable)")
-        let unlabelled = ScopeRef(kind: "folder", id: "opaque-selection-key")
-        XCTAssertEqual(scopeDisplayLabel(unlabelled, previewItem: missing), "Saved item (unavailable)")
-        let current = ScopePreview.Item(ref: ref, label: "Updated blueprints", count: 8)
-        XCTAssertEqual(scopeDisplayLabel(ref, previewItem: current), "Updated blueprints")
+    func testMissingSelectionKeepsParticipantNameAndUsesSeparateNonparticipantDisplayHints() {
+        let participant = ScopeRef(
+            kind: "participant",
+            label: "Jamie Lopez",
+            identifiers: [.init(type: "email", value: "jamie@example.org")]
+        )
+        let missingParticipant = ScopePreview.Item(ref: participant, label: "Jamie Lopez", count: 0, missing: true)
+        XCTAssertEqual(scopeDisplayLabel(participant, previewItem: missingParticipant), "Jamie Lopez (unavailable)")
+        let folder = ScopeRef(kind: "folder", id: "opaque-selection-key")
+        let missingFolder = ScopePreview.Item(ref: folder, label: "opaque-selection-key", count: 0, missing: true)
+        XCTAssertEqual(scopeDisplayLabel(folder, previewItem: missingFolder), "Saved item (unavailable)")
+        let current = ScopePreview.Item(ref: folder, label: "Blueprints", count: 8)
+        XCTAssertEqual(scopeDisplayLabel(folder, previewItem: current), "Blueprints")
     }
 }
 

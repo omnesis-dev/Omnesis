@@ -171,8 +171,14 @@ struct AccessLevelEditorView: View {
                     capability: route.capability,
                     initialPolicy: draft.rule(route.capability)?.scopePolicies.first { $0.sourceId == route.source.id },
                     authoringEnabled: overview.sourceFilters?.enabled == true,
-                    client: openedClient
-                ) { policy in draft.setPolicy(policy, sourceId: route.source.id, capability: route.capability) }
+                    client: openedClient,
+                    displayHints: scopeLabels[route.capability + ":" + route.source.id] ?? [],
+                    hintsChanged: { hints in
+                        let key = route.capability + ":" + route.source.id
+                        scopeLabels[key] = mergingScopeLabelHints(scopeLabels[key] ?? [], hints)
+                    },
+                    changed: { policy in draft.setPolicy(policy, sourceId: route.source.id, capability: route.capability) }
+                )
             }
         }
     }
@@ -240,17 +246,8 @@ struct AccessLevelEditorView: View {
     }
 
     func restrictionSummary(_ rule: AccessGrantRule, _ sourceId: String) -> String {
-        guard var policy = rule.scopePolicies.first(where: { $0.sourceId == sourceId }) else { return "All content" }
-        let labels = scopeLabels[rule.capability + ":" + sourceId] ?? []
-        for index in policy.rules.indices {
-            for match in policy.rules[index].match.indices {
-                let ref = policy.rules[index].match[match]
-                if let item = labels.first(where: { scopeRefIdentityMatches($0.ref, ref) }) {
-                    policy.rules[index].match[match].label = scopeDisplayLabel(ref, previewItem: item)
-                }
-            }
-        }
-        return accessRestrictionSummary(policy)
+        guard let policy = rule.scopePolicies.first(where: { $0.sourceId == sourceId }) else { return "All content" }
+        return accessRestrictionSummary(policy, hints: scopeLabels[rule.capability + ":" + sourceId] ?? [])
     }
 
     struct LabelContext: Hashable {

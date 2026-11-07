@@ -25,18 +25,30 @@ final class AccessFlowComparisonTests: XCTestCase {
         XCTAssertEqual(original.rule("answer")?.boundary.mode, .all)
     }
 
-    func testChoosingRenamedMatchPreservesOneCanonicalSelectionButDifferentIdsRemainDistinct() {
-        let saved = ScopeRef(kind: "label", id: "label-design", label: "Design")
+    func testRenamedParticipantRemainsOneMatchButDifferentIdentifiersRemainDistinct() {
+        let saved = ScopeRef(kind: "participant", label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")])
         var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "example", capability: "answer")
         policy.appendMatchIfMissing(saved)
-        policy.appendMatchIfMissing(.init(kind: "label", id: "label-design", label: "Design plans"))
+        policy.appendMatchIfMissing(.init(
+            kind: "participant",
+            label: "Jamie renamed",
+            identifiers: [.init(type: "email", value: "jamie@example.org")]
+        ))
         XCTAssertEqual(policy.rules[0].match, [saved])
-        policy.appendMatchIfMissing(.init(kind: "label", id: "label-other-design", label: "Design"))
+        policy.appendMatchIfMissing(.init(
+            kind: "participant",
+            label: "Jamie Lopez",
+            identifiers: [.init(type: "email", value: "another@example.org")]
+        ))
         XCTAssertEqual(policy.rules[0].match.count, 2)
         let before = policy
         policy.rules.append(.init(match: [saved], action: "hide"))
         let advanced = policy
-        policy.appendMatchIfMissing(.init(kind: "label", id: "another", label: "Archive"))
+        policy.appendMatchIfMissing(.init(
+            kind: "participant",
+            label: "Another contact",
+            identifiers: [.init(type: "email", value: "third@example.org")]
+        ))
         XCTAssertEqual(policy, advanced, "Unsupported saved policies must remain untouched")
         XCTAssertNotEqual(policy, before)
     }
@@ -55,7 +67,7 @@ final class AccessFlowComparisonTests: XCTestCase {
         var equivalent = before
         equivalent.rules[0].match = [repeated]
         XCTAssertEqual(canonicalAccessPolicy(before), canonicalAccessPolicy(equivalent))
-        XCTAssertFalse(scopeRefIdentityMatches(original, .init(kind: "participant", identifiers: [email])))
+        XCTAssertFalse(scopeRefIdentityMatches(original, .init(kind: "participant", label: "Jamie Lopez", identifiers: [email])))
     }
 
     func testChangingOnlyRestrictionModeStillRequiresExplicitDiscard() {
@@ -70,12 +82,17 @@ final class AccessFlowComparisonTests: XCTestCase {
         XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.unauthorized))
         XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.notFound))
         XCTAssertTrue(scopePreviewCanRetry(GatewayClient.Error.invalidResponse))
-        XCTAssertTrue(scopePreviewFailureMessage(GatewayClient.Error.invalidResponse).contains("selections are kept"))
+        XCTAssertEqual(
+            scopePreviewFailureMessage(GatewayClient.Error.invalidResponse, classifiedFallbackTitle: "Shared preview error"),
+            "Shared preview error. Your selections are kept."
+        )
+        XCTAssertTrue(scopePreviewFailureMessage(GatewayClient.Error.unauthorized, classifiedFallbackTitle: "Unused fallback")
+            .contains("gateway connection changed"))
     }
 
     func testPreparationPresentationIgnoresUnusedKindsButKeepsSelectedKindRemedy() {
         var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "example", capability: "answer")
-        policy.rules[0].match = [.init(kind: "label", id: "label-design", label: "Design")]
+        policy.rules[0].match = [.init(kind: "label", id: "label-design")]
         let unused = ScopeKindReadiness(
             kind: "participant",
             ready: false,
@@ -106,12 +123,12 @@ final class AccessFlowComparisonTests: XCTestCase {
 
     func testAdvancedPreparationPresentationUsesAllRulesAndFirstReferenceOrderWithoutDuplicates() {
         var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "example", capability: "answer")
-        let label = ScopeRef(kind: "label", id: "label-design", label: "Design")
+        let label = ScopeRef(kind: "label", id: "label-design")
         policy.rules = [
             .init(match: [label], action: "hide"),
             .init(
                 match: [
-                    .init(kind: "participant", identifiers: [.init(type: "email", value: "jamie@example.org")]),
+                    .init(kind: "participant", label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")]),
                     label,
                 ],
                 action: "share"

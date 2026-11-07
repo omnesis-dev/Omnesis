@@ -26,7 +26,7 @@ final class AccessScopePickerPagesTests: XCTestCase {
                 readiness: [.init(kind: "folder", ready: true)],
                 items: range.map { index in
                     .init(
-                        ref: .init(kind: "folder", id: "folder-\(index)", label: "Example folder \(index)"),
+                        ref: .init(kind: "folder", id: "folder-\(index)"),
                         label: "Example folder \(index)",
                         count: index + 1
                     )

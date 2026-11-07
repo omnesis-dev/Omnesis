@@ -8115,7 +8115,7 @@ final class PreviewSnapshotTests: XCTestCase {
         let source = PreviewMocks.scopeFolderSource
         let items = (0 ..< 65).map { index in
             ScopeOption(
-                ref: .init(kind: "folder", id: "example-folder-\(index)", label: "Example folder \(index)"),
+                ref: .init(kind: "folder", id: "example-folder-\(index)"),
                 label: "Example folder \(index)",
                 count: index + 1
             )
@@ -8135,6 +8135,7 @@ final class PreviewSnapshotTests: XCTestCase {
             readiness: [.init(kind: "folder", ready: true)],
             items: Array(items.suffix(15))
         )
+        try assertProviderFixtureWireRefs(firstPage.items.map(\.ref) + secondPage.items.map(\.ref))
         // This is an accumulated navigation snapshot after two provider pages, not an oversized API page.
         let options = try appendScopeOptions(secondPage, to: firstPage)
         for scheme in [ColorScheme.light, .dark] {
@@ -8177,7 +8178,7 @@ final class PreviewSnapshotTests: XCTestCase {
             anotherSearch.query = "archive"
             var searchResults = secondPage
             searchResults.items = [.init(
-                ref: .init(kind: "folder", id: "archive-example", label: "Archive folder"),
+                ref: .init(kind: "folder", id: "archive-example"),
                 label: "Archive folder",
                 count: 8
             )]
@@ -8229,7 +8230,7 @@ final class PreviewSnapshotTests: XCTestCase {
         try writeSnapshotPNG(image, to: Self.outputDir.appendingPathComponent(name + ".png"))
     }
 
-    func testAccessScopePreviewsKeepProviderContractsSeparate() {
+    func testAccessScopePreviewsKeepProviderContractsSeparate() throws {
         XCTAssertEqual(PreviewMocks.scopeEditorSource.sourceType, "gmail")
         XCTAssertEqual(PreviewMocks.scopeEditorSource.scopes?.items.map(\.kind), ["participant", "label"])
         XCTAssertEqual(PreviewMocks.scopeEditorSource.scopes?.items.first?.identifiers, ["email", "domain"])
@@ -8237,6 +8238,29 @@ final class PreviewSnapshotTests: XCTestCase {
         XCTAssertEqual(PreviewMocks.scopeParticipantSource.scopes?.items.last?.identifiers, ["phone"])
         XCTAssertEqual(PreviewMocks.scopeFolderSource.sourceType, "google-drive")
         XCTAssertEqual(PreviewMocks.scopeFolderSource.scopes?.items.map(\.kind), ["folder"])
+        let policies = PreviewMocks.scopeEditorOverview.levels.flatMap(\.rules).flatMap(\.scopePolicies)
+        let refs = policies.flatMap(\.rules).flatMap(\.match)
+            + PreviewMocks.scopeEditorRefs + PreviewMocks.scopeFolderOptions.items.map(\.ref)
+            + PreviewMocks.scopeEditorPreview.items.map(\.ref) + [PreviewMocks.scopeConversationOption.ref]
+        try assertProviderFixtureWireRefs(refs)
+        XCTAssertEqual(PreviewMocks.scopeFolderOptions.items.map(\.label), ["Projects", "Archive"])
+        XCTAssertEqual(PreviewMocks.scopeConversationOption.label, "Workshop planning")
+        XCTAssertEqual(PreviewMocks.scopeEditorPreview.items[0].label, "Design")
+    }
+
+    private func assertProviderFixtureWireRefs(_ refs: [ScopeRef]) throws {
+        for ref in refs {
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(ref)) as? [String: Any])
+            if ref.kind == "participant" {
+                XCTAssertEqual(Set(object.keys), ["kind", "label", "identifiers"])
+                XCTAssertFalse((ref.label ?? "").isEmpty)
+                XCTAssertFalse((ref.identifiers ?? []).isEmpty)
+            } else {
+                XCTAssertTrue(["label", "folder", "conversation"].contains(ref.kind))
+                XCTAssertEqual(Set(object.keys), ["kind", "id"])
+                XCTAssertFalse((ref.id ?? "").isEmpty)
+            }
+        }
     }
 
     func testAccessScopeEditors() {

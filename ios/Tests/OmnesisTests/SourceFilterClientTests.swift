@@ -35,6 +35,47 @@ final class AccessSourceFilterClientTests: XCTestCase {
         XCTAssertTrue(try old.authorized(for: old) === old)
     }
 
+    func testProviderPolicyPreviewPayloadsUseStrictWireReferencesAndSeparateDisplayNames() async throws {
+        let participant = ScopeRef(
+            kind: "participant",
+            label: "Jamie Lopez",
+            identifiers: [.init(type: "email", value: "jamie@example.org")]
+        )
+        let cases: [(String, [ScopeRef])] = [
+            ("gmail:mail@example.org", [.init(kind: "label", id: "Label_design"), participant]),
+            ("google-drive:files@example.org", [.init(kind: "folder", id: "projects")]),
+            ("whatsapp-messages:+15550100111", [.init(kind: "conversation", id: "conversation-example")]),
+        ]
+        for (sourceId, refs) in cases {
+            let session = Session()
+            session.body = """
+            {"sourceId":"\(sourceId)","total":1,"visible":1,"hidden":0,"unknown":0,
+             "items":[],"samples":[],"readiness":[]}
+            """
+            let client = try AccessClient(
+                baseURL: XCTUnwrap(URL(string: "https://gateway.example.org")),
+                token: "fictional-owner",
+                session: session
+            )
+            var policy = ScopePolicy.empty(sourceId: sourceId, levelId: "example-level", capability: "answer")
+            policy.rules[0].match = refs
+            _ = try await client.scopePreview(policy)
+            let body = try XCTUnwrap(session.requests.last?.httpBody)
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let encodedPolicy = try XCTUnwrap(root["policy"] as? [String: Any])
+            let rules = try XCTUnwrap(encodedPolicy["rules"] as? [[String: Any]])
+            let matches = try XCTUnwrap(rules.first?["match"] as? [[String: Any]])
+            for ref in matches {
+                let participant = ref["kind"] as? String == "participant"
+                XCTAssertEqual(Set(ref.keys), participant ? ["kind", "label", "identifiers"] : ["kind", "id"])
+            }
+        }
+        // Deliberately invalid defensive input: the DTO must remain lossless rather than silently stripping fields.
+        let invalid = ScopeRef(kind: "folder", id: "opaque-invalid-example", label: "Invalid wire field")
+        let encodedInvalid = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(invalid)) as? [String: Any])
+        XCTAssertEqual(encodedInvalid["label"] as? String, "Invalid wire field")
+    }
+
     func testPickerEncodesAccountAndQueryAsSeparateComponents() async throws {
         let session = Session()
         session.body = """

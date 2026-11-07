@@ -45,7 +45,7 @@ extension PreviewMocks {
     }
 
     static let scopeEditorRefs: [ScopeRef] = [
-        .init(kind: "label", id: "Label_design", label: "Design"),
+        .init(kind: "label", id: "Label_design"),
         .init(kind: "participant", label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")]),
     ]
     static let scopeEditorPolicy = ScopePolicy(
@@ -83,9 +83,13 @@ extension PreviewMocks {
         scopes: scopeDriveContract,
         readiness: [.init(kind: "folder", ready: true)],
         items: [
-            .init(ref: .init(kind: "folder", id: "projects", label: "Projects"), label: "Projects", count: 18, hasChildren: true),
-            .init(ref: .init(kind: "folder", id: "archive", label: "Archive"), label: "Archive", count: 9),
+            .init(ref: .init(kind: "folder", id: "projects"), label: "Projects", count: 18, hasChildren: true),
+            .init(ref: .init(kind: "folder", id: "archive"), label: "Archive", count: 9),
         ]
+    )
+
+    static let scopeConversationOption = ScopeOption(
+        ref: .init(kind: "conversation", id: "conversation-example"), label: "Workshop planning", count: 23
     )
 
     static var scopeEditorOverview: AccessOverview {
@@ -96,7 +100,7 @@ extension PreviewMocks {
             rules: [.init(match: [scopeFolderOptions.items[0].ref], action: "share")],
             otherwise: "hide"
         )
-        let conversation = ScopeRef(kind: "conversation", id: "conversation-example", label: "Workshop planning")
+        let conversation = scopeConversationOption.ref
         let whatsappPolicy = ScopePolicy(
             sourceId: scopeParticipantSource.id,
             audience: .init(accessLevel: "scope-level", capability: "answer"),
