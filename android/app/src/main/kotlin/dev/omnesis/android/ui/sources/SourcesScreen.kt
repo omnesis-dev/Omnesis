@@ -366,6 +366,10 @@ private fun SourceRow(
     }
 }
 
+/** Whether the metadata line shows anything before the host device, which a `·` then separates it from. */
+internal fun SourceRowUi.hostFollowsMetadata(): Boolean =
+    (count != null && unit != null) || countLabel != null || percentIndexed != null
+
 @Composable
 private fun MetadataRow(row: SourceRowUi, onOpenNotices: () -> Unit) {
     val c = OmTheme.colors
@@ -406,7 +410,7 @@ private fun MetadataRow(row: SourceRowUi, onOpenNotices: () -> Unit) {
             }
         }
         if (host != null) {
-            Text("·", fontSize = 11.sp, color = c.textMuted)
+            if (row.hostFollowsMetadata()) Text("·", fontSize = 11.sp, color = c.textMuted)
             Text(
                 host,
                 fontSize = 11.sp,
