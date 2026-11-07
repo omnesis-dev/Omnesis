@@ -8158,7 +8158,7 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
-    func testScopePickerConsumesProvidedBookmarkAndStartsAnotherSearchAtTop() throws {
+    func testScopePickerConsumesProvidedBookmarkAndStartsAnotherSearchAtTop() async throws {
         let source = PreviewMocks.scopeFolderSource
         let (firstPage, secondPage) = scopePickerPageFixtures()
         try assertProviderFixtureWireRefs(firstPage.items.map(\.ref) + secondPage.items.map(\.ref))
@@ -8172,12 +8172,22 @@ final class PreviewSnapshotTests: XCTestCase {
             let location = saved.location(for: source.id)
             saved.catalogues[location] = options
             saved.positions[location] = .init(itemId: .item(.init(last.ref)), index: options.items.count - 1)
-            let restored = try mountScopePicker(source: source, session: saved, scheme: scheme)
+            var installedRestored: SourceFilterPickerView?
+            let restored = try mountScopePicker(
+                source: source, session: saved, scheme: scheme, mounted: { installedRestored = $0 }
+            )
             defer {
                 restored.1.rootView = AnyView(EmptyView())
                 restored.0.isHidden = true
+                installedRestored = nil
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+            try await awaitScopePicker("The mounted picker must issue its retained bookmark after catalogue layout") {
+                guard let picker = installedRestored, let request = picker.pendingRestore,
+                      let scroll = self.scopePickerScroll(in: restored.1.view) else { return false }
+                return picker.issuedRestoreRevision == request.revision && picker.activeRestoreRevision == nil
+                    && picker.restoringLocation == nil && picker.optionsLocation == location
+                    && scroll.bounds.height > 0 && scroll.contentOffset.y > 0
+            }
             let scroll = try XCTUnwrap(scopePickerScroll(in: restored.1.view))
             XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height * 2, "The fixture must require scrolling")
             XCTAssertGreaterThan(scroll.contentOffset.y, 0, "A page-two bookmark must not render at the top")
@@ -8190,13 +8200,26 @@ final class PreviewSnapshotTests: XCTestCase {
             restored.0.isHidden = true
 
             var anotherSearch = saved
-            anotherSearch.query = "Example folder"
+            anotherSearch.query = "folder"
             // The same rows also match this query, so a leaked old anchor would still resolve.
             anotherSearch.catalogues[anotherSearch.location(for: source.id)] = options
-            let fresh = try mountScopePicker(source: source, session: anotherSearch, scheme: scheme)
+            var installedFresh: SourceFilterPickerView?
+            let fresh = try mountScopePicker(
+                source: source, session: anotherSearch, scheme: scheme, mounted: { installedFresh = $0 }
+            )
             defer {
                 fresh.1.rootView = AnyView(EmptyView())
                 fresh.0.isHidden = true
+                installedFresh = nil
+            }
+            let freshLocation = anotherSearch.location(for: source.id)
+            try await awaitScopePicker("A different search must issue its own top request after catalogue layout") {
+                guard let picker = installedFresh, let request = picker.pendingRestore,
+                      let scroll = self.scopePickerScroll(in: fresh.1.view) else { return false }
+                return request.target == .top && picker.issuedRestoreRevision == request.revision
+                    && picker.activeRestoreRevision == nil && picker.restoringLocation == nil
+                    && picker.optionsLocation == freshLocation && scroll.bounds.height > 0
+                    && abs(scroll.contentOffset.y + scroll.adjustedContentInset.top) <= 1
             }
             let reset = try XCTUnwrap(scopePickerScroll(in: fresh.1.view))
             XCTAssertGreaterThan(reset.contentSize.height, reset.bounds.height * 2, "The new query must still require scrolling")
@@ -8302,7 +8325,7 @@ final class PreviewSnapshotTests: XCTestCase {
         let items = (0 ..< 65).map { index in
             ScopeOption(
                 ref: .init(kind: "folder", id: "example-folder-\(index)"),
-                label: "Example folder \(index)",
+                label: index == 0 ? "First folder" : index == 64 ? "Last folder" : "Example folder \(index)",
                 count: index + 1
             )
         }
@@ -8342,7 +8365,6 @@ final class PreviewSnapshotTests: XCTestCase {
         window.rootViewController = host
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         host.view.layoutIfNeeded()
         return (window, host)
     }
