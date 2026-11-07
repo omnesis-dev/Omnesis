@@ -2096,36 +2096,43 @@ describe("source_stats — compute / upsert split", () => {
       dataSize: 0,
       totalUnits: null,
       capturedVersion: 0,
+      capturedDocCount: 0,
     });
   });
 
-  test("computeSourceStatsRow captures dirty_version, upsertSourceStatsRow skips the row data and dirty-bit clear when version moved", () => {
+  test("computeSourceStatsRow captures dirty_version; a raced upsertSourceStatsRow commits the scan, reconciles the count and keeps the dirty bit", () => {
     upsertDocuments(db, [makeDoc({ externalId: "a", content: "hello" })]);
     // Capture compute snapshot now (dirty_version at this moment).
     const agg1 = computeSourceStatsRow(db, "gmail");
     const versionAtCompute = agg1.capturedVersion;
+    expect(agg1.capturedDocCount).toBe(1);
 
     // Simulate a concurrent ingest landing during the compute → bumps
-    // dirty_version, sets needs_refresh=1.
+    // dirty_version and doc_count inline, sets needs_refresh=1.
     upsertDocuments(db, [makeDoc({ externalId: "b", content: "world!" })]);
 
     // Now run the upsert with the (now-stale) compute snapshot.
     upsertSourceStatsRow(db, "gmail", agg1);
 
-    // The upsert should have detected the version mismatch and:
-    //   1. left needs_refresh = 1 (so backfill picks the source up
-    //      again), and
-    //   2. NOT applied the stale aggregation values over the fresher
-    //      ones that upsertDocuments's inline refresh wrote.
+    // The upsert sees the version moved and:
+    //   1. leaves needs_refresh = 1 (so backfill picks the source up
+    //      again),
+    //   2. writes the scan's size (a source that is always ingesting would
+    //      otherwise never get one), and
+    //   3. folds the inline bump into the count instead of writing the
+    //      scan's stale 1 over it.
     const row = db
-      .prepare<[string], { needs_refresh: number; dirty_version: number; doc_count: number }>(
-        "SELECT needs_refresh, dirty_version, doc_count FROM source_stats WHERE source_id = ?",
+      .prepare<
+        [string],
+        { needs_refresh: number; dirty_version: number; doc_count: number; data_size_bytes: number }
+      >(
+        "SELECT needs_refresh, dirty_version, doc_count, data_size_bytes FROM source_stats WHERE source_id = ?",
       )
       .get("gmail")!;
     expect(row.needs_refresh).toBe(1);
     expect(row.dirty_version).toBeGreaterThan(versionAtCompute);
-    // doc_count reflects the post-second-ingest count (2), not the
-    // stale 1 that agg1 carried.
+    expect(row.data_size_bytes).toBe(agg1.dataSize);
+    expect(agg1.dataSize).toBeGreaterThan(0);
     expect(row.doc_count).toBe(2);
 
     // Re-run compute + upsert against the now-current state — should

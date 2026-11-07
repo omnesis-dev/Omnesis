@@ -214,6 +214,8 @@ export interface SourceStatsAggregation {
   dataSize: number;
   totalUnits: number | null;
   capturedVersion: number;
+  /** `doc_count` as the row held it when the aggregation started; see `upsertSourceStatsRow`. */
+  capturedDocCount: number;
 }
 
 export interface LatestActivity {
