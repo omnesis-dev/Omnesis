@@ -3,15 +3,18 @@
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { previewSourceFilter } from "../api.js";
-import { scopeRefLabel, scopeRefKey } from "./source-filter-state.js";
+import { readFilterPreview } from "./source-filter-requests.js";
+import { scopeDisplayLabel, useScopeLabelGeneration } from "./source-filter-labels.js";
+import { scopeRefKey } from "./source-filter-state.js";
 
 export function filterApiError(error, fallback) {
   return error?.serverMessage || fallback;
 }
 
 export function useSourceFilterPreview(sourceId, policy) {
-  const identity = JSON.stringify([sourceId, policy]);
+  const [attempt, setAttempt] = useState(0);
+  const generation = useScopeLabelGeneration();
+  const identity = JSON.stringify([generation, sourceId, policy]);
   const current = useRef(identity);
   current.current = identity;
   const [state, setState] = useState({ identity, pending: Boolean(policy), data: null, error: "" });
@@ -19,7 +22,7 @@ export function useSourceFilterPreview(sourceId, policy) {
     const controller = new AbortController();
     setState({ identity, pending: Boolean(policy), data: null, error: "" });
     if (policy)
-      previewSourceFilter(sourceId, policy, controller.signal)
+      readFilterPreview(sourceId, policy, controller.signal)
         .then((data) => {
           if (
             !controller.signal.aborted &&
@@ -41,10 +44,12 @@ export function useSourceFilterPreview(sourceId, policy) {
             });
         });
     return () => controller.abort();
-  }, [identity]);
-  return state.identity === identity
-    ? state
-    : { identity, pending: Boolean(policy), data: null, error: "" };
+  }, [identity, attempt]);
+  const currentState =
+    state.identity === identity
+      ? state
+      : { identity, pending: Boolean(policy), data: null, error: "" };
+  return { ...currentState, retry: () => setAttempt((value) => value + 1) };
 }
 
 export function FilterReadiness({ readiness = [] }) {
@@ -68,7 +73,15 @@ export function FilterPreview({ preview, showSamples = true }) {
     return html`<p class="source-filter-pending" role="status">
       Calculating visible, hidden and unknown records…
     </p>`;
-  if (preview.error) return html`<p class="access-field-error" role="alert">${preview.error}</p>`;
+  if (preview.error)
+    return html`<div class="source-filter-count-error" role="status">
+      <p>Counts could not be loaded. Your restriction is unchanged.</p>
+      <button type="button" class="btn-secondary" onClick=${preview.retry}>Retry counts</button>
+      <details>
+        <summary>Details</summary>
+        ${preview.error}
+      </details>
+    </div>`;
   if (!preview.data) return null;
   const data = preview.data;
   return html`<section class="source-filter-preview" aria-label="Filter preview">
@@ -114,7 +127,7 @@ export function SourcePolicySummary({ policy, source, capability }) {
             ${rule.match.map((ref) => {
               const item = labels.find((entry) => scopeRefKey(entry.ref) === scopeRefKey(ref));
               return html`<li>
-                ${item?.label || scopeRefLabel(ref)}${ref.kind === "participant" ? ` · ${ref.identifiers.map((id) => id.value).join(" or ")}` : ""}${item?.missing ? " — missing, decision retained" : ""}${item ? ` (${item.count})` : ""}
+                ${item?.label || scopeDisplayLabel(policy.sourceId, ref, source).label}${ref.kind === "participant" ? ` · ${ref.identifiers.map((id) => id.value).join(" or ")}` : ""}${item?.missing ? " — missing, decision retained" : ""}${item ? ` (${item.count})` : ""}
               </li>`;
             })}
           </ul>

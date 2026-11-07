@@ -89,6 +89,10 @@ export function SettingsView({
     replaceRoute(`/portal/settings/${next}`);
   };
 
+  if (activeTab === "access" && (accessNewLevel || accessLevelId)) {
+    return html`<div class="settings-view settings-view--access-task"><${AccessView} authorizationId=${null} levelId=${accessLevelId ?? null} newLevel=${accessNewLevel ?? false} connectOpen=${false} completeInPortal=${false} /></div>`;
+  }
+
   return html`
     <div class="settings-view">
       <div class="settings-header">

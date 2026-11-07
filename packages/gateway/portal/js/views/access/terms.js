@@ -54,8 +54,8 @@ function laneReach(rule, overview) {
   if (connected.length === 0) return "No connected sources";
   const allowed = connected.filter((source) => isSourceAllowed(rule, sourceId(source))).length;
   if (allowed === 0) return "No sources";
-  if (allowed < connected.length) return `${allowed} of ${connected.length} sources`;
-  return rule.sources.mode === "allowlist" ? `All ${connected.length} sources` : "All sources";
+  const reach = allowed < connected.length ? `${allowed} of ${connected.length} sources` : rule.sources.mode === "allowlist" ? `All ${connected.length} sources` : "All sources";
+  return rule.scopePolicies?.length ? `${reach} · restricted content` : reach;
 }
 
 /** The reach of the reading capabilities, or where Answer and Direct disagree, that too. Null for Notes alone. */

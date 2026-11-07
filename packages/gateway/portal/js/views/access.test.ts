@@ -20,7 +20,7 @@ const api = vi.hoisted(() => ({
   revokeAccess: vi.fn(),
   updateAccessLevel: vi.fn(),
 }));
-const router = vi.hoisted(() => ({ navigate: vi.fn(), replaceRoute: vi.fn() }));
+const router = vi.hoisted(() => ({ navigate: vi.fn(), replaceRoute: vi.fn(), setRouteLeaveGuard: vi.fn() }));
 
 const qr = vi.hoisted(() => ({ toCanvas: vi.fn().mockResolvedValue(undefined) }));
 
@@ -2122,14 +2122,24 @@ describe("AccessView", () => {
   });
 
   describe("editing an access level", () => {
-    function continueButton() {
-      return [...host.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent === "Continue")!;
-    }
-
     function capability(name: string): HTMLInputElement {
       return [...host.querySelectorAll<HTMLLabelElement>(".access-capability-preset")]
         .find((candidate) => candidate.querySelector("strong")?.textContent?.trim() === name)!
         .querySelector("input") as HTMLInputElement;
+    }
+
+    async function editPermissions() {
+      const section = [...host.querySelectorAll(".guided-overview-decision")].find((candidate) => candidate.querySelector("h4")?.textContent === "Permissions")!;
+      await act(async () => section.querySelector<HTMLButtonElement>("button")!.click());
+    }
+    async function reviewEdits() {
+      await act(async () => button("Done").click());
+      await act(async () => button("Review changes").click());
+    }
+    async function addNotesAndReview() {
+      await editPermissions();
+      await check(capability("Notes"));
+      await reviewEdits();
     }
 
     function saveButton() {
@@ -2141,18 +2151,15 @@ describe("AccessView", () => {
       api.getAccessOverview.mockResolvedValue(levelOverview);
       await mount({ levelId: "level-research" });
       expect(host.querySelector(".access-page-header h2")?.textContent).toBe("Edit fictional research");
-      expect(document.activeElement).toBe(host.querySelector(".access-page-header h2"));
+      expect(document.activeElement).toBe(host.querySelector(".guided-question h3"));
 
-      await check(capability("Notes"));
-      await act(async () => continueButton().click());
-      await act(async () => continueButton().click());
+      await addNotesAndReview();
 
       const impact = host.querySelector(".access-impact")!;
       expect(impact.querySelector("strong")?.textContent).toBe("2 connections affected");
       expect([...impact.querySelectorAll("li")].map((item) => item.textContent)).toEqual(["Fictional desktop", "Fictional laptop"]);
       expect(saveButton().textContent).toBe("Save changes for 2 connections");
-      // The review names capabilities with the same pill the list uses.
-      expect(host.querySelector(".grant-builder-summary .grant-review-row .access-badge-answer")).not.toBeNull();
+      expect(host.querySelector(".guided-review-decision")?.textContent).toContain("Save new notes");
 
       api.updateAccessLevel.mockResolvedValue({ level: {} });
       await act(async () => {
@@ -2176,14 +2183,13 @@ describe("AccessView", () => {
     test("saves plainly when one connection or none uses the level", async () => {
       api.getAccessOverview.mockResolvedValue(researchUsedBy("Fictional laptop"));
       await mount({ levelId: "level-research" });
-      await act(async () => continueButton().click());
-      await act(async () => continueButton().click());
+      await addNotesAndReview();
       expect(host.querySelector(".access-impact strong")?.textContent).toBe("1 connection affected");
       expect(saveButton().textContent).toBe("Save changes");
 
-      api.getAccessOverview.mockResolvedValue(levelOverview);
-      await remount({ levelId: "level-notes" });
-      await act(async () => continueButton().click());
+      api.getAccessOverview.mockResolvedValue(researchUsedBy());
+      await remount({ levelId: "level-research" });
+      await addNotesAndReview();
       expect(host.querySelector(".access-impact strong")?.textContent).toBe("No connections use this access level yet");
       expect(host.querySelector(".access-impact li")).toBeNull();
       expect(saveButton().textContent).toBe("Save changes");
@@ -2199,8 +2205,7 @@ describe("AccessView", () => {
         ),
       });
       await mount({ levelId: "level-research" });
-      await act(async () => continueButton().click());
-      await act(async () => continueButton().click());
+      await addNotesAndReview();
       const impact = host.querySelector(".access-impact")!;
       expect(impact.querySelector("strong")?.textContent).toBe("2 connections and 1 integration affected");
       expect([...impact.querySelectorAll("li")].map((item) => item.textContent)).toEqual([
@@ -2215,8 +2220,7 @@ describe("AccessView", () => {
     test("says why a level devices use keeps its Answer", async () => {
       api.getAccessOverview.mockResolvedValue(levelOverview);
       await mount({ levelId: "level-research" });
-      await act(async () => continueButton().click());
-      await act(async () => continueButton().click());
+      await addNotesAndReview();
       api.updateAccessLevel.mockRejectedValue(
         Object.assign(new Error("Conflict"), { status: 409, serverMessage: "level-in-use" }),
       );
@@ -2232,9 +2236,10 @@ describe("AccessView", () => {
     test("will not continue past permissions with no capability selected", async () => {
       api.getAccessOverview.mockResolvedValue(levelOverview);
       await mount({ levelId: "level-notes" });
-      expect(continueButton().disabled).toBe(false);
+      await editPermissions();
       await check(capability("Notes"), false);
-      expect(continueButton().disabled).toBe(true);
+      await act(async () => button("Done").click());
+      expect(host.querySelector(".guided-question h3")?.textContent).toBe("What may this connection do?");
       expect(host.textContent).toContain("Select at least one capability.");
     });
 
@@ -2249,9 +2254,7 @@ describe("AccessView", () => {
         });
       api.updateAccessLevel.mockRejectedValue(Object.assign(new Error("stale"), { status: 409, serverMessage: "stale-revision" }));
       await mount({ levelId: "level-research" });
-      await check(capability("Notes"));
-      await act(async () => continueButton().click());
-      await act(async () => continueButton().click());
+      await addNotesAndReview();
       await act(async () => {
         saveButton().click();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2264,7 +2267,8 @@ describe("AccessView", () => {
       expect(host.textContent).toContain("Your draft is retained");
       await act(async () => {button("Reload latest and discard draft").click();await new Promise(resolve=>setTimeout(resolve,0));});
       expect(api.getAccessOverview.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(host.querySelector("[aria-current='step']")?.textContent).toContain("Permissions");
+      expect(host.querySelector(".guided-question h3")?.textContent).toBe("What would you like to change?");
+      await editPermissions();
       expect(capability("Direct").hasAttribute("checked")).toBe(true);
       expect(capability("Answer").hasAttribute("checked")).toBe(false);
       expect(router.replaceRoute).not.toHaveBeenCalled();
@@ -2282,8 +2286,7 @@ describe("AccessView", () => {
         .mockResolvedValue({ ...levelOverview, levels: [levelOverview.levels[1]] });
       api.updateAccessLevel.mockRejectedValue(Object.assign(new Error("gone"), { status: 404 }));
       await mount({ levelId: "level-research" });
-      await act(async () => continueButton().click());
-      await act(async () => continueButton().click());
+      await addNotesAndReview();
       await act(async () => {
         saveButton().click();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2299,8 +2302,7 @@ describe("AccessView", () => {
       api.getAccessOverview.mockResolvedValue(levelOverview);
       api.updateAccessLevel.mockReturnValue(new Promise(() => {}));
       await mount({ levelId: "level-research" });
-      await act(async () => continueButton().click());
-      await act(async () => continueButton().click());
+      await addNotesAndReview();
       await act(async () => {
         saveButton().click();
         saveButton().click();
@@ -2324,13 +2326,14 @@ describe("AccessView", () => {
       api.getAccessOverview.mockResolvedValue(levelOverview);
       await mount({ newLevel: true });
       expect(host.querySelector(".access-page-header h2")?.textContent).toBe("New access level");
-      const name = nameField("Access level name");
+      expect(host.querySelector("#access-new-level-name")).toBeNull();
       // A fresh form does not open on a complaint.
       expect(host.querySelector(".access-level-name-form .access-field-error")).toBeNull();
 
       await check(capability("Answer"), false);
       await check(capability("Notes"));
       await act(async () => continueButton().click());
+      const name = nameField("Access level name");
       const create = () => button("Create access level");
       expect(create().disabled).toBe(true);
 
@@ -2373,14 +2376,14 @@ describe("AccessView", () => {
       await check(capability("Notes"));
       await act(async () => continueButton().click());
 
-      const nameRow = () => [...host.querySelectorAll(".access-review-rows > div")]
-        .find((row) => row.querySelector("dt")?.textContent === "Access level name")!;
-      expect(nameRow().querySelector("dd")?.textContent).toBe("Enter a name for this access level.");
-      // Leaving the first step is when the empty field starts saying so too.
-      expect(host.querySelector(".access-level-name-form .access-field-error")?.textContent)
-        .toBe("Enter a name for this access level.");
+      expect(nameField("Access level name")).toBeDefined();
+      expect(host.querySelector(".access-level-name-form .access-field-error")).toBeNull();
+      expect(button("Create access level").disabled).toBe(true);
+      await typeInto(nameField("Access level name"), "fictional");
+      await typeInto(nameField("Access level name"), "");
+      expect(host.querySelector(".access-level-name-form .access-field-error")?.textContent).toBe("Enter a name for this access level.");
       await typeInto(nameField("Access level name"), " fictional travel ");
-      expect(nameRow().querySelector("dd")?.textContent).toBe("fictional travel");
+      expect(button("Create access level").disabled).toBe(false);
 
       api.createAccessLevel.mockReturnValue(new Promise(() => {}));
       await act(async () => {

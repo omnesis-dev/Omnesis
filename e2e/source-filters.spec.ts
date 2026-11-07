@@ -163,22 +163,30 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   });
   await page.goto(`/portal/settings/access/levels/${levelId}`);
   await expect(page.getByRole("heading", { name: "Edit Fictional research" })).toBeVisible();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await page.getByRole("button", { name: "Edit filter", exact: true }).click();
+  await page
+    .locator(".guided-overview-decision")
+    .filter({ has: page.getByRole("heading", { name: "Answer data", exact: true }) })
+    .getByRole("button", { name: "Change", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Change Fictional project account content", exact: true })
+    .click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("Fictional project room", { exact: true }).first()).toBeVisible();
-  await expect(dialog.locator(".source-filter-counts")).toContainText("6 visible");
-  await expect(dialog).toContainText("Unknown records are included in hidden");
-  await dialog.getByLabel("Everything except matching records").check();
+  await dialog.getByLabel("Everything except matches", { exact: false }).check();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
   await dialog.getByRole("button", { name: "participant", exact: true }).click();
+  await dialog.locator(".source-filter-typed-disclosure > summary").click();
   await dialog.getByLabel("Exact identifier").fill("person@example.com");
   await dialog.getByRole("button", { name: "Add identifier", exact: true }).click();
   await dialog.getByRole("button", { name: "Folders", exact: true }).click();
   await expect(dialog).toContainText("Choosing a folder includes all of its descendants");
   await dialog.getByRole("button", { name: "Open Fictional root", exact: true }).click();
   await dialog.getByRole("checkbox", { name: /Fictional leaf/ }).check();
-  await expect(dialog.getByRole("heading", { name: "Selected items (3)" })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Use this filter", exact: true })).toBeEnabled();
+  await expect(dialog.locator(".filter-selection-strip")).toContainText("3 selected");
+  await dialog.getByRole("button", { name: "Review filter", exact: true }).click();
+  await expect(dialog.locator(".source-filter-counts")).toContainText("6 visible");
+  await expect(dialog).toContainText("Unknown records are included in hidden");
+  await expect(dialog.getByRole("button", { name: "Apply filter", exact: true })).toBeEnabled();
   await dialog.locator(".modal-body").evaluate((body) => {
     body.scrollTop = 0;
   });
@@ -193,19 +201,18 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath("source-filter-mobile.png") });
-  await expect(dialog.getByRole("button", { name: "Use this filter", exact: true })).toBeEnabled();
-  await dialog
-    .getByRole("button", { name: "Use this filter", exact: true })
-    .scrollIntoViewIfNeeded();
+  await expect(dialog.getByRole("button", { name: "Apply filter", exact: true })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Apply filter", exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("source-filter-mobile-actions.png") });
   await page.setViewportSize({ width: 1280, height: 900 });
-  await dialog.getByRole("button", { name: "Use this filter", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Copy Answer filters to Direct once", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.locator(".source-policy-summary")).toHaveCount(3);
-  await expect(page.locator(".source-policy-summary").last()).toContainText("person@example.com");
+  await dialog.getByRole("button", { name: "Apply filter", exact: true }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Use Answer’s data once", exact: true }).click();
+  await page.getByLabel("Use Answer’s data for this draft", { exact: false }).check();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Review changes", exact: true }).click();
+  await expect(page.locator(".guided-review-decision")).toHaveCount(2);
+  await expect(page.locator(".guided-match-names").last()).toContainText("person@example.com");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.getByText(/Your draft is retained/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeDisabled();
@@ -241,6 +248,6 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   ).toHaveLength(3);
   await page.getByRole("button", { name: "Reload latest and discard draft", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Choose permissions", exact: true }),
+    page.getByRole("heading", { name: "What would you like to change?", exact: true }),
   ).toBeVisible();
 });

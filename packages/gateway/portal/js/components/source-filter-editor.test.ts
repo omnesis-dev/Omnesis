@@ -111,6 +111,14 @@ async function mount(props: Record<string, unknown> = {}) {
       host,
     );
   });
+  if (props.enabled !== false && props.savedPolicy !== null && host.textContent?.includes("What should be shared?")) {
+    await act(async () => button("Continue").click());
+    await act(async () => button("Review filter").click());
+    await flushUI();
+  }
+}
+async function flushUI() {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 async function waitOptions() {
   await act(async () => {
@@ -147,9 +155,9 @@ test("saved filters remain inspectable and immutable when the authoring gate is 
   await mount({ enabled: false, onApply, onRemove });
   await waitOptions();
   expect(host.textContent).toContain("saved restriction remains enforced");
-  expect(host.textContent).not.toContain("Use this filter");
+  expect(host.textContent).not.toContain("Apply filter");
   expect(host.textContent).not.toContain("Remove this source filter");
-  expect(host.querySelector(".source-filter-options input")?.hasAttribute("disabled")).toBe(true);
+  expect(host.querySelector(".source-filter-options input")).toBeNull();
   expect(onApply).not.toHaveBeenCalled();
   expect(onRemove).not.toHaveBeenCalled();
 });
@@ -179,7 +187,7 @@ test.each([false, null, undefined])(
     expect(host.textContent).not.toContain("Copy Answer filters to Direct once");
     await act(async () => button("Inspect saved filter").click());
     expect(host.textContent).toContain("saved restriction remains enforced");
-    expect(host.textContent).not.toContain("Use this filter");
+    expect(host.textContent).not.toContain("Apply filter");
     expect(host.textContent).not.toContain("Remove this source filter");
     expect(onChange).not.toHaveBeenCalled();
     await act(async () => button("Close").click());
@@ -196,7 +204,7 @@ test("an unsupported saved field is retained and never converted to an editable 
     onApply = vi.fn();
   await mount({ savedPolicy: saved, onApply });
   expect(host.textContent).toContain("complete saved policy is preserved");
-  expect(host.textContent).not.toContain("Use this filter");
+  expect(host.textContent).not.toContain("Apply filter");
   expect(onApply).not.toHaveBeenCalled();
   expect(saved.maxAge).toEqual({ days: 3 });
 });
@@ -210,10 +218,14 @@ test("late preview responses cannot replace the decision the owner is reviewing"
     .mockReturnValueOnce(fresh.promise);
   const onApply = vi.fn();
   await mount({ onApply });
-  const except = [...host.querySelectorAll<HTMLInputElement>(".source-filter-mode input")][1]!;
+  await act(async () => button("Back").click());
+  await act(async () => button("Back").click());
+  const except = [...host.querySelectorAll<HTMLInputElement>(".source-filter-mode input")][2]!;
   await act(async () => {
     except.dispatchEvent(new window.Event("change", { bubbles: true }));
   });
+  await act(async () => button("Continue").click());
+  await act(async () => button("Review filter").click());
   const preview = (visible: number) => ({
     sourceId: source.id,
     total: 100,
@@ -226,9 +238,10 @@ test("late preview responses cannot replace the decision the owner is reviewing"
   });
   await act(async () => fresh.resolve(preview(7)));
   await act(async () => old.resolve(preview(99)));
+  await flushUI();
   expect(host.querySelector(".source-filter-counts")?.textContent).toContain("7 visible");
   expect(host.querySelector(".source-filter-counts")?.textContent).not.toContain("99");
-  await act(async () => button("Use this filter").click());
+  await act(async () => button("Apply filter").click());
   expect(onApply).toHaveBeenCalledWith(
     expect.objectContaining({
       otherwise: "share",
@@ -256,7 +269,7 @@ test("readiness returned by the preview fences Use even if the overview was read
     ],
   });
   await mount();
-  expect(button("Use this filter").disabled).toBe(true);
+  expect(button("Apply filter").disabled).toBe(true);
   expect(host.textContent).toContain("Refresh required");
   expect(host.textContent).toContain("Fictional collector");
 });
@@ -313,7 +326,8 @@ test("a late picker response from another account is aborted and never displayed
       ],
     }),
   );
-  expect(oldSignal.aborted).toBe(true);
+  await flushUI();
+  expect(oldSignal.aborted).toBe(false); // Consumer cancellation retains the server admission slot until its response settles.
   expect(host.textContent).toContain("Second account room");
   expect(host.textContent).not.toContain("First account room");
 });
@@ -326,6 +340,8 @@ test("participant additions require an explicit accepted typed identifier and ex
   expect(
     [...host.querySelectorAll("option")].map((option) => option.getAttribute("value")),
   ).toEqual(["email", "phone"]);
+  const disclosure = host.querySelector<HTMLDetailsElement>(".source-filter-typed-disclosure")!;
+  await act(async () => { disclosure.open = true; disclosure.dispatchEvent(new window.Event("toggle")); });
   const input = host.querySelector<HTMLInputElement>("input[aria-label='Exact identifier']")!;
   await act(async () => {
     input.value = "person@example.com";

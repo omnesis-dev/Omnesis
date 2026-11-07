@@ -77,7 +77,7 @@ export function CapabilityTriad({ rules, live = true }) {
   </div>`;
 }
 
-function sourceInstanceIcon(source, id) {
+export function sourceInstanceIcon(source, id) {
   const icon = source.icon;
   const safeIcon = typeof icon === "string" && (
     /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(icon)

@@ -3,7 +3,8 @@
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { getSourceFilterOptions } from "../api.js";
+import { useScopeLabelGeneration } from "./source-filter-labels.js";
+import { readFilterOptions } from "./source-filter-requests.js";
 import { filterApiError, FilterReadiness } from "./source-filter-preview.js";
 import { requestIdentity, scopeRefKey, typedParticipant } from "./source-filter-state.js";
 
@@ -12,7 +13,8 @@ export function SourceFilterPicker({ source, kind, selected, onToggle, disabled 
   const [trail, setTrail] = useState([]);
   const parentId = query ? undefined : trail.at(-1)?.id;
   const sourceId = source.id ?? source.sourceId;
-  const identity = requestIdentity(sourceId, kind, query, parentId);
+  const generation = useScopeLabelGeneration();
+  const identity = JSON.stringify([generation, requestIdentity(sourceId, kind, query, parentId)]);
   const current = useRef(identity);
   current.current = identity;
   const requests = useRef(new Set());
@@ -27,6 +29,7 @@ export function SourceFilterPicker({ source, kind, selected, onToggle, disabled 
   const [type, setType] = useState("email");
   const [typed, setTyped] = useState("");
   const [typedError, setTypedError] = useState("");
+  const [typedOpen, setTypedOpen] = useState(false);
   const declaration = source.scopes?.items?.find((item) => item.kind === kind);
   const identifierTypes = declaration?.identifiers ?? [];
   const types = ["email", "phone", "domain"].filter((item) => identifierTypes.includes(item));
@@ -44,7 +47,7 @@ export function SourceFilterPicker({ source, kind, selected, onToggle, disabled 
       error: "",
     }));
     try {
-      const result = await getSourceFilterOptions(
+      const result = await readFilterOptions(
         sourceId,
         { kind, q: query || undefined, parentId, cursor: cursor || undefined },
         controller.signal,
@@ -111,7 +114,16 @@ export function SourceFilterPicker({ source, kind, selected, onToggle, disabled 
         onInput=${(event) => setQuery(event.currentTarget.value)}
     /></label>
     ${visible.pending ? html`<p role="status">Loading source options…</p>` : null}
-    ${visible.error ? html`<p class="access-field-error" role="alert">${visible.error}</p>` : null}
+    ${
+      visible.error
+        ? html`<div role="status">
+            <p>${visible.error}</p>
+            <button type="button" class="btn-secondary" onClick=${() => load(null, false)}>
+              Retry options
+            </button>
+          </div>`
+        : null
+    }
     <ul class="source-filter-options">
       ${visible.items.map(
         (item) =>
@@ -121,7 +133,7 @@ export function SourceFilterPicker({ source, kind, selected, onToggle, disabled 
                 type="checkbox"
                 checked=${keys.has(scopeRefKey(item.ref))}
                 disabled=${disabled}
-                onChange=${() => onToggle(item.ref)}
+                onChange=${() => onToggle(item.ref, item)}
               /><span>${item.label}<small>${item.count} matching records</small></span></label
             >
             ${
@@ -135,7 +147,7 @@ export function SourceFilterPicker({ source, kind, selected, onToggle, disabled 
                       setTrail([...trail, { id: item.ref.id, label: item.label }]);
                     }}
                   >
-                    Open
+                    <span aria-hidden="true">›</span>
                   </button>`
                 : null
             }
@@ -146,47 +158,54 @@ export function SourceFilterPicker({ source, kind, selected, onToggle, disabled 
     ${visible.nextCursor ? html`<button type="button" class="btn-secondary" disabled=${visible.pending} onClick=${() => load(visible.nextCursor, true)}>Load more</button>` : null}
     ${
       kind === "participant" && types.length
-        ? html`<fieldset class="source-filter-typed" disabled=${disabled}>
-            <legend>Add an exact identifier</legend>
-            <p>
-              Saved identifiers are snapshots. Later name changes and person merges do not change
-              this filter.
-            </p>
-            <select
-              aria-label="Identifier type"
-              value=${typedType}
-              onChange=${(event) => setType(event.currentTarget.value)}
-            >
-              ${types.map((item) => html`<option value=${item}>${item === "phone" ? "Phone number" : item === "email" ? "Email address" : "Email domain"}</option>`)}
-            </select>
-            <input
-              aria-label="Exact identifier"
-              value=${typed}
-              onInput=${(event) => {
-                setTyped(event.currentTarget.value);
-                setTypedError("");
-              }}
-              placeholder=${typedType === "phone" ? "+15550100123" : typedType === "domain" ? "example.com" : "person@example.com"}
-            />
-            <button
-              type="button"
-              class="btn-secondary"
-              onClick=${() => {
-                const ref = typedParticipant(typedType, typed);
-                if (!ref) {
-                  setTypedError(
-                    "Enter a valid exact identifier. Phone numbers need an international + prefix.",
-                  );
-                  return;
-                }
-                if (!keys.has(scopeRefKey(ref))) onToggle(ref);
-                setTyped("");
-              }}
-            >
-              Add identifier
-            </button>
-            ${typedError ? html`<p class="access-field-error" role="alert">${typedError}</p>` : null}
-          </fieldset>`
+        ? html`<details
+            class="source-filter-typed-disclosure"
+            open=${typedOpen}
+            onToggle=${(event) => setTypedOpen(event.currentTarget.open)}
+          >
+            <summary>Add an exact identifier</summary>
+            <fieldset class="source-filter-typed" disabled=${disabled}>
+              <legend class="sr-only">Exact identifier</legend>
+              <p>
+                Saved identifiers are snapshots. Later name changes and person merges do not change
+                this filter.
+              </p>
+              <select
+                aria-label="Identifier type"
+                value=${typedType}
+                onChange=${(event) => setType(event.currentTarget.value)}
+              >
+                ${types.map((item) => html`<option value=${item}>${item === "phone" ? "Phone number" : item === "email" ? "Email address" : "Email domain"}</option>`)}
+              </select>
+              <input
+                aria-label="Exact identifier"
+                value=${typed}
+                onInput=${(event) => {
+                  setTyped(event.currentTarget.value);
+                  setTypedError("");
+                }}
+                placeholder=${typedType === "phone" ? "+15550100123" : typedType === "domain" ? "example.com" : "person@example.com"}
+              />
+              <button
+                type="button"
+                class="btn-secondary"
+                onClick=${() => {
+                  const ref = typedParticipant(typedType, typed);
+                  if (!ref) {
+                    setTypedError(
+                      "Enter a valid exact identifier. Phone numbers need an international + prefix.",
+                    );
+                    return;
+                  }
+                  if (!keys.has(scopeRefKey(ref))) onToggle(ref);
+                  setTyped("");
+                }}
+              >
+                Add identifier
+              </button>
+              ${typedError ? html`<p class="access-field-error" role="alert">${typedError}</p>` : null}
+            </fieldset>
+          </details>`
         : null
     }
   </section>`;

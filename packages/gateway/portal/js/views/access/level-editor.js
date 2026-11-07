@@ -1,24 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// The pages an access level opens on.
-//
-// Editing a level is a three-step wizard that changes what every connection
-// using it may do, which sources it reads and under which policy, then shows
-// the current and proposed permissions side by side — and names the
-// connections the change reaches — before saving on the level's revision.
-// Creating a level asks for its name and runs the same wizard.
-//
-// Each page's save is guarded by a ref set the moment it starts: the disabled
-// button only follows on the next render, so a second press in the same moment
-// is refused rather than sent twice.
+// Access-level pages own persistence, revision conflicts and draft lifetime.
+// Focused decision components render the create path and targeted edits.
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { expectedFilterRevisions } from "../../components/source-filter-state.js";
 import { createAccessLevel, updateAccessLevel, getAccessOverview } from "../../api.js";
-import { EffectiveAccessSummary } from "../../components/grant-builder.js";
 import {
   defaultPolicyFamilyId,
   newGrantRule,
@@ -28,7 +18,9 @@ import {
   newAuthorityFilterError,
   validateGrantRules,
 } from "../../components/grant-builder-state.js";
-import { GrantWizard } from "./grant-wizard.js";
+import { LevelFlow } from "./level-flow.js";
+import { useLevelExitGuard } from "./level-exit-guard.js";
+import { sameDecision } from "./level-flow-state.js";
 import {
   LEVEL_NAME_TAKEN_MESSAGE,
   NameField,
@@ -44,8 +36,6 @@ import {
   levelDevices,
   overviewPolicies,
 } from "./shared.js";
-
-const STEPS = ["Permissions", "Data & privacy", "Review changes"];
 
 function PageHeader({ title, busy, onClose, headingRef }) {
   return html`<header class="access-page-header">
@@ -100,7 +90,7 @@ export function LevelEditorPage({
   const [baseline, setBaseline] = useState(level);
   const initial = accessRules(baseline, overview);
   const [value, setValue] = useState(initial);
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState("overview");
   const [linkSources, setLinkSources] = useState(rulesShareSources(initial));
   const [linkFilters, setLinkFilters] = useState(false);
   const [stale, setStale] = useState(false);
@@ -110,9 +100,9 @@ export function LevelEditorPage({
   const reloadController = useRef(null);
   const inFlightRef = useRef(false);
   const validationError = validateGrantRules(value, sources);
+  const exit = useLevelExitGuard(!sameDecision(initial, value), busy, onClose);
 
   useEffect(() => {
-    headingRef?.current?.focus();
     return () => {
       mounted.current = false;
       reloadController.current?.abort();
@@ -149,7 +139,7 @@ export function LevelEditorPage({
       setLinkSources(rulesShareSources(accessRules(current, fresh)));
       setStale(false);
       setError("");
-      setStep(1);
+      setStep("overview");
     } catch (error) {
       if (!controller.signal.aborted && mounted.current)
         setError(
@@ -164,7 +154,7 @@ export function LevelEditorPage({
   }
 
   async function save() {
-    if (validationError || stale || inFlightRef.current) return;
+    if (validationError || stale || sameDecision(initial, value) || inFlightRef.current) return;
     inFlightRef.current = true;
     setBusy(true);
     setError("");
@@ -175,6 +165,7 @@ export function LevelEditorPage({
         rules: serializeGrantRules(value),
       });
       if (!mounted.current) return;
+      exit.saved();
       await onSaved();
       if (mounted.current) onClose();
     } catch (error) {
@@ -205,11 +196,11 @@ export function LevelEditorPage({
     <${PageHeader}
       title=${`Edit ${level.name}`}
       busy=${busy}
-      onClose=${onClose}
+      onClose=${exit.close}
       headingRef=${headingRef}
     />
-    <${GrantWizard}
-      steps=${STEPS}
+    <${LevelFlow}
+      initial=${initial}
       step=${step}
       onStep=${setStep}
       rules=${value}
@@ -223,51 +214,29 @@ export function LevelEditorPage({
       linkSources=${linkSources}
       onLinkSources=${setLinkSources}
       disabled=${busy}
-      idPrefix=${`level-${level.id}`}
       error=${error}
-      copy=${{
-        one: {
-          heading: "Choose permissions",
-          blurb: "Choose what every connection using this access level may do.",
-        },
-        two: { heading: "Choose data and privacy" },
-        three: {
-          heading: "Review changes",
-          blurb: "Compare the current permissions with the ones that will replace them.",
-        },
-      }}
-      review=${html` <div class="access-review-comparison">
-          <${EffectiveAccessSummary}
-            rules=${initial}
-            sources=${sources}
-            policies=${policies}
-            heading="Current permissions"
-          />
-          <${EffectiveAccessSummary}
-            rules=${value}
-            sources=${sources}
-            policies=${policies}
-            heading="Proposed permissions"
-          />
-        </div>
-        <section class="access-impact" aria-label="Affected connections and integrations">
-          <strong>${impactHeading(count, devices.length)}</strong>
-          ${
-            count || devices.length
-              ? html`<ul>
-                  ${connections.map((connection) => html`<li key=${connection.id}>${connection.name}</li>`)}
-                  ${devices.map((device) => html`<li key=${device.id} class="access-impact-device"><${KindIcon} kind=${device.kind} size=${13} class="access-device-icon" />${device.name} <span class="access-muted">(integration)</span></li>`)}
-                </ul>`
-              : null
-          }
-          <p>
-            Connected agents receive the new permissions when they refresh. They do not need to
-            reconnect.${devices.length ? " An integration's next question uses them." : ""}
-          </p>
-        </section>`}
-      leadAction=${html`<span><button type="button" class="btn-ghost" disabled=${busy} onClick=${onClose}>Cancel</button>${stale ? html`<button type="button" class="btn-secondary" disabled=${busy} onClick=${reloadLatest}>Reload latest and discard draft</button>` : null}</span>`}
-      finalAction=${html`<button type="button" class="btn-primary" disabled=${busy || stale || Boolean(validationError)} onClick=${save}>${busy ? "Saving…" : saveChangesLabel(count, devices.length)}</button>`}
+      impact=${html` <section
+        class="access-impact"
+        aria-label="Affected connections and integrations"
+      >
+        <strong>${impactHeading(count, devices.length)}</strong>
+        ${
+          count || devices.length
+            ? html`<ul>
+                ${connections.map((connection) => html`<li key=${connection.id}>${connection.name}</li>`)}
+                ${devices.map((device) => html`<li key=${device.id} class="access-impact-device"><${KindIcon} kind=${device.kind} size=${13} class="access-device-icon" />${device.name} <span class="access-muted">(integration)</span></li>`)}
+              </ul>`
+            : null
+        }
+        <p>
+          Connected agents receive the new permissions when they refresh. They do not need to
+          reconnect.${devices.length ? " An integration's next question uses them." : ""}
+        </p>
+      </section>`}
+      leadAction=${html`<span><button type="button" class="btn-ghost" disabled=${busy} onClick=${exit.close}>Cancel</button>${stale ? html`<button type="button" class="btn-secondary" disabled=${busy} onClick=${reloadLatest}>Reload latest and discard draft</button>` : null}</span>`}
+      finalAction=${html`<button type="button" class="btn-primary" disabled=${busy || stale || sameDecision(initial, value) || Boolean(validationError)} onClick=${save}>${busy ? "Saving…" : saveChangesLabel(count, devices.length)}</button>`}
     />
+    ${exit.confirmation}
   </div>`;
 }
 
@@ -280,7 +249,7 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
   const [value, setValue] = useState(() => ({
     answer: newGrantRule("answer", defaultPolicyFamilyId(policies, overview.defaultPolicyFamilyId)),
   }));
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState("permissions");
   const [linkSources, setLinkSources] = useState(true);
   const [linkFilters, setLinkFilters] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -291,19 +260,23 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
   // gateway's own refusal stays the backstop for a level created meanwhile.
   const taken = levelNameTaken(name, overview.levels ?? []);
   const creationError = newAuthorityFilterError(value, overview.sourceFilters?.enabled === true);
-  const ready = validAccessName(name) && !taken && !creationError && !validateGrantRules(value, sources);
+  const ready =
+    validAccessName(name) && !taken && !creationError && !validateGrantRules(value, sources);
+  const initialDraft = useRef(value);
+  const exit = useLevelExitGuard(
+    Boolean(name.trim()) || !sameDecision(initialDraft.current, value),
+    busy,
+    onClose,
+  );
 
   useEffect(() => {
-    headingRef?.current?.focus();
     return () => {
       mounted.current = false;
     };
   }, []);
 
-  // Leaving the first step is when an empty name becomes worth saying: the
-  // review cannot be saved without one.
+  // Navigation preserves the draft; name validation belongs to its final step.
   const moveTo = (next) => {
-    setNameTouched(true);
     setStep(next);
   };
 
@@ -322,6 +295,7 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
         rules: serializeNewAuthorityRules(value),
       });
       if (!mounted.current) return;
+      exit.saved();
       await onCreated(result?.level ?? { name: name.trim() });
       if (mounted.current) onClose();
     } catch (error) {
@@ -341,25 +315,10 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
     <${PageHeader}
       title="New access level"
       busy=${busy}
-      onClose=${onClose}
+      onClose=${exit.close}
       headingRef=${headingRef}
     />
-    <div class="access-level-name-form">
-      <${NameField}
-        id="access-new-level-name"
-        label="Access level name"
-        value=${name}
-        onInput=${(next) => {
-          setName(next);
-          setNameTouched(true);
-        }}
-        emptyMessage=${nameTouched ? "Enter a name for this access level." : ""}
-        conflictMessage=${taken ? LEVEL_NAME_TAKEN_MESSAGE : ""}
-        disabled=${busy}
-      />
-    </div>
-    <${GrantWizard}
-      steps=${["Permissions", "Data & privacy", "Review"]}
+    <${LevelFlow}
       step=${step}
       onStep=${moveTo}
       rules=${value}
@@ -373,40 +332,24 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
       linkSources=${linkSources}
       onLinkSources=${setLinkSources}
       disabled=${busy}
-      idPrefix="new-level"
-      error=${error || creationError}
-      copy=${{
-        one: {
-          heading: "Choose permissions",
-          blurb: "Choose what connections using this access level may do.",
-        },
-        two: { heading: "Choose data and privacy" },
-        three: { heading: "Review" },
-      }}
-      review=${html` <dl class="access-review-rows" aria-label="New access level">
-          <div>
-            <dt>Access level name</dt>
-            <dd>
-              ${
-                !validAccessName(name)
-                  ? html`<span class="access-field-error"
-                      >Enter a name for this access level.</span
-                    >`
-                  : taken
-                    ? html`<span class="access-field-error">${LEVEL_NAME_TAKEN_MESSAGE}</span>`
-                    : name.trim()
-              }
-            </dd>
-          </div>
-        </dl>
-        <${EffectiveAccessSummary}
-          rules=${value}
-          sources=${sources}
-          policies=${policies}
-          heading="Permissions"
-        />`}
-      leadAction=${html`<button type="button" class="btn-ghost" disabled=${busy} onClick=${onClose}>Cancel</button>`}
+      error=${error || creationError || (step === "review" ? validateGrantRules(value, sources) : "")}
+      review=${html`<div class="access-level-name-form">
+        <${NameField}
+          id="access-new-level-name"
+          label="Access level name"
+          value=${name}
+          onInput=${(next) => {
+            setName(next);
+            setNameTouched(true);
+          }}
+          emptyMessage=${nameTouched ? "Enter a name for this access level." : ""}
+          conflictMessage=${taken ? LEVEL_NAME_TAKEN_MESSAGE : ""}
+          disabled=${busy}
+        />
+      </div>`}
+      leadAction=${html`<button type="button" class="btn-ghost" disabled=${busy} onClick=${exit.close}>Cancel</button>`}
       finalAction=${html`<button type="button" class="btn-primary" disabled=${busy || !ready} onClick=${create}>${busy ? "Creating…" : "Create access level"}</button>`}
     />
+    ${exit.confirmation}
   </div>`;
 }

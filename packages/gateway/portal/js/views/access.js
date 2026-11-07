@@ -115,6 +115,8 @@ export function AccessView({
   const [pending, setPending] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [notice, setNotice] = useState("");
+  const noticeRef = useRef(null);
+  useEffect(() => { if (notice) noticeRef.current?.focus?.(); }, [notice, newLevel, levelId]);
   // The connection a Remove is being confirmed for, and the level that goes
   // with it when it is that level's last connection.
   const [removal, setRemoval] = useState(null);
@@ -607,6 +609,7 @@ export function AccessView({
 
   return html`
     <div class="access-view">
+      ${notice && html`<p class="access-notice" role="status" tabindex="-1" ref=${noticeRef}>${notice}</p>`}
       <header class="access-header">
         <div>
           <h2 ref=${accessHeadingRef} tabIndex="-1">Agent access</h2>
@@ -655,7 +658,6 @@ export function AccessView({
         ? html`<${PendingRequests} requests=${overview.pendingRequests} />`
         : null}
 
-      ${notice && html`<p class="access-notice" role="status">${notice}</p>`}
       ${error && html`<p class="access-error" role="alert">${error}</p>`}
 
       ${loading
