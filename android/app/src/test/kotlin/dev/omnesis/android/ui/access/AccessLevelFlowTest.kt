@@ -145,12 +145,12 @@ class AccessLevelFlowTest {
         assertTrue(unchanged.changes(state).isEmpty())
     }
     @Test fun presentationAndSetOrderAreNotAuthorityChangesButAdvancedRuleOrderIsPreserved() {
-        val refs = listOf(ScopeRef("label", "first", "Before"), ScopeRef("label", "second", "Same"))
+        val refs = listOf(ScopeRef("label", "first"), ScopeRef("participant", label = "Before", identifiers = listOf(ScopeIdentifier("email", "reader@example.org"))))
         val policy = ScopePolicy(source.id, ScopeAudience("saved", "direct"), listOf(ScopeRule(refs, "share")), "hide")
         val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALL, emptyList())).copy(scopePolicies = listOf(policy), filterRevision = 3)
         val level = AccessLevelSummary("saved", "Helper", 1, listOf(direct), 0)
         val state = overview.copy(levels = listOf(level))
-        val currentPolicy = policy.copy(rules = listOf(ScopeRule(refs.reversed().map { it.copy(label = "Renamed") }, "share")))
+        val currentPolicy = policy.copy(rules = listOf(ScopeRule(refs.reversed().map { if (it.kind == "participant") it.copy(label = "Renamed") else it }, "share")))
         val current = AccessLevelDraft.opening(level, state).setRule(direct.copy(sources = AccessSourceBoundary(AccessSourceMode.DENYLIST, emptyList()), scopePolicies = listOf(currentPolicy)))
         assertFalse(current.isChangedFrom(level))
         assertTrue(current.changes(state).isEmpty())

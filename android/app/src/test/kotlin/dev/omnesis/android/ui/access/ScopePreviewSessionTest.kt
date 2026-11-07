@@ -45,7 +45,7 @@ class ScopePreviewSessionTest {
         try { session.options(policy.sourceId, "label", "", null, null); fail("Wrong options accepted") } catch (_: IllegalStateException) { }
     }
     @Test fun displayHintsUseStableIdsWhileEqualNamesAndExpandedCapturesStaySeparate() = runBlocking {
-        val renamed = ref.copy(label = "Renamed")
+        val renamed = ref
         val other = ScopeRef("label", "another-label")
         val session = ScopePreviewSession(object : ScopeEditorGateway {
             override suspend fun preview(policy: ScopePolicy) = preview()
@@ -56,7 +56,7 @@ class ScopePreviewSessionTest {
         assertEquals("Renamed", session.label(policy.sourceId, ref))
         assertEquals("Renamed", session.label(policy.sourceId, other))
         assertEquals(2, session.labels.value.size)
-        val captured = ScopeRef("participant", identifiers = listOf(ScopeIdentifier("email", "reader@example.org")))
+        val captured = ScopeRef("participant", label = "reader@example.org", identifiers = listOf(ScopeIdentifier("email", "reader@example.org")))
         val expanded = captured.copy(identifiers = captured.identifiers!! + ScopeIdentifier("email", "other@example.org"))
         assertNotEquals(scopeRefKey(captured), scopeRefKey(expanded))
     }

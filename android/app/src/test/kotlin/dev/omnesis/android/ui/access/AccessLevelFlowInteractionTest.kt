@@ -254,13 +254,23 @@ class AccessLevelFlowInteractionTest {
     }
     @Test fun aSameCountPolicyReplacementShowsOnlyTheChangedAccountInPrimaryReview() {
         val other = AccessSourceInstance("mail:other@example.org", "Other mail")
-        val firstPolicy = ScopePolicy(source.id, ScopeAudience("saved-level", "direct"), listOf(ScopeRule(listOf(ScopeRef("label", "first", "Project")), "share")), "hide")
-        val secondPolicy = firstPolicy.copy(sourceId = other.id, rules = listOf(ScopeRule(listOf(ScopeRef("label", "unchanged", "Outside")), "share")))
+        val firstPolicy = ScopePolicy(source.id, ScopeAudience("saved-level", "direct"), listOf(ScopeRule(listOf(ScopeRef("label", "first")), "share")), "hide")
+        val secondPolicy = firstPolicy.copy(sourceId = other.id, rules = listOf(ScopeRule(listOf(ScopeRef("label", "unchanged")), "share")))
         val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id, other.id))).copy(scopePolicies = listOf(firstPolicy, secondPolicy), filterRevision = 3)
         val level = AccessLevelSummary("saved-level", "Helper", 1, listOf(direct), 0)
         val catalogue = overview.copy(sources = listOf(source, other), levels = listOf(level))
-        val replacement = firstPolicy.copy(rules = listOf(ScopeRule(listOf(ScopeRef("label", "replacement", "Receipts")), "share")))
-        show(AccessLevelDraft.opening(level, catalogue).setPolicy(replacement, source.id, AccessCapability.DIRECT), catalogue)
+        val replacement = firstPolicy.copy(rules = listOf(ScopeRule(listOf(ScopeRef("label", "replacement")), "share")))
+        val reader = object : ScopeEditorGateway {
+            override suspend fun preview(policy: ScopePolicy): ScopePreview {
+                assertProviderWirePolicy(policy)
+                return ScopePreview(policy.sourceId, 3, 1, 2, 0, policy.rules.flatMap { it.match }.map { ref ->
+                    ScopePreviewItem(ref, when (ref.id) { "first" -> "Project"; "replacement" -> "Receipts"; else -> "Outside" }, 1)
+                }, emptyList(), listOf(ScopeKindReadiness("label", true)))
+            }
+            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = error("No picker expected")
+        }
+        var draft by mutableStateOf(AccessLevelDraft.opening(level, catalogue).setPolicy(replacement, source.id, AccessCapability.DIRECT))
+        compose.setContent { OmnesisTheme { AccessHomeContent(AccessManagementState(catalogue, draft), reader, onClose = {}, onUpdate = { draft = it }) } }
         compose.onNodeWithText("Review changes").performClick()
         compose.onNodeWithText("Other mail", substring = true).assertDoesNotExist()
         compose.onNodeWithText("Outside", substring = true).assertDoesNotExist()

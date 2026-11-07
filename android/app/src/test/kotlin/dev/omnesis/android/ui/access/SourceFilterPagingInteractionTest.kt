@@ -27,7 +27,7 @@ class SourceFilterPagingInteractionTest {
     ), 3)
     private val readiness = listOf(ScopeKindReadiness("folder", true), ScopeKindReadiness("participant", true))
     private val source = AccessSourceInstance("files:viewer@example.org", "Files", scopes = scopes, scopeReadiness = readiness)
-    private val initial = ScopePolicy(source.id, ScopeAudience("saved", "direct"), listOf(ScopeRule(listOf(ScopeRef("folder", "folder-1", "Folder 1")), "share")), "hide")
+    private val initial = ScopePolicy(source.id, ScopeAudience("saved", "direct"), listOf(ScopeRule(listOf(ScopeRef("folder", "folder-1")), "share")), "hide")
     private val navigation = SourceFilterPickerState("folder", "")
     private var reads = 0
     private var failedSecondPage = false
@@ -35,8 +35,9 @@ class SourceFilterPagingInteractionTest {
     private var applied: ScopePolicy? = null
     private val gateway = object : ScopeEditorGateway {
         override suspend fun preview(policy: ScopePolicy): ScopePreview {
+            assertProviderWirePolicy(policy)
             previews++
-            return ScopePreview(source.id, 65, 2, 63, 1, policy.rules.flatMap { it.match }.map { ScopePreviewItem(it, it.label ?: "Saved folder", 1) }, emptyList(), readiness)
+            return ScopePreview(source.id, 65, 2, 63, 1, policy.rules.flatMap { it.match }.map { ScopePreviewItem(it, it.label ?: "Folder ${it.id!!.substringAfterLast('-')}", 1) }, emptyList(), readiness)
         }
         override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions {
             reads++
@@ -44,8 +45,8 @@ class SourceFilterPagingInteractionTest {
             val range = if (cursor == null) 1..50 else 51..65
             return ScopeOptions(sourceId, "files", scopes, readiness, range.map { index ->
                 val label = if (kind == "folder") "Folder $index" else "Person $index"
-                ScopeOption(ScopeRef(kind, "${parentId ?: "root"}-$index", label), label, 1, hasChildren = kind == "folder")
-            }, nextCursor = if (cursor == null) "page-two" else null)
+                ScopeOption(if (kind == "participant") ScopeRef(kind, label = label, identifiers = listOf(ScopeIdentifier("email", "reader$index@example.org"))) else ScopeRef(kind, "${parentId ?: "root"}-$index"), label, 1, hasChildren = kind == "folder")
+            }, nextCursor = if (cursor == null) "page-two" else null).also { assertProviderWireOptions(it) }
         }
     }
     private fun show() {

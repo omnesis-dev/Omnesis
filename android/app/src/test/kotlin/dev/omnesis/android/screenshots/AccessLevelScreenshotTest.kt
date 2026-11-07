@@ -92,7 +92,7 @@ class AccessLevelScreenshotTest {
         internal val level = AccessLevelSummary("scope-level", "Research assistant", 4, listOf(AccessGrantRule.answer(boundary, AccessAnswerRelease.unreviewed()).copy(filterRevision = 3, scopePolicies = listOf(policy)), AccessGrantRule.direct(boundary)), 2)
         internal val overview = AccessOverview(emptyList(), listOf(gmailSource, source, driveSource), levels = listOf(level), sourceFilters = SourceFiltersAvailability(true))
         private fun gatewayFor(result: ScopePreview) = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy) = result.copy(sourceId = policy.sourceId)
+            override suspend fun preview(policy: ScopePolicy) = result.copy(sourceId = policy.sourceId).also { assertProviderWirePolicy(policy); it.items.forEach { item -> assertProviderWireRef(item.ref) } }
             override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions {
                 val chosen = overview.sources.first { it.id == sourceId }
                 val options = when (kind) {
@@ -100,7 +100,7 @@ class AccessLevelScreenshotTest {
                     "label" -> listOf(ScopeOption(ScopeRef("label", "Label_41"), "Project", 12))
                     else -> refs.filter { it.kind == kind }.map { ref -> ScopeOption(ref, if (ref.kind == "conversation") "Workshop planning" else "Maya Reeves", 24) }
                 }.filter { query.isBlank() || it.label.contains(query, ignoreCase = true) }
-                return ScopeOptions(chosen.id, chosen.sourceType!!, chosen.scopes!!, if (chosen.id == result.sourceId) result.readiness else chosen.scopeReadiness!!, options)
+                return assertProviderWireOptions(ScopeOptions(chosen.id, chosen.sourceType!!, chosen.scopes!!, if (chosen.id == result.sourceId) result.readiness else chosen.scopeReadiness!!, options))
             }
         }
         internal val gateway = gatewayFor(preview)

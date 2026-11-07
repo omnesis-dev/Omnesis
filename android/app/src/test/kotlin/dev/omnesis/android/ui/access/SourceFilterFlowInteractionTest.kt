@@ -19,20 +19,20 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 class SourceFilterFlowInteractionTest {
     @get:Rule val compose = createComposeRule()
-    private val folder = ScopeRef("folder", "workspace", "Workspace")
+    private val folder = ScopeRef("folder", "workspace")
     private val scopes = SourceScopes(listOf(SourceScopeItem("folder", "hierarchy", noun = SourceScopeNoun("folder", "folders"), picker = "tree")), 3)
     private val source = AccessSourceInstance("files:reader@example.org", "Files", scopes = scopes, scopeReadiness = listOf(ScopeKindReadiness("folder", true)))
     private val policy = ScopePolicy(source.id, ScopeAudience("level-example", "direct"), listOf(ScopeRule(listOf(folder), "share")), "hide")
     private val gateway = object : ScopeEditorGateway {
-        override suspend fun preview(policy: ScopePolicy) = ScopePreview(source.id, 8, 3, 5, 1, policy.rules.flatMap { it.match }.map { ScopePreviewItem(it, it.label ?: "Workspace", 3) }, emptyList(), source.scopeReadiness!!)
+        override suspend fun preview(policy: ScopePolicy) = ScopePreview(source.id, 8, 3, 5, 1, policy.rules.flatMap { it.match }.map { ScopePreviewItem(it, it.label ?: "Workspace", 3) }, emptyList(), source.scopeReadiness!!).also { assertProviderWirePolicy(policy) }
         override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = ScopeOptions(sourceId, "files", scopes, source.scopeReadiness!!,
-            if (parentId == null) listOf(ScopeOption(folder, "Workspace", 3, hasChildren = true)) else listOf(ScopeOption(ScopeRef("folder", "design", "Design notes"), "Design notes", 2)))
+            if (parentId == null) listOf(ScopeOption(folder, "Workspace", 3, hasChildren = true)) else listOf(ScopeOption(ScopeRef("folder", "design"), "Design notes", 2)))
     }
     private var saved: ScopePolicy? = null
     private var saves = 0
     private fun show() {
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
-            SourceFilterEditor(source, "level-example", "direct", policy, true, gateway, onClose = {}) { saved = it; saves++ }
+            SourceFilterEditor(source, "level-example", "direct", policy, true, gateway, onClose = {}) { it?.let(::assertProviderWirePolicy); saved = it; saves++ }
         } } }
     }
     @Test fun browsingFoldersDoesNotSelectThemAndReviewBackRetainsSearchAndTrail() {
@@ -76,7 +76,7 @@ class SourceFilterFlowInteractionTest {
         assertEquals(0, saves)
     }
     @Test fun parentAccountHydratesALabelLessSavedSelectionWithoutChangingItsIdentifiers() {
-        val savedPolicy = policy.copy(rules = listOf(ScopeRule(listOf(folder.copy(label = null)), "share")))
+        val savedPolicy = policy.copy(rules = listOf(ScopeRule(listOf(folder), "share")))
         val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id))).copy(scopePolicies = listOf(savedPolicy), filterRevision = 4)
         val level = AccessLevelSummary("level-example", "File helper", 1, listOf(direct), 0)
         val overview = AccessOverview(emptyList(), listOf(source), levels = listOf(level), sourceFilters = SourceFiltersAvailability(true))
@@ -91,7 +91,7 @@ class SourceFilterFlowInteractionTest {
     }
     @Test fun savedNamesFromOtherKindsAppearWithoutChangingTabsOrApplyingTheFilter() {
         val labelRef = ScopeRef("label", "project-label")
-        val person = ScopeRef("participant", identifiers = listOf(ScopeIdentifier("email", "reader@example.org")))
+        val person = ScopeRef("participant", label = "reader@example.org", identifiers = listOf(ScopeIdentifier("email", "reader@example.org")))
         val contract = SourceScopes(listOf(SourceScopeItem("participant", "fixed", identifiers = listOf("email", "domain")), SourceScopeItem("label", "changes", noun = SourceScopeNoun("label", "labels"), picker = "search")), 2)
         val readiness = contract.items.map { ScopeKindReadiness(it.kind, true) }
         val mail = AccessSourceInstance("gmail:reader@example.org", "Gmail", scopes = contract, scopeReadiness = readiness)
@@ -112,8 +112,8 @@ class SourceFilterFlowInteractionTest {
         assertEquals(listOf(labelRef, person), saved.rules.single().match)
     }
     @Test fun aRenamedSavedFolderStaysCheckedAndCanBeRemovedWithoutDuplication() {
-        val before = folder.copy(label = "Before")
-        val renamed = folder.copy(label = "Renamed folder")
+        val before = folder
+        val renamed = folder
         var selection: List<ScopeRef>? = null
         val reader = object : ScopeEditorGateway {
             override suspend fun preview(policy: ScopePolicy) = gateway.preview(policy)
@@ -131,7 +131,7 @@ class SourceFilterFlowInteractionTest {
         assertEquals(listOf(before), selection)
     }
     @Test fun equalFolderNamesWithDifferentIdsRemainIndependentSelections() {
-        val first = folder.copy(label = "Workspace")
+        val first = folder
         val second = first.copy(id = "workspace-copy")
         var selection: List<ScopeRef>? = null
         val reader = object : ScopeEditorGateway {
