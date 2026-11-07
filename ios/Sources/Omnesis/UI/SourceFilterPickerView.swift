@@ -29,9 +29,13 @@ struct SourceFilterPickerView: View {
     @State var loadGeneration = 0
     @State var catalogueRevision = 0
     @State var pendingRestore: ScopePickerRestoreRequest?
+    @State var activeRestoreRevision: UUID?
     @State var issuedRestoreRevision: UUID?
     @State var restoringLocation: ScopePickerLocation?
     @FocusState var searchFocused: Bool
+    #if DEBUG
+    var mountedForTesting: ((SourceFilterPickerView) -> Void)?
+    #endif
 
     var searchKey: String {
         "\(source.id):\(kind):\(query):\(parentId ?? "")"
@@ -284,6 +288,7 @@ struct SourceFilterPickerView: View {
             .onPreferenceChange(ScopePickerLayoutKey.self) { consumeRestore(layout: $0, proxy: proxy) }
             .scrollDismissesKeyboard(.interactively)
             .simultaneousGesture(DragGesture().onChanged { _ in
+                activeRestoreRevision = nil
                 pendingRestore = nil
                 restoringLocation = nil
             })
@@ -326,6 +331,9 @@ struct SourceFilterPickerView: View {
                 .disabled(!ready || typedId == nil)
             }
         }
+        #if DEBUG
+        .onAppear { mountedForTesting?(self) }
+        #endif
         .onDisappear { sessionChanged(session) }
         .onChange(of: store.access?.baseURL.absoluteString) { _, _ in options = nil
             catalogues = [:]

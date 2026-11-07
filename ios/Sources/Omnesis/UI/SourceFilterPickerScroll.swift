@@ -32,6 +32,8 @@ extension SourceFilterPickerView {
     }
 
     func openLocation() async {
+        let revision = UUID()
+        activeRestoreRevision = revision
         let requested = location
         let retainedAnchor = positions[requested]?.itemId ?? .top
         restoringLocation = requested
@@ -42,10 +44,11 @@ extension SourceFilterPickerView {
             catalogueRevision += 1
         } else if optionsLocation != requested { options = nil }
         await load()
-        guard !Task.isCancelled, requested == location, restoringLocation == requested else { return }
+        guard !Task.isCancelled, activeRestoreRevision == revision,
+              requested == location, restoringLocation == requested else { return }
         let target = retainedAnchor == .top || pickerRows.contains(where: { $0.id == retainedAnchor }) ? retainedAnchor : .top
         pendingRestore = .init(
-            revision: UUID(),
+            revision: revision,
             location: requested,
             catalogueRevision: catalogueRevision,
             loadGeneration: loadGeneration,
@@ -54,7 +57,8 @@ extension SourceFilterPickerView {
     }
 
     func consumeRestore(layout: ScopePickerLayout, proxy: ScrollViewProxy) {
-        guard let request = pendingRestore, issuedRestoreRevision != request.revision,
+        guard let request = pendingRestore, activeRestoreRevision == request.revision,
+              issuedRestoreRevision != request.revision,
               request.location == location, request.catalogueRevision == catalogueRevision,
               request.loadGeneration == loadGeneration, optionsLocation == location,
               openedClient?.baseURL == store.access?.baseURL, openedClient?.token == store.access?.token,
@@ -65,6 +69,7 @@ extension SourceFilterPickerView {
         // Layout acknowledges this exact catalogue/request, even when a seeded load did not suspend.
         // Keep the stamp stable after issuance; geometry feedback must not issue another scroll.
         issuedRestoreRevision = request.revision
+        activeRestoreRevision = nil
         restoringLocation = nil
         scrollAnchor = request.target
         proxy.scrollTo(request.target, anchor: .top)

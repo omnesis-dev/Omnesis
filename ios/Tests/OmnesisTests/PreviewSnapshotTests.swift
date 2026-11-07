@@ -9,6 +9,52 @@ import UIKit
 import Vision
 import XCTest
 
+/// Holds the actual options requests so two mounted Retry operations can finish out of order.
+private actor ScopePickerRetrySession: URLSessionLike {
+    private var requests: [URLRequest] = []
+    private var held: [Int: CheckedContinuation<(Data, URLResponse), Error>] = [:]
+
+    var arrived: Int {
+        requests.count
+    }
+
+    var cursors: [String?] {
+        requests.map { request in
+            request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+                .queryItems?.first { $0.name == "cursor" }?.value
+        }
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let index = requests.count
+        requests.append(request)
+        return try await withCheckedThrowingContinuation { held[index] = $0 }
+    }
+
+    func answer(_ index: Int, with page: ScopeOptions) throws {
+        let url = try XCTUnwrap(requests[index].url)
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"]
+        ))
+        let data = try JSONEncoder().encode(page)
+        let continuation = try XCTUnwrap(held.removeValue(forKey: index))
+        continuation.resume(returning: (data, response))
+    }
+
+    func fail(_ index: Int) throws {
+        let continuation = try XCTUnwrap(held.removeValue(forKey: index))
+        continuation.resume(throwing: URLError(.timedOut))
+    }
+
+    func cancelHeld() {
+        let remaining = held.values
+        held.removeAll()
+        for continuation in remaining {
+            continuation.resume(throwing: CancellationError())
+        }
+    }
+}
+
 // This catalogue holds one test per screen state, and the app has hundreds of
 // them: its length is the point, and every view added to the app lengthens it.
 // The length rules are turned off here rather than re-recorded on every
@@ -8168,6 +8214,89 @@ final class PreviewSnapshotTests: XCTestCase {
         }
     }
 
+    func testScopePickerObsoleteRetryCannotRestoreDuringNewerRetry() async throws {
+        let source = PreviewMocks.scopeFolderSource
+        let (firstPage, secondPage) = scopePickerPageFixtures()
+        let options = try appendScopeOptions(secondPage, to: firstPage)
+        let transport = ScopePickerRetrySession()
+        defer { Task { await transport.cancelHeld() } }
+        let client = try AccessClient(
+            baseURL: XCTUnwrap(URL(string: "https://gateway.example.org")),
+            token: "invented-picker-retry-token",
+            session: transport
+        )
+        let store = AppStore.preview()
+        await store.awaitPairingRuntimeForTesting()
+        store.injectAccessClientForTesting(client)
+        var saved = ScopePickerSession(kind: "folder", sourceId: source.id)
+        let location = saved.location(for: source.id)
+        let leading = ScopePickerAnchor.item(.init(options.items[57].ref))
+        saved.catalogues[location] = options
+        saved.positions[location] = .init(itemId: leading, index: 57)
+        var installed: SourceFilterPickerView?
+        let mounted = try mountScopePicker(
+            source: source, session: saved, scheme: .light, store: store, mounted: { installed = $0 }
+        )
+        defer {
+            mounted.1.rootView = AnyView(EmptyView())
+            mounted.0.isHidden = true
+            installed = nil
+        }
+        try await awaitScopePicker("The mounted picker must start its initial options request") {
+            await transport.arrived == 1 && installed != nil
+        }
+        let picker = try XCTUnwrap(installed)
+        try await transport.fail(0)
+        try await awaitScopePicker("A transient initial error must leave the real Retry path available") {
+            picker.error != nil && !picker.loading
+        }
+
+        // These call the installed State's exact openLocation used by Retry.
+        // R1 has its first 50 rows, but its final 15 remain held by the transport.
+        let retry1 = Task { await picker.openLocation() }
+        defer { retry1.cancel() }
+        try await awaitScopePicker("R1 must request a fresh first page") { await transport.arrived == 2 }
+        try await transport.answer(1, with: firstPage)
+        try await awaitScopePicker("R1 must request the remaining cached rows") { await transport.arrived == 3 }
+        let retry2 = Task { await picker.openLocation() }
+        defer { retry2.cancel() }
+        try await awaitScopePicker("R2 must hold its own first page before R1 finishes") { await transport.arrived == 4 }
+        let cursors = await transport.cursors
+        XCTAssertEqual(cursors, [nil, nil, "second", nil])
+
+        try await transport.answer(2, with: secondPage)
+        await retry1.value
+        XCTAssertTrue(picker.loading, "R2 is still waiting for its first page")
+        XCTAssertNil(picker.pendingRestore, "An obsolete producer cannot publish restoration for the newer request")
+        XCTAssertEqual(picker.restoringLocation, location, "R1 cannot consume R2's restoration while R2 is suspended")
+        XCTAssertEqual(picker.session.positions[location]?.itemId, leading, "The observed leading bookmark must remain intact")
+
+        try await transport.answer(3, with: firstPage)
+        try await awaitScopePicker("R2 must restore its own complete catalogue") { await transport.arrived == 5 }
+        try await transport.answer(4, with: secondPage)
+        await retry2.value
+        try await awaitScopePicker("Only the completed current request may finish restoration") {
+            !picker.loading && picker.error == nil && picker.restoringLocation == nil
+                && picker.options?.items.count == 65 && picker.session.positions[location]?.itemId == leading
+        }
+        XCTAssertEqual(picker.session.positions[location]?.itemId, leading)
+        try captureScopePicker(
+            mounted.0,
+            name: "scope-picker-current-retry-restored",
+            visibleLabel: XCTUnwrap(options.items.last).label
+        )
+    }
+
+    private func awaitScopePicker(_ message: String, condition: () async -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if await condition() { return }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail(message)
+        throw CancellationError()
+    }
+
     private func scopePickerPageFixtures() -> (ScopeOptions, ScopeOptions) {
         let source = PreviewMocks.scopeFolderSource
         let items = (0 ..< 65).map { index in
@@ -8196,14 +8325,17 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     private func mountScopePicker(
-        source: AccessSourceInstance, session: ScopePickerSession, scheme: ColorScheme
+        source: AccessSourceInstance, session: ScopePickerSession, scheme: ColorScheme,
+        store: AppStore? = nil, mounted: ((SourceFilterPickerView) -> Void)? = nil
     ) throws
         -> (UIWindow, UIHostingController<AnyView>) {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
+        var picker = SourceFilterPickerView(source: source, session: session, selected: { _ in })
+        picker.mountedForTesting = mounted
         let view = NavigationStack {
-            SourceFilterPickerView(source: source, session: session, selected: { _ in })
-        }.environment(AppStore.preview()).preferredColorScheme(scheme)
+            picker
+        }.environment(store ?? AppStore.preview()).preferredColorScheme(scheme)
         let host = UIHostingController(rootView: AnyView(view))
         let window = UIWindow(windowScene: scene)
         window.frame = scene.coordinateSpace.bounds

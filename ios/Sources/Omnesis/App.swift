@@ -3252,6 +3252,10 @@ extension AppStore {
         adminCoord.injectAdminClientForTesting(client)
     }
 
+    func injectAccessClientForTesting(_ client: AccessClient) {
+        adminCoord.injectAccessClientForTesting(client)
+    }
+
     /// Run the real source-registry refresh against a stubbed admin client,
     /// as the phone identified by `localDeviceId`, so the removal
     /// reconciliation that follows it can be asserted without pairing.
