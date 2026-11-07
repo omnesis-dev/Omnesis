@@ -64,6 +64,33 @@ describe("UsearchWriteHandle", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("ranks by the sign bits and reports the binary encoding on both handles", () => {
+    // Two vectors that agree in sign on every dimension but one, and one that
+    // disagrees on most: the graph's Hamming distances are those bit counts.
+    const base = randomVector();
+    const near = Float32Array.from(base);
+    near[0] = -near[0];
+    const far = Float32Array.from(base, (x) => -x);
+    far[0] = base[0];
+    const writer = new UsearchWriteHandle(path, DIMS);
+    expect(writer.encoding).toBe("b1");
+    writer.add(1n, base);
+    writer.add(2n, near);
+    writer.add(3n, far);
+    writer.save();
+    writer.close();
+
+    const reader = UsearchReadHandle.open(path, DIMS);
+    expect(reader.encoding()).toBe("b1");
+    const hits = reader.search(base, 3);
+    expect(hits.map((h) => [h.key, h.distance])).toEqual([
+      [1n, 0],
+      [2n, 1],
+      [3n, DIMS - 1],
+    ]);
+    reader.close();
+  });
+
   it("creates an empty index and adds vectors", () => {
     const handle = new UsearchWriteHandle(path, DIMS);
     expect(handle.size()).toBe(0);

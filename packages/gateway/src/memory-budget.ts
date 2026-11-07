@@ -120,17 +120,19 @@ export function memoryHeadroom(budget: MemoryBudget, read: ReadText = readText):
 
 /**
  * Anonymous memory a writable HNSW graph of `vectors` vectors at `dim`
- * float32 dimensions takes: the vectors, their links (connectivity 16 adds
- * about 200 bytes a vector), and what the allocator keeps. A graph built in
- * this process measures about 1.35 times its file; one loaded from a complete
- * file about 1.05 times.
+ * dimensions takes: the vectors as the graph stores them (`vectorBytes` each:
+ * four bytes a dimension as floats, one bit as binary codes), their links
+ * (connectivity 16 adds about 200 bytes a vector), and what the allocator
+ * keeps. A graph built in this process measures about 1.35 times its file; one
+ * loaded from a complete file about 1.05 times.
  */
 export function estimateHnswGraphBytes(
   vectors: number,
   dim: number,
   how: "build" | "load" = "build",
+  bytesPerVector: number = dim * 4,
 ): number {
-  return Math.ceil(vectors * (dim * 4 + 256) * (how === "load" ? 1.1 : 1.4));
+  return Math.ceil(vectors * (bytesPerVector + 256) * (how === "load" ? 1.1 : 1.4));
 }
 
 /**
