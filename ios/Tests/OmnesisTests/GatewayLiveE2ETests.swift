@@ -239,7 +239,7 @@ private final class LiveSessionDelegate: NSObject, URLSessionTaskDelegate, @unch
         let total = String(format: "%.2fs", metrics.taskInterval.duration)
         for transaction in metrics.transactionMetrics {
             let phases = [
-                "queue=\(span(transaction.fetchStartDate, transaction.domainLookupStartDate))",
+                "reused=\(transaction.isReusedConnection)",
                 "dns=\(span(transaction.domainLookupStartDate, transaction.domainLookupEndDate))",
                 "connect=\(span(transaction.connectStartDate, transaction.connectEndDate))",
                 "tls=\(span(transaction.secureConnectionStartDate, transaction.secureConnectionEndDate))",
