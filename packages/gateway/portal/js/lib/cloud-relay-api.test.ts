@@ -53,3 +53,20 @@ test("recovery and CT presentation refuses unknown or prototype-derived states",
  expect(relayRecoveryLabel("present")).toBe("Stored locally");expect(relayMonitorLabel("observing")).toBe("Recent provider observations completed");for(const value of ["__proto__",undefined,"private-path"]){expect(relayRecoveryLabel(value)).toBe("Unavailable");expect(relayMonitorLabel(value)).toBe("Monitoring status unavailable");}
  for(const code of ["ct-configuration-invalid","ct-provider-unavailable","ct-provider-refused","ct-provider-invalid","ct-scan-incomplete","ct-journal-invalid","ct-journal-write-failed"])expect(relayError(code)).not.toContain("An operation failed");
 });
+
+
+test("managed owner linking permits only the enrolled installation origin and exact launch contract", () => {
+  const origin = "https://relay.example.test";
+  const query = "operationId=00000000-0000-4000-8000-000000000000&ticket=" + "a".repeat(43);
+  const url = origin + "/_relay/v2/google/browser/begin?" + query;
+  expect(googleAuthorizationUrl(url, origin)).toBe(url);
+  for (const invalid of [undefined, "http://relay.example.test", "https://other.example.test"])
+    expect(() => googleAuthorizationUrl(url, invalid)).toThrow("Google authorization is unavailable");
+  for (const invalid of [url + "#fragment", url + "&extra=1", url + "&ticket=" + "b".repeat(43),
+    url.replace("operationId=00000000-0000-4000-8000-000000000000", "operationId=invalid"),
+    url.replace("ticket=" + "a".repeat(43), "ticket=short"),
+    origin + "/_relay/v2/google/browser/begin?operationId=00000000-0000-4000-8000-000000000000&operationId=00000000-0000-4000-8000-000000000000",
+    origin + "/_relay/v2/google/browser/begin?ticket=" + "a".repeat(43) + "&ticket=" + "b".repeat(43),
+    url.replace("/begin?", "/callback?"), url.replace("relay.example.test", "attacker.example.test")])
+    expect(() => googleAuthorizationUrl(invalid, origin)).toThrow("Google authorization is unavailable");
+});

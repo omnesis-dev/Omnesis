@@ -50,3 +50,13 @@ test("Google linking navigates only after an authorized start and refuses substi
  await act(async()=>current.run("google/link"));expect(assign).toHaveBeenCalledExactlyOnceWith("https://accounts.google.com/o/oauth2/v2/auth?state=fictional");expect(current.status).toEqual({revision:1});
  await act(async()=>current.run("google/link"));expect(assign).toHaveBeenCalledOnce();expect(current.error).toContain("Couldn't load or update");
 });
+
+
+test("managed owner linking navigates through the installation service with its one-use launch ticket", async () => {
+  const assign = vi.fn(); Object.defineProperty(window, "location", { configurable: true, value: { assign } });
+  const relayUrl = "https://relay.example.test";
+  const authorizeUrl = relayUrl + "/_relay/v2/google/browser/begin?operationId=00000000-0000-4000-8000-000000000000&ticket=" + "a".repeat(43);
+  request.mockResolvedValueOnce({ revision: 1, config: { relayUrl } }).mockResolvedValueOnce({ authorizeUrl });
+  await mount(); await act(async () => current.run("google/link"));
+  expect(assign).toHaveBeenCalledExactlyOnceWith(authorizeUrl); expect(current.error).toBe("");
+});

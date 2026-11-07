@@ -25,7 +25,7 @@ export function useRelayManagement() {
       const result = await relayManagement(operation, input, controller.signal);
       if (controller.signal.aborted) throw new Error("Request expired");
       // Replacement and unmount both abort this request before clearing it.
-      if (operation === "google/link") window.location.assign(googleAuthorizationUrl(result.authorizeUrl));
+      if (operation === "google/link") window.location.assign(googleAuthorizationUrl(result.authorizeUrl, status?.config?.relayUrl));
       else setStatus(result);
     } catch (error) {
       if (mounted.current && active.current === attempt) setError(relayError(error?.code) || "Couldn't load or update the relay. Check the connection and try again.");

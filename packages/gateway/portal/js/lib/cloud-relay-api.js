@@ -61,11 +61,20 @@ export function relayHttpsUrl(value) {
   catch { return null; }
 }
 
-export function googleAuthorizationUrl(value) {
+/** Accept Google directly or a single-use launch on the gateway's authenticated installation service. */
+export function googleAuthorizationUrl(value, installationRelayUrl) {
   const safe = relayHttpsUrl(value);
   if (!safe) throw new Error("Google authorization is unavailable.");
   const url = new URL(safe);
-  if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth") throw new Error("Google authorization is unavailable.");
+  if (url.origin === "https://accounts.google.com" && url.pathname === "/o/oauth2/v2/auth") return url.href;
+  const service = relayHttpsUrl(installationRelayUrl);
+  const operationIds = url.searchParams.getAll("operationId");
+  const tickets = url.searchParams.getAll("ticket");
+  if (!service || url.origin !== new URL(service).origin ||
+      url.pathname !== "/_relay/v2/google/browser/begin" || url.hash ||
+      [...url.searchParams.keys()].length !== 2 || operationIds.length !== 1 || tickets.length !== 1 ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(operationIds[0]) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(tickets[0])) throw new Error("Google authorization is unavailable.");
   return url.href;
 }
 
