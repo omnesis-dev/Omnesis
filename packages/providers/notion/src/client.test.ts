@@ -3,7 +3,13 @@
 
 import { describe, test, expect } from "vitest";
 import { APIResponseError, APIErrorCode, RequestTimeoutError } from "@notionhq/client";
-import { withRetry, isTransientNotionError, readRetryAfterMs } from "./client.js";
+import {
+  NotionClient,
+  withRetry,
+  isInaccessibleNotionError,
+  isTransientNotionError,
+  readRetryAfterMs,
+} from "./client.js";
 
 function makeAPIError(args: {
   code: APIErrorCode;
@@ -235,5 +241,94 @@ describe("withRetry", () => {
 
     expect(sleeps).toEqual([50, 100]);
     expect(calls).toBe(3);
+  });
+});
+
+describe("getPageContent with a nested block Notion will not return", () => {
+  const paragraph = (id: string, text: string, hasChildren = false) => ({
+    object: "block",
+    id,
+    type: "paragraph",
+    has_children: hasChildren,
+    paragraph: { rich_text: [{ plain_text: text, annotations: {}, href: null }] },
+  });
+  const synced = (id: string) => ({
+    object: "block",
+    id,
+    type: "synced_block",
+    has_children: true,
+    synced_block: { synced_from: { type: "block_id", block_id: "original" } },
+  });
+
+  function clientWithBlocks(
+    tree: Record<string, unknown[]>,
+    failing: Record<string, () => Error>,
+  ): NotionClient {
+    const client = new NotionClient("secret_example", { sleepFn: noSleep });
+    (client as any).client = {
+      blocks: {
+        children: {
+          async list({ block_id }: { block_id: string }) {
+            const fail = failing[block_id];
+            if (fail) throw fail();
+            return { results: tree[block_id] ?? [], has_more: false, next_cursor: null };
+          },
+        },
+      },
+    };
+    return client;
+  }
+
+  test("renders the page without that subtree", async () => {
+    const client = clientWithBlocks(
+      {
+        page: [
+          paragraph("p1", "Before the synced block"),
+          synced("s1"),
+          paragraph("p2", "After it"),
+        ],
+      },
+      { s1: () => makeAPIError({ code: APIErrorCode.ObjectNotFound, status: 404 }) },
+    );
+
+    const { markdown } = await client.getPageContent("page");
+
+    expect(markdown).toContain("Before the synced block");
+    expect(markdown).toContain("After it");
+  });
+
+  test("still fails when the page itself is not found", async () => {
+    const client = clientWithBlocks(
+      {},
+      { page: () => makeAPIError({ code: APIErrorCode.ObjectNotFound, status: 404 }) },
+    );
+
+    await expect(client.getPageContent("page")).rejects.toSatisfy(isInaccessibleNotionError);
+  });
+
+  test("still fails on a nested block's server error", async () => {
+    const client = clientWithBlocks(
+      { page: [paragraph("p1", "Text", true)] },
+      { p1: () => makeAPIError({ code: APIErrorCode.ValidationError, status: 400 }) },
+    );
+
+    await expect(client.getPageContent("page")).rejects.toBeInstanceOf(APIResponseError);
+  });
+});
+
+describe("isInaccessibleNotionError", () => {
+  test("is true for not-found and restricted objects only", () => {
+    expect(
+      isInaccessibleNotionError(makeAPIError({ code: APIErrorCode.ObjectNotFound, status: 404 })),
+    ).toBe(true);
+    expect(
+      isInaccessibleNotionError(
+        makeAPIError({ code: APIErrorCode.RestrictedResource, status: 403 }),
+      ),
+    ).toBe(true);
+    expect(
+      isInaccessibleNotionError(makeAPIError({ code: APIErrorCode.Unauthorized, status: 401 })),
+    ).toBe(false);
+    expect(isInaccessibleNotionError(new TypeError("fetch failed"))).toBe(false);
   });
 });

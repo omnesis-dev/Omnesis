@@ -34,7 +34,11 @@ const SYSTEM_TYPES = new Set(["created_time", "last_edited_time"]);
  * Sanitize a Notion property name into a valid snake_case column name.
  * Handles unicode, special characters, collisions, and edge cases.
  */
-export function sanitizeColumnName(name: string, existingNames: Set<string> = new Set()): string {
+export function sanitizeColumnName(
+  name: string,
+  existingNames: Set<string> = new Set(),
+  derivedSuffixes: readonly string[] = [],
+): string {
   let col = name
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "_")
@@ -55,9 +59,18 @@ export function sanitizeColumnName(name: string, existingNames: Set<string> = ne
   // here is the same-run collision case, which still needs the `_N`
   // suffix because both properties must keep distinct DuckDB columns
   // for the current sync to round-trip.
+  //
+  // A property stored in derived columns (a `date` becomes `<col>_start` and
+  // `<col>_end`) needs those derived names free as well, or a "date start" text
+  // property followed by a "Date" date property both claim `date_start`. The
+  // base must stay free too, exactly as before, so a database without such a
+  // collision keeps every column name it already has.
+  const taken = (candidate: string): boolean =>
+    existingNames.has(candidate) ||
+    derivedSuffixes.some((s) => existingNames.has(`${candidate}_${s}`));
   let final = col;
   let suffix = 2;
-  while (existingNames.has(final)) {
+  while (taken(final)) {
     final = `${col}_${suffix}`;
     suffix++;
   }
@@ -337,6 +350,44 @@ const SYSTEM_COLUMNS: ColumnDefinition[] = [
   },
 ];
 
+// ── Property → Column Assignment ───────────────────────────────────────
+
+const DATE_COLUMN_SUFFIXES = ["start", "end"] as const;
+
+export interface PropertyColumns {
+  propName: string;
+  prop: DatabaseProperty;
+  mapped: MappedColumns;
+}
+
+/**
+ * Assign every column-producing property of a database its columns, in
+ * property order. This is the single naming pass: the table schema and the
+ * row extractor both read it, so a row's keys always name the table's columns.
+ */
+export function mapPropertyColumns(database: DataSourceObjectResponse): PropertyColumns[] {
+  const usedNames = new Set(SYSTEM_COLUMNS.map((c) => c.name));
+  const assigned: PropertyColumns[] = [];
+
+  for (const [propName, prop] of Object.entries(database.properties)) {
+    if (SKIP_TYPES.has(prop.type)) continue;
+    if (SYSTEM_TYPES.has(prop.type)) continue;
+
+    const sanitized = sanitizeColumnName(
+      propName,
+      usedNames,
+      prop.type === "date" ? DATE_COLUMN_SUFFIXES : [],
+    );
+    const mapped = mapPropertyToColumns(prop, sanitized);
+    if (!mapped) continue;
+
+    for (const col of mapped.columns) usedNames.add(col.name);
+    assigned.push({ propName, prop, mapped });
+  }
+
+  return assigned;
+}
+
 // ── Main Mapper ────────────────────────────────────────────────────────
 
 /**
@@ -368,8 +419,6 @@ export function mapDatabaseToSchema(database: DataSourceObjectResponse): Analyti
   const tableName = `notion_${dbId}`;
   const displayName = extractDatabaseTitle(database);
 
-  // Reserve system column names
-  const usedNames = new Set(SYSTEM_COLUMNS.map((c) => c.name));
   const columns: ColumnDefinition[] = [...SYSTEM_COLUMNS];
 
   // The sanitized column name of the database's title property, captured for
@@ -377,18 +426,10 @@ export function mapDatabaseToSchema(database: DataSourceObjectResponse): Analyti
   // property per database; it carries the row's human name.
   let titleColumn: string | undefined;
 
-  for (const [propName, propConfig] of Object.entries(database.properties)) {
-    if (SKIP_TYPES.has(propConfig.type)) continue;
-    if (SYSTEM_TYPES.has(propConfig.type)) continue;
-
-    const sanitized = sanitizeColumnName(propName, usedNames);
-    const mapped = mapPropertyToColumns(propConfig, sanitized);
-    if (!mapped) continue;
-
+  for (const { prop: propConfig, mapped } of mapPropertyColumns(database)) {
     if (propConfig.type === "title") titleColumn = mapped.columnName;
 
     for (const col of mapped.columns) {
-      usedNames.add(col.name);
       // Stamp the column with its Notion property id so the gateway-
       // side rename detector can match across renames. Multi-column
       // properties (date → `<col>_start` + `<col>_end`) disambiguate

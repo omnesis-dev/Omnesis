@@ -1253,6 +1253,22 @@ export function mountSyncStateRoutes(
     },
   );
 
+  // A page the gateway refused as invalid can never be written; the collector
+  // discards it while its cursor is uncommitted so the next attempt fetches
+  // afresh instead of replaying it forever.
+  app.post(
+    "/sync-state/:sourceId/pending-page/abandon",
+    scope.writeAny(),
+    validateJson(acknowledgeStructuredPageBody),
+    async (c) => {
+      const sourceId = requireSourceId(c.req.param("sourceId"));
+      enforceWriteScopeForSource(c.get("auth").scopes, sourceId);
+      return c.json(
+        await sourceService.abandonStructuredPage(sourceId, c.req.valid("json"), c.get("auth")),
+      );
+    },
+  );
+
   app.post("/sync-state/:sourceId/lease", scope.writeAny(), async (c) => {
     const sourceId = requireSourceId(c.req.param("sourceId"));
     enforceWriteScopeForSource(c.get("auth").scopes, sourceId);

@@ -765,6 +765,15 @@ export function normalizeAnalyticsSchemaColumnTypes(
   if (columns.filter(({ categoricalRole }) => categoricalRole === "series").length > 1) {
     throw new Error(`${where} may declare at most one categorical series column.`);
   }
+  // DuckDB matches identifiers without regard to case, so `Due` and `due` are
+  // the same column there; a table built from such a schema fails at
+  // CREATE TABLE or ADD COLUMN, and every retry of the same page with it.
+  const declared = new Set<string>();
+  for (const column of columns) {
+    const key = String(column.name).toLowerCase();
+    if (declared.has(key)) throw new Error(`${where} declares column '${column.name}' twice.`);
+    declared.add(key);
+  }
   if (
     candidate.sharedDiscriminatorColumn !== undefined &&
     !columns.some((column) => column.name === candidate.sharedDiscriminatorColumn)

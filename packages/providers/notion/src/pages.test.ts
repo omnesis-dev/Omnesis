@@ -430,6 +430,98 @@ describe("NotionPagesSource — error classification", () => {
   });
 });
 
+describe("NotionPagesSource — a page Notion will not return", () => {
+  const notFound = () =>
+    new APIResponseError({
+      code: APIErrorCode.ObjectNotFound,
+      status: 404,
+      message: "Could not find block with ID: example.",
+      headers: new Headers(),
+      rawBodyText: "",
+      additional_data: undefined,
+      request_id: undefined,
+    });
+
+  function clientFailing(pages: PageObjectResponse[], unreadable: string, err: () => Error) {
+    const fetched: string[] = [];
+    const client = {
+      async searchPages() {
+        return { ...makeSearchResponse([]), results: pages } as unknown as SearchResponse;
+      },
+      async getPageContent(id: string) {
+        if (id === unreadable) throw err();
+        fetched.push(id);
+        return { markdown: `# ${id}`, linkedPageIds: [] };
+      },
+    } as unknown as NotionClient;
+    return { client, fetched };
+  }
+
+  test("is skipped while the rest of the run syncs, and still counts as present", async () => {
+    const pages = [
+      makeFullPage("a", "2026-04-03T00:00:00.000Z"),
+      makeFullPage("b", "2026-04-02T00:00:00.000Z"),
+      makeFullPage("c", "2026-04-01T00:00:00.000Z"),
+    ];
+    const { client, fetched } = clientFailing(pages, "b", notFound);
+    const source = new NotionPagesSource(client, sourceId, providerId);
+
+    const result = await source.sync(null);
+
+    expect(fetched).toEqual(["a", "c"]);
+    expect(result.documents.map((d) => d.externalId)).toEqual(["page-a", "page-c"]);
+    expect(result.presentExternalIds?.sort()).toEqual(["page-a", "page-b", "page-c"]);
+  });
+
+  test("leaves the watermark short of itself, so the next run reads it again", async () => {
+    const pages = [
+      makeFullPage("newest", "2026-04-03T00:00:00.000Z"),
+      makeFullPage("older", "2026-04-01T00:00:00.000Z"),
+    ];
+    const { client } = clientFailing(pages, "newest", notFound);
+    const source = new NotionPagesSource(client, sourceId, providerId);
+
+    const result = await source.sync(null);
+
+    expect((result.cursor as NotionPagesCursor).lastEditedTime).toBe("2026-04-01T00:00:00.000Z");
+  });
+
+  test("a restricted page still fails the run as a permission error", async () => {
+    const restricted = () =>
+      new APIResponseError({
+        code: APIErrorCode.RestrictedResource,
+        status: 403,
+        message: "Insufficient permissions for this endpoint.",
+        headers: new Headers(),
+        rawBodyText: "",
+        additional_data: undefined,
+        request_id: undefined,
+      });
+    const { client } = clientFailing([makeFullPage("a")], "a", restricted);
+    const source = new NotionPagesSource(client, sourceId, providerId);
+
+    await expect(source.sync(null)).rejects.toMatchObject({ kind: "permission" });
+  });
+
+  test("any other failure reading a page still fails the run", async () => {
+    const pages = [makeFullPage("a")];
+    const unauthorized = () =>
+      new APIResponseError({
+        code: APIErrorCode.Unauthorized,
+        status: 401,
+        message: "API token is invalid.",
+        headers: new Headers(),
+        rawBodyText: "",
+        additional_data: undefined,
+        request_id: undefined,
+      });
+    const { client } = clientFailing(pages, "a", unauthorized);
+    const source = new NotionPagesSource(client, sourceId, providerId);
+
+    await expect(source.sync(null)).rejects.toMatchObject({ kind: "auth" });
+  });
+});
+
 describe("NotionPagesSource — a rewalk that could not read everything", () => {
   /** A search result Notion acknowledged but would not describe. */
   function makePartialResult(id: string) {

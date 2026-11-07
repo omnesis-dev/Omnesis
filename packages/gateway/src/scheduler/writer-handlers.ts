@@ -86,6 +86,7 @@ import { advanceOccWatermark } from "../data/occ-materialized.js";
 import {
   preparePendingSourcePage,
   acknowledgePendingSourcePage,
+  abandonPendingSourcePage,
   type PreparePendingSourcePage,
 } from "../data/repositories/PendingSourcePageRepository.js";
 import {
@@ -824,6 +825,8 @@ export const writerHandlers = {
     preparePendingSourcePage(db, args),
   "db.acknowledgePendingSourcePage": (db: Db, args: Omit<PreparePendingSourcePage, "payload">) =>
     acknowledgePendingSourcePage(db, args),
+  "db.abandonPendingSourcePage": (db: Db, args: Omit<PreparePendingSourcePage, "payload">) =>
+    abandonPendingSourcePage(db, args),
   "db.revokeSyncAttempt": (db: Db, sourceId: string, expectedEpoch: number, cursorRow?: string) =>
     revokeSyncAttempt(db, sourceId, expectedEpoch, cursorRow ?? ""),
   "db.resetMemberCursor": (db: Db, sourceId: string, deviceId: string): void => {
