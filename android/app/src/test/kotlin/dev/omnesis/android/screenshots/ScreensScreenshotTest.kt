@@ -5,6 +5,7 @@ package dev.omnesis.android.screenshots
 
 import androidx.compose.foundation.background
 import dev.omnesis.android.designsystem.components.DeleteDocumentDialog
+import dev.omnesis.android.ui.agent.LocalAgentTimersFrozen
 import dev.omnesis.android.ui.home.MenuRevealContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.fillMaxSize
@@ -130,7 +131,11 @@ class ScreensScreenshotTest {
     private fun capture(name: String, dark: Boolean, fontScale: Float = 1f, content: @androidx.compose.runtime.Composable () -> Unit) {
         captureRoboImage(filePath = "src/test/roborazzi/$name.png") {
             val density = LocalDensity.current
-            CompositionLocalProvider(LocalInspectionMode provides true, LocalDensity provides Density(density.density, fontScale)) {
+            CompositionLocalProvider(
+                LocalInspectionMode provides true,
+                LocalAgentTimersFrozen provides true,
+                LocalDensity provides Density(density.density, fontScale),
+            ) {
                 OmnesisTheme(darkTheme = dark) { content() }
             }
         }

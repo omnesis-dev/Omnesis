@@ -84,6 +84,7 @@ import dev.omnesis.android.ui.agent.AgentWatchCard
 import dev.omnesis.android.ui.agent.AssistantTurn
 import dev.omnesis.android.ui.agent.CitationsDrawer
 import dev.omnesis.android.ui.agent.ConversationOriginCard
+import dev.omnesis.android.ui.agent.LocalAgentTimersFrozen
 import dev.omnesis.android.ui.agent.ReportArtifact
 import dev.omnesis.android.ui.agent.ResearchWorkspace
 import dev.omnesis.android.ui.agent.SlashCommand
@@ -126,7 +127,7 @@ class AgentParityScreenshotTest {
             // Render as if in a preview so inspection-gated infinite animations (e.g. the
             // citing-pill pulse) freeze — an unbounded animation never idles and hangs the
             // native capture otherwise.
-            CompositionLocalProvider(LocalInspectionMode provides true) {
+            CompositionLocalProvider(LocalInspectionMode provides true, LocalAgentTimersFrozen provides true) {
                 OmnesisTheme(darkTheme = dark) { content() }
             }
         }

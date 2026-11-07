@@ -18,6 +18,7 @@ import dev.omnesis.android.ui.agent.AgentTurnBuilder
 import dev.omnesis.android.ui.agent.DailyBriefContext
 import dev.omnesis.android.ui.agent.DailyBriefFixtures
 import dev.omnesis.android.ui.agent.DailyBriefThumbsDownDialog
+import dev.omnesis.android.ui.agent.LocalAgentTimersFrozen
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -37,7 +38,7 @@ class DailyBriefScreenshotTest {
 
     private fun capture(name: String, dark: Boolean, content: @Composable () -> Unit) {
         captureRoboImage(filePath = "src/test/roborazzi/$name.png") {
-            CompositionLocalProvider(LocalInspectionMode provides true) {
+            CompositionLocalProvider(LocalInspectionMode provides true, LocalAgentTimersFrozen provides true) {
                 OmnesisTheme(darkTheme = dark) { content() }
             }
         }
