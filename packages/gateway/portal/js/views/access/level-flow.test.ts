@@ -468,3 +468,85 @@ test("an unavailable unfiltered account remains visible in the overview, data de
   expect(host.querySelector(".guided-unchanged")?.textContent).toContain("missing@example.org");
   expect(host.querySelector(".guided-unchanged")?.textContent).toContain("All content");
 });
+
+test("applying an unchanged filter on the first of two accounts keeps review disabled and wire order intact", async () => {
+  const second = { ...source, id: "fictional:two", displayName: "Second invented source" };
+  const policies = [source, second].map((item, index) => ({
+    sourceId: item.id,
+    audience: { accessLevel: "invented-level", capability: "answer" },
+    rules: [{ action: "share", match: [{ kind: "label", id: `invented-label-${index}` }] }],
+    otherwise: "hide",
+  }));
+  const answer = {
+    ...newGrantRule("answer", "invented-policy"),
+    sources: { mode: "allowlist", sourceIds: [source.id, second.id] },
+    filterRevision: 7,
+    scopePolicies: policies,
+  };
+  await act(async () =>
+    render(
+      h(LevelEditorPage, {
+        level: { id: "invented-level", name: "Project assistant", revision: 2, rules: [answer] },
+        overview: { ...overview, sources: [source, second] },
+        connections: [],
+        onSaved: vi.fn(),
+        onClose: vi.fn(),
+        onConflict: vi.fn(),
+        onGone: vi.fn(),
+      }),
+      host,
+    ),
+  );
+  const changeTopic = async (title: string) => {
+    const row = [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")].find(
+      (item) => item.querySelector("h4")?.textContent === title,
+    )!;
+    await act(async () => row.querySelector<HTMLButtonElement>("button")!.click());
+  };
+  await changeTopic("Answer data");
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>(".guided-source-row button")!.click(),
+  );
+  await click("Continue");
+  await click("Review filter");
+  await vi.waitFor(() => expect(button("Apply filter").disabled).toBe(false));
+  await click("Apply filter");
+  await click("Done");
+  expect(button("Review changes").disabled).toBe(true);
+  await changeTopic("Answer release");
+  await change([...host.querySelectorAll<HTMLInputElement>(".grant-builder-release input")][1]!);
+  await click("Done");
+  await click("Review changes");
+  await click("Save changes");
+  expect(api.updateAccessLevel.mock.calls[0]![1].rules[0].scopePolicies).toEqual(policies);
+});
+
+test("toggling an account off and back on from all sources leaves no review or save action", async () => {
+  const answer = {
+    ...newGrantRule("answer", "invented-policy"),
+    sources: { mode: "all", sourceIds: [] },
+  };
+  await act(async () =>
+    render(
+      h(LevelEditorPage, {
+        level: { id: "invented-level", name: "All-source boundary", revision: 1, rules: [answer] },
+        overview,
+        connections: [],
+        onSaved: vi.fn(),
+        onClose: vi.fn(),
+        onConflict: vi.fn(),
+        onGone: vi.fn(),
+      }),
+      host,
+    ),
+  );
+  const data = [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")].find(
+    (row) => row.querySelector("h4")?.textContent === "Answer data",
+  )!;
+  await act(async () => data.querySelector<HTMLButtonElement>("button")!.click());
+  await change(host.querySelector(".guided-source-select input")!);
+  await change(host.querySelector(".guided-source-select input")!);
+  await click("Done");
+  expect(button("Review changes").disabled).toBe(true);
+  expect(api.updateAccessLevel).not.toHaveBeenCalled();
+});

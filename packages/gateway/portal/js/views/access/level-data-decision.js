@@ -57,8 +57,7 @@ export function LevelDataDecision({
             /></label>
             <div class="guided-source-tools">
               <span
-                >${all.filter((source) => isSourceAllowed(rule, sourceId(source))).length}
-                selected</span
+                >${`${all.filter((source) => isSourceAllowed(rule, sourceId(source))).length} selected`}</span
               ><button
                 type="button"
                 class="btn-secondary"

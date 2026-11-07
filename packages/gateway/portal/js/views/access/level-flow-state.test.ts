@@ -98,3 +98,41 @@ test("the same number of selected matches with different identities is a data ch
     ),
   ).toEqual(["answer-data"]);
 });
+
+test("renamed participant snapshots and reordered selections do not appear as changed access decisions", () => {
+  const ref = {
+    kind: "participant",
+    label: "Old snapshot",
+    identifiers: [
+      { type: "email", value: "one@example.org" },
+      { type: "email", value: "two@example.org" },
+    ],
+  };
+  const policy = {
+    sourceId: sources[0]!.id,
+    audience: { accessLevel: "invented-level", capability: "answer" },
+    rules: [{ action: "share", match: [ref, { kind: "label", id: "invented-label" }] }],
+    otherwise: "hide",
+  };
+  const before = { answer: { ...answer, scopePolicies: [policy] } };
+  const after = {
+    answer: {
+      ...before.answer,
+      scopePolicies: [
+        {
+          ...policy,
+          rules: [
+            {
+              ...policy.rules[0]!,
+              match: [
+                { kind: "label", id: "invented-label" },
+                { ...ref, label: "New snapshot", identifiers: [...ref.identifiers].reverse() },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  expect(changedLevelDecisions(before, after, sources)).toEqual([]);
+});

@@ -13,6 +13,7 @@ import {
   policyFamilyId,
   policyFamilyName,
 } from "../../components/grant-builder-state.js";
+import { scopePolicyIntent } from "../../components/grant-intent.js";
 import { editableSourcePolicy } from "../../components/source-filter-state.js";
 import { sourceAccountOf } from "../../lib/source-id.js";
 import {
@@ -101,7 +102,9 @@ function AccountDelta({ decision, before, after, sources }) {
   const boundary = (rule, id) => ({
     granted: Boolean(rule),
     allowed: Boolean(rule && isSourceAllowed(rule, id)),
-    policy: rule?.scopePolicies?.find((policy) => policy.sourceId === id) ?? null,
+    policy: scopePolicyIntent(
+      rule?.scopePolicies?.find((policy) => policy.sourceId === id) ?? null,
+    ),
   });
   const changed = [...ids].filter((id) => !sameDecision(boundary(left, id), boundary(right, id)));
   const unchanged = ids.size - changed.length;

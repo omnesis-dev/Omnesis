@@ -48,16 +48,18 @@ export function useLevelExitGuard(dirty, busy, onClose, inFlight) {
       active.current = false;
       setRouteLeaveGuard(null);
     },
-    confirmation: html`<${ConfirmModal}
-      open=${confirm}
-      title="Discard this draft?"
-      body="Your saved access level will not change. Unsaved choices in this draft will be lost."
-      confirmLabel="Discard draft"
-      cancelLabel="Keep editing"
-      confirmDisabled=${busy}
-      cancelDisabled=${busy}
-      onCancel=${() => setConfirm(false)}
-      onConfirm=${leave}
-    />`,
+    confirmation: html`<div class="guided-exit-confirmation">
+      <${ConfirmModal}
+        open=${confirm}
+        title="Discard this draft?"
+        body="Your saved access level will not change. Unsaved choices in this draft will be lost."
+        confirmLabel="Discard draft"
+        cancelLabel="Keep editing"
+        confirmDisabled=${busy}
+        cancelDisabled=${busy}
+        onCancel=${() => setConfirm(false)}
+        onConfirm=${leave}
+      />
+    </div>`,
   };
 }

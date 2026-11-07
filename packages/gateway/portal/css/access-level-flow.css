@@ -784,26 +784,33 @@
 
 /* Pale accent fills need dark labels in both application themes and states. */
 .guided-level-flow .btn-primary,
-.guided-filter-editor .btn-primary {
+.guided-filter-editor .btn-primary,
+.guided-exit-confirmation .confirm-modal-actions .btn-primary {
   color: #0d2137;
   background: #79c0ff;
   border-color: #79c0ff;
 }
 .guided-level-flow .btn-primary:hover:not(:disabled),
-.guided-filter-editor .btn-primary:hover:not(:disabled) {
+.guided-filter-editor .btn-primary:hover:not(:disabled),
+.guided-exit-confirmation .confirm-modal-actions .btn-primary:hover:not(:disabled) {
   color: #0d2137;
   background: #a2d3ff;
   border-color: #a2d3ff;
 }
 .guided-level-flow .btn-primary:active:not(:disabled),
-.guided-filter-editor .btn-primary:active:not(:disabled) {
+.guided-filter-editor .btn-primary:active:not(:disabled),
+.guided-exit-confirmation .confirm-modal-actions .btn-primary:active:not(:disabled) {
   color: #0d2137;
   background: #58a6ff;
   border-color: #58a6ff;
 }
 .guided-level-flow .btn-primary:disabled,
-.guided-filter-editor .btn-primary:disabled {
+.guided-filter-editor .btn-primary:disabled,
+.guided-exit-confirmation .confirm-modal-actions .btn-primary:disabled {
   opacity: 0.5;
+}
+.guided-exit-confirmation .confirm-modal-actions .btn-primary:hover:not(:disabled) {
+  filter: none;
 }
 .guided-question h3:focus {
   outline: none;
@@ -958,4 +965,21 @@
     max-height: none;
     overflow: visible;
   }
+}
+
+.guided-exit-confirmation button {
+  min-height: 44px;
+  font-size: 15px;
+}
+.guided-exit-confirmation button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.guided-level-flow input:not([type="checkbox"]):not([type="radio"]),
+.guided-level-flow select,
+.guided-level-flow .grant-builder-release-reviewed select,
+.guided-filter-editor input:not([type="checkbox"]):not([type="radio"]),
+.guided-filter-editor select {
+  border-color: var(--text-muted);
 }

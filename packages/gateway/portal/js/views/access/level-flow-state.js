@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { sameGrantIntent, scopePolicyIntent } from "../../components/grant-intent.js";
 import { isSourceAllowed, sourceId } from "../../components/grant-builder-state.js";
 import { sourcePolicy, editableSourcePolicy } from "../../components/source-filter-state.js";
 
@@ -39,19 +40,7 @@ export function sourceBoundarySummary(rule, source) {
   const count = policy.rules[0].match?.length ?? 0;
   return `${policy.rules[0].action === "share" ? "Only" : "Except"} ${count} selected ${count === 1 ? "match" : "matches"}`;
 }
-function canonical(value) {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === "object")
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, canonical(value[key])]),
-    );
-  return value;
-}
-export function sameDecision(left, right) {
-  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
-}
+export const sameDecision = sameGrantIntent;
 function dataDecision(rule, sources) {
   if (!rule) return null;
   const known = new Set(sources.map(sourceId));
@@ -61,7 +50,9 @@ function dataDecision(rule, sources) {
       .map(sourceId)
       .sort(),
     retained: [...(rule.sources.sourceIds ?? [])].filter((id) => !known.has(id)).sort(),
-    policies: [...(rule.scopePolicies ?? [])].sort((a, b) => a.sourceId.localeCompare(b.sourceId)),
+    policies: [...(rule.scopePolicies ?? [])]
+      .map(scopePolicyIntent)
+      .sort((a, b) => a.sourceId.localeCompare(b.sourceId)),
   };
 }
 export function changedLevelDecisions(before, after, sources) {

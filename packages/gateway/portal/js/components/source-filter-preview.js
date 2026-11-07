@@ -113,9 +113,9 @@ export function SourcePolicySummary({ policy, source, capability }) {
   const labels = preview.data?.items ?? [];
   return html`<section
     class="source-policy-summary"
-    aria-label=${`${capability} filter for ${source?.displayName || policy.sourceId}`}
+    aria-label=${`${capability} filter for ${source?.displayName || source?.name || "Unavailable account"}`}
   >
-    <strong>${source?.displayName || source?.name || policy.sourceId}</strong>
+    <strong>${source?.displayName || source?.name || "Unavailable account"}</strong>
     ${(Array.isArray(policy.rules) ? policy.rules : []).map(
       (rule, index) =>
         html`<div key=${index}>
@@ -127,7 +127,7 @@ export function SourcePolicySummary({ policy, source, capability }) {
             ${rule.match.map((ref) => {
               const item = labels.find((entry) => scopeRefKey(entry.ref) === scopeRefKey(ref));
               return html`<li>
-                ${item?.label || scopeDisplayLabel(policy.sourceId, ref, source).label}${ref.kind === "participant" ? ` · ${ref.identifiers.map((id) => id.value).join(" or ")}` : ""}${item?.missing ? " — missing, decision retained" : ""}${item ? ` (${item.count})` : ""}
+                ${scopeDisplayLabel(policy.sourceId, ref, source).label}${ref.kind === "participant" ? ` · ${ref.identifiers.map((id) => id.value).join(" or ")}` : ""}${item?.missing ? " — missing, decision retained" : ""}${item ? ` (${item.count})` : ""}
               </li>`;
             })}
           </ul>

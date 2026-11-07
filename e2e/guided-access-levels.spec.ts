@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { readFileSync, mkdirSync, chmodSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect, type Page } from "@playwright/test";
 import { scopeContracts as whatsappContracts } from "@omnesis/provider-whatsapp/scope-contracts";
@@ -67,7 +67,9 @@ async function assertPrimaryContrast(page: Page) {
   const dialog = page.getByRole("dialog");
   const scope = (await dialog.count()) ? dialog : page;
   const button = scope
-    .locator(".guided-task-footer .btn-primary:enabled, .guided-filter-footer .btn-primary:enabled")
+    .locator(
+      ".guided-task-footer .btn-primary:enabled, .guided-filter-footer .btn-primary:enabled, .confirm-modal-actions .btn-primary:enabled",
+    )
     .last();
   if (!(await button.count())) return;
   const check = async () => {
@@ -111,17 +113,73 @@ async function assertPrimaryContrast(page: Page) {
   await page.mouse.up();
   await page.mouse.move(0, 0);
 }
+async function assertInputAffordance(page: Page) {
+  const ratios = await page
+    .locator(
+      '.guided-level-flow input:enabled:not([type="checkbox"]):not([type="radio"]), .guided-level-flow select:enabled, .guided-filter-editor input:enabled:not([type="checkbox"]):not([type="radio"]), .guided-filter-editor select:enabled',
+    )
+    .evaluateAll((elements) => {
+      const luminance = (color: string) => {
+        const values = color
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+          .map((channel) => {
+            const value = channel / 255;
+            return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+          });
+        return values[0]! * 0.2126 + values[1]! * 0.7152 + values[2]! * 0.0722;
+      };
+      return elements
+        .filter((element) => (element as HTMLElement).offsetParent !== null)
+        .map((element) => {
+          let background = getComputedStyle(element).backgroundColor;
+          let parent = element.parentElement;
+          while ((background === "transparent" || background === "rgba(0, 0, 0, 0)") && parent) {
+            background = getComputedStyle(parent).backgroundColor;
+            parent = parent.parentElement;
+          }
+          const border = luminance(getComputedStyle(element).borderTopColor),
+            surface = luminance(background);
+          return (Math.max(border, surface) + 0.05) / (Math.min(border, surface) + 0.05);
+        });
+    });
+  for (const ratio of ratios) expect(ratio).toBeGreaterThanOrEqual(3);
+}
 async function capture(
   page: Page,
   testInfo: { outputPath: (name: string) => string },
   name: string,
+  captureScale = 1,
 ) {
   const root = process.env.OMNESIS_ACCESS_FLOW_CAPTURE_DIR;
   if (root) mkdirSync(root, { recursive: true, mode: 0o700 });
   const path = root ? join(root, name + ".png") : testInfo.outputPath(name + ".png");
-  await page.screenshot({ path });
+  if (captureScale === 1) await page.screenshot({ path });
+  else {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const { cssVisualViewport: viewport } = await session.send("Page.getLayoutMetrics");
+      const result = await session.send("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: false,
+        clip: {
+          x: viewport.pageX,
+          y: viewport.pageY,
+          width: viewport.clientWidth,
+          height: viewport.clientHeight,
+          scale: captureScale,
+        },
+      });
+      writeFileSync(path, Buffer.from(result.data, "base64"));
+    } finally {
+      await session.detach();
+    }
+  }
   await assertPrimaryContrast(page);
+  await assertInputAffordance(page);
   if (root) chmodSync(path, 0o600);
+  return path;
 }
 for (const theme of ["dark", "light"])
   for (const width of [1440, 390])
@@ -204,34 +262,41 @@ for (const theme of ["dark", "light"])
                 ],
               }
             : { kind, id: kind === "label" ? "planning" : parent ? "folder-child" : "folder-root" };
+        const items =
+          longCatalogue && kind !== "participant"
+            ? Array.from({ length: 65 }, (_, index) => ({
+                ref: { kind, id: `${parent || kind}-item-${index}` },
+                label: `${kind === "folder" ? "Folder" : "Label"} ${String(index + 1).padStart(2, "0")} — Independently invented catalogue entry`,
+                count: 6,
+                hasChildren: kind === "folder" && !parent,
+              }))
+            : [
+                {
+                  ref,
+                  label:
+                    kind === "folder"
+                      ? parent
+                        ? "Comet notes"
+                        : "Dawn archive"
+                      : kind === "label"
+                        ? "Planning"
+                        : "Maya Reeves",
+                  count: 6,
+                  hasChildren: kind === "folder" && !parent,
+                },
+              ];
+        const cursor = url.searchParams.get("cursor");
+        const offset = cursor ? Number(Buffer.from(cursor, "base64url").toString()) : 0;
         await route.fulfill({
           json: {
             sourceId,
             scopes: sources.find((source) => source.id === sourceId)!.scopes,
             readiness: sources.find((source) => source.id === sourceId)!.scopeReadiness,
-            items:
-              longCatalogue && kind !== "participant"
-                ? Array.from({ length: 65 }, (_, index) => ({
-                    ref: { kind, id: `${parent || kind}-item-${index}` },
-                    label: `${kind === "folder" ? "Folder" : "Label"} ${String(index + 1).padStart(2, "0")} — Independently invented catalogue entry`,
-                    count: 6,
-                    hasChildren: kind === "folder" && !parent,
-                  }))
-                : [
-                    {
-                      ref,
-                      label:
-                        kind === "folder"
-                          ? parent
-                            ? "Comet notes"
-                            : "Dawn archive"
-                          : kind === "label"
-                            ? "Planning"
-                            : "Maya Reeves",
-                      count: 6,
-                      hasChildren: kind === "folder" && !parent,
-                    },
-                  ],
+            items: items.slice(offset, offset + 50),
+            nextCursor:
+              offset + 50 < items.length
+                ? Buffer.from(String(offset + 50)).toString("base64url")
+                : undefined,
           },
         });
       });
@@ -272,9 +337,10 @@ for (const theme of ["dark", "light"])
               (rule: { match: Array<{ kind: string; id?: string }> }) =>
                 rule.match.map((ref) => ({
                   ref,
-                  label: nameFor(ref),
-                  count: 6,
-                  missing: previews === "missing",
+                  label:
+                    previews === "missing" && ref.kind !== "participant" ? ref.id : nameFor(ref),
+                  count: previews === "missing" && ref.kind !== "participant" ? 0 : 6,
+                  missing: previews === "missing" && ref.kind !== "participant",
                 })),
             ),
             samples: [
@@ -348,12 +414,13 @@ for (const theme of ["dark", "light"])
       ).toBeFocused();
       await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeInViewport();
       await expect(page.getByLabel("Access level name", { exact: true })).toHaveCount(0);
-      await shot("new-01-permissions");
+      await shot("supplement-00-answer-only-permissions");
       await page
         .locator(".access-capability-preset")
         .filter({ has: page.getByText("Direct", { exact: true }) })
         .locator("input")
         .check();
+      await shot("new-01-permissions");
       await forward();
       await expect(
         page.getByRole("heading", { name: "Which data may Answer use?", exact: true }),
@@ -518,7 +585,7 @@ for (const theme of ["dark", "light"])
       await shot("edit-04-conflict");
       await expect(page.locator(".guided-task-footer")).not.toContainText("Reload latest");
       if (width === 390) {
-        await page.addStyleTag({ content: "html { zoom: 2; }" });
+        await page.setViewportSize({ width: width / 2, height: 422 });
         const recovery = page.getByRole("button", {
           name: "Reload latest and discard draft",
           exact: true,
@@ -535,19 +602,20 @@ for (const theme of ["dark", "light"])
           .boundingBox();
         expect(saveBounds).not.toBeNull();
         expect(saveBounds!.x).toBeGreaterThanOrEqual(0);
-        expect(saveBounds!.x + saveBounds!.width).toBeLessThanOrEqual(width);
+        expect(saveBounds!.x + saveBounds!.width).toBeLessThanOrEqual(width / 2);
+        const zoomPath = await capture(
+          page,
+          testInfo,
+          `${theme}-${width}-edit-04b-conflict-200percent`,
+          2,
+        );
+        const zoomPng = readFileSync(zoomPath);
+        expect(zoomPng.readUInt32BE(16)).toBe(width);
+        expect(zoomPng.readUInt32BE(20)).toBe(844);
         await expect(
           page.getByRole("button", { name: "Save changes", exact: true }),
         ).toBeInViewport({ ratio: 1 });
-        await shot("edit-04b-conflict-200percent");
-        await page.evaluate(() => {
-          document.documentElement.style.zoom = "1";
-        });
-        // The stress style is removed after the large-text capture.
-        await page
-          .locator("style")
-          .last()
-          .evaluate((element) => element.remove());
+        await page.setViewportSize({ width, height: 844 });
       }
       await page
         .getByRole("button", { name: "Reload latest and discard draft", exact: true })
@@ -600,6 +668,8 @@ for (const theme of ["dark", "light"])
       await modal().getByRole("button", { name: "labels", exact: true }).click();
       const search = modal().getByRole("searchbox");
       await search.fill("invented");
+      await expect(modal().locator(".source-filter-options li")).toHaveCount(50);
+      await modal().getByRole("button", { name: "Load more", exact: true }).click();
       await expect(modal().locator(".source-filter-options li")).toHaveCount(65);
       const results = modal().locator(".source-filter-options input");
       for (let index = 40; index < 60; index++) await results.nth(index).check();
@@ -628,6 +698,7 @@ for (const theme of ["dark", "light"])
       await modal().getByRole("button", { name: "participant", exact: true }).click();
       await modal().getByRole("button", { name: "labels", exact: true }).click();
       await expect(search).toHaveValue("invented");
+      await expect(modal().locator(".source-filter-options li")).toHaveCount(65);
       await expect
         .poll(() =>
           modal()
@@ -636,6 +707,7 @@ for (const theme of ["dark", "light"])
         )
         .toBeCloseTo(offset, 0);
       await search.fill("catalogue");
+      await expect(modal().locator(".source-filter-options li")).toHaveCount(50);
       await expect
         .poll(() =>
           modal()
@@ -664,10 +736,15 @@ for (const theme of ["dark", "light"])
         .getByRole("button", { name: "Change Google Drive content", exact: true })
         .click();
       await pickMatches();
+      await expect(modal().locator(".source-filter-options li")).toHaveCount(50);
+      await modal().getByRole("button", { name: "Load more", exact: true }).click();
       await expect(modal().locator(".source-filter-options li")).toHaveCount(65);
       await modal()
         .getByRole("button", { name: /Open Folder 60/ })
         .click();
+      await expect(modal().locator(".source-filter-options li")).toHaveCount(50);
+      await modal().getByRole("button", { name: "Load more", exact: true }).click();
+      await expect(modal().locator(".source-filter-options li")).toHaveCount(65);
       await modal().locator(".source-filter-options input").nth(59).check();
       const folderOffset = await modal()
         .locator(".filter-task-scroll")
@@ -689,6 +766,13 @@ for (const theme of ["dark", "light"])
       await expect(
         driveRow.getByRole("button", { name: "Change Google Drive content", exact: true }),
       ).toBeFocused();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(
+        page.getByRole("dialog", { name: "Discard this draft?", exact: true }),
+      ).toBeVisible();
+      await shot("stress-06-discard-confirmation");
+      await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+      await expect(account.locator(".guided-readable-boundary")).toContainText("and 18 more");
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Discard draft", exact: true }).click();
       longCatalogue = false;
@@ -793,8 +877,11 @@ for (const theme of ["dark", "light"])
       ).toBeDisabled();
       await expect(modal().getByText("Waiting for source metadata.").first()).toBeVisible();
       await shot("supplement-10-preparing");
-      previews = "missing";
       await modal().getByRole("button", { name: "Back", exact: true }).click();
+      await modal()
+        .getByRole("checkbox", { name: /Planning/ })
+        .check();
+      previews = "missing";
       await modal().getByRole("button", { name: "Review filter", exact: true }).click();
       await expect(
         modal()

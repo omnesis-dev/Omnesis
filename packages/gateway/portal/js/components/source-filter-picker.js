@@ -17,27 +17,35 @@ export function SourceFilterPicker({
   active = true,
   scrollContainer,
   memory,
+  readiness,
+  onReadiness,
 }) {
   const sourceKey = `${source.id ?? source.sourceId}:${kind}`;
   const saved = memory?.get(sourceKey);
   const [query, setQuery] = useState(saved?.query ?? "");
   const [trail, setTrail] = useState(saved?.trail ?? []);
   const positions = useRef(saved?.positions ?? new Map());
+  // Option pages belong to this child draft. They never validate Apply: that
+  // always requires a fresh exact-policy preview.
+  const catalogues = useRef(saved?.catalogues ?? new Map());
   const parentId = query ? undefined : trail.at(-1)?.id;
   const sourceId = source.id ?? source.sourceId;
   const generation = useScopeLabelGeneration();
-  const identity = JSON.stringify([generation, requestIdentity(sourceId, kind, query, parentId)]);
-  const scrollKey = JSON.stringify([identity, trail.map((item) => item.id)]);
+  const identity = JSON.stringify([
+    generation,
+    requestIdentity(sourceId, kind, query, parentId),
+    trail.map((item) => item.id),
+  ]);
+  const scrollKey = identity;
   const current = useRef(identity);
   current.current = identity;
   const requests = useRef(new Set());
   const inFlight = useRef(false);
-  const [state, setState] = useState({
-    identity,
-    items: [],
-    pending: true,
-    nextCursor: null,
-    error: "",
+  const [state, setState] = useState(() => {
+    const retained = catalogues.current.get(identity);
+    return retained
+      ? { ...retained, retained: true }
+      : { identity, items: [], pending: true, nextCursor: null, error: "" };
   });
   const [type, setType] = useState("email");
   const [typed, setTyped] = useState("");
@@ -71,14 +79,27 @@ export function SourceFilterPicker({
         result.sourceId !== sourceId
       )
         return;
-      setState((old) => ({
-        identity,
-        items: append && old.identity === identity ? [...old.items, ...result.items] : result.items,
-        nextCursor: result.nextCursor,
-        readiness: result.readiness,
-        pending: false,
-        error: "",
-      }));
+      setState((old) => {
+        const next = {
+          identity,
+          items:
+            append && old.identity === identity ? [...old.items, ...result.items] : result.items,
+          nextCursor: result.nextCursor,
+          readiness: result.readiness,
+          pending: false,
+          error: "",
+          retained: false,
+        };
+        catalogues.current.delete(identity);
+        catalogues.current.set(identity, next);
+        while (catalogues.current.size > 16) {
+          const oldest = catalogues.current.keys().next().value;
+          catalogues.current.delete(oldest);
+          positions.current.delete(oldest);
+        }
+        return next;
+      });
+      if (Array.isArray(result.readiness)) onReadiness?.(result.readiness);
     } catch (error) {
       if (!controller.signal.aborted && current.current === requestKey)
         setState((old) => ({
@@ -93,7 +114,13 @@ export function SourceFilterPicker({
     }
   }
   useEffect(() => {
-    const timer = setTimeout(() => load(null, false), 150);
+    const retained = catalogues.current.get(identity);
+    if (retained) {
+      catalogues.current.delete(identity);
+      catalogues.current.set(identity, retained);
+      setState({ ...retained, retained: true });
+    }
+    const timer = retained ? null : setTimeout(() => load(null, false), 150);
     return () => {
       clearTimeout(timer);
       for (const controller of requests.current) controller.abort();
@@ -113,20 +140,37 @@ export function SourceFilterPicker({
     element.addEventListener("scroll", remember);
     return () => {
       element.removeEventListener("scroll", remember);
-      memory?.set(sourceKey, { query, trail, positions: positions.current });
+      memory?.set(sourceKey, {
+        query,
+        trail,
+        positions: positions.current,
+        catalogues: catalogues.current,
+      });
     };
   }, [scrollKey, active]);
   useLayoutEffect(() => {
     if (active && state.identity === identity && !state.pending && scrollContainer?.current)
       scrollContainer.current.scrollTop = positions.current.get(scrollKey) ?? 0;
   }, [scrollKey, active, state.pending]);
-  const visible = state.identity === identity ? state : { items: [], pending: true };
+  const retained = catalogues.current.get(identity);
+  const visible =
+    state.identity === identity
+      ? state
+      : retained
+        ? { ...retained, retained: true }
+        : { items: [], pending: true };
+  const currentReadiness = readiness ?? visible.readiness ?? source.scopeReadiness;
+  const refresh = () => {
+    positions.current.set(scrollKey, 0);
+    catalogues.current.delete(identity);
+    load(null, false);
+  };
   const keys = new Set(selected.map(scopeRefKey));
   return html`<section
     class="source-filter-picker"
     aria-label=${`Choose ${declaration?.noun?.many || kind}`}
   >
-    <${FilterReadiness} readiness=${visible.readiness ?? source.scopeReadiness} />
+    <${FilterReadiness} readiness=${currentReadiness} />
     ${
       kind === "folder"
         ? html`<p>
@@ -146,6 +190,7 @@ export function SourceFilterPicker({
         maxlength="256"
         onInput=${(event) => setQuery(event.currentTarget.value)}
     /></label>
+    ${!visible.pending && !visible.error && (visible.retained || currentReadiness?.some((item) => !item.ready)) ? html`<button type="button" class="btn-secondary" onClick=${refresh}>Refresh list</button>` : null}
     ${visible.pending ? html`<p role="status">Loading source options…</p>` : null}
     ${
       visible.error

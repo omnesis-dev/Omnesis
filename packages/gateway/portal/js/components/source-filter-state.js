@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { sameScopePolicyIntent } from "./grant-intent.js";
+
 export const SCOPE_KINDS = ["conversation", "participant", "label", "folder"];
 export const cloneFilter = (value) => JSON.parse(JSON.stringify(value));
 
@@ -26,8 +28,13 @@ export function newSourcePolicy(sourceId, capability, accessLevel = "new") {
 }
 
 export function setSourcePolicy(rule, sourceId, policy) {
-  const policies = (rule.scopePolicies ?? []).filter((current) => current.sourceId !== sourceId);
-  if (policy) policies.push(cloneFilter(policy));
+  const current = (rule.scopePolicies ?? []).find((item) => item.sourceId === sourceId);
+  if ((!current && !policy) || (current && policy && sameScopePolicyIntent(current, policy)))
+    return rule;
+  const policies = (rule.scopePolicies ?? []).flatMap((item) =>
+    item.sourceId === sourceId ? (policy ? [cloneFilter(policy)] : []) : [item],
+  );
+  if (policy && !current) policies.push(cloneFilter(policy));
   return {
     ...rule,
     ...(rule.filterRevision !== undefined || policies.length
@@ -53,12 +60,19 @@ export function copyRuleFilters(rule, sourceRule, accessLevel = "new") {
 }
 
 export function scopeRefKey(ref) {
-  return ref.kind === "participant"
-    ? `participant:${(ref.identifiers ?? [])
-        .map((id) => `${id.type}:${id.value}`)
-        .sort()
-        .join("|")}`
-    : `${ref.kind}:${ref.id}`;
+  if (ref.kind !== "participant") return JSON.stringify([ref.kind, ref.id]);
+  const tuples = new Map(
+    (ref.identifiers ?? []).map((id) => {
+      const tuple = [id.type, id.value];
+      return [JSON.stringify(tuple), tuple];
+    }),
+  );
+  return JSON.stringify([
+    "participant",
+    [...tuples.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([, tuple]) => tuple),
+  ]);
 }
 
 export function scopeRefLabel(ref) {

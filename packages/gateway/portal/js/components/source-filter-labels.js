@@ -42,7 +42,14 @@ export function rememberScopeLabels(sourceId, items = [], expectedGeneration = g
   for (const item of items) {
     if (!item?.ref || typeof item.label !== "string" || !item.label.trim()) continue;
     const key = JSON.stringify([sourceId, scopeRefKey(item.ref)]);
-    const value = { label: item.label, missing: item.missing === true };
+    const prior = labels.get(key);
+    const opaqueMissing =
+      item.missing === true && item.ref.kind !== "participant" && item.label === item.ref.id;
+    const value = {
+      label: opaqueMissing ? (prior?.label ?? "Saved selection") : item.label,
+      missing: item.missing === true,
+      ...(opaqueMissing && (!prior || prior.unavailable) ? { unavailable: true } : {}),
+    };
     if (JSON.stringify(labels.get(key)) !== JSON.stringify(value)) changed = true;
     labels.delete(key);
     labels.set(key, value);

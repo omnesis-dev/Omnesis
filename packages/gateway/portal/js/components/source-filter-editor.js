@@ -47,6 +47,7 @@ export function SourceFilterEditor({
   );
   const [attempted, setAttempted] = useState(false);
   const [pickerVisited, setPickerVisited] = useState(false);
+  const [pickerReadiness, setPickerReadiness] = useState(null);
   const heading = useRef(null);
   const scroll = useRef(null);
   const pickerMemory = useRef(new Map());
@@ -67,7 +68,7 @@ export function SourceFilterEditor({
       ? null
       : filterDraftError(draft, {
           ...source,
-          scopeReadiness: preview.data?.readiness ?? source.scopeReadiness,
+          scopeReadiness: preview.data?.readiness ?? pickerReadiness ?? source.scopeReadiness,
         });
   const kinds = source.scopes?.items ?? [];
   useEffect(() => {
@@ -167,6 +168,8 @@ export function SourceFilterEditor({
                   active=${step === "picker"}
                   scrollContainer=${scroll}
                   memory=${pickerMemory.current}
+                  readiness=${pickerReadiness}
+                  onReadiness=${setPickerReadiness}
                 />`
               : !kinds.length
                 ? html`<p>The source descriptor is unavailable. Saved decisions are retained.</p>`
@@ -191,10 +194,7 @@ export function SourceFilterEditor({
                           >
                           <ul class="source-filter-selected">
                             ${selected.map((ref) => {
-                              const item = preview.data?.items?.find(
-                                (entry) => scopeRefKey(entry.ref) === scopeRefKey(ref),
-                              );
-                              const label = item ?? scopeDisplayLabel(sourceId, ref, source);
+                              const label = scopeDisplayLabel(sourceId, ref, source);
                               return html`<li key=${scopeRefKey(ref)}>
                                 ${label.label}${label.missing ? " · Missing — decision retained" : label.unavailable ? " · Name unavailable; restriction retained" : ""}
                               </li>`;

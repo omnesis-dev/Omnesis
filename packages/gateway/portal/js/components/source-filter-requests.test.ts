@@ -157,3 +157,38 @@ test("an identical request immediately after awaiting completion starts a fresh 
   expect(api.previewSourceFilter).toHaveBeenCalledTimes(2);
   await fresh;
 });
+
+test("a deleted catalogue reference keeps its resolved name without displaying an opaque ID", async () => {
+  const ref = { kind: "label", id: "opaque-label-17" };
+  api.getSourceFilterOptions.mockResolvedValue({
+    sourceId: policy.sourceId,
+    items: [{ ref, label: "Invented planning label" }],
+  });
+  await readFilterOptions(policy.sourceId, { kind: "label" });
+  api.previewSourceFilter.mockResolvedValue({
+    sourceId: policy.sourceId,
+    items: [{ ref, label: ref.id, missing: true, count: 0 }],
+  });
+  await readFilterPreview(policy.sourceId, {
+    ...policy,
+    rules: [{ action: "share", match: [ref] }],
+  });
+  expect(scopeDisplayLabel(policy.sourceId, ref)).toEqual({
+    label: "Invented planning label",
+    missing: true,
+  });
+  const unknown = { kind: "folder", id: "opaque-folder-81" };
+  api.previewSourceFilter.mockResolvedValue({
+    sourceId: policy.sourceId,
+    items: [{ ref: unknown, label: unknown.id, missing: true, count: 0 }],
+  });
+  await readFilterPreview(policy.sourceId, {
+    ...policy,
+    rules: [{ action: "share", match: [unknown] }],
+  });
+  expect(scopeDisplayLabel(policy.sourceId, unknown)).toEqual({
+    label: "Saved selection",
+    missing: true,
+    unavailable: true,
+  });
+});

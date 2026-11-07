@@ -12,6 +12,8 @@ import { SourceFilterEditor } from "./source-filter-editor.js";
 // @ts-expect-error — portal modules are plain JavaScript.
 import { SourceFilterPicker } from "./source-filter-picker.js";
 // @ts-expect-error — portal modules are plain JavaScript.
+import { SourcePolicySummary } from "./source-filter-preview.js";
+// @ts-expect-error — portal modules are plain JavaScript.
 import { SourceFilters } from "./source-filters.js";
 // @ts-expect-error — portal modules are plain JavaScript.
 import { CapabilityPicker, GrantDataPrivacy } from "./grant-builder.js";
@@ -667,4 +669,130 @@ test("an unfiltered account opens as All content and continuing cannot imply a n
   expect(onClose).toHaveBeenCalled();
   expect(onApply).not.toHaveBeenCalled();
   expect(onRemove).not.toHaveBeenCalled();
+});
+
+test("a missing catalogue item with no resolved name hides its opaque ID and preserves the saved reference", async () => {
+  const ref = { kind: "conversation", id: "opaque-missing-room-73" };
+  const saved = { ...policy, rules: [{ action: "share", match: [ref] }] };
+  const onApply = vi.fn();
+  api.previewSourceFilter.mockResolvedValue({
+    sourceId: source.id,
+    readiness: source.scopeReadiness,
+    items: [{ ref, label: ref.id, missing: true, count: 0 }],
+    visible: 0,
+    hidden: 20,
+    unknown: 0,
+    samples: [],
+  });
+  await mount({ savedPolicy: saved, onApply });
+  expect(host.textContent).toContain("Saved selection");
+  expect(host.textContent).toContain("Missing — decision retained");
+  expect(host.textContent).not.toContain(ref.id);
+  await act(async () => button("Apply filter").click());
+  expect(onApply).toHaveBeenCalledWith(saved);
+});
+
+test("saved rule summaries retain missing decisions without exposing catalogue fallback IDs", async () => {
+  const ref = { kind: "conversation", id: "opaque-summary-room-88" };
+  const saved = { ...policy, rules: [{ action: "share", match: [ref] }] };
+  api.previewSourceFilter.mockResolvedValue({
+    sourceId: source.id,
+    readiness: source.scopeReadiness,
+    items: [{ ref, label: ref.id, missing: true, count: 0 }],
+    visible: 0,
+    hidden: 20,
+    unknown: 0,
+    samples: [],
+  });
+  await act(async () =>
+    render(h(SourcePolicySummary, { policy: saved, source, capability: "Answer" }), host),
+  );
+  await flushUI();
+  expect(host.textContent).toContain("Saved selection");
+  expect(host.textContent).toContain("missing, decision retained");
+  expect(host.textContent).not.toContain(ref.id);
+});
+
+test("loaded option pages survive query returns and kind remounts within a child draft", async () => {
+  const memory = new Map();
+  const scroll = { current: host };
+  api.getSourceFilterOptions.mockImplementation(
+    async (id: string, query: { kind: string; cursor?: string }) => ({
+      sourceId: id,
+      readiness: source.scopeReadiness,
+      items: Array.from(
+        { length: query.kind === "label" ? (query.cursor ? 15 : 50) : 1 },
+        (_, index) => ({
+          ref: { kind: query.kind, id: `${query.kind}-${(query.cursor ? 50 : 0) + index}` },
+          label: `Invented option ${index}`,
+          count: 1,
+        }),
+      ),
+      nextCursor: query.kind === "label" && !query.cursor ? "next-page" : undefined,
+    }),
+  );
+  const renderKind = async (kind: string) =>
+    act(async () =>
+      render(
+        h(SourceFilterPicker, {
+          key: kind,
+          source,
+          kind,
+          selected: [],
+          onToggle: vi.fn(),
+          memory,
+          scrollContainer: scroll,
+        }),
+        host,
+      ),
+    );
+  await renderKind("label");
+  await waitOptions();
+  await act(async () => button("Load more").click());
+  await vi.waitFor(() =>
+    expect(host.querySelectorAll(".source-filter-options li")).toHaveLength(65),
+  );
+  const input = host.querySelector<HTMLInputElement>("input[type=search]")!;
+  await act(async () => {
+    input.value = "another";
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+  await waitOptions();
+  expect(host.querySelectorAll(".source-filter-options li")).toHaveLength(50);
+  await act(async () => {
+    input.value = "";
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+  expect(host.querySelectorAll(".source-filter-options li")).toHaveLength(65);
+  await renderKind("conversation");
+  await waitOptions();
+  const reads = api.getSourceFilterOptions.mock.calls.length;
+  await renderKind("label");
+  expect(host.querySelectorAll(".source-filter-options li")).toHaveLength(65);
+  expect(api.getSourceFilterOptions).toHaveBeenCalledTimes(reads);
+  expect(host.textContent).toContain("Refresh list");
+});
+
+test("an explicit option refresh can recover readiness while Apply still waits for a fresh policy preview", async () => {
+  const waiting = {
+    ...source,
+    scopeReadiness: source.scopeReadiness.map((item) => ({ ...item, ready: false })),
+  };
+  const option = {
+    sourceId: source.id,
+    items: [{ ref: policy.rules[0]!.match[0], label: "Invented room", count: 1 }],
+  };
+  api.getSourceFilterOptions
+    .mockResolvedValueOnce({ ...option, readiness: waiting.scopeReadiness })
+    .mockResolvedValueOnce({ ...option, readiness: source.scopeReadiness });
+  await mount({ source: waiting });
+  await waitOptions();
+  expect(host.textContent).toContain("Choose matching content");
+  await act(async () => button("Refresh list").click());
+  await flushUI();
+  await act(async () => button("Review filter").click());
+  await flushUI();
+  expect(host.textContent).toContain("Review this filter");
+  expect(api.previewSourceFilter).toHaveBeenCalled();
+  expect(button("Apply filter").disabled).toBe(false);
 });
