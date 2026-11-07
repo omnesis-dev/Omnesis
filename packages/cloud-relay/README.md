@@ -691,3 +691,31 @@ operator override on an already configured installation disables setup with
 `relay-service-mismatch`; it does not migrate an identity or send its credentials
 to another operator. Plan such a migration separately. The custom public gateway
 origin remains independent of the relay service selection.
+
+## Aggregate operator metrics
+
+Set `OMNESIS_CLOUD_RELAY_METRICS_PORT` to enable a separate plain-HTTP
+`GET /metrics` listener bound only to `127.0.0.1`. It is disabled by default;
+port zero selects an ephemeral private port for tests. The public HTTPS control
+and opaque TLS data listeners never expose this endpoint. Put any remote scraper
+behind an authenticated private monitoring path; do not publish the metrics port.
+
+The `cloud_relay_` Prometheus families describe active and registered gateways,
+routing-account records and Google links, stream and login admission capacity,
+tunnel lifecycle events, stream admission failures, data-plane connection events,
+ingress/egress encrypted bytes, DNS publication and cleanup outcomes, active DNS
+leases and queued operations, recovery-policy epoch/expiry, and process resources.
+HTTP completion counts include exact status codes and duration histograms; route
+and method labels come from fixed allowlists. Upgrade observations include the
+101 response. Account, gateway, hostname, token, URL query and application payload
+values never become metric labels.
+
+Traffic counters include bytes received/sent on admitted data sockets, including
+TLS handshakes; they do not represent decrypted HTTP or application payload sizes.
+Live sockets contribute immediately. Counters reset on process restart, so use
+Prometheus rates/increases rather than adding raw values across restarts. Tunnel
+establishments and disconnections include intentional renewals and shutdowns;
+heartbeat timeouts are reported separately. Registered-account counts describe
+routing records, not unique people. DNS proof publication is not confirmation
+that a certificate authority issued a certificate. A zero recovery expiry means
+that independent recovery policy is not configured.

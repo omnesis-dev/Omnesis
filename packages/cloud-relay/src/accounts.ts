@@ -79,6 +79,24 @@ export class RelayAccounts {
     return result.changes === 1;
   }
 
+  snapshot(): {
+    accounts: number;
+    maxAccounts: number;
+    gatewayBindings: number;
+    googleLinks: number;
+  } {
+    const count = (
+      table: "relay_accounts" | "relay_gateway_bindings" | "relay_identity_aliases",
+    ): number =>
+      (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+    return {
+      accounts: count("relay_accounts"),
+      maxAccounts: this.maxAccounts,
+      gatewayBindings: count("relay_gateway_bindings"),
+      googleLinks: count("relay_identity_aliases"),
+    };
+  }
+
   close(): void {
     this.db.close();
   }

@@ -19,6 +19,20 @@ export class LoginAdmission {
     }
   }
 
+  snapshot(): {
+    activeLogins: number;
+    loginAttempts: number;
+    maxConcurrentLogins: number;
+    maxLoginsPerMinute: number;
+  } {
+    return {
+      activeLogins: this.active,
+      loginAttempts: this.window === Math.floor(Date.now() / 60_000) ? this.attempts : 0,
+      maxConcurrentLogins: this.maxConcurrent,
+      maxLoginsPerMinute: this.maxPerMinute,
+    };
+  }
+
   async run<T>(work: () => Promise<T>): Promise<T> {
     const window = Math.floor(Date.now() / 60_000);
     if (window !== this.window) {

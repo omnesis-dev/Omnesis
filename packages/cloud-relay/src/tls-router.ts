@@ -3,9 +3,11 @@
 
 import { createServer, type Server, type Socket } from "node:net";
 import { pipeline, type Duplex } from "node:stream";
+import { CloudRelayMetrics, type DataEvent } from "./metrics.js";
 import { clientHelloHostname, MAX_CLIENT_HELLO_BYTES } from "./client-hello.js";
 
 export interface TlsRouterOptions {
+  metrics?: CloudRelayMetrics;
   accountForHostname(hostname: string): string | undefined;
   open(account: string, signal: AbortSignal): Promise<Duplex>;
   maxConnections?: number;
@@ -15,8 +17,12 @@ export interface TlsRouterOptions {
 /** Routes encrypted bytes without terminating TLS, parsing HTTP, or seeing credentials. */
 export function createTlsRouter(options: TlsRouterOptions): {
   server: Server;
+  snapshot(): { dataConnections: number; dataIngressBytes: number; dataEgressBytes: number };
   close(): Promise<void>;
 } {
+  const metrics = options.metrics ?? new CloudRelayMetrics();
+  let closedIngressBytes = 0;
+  let closedEgressBytes = 0;
   const maxConnections = options.maxConnections ?? 256;
   const helloTimeoutMs = options.helloTimeoutMs ?? 10_000;
   for (const limit of [maxConnections, helloTimeoutMs])
@@ -26,23 +32,32 @@ export function createTlsRouter(options: TlsRouterOptions): {
   const server = createServer((socket) => {
     socket.on("error", () => socket.destroy());
     if (sockets.size >= maxConnections) {
+      metrics.data("capacity");
       socket.destroy();
       return;
     }
     sockets.add(socket);
+    metrics.data("accepted");
     const controller = new AbortController();
-    const timer = setTimeout(() => socket.destroy(), helloTimeoutMs);
+    const timer = setTimeout(() => {
+      metrics.data("hello_timeout");
+      socket.destroy();
+    }, helloTimeoutMs);
     const initial = Buffer.alloc(MAX_CLIENT_HELLO_BYTES);
     let initialLength = 0;
     let recordOffset = 0;
     let destination: Duplex | undefined;
     socket.once("close", () => {
+      closedIngressBytes += socket.bytesRead;
+      closedEgressBytes += socket.bytesWritten;
       sockets.delete(socket);
+      metrics.data("closed");
       clearTimeout(timer);
       controller.abort();
       destination?.destroy();
     });
     const receive = (chunk: Buffer): void => {
+      let failure: DataEvent = "invalid_hello";
       try {
         if (initialLength + chunk.length > MAX_CLIENT_HELLO_BYTES)
           throw new Error("ClientHello too large");
@@ -58,7 +73,11 @@ export function createTlsRouter(options: TlsRouterOptions): {
         const hostname = clientHelloHostname(initial.subarray(0, initialLength));
         if (hostname === undefined) return;
         const account = options.accountForHostname(hostname);
-        if (account === undefined) throw new Error("Unknown gateway");
+        if (account === undefined) {
+          failure = "unknown_gateway";
+          throw new Error("Unknown gateway");
+        }
+        failure = "connect_failed";
         socket.pause();
         socket.removeListener("data", receive);
         void options.open(account, controller.signal).then(
@@ -68,6 +87,7 @@ export function createTlsRouter(options: TlsRouterOptions): {
               return;
             }
             destination = stream;
+            metrics.data("routed");
             stream.on("error", () => socket.destroy());
             // Preserve the exact original ClientHello, including its random and key shares.
             stream.write(initial.subarray(0, initialLength));
@@ -81,9 +101,13 @@ export function createTlsRouter(options: TlsRouterOptions): {
               stream.destroy();
             });
           },
-          () => socket.destroy(),
+          () => {
+            metrics.data("connect_failed");
+            socket.destroy();
+          },
         );
       } catch {
+        metrics.data(failure);
         socket.destroy();
       }
     };
@@ -91,6 +115,13 @@ export function createTlsRouter(options: TlsRouterOptions): {
   });
   return {
     server,
+    snapshot: () => ({
+      dataConnections: sockets.size,
+      dataIngressBytes:
+        closedIngressBytes + [...sockets].reduce((sum, socket) => sum + socket.bytesRead, 0),
+      dataEgressBytes:
+        closedEgressBytes + [...sockets].reduce((sum, socket) => sum + socket.bytesWritten, 0),
+    }),
     close: () =>
       new Promise<void>((resolve, reject) => {
         for (const socket of sockets) socket.destroy();

@@ -189,6 +189,10 @@ export class AcmeDnsChallenges {
     await savePrivateJson(this.options.file, remaining);
     this.leases = remaining;
   }
+  snapshot(): { dnsLeases: number; dnsQueued: number } {
+    return { dnsLeases: this.leases.length, dnsQueued: this.queued };
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     clearInterval(this.timer);

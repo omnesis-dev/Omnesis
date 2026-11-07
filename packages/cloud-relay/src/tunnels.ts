@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { type Duplex } from "node:stream";
 import { createWebSocketStream, WebSocket } from "ws";
+import { CloudRelayMetrics } from "./metrics.js";
 
 export class RelayError extends Error {
   constructor(
@@ -52,7 +53,10 @@ export class TunnelBroker {
   private readonly pending = new Map<string, Pending>();
   private activeStreams = 0;
 
-  constructor(private readonly limits: TunnelLimits = DEFAULT_TUNNEL_LIMITS) {
+  constructor(
+    private readonly limits: TunnelLimits = DEFAULT_TUNNEL_LIMITS,
+    private readonly metrics = new CloudRelayMetrics(),
+  ) {
     for (const value of Object.values(limits)) {
       if (!Number.isSafeInteger(value) || value <= 0 || value > 715_827_882)
         throw new Error("Tunnel limits must be positive integers");
@@ -74,6 +78,7 @@ export class TunnelBroker {
       pending: new Set(),
       expiry: setTimeout(
         () => {
+          this.metrics.tunnel("session_expired");
           tunnel.revoke();
           socket.terminate();
         },
@@ -81,6 +86,7 @@ export class TunnelBroker {
       ),
       heartbeat: setInterval(() => {
         if (!alive) {
+          this.metrics.tunnel("heartbeat_timeout");
           tunnel.revoke();
           socket.terminate();
           return;
@@ -91,20 +97,28 @@ export class TunnelBroker {
       revoke: () => {
         clearTimeout(tunnel.expiry);
         clearInterval(tunnel.heartbeat);
-        if (this.gateways.get(account) === tunnel) this.gateways.delete(account);
-        for (const ticket of tunnel.pending)
+        if (this.gateways.get(account) === tunnel) {
+          this.gateways.delete(account);
+          this.metrics.tunnel("disconnected");
+        }
+        for (const ticket of tunnel.pending) {
+          this.metrics.stream("gateway_disconnected");
           this.fail(ticket, new RelayError(502, "Gateway disconnected"));
+        }
         for (const stream of tunnel.streams) stream.destroy();
       },
     };
     this.gateways.set(account, tunnel);
+    this.metrics.tunnel("connected");
     socket.on("pong", () => {
       alive = true;
     });
     socket.on("error", () => {
+      this.metrics.tunnel("socket_error");
       socket.terminate();
     });
     socket.on("message", () => {
+      this.metrics.tunnel("unexpected_message");
       socket.close(1008, "Unexpected control message");
     });
     socket.once("close", tunnel.revoke);
@@ -114,28 +128,36 @@ export class TunnelBroker {
   }
 
   open(account: string, signal: AbortSignal): Promise<Duplex> {
+    this.metrics.stream("requested");
     const tunnel = this.gateways.get(account);
-    if (!tunnel || tunnel.socket.readyState !== WebSocket.OPEN)
+    if (!tunnel || tunnel.socket.readyState !== WebSocket.OPEN) {
+      this.metrics.stream("offline");
       throw new RelayError(503, "Gateway is offline");
-    if (signal.aborted) throw new RelayError(499, "Client disconnected");
+    }
+    if (signal.aborted) {
+      this.metrics.stream("aborted");
+      throw new RelayError(499, "Client disconnected");
+    }
     if (
       this.activeStreams + this.pending.size >= this.limits.maxStreams ||
       tunnel.streams.size + tunnel.pending.size >= this.limits.maxStreamsPerGateway
     ) {
+      this.metrics.stream("capacity");
       throw new RelayError(429, "Stream capacity reached");
     }
     const ticket = randomBytes(32).toString("hex");
     return new Promise<Duplex>((resolve, reject) => {
       const abort = (): void => {
+        this.metrics.stream("aborted");
         this.fail(ticket, new RelayError(499, "Client disconnected"));
       };
       const clean = (): void => signal.removeEventListener("abort", abort);
       this.pending.set(ticket, {
         owner: tunnel,
-        timer: setTimeout(
-          () => this.fail(ticket, new RelayError(504, "Gateway connection timed out")),
-          this.limits.connectTimeoutMs,
-        ),
+        timer: setTimeout(() => {
+          this.metrics.stream("timeout");
+          this.fail(ticket, new RelayError(504, "Gateway connection timed out"));
+        }, this.limits.connectTimeoutMs),
         resolve: (stream) => {
           clean();
           resolve(stream);
@@ -159,6 +181,7 @@ export class TunnelBroker {
 
   claim(account: string, ticket: string, socket: WebSocket): void {
     if (!this.canClaim(account, ticket)) {
+      this.metrics.stream("rejected");
       socket.close(1008, "Invalid data channel");
       return;
     }
@@ -174,9 +197,11 @@ export class TunnelBroker {
     });
     pending.owner.streams.add(stream);
     this.activeStreams++;
+    this.metrics.stream("connected");
     stream.once("close", () => {
       pending.owner.streams.delete(stream);
       this.activeStreams--;
+      this.metrics.stream("closed");
     });
     pending.resolve(stream);
   }
@@ -188,6 +213,24 @@ export class TunnelBroker {
     pending.owner.pending.delete(ticket);
     clearTimeout(pending.timer);
     pending.reject(error);
+  }
+
+  snapshot(): {
+    onlineGateways: number;
+    activeStreams: number;
+    pendingStreams: number;
+    maxGateways: number;
+    maxStreams: number;
+    maxStreamsPerGateway: number;
+  } {
+    return {
+      onlineGateways: this.gateways.size,
+      activeStreams: this.activeStreams,
+      pendingStreams: this.pending.size,
+      maxGateways: this.limits.maxGateways,
+      maxStreams: this.limits.maxStreams,
+      maxStreamsPerGateway: this.limits.maxStreamsPerGateway,
+    };
   }
 
   closeAccount(account: string): void {

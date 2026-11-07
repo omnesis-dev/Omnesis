@@ -578,3 +578,37 @@ test("explicit Google commands dispatch to their interactive flow", async () => 
     expect(run).toHaveBeenLastCalledWith(command, env);
   }
 });
+
+test("private metrics expose live aggregates separately and listener conflicts drain owned resources", async () => {
+  const env = await daemonEnv();
+  env.OMNESIS_CLOUD_RELAY_METRICS_PORT = "0";
+  const daemon = await startRelayDaemon(env);
+  try {
+    expect(daemon.metricsPort).toBeGreaterThan(0);
+    expect((await fetch(daemon.url + "/metrics")).status).toBe(404);
+    const body = await (await fetch(`http://127.0.0.1:${daemon.metricsPort}/metrics`)).text();
+    expect(body).toContain("cloud_relay_online_gateways 0\n");
+    expect(body).toContain('route="other"');
+    await expect(
+      startRelayDaemon({ ...env, OMNESIS_CLOUD_RELAY_METRICS_PORT: String(daemon.metricsPort) }),
+    ).rejects.toThrow("EADDRINUSE");
+  } finally {
+    await daemon.close();
+  }
+});
+
+test("metrics shutdown failure still closes the control listener and account database", async () => {
+  const metrics = await import("./metrics-server.js");
+  vi.spyOn(metrics, "startRelayMetricsServer").mockResolvedValue({
+    port: 12345,
+    close: () => Promise.reject(new Error("fixture metrics shutdown failure")),
+  });
+  const close = vi.spyOn(RelayAccounts.prototype, "close");
+  const daemon = await startRelayDaemon({
+    ...(await daemonEnv()),
+    OMNESIS_CLOUD_RELAY_METRICS_PORT: "0",
+  });
+  await expect(daemon.close()).rejects.toThrow("fixture metrics shutdown failure");
+  expect(close).toHaveBeenCalledOnce();
+  await expect(fetch(daemon.url + "/healthz")).rejects.toThrow();
+});

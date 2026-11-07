@@ -61,6 +61,7 @@ async function setup(
     recoveryPolicy: policy === false ? undefined : (policy?.(f) ?? f.policy()),
     gatewayIdentity,
   });
+  expect(relay.metrics()).toContain("cloud_relay_recovery_policy_epoch ");
   const url = await listen(relay.server);
   cleanup.push(async () => {
     await relay.close();

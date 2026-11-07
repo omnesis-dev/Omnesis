@@ -34,12 +34,15 @@ import { registerGatewayKey, prepareGatewayOwner } from "./gateway-key-client.js
 import { loadRelayRecoveryPolicy, runRelayRecoveryCommand } from "./relay-recovery-runtime.js";
 import { assertRelayDnsIsolation, startIndependentDnsDaemon } from "./dns-broker-runtime.js";
 import { googleBrowserConfiguration } from "./google-browser-runtime.js";
+import { CloudRelayMetrics } from "./metrics.js";
+import { startRelayMetricsServer } from "./metrics-server.js";
 import type { RelayWebLoginOptions } from "./relay-web-login.js";
 import type { AddressInfo } from "node:net";
 
 const positive = z.coerce.number().int().positive().max(2_147_483_647);
 const envSchema = z.object({
   OMNESIS_CLOUD_RELAY_BIND: z.string().default("127.0.0.1"),
+  OMNESIS_CLOUD_RELAY_METRICS_PORT: z.coerce.number().int().min(0).max(65535).optional(),
   OMNESIS_CLOUD_RELAY_PORT: z.coerce.number().int().min(0).max(65535).default(8787),
   OMNESIS_CLOUD_RELAY_PUBLIC_DATA_PORT: z.coerce.number().int().min(1).max(65535).optional(),
   OMNESIS_CLOUD_RELAY_DATA_PORT: z.coerce.number().int().min(0).max(65535).optional(),
@@ -79,8 +82,9 @@ const envSchema = z.object({
 
 export async function startRelayDaemon(
   env: NodeJS.ProcessEnv,
-): Promise<{ url: string; dataPort: number; close(): Promise<void> }> {
+): Promise<{ url: string; dataPort: number; metricsPort?: number; close(): Promise<void> }> {
   const config = envSchema.parse(env);
+  const metrics = new CloudRelayMetrics();
   assertRelayDnsIsolation(env);
   const recoveryPolicy = await loadRelayRecoveryPolicy(env);
   const tlsCert = config.OMNESIS_CLOUD_RELAY_TLS_CERT_FILE;
@@ -194,6 +198,7 @@ export async function startRelayDaemon(
         file: config.OMNESIS_CLOUD_RELAY_ACME_JOURNAL,
         suffix: config.OMNESIS_CLOUD_RELAY_DOMAIN,
         provider: cloudflareDnsProvider({
+          metrics,
           zoneId: config.OMNESIS_CLOUD_RELAY_ACME_ZONE_ID,
           zoneName: config.OMNESIS_CLOUD_RELAY_ACME_ZONE_NAME,
           token,
@@ -201,6 +206,7 @@ export async function startRelayDaemon(
       });
     }
     relay = createCloudRelay({
+      metrics,
       recoveryPolicy,
       identity,
       acmeDns,
@@ -237,6 +243,7 @@ export async function startRelayDaemon(
     accounts.close();
     throw error;
   }
+  let metricsServer: Awaited<ReturnType<typeof startRelayMetricsServer>> | undefined;
   try {
     relay.server.listen(config.OMNESIS_CLOUD_RELAY_PORT, config.OMNESIS_CLOUD_RELAY_BIND);
     await once(relay.server, "listening");
@@ -245,6 +252,10 @@ export async function startRelayDaemon(
       config.OMNESIS_CLOUD_RELAY_BIND,
     );
     await once(relay.dataServer, "listening");
+    if (config.OMNESIS_CLOUD_RELAY_METRICS_PORT !== undefined)
+      metricsServer = await startRelayMetricsServer(config.OMNESIS_CLOUD_RELAY_METRICS_PORT, () =>
+        relay.metrics(),
+      );
   } catch (error) {
     // DNS leases and tunnel timers are owned even when the first listener never opened.
     await relay.close().catch(() => {});
@@ -258,11 +269,16 @@ export async function startRelayDaemon(
   return {
     url: `${tlsCert ? "https" : "http"}://${host}:${address.port}`,
     dataPort: (relay.dataServer.address() as AddressInfo).port,
+    metricsPort: metricsServer?.port,
     async close() {
       try {
-        await relay.close();
+        await metricsServer?.close();
       } finally {
-        accounts.close();
+        try {
+          await relay.close();
+        } finally {
+          accounts.close();
+        }
       }
     },
   };

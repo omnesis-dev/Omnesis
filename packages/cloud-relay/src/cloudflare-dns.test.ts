@@ -122,3 +122,30 @@ test("the default transport uses the configured API recipient rather than a call
   await cloudflareDnsProvider(options).create(lease, new AbortController().signal);
   expect(String(fetch.mock.calls[0][0])).toContain("https://api.cloudflare.com/client/v4/zones/");
 });
+
+test("reports publication and cleanup outcomes without exposing provider errors or credentials", async () => {
+  const { CloudRelayMetrics } = await import("./metrics.js");
+  const metrics = new CloudRelayMetrics();
+  const dnsFetch = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json({ success: true, result: record }))
+    .mockResolvedValueOnce(Response.json({ success: true, result: [] }))
+    .mockResolvedValueOnce(new Response("private-provider-error-fixture", { status: 500 }))
+    .mockResolvedValueOnce(new Response("private-provider-error-fixture", { status: 500 }));
+  const events = vi.spyOn(metrics, "dns");
+  const provider = cloudflareDnsProvider({ ...options, metrics, fetch: dnsFetch });
+  await provider.create(lease, new AbortController().signal);
+  await provider.remove(lease, new AbortController().signal);
+  await expect(provider.create(lease, new AbortController().signal)).rejects.toThrow(
+    "DNS provider request refused",
+  );
+  await expect(provider.remove(lease, new AbortController().signal)).rejects.toThrow(
+    "DNS provider request refused",
+  );
+  expect(events.mock.calls.map(([event]) => event)).toEqual([
+    "publish_success",
+    "remove_success",
+    "publish_failure",
+    "remove_failure",
+  ]);
+});

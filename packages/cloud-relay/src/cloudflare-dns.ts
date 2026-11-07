@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
+import { CloudRelayMetrics } from "./metrics.js";
+
 import { readBoundedJson } from "./google-credentials.js";
 import type { DnsChallengeLease, DnsChallengeProvider } from "./acme-dns.js";
 
@@ -19,7 +21,9 @@ export function cloudflareDnsProvider(options: {
   zoneName: string;
   token: string;
   fetch?: typeof fetch;
+  metrics?: CloudRelayMetrics;
 }): DnsChallengeProvider {
+  const metrics = options.metrics ?? new CloudRelayMetrics();
   const zoneId = idSchema.parse(options.zoneId);
   const zoneName = z
     .string()
@@ -64,7 +68,7 @@ export function cloudflareDnsProvider(options: {
       comment: `omnesis-acme-v1:${lease.id}:${lease.expiresAt}`,
     };
   };
-  return {
+  const provider: DnsChallengeProvider = {
     async create(lease, signal) {
       const expected = fields(lease);
       const response = await request("", "POST", signal, expected);
@@ -97,5 +101,21 @@ export function cloudflareDnsProvider(options: {
           await request(`/${record.id}`, "DELETE", signal);
       }
     },
+  };
+  const observe = async (
+    operation: "publish" | "remove",
+    run: () => Promise<void>,
+  ): Promise<void> => {
+    try {
+      await run();
+      metrics.dns(`${operation}_success`);
+    } catch (error) {
+      metrics.dns(`${operation}_failure`);
+      throw error;
+    }
+  };
+  return {
+    create: (lease, signal) => observe("publish", () => provider.create(lease, signal)),
+    remove: (lease, signal) => observe("remove", () => provider.remove(lease, signal)),
   };
 }

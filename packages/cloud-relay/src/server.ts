@@ -6,6 +6,7 @@ import { createServer as createHttpsServer } from "node:https";
 import { type Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
+import { CloudRelayMetrics } from "./metrics.js";
 import { gatewayIdSchema } from "./accounts.js";
 import { SESSION_HEADER, relayOrigin, isLoopback } from "./network.js";
 import {
@@ -34,6 +35,7 @@ import type { AcmeDnsChallenges } from "./acme-dns.js";
 import type { RelayAccounts } from "./accounts.js";
 
 export interface CloudRelayOptions {
+  metrics?: CloudRelayMetrics;
   identity?: IdentityProvider;
   /** Trusted public control origin; incoming Host headers never choose proof recipients. */
   controlOrigin?: string;
@@ -61,8 +63,10 @@ const loginSchema = z.object({ idToken: z.string().min(1).max(16_384) }).strict(
 export function createCloudRelay(options: CloudRelayOptions): {
   server: Server;
   dataServer: ReturnType<typeof createTlsRouter>["server"];
+  metrics(): string;
   close(): Promise<void>;
 } {
+  const metrics = options.metrics ?? new CloudRelayMetrics();
   const loginAdmission = new LoginAdmission(
     options.loginLimits?.maxConcurrent,
     options.loginLimits?.maxPerMinute,
@@ -78,7 +82,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
         loginAdmission,
       )
     : undefined;
-  const broker = new TunnelBroker(options.limits);
+  const broker = new TunnelBroker(options.limits, metrics);
   const recovery = options.recoveryPolicy
     ? new RelayRecovery(options.accounts, options.recoveryPolicy)
     : undefined;
@@ -100,6 +104,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
   const gatewayBinding = (account: string) =>
     recovery ? recovery.binding(account) : options.accounts.gatewayBinding(account);
   const router = createTlsRouter({
+    metrics,
     accountForHostname: (host) =>
       recovery ? recovery.accountForHostname(host) : options.accounts.accountForHostname(host),
     open: (account, signal) => broker.open(account, signal),
@@ -180,6 +185,10 @@ export function createCloudRelay(options: CloudRelayOptions): {
   };
 
   server.on("request", (req, res) => {
+    const started = performance.now();
+    res.once("finish", () =>
+      metrics.http(req.method, req.url, res.statusCode, (performance.now() - started) / 1000),
+    );
     void (async () => {
       if (googleBrowser && (await googleBrowser.handle(req, res))) return;
       if (webLogin && (await webLogin.handle(req, res))) return;
@@ -541,29 +550,43 @@ export function createCloudRelay(options: CloudRelayOptions): {
         broker.admit(session.accountId);
         if (!options.accounts.bindGateway(session.accountId, gateway.data))
           throw new RelayError(409, "Account already has a different gateway");
-        controls.handleUpgrade(req, socket, head, (ws) =>
-          broker.attach(session.accountId, ws, session.expiresAt),
-        );
+        controls.handleUpgrade(req, socket, head, (ws) => {
+          metrics.http("GET", req.url, 101, 0);
+          broker.attach(session.accountId, ws, session.expiresAt);
+        });
         return;
       }
       if (req.url === "/_relay/v1/data") {
         const ticket = req.headers["x-omnesis-relay-ticket"];
         if (typeof ticket !== "string" || !broker.canClaim(session.accountId, ticket))
           throw new RelayError(403, "Invalid channel ticket");
-        channels.handleUpgrade(req, socket, head, (ws) =>
-          broker.claim(session.accountId, ticket, ws),
-        );
+        channels.handleUpgrade(req, socket, head, (ws) => {
+          metrics.http("GET", req.url, 101, 0);
+          broker.claim(session.accountId, ticket, ws);
+        });
         return;
       }
       throw new RelayError(404, "Use the gateway's end-to-end TLS origin");
-    })().catch((error: unknown) =>
-      rejectUpgrade(socket, error instanceof RelayError ? error.status : 500),
-    );
+    })().catch((error: unknown) => {
+      const status = error instanceof RelayError ? error.status : 500;
+      metrics.http("GET", req.url, status, 0);
+      rejectUpgrade(socket, status);
+    });
   });
 
   return {
     server,
     dataServer: router.server,
+    metrics: () =>
+      metrics.render({
+        ...loginAdmission.snapshot(),
+        ...broker.snapshot(),
+        ...router.snapshot(),
+        ...options.accounts.snapshot(),
+        ...(options.acmeDns?.snapshot() ?? { dnsLeases: 0, dnsQueued: 0 }),
+        recoveryExpiresAt: options.recoveryPolicy?.expiresAt ?? 0,
+        recoveryEpoch: options.recoveryPolicy?.epoch ?? 0,
+      }),
     async close() {
       googleBrowser?.close();
       if (router.server.listening) await router.close();
