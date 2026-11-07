@@ -556,3 +556,14 @@ func scopePreviewFailureMessage(_ error: Error) -> String {
     }
     return "Couldn’t check this restriction. Your selections are kept."
 }
+
+/// Presentation follows only the selected kinds, in first-reference order across all saved rules.
+func scopePreparationStatuses(policy: ScopePolicy, readiness: [ScopeKindReadiness]) -> [ScopeKindReadiness] {
+    var seen: Set<String> = []
+    return policy.rules.flatMap(\.match).compactMap { ref in
+        guard seen.insert(ref.kind).inserted,
+              let status = readiness.first(where: { $0.kind == ref.kind }),
+              !status.ready || !(status.behindCollectors ?? []).isEmpty else { return nil }
+        return status
+    }
+}

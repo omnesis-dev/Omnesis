@@ -83,6 +83,10 @@ struct SourceFilterEditorView: View {
         ).decision
     }
 
+    private var preparationStatuses: [ScopeKindReadiness] {
+        mode == .all ? [] : scopePreparationStatuses(policy: policy, readiness: preview?.readiness ?? source.scopeReadiness ?? [])
+    }
+
     private var canApply: Bool {
         commit != .blocked
     }
@@ -144,18 +148,14 @@ struct SourceFilterEditorView: View {
                             .font(.subheadline)
                     }
                 }
-                ForEach(
-                    Array((mode == .all ? [] : preview?.readiness ?? source.scopeReadiness ?? []).enumerated()),
-                    id: \.offset
-                ) { _, item in
-                    if !item.ready || !(item.behindCollectors ?? []).isEmpty {
-                        Section {
-                            Text(item.message ?? "Preparing \(item.kind) filters")
-                            if let processed = item
-                                .processed { Text("\(processed) processed\(item.pending.map { ", \($0) pending" } ?? "")") }
-                            ForEach(item.behindCollectors ?? [], id: \.deviceId) { Text("Update collector: \($0.name)") }
-                            Button("Check again") { Task { await refresh() } }.frame(minHeight: 44).disabled(loading)
+                ForEach(Array(preparationStatuses.enumerated()), id: \.offset) { _, item in
+                    Section {
+                        Text(item.message ?? "Preparing \(item.kind) filters")
+                        if let processed = item.processed {
+                            Text("\(processed) processed\(item.pending.map { ", \($0) pending" } ?? "")")
                         }
+                        ForEach(item.behindCollectors ?? [], id: \.deviceId) { Text("Update collector: \($0.name)") }
+                        Button("Check again") { Task { await refresh() } }.frame(minHeight: 44).disabled(loading)
                     }
                 }
                 if !policy.withinLimits { Section { Text("Choose at most 256 identifiers or items.").foregroundStyle(Theme.danger) } }

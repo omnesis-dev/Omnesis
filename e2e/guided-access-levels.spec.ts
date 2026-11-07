@@ -359,7 +359,12 @@ for (const theme of ["dark", "light"])
             unknown: 2,
             readiness: sources
               .find((source) => source.id === sourceId)!
-              .scopeReadiness.map((item) => ({ ...item, ready: previews !== "preparing" })),
+              .scopeReadiness.map((item) => ({
+                ...item,
+                ready:
+                  previews !== "preparing" &&
+                  !(previews === "unused-preparing" && item.kind === "label"),
+              })),
             items: body.policy.rules.flatMap(
               (rule: { match: Array<{ kind: string; id?: string }> }) =>
                 rule.match.map((ref) => ({
@@ -926,6 +931,15 @@ for (const theme of ["dark", "light"])
       ).toBeDisabled();
       await expect(modal().getByText("Waiting for source metadata.").first()).toBeVisible();
       await shot("supplement-10-preparing");
+      await modal().getByRole("button", { name: "Back", exact: true }).click();
+      previews = "unused-preparing";
+      await modal().getByRole("button", { name: "Review filter", exact: true }).click();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await expect(modal()).not.toContainText("Provisional counts");
+      await expect(modal()).not.toContainText("Apply is unavailable");
+      await shot("supplement-10a-unused-metadata-preparing");
       await modal().getByRole("button", { name: "Back", exact: true }).click();
       await modal()
         .getByRole("checkbox", { name: /Planning/ })

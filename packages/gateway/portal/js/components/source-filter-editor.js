@@ -63,6 +63,10 @@ export function SourceFilterEditor({
     sourceId,
     mode !== "all" && selected.length && (step === "review" || readOnly) ? draft : null,
   );
+  const requiredKinds = selected.map((ref) => ref.kind);
+  const relevantReadiness = (preview.data?.readiness ?? source.scopeReadiness ?? []).filter(
+    (item) => requiredKinds.includes(item.kind),
+  );
   const error =
     mode === "all"
       ? null
@@ -209,8 +213,8 @@ export function SourceFilterEditor({
                             </p>
                           </details>
                         </div>
-                        <${FilterPreview} preview=${preview} /><${FilterReadiness}
-                          readiness=${preview.data ? [] : source.scopeReadiness}
+                        <${FilterPreview} preview=${preview} requiredKinds=${requiredKinds} /><${FilterReadiness}
+                          readiness=${preview.data ? [] : relevantReadiness}
                         />${
                           preview.data?.identifierProposals?.length
                             ? html`<details class="source-filter-proposals">
@@ -226,7 +230,7 @@ export function SourceFilterEditor({
         }
       </div>
       <footer class="source-filter-actions guided-filter-footer">
-        ${!readOnly && step === "review" && preview.data?.readiness?.some((item) => !item.ready) ? html`<p class="guided-filter-blocked" role="status">Source metadata is preparing. Apply is unavailable until it is ready.</p>` : null}
+        ${!readOnly && step === "review" && preview.data && relevantReadiness.some((item) => !item.ready) ? html`<p class="guided-filter-blocked" role="status">Source metadata is preparing. Apply is unavailable until it is ready.</p>` : null}
         <button type="button" class="btn-secondary" onClick=${onClose}>
           ${readOnly ? "Close" : "Cancel"}
         </button>

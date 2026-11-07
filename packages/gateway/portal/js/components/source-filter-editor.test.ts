@@ -809,3 +809,24 @@ test("an unresolved saved name is loading until the exact preview resolves, neve
   expect(host.textContent).not.toContain("Missing —");
   expect(button("Apply filter").disabled).toBe(true);
 });
+
+test.each([false, true])("readiness presentation considers only selected kinds (selected kind pending: %s)", async (selectedPending) => {
+  const saved = { ...policy, rules: [{ action: "share", match: [{ kind: "participant", label: "reader@example.org", identifiers: [{ type: "email", value: "reader@example.org" }] }] }] };
+  api.previewSourceFilter.mockResolvedValue({
+    sourceId: source.id,
+    visible: 6, hidden: 14, unknown: 2, items: [], samples: [],
+    readiness: [
+      { kind: "participant", ready: !selectedPending, message: "Participant metadata preparing" },
+      { kind: "label", ready: false, message: "Unrelated labels preparing" },
+    ],
+  });
+  await mount({ savedPolicy: saved });
+  expect(button("Apply filter").disabled).toBe(selectedPending);
+  expect(host.textContent).not.toContain("Unrelated labels preparing");
+  expect(host.textContent!.includes("Provisional counts")).toBe(selectedPending);
+  expect(host.textContent!.includes("Apply is unavailable")).toBe(selectedPending);
+  await act(async () => render(h(SourcePolicySummary, { policy: saved, source, capability: "Answer" }), host));
+  await flushUI();
+  expect(host.textContent).not.toContain("Unrelated labels preparing");
+  expect(host.textContent!.includes("Provisional counts")).toBe(selectedPending);
+});

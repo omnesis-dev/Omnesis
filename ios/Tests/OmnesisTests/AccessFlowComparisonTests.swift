@@ -72,4 +72,54 @@ final class AccessFlowComparisonTests: XCTestCase {
         XCTAssertTrue(scopePreviewCanRetry(GatewayClient.Error.invalidResponse))
         XCTAssertTrue(scopePreviewFailureMessage(GatewayClient.Error.invalidResponse).contains("selections are kept"))
     }
+
+    func testPreparationPresentationIgnoresUnusedKindsButKeepsSelectedKindRemedy() {
+        var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "example", capability: "answer")
+        policy.rules[0].match = [.init(kind: "label", id: "label-design", label: "Design")]
+        let unused = ScopeKindReadiness(
+            kind: "participant",
+            ready: false,
+            reason: "metadata-refresh",
+            message: "Preparing people",
+            pending: 20
+        )
+        let selectedReady = ScopeKindReadiness(kind: "label", ready: true)
+        let readiness = [unused, selectedReady]
+        XCTAssertTrue(scopePreparationStatuses(policy: policy, readiness: readiness).isEmpty)
+        XCTAssertTrue(policy.readyToSave(readiness), "Unused preparation must not be represented as blocking this ready decision")
+        let selectedPending = ScopeKindReadiness(
+            kind: "label",
+            ready: false,
+            reason: "metadata-refresh",
+            message: "Preparing labels",
+            processed: 42,
+            pending: 18,
+            behindCollectors: [.init(
+                deviceId: "example-collector",
+                name: "Example collector"
+            )]
+        )
+        XCTAssertEqual(scopePreparationStatuses(policy: policy, readiness: [unused, selectedPending]), [selectedPending])
+        XCTAssertFalse(policy.readyToSave([unused, selectedPending]))
+        XCTAssertEqual(readiness, [unused, selectedReady], "Presentation must not alter readiness facts")
+    }
+
+    func testAdvancedPreparationPresentationUsesAllRulesAndFirstReferenceOrderWithoutDuplicates() {
+        var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "example", capability: "answer")
+        let label = ScopeRef(kind: "label", id: "label-design", label: "Design")
+        policy.rules = [
+            .init(match: [label], action: "hide"),
+            .init(
+                match: [
+                    .init(kind: "participant", identifiers: [.init(type: "email", value: "jamie@example.org")]),
+                    label,
+                ],
+                action: "share"
+            ),
+        ]
+        let participant = ScopeKindReadiness(kind: "participant", ready: false, message: "Preparing people")
+        let labels = ScopeKindReadiness(kind: "label", ready: false, message: "Preparing labels")
+        XCTAssertEqual(scopePreparationStatuses(policy: policy, readiness: [participant, labels]), [labels, participant])
+        XCTAssertFalse(policy.editable, "The display projection must also work for retained advanced rules")
+    }
 }

@@ -68,7 +68,7 @@ export function FilterReadiness({ readiness = [] }) {
     : null;
 }
 
-export function FilterPreview({ preview, showSamples = true }) {
+export function FilterPreview({ preview, showSamples = true, requiredKinds }) {
   if (preview.pending)
     return html`<p class="source-filter-pending" role="status">
       Calculating visible, hidden and unknown records…
@@ -84,9 +84,12 @@ export function FilterPreview({ preview, showSamples = true }) {
     </div>`;
   if (!preview.data) return null;
   const data = preview.data;
-  const preparing = data.readiness?.some((item) => !item.ready);
+  const readiness = (data.readiness ?? []).filter(
+    (item) => requiredKinds == null || requiredKinds.includes(item.kind),
+  );
+  const preparing = readiness.some((item) => !item.ready);
   return html`<section class="source-filter-preview" aria-label="Filter preview">
-    <${FilterReadiness} readiness=${data.readiness} />
+    <${FilterReadiness} readiness=${readiness} />
     ${preparing ? html`<p role="status">Provisional counts — source metadata is still preparing. Applying this filter is blocked until it is ready.</p>` : null}
     <div class="source-filter-counts">
       <span><strong>${data.visible}</strong> visible</span
@@ -136,6 +139,6 @@ export function SourcePolicySummary({ policy, source, capability }) {
         </div>`,
     )}
     <small>Everything else: ${policy.otherwise === "share" ? "share" : "hide"}.</small>
-    <${FilterPreview} preview=${preview} showSamples=${false} />
+    <${FilterPreview} preview=${preview} showSamples=${false} requiredKinds=${(policy.rules ?? []).flatMap((rule) => (rule.match ?? []).map((ref) => ref.kind))} />
   </section>`;
 }
