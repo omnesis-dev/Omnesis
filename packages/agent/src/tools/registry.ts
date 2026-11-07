@@ -36,6 +36,7 @@ import {
 import { createSearchLoopsTool, createFetchLoopTool, createListLoopsTool } from "./loops.js";
 import { createTemporalQueryTool } from "./temporal.js";
 import { createEntityContextTool } from "./entity-context.js";
+import type { TurnFollowUp } from "../session.js";
 import type { TemporalOrigin } from "@omnesis/core";
 import type { ToolHandle } from "../backend.js";
 import type { ToolPorts } from "./types.js";
@@ -242,6 +243,50 @@ export const GENERIC_SUBAGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
  */
 export function selectNonCitationTools(tools: ReadonlyArray<ToolHandle>): ToolHandle[] {
   return tools.filter((t) => !CITATION_TOOL_NAMES.has(t.name));
+}
+
+/** The retrieval tools whose results are documents a Timeline citation can point at. */
+export const DOCUMENT_RETRIEVAL_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "search_many",
+  "fetch_many",
+  "temporal_query",
+  "trace_connections",
+  "lookup_document_by_url",
+  "run_sql",
+]);
+
+/**
+ * What a model is told when it answered from retrieved documents without
+ * citing any. The user never sees it or anything written in reply, so the
+ * model is told to cite or stop, and to write nothing either way.
+ */
+export const CITATION_FOLLOW_UP_MESSAGE =
+  "Your answer cites no documents. If it relies on documents, call `fetch_many` for any you " +
+  "have not read in this turn, then `annotate_many` with every document your answer relies " +
+  "on. If there is nothing to cite, call no tool. Either way, end your turn without writing " +
+  "any text: the user does not see this message or anything you write in reply to it.";
+
+/**
+ * The session follow-up that makes a Timeline surface cite: a turn that
+ * answered from retrieved documents and called no citation tool gets one
+ * silent run, told to cite or stop. A turn that already cited, retrieved
+ * nothing, or whose retrieval only failed ends as it is. Only the citation
+ * calls of that run are recorded, so the Timeline survives a reload and
+ * nothing else of the run appears. Undefined for a toolset with no
+ * `annotate_many`, which has no Timeline to fill.
+ */
+export function citationFollowUp(tools: ReadonlyArray<ToolHandle>): TurnFollowUp | undefined {
+  if (!tools.some((t) => t.name === "annotate_many")) return undefined;
+  return {
+    ask: (calls) => {
+      if (calls.some((call) => CITATION_TOOL_NAMES.has(call.tool))) return undefined;
+      const retrieved = calls.some(
+        (call) => DOCUMENT_RETRIEVAL_TOOL_NAMES.has(call.tool) && call.result.kind !== "error",
+      );
+      return retrieved ? CITATION_FOLLOW_UP_MESSAGE : undefined;
+    },
+    records: (tool) => CITATION_TOOL_NAMES.has(tool),
+  };
 }
 
 /**
