@@ -22,6 +22,7 @@ import { GatewayWsClient, HttpGatewayClient } from "@omnesis/gateway-client";
 import { SyncEngine } from "../sync-engine.js";
 import { SourceManager } from "../source-manager.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
+import { handleHarnessCommand } from "./harness-commands.js";
 import { gatewayFetch, gatewayJson, type GatewayEndpoint } from "./gateway-request.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import {
@@ -55,6 +56,10 @@ async function getFreePort(): Promise<number> {
 }
 
 export interface HarnessOptions {
+  /** Explicit environment for an isolated gateway under test. Fixed state paths win. */
+  extraGatewayEnv?: NodeJS.ProcessEnv;
+  /** Route collector and assertion traffic through a test transport after gateway boot. */
+  gatewayTransport?: (directUrl: string) => Promise<string>;
   /** Sync interval override (default: very high so tests control sync manually) */
   syncInterval?: string;
   /** Additional config to merge */
@@ -151,6 +156,8 @@ export class E2EHarness {
 
     // 1. Start gateway subprocess
     await this.startGateway();
+    if (this.options.gatewayTransport)
+      this.gatewayUrl = await this.options.gatewayTransport(this.gatewayUrl);
 
     // 2. Pair the in-process collector and use its device token for collector
     // traffic. `apiKey` remains the bootstrap-admin credential used by test
@@ -209,10 +216,10 @@ export class E2EHarness {
         hostableSourceTypes: this.descriptors.map((descriptor) => descriptor.id),
       },
     });
-    this.collectorWs.onCommand(async (command) => {
-      if (command.type === "sources.snapshot") return { ok: true, applied: true };
-      throw new Error(`Unsupported synthetic harness command: ${command.type}`);
-    });
+    const commandEngine = this.engine;
+    this.collectorWs.onCommand((command) =>
+      Promise.resolve(handleHarnessCommand(commandEngine, command)),
+    );
     this.collectorWs.connect();
     await this.waitForDeviceOnline(collector.deviceId);
 
@@ -473,6 +480,7 @@ export class E2EHarness {
   private async startGateway(): Promise<void> {
     const env = {
       ...e2eGatewayEnv(),
+      ...this.options.extraGatewayEnv,
       OMNESIS_DB_PATH: this.dbPath,
       OMNESIS_GATEWAY_PORT: String(this.gatewayPort),
       OMNESIS_CONFIG_DIR: this.configDir,

@@ -23,14 +23,15 @@
     "packages/relay",
     "packages/agent-integration",
     "packages/providers/*",
-    "packages/providers-synth/*"
+    "packages/providers-synth/*",
+    "packages/cloud-relay"
   ],
   "scripts": {
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node scripts/run-check.mjs unit-all",
     "test:unit:vitest": "node scripts/run-check.mjs unit",
     "test:unit:smoke": "node scripts/run-check.mjs smoke",
-    "test:unit:no-gateway": "npm run test:unit:vitest && npm run test:hermes",
+    "test:unit:no-gateway": "npm run test:unit:vitest && npm run test:hermes && npm run test:cloud-relay",
     "test:e2e": "node scripts/run-check.mjs e2e",
     "test:openclaw": "tsc --build packages/agent-integration && node packages/agent-integration/test/openclaw_gateway_probe.mjs",
     "test:hermes": "python3 -B packages/agent-integration/hermes/test_adapter.py",
@@ -75,7 +76,7 @@
     "briefs:backtest": "tsx evals/briefs/src/backtest/run.ts",
     "preinstall": "node scripts/native-runtime-preflight.mjs",
     "postinstall": "patch-package && node scripts/native-vector-compat.mjs --package-dir packages/gateway && node scripts/duckdb-extensions.mjs --package-dir packages/gateway --best-effort",
-    "test:unit:raw": "npm run test:unit:vitest && npm run test:unit:smoke && npm run test:openclaw && npm run test:hermes",
+    "test:unit:raw": "npm run test:unit:vitest && npm run test:unit:smoke && npm run test:openclaw && npm run test:hermes && npm run test:cloud-relay",
     "checks:status": "node scripts/run-check.mjs status",
     "checks:cancel": "node scripts/run-check.mjs cancel",
     "typecheck:tests:raw": "tsc --build && for c in packages/*/tsconfig.tests.json packages/*/*/tsconfig.tests.json extension/tsconfig.tests.json; do tsc -p \"$c\" || exit 1; done",
@@ -85,7 +86,9 @@
     "checks:bundle": "node scripts/nx/checks.mjs bundle",
     "checks:full": "node scripts/nx/checks.mjs full",
     "wire-fixtures": "tsx scripts/write-wire-fixtures.mjs",
-    "fixtures:release-upgrade": "tsx scripts/fixtures/generate-release-upgrade.mjs"
+    "fixtures:release-upgrade": "tsx scripts/fixtures/generate-release-upgrade.mjs",
+    "cloud-relay": "tsx packages/cloud-relay/src/main.ts",
+    "test:cloud-relay": "node scripts/run-check.mjs unit --config packages/cloud-relay/vitest.config.ts --coverage"
   },
   "overrides": {
     "@xmldom/xmldom@^0.8.0": "^0.8.15",
@@ -113,6 +116,8 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.0.0",
     "@types/picomatch": "^4.0.3",
+    "@types/semver": "^7.7.1",
+    "@vitest/coverage-v8": "^5.0.5",
     "eslint": "^10.4.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-import-resolver-typescript": "^3.7.0",
@@ -127,8 +132,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.18.0",
-    "vitest": "^5.0.1",
-    "@types/semver": "^7.7.1"
+    "vitest": "^5.0.1"
   },
   "nx": {
     "targets": {

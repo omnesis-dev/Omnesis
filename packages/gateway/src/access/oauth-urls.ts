@@ -3,10 +3,14 @@
 
 import { isSafeMcpResourceUrl, isSafePublicBaseUrl } from "@omnesis/config";
 
+export type OAuthIssuerSource = readonly string[] | (() => readonly string[]);
+
 export interface OAuthEndpointUrls {
   issuer: string;
   resource: string;
   supportedResources: readonly string[];
+  /** Resources this explicitly configured issuer may authorize or refresh. */
+  issuerResources: readonly string[];
   authorize: string;
   token: string;
   register: string;
@@ -20,12 +24,14 @@ export interface OAuthMetadataPaths {
   protectedResources: readonly string[];
 }
 
-/** Resolve the stable authorization server and its configured MCP resources. */
+/** Select only an explicitly configured issuer and keep its authorization resources separate. */
 export function resolveOAuthUrls(
   requestUrl: string,
   configuredBaseUrl?: string,
   configuredResources?: readonly string[],
+  issuerSource: OAuthIssuerSource = [],
 ): OAuthEndpointUrls | null {
+  const additionalIssuers = typeof issuerSource === "function" ? issuerSource() : issuerSource;
   let requested: URL;
   try {
     requested = new URL(requestUrl);
@@ -33,26 +39,66 @@ export function resolveOAuthUrls(
     return null;
   }
   if (configuredBaseUrl && !isSafePublicBaseUrl(configuredBaseUrl)) return null;
-  const base = configuredBaseUrl ? new URL(configuredBaseUrl) : requested;
-  if (!configuredBaseUrl && !isLoopbackHostname(requested.hostname)) return null;
-  const pathPrefix = configuredBaseUrl && base.pathname !== "/" ? base.pathname : "";
-  const canonicalBase = `${base.origin}${pathPrefix}`;
-  const resource = `${canonicalBase}/mcp`;
-  const supportedResources = new Set([resource]);
+  if (
+    additionalIssuers.length > 8 ||
+    additionalIssuers.some((value) => !isSafePublicBaseUrl(value))
+  )
+    return null;
+  const primary = configuredBaseUrl ? canonicalIssuer(configuredBaseUrl) : undefined;
+  const extras = [...new Set(additionalIssuers.map(canonicalIssuer))];
+  const configured = [...new Set([...(primary ? [primary] : []), ...extras])];
+  // Distinct issuer prefixes on the same origin cannot be selected safely after proxy path rewriting.
+  if (new Set(configured.map((value) => new URL(value).origin)).size !== configured.length)
+    return null;
+  const loopback =
+    !primary && isLoopbackHostname(requested.hostname) ? requested.origin : undefined;
+  const issuer =
+    extras.find((value) => new URL(value).host === requested.host) ??
+    primary ??
+    loopback ??
+    extras[0];
+  if (!issuer) return null;
+  const bases = [...configured, ...(loopback ? [loopback] : [])];
+  const defaultIssuer = primary ?? extras[0] ?? issuer;
+  const issuerOf = (resource: string): string =>
+    bases.find((base) => new URL(base).origin === new URL(resource).origin) ?? defaultIssuer;
+  const resource = `${issuer}/mcp`;
+  const supportedResources = new Set([
+    `${primary ?? issuer}/mcp`,
+    ...extras.map((base) => `${base}/mcp`),
+  ]);
   for (const candidate of configuredResources ?? []) {
     if (!isSafeMcpResourceUrl(candidate)) return null;
     supportedResources.add(normalizeResource(candidate));
   }
+  supportedResources.add(resource);
   return {
-    issuer: canonicalBase,
+    issuer,
     resource,
     supportedResources: [...supportedResources],
-    authorize: `${canonicalBase}/oauth/authorize`,
-    token: `${canonicalBase}/oauth/token`,
-    register: `${canonicalBase}/oauth/register`,
-    revoke: `${canonicalBase}/oauth/revoke`,
+    issuerResources: [...supportedResources].filter((value) => issuerOf(value) === issuer),
+    authorize: `${issuer}/oauth/authorize`,
+    token: `${issuer}/oauth/token`,
+    register: `${issuer}/oauth/register`,
+    revoke: `${issuer}/oauth/revoke`,
     protectedResourceMetadata: protectedResourceMetadataUrl(resource),
   };
+}
+
+function canonicalIssuer(value: string): string {
+  const url = new URL(value);
+  return `${url.origin}${url.pathname === "/" ? "" : url.pathname}`;
+}
+
+/** Completion follows the stored, already validated resource, never the portal's request Host. */
+export function resolveOAuthResourceUrls(
+  resource: string,
+  base?: string,
+  resources?: readonly string[],
+  additionalIssuers?: OAuthIssuerSource,
+): OAuthEndpointUrls | null {
+  const urls = resolveOAuthUrls(resource, base, resources, additionalIssuers);
+  return urls?.issuerResources.includes(resource) ? urls : null;
 }
 
 /** Advertise same-machine setup without permitting OAuth on a remote request origin. */
@@ -61,17 +107,29 @@ export function resolveOAuthOverviewUrls(
   configuredBaseUrl?: string,
   configuredResources?: readonly string[],
   loopbackBaseUrl?: string,
+  additionalIssuers?: OAuthIssuerSource,
 ): OAuthEndpointUrls | null {
-  const urls = resolveOAuthUrls(requestUrl, configuredBaseUrl, configuredResources);
+  const urls = resolveOAuthUrls(
+    requestUrl,
+    configuredBaseUrl,
+    configuredResources,
+    additionalIssuers,
+  );
   if (urls || configuredBaseUrl || !loopbackBaseUrl) return urls;
-  return resolveOAuthUrls(loopbackBaseUrl, undefined, configuredResources);
+  return resolveOAuthUrls(loopbackBaseUrl, undefined, configuredResources, additionalIssuers);
 }
 
 export function resolveOAuthMetadataPaths(
   configuredBaseUrl?: string,
   configuredResources?: readonly string[],
+  additionalIssuers?: OAuthIssuerSource,
 ): OAuthMetadataPaths | null {
-  const urls = resolveOAuthUrls("http://127.0.0.1/mcp", configuredBaseUrl, configuredResources);
+  const urls = resolveOAuthUrls(
+    "http://127.0.0.1/mcp",
+    configuredBaseUrl,
+    configuredResources,
+    additionalIssuers,
+  );
   if (!urls) return null;
   const issuerPath = new URL(urls.issuer).pathname;
   const issuerPrefix = issuerPath === "/" ? "" : issuerPath;

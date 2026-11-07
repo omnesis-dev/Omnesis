@@ -9,7 +9,7 @@ satisfy the notice-retention requirements of the permissive licenses (MIT, BSD,
 ISC, Apache-2.0, OFL) and the weak-copyleft licenses (MPL-2.0, LGPL-3.0) those
 components carry.
 
-It includes a Models.dev catalog notice, a DuckDB httpfs extension notice and seven sections:
+It includes a Models.dev catalog notice, a DuckDB httpfs extension notice and ten sections:
 
 1. **Vendored browser libraries** — minified JS bundles committed under
    `packages/gateway/portal/vendor/` and served by the gateway's web portal.
@@ -22,6 +22,10 @@ It includes a Models.dev catalog notice, a DuckDB httpfs extension notice and se
 6. **iOS runtime dependencies** — SwiftDraw's native SVG renderer.
 7. **Runtime npm production dependencies** — the transitive closure of production
    (non-dev) npm packages pulled in by the published `@omnesis/*` packages.
+8. **Android Google sign-in dependencies** — Credential Manager and Google's
+   identity SDK used by optional Google pairing.
+9. **Swift certificate parsing** — Apple's ASN.1 parser used for public-key pinning.
+10. **ACME protocol client** — gateway certificate issuance and renewal.
 
 Copyright holders and license identifiers below were verified against each
 package's own `LICENSE` file and `package.json` (and, for the vendored bundles,
@@ -511,8 +515,46 @@ own source-availability / notice obligations.
 - `tslib@2.8.1` — 0BSD
 - `postal-mime@2.7.4` — MIT-0
 
+## 8. Android Google sign-in dependencies
+
+Optional Google pairing in the Android app uses:
+
+- `androidx.credentials:credentials:1.6.0` and
+  `androidx.credentials:credentials-play-services-auth:1.6.0`, licensed under
+  the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+  Their metadata is published in Google's Maven repository:
+  [Credential Manager POM](https://dl.google.com/dl/android/maven2/androidx/credentials/credentials/1.6.0/credentials-1.6.0.pom)
+  and [Play Services adapter POM](https://dl.google.com/dl/android/maven2/androidx/credentials/credentials-play-services-auth/1.6.0/credentials-play-services-auth-1.6.0.pom).
+- `com.google.android.libraries.identity.googleid:googleid:1.1.1`, whose
+  [published POM](https://dl.google.com/dl/android/maven2/com/google/android/libraries/identity/googleid/googleid/1.1.1/googleid-1.1.1.pom)
+  declares the [Android Software Development Kit License](https://developer.android.com/studio/terms.html).
+
+These dependencies are resolved through Gradle; their source is not vendored or
+relicensed under Omnesis's AGPL header. Google sign-in is disabled without the
+configured OAuth registrations; QR and manual pairing remain available.
+
+## 9. Swift certificate parsing
+
+Strict public-key pinning uses Apple's `swift-asn1` 1.7.4 to parse the complete
+certificate SubjectPublicKeyInfo. It is licensed under the
+[Apache License 2.0](https://github.com/apple/swift-asn1/blob/1.7.4/LICENSE.txt).
+The dependency is resolved through Swift Package Manager; its source is not
+vendored or relicensed under Omnesis's AGPL header.
+
+## 10. ACME protocol client
+
+Optional gateway certificate provisioning uses `acme-client` 5.4.0, licensed
+under the [MIT License](https://github.com/publishlab/node-acme-client/blob/master/LICENSE).
+The npm lockfile records its transitive dependency licenses. Its source is
+resolved through npm, rather than vendored or relicensed under Omnesis's AGPL
+header. ACME account and gateway TLS private keys remain on the gateway.
+
 ---
 
 _This document is a compliance aid, not legal advice. Redistributors should
 verify obligations against each component's own `LICENSE` file, which travels
 with the source and the installed `node_modules`._
+
+## Google sign-in artwork
+
+Google LLC retains the rights to the original Google G artwork bundled in the portal, native sign-in buttons and relay discovery page. Source: [official sign-in mark](https://developers.google.com/static/identity/images/g-logo.png). Its use is governed by Google's [Sign in with Google branding guidelines](https://developers.google.com/identity/branding-guidelines), rather than this repository's AGPL license. The artwork is copied without modification.

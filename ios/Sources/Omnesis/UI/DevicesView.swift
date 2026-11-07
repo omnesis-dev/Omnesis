@@ -70,6 +70,9 @@ struct DevicesView: View {
                     SettingsBackButton()
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    GatewayPairingRequestsButton(scopes: store.pairing?.scopes, client: store.admin)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showPairSheet = true
                     } label: {
@@ -579,6 +582,24 @@ func deviceGatewayMessage(_ error: Error) -> String {
     case .serverError(_, let body): gatewayError.gatewayMessage ?? (body.isEmpty ? "server error" : body)
     case .invalidResponse, .invalidURL: "bad gateway response"
     case .decoding: "could not read the response"
+    }
+}
+
+/// The admin-scoped presentation owns its sheet independently of the device list's refresh lifecycle.
+@available(iOS 17.0, *)
+struct GatewayPairingRequestsButton: View {
+    let scopes: [String]?
+    let client: (any GatewayPairingApproving)?
+    @State private var showingRequests = false
+
+    var body: some View {
+        if scopes?.contains("admin") == true {
+            Button("Pairing requests", systemImage: "checkmark.shield") { showingRequests = true }
+                .accessibilityIdentifier("devices.pairingRequests")
+                .sheet(isPresented: $showingRequests) {
+                    GatewayPairingApprovalView(client: client)
+                }
+        }
     }
 }
 

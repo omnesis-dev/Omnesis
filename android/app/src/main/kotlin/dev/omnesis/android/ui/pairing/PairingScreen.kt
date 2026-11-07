@@ -3,8 +3,12 @@
 
 package dev.omnesis.android.ui.pairing
 
+import dev.omnesis.android.R
+
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,6 +49,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -71,9 +78,11 @@ fun PairingScreen(
     vm: PairingViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    BackHandler(enabled = state.mode == PairingViewModel.Mode.Google && state.googlePhase == PairingViewModel.GooglePhase.Pairing) { }
     PairingContent(
         state = state,
-        onBack = onBack,
+        onBack = { if (state.mode == PairingViewModel.Mode.Google) vm.showScanner() else onBack() },
         onShowScanner = vm::showScanner,
         onShowManual = vm::showManualEntry,
         onQrCode = vm::pairFromQr,
@@ -84,6 +93,10 @@ fun PairingScreen(
         onPair = vm::pair,
         onCancelPending = vm::cancelPending,
         onConfirmPending = vm::confirmPending,
+        onShowGoogle = vm::showGoogle,
+        onGoogleSignIn = { vm.startGoogle(context) },
+        onGoogleCompare = vm::confirmGoogleComparison,
+        onGooglePair = vm::finishGooglePairing,
     )
 }
 
@@ -102,14 +115,27 @@ fun PairingContent(
     onPair: () -> Unit,
     onCancelPending: () -> Unit = {},
     onConfirmPending: () -> Unit = {},
+    onShowGoogle: () -> Unit = {},
+    onGoogleSignIn: () -> Unit = {},
+    onGoogleCompare: () -> Unit = {},
+    onGooglePair: () -> Unit = {},
 ) {
     val c = OmTheme.colors
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Pair with your gateway", style = MaterialTheme.typography.titleMedium, color = c.textPrimary) },
+                title = { Text("Pair with your gateway", style = MaterialTheme.typography.titleMedium, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
-                    TextButton(onClick = onBack) { Text("Cancel", color = c.accent) }
+                    TextButton(onClick = onBack, enabled = state.googlePhase != PairingViewModel.GooglePhase.Pairing) { Text("Cancel", color = c.accent) }
+                },
+                actions = {
+                    if (state.googleAvailable && state.mode != PairingViewModel.Mode.Google) {
+                        TextButton(onClick = onShowGoogle) {
+                            Image(painterResource(R.drawable.google_sign_in_mark), contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Google", color = c.accent)
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.bgPrimary),
             )
@@ -138,6 +164,7 @@ fun PairingContent(
                     onPair = onPair,
                     onPairFromPayload = onQrCode,
                 )
+                PairingViewModel.Mode.Google -> GoogleCloudPairingPane(state, onGoogleSignIn, onGoogleCompare, onGooglePair)
             }
         }
     }
@@ -487,6 +514,7 @@ fun PairingConfirmationSheet(
         modifier = modifier
             .fillMaxWidth()
             .background(c.bgPrimary)
+            .verticalScroll(rememberScrollState())
             .padding(OmSpacing.lg),
         verticalArrangement = Arrangement.spacedBy(OmSpacing.lg),
     ) {
@@ -514,7 +542,11 @@ fun PairingConfirmationSheet(
         OmnesisCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (trustKind == PairingViewModel.TrustKind.System) "TLS TRUST" else "FINGERPRINT",
+                    when (trustKind) {
+                        PairingViewModel.TrustKind.System -> "TLS TRUST"
+                        PairingViewModel.TrustKind.PinnedKey -> "PUBLIC KEY FINGERPRINT"
+                        else -> "FINGERPRINT"
+                    },
                     style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.6.sp),
                     fontWeight = FontWeight.Bold,
                     color = c.textMuted,
@@ -546,8 +578,16 @@ fun PairingConfirmationSheet(
                     style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
                     fontWeight = FontWeight.Normal,
                     color = c.textPrimary,
-                    maxLines = 4,
                 )
+                if (trustKind == PairingViewModel.TrustKind.PinnedKey) {
+                    Spacer(Modifier.height(OmSpacing.xs))
+                    Text(
+                        "Android verifies the gateway public key, hostname, and certificate validity. " +
+                            "Certificate renewals using this key remain trusted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.textSecondary,
+                    )
+                }
             } else {
                 Text("Not pinned (legacy payload)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = c.warning)
                 Spacer(Modifier.height(OmSpacing.xs))
@@ -561,7 +601,7 @@ fun PairingConfirmationSheet(
             }
         }
 
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(OmSpacing.sm))
 
         Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.md)) {
             Button(

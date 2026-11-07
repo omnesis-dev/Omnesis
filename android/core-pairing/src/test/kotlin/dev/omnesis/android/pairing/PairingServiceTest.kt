@@ -55,18 +55,40 @@ class PairingServiceTest {
                 pushAppId = "dev.omnesis.android",
             ),
             clientFactory = {
-                OkHttpClient.Builder().addInterceptor { chain ->
-                    val original = chain.request()
-                    chain.proceed(
-                        original.newBuilder()
-                            .url(server.url(original.url.encodedPath))
-                            .build(),
-                    )
-                }.build()
+                exchangeClient()
             },
+            strictClientFactory = { exchangeClient() },
+            keyClientFactory = { _, _ -> exchangeClient() },
+            fetchDirectCandidates = { _, _, _ -> emptyList() },
         )
 
+    private fun exchangeClient() = OkHttpClient.Builder().addInterceptor { chain ->
+        val original = chain.request()
+        chain.proceed(original.newBuilder().url(server.url(original.url.encodedPath)).build())
+    }.build()
+
     private fun baseUrl() = "https://gateway.example.com"
+
+    @Test
+    fun stableKeyPinPersistsSeparatelyAndCannotBeReinterpretedAsLeafTrust() = runTest {
+        val store = InMemoryStore()
+        val spki = "a1".repeat(32)
+        server.enqueue(MockResponse().setBody("""{"device":{"id":"dev-key","name":"Fictional gateway","kind":"android"},"tokenId":"new-key-generation","token":"synthetic-key-token","scopes":["read"]}"""))
+        val paired = service(store).pair("""{"v":4,"gatewayUrl":"${baseUrl()}","pairingCode":"SYNTHETIC","tls":{"mode":"pinned-key-strict","spkiFingerprint":"$spki"}}""")
+        assertEquals(PairingTlsMode.PINNED_KEY_STRICT, paired.tlsMode)
+        assertEquals(spki, paired.spkiFingerprint)
+        assertNull(paired.fingerprint)
+        assertEquals(paired, service(store).current())
+        assertFalse(service(store).upgradeTrustToSystem())
+        val bundle = store.get("gateway.credential.v1")!!
+        store.set("gateway.credential.v1", bundle.replace("spkiFingerprint", "untrustedOtherField"))
+        assertNull(service(store).current())
+        for (tls in listOf("""{"mode":"pinned-key-strict","fingerprint":"$spki"}""", """{"mode":"pinned-leaf-strict","spkiFingerprint":"$spki"}""")) {
+            assertThrows(PairingPayloadException::class.java) {
+                PairingPayload.decode("""{"v":4,"gatewayUrl":"${baseUrl()}","pairingCode":"SYNTHETIC","tls":$tls}""")
+            }
+        }
+    }
 
     @Test
     fun pairManually_persists_and_exposes_current() = runTest {
@@ -220,6 +242,25 @@ class PairingServiceTest {
         assertEquals(PairingTlsMode.SYSTEM.persistedValue, credential.tlsMode)
         assertNull(pairing.fingerprint)
         assertEquals(listOf<String?>(null), fingerprints)
+    }
+
+    @Test
+    fun cloud_pairing_persists_strict_pin_and_never_upgrades_to_generic_public_trust() = runTest {
+        server.enqueue(MockResponse().setBody(
+            """{"device":{"id":"dev-cloud","name":"Cloud gateway","kind":"android"},"tokenId":"tid","token":"device-test-token","scopes":["read"]}""",
+        ))
+        val store = InMemoryStore()
+        val svc = service(store)
+        val pin = "b".repeat(64)
+        val payload = """{"v":4,"gatewayUrl":"https://gateway.example.com","pairingCode":"AB-CD","tls":{"mode":"pinned-leaf-strict","fingerprint":"$pin"}}"""
+        val pairing = svc.pair(payload)
+        assertEquals(PairingTlsMode.PINNED_LEAF_STRICT, pairing.tlsMode)
+        assertEquals(pin, svc.current()?.fingerprint)
+        assertFalse(svc.upgradeTrustToSystem())
+        assertEquals(PairingTlsMode.PINNED_LEAF_STRICT, svc.current()?.tlsMode)
+        val stored = OmnesisJson.decodeFromString<PairingCredentialBundle>(requireNotNull(store.get("gateway.credential.v1")))
+        assertEquals("pinned-leaf-strict", stored.tlsMode)
+        assertEquals(pin, stored.fingerprint)
     }
 
     @Test

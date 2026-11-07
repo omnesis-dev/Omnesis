@@ -468,7 +468,8 @@ export function hasPerDeviceCursor(mode: MultiDeviceMode): boolean {
  * replaces what it trusts as surely as under `pinned-leaf`. Readers treat any
  * other value as unreported.
  */
-export type DeviceTlsTrustMode = "system" | "pinned-leaf" | "pinned-ca" | "legacy";
+export type DeviceTlsTrustMode =
+  "system" | "pinned-leaf" | "pinned-leaf-strict" | "pinned-key-strict" | "pinned-ca" | "legacy";
 
 /**
  * Declared capabilities of a device. Sent in the `hello` message when

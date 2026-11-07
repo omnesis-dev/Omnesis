@@ -32,6 +32,7 @@
 #   scripts/android-logic.sh                       # the pure-logic JVM lane (core modules)
 #   scripts/android-logic.sh --module :feature-health   # one module's testDebugUnitTest
 #   scripts/android-logic.sh --tests dev.omnesis.android.transport.dto.DtoDecodeTest
+#   scripts/android-logic.sh --module :core-pairing --coverage
 #
 # Configuration (all optional except the host; generic defaults — nothing
 # operator-private is committed: the host alias / paths are read at runtime):
@@ -61,13 +62,20 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # --tests <filter>   pass a --tests filter through to gradle.
 MODULE=""
 TESTS_FILTER=""
+COVERAGE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --coverage) COVERAGE=1; shift ;;
     --module) shift; [[ -n "${1:-}" ]] || { echo "android-logic: --module needs a value" >&2; exit 64; }; MODULE="$1"; shift ;;
     --tests)  shift; [[ -n "${1:-}" ]] || { echo "android-logic: --tests needs a value" >&2; exit 64; }; TESTS_FILTER="$1"; shift ;;
     *) echo "android-logic: unknown argument '$1'" >&2; exit 64 ;;
   esac
 done
+[[ -z "$MODULE" || "$MODULE" =~ ^:?[a-zA-Z0-9_-]+$ ]] || { echo "android-logic: unsupported module characters" >&2; exit 64; }
+[[ -z "$TESTS_FILTER" || "$TESTS_FILTER" =~ ^[a-zA-Z0-9_:.*/=-]+$ ]] || { echo "android-logic: unsupported test filter characters" >&2; exit 64; }
+if [[ "$COVERAGE" == 1 && "${MODULE#:}" != "core-pairing" && "${MODULE#:}" != "core-transport" && "${MODULE#:}" != "app" ]]; then
+  echo "android-logic: --coverage requires --module :core-pairing, :core-transport or :app" >&2; exit 64
+fi
 
 # --- Configuration (generic env, fail-loud on the host). -----------------------
 HOST="${OMNESIS_EPIC_MACOS_HOST:-}"
@@ -140,6 +148,10 @@ else
 fi
 GRADLE_EXTRA=""
 [[ -n "$TESTS_FILTER" ]] && GRADLE_EXTRA="--tests $TESTS_FILTER"
+COVERAGE_TASK=""
+if [[ "$COVERAGE" == 1 ]]; then
+  COVERAGE_TASK=":${MODULE#:}:logicCoverageReport -PomnesisCoverage=true"
+fi
 
 echo "→ macOS host:        $HOST"
 echo "→ warm scratch:      $RESOLVED_TARGET (persistent — Gradle cache reused)"
@@ -192,7 +204,18 @@ ssh "$HOST" "bash -lc '
   export ANDROID_SDK_ROOT=\"\$ANDROID_HOME\"
   export PATH=\"\$JAVA_HOME/bin:\$PATH\"
   [ -x ./gradlew ] || { echo \"./gradlew not found in \$(pwd)\" >&2; exit 1; }
-  ./gradlew $GRADLE_TASKS $GRADLE_EXTRA --build-cache --configuration-cache
+  ./gradlew $GRADLE_TASKS $GRADLE_EXTRA $COVERAGE_TASK --build-cache --configuration-cache
 '" || fail "the Android JVM-only logic lane failed on '$HOST' (compile or test failure)"
+
+if [[ "$COVERAGE" == 1 ]]; then
+  COVERAGE_OUT="${OMNESIS_ANDROID_LOGIC_COVERAGE_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/omnesis-android-coverage.XXXXXX")}"
+  mkdir -p "$COVERAGE_OUT"
+  COVERAGE_OUT="$(cd "$COVERAGE_OUT" && pwd -P)"
+  case "$COVERAGE_OUT" in "$ROOT"|"$ROOT"/*) fail "coverage output must be outside the checkout" ;; esac
+  rsync -az "$HOST:$RESOLVED_TARGET/android/${MODULE#:}/build/reports/logic-coverage/" "$COVERAGE_OUT/" \
+    || fail "could not retrieve the Android coverage report"
+  [[ -s "$COVERAGE_OUT/coverage.xml" ]] || fail "Android coverage report is missing or empty"
+  echo "→ Android coverage report: $COVERAGE_OUT/coverage.xml"
+fi
 
 echo "✓ Android pure-logic JVM test lane passed on $HOST — emulator-less, fast feedback."

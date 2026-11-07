@@ -10,7 +10,11 @@ import {
   type CertificateProbe,
   type ServedResource,
 } from "../../access/served-by-gateway.js";
-import { resolveOAuthOverviewUrls, resolveOAuthUrls } from "../../access/oauth-urls.js";
+import {
+  resolveOAuthOverviewUrls,
+  resolveOAuthUrls,
+  resolveOAuthResourceUrls,
+} from "../../access/oauth-urls.js";
 import { ClientMetadataDocumentResolver } from "../../access/client-metadata-document.js";
 import { normalizeInteractiveOAuthScope } from "../../access/oauth-scopes.js";
 import { MCP_ACCESS_SCOPE, type AuthorizationRequestPortal } from "../../access/types.js";
@@ -77,6 +81,7 @@ export function mountOAuthAuthorizationRoutes(
     /** Actual same-machine gateway origin advertised for local-only setup. */
     loopbackBaseUrl?: string;
     mcpResourceUrls?: readonly string[];
+    additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
     /**
@@ -129,7 +134,12 @@ export function mountOAuthAuthorizationRoutes(
 
   app.get("/oauth/authorize", noStore, scope.public(), async (c) => {
     if (authorizationLimiter.consume(clientIp(c))) return oauthRateLimitError(c);
-    const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
+    const urls = resolveOAuthUrls(
+      c.req.url,
+      options.publicBaseUrl,
+      options.mcpResourceUrls,
+      options.additionalOAuthIssuerUrls,
+    );
     if (!urls) return oauthConfigurationRequired(c);
     if (hasDuplicateQueryParameter(c.req.url, REPEATABLE_AUTHORIZATION_PARAMETERS)) {
       return oauthError(c, 400, "invalid_request", "OAuth parameters must occur exactly once.");
@@ -160,7 +170,7 @@ export function mountOAuthAuthorizationRoutes(
     const requestedResource = requestedResources[0];
     const requestedResourceIsValid =
       requestedResource !== undefined &&
-      urls.supportedResources.includes(requestedResource) &&
+      urls.issuerResources.includes(requestedResource) &&
       requestedResources.every((resource) => resource === requestedResource);
     if (!requestedResourceIsValid || !requestedScope) {
       if (access.isRegisteredRedirect(query.client_id, query.redirect_uri)) {
@@ -331,7 +341,12 @@ export function mountOAuthAuthorizationRoutes(
       }
       return oauthError(c, status, "invalid_request", result.error);
     }
-    const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
+    const urls = resolveOAuthResourceUrls(
+      result.value.resource,
+      options.publicBaseUrl,
+      options.mcpResourceUrls,
+      options.additionalOAuthIssuerUrls,
+    );
     if (!urls) return oauthConfigurationRequired(c);
     return c.redirect(authorizationCompletionTarget(result.value, urls.issuer), 303);
   });
@@ -362,6 +377,7 @@ export function mountOAuthAuthorizationRoutes(
       options.publicBaseUrl,
       options.mcpResourceUrls,
       options.loopbackBaseUrl,
+      options.additionalOAuthIssuerUrls,
     );
     const served = urls
       ? await servedByGateway(urls.supportedResources)
@@ -467,7 +483,12 @@ export function mountOAuthAuthorizationRoutes(
           result.error === "not-found" ? 404 : result.error === "expired" ? 410 : 409,
         );
       }
-      const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
+      const urls = resolveOAuthResourceUrls(
+        result.value.resource,
+        options.publicBaseUrl,
+        options.mcpResourceUrls,
+        options.additionalOAuthIssuerUrls,
+      );
       if (!urls) return c.json({ error: "oauth-not-configured" }, 503);
       return c.json({ redirectTo: authorizationCompletionTarget(result.value, urls.issuer) });
     },

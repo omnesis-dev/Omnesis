@@ -9,6 +9,7 @@ public protocol URLSessionLike: Sendable {
 }
 
 extension URLSession: URLSessionLike {}
+extension GatewayOwnedSession: URLSessionLike {}
 
 /// Thin wrapper around `URLSession` that speaks the Omnesis gateway's
 /// existing HTTP contract used by the desktop collector.

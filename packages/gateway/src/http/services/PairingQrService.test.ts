@@ -32,10 +32,16 @@ function qr(
     hostNames?: string[];
     inContainer?: boolean;
     hostNetwork?: HostNetwork | null;
+    strictPinOrigins?: readonly string[];
+    tlsSpkiFingerprint?: string | (() => string);
+    strictPinSpkiFingerprint?: () => string | undefined;
   } = {},
 ): PairingQrService {
   return new PairingQrService({
     tlsFingerprint,
+    strictPinOrigins: extra.strictPinOrigins,
+    tlsSpkiFingerprint: extra.tlsSpkiFingerprint,
+    strictPinSpkiFingerprint: extra.strictPinSpkiFingerprint,
     systemTrustOrigins,
     pairingKind: () => kind,
     discoverIdentities: async () => extra.identities ?? IDENTITIES,
@@ -52,6 +58,33 @@ function qr(
 }
 
 describe("PairingQrService", () => {
+  it("relay QR pairing canonicalizes origins and preserves strict pins even on a publicly trusted hostname", () => {
+    const fingerprint = "ab".repeat(32),
+      gatewayUrl = "https://gateway.example.test";
+    const service = qr(fingerprint, [gatewayUrl], "ios", {
+      strictPinOrigins: ["https://GATEWAY.example.test:443/"],
+    });
+    for (const trustMode of [undefined, "auto", "pinned-leaf", "pinned-leaf-strict"] as const)
+      expect(
+        JSON.parse(service.encode({ gatewayUrl, pairingCode: "ABCDEF0123", trustMode })).tls,
+      ).toEqual({ mode: "pinned-leaf-strict", fingerprint });
+    expect(() =>
+      service.encode({ gatewayUrl, pairingCode: "ABCDEF0123", trustMode: "system" }),
+    ).toThrow("certificate pin");
+    expect(() =>
+      qr(undefined, [gatewayUrl], "ios", { strictPinOrigins: [gatewayUrl] }).encode({
+        gatewayUrl,
+        pairingCode: "ABCDEF0123",
+      }),
+    ).toThrow("fingerprint");
+    expect(
+      JSON.parse(
+        qr(fingerprint, [gatewayUrl], "ios", {
+          strictPinOrigins: ["https://different.example.test"],
+        }).encode({ gatewayUrl, pairingCode: "ABCDEF0123" }),
+      ).tls,
+    ).toEqual({ mode: "system" });
+  });
   it("reads the served fingerprint at encode time; system trust carries none", () => {
     let served = "ab12cd34".repeat(8);
     const service = qr(() => served, ["https://public-gateway.example.com"]);
@@ -728,4 +761,170 @@ describe("PairingQrService", () => {
       expect(result.recommendedUrl).toBe("https://192.168.1.20");
     });
   });
+});
+
+describe("stable key trust", () => {
+  it("strict relay QRs bind the served SPKI at encode time", () => {
+    const gatewayUrl = "https://public-gateway.example.com";
+    let spki = "a".repeat(64);
+    const service = qr("b".repeat(64), [gatewayUrl], "ios", {
+      strictPinOrigins: [gatewayUrl],
+      tlsSpkiFingerprint: () => spki,
+    });
+    const encode = () => JSON.parse(service.encode({ gatewayUrl, pairingCode: "ABCDEF0123" }));
+    expect(encode().tls).toEqual({ mode: "pinned-key-strict", spkiFingerprint: spki });
+    spki = "c".repeat(64);
+    expect(encode().tls.spkiFingerprint).toBe(spki);
+  });
+  it("explicit key pinning requires a well formed SPKI, separate from a leaf fingerprint", () => {
+    const gatewayUrl = "https://public-gateway.example.com";
+    for (const spki of [undefined, "invalid"]) {
+      expect(() =>
+        qr("b".repeat(64), [gatewayUrl], "ios", { tlsSpkiFingerprint: spki }).encode({
+          gatewayUrl,
+          pairingCode: "ABCDEF0123",
+          trustMode: "pinned-key-strict",
+        }),
+      ).toThrow("SPKI");
+    }
+    expect(
+      JSON.parse(
+        qr(undefined, [gatewayUrl], "ios", { tlsSpkiFingerprint: "a".repeat(64) }).encode({
+          gatewayUrl,
+          pairingCode: "ABCDEF0123",
+          trustMode: "pinned-key-strict",
+        }),
+      ).tls,
+    ).toEqual({ mode: "pinned-key-strict", spkiFingerprint: "a".repeat(64) });
+  });
+});
+
+describe("duplicate and invalid route metadata", () => {
+  it("offers each recorded host once when configured names and container advertisements overlap", async () => {
+    const service = qr("a".repeat(64), ["https://192.168.1.20"], "android", {
+      inContainer: true,
+      hostNames: ["192.168.1.20"],
+      identities: IDENTITIES,
+      hostNetwork: hostNetworkFromText(
+        "port 443\nlocal-name studio.local\ninterface en0 192.168.1.20",
+      ),
+      advertisedLocalName: "studio.local",
+    });
+    const plan = await service.pairingAddresses({
+      pairingCode: "fictional",
+      requestHost: "192.168.1.20",
+      requestPort: "443",
+    });
+    const urls = plan.addresses.map((a) => a.gatewayUrl);
+    expect(new Set(urls).size).toBe(urls.length);
+    expect(urls.filter((url) => url === "https://192.168.1.20")).toHaveLength(1);
+    expect(urls.filter((url) => url === "https://studio.local")).toHaveLength(1);
+    const withoutAdvertisement = qr("a".repeat(64), [], "android", {
+      inContainer: true,
+      hostNames: ["192.168.1.20"],
+      advertisedLocalName: null,
+      identities: [{ kind: "lan", address: "172.20.0.5", label: "Container", offLan: false }],
+    });
+    expect(
+      (
+        await withoutAdvertisement.pairingAddresses({
+          pairingCode: "fictional",
+          requestHost: "gateway",
+          requestPort: "443",
+        })
+      ).addresses.some((a) => a.host === "192.168.1.20"),
+    ).toBe(true);
+  });
+  it("fails closed for a malformed strict-origin configuration and an unsupported internal policy", () => {
+    const gatewayUrl = "https://public-gateway.example.com";
+    expect(() =>
+      qr("a".repeat(64), [gatewayUrl], "ios", { strictPinOrigins: ["bad"] }).encode({
+        gatewayUrl,
+        pairingCode: "fictional",
+      }),
+    ).toThrow("absolute HTTPS origin");
+    expect(() =>
+      qr("a".repeat(64), [gatewayUrl], "ios").encode({
+        gatewayUrl,
+        pairingCode: "fictional",
+        trustMode: "unsupported" as never,
+      }),
+    ).toThrow();
+  });
+});
+
+it("deduplicates an allowlisted host repeated by configuration and the local advertiser", async () => {
+  const service = qr(
+    "a".repeat(64),
+    ["https://studio.local", "https://gateway.example.test"],
+    "android",
+    {
+      hostNames: ["gateway.example.test"],
+      advertisedLocalName: "studio.local",
+      identities: [],
+      listenPort: 443,
+    },
+  );
+  const plan = await service.pairingAddresses({
+    pairingCode: "fictional",
+    requestHost: "gateway.example.test",
+    requestPort: "443",
+  });
+  expect(plan.addresses.map((a) => a.gatewayUrl).sort()).toEqual([
+    "https://gateway.example.test",
+    "https://studio.local",
+  ]);
+});
+
+it("keeps direct and Tailscale pairings unchanged beside relay key-pinned pairings on one gateway", () => {
+  const relayOrigin = "https://relay-gateway.example.test";
+  const tailscaleOrigin = "https://studio.tail-example.ts.net";
+  const fingerprint = "a".repeat(64);
+  const spkiFingerprint = "b".repeat(64);
+  const service = qr(fingerprint, [relayOrigin, tailscaleOrigin], "ios", {
+    strictPinOrigins: [relayOrigin],
+    tlsSpkiFingerprint: spkiFingerprint,
+  });
+  const encode = (gatewayUrl: string) =>
+    JSON.parse(service.encode({ gatewayUrl, pairingCode: "fictional" }));
+  expect(encode(relayOrigin).tls).toEqual({ mode: "pinned-key-strict", spkiFingerprint });
+  expect(encode(tailscaleOrigin).tls).toEqual({ mode: "system" });
+  expect(encode("https://192.168.1.20:7600")).toMatchObject({ v: 3, fingerprint });
+  const directOnly = qr(fingerprint, [tailscaleOrigin], "ios", {
+    tlsSpkiFingerprint: spkiFingerprint,
+  });
+  expect(
+    JSON.parse(directOnly.encode({ gatewayUrl: tailscaleOrigin, pairingCode: "fictional" })).tls,
+  ).toEqual({ mode: "system" });
+  expect(
+    JSON.parse(
+      directOnly.encode({ gatewayUrl: "https://192.168.1.20:7600", pairingCode: "fictional" }),
+    ),
+  ).toMatchObject({ v: 3, fingerprint });
+});
+
+it("keeps public SNI and direct key pins separate and refuses uninitialized public trust", () => {
+  const publicOrigin = "https://public-gateway.example.com";
+  const directOrigin = "https://studio.tail-example.ts.net";
+  let publicKey: string | undefined = "c".repeat(64);
+  const service = qr("a".repeat(64), [publicOrigin, directOrigin], "ios", {
+    strictPinOrigins: [publicOrigin],
+    tlsSpkiFingerprint: "b".repeat(64),
+    strictPinSpkiFingerprint: () => publicKey,
+  });
+  const encode = (gatewayUrl: string) =>
+    JSON.parse(
+      service.encode({ gatewayUrl, pairingCode: "fictional", trustMode: "pinned-key-strict" }),
+    );
+  expect(encode(publicOrigin).tls).toEqual({
+    mode: "pinned-key-strict",
+    spkiFingerprint: publicKey,
+  });
+  expect(encode(directOrigin).tls).toEqual({
+    mode: "pinned-key-strict",
+    spkiFingerprint: "b".repeat(64),
+  });
+  publicKey = undefined;
+  expect(() => encode(publicOrigin)).toThrow("not ready");
+  expect(encode(directOrigin).tls.spkiFingerprint).toBe("b".repeat(64));
 });

@@ -796,36 +796,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Live WS connection state — flips immediately when the socket
-    /// drops, beats an on-appear HTTP probe.
-    @ViewBuilder
-    private var connectionRow: some View {
-        switch store.wsState {
-        case .disconnected, .connecting, .authenticating:
-            HStack {
-                ProgressView().controlSize(.small)
-                Text("Connecting…").foregroundStyle(.secondary)
-            }
-        case .connected:
-            Label("Connected", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(Theme.success)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Gateway connection failed", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Theme.warning)
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textMuted)
-                Text(
-                    "Away from home? Connect Tailscale on this phone and the gateway. If this pairing uses a home-network address, re-pair using the gateway's Tailscale hostname."
-                )
-                .font(.footnote)
-                .foregroundStyle(Theme.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
     // MARK: - Gateway
 
     /// Gateway-owned configuration, connection identity, edit-URL escape
@@ -909,24 +879,8 @@ struct SettingsView: View {
         } header: {
             Text("Gateway")
         } footer: {
-            switch store.pairing?.tlsMode {
-            case .system:
-                Text(
-                    "This pairing uses system HTTPS verification. Re-pair to change its URL. "
-                        + "Re-pair wipes the token + buffered batches and scans a new QR."
-                )
-            case .pinnedLeaf:
-                Text(
-                    "Omnesis requires HTTPS. Edit the URL only when the same certificate-pinned "
-                        + "gateway moves; re-pair if the gateway or certificate was replaced."
-                )
-            case .legacy:
-                Text(
-                    "This legacy pairing uses HTTPS with system verification. Re-pair to upgrade "
-                        + "its trust settings before changing the gateway URL."
-                )
-            case nil:
-                EmptyView()
+            if let description = GatewayTrustDescription.message(for: store.pairing?.tlsMode) {
+                Text(description)
             }
         }
         .listRowBackground(Theme.bgSecondary)
@@ -938,14 +892,75 @@ struct SettingsView: View {
             return
         }
         do {
-            try PairingService().updateGatewayURL(url)
-            store.reload()
+            try store.updateGatewayURL(url)
             editingURL = false
         } catch {
             if case PairingPayloadError.invalidShape(let message) = error {
                 saveError = message
             } else {
                 saveError = error.localizedDescription
+            }
+        }
+    }
+}
+
+enum GatewayTrustDescription {
+    static func message(for mode: PairingTlsMode?) -> String? {
+        switch mode {
+        case .system:
+            "This pairing uses system HTTPS verification. Re-pair to change its URL. "
+                + "Re-pair wipes the token + buffered batches and scans a new QR."
+        case .pinnedKeyStrict:
+            "Omnesis verifies this gateway's public key and HTTPS hostname. "
+                + "Certificates can renew automatically; re-pair if the gateway key changes."
+        case .pinnedLeaf, .pinnedLeafStrict:
+            "Omnesis requires HTTPS. Edit the URL only when the same certificate-pinned "
+                + "gateway moves; re-pair if the gateway or certificate was replaced."
+        case .legacy:
+            "This legacy pairing uses HTTPS with system verification. Re-pair to upgrade "
+                + "its trust settings before changing the gateway URL."
+        case nil:
+            nil
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+extension SettingsView {
+    /// Live WS connection state — flips immediately when the socket
+    /// drops, beats an on-appear HTTP probe.
+    @ViewBuilder
+    private var connectionRow: some View {
+        switch store.wsState {
+        case .disconnected, .connecting, .authenticating:
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("Connecting…").foregroundStyle(.secondary)
+                Spacer()
+                if store.connectionPath != nil { GatewayConnectionPill(path: .reconnecting) }
+            }
+        case .connected:
+            HStack {
+                Label("Connected", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(Theme.success)
+                Spacer()
+                if let path = store.connectionPath {
+                    GatewayConnectionPill(path: path)
+                }
+            }
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Gateway connection failed", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.warning)
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textMuted)
+                Text(
+                    "Away from home? Connect Tailscale on this phone and the gateway. If this pairing uses a home-network address, re-pair using the gateway's Tailscale hostname."
+                )
+                .font(.footnote)
+                .foregroundStyle(Theme.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

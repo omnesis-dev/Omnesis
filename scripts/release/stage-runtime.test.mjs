@@ -74,6 +74,7 @@ describe("runtime staging", () => {
 
     expect(names).toContain("@omnesis/gateway");
     expect(names).toContain("@omnesis/core");
+    expect(names).toContain("@omnesis/cloud-relay");
     expect(names).toContain("@omnesis/provider-web");
     expect(names).not.toContain("@omnesis/collector");
     expect(names).not.toContain("@omnesis/provider-google");
@@ -138,6 +139,7 @@ describe("runtime staging", () => {
 
     expect(manifest.packages.some((entry) => entry.name === "@omnesis/gateway")).toBe(true);
     expect(existsSync(join(directory, "packages/gateway/dist/index.js"))).toBe(true);
+    expect(existsSync(join(directory, "packages/cloud-relay/dist/tunnel-client.js"))).toBe(true);
     expect(statSync(join(directory, "packages/gateway/dist/index.js")).mode & 0o777).toBe(0o644);
     const schemaVersionModule = join(directory, "packages/gateway/dist/data/schema-version.js");
     expect(existsSync(schemaVersionModule)).toBe(true);

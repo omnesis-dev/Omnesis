@@ -4,6 +4,7 @@
 package dev.omnesis.android.transport.tls
 
 import okhttp3.OkHttpClient
+import dev.omnesis.android.transport.routing.DirectGatewayRoute
 import java.time.Duration
 import javax.net.ssl.X509TrustManager
 
@@ -24,8 +25,11 @@ object PinnedOkHttp {
         requirePin: Boolean = false,
         host: String? = null,
         onSystemTrustVerified: (() -> Unit)? = null,
+        requireCertificateValidity: Boolean = false,
+        spkiFingerprint: String? = null,
+        directRoute: DirectGatewayRoute? = null,
     ): OkHttpClient =
-        baseBuilder(OkHttpClient.Builder(), fingerprint, requirePin, host, onSystemTrustVerified, systemTrust = null)
+        baseBuilder(OkHttpClient.Builder(), fingerprint, requirePin, host, onSystemTrustVerified, systemTrust = null, requireCertificateValidity, spkiFingerprint, directRoute)
             .callTimeout(Duration.ofSeconds(30))
             .connectTimeout(Duration.ofSeconds(15))
             .readTimeout(Duration.ofSeconds(30))
@@ -40,8 +44,11 @@ object PinnedOkHttp {
         requirePin: Boolean = false,
         host: String? = null,
         onSystemTrustVerified: (() -> Unit)? = null,
+        requireCertificateValidity: Boolean = false,
+        spkiFingerprint: String? = null,
+        directRoute: DirectGatewayRoute? = null,
     ): OkHttpClient =
-        baseBuilder(OkHttpClient.Builder(), fingerprint, requirePin, host, onSystemTrustVerified, systemTrust = null)
+        baseBuilder(OkHttpClient.Builder(), fingerprint, requirePin, host, onSystemTrustVerified, systemTrust = null, requireCertificateValidity, spkiFingerprint, directRoute)
             .connectTimeout(Duration.ofSeconds(15))
             .readTimeout(Duration.ZERO)
             .callTimeout(Duration.ZERO)
@@ -55,8 +62,11 @@ object PinnedOkHttp {
         host: String? = null,
         onSystemTrustVerified: (() -> Unit)? = null,
         systemTrust: X509TrustManager? = null,
+        requireCertificateValidity: Boolean = false,
+        spkiFingerprint: String? = null,
+        directRoute: DirectGatewayRoute? = null,
     ): OkHttpClient =
-        baseBuilder(builder, fingerprint, requirePin, host, onSystemTrustVerified, systemTrust).build()
+        baseBuilder(builder, fingerprint, requirePin, host, onSystemTrustVerified, systemTrust, requireCertificateValidity, spkiFingerprint, directRoute).build()
 
     private fun baseBuilder(
         builder: OkHttpClient.Builder,
@@ -65,21 +75,35 @@ object PinnedOkHttp {
         host: String?,
         onSystemTrustVerified: (() -> Unit)?,
         systemTrust: X509TrustManager?,
+        requireCertificateValidity: Boolean,
+        spkiFingerprint: String?,
+        directRoute: DirectGatewayRoute?,
     ): OkHttpClient.Builder {
         val validFingerprint = LeafCertPinner.isValidFingerprint(fingerprint)
-        require(!requirePin || validFingerprint) {
+        val validKey = LeafCertPinner.isValidFingerprint(spkiFingerprint)
+        require(spkiFingerprint == null || validKey) { "strict key pin must be a SHA-256 SPKI fingerprint" }
+        require(!requirePin || validFingerprint || validKey) {
             "pinned-leaf TLS trust requires a valid certificate fingerprint"
         }
-        if (validFingerprint) {
+        require(directRoute == null || validKey || validFingerprint && requireCertificateValidity && host == null) {
+            "direct routing requires a strict paired TLS identity"
+        }
+        val pinHost = if (validKey && directRoute != null) {
+            require(host == null || host.equals(directRoute.host, ignoreCase = true))
+            directRoute.host
+        } else host
+        if (validFingerprint || validKey) {
             val pinner = LeafCertPinner(
-                fingerprint!!,
-                host,
+                fingerprint.orEmpty(),
+                pinHost,
                 onSystemTrustVerified,
                 systemTrust ?: LeafCertPinner.platformDefaultTrustManager(),
+                requireCertificateValidity = requireCertificateValidity,
+                spkiFingerprint = spkiFingerprint,
             )
             builder.sslSocketFactory(pinner.socketFactory, pinner.trustManager)
             builder.hostnameVerifier(pinner.hostnameVerifier)
         }
-        return builder
+        return directRoute?.install(builder) ?: builder
     }
 }

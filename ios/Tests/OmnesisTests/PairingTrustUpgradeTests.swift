@@ -23,7 +23,12 @@ final class PairingTrustUpgradeTests: XCTestCase {
             token: "omn_pinned_token",
             scopes: ["read", "write"]
         ))
-        service = PairingService(store: store, exchange: exchange, pinnedExchangeBuilder: { _ in nil })
+        service = PairingService(
+            store: store,
+            exchange: exchange,
+            pinnedExchangeBuilder: { _ in nil },
+            strictPinnedExchangeBuilder: { _ in nil }
+        )
         OmnesisURLSession._setStore(store)
     }
 
@@ -70,6 +75,22 @@ final class PairingTrustUpgradeTests: XCTestCase {
         XCTAssertTrue(OmnesisURLSession.shared === URLSession.shared)
 
         XCTAssertFalse(try upgrade(), "a system pairing has nothing to upgrade")
+    }
+
+    func testVerifiedCloudPairingNeverFallsBackToSystemTrustOrDiscardsItsPin() async throws {
+        let raw = #"{"v":4,"gatewayUrl":"https://gateway.example.com","pairingCode":"AAAA-BBBB","tls":{"mode":"pinned-leaf-strict","fingerprint":"\#(pin)"}}"#
+        let pairing = try await service.pairAsync(raw: raw)
+        XCTAssertEqual(pairing.tlsMode, .pinnedLeafStrict)
+        XCTAssertEqual(try storedBundle().tlsMode, "pinned-leaf-strict")
+        XCTAssertEqual(try service.current()?.fingerprint, pin)
+        XCTAssertFalse(try upgrade())
+        XCTAssertEqual(try service.current()?.tlsMode, .pinnedLeafStrict)
+        XCTAssertTrue(OmnesisURLSession.shared.delegate is PinnedSession)
+        let claimStore = InMemoryStore()
+        let mints = MintCounter()
+        try await NotificationClaimCredentialProvisioner(pairing: pairing, store: claimStore, request: mints.mint).ensure()
+        XCTAssertEqual(try NotificationClaimCredentials.stored(keychain: claimStore)?.tlsMode, "pinned-leaf-strict")
+        XCTAssertEqual(try NotificationClaimCredentials.stored(keychain: claimStore)?.fingerprint, pin)
     }
 
     func testUpgradeLeavesAPinnedIPPairingStrictlyPinned() async throws {

@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Android
 import androidx.compose.material.icons.outlined.Devices
@@ -110,6 +111,8 @@ fun DevicesScreen(
     val tokens by vm.tokens.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val pair by vm.pair.collectAsStateWithLifecycle()
+    var showApprovals by remember { mutableStateOf(false) }
+    val approvalClient = vm.pairingApprovalClient()
     val thisDeviceId by vm.thisDeviceId.collectAsStateWithLifecycle()
 
     DevicesContent(
@@ -126,10 +129,15 @@ fun DevicesScreen(
         onForgetDevice = vm::forgetDevice,
         onRepairDevice = vm::openRepair,
         onPair = vm::openPair,
+        onPairingRequests = approvalClient?.let { { showApprovals = true } },
         onDismissNotice = vm::dismissNotice,
         onOpenSettings = onOpenSettings,
         focusedDeviceId = focusedDeviceId,
     )
+
+    if (showApprovals && approvalClient != null) {
+        GatewayPairingApprovalSheet(client = approvalClient, onOpenSettings = onOpenSettings, onDismiss = { showApprovals = false })
+    }
 
     pair?.let { state ->
         PairDeviceSheet(
@@ -158,6 +166,7 @@ fun DevicesContent(
     onForgetDevice: (DeviceRecord) -> Unit = {},
     onRepairDevice: (DeviceRecord) -> Unit = {},
     onPair: () -> Unit = {},
+    onPairingRequests: (() -> Unit)? = null,
     onDismissNotice: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     otherExpanded: Boolean = false,
@@ -184,6 +193,11 @@ fun DevicesContent(
                 },
                 title = { Text("Devices", style = MaterialTheme.typography.titleMedium, color = c.textPrimary) },
                 actions = {
+                    if (onPairingRequests != null) {
+                        IconButton(onClick = onPairingRequests) {
+                            Icon(Icons.Outlined.VerifiedUser, contentDescription = "Pairing requests", tint = c.textPrimary)
+                        }
+                    }
                     IconButton(onClick = onPair) {
                         Icon(Icons.Outlined.Add, contentDescription = "Pair a device", tint = c.textPrimary)
                     }
@@ -790,7 +804,14 @@ private fun StatusLabel(device: DeviceRecord, isThis: Boolean) {
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         Box(Modifier.size(6.dp).clip(CircleShape).background(fg))
-        Text(
+        val path = when (device.connectionPath) {
+            "local" -> dev.omnesis.android.transport.routing.GatewayConnectionPath.LOCAL
+            "relay" -> dev.omnesis.android.transport.routing.GatewayConnectionPath.RELAY
+            "reconnecting" -> dev.omnesis.android.transport.routing.GatewayConnectionPath.RECONNECTING
+            else -> null
+        }
+        if (!device.revoked && path != null) dev.omnesis.android.ui.common.GatewayConnectionPill(path)
+        else Text(
             DeviceGrouping.statusLine(device, isCurrent = isThis),
             fontSize = 11.sp,
             fontWeight = FontWeight.Medium,

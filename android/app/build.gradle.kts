@@ -123,6 +123,8 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
+apply(from = rootProject.file("logic-coverage.gradle.kts"))
+
 val localPushProperties = Properties().apply {
     val file = rootProject.file("local.push.properties")
     if (file.isFile) file.inputStream().use(::load)
@@ -168,6 +170,9 @@ android {
         buildConfigField("String", "FIREBASE_API_KEY", "\"${firebaseBuildValue("OMNESIS_FIREBASE_API_KEY")}\"")
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseBuildValue("OMNESIS_FIREBASE_PROJECT_ID")}\"")
         buildConfigField("String", "FIREBASE_SENDER_ID", "\"${firebaseBuildValue("OMNESIS_FIREBASE_SENDER_ID")}\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${firebaseBuildValue("OMNESIS_GOOGLE_WEB_CLIENT_ID")}\"")
+        buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"${firebaseBuildValue("OMNESIS_GOOGLE_ANDROID_CLIENT_ID")}\"")
+        buildConfigField("String", "CLOUD_RELAY_URL", "\"${firebaseBuildValue("OMNESIS_CLOUD_RELAY_URL")}\"")
     }
 
     flavorDimensions += "distribution"
@@ -227,6 +232,9 @@ roborazzi {
 }
 
 dependencies {
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.google.identity)
     implementation(project(":core-designsystem"))
     implementation(project(":core-transport"))
     implementation(project(":core-pairing"))

@@ -25,11 +25,18 @@ import {
 import { BadRequestError } from "../errors.js";
 import type { DeviceKind } from "@omnesis/types";
 
-export type PairingQrTrustMode = "auto" | "system" | "pinned-leaf";
+export type PairingQrTrustMode =
+  "auto" | "system" | "pinned-leaf" | "pinned-leaf-strict" | "pinned-key-strict";
 
 export interface PairingQrServiceOptions {
+  /** Relay origins retain their verified key even if another certificate passes WebPKI. */
+  strictPinOrigins?: readonly string[];
   /** The served leaf's fingerprint, read at encode time so a rotation applies at once. */
   tlsFingerprint?: string | (() => string);
+  /** SHA256 of the currently served leaf's complete DER SubjectPublicKeyInfo. */
+  tlsSpkiFingerprint?: string | (() => string);
+  /** Public SNI keys can renew independently of the direct gateway identity. */
+  strictPinSpkiFingerprint?: () => string | undefined;
   /** Exact HTTPS origins whose certificate phones verify through platform trust. */
   systemTrustOrigins?: readonly string[] | (() => readonly string[]);
   /**
@@ -417,9 +424,24 @@ export class PairingQrService {
     );
     if (!verdict.usable) throw new BadRequestError(verdict.reason);
 
-    // A caller that names no trust mode gets the one its origin earns: a pin
-    // on a publicly trusted name would strand the phone at the next renewal.
-    const trustMode = input.trustMode ?? "auto";
+    // Relay pairing retains its verified key even when the origin also passes WebPKI.
+    const strictPin = this.options.strictPinOrigins?.some(
+      (origin) => canonicalOrigin(origin) === canonicalOrigin(input.gatewayUrl),
+    );
+    if (strictPin && input.trustMode === "system")
+      throw new BadRequestError("Relay pairing requires a verified gateway certificate pin");
+    const configuredSpki =
+      strictPin && this.options.strictPinSpkiFingerprint
+        ? this.options.strictPinSpkiFingerprint
+        : this.options.tlsSpkiFingerprint;
+    const spki = typeof configuredSpki === "function" ? configuredSpki() : configuredSpki;
+    if (strictPin && this.options.strictPinSpkiFingerprint && !spki)
+      throw new BadRequestError("Public gateway TLS identity is not ready for pairing");
+    const trustMode = strictPin
+      ? spki
+        ? "pinned-key-strict"
+        : "pinned-leaf-strict"
+      : (input.trustMode ?? "auto");
     switch (trustMode) {
       case "auto":
         return verdict.systemTrust
@@ -430,7 +452,18 @@ export class PairingQrService {
           throw new BadRequestError("system TLS trust is not allowed for this gateway origin");
         }
         return this.systemTrustPayload(input);
-      case "pinned-leaf": {
+      case "pinned-key-strict":
+        if (!spki || !/^[a-f0-9]{64}$/.test(spki))
+          throw new BadRequestError("pinned-key TLS trust requires a gateway SPKI fingerprint");
+        return JSON.stringify(
+          buildPairingPayloadV4({
+            gatewayUrl: canonicalOrigin(input.gatewayUrl),
+            pairingCode: input.pairingCode,
+            tls: { mode: "pinned-key-strict", spkiFingerprint: spki },
+          }),
+        );
+      case "pinned-leaf":
+      case "pinned-leaf-strict": {
         const fingerprint = this.tlsFingerprintSha256;
         if (!fingerprint) {
           throw new BadRequestError("pinned-leaf TLS trust requires a gateway fingerprint");
@@ -439,7 +472,7 @@ export class PairingQrService {
           buildPairingPayloadV4({
             gatewayUrl: canonicalOrigin(input.gatewayUrl),
             pairingCode: input.pairingCode,
-            tls: { mode: "pinned-leaf", fingerprint },
+            tls: { mode: trustMode, fingerprint },
           }),
         );
       }

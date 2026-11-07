@@ -28,11 +28,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swhitty/SwiftDraw.git", exact: "0.29.0"),
+        .package(url: "https://github.com/apple/swift-asn1.git", exact: "1.7.4"),
     ],
     targets: [
         .target(
             name: "Omnesis",
-            dependencies: ["SwiftDraw"],
+            dependencies: ["SwiftDraw", .product(name: "SwiftASN1", package: "swift-asn1")],
             path: "Sources/Omnesis",
             exclude: [
                 // DEBUG-only simulator probe; never part of the sim-less lane.
@@ -70,6 +71,8 @@ let package = Package(
                 "AdminCoordinatorPendingAccessTests.swift",
                 "AdminCoordinatorInternalSourcesTests.swift",
                 "AdminCoordinatorNoticesTests.swift",
+                // Exercises the hosted UIKit Google enrollment composition.
+                "GoogleDefaultPairingCompositionTests.swift",
                 // Constructs HealthSampleProbeView (SwiftUI + UIKit-gated).
                 "HealthSampleProbeViewTests.swift",
                 // Hosts the search breadcrumbs' UIKit text views in a window.
@@ -78,7 +81,8 @@ let package = Package(
                 "GatewayLiveE2ETests.swift",
                 // Opt-in microphone capture needs a hosted iOS audio session.
                 "RealtimeAudioCaptureDeviceTests.swift",
-            ]
+            ],
+            resources: [.copy("Fixtures")]
         ),
     ]
 )

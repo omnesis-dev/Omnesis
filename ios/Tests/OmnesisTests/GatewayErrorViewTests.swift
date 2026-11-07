@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import AuthenticationServices
 import Foundation
 @testable import Omnesis
 import XCTest
@@ -19,6 +20,46 @@ final class GatewayErrorViewTests: XCTestCase {
         XCTAssertEqual(kind, .voice(failure))
         XCTAssertEqual(kind.title, "OpenAI credit or quota limit")
         XCTAssertTrue(kind.detail(for: "start a call").contains("billing"))
+    }
+
+    func testCloudPairingErrorsUseSharedPrivateRecoveryCopy() {
+        XCTAssertEqual(GatewayErrorView.classify(CloudPairingError.httpStatus(401)), .unauthorized)
+        XCTAssertEqual(GatewayErrorView.classify(CloudPairingError.httpStatus(403)), .forbidden)
+        XCTAssertEqual(GatewayErrorView.classify(CloudPairingError.httpStatus(503)), .server(status: 503, body: ""))
+        XCTAssertEqual(GatewayErrorView.classify(CloudPairingError.refused), .forbidden)
+        XCTAssertEqual(GatewayErrorView.classify(CloudPairingError.codeMismatch), .certificate)
+        let recoverable: [CloudPairingError] = [.cancelled, .expired, .confirmationRequired, .configuration, .response]
+        for error in recoverable {
+            guard case .unknown(let copy) = GatewayErrorView.classify(error) else { return XCTFail("Missing safe pairing recovery") }
+            XCTAssertFalse(copy.isEmpty)
+        }
+        XCTAssertEqual(GatewayErrorView.classify(CancellationError()), .unknown("Sign-in was cancelled. Try again or scan a QR code."))
+        let cancelled = NSError(
+            domain: ASWebAuthenticationSessionErrorDomain,
+            code: ASWebAuthenticationSessionError.canceledLogin.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "Private callback detail"]
+        )
+        XCTAssertEqual(GatewayErrorView.classify(cancelled), .unknown("Sign-in was cancelled. Try again or scan a QR code."))
+        let unavailable = NSError(
+            domain: ASWebAuthenticationSessionErrorDomain,
+            code: ASWebAuthenticationSessionError.presentationContextInvalid.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "Private callback detail"]
+        )
+        XCTAssertEqual(GatewayErrorView.classify(unavailable), .unknown("Couldn’t open Google sign-in. Try again or scan a QR code."))
+        XCTAssertEqual(GatewayErrorView.classify(CloudIdentityError.gateway), .certificate)
+        let identityErrors: [CloudIdentityError] = [
+            .invalidToken,
+            .invalidKey,
+            .signature,
+            .claims,
+            .expired,
+            .nonce,
+            .account,
+            .configuration,
+        ]
+        for error in identityErrors {
+            XCTAssertEqual(GatewayErrorView.classify(error), .unauthorized)
+        }
     }
 
     // MARK: - classify(_:)

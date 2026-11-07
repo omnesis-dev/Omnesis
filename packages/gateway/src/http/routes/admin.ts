@@ -18,6 +18,7 @@ import { mountSourceDocumentProfilesRoutes } from "./admin/source-document-profi
 import { mountWidgetOriginsRoutes } from "./admin/widget-origins.js";
 import { mountWidgetRenderersRoutes } from "./admin/widget-renderers.js";
 import { mountDoctorRoutes } from "./admin/doctor.js";
+import { mountCloudRelayManagementRoutes } from "./admin/cloud-relay.js";
 import { mountTlsRoutes } from "./admin/tls.js";
 import { mountWatermarkRoutes } from "./admin/watermarks.js";
 import { mountHostFleetUpdateRoutes } from "./admin/host-fleet-update.js";
@@ -59,6 +60,7 @@ export function mountAdminRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   mountWidgetRenderersRoutes(app);
   mountDoctorRoutes(app, deps);
   mountTlsRoutes(app, deps);
+  mountCloudRelayManagementRoutes(app, deps.cloudRelayManagement);
   mountWatermarkRoutes(app, deps);
   mountHostFleetUpdateRoutes(app, deps);
 }

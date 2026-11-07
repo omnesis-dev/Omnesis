@@ -82,6 +82,7 @@ export interface McpStreamableRoutesDeps {
   isAgentIntegrationDevice?: (deviceId: DeviceId) => boolean;
   publicBaseUrl?: string;
   mcpResourceUrls?: readonly string[];
+  additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
   /** Required final authorization and attribution fence for every corpus result. */
   recordMcpToolInvocation: (input: McpToolInvocationAuditInput) => Promise<void>;
   /**
@@ -121,6 +122,7 @@ export function mountMcpStreamableRoutes(
         deps.publicBaseUrl,
         deps.mcpResourceUrls,
         c.req.header("Authorization") !== undefined,
+        deps.additionalOAuthIssuerUrls,
       );
     }
     return next();
@@ -734,8 +736,14 @@ function oauthChallenge(
   publicBaseUrl?: string,
   mcpResourceUrls?: readonly string[],
   rejectedToken = false,
+  additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource,
 ) {
-  const urls = resolveOAuthUrls(c.req.url, publicBaseUrl, mcpResourceUrls);
+  const urls = resolveOAuthUrls(
+    c.req.url,
+    publicBaseUrl,
+    mcpResourceUrls,
+    additionalOAuthIssuerUrls,
+  );
   if (!urls) {
     return c.json({ error: "OAuth requires gateway.publicBaseUrl for non-loopback access." }, 503);
   }

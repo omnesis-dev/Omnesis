@@ -1021,12 +1021,12 @@
     {
       "value": "marek.vint+news@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "marekvint@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "maria.smith@acme.com",
@@ -1282,7 +1282,7 @@
         "packages/providers/github/src/normalizer.test.ts",
         "packages/providers/github/src/normalizer.ts"
       ],
-      "reason": "GitHub's public squash-merge committer address — a code constant, not corpus data"
+      "reason": "GitHub's public squash-merge committer address \u2014 a code constant, not corpus data"
     },
     {
       "value": "noreply@vendor.com",
@@ -1478,7 +1478,7 @@
     {
       "value": "someone@a-real-looking-domain.co.uk",
       "paths": ["scripts/lib/brain-cassette.test.mjs"],
-      "reason": "invented, deliberately OFF a reserved domain — the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
+      "reason": "invented, deliberately OFF a reserved domain \u2014 the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
     },
     {
       "value": "someone@s.whatsapp.net",
@@ -1787,7 +1787,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture — placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
+      "reason": "reviewed invented fixture \u2014 placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
     },
     {
       "value": "+1 415 555 7777",
@@ -1828,7 +1828,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+15551111111",
@@ -1917,7 +1917,7 @@
         "packages/providers/apple/src/contacts.test.ts",
         "packages/gateway/src/domain/LinkGraphService.test.ts"
       ],
-      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+442071234567",
@@ -2085,7 +2085,10 @@
     },
     {
       "value": "10.0.0.42",
-      "paths": ["packages/cli/src/commands/devices.test.ts"],
+      "paths": [
+        "ios/Tests/OmnesisTests/AppStoreHintPropagationTests.swift",
+        "packages/cli/src/commands/devices.test.ts"
+      ],
       "reason": "reviewed existing fixture"
     },
     {
@@ -2157,7 +2160,10 @@
     },
     {
       "value": "192.168.1.2",
-      "paths": ["packages/gateway/src/access/client-metadata-document.test.ts"],
+      "paths": [
+        "ios/Tests/OmnesisTests/GatewayRoutingLifecycleTests.swift",
+        "packages/gateway/src/access/client-metadata-document.test.ts"
+      ],
       "reason": "invented private-address fixture for mixed-answer SSRF rejection"
     },
     {
@@ -2169,6 +2175,7 @@
       "value": "192.168.1.20",
       "paths": [
         "packages/cli/src/commands/phone-pairing.test.ts",
+        "packages/cloud-relay/src/metadata-recovery.test.ts",
         "packages/collector/src/e2e/pairing-lifecycle.e2e.test.ts",
         "packages/collector/src/main.test.ts",
         "packages/core/src/host-network.test.ts",
@@ -2201,6 +2208,170 @@
         "packages/gateway/src/http/services/PairingQrService.test.ts"
       ],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "10.0.0.1",
+      "paths": [
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/DirectCandidatePersistenceTest.kt",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/DirectGatewayCandidatesTest.kt",
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift",
+        "packages/cloud-relay/src/direct-path.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.2",
+      "paths": [
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairedGatewayTransportTest.kt",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairingGenerationTest.kt",
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "ios/Tests/OmnesisTests/GatewayDirectDiscoveryTests.swift",
+        "ios/Tests/OmnesisTests/GatewayPairingGenerationTests.swift"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.3.2.1",
+      "paths": [
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairingGenerationTest.kt"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "172.16.0.1",
+      "paths": [
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift",
+        "packages/cloud-relay/src/direct-path.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "172.31.255.254",
+      "paths": [
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "packages/cloud-relay/src/direct-path.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.256",
+      "paths": [
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.20",
+      "paths": [
+        "ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift",
+        "packages/cloud-relay/src/adaptive-path.test.ts",
+        "packages/cloud-relay/src/adaptive-probe.test.ts",
+        "packages/cloud-relay/src/adaptive-tls.test.ts",
+        "packages/cloud-relay/src/direct-path.test.ts",
+        "packages/cloud-relay/src/direct-tls.test.ts",
+        "packages/cloud-relay/src/runtime-direct.test.ts",
+        "packages/gateway/src/http/routes/direct-candidates.test.ts",
+        "packages/gateway/src/http/services/DirectCandidates.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "172.31.255.255",
+      "paths": ["ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.256",
+      "paths": ["ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.01.1",
+      "paths": ["ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.4.2.1",
+      "paths": ["ios/Tests/OmnesisTests/GatewayPairingGenerationTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.99",
+      "paths": ["packages/cloud-relay/src/adaptive-path.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.20",
+      "paths": ["packages/cloud-relay/src/adaptive-path.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.10",
+      "paths": ["packages/cloud-relay/src/direct-discovery.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.1.2.3",
+      "paths": ["packages/cloud-relay/src/direct-path.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.1",
+      "paths": ["packages/cloud-relay/src/direct-path.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.01.2.3",
+      "paths": ["packages/cloud-relay/src/direct-path.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "172.17.0.1",
+      "paths": ["packages/gateway/src/http/services/DirectCandidates.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.4",
+      "paths": [
+        "ios/Tests/OmnesisTests/GatewayPairingCoordinatorTests.swift",
+        "packages/gateway/src/http/services/DirectCandidates.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.2",
+      "paths": [
+        "ios/Tests/OmnesisTests/GatewayExtensionCredentialPolicyTests.swift",
+        "android/app/src/test/kotlin/dev/omnesis/android/ui/pairing/GoogleDefaultCompositionTest.kt",
+        "android/app/src/test/kotlin/dev/omnesis/android/ui/pairing/GoogleSettingsRouteProjectionTest.kt",
+        "android/app/src/test/kotlin/dev/omnesis/android/widgets/TaskWidgetRepositoryTest.kt",
+        "ios/Tests/OmnesisTests/GatewayPairingRoutingFactoryTests.swift",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/DirectCandidatePersistenceTest.kt",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairedGatewayRoutesTest.kt",
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "ios/Tests/OmnesisTests/GatewayAdaptiveSocketTests.swift",
+        "ios/Tests/OmnesisTests/GatewayHintPublicationTests.swift",
+        "ios/Tests/OmnesisTests/GatewayPairedHintRefresherTests.swift",
+        "ios/Tests/OmnesisTests/GatewayRoutedSessionTests.swift"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.3",
+      "paths": ["ios/Tests/OmnesisTests/GatewayRoutingLifecycleTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.50.20",
+      "paths": ["ios/Tests/OmnesisTests/GatewayRoutingLifecycleTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.21",
+      "paths": ["packages/cloud-relay/src/metadata-recovery.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
     }
   ],
   "tailnetIps": [
@@ -2258,6 +2429,14 @@
         "packages/core/src/pairing-address.test.ts"
       ],
       "reason": "Invented Tailscale ULA IPv6 fixture exercising the IPv4+IPv6 TailscaleIPs shape."
+    },
+    {
+      "value": "100.64.0.1",
+      "paths": [
+        "packages/cloud-relay/src/direct-path.test.ts",
+        "packages/gateway/src/http/services/DirectCandidates.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
     }
   ],
   "names": [
@@ -5529,7 +5708,7 @@
     {
       "value": "Alex Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Alex Doe",
@@ -5858,7 +6037,7 @@
     {
       "value": "Apple Watch",
       "paths": ["evals/universes/wrist/universe.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Apple Watch Series",
@@ -6148,7 +6327,7 @@
         "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "product name — the brain end-to-end test kit, not a person"
+      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
     },
     {
       "value": "Bram Halvorsen",
@@ -6348,7 +6527,7 @@
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Cedar Grove Billing",
@@ -7156,7 +7335,7 @@
     {
       "value": "Eurostar Bookings",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Eve Bond",
@@ -7559,7 +7738,7 @@
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Guided Kyoto",
@@ -7668,7 +7847,7 @@
     {
       "value": "Hello Alex",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hello John Smith",
@@ -7736,7 +7915,7 @@
         "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hi Anton",
@@ -7976,7 +8155,7 @@
     {
       "value": "Iris Kelland",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "JP Bond",
@@ -8279,7 +8458,7 @@
     {
       "value": "Jordan Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Juniper Workshop",
@@ -8432,7 +8611,7 @@
     {
       "value": "London Paris",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "London St Pancras",
@@ -8441,7 +8620,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Lucian Farrow",
@@ -8961,7 +9140,7 @@
     {
       "value": "My Sweep",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture — a deliberately malformed sweep file name"
+      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
     },
     {
       "value": "My Task",
@@ -9133,7 +9312,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "North Quarter",
@@ -9263,7 +9442,7 @@
     {
       "value": "Not An Id",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture — a deliberately malformed sweep file name"
+      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
     },
     {
       "value": "Not Found",
@@ -9406,7 +9585,7 @@
     {
       "value": "Outbound Sunday",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Outgoing Phone",
@@ -9451,7 +9630,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Paris Riverside Triathlon",
@@ -9460,7 +9639,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Parkside Cafe",
@@ -9966,7 +10145,7 @@
       "reason": "reviewed invented fixture"
     },
     {
-      "value": "Renée Vance",
+      "value": "Ren\u00e9e Vance",
       "paths": ["packages/gateway/src/merge-candidates.test.ts"],
       "reason": "reviewed invented fixture"
     },
@@ -10075,7 +10254,7 @@
     {
       "value": "Riverbend Tri Club",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Riverside Bank",
@@ -10189,7 +10368,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Robin Vale",
@@ -10231,12 +10410,12 @@
     {
       "value": "Sam Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Diaz",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Quinn",
@@ -10554,7 +10733,7 @@
     {
       "value": "St Pancras",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "St Pancras International",
@@ -10562,7 +10741,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Stable Child",
@@ -10590,7 +10769,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Standup Recap",
@@ -11106,17 +11285,17 @@
         "packages/collector/src/e2e/brain-bench/README.md",
         "packages/collector/src/e2e/brain-bench/index.ts"
       ],
-      "reason": "product name — the brain end-to-end test kit, not a person"
+      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
     },
     {
       "value": "The Brambling",
       "paths": ["packages/collector/src/e2e/brain-loops.e2e.test.ts"],
-      "reason": "invented fixture — an invented venue used for a lighting-quote arc in the bench's loop tests"
+      "reason": "invented fixture \u2014 an invented venue used for a lighting-quote arc in the bench's loop tests"
     },
     {
       "value": "The Cedar Grove",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture — a three-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "The Coinbase",
@@ -11222,7 +11401,7 @@
     {
       "value": "The Riverside Estate",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture — a three-word window of the invented venue 'Riverside Estate'"
+      "reason": "invented fixture \u2014 a three-word window of the invented venue 'Riverside Estate'"
     },
     {
       "value": "The Studio Northstar",
@@ -11258,7 +11437,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Theo Marsh",
@@ -11395,7 +11574,7 @@
     {
       "value": "Tri Club",
       "paths": ["evals/universes/wrist/sources/gmail/messages.json"],
-      "reason": "invented fixture — wrist demo universe"
+      "reason": "invented fixture \u2014 wrist demo universe"
     },
     {
       "value": "Tuesday James",
@@ -11557,7 +11736,7 @@
     {
       "value": "Wakes Fictional",
       "paths": ["packages/gateway/portal/js/views/watches.test.ts"],
-      "reason": "invented fixture — two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
+      "reason": "invented fixture \u2014 two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
     },
     {
       "value": "Web Crypto",
@@ -12519,6 +12698,41 @@
       "value": "Main Camera",
       "paths": ["packages/providers/immich/src/normalizer.test.ts"],
       "reason": "Invented Immich fixture name (person, album, place or camera), not corpus data."
+    },
+    {
+      "value": "Upgrade Required",
+      "paths": ["packages/collector/src/e2e/cloud-relay-failclosed.e2e.test.ts"],
+      "reason": "Standard HTTP status phrase in a synthetic tunnel protocol fixture."
+    },
+    {
+      "value": "Opening Google",
+      "paths": ["packages/gateway/portal/js/components/cloud-pairing-login.test.ts"],
+      "reason": "Product sign-in status label, not a person."
+    },
+    {
+      "value": "Provided Tailscale",
+      "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
+      "reason": "Invented certificate status label, not a person."
+    },
+    {
+      "value": "Link Google",
+      "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
+      "reason": "Google discovery control label, not a person."
+    },
+    {
+      "value": "Unlink Google",
+      "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
+      "reason": "Google discovery control label, not a person."
+    },
+    {
+      "value": "Invalid Google",
+      "paths": ["packages/gateway/portal/js/lib/cloud-pairing.test.ts"],
+      "reason": "Static Google sign-in UI label or error text, not a person."
+    },
+    {
+      "value": "Refresh Google",
+      "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
+      "reason": "Static Google sign-in UI label or error text, not a person."
     }
   ],
   "secretFixtures": [
@@ -12542,6 +12756,11 @@
       "kind": "private-key",
       "reason": "Documentation string names a PEM header shape without containing a real key.",
       "paths": []
+    },
+    {
+      "path": "packages/cloud-relay/src/google-commands.test.ts",
+      "kind": "private-key",
+      "reason": "Synthetic PEM header with non-key placeholder text verifies rejection of mixed certificate/private-key input; contains no private key."
     }
   ]
 }

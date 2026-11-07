@@ -4,6 +4,11 @@
 package dev.omnesis.android.transport.ws
 
 import dev.omnesis.android.transport.dto.OmnesisJson
+import dev.omnesis.android.transport.routing.DirectGatewayRoute
+import dev.omnesis.android.transport.routing.DirectGatewayCandidate
+import dev.omnesis.android.transport.routing.DirectGatewayProbe
+import dev.omnesis.android.transport.routing.DirectGatewayProbing
+import dev.omnesis.android.transport.routing.GatewayConnectionPath
 import dev.omnesis.android.transport.DeviceCapabilities
 import dev.omnesis.android.transport.HostedSourceContract
 import dev.omnesis.android.transport.SourceMultiDeviceMode
@@ -35,6 +40,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -104,11 +110,15 @@ class DeviceSocketTest {
         server.shutdown()
     }
 
-    private fun socket() = DeviceSocket(
+    private fun socket(route: DirectGatewayRoute? = null, probe: DirectGatewayProbing = DirectGatewayProbe, expected: String? = null, refresh: (suspend () -> Unit)? = null) = DeviceSocket(
         OkHttpClient(),
         server.url("/").toString(),
         "tok",
         scope,
+        directRoute = route,
+        directProbe = probe,
+        expectedDeviceId = expected,
+        refreshHints = refresh,
         capabilities = DeviceCapabilities.android(
             listOf(
                 HostedSourceContract("health-connect", SourceMultiDeviceMode.PARTITIONED),
@@ -149,6 +159,252 @@ class DeviceSocketTest {
                 """"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""",
         )
         withTimeout(5_000) { socket.state.first { it is DeviceSocket.ConnectionState.Connected } }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun `actual network socket close reconnects and foreground replaces only the same authenticated control connection`(): Unit = runBlocking {
+        val socket = socket(expected = "dev-1")
+        connect(socket)
+        val second = ServerSide()
+        server.enqueue(MockResponse().withWebSocketUpgrade(second.listener))
+        serverSide.ws!!.close(1001, "owned gateway restart") // real peer close, rather than an injected callback
+        assertEquals("Bearer tok", server.takeRequest(5, TimeUnit.SECONDS)?.getHeader("Authorization"))
+        val hello = second.takeFrame()
+        second.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""")
+        withTimeout(5_000) { socket.state.first { it is DeviceSocket.ConnectionState.Connected } }
+        val third = ServerSide()
+        server.enqueue(MockResponse().withWebSocketUpgrade(third.listener))
+        socket.recoverAfterInterruption()
+        assertEquals("Bearer tok", server.takeRequest(5, TimeUnit.SECONDS)?.getHeader("Authorization"))
+        val resumedHello = third.takeFrame()
+        third.ws!!.send("""{"kind":"response","correlationId":"${resumedHello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""")
+        withTimeout(5_000) { socket.state.first { it is DeviceSocket.ConnectionState.Connected } }
+        socket.stop()
+        socket.recoverAfterInterruption()
+        assertEquals(DeviceSocket.ConnectionState.Disconnected, socket.state.value)
+    }
+
+    @Test fun `relay connection periodically checks returning home and stops probing after teardown`() {
+        scope.cancel()
+        val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
+        scope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(scheduler))
+        val route = DirectGatewayRoute.createValidated("https://gateway.example.test", listOf(DirectGatewayCandidate("127.0.0.1", server.port)), true)!!
+        route.connected(java.net.InetSocketAddress("127.0.0.1", 9443))
+        var probes = 0
+        val probe = object : DirectGatewayProbing {
+            override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient): Boolean { probes++; return false }
+        }
+        val socket = socket(route, probe)
+        socket.start()
+        scheduler.runCurrent()
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        val hello = serverSide.takeFrame()
+        serverSide.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""")
+        runBlocking { withTimeout(5000) { socket.state.first { it is DeviceSocket.ConnectionState.Connected } } }
+        scheduler.advanceTimeBy(30_001)
+        scheduler.runCurrent()
+        assertEquals(1, probes)
+        socket.stop()
+        scheduler.advanceTimeBy(60_000)
+        scheduler.runCurrent()
+        assertEquals(1, probes)
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun `metadata refresh continues while disconnected and rejected updates do not change authority`() {
+        scope.cancel()
+        val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
+        scope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(scheduler))
+        val route = DirectGatewayRoute.maintained("https://gateway.example.test", emptyList())
+        var refreshes = 0
+        val socket = socket(route, refresh = { refreshes++; throw javax.net.ssl.SSLHandshakeException("Refused metadata") })
+        runBlocking { socket.refreshDirectPath() }
+        assertEquals(0, refreshes)
+        socket.start()
+        scheduler.runCurrent()
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        scheduler.advanceTimeBy(30_001)
+        scheduler.runCurrent()
+        assertEquals(1, refreshes)
+        assertTrue(route.endpoints.isEmpty())
+        socket.stop()
+        scheduler.advanceTimeBy(60_000)
+        scheduler.runCurrent()
+        assertEquals(1, refreshes)
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun `stopping cancels an outstanding metadata refresh and never starts a later promotion`() {
+        scope.cancel()
+        val scheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
+        scope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.test.StandardTestDispatcher(scheduler))
+        val route = DirectGatewayRoute.maintained("https://gateway.example.test", emptyList())
+        val gate = CompletableDeferred<Unit>()
+        var refreshes = 0
+        val socket = socket(route, refresh = { refreshes++; gate.await() })
+        socket.start(); scheduler.runCurrent()
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        scheduler.advanceTimeBy(30_001); scheduler.runCurrent()
+        assertEquals(1, refreshes)
+        socket.stop(); scheduler.runCurrent()
+        scheduler.advanceTimeBy(60_000); scheduler.runCurrent()
+        assertEquals(1, refreshes)
+    }
+
+    @Test fun `live metadata refresh runs before considering promotion on the same authenticated socket`() = runBlocking {
+        val route = DirectGatewayRoute.maintained("https://gateway.example.test", emptyList())
+        var refreshes = 0
+        val socket = socket(route, refresh = { refreshes++ })
+        connect(socket)
+        socket.refreshDirectPath()
+        assertEquals(1, refreshes)
+        assertTrue(socket.state.value is DeviceSocket.ConnectionState.Connected)
+        socket.stop()
+    }
+
+    @Test fun `verified better path reconnects only control socket and reauthenticates same device and bearer`() = runBlocking {
+        val route = DirectGatewayRoute.createValidated("https://gateway.example.test", listOf(DirectGatewayCandidate("127.0.0.1", server.port)), true)!!
+        route.connected(java.net.InetSocketAddress("127.0.0.1", 9443))
+        var probes = 0
+        val probe = object : DirectGatewayProbing {
+            override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient): Boolean { probes++; return true }
+        }
+        val socket = socket(route, probe, "dev-1")
+        connect(socket)
+        assertEquals("relay", serverSide.takeFrame()["payload"]!!.jsonObject["path"]!!.jsonPrimitive.content)
+        val second = ServerSide()
+        server.enqueue(MockResponse().withWebSocketUpgrade(second.listener))
+        socket.promoteDirectPath()
+        assertEquals(1, probes)
+        assertEquals("Bearer tok", server.takeRequest(5, TimeUnit.SECONDS)!!.getHeader("Authorization"))
+        val hello = second.takeFrame()
+        route.connected(java.net.InetSocketAddress("127.0.0.1", server.port))
+        second.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""")
+        withTimeout(5000) { socket.state.first { it is DeviceSocket.ConnectionState.Connected && it.connectionPath == GatewayConnectionPath.LOCAL } }
+        assertEquals("local", second.takeFrame()["payload"]!!.jsonObject["path"]!!.jsonPrimitive.content)
+        socket.promoteDirectPath()
+        assertEquals(1, probes)
+        socket.stop()
+        socket.promoteDirectPath()
+        assertEquals(1, probes)
+    }
+
+    @Test fun `failed and stale better-path probes cannot close a newer or stopped socket`() = runBlocking {
+        val route = DirectGatewayRoute.createValidated("https://gateway.example.test", listOf(DirectGatewayCandidate("127.0.0.1", server.port)), true)!!
+        route.connected(java.net.InetSocketAddress("127.0.0.1", 9443))
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Boolean>()
+        var probes = 0
+        val probe = object : DirectGatewayProbing {
+            override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient): Boolean {
+                probes++
+                if (probes == 1) return false
+                started.complete(Unit)
+                return release.await()
+            }
+        }
+        val socket = socket(route, probe)
+        socket.promoteDirectPath()
+        assertEquals(0, probes)
+        connect(socket)
+        serverSide.takeFrame() // advisory relay telemetry after authenticated hello
+        socket.promoteDirectPath()
+        assertTrue(socket.state.value is DeviceSocket.ConnectionState.Connected)
+        val late = launch { socket.promoteDirectPath() }
+        started.await()
+        socket.stop()
+        release.complete(true)
+        late.join()
+        assertEquals(DeviceSocket.ConnectionState.Disconnected, socket.state.value)
+    }
+
+    @Test fun `earlier probe cannot reconnect a new socket with identical connected values`() = runBlocking {
+        val route = DirectGatewayRoute.createValidated("https://gateway.example.test", listOf(DirectGatewayCandidate("127.0.0.1", server.port)), true)!!
+        route.connected(java.net.InetSocketAddress("127.0.0.1", 9443))
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Boolean>()
+        var calls = 0
+        val probe = object : DirectGatewayProbing {
+            override suspend fun reachable(route: DirectGatewayRoute, client: OkHttpClient): Boolean {
+                if (++calls > 1) return true
+                started.complete(Unit)
+                return release.await()
+            }
+        }
+        val socket = socket(route, probe, "dev-1")
+        connect(socket)
+        serverSide.takeFrame()
+        val stale = launch { socket.promoteDirectPath() }
+        started.await()
+        val second = ServerSide()
+        server.enqueue(MockResponse().withWebSocketUpgrade(second.listener))
+        socket.promoteDirectPath()
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        val hello = second.takeFrame()
+        second.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""")
+        withTimeout(5000) { socket.state.first { it is DeviceSocket.ConnectionState.Connected } }
+        second.takeFrame()
+        release.complete(true)
+        stale.join()
+        assertTrue(socket.state.value is DeviceSocket.ConnectionState.Connected)
+        assertEquals(2, server.requestCount)
+        socket.stop()
+    }
+
+    @Test fun `default direct socket stays independent of cloud routing and retains decoded device metadata`() = runBlocking {
+        val socket = DeviceSocket(OkHttpClient(), server.url("/").toString(), "tok", scope)
+        socket.start()
+        assertEquals("Bearer tok", server.takeRequest(5, TimeUnit.SECONDS)!!.getHeader("Authorization"))
+        val hello = serverSide.takeFrame()
+        serverSide.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""")
+        val connected = withTimeout(5000) { socket.state.first { it is DeviceSocket.ConnectionState.Connected } } as DeviceSocket.ConnectionState.Connected
+        assertEquals("dev-1", connected.deviceId)
+        assertEquals("Pixel Test", connected.deviceName)
+        assertEquals(listOf("read"), connected.scopes)
+        assertEquals(DeviceSocket.ConnectionState.Connected("dev-1", "Pixel Test", listOf("read")), connected)
+        socket.promoteDirectPath()
+        assertEquals(connected, socket.state.value)
+        assertTrue(serverSide.received.isEmpty())
+        assertNull(socket.dispatchSync)
+        socket.stop()
+    }
+
+    @Test fun `revoked hello never publishes advisory path or reauthenticates a different device`() = runBlocking {
+        val route = DirectGatewayRoute.maintained("https://gateway.example.test", emptyList())
+        route.connected(java.net.InetSocketAddress("127.0.0.1", 9443))
+        val socket = socket(route, expected = "dev-1")
+        socket.start()
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        val hello = serverSide.takeFrame()
+        serverSide.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":false,"error":{"message":"revoked"}}""")
+        val failure = withTimeout(5000) { socket.state.first { it is DeviceSocket.ConnectionState.Failed } } as DeviceSocket.ConnectionState.Failed
+        assertEquals("revoked", failure.message)
+        socket.promoteDirectPath()
+        assertTrue(serverSide.received.isEmpty())
+        socket.stop()
+    }
+
+    @Test fun `malformed strict hello identity is refused before connected state or path telemetry`() = runBlocking {
+        val socket = socket(expected = "dev-1")
+        socket.start()
+        assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+        val hello = serverSide.takeFrame()
+        serverSide.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":{}}}""")
+        val failure = withTimeout(5000) { socket.state.first { it is DeviceSocket.ConnectionState.Failed } } as DeviceSocket.ConnectionState.Failed
+        assertTrue(failure.message.contains("identity"))
+        assertTrue(serverSide.received.isEmpty())
+        socket.stop()
+    }
+
+    @Test fun `mismatching gateway device identity never becomes connected or reports path`() = runBlocking {
+        val socket = socket(expected = "a-different-device")
+        socket.start()
+        server.takeRequest(5, TimeUnit.SECONDS)
+        val hello = serverSide.takeFrame()
+        serverSide.ws!!.send("""{"kind":"response","correlationId":"${hello["id"]!!.jsonPrimitive.content}","ok":true,"result":{"deviceId":"dev-1","deviceName":"Pixel Test","scopes":["read"]}}""")
+        withTimeout(5000) { socket.state.first { it is DeviceSocket.ConnectionState.Failed } }
+        assertTrue(serverSide.received.isEmpty())
+        socket.stop()
     }
 
     @Test

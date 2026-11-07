@@ -108,6 +108,9 @@ export const bundles = {
       "notification-queue.e2e.test.ts",
       "push-transport-selection.e2e.test.ts",
       "relay-push.e2e.test.ts",
+      "cloud-relay.e2e.test.ts",
+      "cloud-relay-failclosed.e2e.test.ts",
+      "cloud-relay-recovery.e2e.test.ts",
       "secure-storage*.e2e.test.ts",
       "sidecar-encryption.e2e.test.ts",
       "tofu.e2e.test.ts",
@@ -228,6 +231,7 @@ function isNativeWire(path) {
 }
 
 const areas = [
+  { test: (p) => p.startsWith("packages/cloud-relay/"), bundles: ["security-notifications"] },
   {
     test: (p) => /packages\/(?:core|types|config|source-sdk|gateway-client)\/src\//.test(p),
     bundles: ["gateway-core"],

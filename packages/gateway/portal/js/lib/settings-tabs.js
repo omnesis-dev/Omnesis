@@ -33,6 +33,7 @@ const TABS = [
   { key: "access", label: "Access" },
   { key: "policies", label: "Policies" },
   { key: "devices", label: "Devices" },
+  { key: "relay", label: "Relay", experimental: true },
 ];
 
 /** Every tab key — what the router accepts as a path segment. */

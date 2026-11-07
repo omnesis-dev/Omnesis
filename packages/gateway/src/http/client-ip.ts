@@ -20,6 +20,23 @@
  * stays closed either way, since the socket peer must itself be loopback.
  */
 
+import { experimentalEnabled } from "@omnesis/core";
+
+const exposedRequests = new WeakMap<object, number>();
+
+/** Trusted request bindings only. An opaque relay cannot inject an HTTP policy marker. */
+export function markRelayRequestExposure(env: object): () => void {
+  exposedRequests.set(env, (exposedRequests.get(env) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = exposedRequests.get(env)! - 1;
+    if (remaining === 0) exposedRequests.delete(env);
+    else exposedRequests.set(env, remaining);
+  };
+}
+
 type HeaderReader = (name: string) => string | undefined;
 
 interface RawPeer {
@@ -90,6 +107,15 @@ export function isLoopbackIp(ip: string): boolean {
  * loopback, does not exempt the whole Internet.
  */
 export function isLoopbackClient(header: HeaderReader, env: unknown): boolean {
+  // Relay traffic arrives on a local tunnel socket but remains remote traffic.
+  // This marker can only remove an exemption; it never grants access.
+  if (
+    experimentalEnabled() &&
+    (exposedRequests.has(env as object) ||
+      process.env.OMNESIS_CLOUD_RELAY_URL ||
+      header("x-omnesis-cloud-relay") === "1")
+  )
+    return false;
   const peer = socketPeerAddress(env);
   if (peer === undefined || !isLoopbackIp(peer)) return false;
   const forwarded = forwardedClientAddress(header);

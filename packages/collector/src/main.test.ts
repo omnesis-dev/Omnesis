@@ -39,6 +39,7 @@ import type { RegisteredSource, SyncEngine } from "./sync-engine.js";
 
 const SAVED = {
   url: process.env.OMNESIS_GATEWAY_URL,
+  requestUrl: process.env.OMNESIS_GATEWAY_REQUEST_URL,
   disable: process.env.OMNESIS_MDNS_DISABLE,
 };
 
@@ -47,10 +48,13 @@ beforeEach(() => {
   localUrlMock.mockReset();
   localUrlMock.mockImplementation((url: string) => url);
   delete process.env.OMNESIS_GATEWAY_URL;
+  delete process.env.OMNESIS_GATEWAY_REQUEST_URL;
   delete process.env.OMNESIS_MDNS_DISABLE;
 });
 
 afterEach(() => {
+  if (SAVED.requestUrl === undefined) delete process.env.OMNESIS_GATEWAY_REQUEST_URL;
+  else process.env.OMNESIS_GATEWAY_REQUEST_URL = SAVED.requestUrl;
   if (SAVED.url === undefined) delete process.env.OMNESIS_GATEWAY_URL;
   else process.env.OMNESIS_GATEWAY_URL = SAVED.url;
   if (SAVED.disable === undefined) delete process.env.OMNESIS_MDNS_DISABLE;
@@ -58,6 +62,13 @@ afterEach(() => {
 });
 
 describe("resolveGatewayUrl", () => {
+  test("paired transport connects through its adapter while retaining canonical public identity", async () => {
+    process.env.OMNESIS_GATEWAY_URL = "https://canonical.example.com";
+    process.env.OMNESIS_GATEWAY_REQUEST_URL = "http://127.0.0.1:12345";
+    expect(await resolveGatewayUrl()).toEqual({ url: "http://127.0.0.1:12345" });
+    expect(discoverMock).not.toHaveBeenCalled();
+  });
+
   test("OMNESIS_GATEWAY_URL override beats mDNS discovery", async () => {
     process.env.OMNESIS_GATEWAY_URL = "https://gateway.example.com:7600";
     discoverMock.mockResolvedValue({ url: "https://192.168.1.20:7600", fingerprint: "deadbeef" });
@@ -308,6 +319,23 @@ describe("resolveCollectorToken", () => {
       unauthorizedAt: null,
       repairCommand: null,
     });
+
+  test("ephemeral adapter ports never replace the saved canonical identity or reset prior authentication", async () => {
+    process.env.OMNESIS_GATEWAY_URL = GATEWAY;
+    process.env.OMNESIS_GATEWAY_REQUEST_URL = "http://127.0.0.1:12345";
+    writeCollectorTokenFile("omn_saved", dir);
+    recordAuthenticated("omn_saved");
+    globalThis.fetch = answer({ config: 200 });
+    expect(await resolveCollectorToken(process.env.OMNESIS_GATEWAY_REQUEST_URL, dir)).toEqual({
+      outcome: "token",
+      token: "omn_saved",
+    });
+    expect(readCollectorPairingState(dir)?.gatewayUrl).toBe(GATEWAY);
+    globalThis.fetch = answer({ config: 401 });
+    expect(await resolveCollectorToken(process.env.OMNESIS_GATEWAY_REQUEST_URL, dir)).toEqual({
+      outcome: "needs-pairing",
+    });
+  });
 
   test("keeps a saved token the gateway still accepts, and records that it worked", async () => {
     writeCollectorTokenFile("omn_saved", dir);

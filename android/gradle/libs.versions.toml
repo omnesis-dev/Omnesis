@@ -11,6 +11,10 @@ composeBom = "2024.12.01"
 navigationCompose = "2.8.5"
 coroutines = "1.9.0"
 serializationJson = "1.7.3"
+credentials = "1.6.0"
+# Google ID 1.2 uses Kotlin metadata newer than this project's Kotlin compiler.
+# 1.1.1 supplies the nonce-bound Credential Manager button flow.
+googleId = "1.1.1"
 okhttp = "4.12.0"
 securityCrypto = "1.1.0-alpha06"
 coil = "2.7.0"
@@ -47,6 +51,9 @@ androidxTestOrchestrator = "1.5.1"
 androidxTestServices = "1.5.0"
 
 [libraries]
+androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
+androidx-credentials-play-services-auth = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
+google-identity = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleId" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }

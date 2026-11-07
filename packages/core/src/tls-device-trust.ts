@@ -59,6 +59,8 @@ export type TlsTrustSnapshotFacts = Pick<
 const KNOWN_MODES: ReadonlySet<string> = new Set<DeviceTlsTrustMode>([
   "system",
   "pinned-leaf",
+  "pinned-leaf-strict",
+  "pinned-key-strict",
   "pinned-ca",
   "legacy",
 ]);
@@ -100,7 +102,11 @@ const isManagedHarness = (device: TlsTrustDeviceFacts): boolean =>
  * reports it.
  */
 function reportsLeafPin(device: TlsTrustDeviceFacts, mode: DeviceTlsTrustMode | null): boolean {
-  return mode === "pinned-leaf" || (mode === "pinned-ca" && device.kind === "agent");
+  return (
+    mode === "pinned-leaf" ||
+    mode === "pinned-leaf-strict" ||
+    (mode === "pinned-ca" && device.kind === "agent")
+  );
 }
 
 /**
@@ -114,6 +120,8 @@ function mayPinUnreported(device: TlsTrustDeviceFacts): boolean {
 
 /** What brings back a device that pinned a certificate the gateway already replaced. */
 function strandedRemedy(device: TlsTrustDeviceFacts, fingerprintSha256: string | null): string {
+  if (device.tlsMode === "pinned-leaf-strict" && !isPhone(device.kind))
+    return "Independently verify the gateway's new certificate and pair this device again. Keep strict certificate pinning enabled.";
   if (device.kind === "agent") {
     const harness = device.harness ?? "<harness>";
     // The new fingerprint lets the refresh accept the certificate unattended.
@@ -140,6 +148,8 @@ function strandedRemedy(device: TlsTrustDeviceFacts, fingerprintSha256: string |
  * has happened.
  */
 function renewalRemedy(device: TlsTrustDeviceFacts, updateFollows: boolean): string {
+  if (device.tlsMode === "pinned-leaf-strict")
+    return "After the renewal, independently verify the gateway's new certificate and pair this device again. Keep strict certificate pinning enabled.";
   if (device.kind === "agent") {
     // Without the fingerprint the stranded remedy carries: it does not exist yet.
     const refresh = `\`omnesis connect ${device.harness ?? "<harness>"} --refresh\``;
@@ -188,7 +198,8 @@ export function deviceTlsTrust(
   // other leaves a pin nothing to give way to.
   const publiclyTrusted = snapshot.ownership === "tailscale";
   if (declaredPinned) {
-    if (publiclyTrusted && device.tlsFollowsPublicRenewal) return null;
+    if (publiclyTrusted && device.tlsFollowsPublicRenewal && mode !== "pinned-leaf-strict")
+      return null;
     return {
       status: "pinned-renews",
       renewsAt: snapshot.renewsAt,

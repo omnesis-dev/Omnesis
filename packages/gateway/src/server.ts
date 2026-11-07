@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { markRelayRequestExposure } from "./http/client-ip.js";
+
 import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { matchedRoutes } from "hono/route";
-import { strictRoute } from "./http/scope.js";
 import { httpActivityName, withActivity } from "./observability/main-activity.js";
 type Db = Database.Database;
 import { join } from "node:path";
@@ -26,6 +27,7 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { strictRoute } from "./http/scope.js";
 import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
 import { getDevice } from "./data/repositories/DeviceRepository.js";
 import {
@@ -101,7 +103,10 @@ import { DeviceService } from "./http/services/DeviceService.js";
 import { PushRegistrationService } from "./http/services/PushRegistrationService.js";
 import { mountStatusRoutes, mountDbSizeRoute } from "./http/routes/status.js";
 import { mountPortalRoutes } from "./http/routes/portal.js";
+import { devicePathObservation } from "./http/device-path-observation.js";
 import { mountAdminRoutes } from "./http/routes/admin.js";
+import { mountDirectCandidateRoutes } from "./http/routes/direct-candidates.js";
+import { mountCloudPairingRoutes } from "./http/routes/cloud-pairing.js";
 import { mountBackupRoutes } from "./http/routes/backup.js";
 import { mountExportRoutes } from "./http/routes/export.js";
 import { mountModelCredentialsRoutes } from "./http/routes/model-credentials.js";
@@ -600,8 +605,13 @@ export function createServer(
      * so unit tests that build a server without TLS wiring can omit it.
      */
     tlsFingerprintSha256?: string | (() => string);
+    /** Public SNI leaf used by cloud pairing; direct QR continues to use its default certificate. */
+    cloudTlsFingerprintSha256?: string | (() => string | undefined);
+    tlsSpkiFingerprintSha256?: string | (() => string);
+    cloudTlsSpkiFingerprintSha256?: () => string | undefined;
     /** The served certificate's lifecycle, for `/admin/tls`. */
     tlsLifecycle?: TlsLifecyclePort;
+    cloudRelayManagement?: import("@omnesis/cloud-relay").CloudRelayManagement;
     /** Who minted the served certificate and the file an agent on this machine trusts it by. */
     agentCertificateTrust?: () => AgentCertificateTrust;
     /** HTTPS origins allowed in explicitly system-trusted V4 pairing payloads. */
@@ -632,8 +642,17 @@ export function createServer(
      * `localhost:3003` callback fallback.
      */
     publicBaseUrl?: string;
+    cloudRelayExposure?: () => boolean;
+    cloudIdentitySource?: () =>
+      import("./http/services/CloudPairingConfiguration.js").CloudPairingIdentity | undefined;
+    cloudPairingPublicOrigin?: () => string | undefined;
+    cloudIdentity?: {
+      identity: import("@omnesis/cloud-relay").IdentityProvider;
+      ownerAccountId: string;
+    };
     /** Exact externally reachable MCP protected-resource URLs. */
     mcpResourceUrls?: readonly string[];
+    additionalOAuthIssuerUrls?: import("./access/oauth-urls.js").OAuthIssuerSource;
     /**
      * Gateway listen port. Advertises the local MCP setup address and scopes the portal session
      * cookie name per-port (see `sessionCookieName(port)` in
@@ -661,6 +680,20 @@ export function createServer(
   },
 ) {
   const app = strictRoute(new Hono<AppEnv>());
+  app.use("*", async (c, next) => {
+    let release: (() => void) | undefined;
+    if (opts?.cloudRelayExposure?.()) {
+      // node-ws writes its upgrade symbol onto this exact original bindings object.
+      const bindings = typeof c.env === "object" && c.env !== null ? c.env : {};
+      c.env = bindings;
+      release = markRelayRequestExposure(bindings);
+    }
+    try {
+      await next();
+    } finally {
+      release?.();
+    }
+  });
 
   if (opts?.requestAdmission) app.use("*", opts.requestAdmission);
   app.use("*", requestIdMiddleware());
@@ -982,7 +1015,12 @@ export function createServer(
     const authHeader = c.req.header("Authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const rawToken = authHeader.slice(7);
-      const oauthUrls = resolveOAuthUrls(c.req.url, opts?.publicBaseUrl, opts?.mcpResourceUrls);
+      const oauthUrls = resolveOAuthUrls(
+        c.req.url,
+        opts?.publicBaseUrl,
+        opts?.mcpResourceUrls,
+        opts?.additionalOAuthIssuerUrls,
+      );
       const principal =
         c.req.path === "/mcp" && oauthUrls
           ? (() => {
@@ -1088,6 +1126,12 @@ export function createServer(
     return next();
   });
 
+  app.use(
+    "*",
+    devicePathObservation(
+      opts?.wsServer ? (id, path) => opts.wsServer!.noteConnectionPath(id, path) : undefined,
+    ),
+  );
   app.use("*", requestContextMiddleware());
 
   // Per-token / per-endpoint access logging — runs after auth +
@@ -1398,6 +1442,7 @@ export function createServer(
     publicBaseUrl: opts?.publicBaseUrl,
     ...(opts?.port ? { loopbackBaseUrl: `https://localhost:${opts.port}` } : {}),
     mcpResourceUrls: opts?.mcpResourceUrls,
+    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
     authorizationNotifier: opts?.accessAuthorizationNotifier,
     onAuthorizationPending: opts?.accessCleanupWake,
     onDeviceLevelChanged: () => statusCache.bump(),
@@ -1542,7 +1587,10 @@ export function createServer(
     deviceForSource,
     pairingService,
     tlsFingerprintSha256: opts?.tlsFingerprintSha256,
+    tlsSpkiFingerprintSha256: opts?.tlsSpkiFingerprintSha256,
+    cloudTlsSpkiFingerprintSha256: opts?.cloudTlsSpkiFingerprintSha256,
     tlsLifecycle: opts?.tlsLifecycle,
+    cloudRelayManagement: opts?.cloudRelayManagement,
     systemTrustPairingOrigins:
       opts?.systemTrustPairingOrigins ?? (opts?.publicBaseUrl ? [opts.publicBaseUrl] : []),
     publiclyTrustedPairingHosts: opts?.publiclyTrustedPairingHosts,
@@ -1559,6 +1607,20 @@ export function createServer(
     hostFleetUpdateService: opts?.hostFleetUpdateService,
     watermarkService,
   });
+  mountDirectCandidateRoutes(app, { configDir: opts?.configDir, port: opts?.port });
+  mountCloudPairingRoutes(
+    app,
+    w,
+    () => {
+      const fingerprint = opts?.cloudTlsFingerprintSha256 ?? opts?.tlsFingerprintSha256;
+      return (typeof fingerprint === "function" ? fingerprint() : fingerprint) ?? "";
+    },
+    opts?.cloudIdentity,
+    opts?.publicBaseUrl,
+    opts?.cloudIdentitySource,
+    opts?.cloudPairingPublicOrigin,
+    opts?.cloudRelayManagement?.managedGoogleBrowser?.bind(opts.cloudRelayManagement),
+  );
 
   // Documents core (CRUD, count/stats/recent, list/ids/exists).
   mountDocumentCoreRoutes(app, {
@@ -1660,6 +1722,7 @@ export function createServer(
     },
     publicBaseUrl: opts?.publicBaseUrl,
     mcpResourceUrls: opts?.mcpResourceUrls,
+    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
     recordMcpToolInvocation: (input) => accessService.recordMcpToolInvocation(input),
     recordDirectAuditEvent: async (input) => {
       await w.appendDirectAuditEvent(input);

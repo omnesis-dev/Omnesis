@@ -2,7 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, describe, expect, test } from "vitest";
-import { clientAddress, forwardedClientAddress, isLoopbackClient } from "./client-ip.js";
+import {
+  clientAddress,
+  forwardedClientAddress,
+  isLoopbackClient,
+  markRelayRequestExposure,
+} from "./client-ip.js";
 
 function headers(map: Record<string, string>): (name: string) => string | undefined {
   return (name) => map[name.toLowerCase()];
@@ -116,4 +121,52 @@ describe("with OMNESIS_TRUST_PROXY=true", () => {
       isLoopbackClient(headers({ "x-forwarded-for": "127.0.0.1" }), peer("203.0.113.10")),
     ).toBe(false);
   });
+});
+
+test("experimental tunnel traffic never inherits local rate-limit exemptions", () => {
+  const experimental = process.env.OMNESIS_EXPERIMENTAL;
+  try {
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    expect(isLoopbackClient(headers({ "x-omnesis-cloud-relay": "1" }), peer("127.0.0.1"))).toBe(
+      false,
+    );
+    expect(isLoopbackClient(headers({}), peer("127.0.0.1"))).toBe(true);
+    process.env.OMNESIS_EXPERIMENTAL = "0";
+    expect(isLoopbackClient(headers({ "x-omnesis-cloud-relay": "1" }), peer("127.0.0.1"))).toBe(
+      true,
+    );
+  } finally {
+    if (experimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
+    else process.env.OMNESIS_EXPERIMENTAL = experimental;
+  }
+});
+
+test("trusted per-request relay exposure removes exemptions without affecting another app or accepting a header assertion", () => {
+  const priorExperimental = process.env.OMNESIS_EXPERIMENTAL,
+    priorRelay = process.env.OMNESIS_CLOUD_RELAY_URL;
+  try {
+    delete process.env.OMNESIS_CLOUD_RELAY_URL;
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    const direct = peer("127.0.0.1") as object,
+      relayed = peer("127.0.0.1") as object;
+    const release = markRelayRequestExposure(relayed);
+    const releaseConcurrent = markRelayRequestExposure(relayed);
+    expect(isLoopbackClient(headers({}), direct)).toBe(true);
+    expect(isLoopbackClient(headers({}), relayed)).toBe(false);
+    expect(isLoopbackClient(headers({ "x-forwarded-for": "127.0.0.1" }), relayed)).toBe(false);
+    process.env.OMNESIS_EXPERIMENTAL = "0";
+    expect(isLoopbackClient(headers({}), relayed)).toBe(true);
+    process.env.OMNESIS_EXPERIMENTAL = "1";
+    expect(isLoopbackClient(headers({}), direct)).toBe(true);
+    release();
+    release();
+    expect(isLoopbackClient(headers({}), relayed)).toBe(false);
+    releaseConcurrent();
+    expect(isLoopbackClient(headers({}), relayed)).toBe(true);
+  } finally {
+    if (priorExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
+    else process.env.OMNESIS_EXPERIMENTAL = priorExperimental;
+    if (priorRelay === undefined) delete process.env.OMNESIS_CLOUD_RELAY_URL;
+    else process.env.OMNESIS_CLOUD_RELAY_URL = priorRelay;
+  }
 });

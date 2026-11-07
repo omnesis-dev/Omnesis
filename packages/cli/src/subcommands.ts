@@ -11,9 +11,11 @@
  * CLI: importing `index.ts` performs the TLS preflight and dispatches argv.
  */
 
+import { experimentalEnabled } from "@omnesis/core";
 import type { SubCommandsDef } from "citty";
 
 export const SUB_COMMANDS: SubCommandsDef = {
+  cloud: () => import("./commands/cloud.js").then((m) => m.cloudCommand),
   // ── Read commands (any token) ────────────────────────────────────────
   search: () => import("./commands/search.js").then((m) => m.searchCommand),
   show: () => import("./commands/show.js").then((m) => m.showCommand),
@@ -112,7 +114,10 @@ export const HIDDEN_INTERNAL_COMMANDS: ReadonlySet<string> = new Set(["_portal-f
 export function visibleSubCommands(): SubCommandsDef {
   return Object.fromEntries(
     Object.entries(SUB_COMMANDS).filter(
-      ([name]) => !HIDDEN_COMMAND_ALIASES.has(name) && !HIDDEN_INTERNAL_COMMANDS.has(name),
+      ([name]) =>
+        !HIDDEN_COMMAND_ALIASES.has(name) &&
+        !HIDDEN_INTERNAL_COMMANDS.has(name) &&
+        (name !== "cloud" || experimentalEnabled()),
     ),
   );
 }

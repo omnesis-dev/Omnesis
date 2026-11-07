@@ -38,6 +38,7 @@ import { WarningTriangle } from "./components/model-health.js";
 import { TestInstanceCard } from "./components/test-instance-card.js";
 import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-model.js";
 import { onTaskCounts } from "./lib/task-counts.js";
+import { CloudPairingLogin } from "./components/cloud-pairing-login.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
@@ -160,6 +161,7 @@ function LoginView({ reason } = {}) {
             ${loading ? "Authenticating..." : "Log in"}
           </button>
         </form>
+        <${CloudPairingLogin} />
         <p class="login-hint">
           Your default token is in <code>~/.config/omnesis/token</code>, or run
           ${" "}<code>omnesis devices pair</code> with <code>kind=portal</code> for a one-shot code.

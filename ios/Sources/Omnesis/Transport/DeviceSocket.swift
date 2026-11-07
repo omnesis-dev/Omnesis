@@ -20,21 +20,6 @@ import Foundation
 /// events arrive across reconnects.
 @available(iOS 17.0, *)
 public actor DeviceSocket {
-    public enum ConnectionState: Equatable, Sendable {
-        case disconnected
-        case connecting
-        case authenticating
-        case connected(deviceId: String, deviceName: String, scopes: [String])
-        case failed(String)
-    }
-
-    /// A raw event from the gateway. The `type` field routes to a handler;
-    /// `payload` is the parsed JSON value (caller decodes further).
-    public struct Event: Sendable, Equatable {
-        public let type: String
-        public let payload: JSONValue
-    }
-
     /// Wire protocol version this client speaks. Must match the gateway's
     /// `PROTOCOL_VERSION` exported from `@omnesis/core/ws-messages.ts`. Bump
     /// in lockstep with the gateway when the registry shape changes
@@ -45,6 +30,14 @@ public actor DeviceSocket {
     private let token: String
     private let session: URLSession
     private let capabilities: PairingCapabilities
+    private let expectedDeviceId: String?
+    private let routingOwner: (any GatewaySocketRouting)?
+    private let hintRefresher: (any GatewayDirectHintRefreshing)?
+    private let promotionClock: any GatewayPromotionWaiting
+    private var routeObserver: UUID?
+    private var promotionTask: Task<Void, Never>?
+    public nonisolated let pathChanges: AsyncStream<GatewayConnectionPath>
+    private let pathContinuation: AsyncStream<GatewayConnectionPath>.Continuation
 
     /// Public channel of events. The single consumer is typically the app
     /// store; callers iterate with `for await event in socket.events`.
@@ -58,8 +51,15 @@ public actor DeviceSocket {
     private var task: URLSessionWebSocketTask?
     private var runner: Task<Void, Never>?
     private var reconnectAttempt = 0
+    private var connectionGeneration = UUID()
     private var currentState: ConnectionState = .disconnected
     private var stopped = false
+    private var reconnectRequested = false
+    private var retryWait: Task<Void, Never>?
+    private var livenessTask: Task<Void, Never>?
+    private var pendingPing: UUID?
+
+    private let liveness: Liveness
 
     private let log = AppLog.make(category: "transport.ws")
 
@@ -67,16 +67,29 @@ public actor DeviceSocket {
         gatewayUrl: URL,
         token: String,
         session: URLSession = OmnesisURLSession.shared,
-        capabilities: PairingCapabilities = .ios()
+        capabilities: PairingCapabilities = .ios(),
+        routingOwner: (any GatewaySocketRouting)? = nil,
+        expectedDeviceId: String? = nil,
+        promotionClock: any GatewayPromotionWaiting = GatewayPromotionClock(),
+        hintRefresher: (any GatewayDirectHintRefreshing)? = nil,
+        liveness: Liveness = Liveness()
     ) {
+        self.liveness = liveness
         self.url = DeviceSocket.deriveWsURL(from: gatewayUrl)
         self.token = token
         // OmnesisURLSession.shared pins the gateway's TLS leaf cert when a
         // fingerprint is in Keychain (post-pair) and falls through to
         // URLSession.shared otherwise. URLSessionWebSocketTask is supported
         // by both shapes — both .ephemeral (PinnedSession) and .default.
-        self.session = session
+        self.session = routingOwner?.session ?? session
         self.capabilities = capabilities
+        self.routingOwner = routingOwner
+        self.promotionClock = promotionClock
+        self.hintRefresher = hintRefresher
+        self.expectedDeviceId = expectedDeviceId
+        var pathContinuation: AsyncStream<GatewayConnectionPath>.Continuation!
+        self.pathChanges = AsyncStream { pathContinuation = $0 }
+        self.pathContinuation = pathContinuation
 
         var econt: AsyncStream<Event>.Continuation!
         self.events = AsyncStream { econt = $0 }
@@ -90,6 +103,8 @@ public actor DeviceSocket {
     deinit {
         eventsContinuation.finish()
         stateContinuation.finish()
+        pathContinuation.finish()
+        routingOwner?.retireRouting()
     }
 
     /// Start the connect / reconnect loop. Safe to call once — subsequent
@@ -98,6 +113,20 @@ public actor DeviceSocket {
     /// races the coordinator's asynchronous startup task.
     public func start() {
         guard !stopped, runner == nil else { return }
+        if let routingOwner {
+            routeObserver = routingOwner.observeRoutePath { [weak self] path in
+                Task { await self?.routeChanged(path) }
+            }
+            let clock = promotionClock
+            promotionTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    do { try await clock.wait() } catch { return }
+                    guard let self else { return }
+                    do { try await self.refreshRoutingHints() } catch { /* The rejected update never changes current trust or routes. */ }
+                    await self.promoteDirectPath()
+                }
+            }
+        }
         runner = Task { [weak self] in
             await self?.runLoop()
         }
@@ -106,6 +135,14 @@ public actor DeviceSocket {
     /// Close the socket and stop reconnecting.
     public func stop() {
         stopped = true
+        connectionGeneration = UUID()
+        livenessTask?.cancel()
+        retryWait?.cancel()
+        promotionTask?.cancel()
+        promotionTask = nil
+        if let routeObserver { routingOwner?.removeRoutePathObserver(routeObserver) }
+        routeObserver = nil
+        routingOwner?.retireRouting()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         runner?.cancel()
@@ -113,8 +150,31 @@ public actor DeviceSocket {
         updateState(.disconnected)
     }
 
+    /// A foreground transition may resume a suspended, half-open TCP connection.
+    /// Replace only the control socket; uploads keep their independent leases.
+    public func recoverAfterInterruption() {
+        guard !stopped, runner != nil else { return }
+        connectionGeneration = UUID()
+        reconnectRequested = true
+        updateState(.connecting)
+        reconnectAttempt = 0
+        livenessTask?.cancel()
+        retryWait?.cancel()
+        task?.cancel(with: .goingAway, reason: nil)
+    }
+
     public func state() -> ConnectionState {
         currentState
+    }
+
+    /// A receive completion carries the lease captured before it suspended.
+    /// Foreground recovery, retirement or caller cancellation invalidates it.
+    var frameGeneration: UUID {
+        connectionGeneration
+    }
+
+    func requireCurrentFrame(generation: UUID) throws {
+        guard !stopped, !Task.isCancelled, generation == connectionGeneration else { throw CancellationError() }
     }
 
     /// Resolves true once the socket has completed a hello. The gateway
@@ -199,24 +259,41 @@ public actor DeviceSocket {
                 // connectOnce returns when the socket errors/closes; loop to
                 // reconnect after backing off.
             } catch {
+                guard !stopped, !Task.isCancelled else { break }
+                if reconnectRequested { continue }
                 log.warning("WS connection failed: \(String(describing: error), privacy: .private)")
                 updateState(.failed("\(error.localizedDescription)"))
             }
-            if stopped { break }
+            if stopped || Task.isCancelled { break }
+            if reconnectRequested { continue }
             let delay = backoffDelay()
             reconnectAttempt += 1
             log.info("WS reconnect in \(delay, privacy: .public)ms (attempt \(self.reconnectAttempt, privacy: .public))")
-            try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000)
+            let wait = Task { _ = try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000) }
+            retryWait = wait
+            await wait.value
+            retryWait = nil
         }
     }
 
     private func connectOnce() async throws {
+        reconnectRequested = false
+        connectionGeneration = UUID()
+        let generation = connectionGeneration
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let task = session.webSocketTask(with: request)
         self.task = task
+        defer {
+            livenessTask?.cancel()
+            livenessTask = nil
+            pendingPing = nil
+            task.cancel(with: .goingAway, reason: nil)
+            if self.task === task { self.task = nil }
+        }
         task.resume()
+        armHelloDeadline(generation: generation)
 
         // Send hello.
         updateState(.authenticating)
@@ -235,6 +312,7 @@ public actor DeviceSocket {
                 throw error
             }
 
+            try requireCurrentFrame(generation: generation)
             guard let frame = decodeFrame(message) else { continue }
 
             if !authenticated {
@@ -243,11 +321,16 @@ public actor DeviceSocket {
                     switch resp.body {
                     case .ok(let result):
                         let deviceId = extractString(result["deviceId"]) ?? ""
+                        guard expectedDeviceId == nil || expectedDeviceId == deviceId else {
+                            throw GatewayClient.Error.unauthorized
+                        }
                         let deviceName = extractString(result["deviceName"]) ?? ""
                         let scopes = extractStringArray(result["scopes"]) ?? []
                         reconnectAttempt = 0
                         authenticated = true
+                        armHeartbeat(generation: generation)
                         updateState(.connected(deviceId: deviceId, deviceName: deviceName, scopes: scopes))
+                        if let path = routingOwner?.connectionPath { await routeChanged(path) }
                         log.info("WS authenticated as \(deviceName, privacy: .public) (\(deviceId, privacy: .public))")
                         continue
                     case .err(let err):
@@ -418,6 +501,12 @@ public actor DeviceSocket {
 
     private func updateState(_ s: ConnectionState) {
         currentState = s
+        if routingOwner != nil {
+            switch s {
+            case .connected: break
+            default: pathContinuation.yield(.reconnecting)
+            }
+        }
         stateContinuation.yield(s)
     }
 
@@ -587,5 +676,110 @@ enum WsFrame: Decodable {
         case .command: self = try .command(WsCommandFrame(from: decoder))
         case .response: self = try .response(WsResponseFrame(from: decoder))
         }
+    }
+}
+
+@available(iOS 17.0, *)
+extension DeviceSocket {
+    /// Fresh canonical metadata is independent of an old LAN route, so this
+    /// also runs while the control socket is reconnecting or its TLS fails.
+    @discardableResult
+    func refreshRoutingHints() async throws -> Bool {
+        guard !stopped, let routingOwner, let hintRefresher else { return false }
+        return try await hintRefresher.refresh { candidates in try routingOwner.updateCandidates(candidates) }
+    }
+
+    /// A successful TLS probe may move only this control socket. In-flight HTTP
+    /// requests and uploads retain their own independently owned transport.
+    func promoteDirectPath() async {
+        guard !stopped, case .connected = currentState,
+              let routingOwner, routingOwner.connectionPath == .relay else { return }
+        let generation = connectionGeneration
+        let verified = await routingOwner.directPathAvailable()
+        guard verified, generation == connectionGeneration, !stopped, case .connected = currentState,
+              routingOwner.connectionPath == .relay else { return }
+        updateState(.connecting)
+        recoverAfterInterruption()
+    }
+
+    func routeChanged(_ path: GatewayConnectionPath) async {
+        guard !stopped, case .connected = currentState, routingOwner?.connectionPath == path else { return }
+        pathContinuation.yield(path)
+        if path != .reconnecting {
+            await emitEvent(type: "connection.path", payload: ["path": .string(path.rawValue)])
+        }
+    }
+
+    private func armHelloDeadline(generation: UUID) {
+        let policy = liveness
+        livenessTask = Task { [weak self] in
+            do { try await policy.wait(policy.helloTimeout) } catch { return }
+            await self?.expireConnection(generation: generation, helloOnly: true)
+        }
+    }
+
+    private func armHeartbeat(generation: UUID) {
+        livenessTask?.cancel()
+        let policy = liveness
+        livenessTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await policy.wait(policy.pingInterval) } catch { return }
+                guard let self, let ping = await self.beginPing(generation: generation) else { return }
+                do { try await policy.wait(policy.pongTimeout) } catch { return }
+                if await self.expirePing(ping, generation: generation) { return }
+            }
+        }
+    }
+
+    private func beginPing(generation: UUID) -> UUID? {
+        guard !stopped, generation == connectionGeneration, let task else { return nil }
+        let id = UUID()
+        pendingPing = id
+        liveness.ping(task) { [weak self] error in
+            let failed = error != nil
+            Task { await self?.receivedPong(id, generation: generation, failed: failed) }
+        }
+        return id
+    }
+
+    private func receivedPong(_ id: UUID, generation: UUID, failed: Bool) {
+        guard !stopped, generation == connectionGeneration, pendingPing == id else { return }
+        pendingPing = nil
+        if failed { expireConnection(generation: generation) }
+    }
+
+    @discardableResult
+    private func expirePing(_ id: UUID, generation: UUID) -> Bool {
+        guard generation == connectionGeneration, pendingPing == id else { return false }
+        expireConnection(generation: generation)
+        return true
+    }
+
+    private func expireConnection(generation: UUID, helloOnly: Bool = false) {
+        guard !stopped, generation == connectionGeneration else { return }
+        if helloOnly {
+            guard case .authenticating = currentState else { return }
+        }
+        connectionGeneration = UUID()
+        pendingPing = nil
+        task?.cancel(with: .goingAway, reason: nil)
+    }
+}
+
+@available(iOS 17.0, *)
+extension DeviceSocket {
+    public enum ConnectionState: Equatable, Sendable {
+        case disconnected
+        case connecting
+        case authenticating
+        case connected(deviceId: String, deviceName: String, scopes: [String])
+        case failed(String)
+    }
+
+    /// A raw event from the gateway. The `type` field routes to a handler;
+    /// `payload` is the parsed JSON value (caller decodes further).
+    public struct Event: Sendable, Equatable {
+        public let type: String
+        public let payload: JSONValue
     }
 }
