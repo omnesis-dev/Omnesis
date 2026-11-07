@@ -27,7 +27,7 @@ internal fun AccessPermissionsQuestion(draft: AccessLevelDraft, overview: Access
 internal fun AccessDataQuestion(
     draft: AccessLevelDraft, overview: AccessOverview, capability: AccessCapability,
     iconFor: (String) -> SourceIconModel, nameFor: (String) -> String?, update: (AccessLevelDraft) -> Unit,
-    filter: (AccessSourceInstance, AccessCapability) -> Unit,
+    session: ScopePreviewSession, filter: (AccessSourceInstance, AccessCapability) -> Unit,
 ) {
     val rule = draft.rule(capability) ?: return
     val known = draft.knownSourceIds(overview)
@@ -62,6 +62,7 @@ internal fun AccessDataQuestion(
                             Text(nameFor(source.id) ?: source.name, style = MaterialTheme.typography.titleMedium)
                             source.accountLabel(nameFor(source.id) ?: source.name)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             Text(if (!allowed) "Not allowed" else scopePolicySummary(policy, source), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (allowed && policy != null) AccessRestrictionNames(policy, source, session)
                             if (!source.available) Text("Unavailable · saved access retained", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
@@ -98,7 +99,7 @@ internal fun AccessFutureQuestion(draft: AccessLevelDraft, overview: AccessOverv
         val value = AccessSourceSelectionState.from(rule.sources, known)
         Text(if (linked) "Answer and Direct" else cap.title, style = MaterialTheme.typography.titleMedium)
         fun set(allowed: Boolean) { if (allowed != value.futureSourcesAllowed) update(draft.setBoundary(value.setFutureSourcesAllowed(allowed, known).boundary(known), cap, overview.sourceFilters?.enabled)) }
-        AccessChoice("Ask me first", "New source accounts stay blocked until you allow them.", !value.futureSourcesAllowed) { set(false) }
+        AccessChoice("Keep new sources blocked", "New source accounts stay blocked until you allow them.", !value.futureSourcesAllowed) { set(false) }
         AccessChoice("Allow new sources automatically", "This permission will include accounts you connect later.", value.futureSourcesAllowed) { set(true) }
     }
 }

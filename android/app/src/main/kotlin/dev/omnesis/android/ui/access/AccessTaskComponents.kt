@@ -25,7 +25,7 @@ internal fun AccessTaskScaffold(
     title: String, question: String, description: String? = null, progress: String? = null,
     primary: String, enabled: Boolean, onPrimary: () -> Unit, onBack: () -> Unit,
     onCancel: (() -> Unit)? = null, backLabel: String = "Back", footer: String? = null,
-    scrollable: Boolean = true, busy: Boolean = false, focusKey: Any? = null, content: @Composable ColumnScope.() -> Unit,
+    scrollable: Boolean = true, busy: Boolean = false, compactHeader: Boolean = false, focusKey: Any? = null, content: @Composable ColumnScope.() -> Unit,
 ) {
     val scroll = rememberScrollState()
     val focus = remember { FocusRequester() }
@@ -41,12 +41,12 @@ internal fun AccessTaskScaffold(
         } },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().then(if (scrollable) Modifier.verticalScroll(scroll) else Modifier)
-            .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            progress?.let { Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) }
-            Text(question, style = MaterialTheme.typography.headlineMedium,
+            .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(if (compactHeader) 10.dp else 20.dp)) {
+            progress?.takeUnless { compactHeader }?.let { Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) }
+            Text(question, style = if (compactHeader) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.focusRequester(focus).focusable().semantics { heading() })
             LaunchedEffect(question, focusKey) { if (scrollable) scroll.scrollTo(0); focus.requestFocus() }
-            description?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            description?.takeUnless { compactHeader }?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             content()
             if (scrollable) Spacer(Modifier.height(4.dp))
         }
@@ -56,7 +56,7 @@ internal fun AccessTaskScaffold(
 @Composable
 internal fun AccessChoice(title: String, detail: String, selected: Boolean, enabled: Boolean = true, choose: () -> Unit) {
     val editable = enabled && LocalAccessEditingEnabled.current
-    Surface(shape = MaterialTheme.shapes.medium, color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .38f),
+    Surface(shape = MaterialTheme.shapes.medium, contentColor = MaterialTheme.colorScheme.onSurface, color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .38f),
         modifier = Modifier.fillMaxWidth().selectable(selected = selected, enabled = editable, role = Role.RadioButton, onClick = choose)) {
         Row(Modifier.padding(16.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -70,7 +70,7 @@ internal fun AccessChoice(title: String, detail: String, selected: Boolean, enab
 
 @Composable
 internal fun AccessToggleChoice(title: String, detail: String, checked: Boolean, change: (Boolean) -> Unit) {
-    Surface(shape = MaterialTheme.shapes.medium, color = if (checked) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .38f),
+    Surface(shape = MaterialTheme.shapes.medium, contentColor = MaterialTheme.colorScheme.onSurface, color = if (checked) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .38f),
         modifier = Modifier.fillMaxWidth().toggleable(enabled = LocalAccessEditingEnabled.current, value = checked, role = Role.Checkbox, onValueChange = change)) {
         Row(Modifier.padding(16.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -86,7 +86,7 @@ internal fun AccessToggleChoice(title: String, detail: String, checked: Boolean,
 internal fun AccessNotice(message: String, error: Boolean = false) {
     Surface(shape = MaterialTheme.shapes.small, color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant) {
         Text(message, style = MaterialTheme.typography.bodyLarge,
-            color = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (error) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth().padding(16.dp).semantics { liveRegion = if (error) LiveRegionMode.Assertive else LiveRegionMode.Polite })
     }
 }

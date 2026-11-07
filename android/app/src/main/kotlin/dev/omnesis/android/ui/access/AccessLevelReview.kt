@@ -19,14 +19,14 @@ import kotlin.coroutines.coroutineContext
 internal fun AccessLevelOverview(draft: AccessLevelDraft, overview: AccessOverview, change: (AccessLevelPage) -> Unit) {
     AccessOverviewRow("Name", draft.name, "Change name") { change(AccessLevelPage.REVIEW) }
     AccessOverviewRow("Permissions", listOf(AccessCapability.ANSWER, AccessCapability.DIRECT, AccessCapability.NOTES)
-        .filter { draft.rule(it) != null }.joinToString { it.outcome }, "Change permissions") { change(AccessLevelPage.PERMISSIONS) }
+        .filter { draft.rule(it) != null }.joinToString { it.title }, "Change permissions") { change(AccessLevelPage.PERMISSIONS) }
     draft.readingCapabilities.forEach { cap ->
         AccessOverviewRow("${cap.title} data", ruleDataSummary(draft.rule(cap)!!, overview), "Change ${cap.title} data") {
             change(if (cap == AccessCapability.ANSWER) AccessLevelPage.ANSWER_DATA else AccessLevelPage.DIRECT_DATA)
         }
     }
     if (draft.readingCapabilities.isNotEmpty()) AccessOverviewRow("New sources", draft.readingCapabilities.joinToString("\n") {
-        "${it.title}: ${if (futureAllowed(draft.rule(it)!!.sources)) "allowed automatically" else "ask me first"}"
+        "${it.title}: ${if (futureAllowed(draft.rule(it)!!.sources)) "allowed automatically" else "blocked until allowed"}"
     }, "Change new sources") { change(AccessLevelPage.FUTURE) }
     if (draft.rule(AccessCapability.ANSWER) != null) AccessOverviewRow("Answer release", releaseSummary(draft.rule(AccessCapability.ANSWER), overview), "Change Answer release") { change(AccessLevelPage.RELEASE) }
 }
@@ -51,20 +51,21 @@ internal fun AccessLevelReview(draft: AccessLevelDraft, overview: AccessOverview
     OutlinedTextField(draft.name, { update(draft.copy(name = it)) }, label = { Text("Access level name") },
         enabled = LocalAccessEditingEnabled.current, isError = nameError != null, supportingText = { Text(nameError ?: "${draft.name.trim().length}/120") },
         singleLine = true, modifier = Modifier.fillMaxWidth())
-    if (draft.id == "new") AccessGrantSummary(draft.serializedRules, overview, session, change)
+    if (draft.id == "new") AccessGrantSummary(draft.serializedRules, overview, session, change, linked = draft.directSameAsAnswer && draft.rule(AccessCapability.ANSWER) != null && draft.rule(AccessCapability.DIRECT) != null)
     else {
         val changes = draft.changes(overview)
         if (changes.isEmpty()) Text("No changes yet.", style = MaterialTheme.typography.bodyLarge)
         changes.forEach { difference ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(difference.title, style = MaterialTheme.typography.titleMedium)
-                Text("Before", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(difference.before, style = MaterialTheme.typography.bodyLarge)
-                Text("After", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Text(difference.after, style = MaterialTheme.typography.bodyLarge)
                 if (difference.title.endsWith(" data")) {
                     val capability = if (difference.title.startsWith("Answer")) AccessCapability.ANSWER else AccessCapability.DIRECT
                     ChangedSourcePolicies(draft, overview, capability, session)
+                } else {
+                    Text("Before", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(difference.before, style = MaterialTheme.typography.bodyLarge)
+                    Text("After", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(difference.after, style = MaterialTheme.typography.bodyLarge)
                 }
                 HorizontalDivider()
             }
@@ -93,34 +94,64 @@ private fun ChangedSourcePolicies(draft: AccessLevelDraft, overview: AccessOverv
             if (oldPolicy != null && oldAllowed) AccessPolicySummary(oldPolicy, source, session)
             Text("After: ${if (newAllowed) scopePolicySummary(newPolicy, source) else "Not allowed"}", style = MaterialTheme.typography.bodyLarge)
             if (newPolicy != null && newAllowed) AccessPolicySummary(newPolicy, source, session)
+            if (oldPolicy != null && newPolicy != null && oldPolicy != newPolicy) {
+                var identifiers by remember(oldPolicy, newPolicy) { mutableStateOf(false) }
+                TextButton(onClick = { identifiers = !identifiers }) { Text(if (identifiers) "Hide selection identifiers" else "Inspect selection identifiers") }
+                if (identifiers) {
+                    fun details(policy: ScopePolicy) = policy.rules.flatMap { it.match }.joinToString("\n") { ref ->
+                        "${scopeKindTitle(ref.kind, source)}: ${ref.id ?: ref.identifiers?.joinToString { it.value }.orEmpty()}"
+                    }
+                    Text("Before identifiers\n${details(oldPolicy)}", style = MaterialTheme.typography.bodyMedium)
+                    Text("After identifiers\n${details(newPolicy)}", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun AccessGrantSummary(rules: List<AccessGrantRule>, overview: AccessOverview, session: ScopePreviewSession, change: ((AccessLevelPage) -> Unit)? = null) {
-    ReviewTopic("Permissions", AccessLevelPage.PERMISSIONS, change)
-    listOf(AccessCapability.ANSWER, AccessCapability.DIRECT, AccessCapability.NOTES).filter { cap -> rules.any { it.capability == cap } }.forEach { cap -> Text(cap.outcome, style = MaterialTheme.typography.bodyLarge) }
+private fun AccessGrantSummary(rules: List<AccessGrantRule>, overview: AccessOverview, session: ScopePreviewSession, change: ((AccessLevelPage) -> Unit)? = null, linked: Boolean = false) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ReviewTopic("Permissions", AccessLevelPage.PERMISSIONS, change)
+        listOf(AccessCapability.ANSWER, AccessCapability.DIRECT, AccessCapability.NOTES).filter { cap -> rules.any { it.capability == cap } }
+            .forEach { Text(it.outcome, style = MaterialTheme.typography.bodyLarge) }
+    }
     listOf(AccessCapability.ANSWER, AccessCapability.DIRECT).forEach { cap ->
         rules.firstOrNull { it.capability == cap }?.let { rule ->
             HorizontalDivider()
-            ReviewTopic("${cap.title} data", if (cap == AccessCapability.ANSWER) AccessLevelPage.ANSWER_DATA else AccessLevelPage.DIRECT_DATA, change)
-            (overview.sources + rule.scopePolicies.filter { p -> overview.sources.none { it.id == p.sourceId } }.map { AccessSourceInstance(it.sourceId, "Unavailable account", available = false) })
-                .filter { sourceAllowed(rule.sources, it.id) }.forEach { source ->
-                    Text(source.name, style = MaterialTheme.typography.titleSmall)
-                    val policy = rule.scopePolicies.firstOrNull { it.sourceId == source.id }
-                    Text(scopePolicySummary(policy, source), style = MaterialTheme.typography.bodyLarge)
-                    if (policy != null) AccessPolicySummary(policy, source, session)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ReviewTopic("${cap.title} data", if (cap == AccessCapability.ANSWER) AccessLevelPage.ANSWER_DATA else AccessLevelPage.DIRECT_DATA, change)
+                if (linked && cap == AccessCapability.DIRECT) {
+                    Text("Direct uses the same data as Answer, including its filters and new-source choice.", style = MaterialTheme.typography.bodyLarge)
+                    Text("Direct reads originals without Answer’s privacy review.", style = MaterialTheme.typography.bodyLarge)
+                } else {
+                    val retained = (rule.sources.sourceIds + rule.scopePolicies.map { it.sourceId }).distinct().filter { id -> overview.sources.none { it.id == id } }
+                    val inventory = overview.sources + retained.map { AccessSourceInstance(it, "Unavailable account", available = false) }
+                    inventory.filter { sourceAllowed(rule.sources, it.id) }.forEach { source ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(source.name + source.accountLabel()?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.titleSmall)
+                            if (!source.available) Text("Unavailable · saved boundary retained", style = MaterialTheme.typography.bodyMedium)
+                            val policy = rule.scopePolicies.firstOrNull { it.sourceId == source.id }
+                            Text(scopePolicySummary(policy, source), style = MaterialTheme.typography.bodyLarge)
+                            if (policy != null) AccessPolicySummary(policy, source, session)
+                        }
+                    }
+                    val excluded = inventory.filter { rule.sources.mode == AccessSourceMode.DENYLIST && it.id in rule.sources.sourceIds }
+                    if (excluded.isNotEmpty()) Text("Excluded accounts: " + excluded.joinToString { it.name + it.accountLabel()?.let { label -> " · $label" }.orEmpty() }, style = MaterialTheme.typography.bodyLarge)
+                    if (change != null) TextButton(enabled = LocalAccessEditingEnabled.current, onClick = { change(AccessLevelPage.FUTURE) }) { Text("Change new sources for ${cap.title}") }
+                    Text("New sources: ${if (futureAllowed(rule.sources)) "allowed automatically" else "blocked until you allow them"}.", style = MaterialTheme.typography.bodyLarge)
                 }
-            if (change != null) TextButton(enabled = LocalAccessEditingEnabled.current, onClick = { change(AccessLevelPage.FUTURE) }) { Text("Change new sources for ${cap.title}") }
-            Text("New sources: ${if (futureAllowed(rule.sources)) "allowed automatically" else "blocked until you allow them"}.", style = MaterialTheme.typography.bodyLarge)
+            }
         }
     }
     rules.firstOrNull { it.capability == AccessCapability.ANSWER }?.let {
-        HorizontalDivider(); ReviewTopic("Answer release", AccessLevelPage.RELEASE, change)
-        Text(releaseSummary(it, overview), style = MaterialTheme.typography.bodyLarge)
+        HorizontalDivider()
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ReviewTopic("Answer release", AccessLevelPage.RELEASE, change)
+            Text(releaseSummary(it, overview), style = MaterialTheme.typography.bodyLarge)
+        }
     }
-    if (rules.any { it.capability == AccessCapability.DIRECT }) Text("Direct reads originals without Answer’s privacy review.", style = MaterialTheme.typography.bodyLarge)
+    if (!linked && rules.any { it.capability == AccessCapability.DIRECT }) Text("Direct reads originals without Answer’s privacy review.", style = MaterialTheme.typography.bodyLarge)
 }
 
 @Composable
@@ -137,11 +168,14 @@ internal fun AccessPolicySummary(policy: ScopePolicy, source: AccessSourceInstan
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { coroutineContext.ensureActive(); failed = true }
     }
-    policy.rules.flatMap { it.match }.forEach { ref ->
+    val refs = policy.rules.flatMap { it.match }
+    var allItems by remember(policy) { mutableStateOf(false) }
+    (if (allItems) refs else refs.take(3)).forEach { ref ->
         val label = session.label(source.id, ref) ?: preview?.items?.firstOrNull { it.ref == ref }?.label
             ?: ref.identifiers?.joinToString { it.value } ?: "${scopeKindTitle(ref.kind, source)} · label unavailable"
         Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+    if (refs.size > 3) TextButton(onClick = { allItems = !allItems }) { Text(if (allItems) "Show fewer selected items" else "Inspect all ${refs.size} selected items") }
     when {
         failed -> {
             Text("Counts unavailable. The restriction itself is unchanged.", style = MaterialTheme.typography.bodyMedium)

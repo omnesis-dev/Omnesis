@@ -15,6 +15,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -34,7 +35,10 @@ internal fun SourceFilterPicker(
     state: SourceFilterPickerState? = null, onBack: (() -> Unit)? = null,
     onSelectionChange: ((List<ScopeRef>) -> Unit)? = null, selected: (List<ScopeRef>) -> Unit,
 ) {
+    val compact = WindowInsets.ime.getBottom(LocalDensity.current) > 0 || LocalDensity.current.fontScale > 1.3f
     val session = remember(gateway) { if (gateway is ScopePreviewSession) gateway else ScopePreviewSession(gateway) }
+    val labels by session.labels.collectAsState()
+    fun label(ref: ScopeRef) = labels[source.id to ref] ?: ref.label
     val picker = remember(source.id, capability) { state ?: SourceFilterPickerState(source.scopes?.items?.firstOrNull()?.kind ?: "participant", source.scopes?.items?.firstOrNull { it.kind == "participant" }?.identifiers?.firstOrNull().orEmpty()) }
     var refs by remember(source.id, capability) { mutableStateOf(initialSelection) }
     var managing by remember { mutableStateOf(false) }
@@ -76,14 +80,14 @@ internal fun SourceFilterPicker(
     Dialog(onDismissRequest = ::back, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) {
             AccessTaskScaffold(
-                title = "${capability.replaceFirstChar { it.uppercase() }} filter",
+                title = if (compact && !picker.enteringIdentifier) "${capability.replaceFirstChar { it.uppercase() }} · ${source.name}" else "${capability.replaceFirstChar { it.uppercase() }} filter",
                 question = if (picker.enteringIdentifier) "Enter an exact identifier" else "Choose matches",
                 description = source.name + source.accountLabel()?.let { " · $it" }.orEmpty(),
                 progress = if (picker.enteringIdentifier) "Exact identifier" else "Step 2 of 3",
                 primary = if (picker.enteringIdentifier) "Add this identifier" else "Review filter",
                 enabled = if (picker.enteringIdentifier) ready && typedId != null && !duplicate else refs.isNotEmpty() && withinLimits,
                 onPrimary = { if (picker.enteringIdentifier) addIdentifier() else selected(refs) },
-                onBack = ::back, onCancel = onClose, scrollable = picker.enteringIdentifier,
+                onBack = ::back, onCancel = onClose, scrollable = picker.enteringIdentifier, compactHeader = compact && !picker.enteringIdentifier,
             ) {
                 if (picker.enteringIdentifier) {
                     declaration?.identifiers.orEmpty().takeIf { it.size > 1 }?.let { types ->
@@ -110,7 +114,7 @@ internal fun SourceFilterPicker(
                         TextButton(onClick = { managing = true }, enabled = refs.isNotEmpty(), modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Manage selection") }
                     }
                     if (refs.isNotEmpty()) Text(refs.take(2).joinToString(" · ") { ref ->
-                        session.label(source.id, ref) ?: ref.identifiers?.joinToString { it.value } ?: "${scopeKindTitle(ref.kind, source)} · saved selection"
+                        label(ref) ?: ref.identifiers?.joinToString { it.value } ?: "${scopeKindTitle(ref.kind, source)} · saved selection"
                     } + if (refs.size > 2) " · +${refs.size - 2} more" else "", maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -153,8 +157,9 @@ internal fun SourceFilterPicker(
     }
     if (managing) AlertDialog(onDismissRequest = { managing = false }, title = { Text("Selected matches") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("${capability.replaceFirstChar { it.uppercase() }} · ${source.name}" + source.accountLabel()?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             refs.forEach { ref -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(session.label(source.id, ref) ?: ref.identifiers?.joinToString { it.value } ?: "${scopeKindTitle(ref.kind, source)} · saved selection", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                Text(label(ref) ?: ref.identifiers?.joinToString { it.value } ?: "${scopeKindTitle(ref.kind, source)} · saved selection", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 TextButton(onClick = { setRefs(refs - ref) }, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) { Text("Remove") }
             } }
         } }, confirmButton = { TextButton(onClick = { managing = false }) { Text("Back to choices") } })

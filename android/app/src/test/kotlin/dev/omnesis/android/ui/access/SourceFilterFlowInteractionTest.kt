@@ -75,4 +75,40 @@ class SourceFilterFlowInteractionTest {
         compose.onNodeWithText("Maximum age: P3M").assertExists()
         assertEquals(0, saves)
     }
+    @Test fun parentAccountHydratesALabelLessSavedSelectionWithoutChangingItsIdentifiers() {
+        val savedPolicy = policy.copy(rules = listOf(ScopeRule(listOf(folder.copy(label = null)), "share")))
+        val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id))).copy(scopePolicies = listOf(savedPolicy), filterRevision = 4)
+        val level = AccessLevelSummary("level-example", "File helper", 1, listOf(direct), 0)
+        val overview = AccessOverview(emptyList(), listOf(source), levels = listOf(level), sourceFilters = SourceFiltersAvailability(true))
+        var draft by mutableStateOf(AccessLevelDraft.opening(level, overview))
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            AccessHomeContent(AccessManagementState(overview, draft), gateway, onClose = {}, onUpdate = { draft = it })
+        } } }
+        compose.onNodeWithContentDescription("Change Direct data").performClick()
+        compose.onNodeWithText("Workspace", substring = false).assertExists()
+        assertEquals(savedPolicy, draft.rule(AccessCapability.DIRECT)!!.scopePolicies.single())
+        assertEquals(4, draft.expectedFilterRevisions["direct"])
+    }
+    @Test fun savedNamesFromOtherKindsAppearWithoutChangingTabsOrApplyingTheFilter() {
+        val labelRef = ScopeRef("label", "project-label")
+        val person = ScopeRef("participant", identifiers = listOf(ScopeIdentifier("email", "reader@example.org")))
+        val contract = SourceScopes(listOf(SourceScopeItem("participant", "fixed", identifiers = listOf("email", "domain")), SourceScopeItem("label", "changes", noun = SourceScopeNoun("label", "labels"), picker = "search")), 2)
+        val readiness = contract.items.map { ScopeKindReadiness(it.kind, true) }
+        val mail = AccessSourceInstance("gmail:reader@example.org", "Gmail", scopes = contract, scopeReadiness = readiness)
+        val saved = ScopePolicy(mail.id, ScopeAudience("level-example", "answer"), listOf(ScopeRule(listOf(labelRef, person), "share")), "hide")
+        val pending = kotlinx.coroutines.CompletableDeferred<ScopePreview>()
+        val reader = object : ScopeEditorGateway {
+            override suspend fun preview(policy: ScopePolicy) = pending.await()
+            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = ScopeOptions(sourceId, "gmail", contract, readiness, emptyList())
+        }
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            SourceFilterEditor(mail, "level-example", "answer", saved, true, reader, onClose = {}) { saves++ }
+        } } }
+        compose.onNodeWithText("Continue").performClick()
+        pending.complete(ScopePreview(mail.id, 4, 2, 2, 0, listOf(ScopePreviewItem(labelRef, "Project", 2)), emptyList(), readiness))
+        compose.waitForIdle()
+        compose.onNodeWithText("Project · reader@example.org").assertExists()
+        assertEquals(0, saves)
+        assertEquals(listOf(labelRef, person), saved.rules.single().match)
+    }
 }

@@ -56,6 +56,15 @@ fun SourceFilterEditor(
             SourceFilterStage.MODE -> { onClose(); SourceFilterStage.MODE }
         }
     }
+    // Resolve saved names across all kinds before Matches, including kinds not open yet.
+    // This warms labels only; the Review effect below still validates the exact current policy.
+    LaunchedEffect(session, initialPolicy, writable) {
+        if (!writable || initialPolicy == null || initialPolicy.sourceId != source.id ||
+            initialPolicy.rules.flatMap { it.match }.none { session.label(source.id, it) == null && it.identifiers.isNullOrEmpty() }) return@LaunchedEffect
+        try { session.preview(initialPolicy.copy(audience = ScopeAudience(levelId, capability))) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { /* A failed label read cannot change the saved restriction. Review offers a fresh retry. */ }
+    }
     LaunchedEffect(session, policy, stage, boundary, retry) {
         if (stage != SourceFilterStage.REVIEW || (writable && boundary == SourceFilterBoundary.ALL)) return@LaunchedEffect
         val token = Any(); request = token; loading = true; previewedPolicy = null; error = null
@@ -88,7 +97,7 @@ fun SourceFilterEditor(
                 title = "${capability.replaceFirstChar { it.uppercase() }} filter",
                 question = if (stage == SourceFilterStage.MODE) "What can it use from this account?" else if (writable) "Review this filter" else "Saved restriction",
                 description = source.name + source.accountLabel()?.let { " · $it" }.orEmpty(),
-                progress = if (!writable) null else if (stage == SourceFilterStage.MODE) "Step 1 of 3" else "Step 3 of 3",
+                progress = if (!writable) null else if (stage == SourceFilterStage.MODE) "Step 1 of ${if (boundary == SourceFilterBoundary.ALL) 2 else 3}" else "Step ${if (boundary == SourceFilterBoundary.ALL) "2 of 2" else "3 of 3"}",
                 primary = primary,
                 enabled = !writable || stage == SourceFilterStage.MODE || allContent || (current && ready && policy.withinLimits && refs.isNotEmpty() && !loading && error == null),
                 onPrimary = {

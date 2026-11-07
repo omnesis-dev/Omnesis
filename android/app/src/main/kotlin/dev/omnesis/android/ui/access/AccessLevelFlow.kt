@@ -48,14 +48,20 @@ internal fun AccessLevelDraft.pageError(page: AccessLevelPage, overview: AccessO
     }
     else -> null
 }
-internal fun AccessLevelDraft.isChangedFrom(level: AccessLevelSummary?): Boolean = level == null || name != level.name || rules != level.rules
+internal fun AccessLevelDraft.isChangedFrom(level: AccessLevelSummary?): Boolean = level == null || name.trim() != level.name || serializedRules.associateBy { it.capability } != level.rules.associateBy { it.capability }
 internal fun sourceAllowed(boundary: AccessSourceBoundary, id: String): Boolean = when (boundary.mode) {
     AccessSourceMode.ALL -> true
     AccessSourceMode.ALLOWLIST -> id in boundary.sourceIds
     AccessSourceMode.DENYLIST -> id !in boundary.sourceIds
 }
 internal fun futureAllowed(boundary: AccessSourceBoundary): Boolean = boundary.mode != AccessSourceMode.ALLOWLIST
-internal fun AccessSourceInstance.accountLabel(displayName: String = name): String? = id.substringAfter(':', "").takeIf { it.isNotBlank() && !displayName.contains(it, ignoreCase = true) }
+internal fun AccessSourceInstance.accountLabel(displayName: String = name): String? {
+    val account = id.substringAfter(':', "").takeIf { it.isNotBlank() } ?: return null
+    fun normalized(value: String) = value.filter(Char::isLetterOrDigit).lowercase()
+    if (normalized(displayName).contains(normalized(account))) return null
+    val friendly = name.takeIf { it.startsWith(displayName) }?.removePrefix(displayName)?.trim(' ', '·', ':', '—', '-', '(', ')')
+    return friendly?.takeIf { it.isNotBlank() } ?: account
+}
 internal fun scopeKindTitle(kind: String, source: AccessSourceInstance): String = source.scopes?.items?.firstOrNull { it.kind == kind }?.noun?.many?.replaceFirstChar { it.uppercase() }
     ?: if (kind == "participant") "People" else kind.replaceFirstChar { it.uppercase() }
 internal fun scopePolicySummary(policy: ScopePolicy?, source: AccessSourceInstance): String {
@@ -67,7 +73,7 @@ internal fun scopePolicySummary(policy: ScopePolicy?, source: AccessSourceInstan
     return "${if (policy.rules.single().action == "share") "Only selected" else "All except selected"} $names · ${refs.size}"
 }
 internal fun ruleDataSummary(rule: AccessGrantRule, overview: AccessOverview): String {
-    val chosen = overview.sources.count { sourceAllowed(rule.sources, it.id) }
+    val chosen = (overview.sources.map { it.id } + rule.sources.sourceIds + rule.scopePolicies.map { it.sourceId }).distinct().count { sourceAllowed(rule.sources, it) }
     val restrictions = rule.scopePolicies.size
     return "$chosen ${if (chosen == 1) "source" else "sources"}${if (restrictions > 0) " · $restrictions restricted" else " · all content"}"
 }
@@ -80,7 +86,7 @@ internal data class AccessLevelChange(val title: String, val before: String, val
 internal fun AccessLevelDraft.changes(overview: AccessOverview): List<AccessLevelChange> {
     val previous = originalLevel ?: overview.levels.firstOrNull { it.id == id } ?: return emptyList()
     return buildList {
-        if (name != previous.name) add(AccessLevelChange("Name", previous.name, name))
+        if (name.trim() != previous.name) add(AccessLevelChange("Name", previous.name, name.trim()))
         fun capabilityList(items: List<AccessGrantRule>) = listOf(AccessCapability.ANSWER, AccessCapability.DIRECT, AccessCapability.NOTES)
             .filter { cap -> items.any { it.capability == cap } }.joinToString { it.outcome }.ifEmpty { "None" }
         if (rules.map { it.capability }.toSet() != previous.rules.map { it.capability }.toSet()) add(AccessLevelChange("Permissions", capabilityList(previous.rules), capabilityList(rules)))
@@ -91,10 +97,7 @@ internal fun AccessLevelDraft.changes(overview: AccessOverview): List<AccessLeve
             val beforeIds = before?.let { AccessSourceSelectionState.from(it.sources, known).allowedSourceIds }
             val afterIds = after?.let { AccessSourceSelectionState.from(it.sources, known).allowedSourceIds }
             if (beforeIds != afterIds || before?.scopePolicies != after?.scopePolicies) {
-                fun detail(rule: AccessGrantRule) = ruleDataSummary(rule, overview) + rule.scopePolicies.joinToString(prefix = if (rule.scopePolicies.isEmpty()) "" else "\n", separator = "\n") { policy ->
-                    val source = overview.sources.firstOrNull { it.id == policy.sourceId } ?: AccessSourceInstance(policy.sourceId, "Unavailable account", available = false)
-                    "${source.name}: ${scopePolicySummary(policy, source)}"
-                }
+                fun detail(rule: AccessGrantRule) = ruleDataSummary(rule, overview)
                 add(AccessLevelChange("${cap.title} data", before?.let(::detail) ?: "Not allowed", after?.let(::detail) ?: "Not allowed"))
             }
             if (after != null && (before == null || futureAllowed(before.sources) != futureAllowed(after.sources))) add(AccessLevelChange("New sources for ${cap.title}", if (before == null) "Not allowed" else if (futureAllowed(before.sources)) "Allowed automatically" else "Blocked until allowed", if (futureAllowed(after.sources)) "Allowed automatically" else "Blocked until allowed"))

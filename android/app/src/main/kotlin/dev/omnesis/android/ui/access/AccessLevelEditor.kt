@@ -78,9 +78,9 @@ internal fun AccessLevelEditor(
     AccessTaskScaffold(
         title = if (creating) "New access level" else "Edit access level", question = question, description = description,
         progress = if (creating) "Step ${pages.indexOf(page) + 1} of ${pages.size}" else null,
-        primary = primary, enabled = !state.loading && !conflict && when (page) {
+        primary = primary, enabled = !state.loading && when (page) {
             AccessLevelPage.OVERVIEW -> changed
-            AccessLevelPage.REVIEW -> draft.validFor(overview) && (creating || changed)
+            AccessLevelPage.REVIEW -> !conflict && state.errorCode != "level-in-use" && draft.validFor(overview) && (creating || changed)
             else -> error == null
         },
         onPrimary = {
@@ -98,6 +98,8 @@ internal fun AccessLevelEditor(
                                 AccessLevelPage.FUTURE -> added.isNotEmpty()
                                 else -> false
                             } }
+                        } else if (page == AccessLevelPage.DIRECT_CHOICE && !draft.directSameAsAnswer) {
+                            requiredReviewPages = (listOf(AccessLevelPage.DIRECT_DATA) + requiredReviewPages.dropWhile { it != page }.drop(1)).distinct()
                         } else requiredReviewPages = requiredReviewPages.dropWhile { it != page }.drop(1)
                         val next = requiredReviewPages.firstOrNull() ?: draft.createPages().firstOrNull { it != AccessLevelPage.REVIEW && draft.pageError(it, overview) != null }
                         if (next == null) { returnToReview = false; page = AccessLevelPage.REVIEW } else page = next
@@ -114,7 +116,13 @@ internal fun AccessLevelEditor(
         if (state.error != null || conflict) {
             AccessNotice(if (conflict) "This access level changed on the gateway. Your unsaved draft is still here. Review it, or reload the latest version." else state.error.orEmpty(), error = true)
             if (conflict && state.error != null && state.error != "stale-revision") AccessNotice(state.error, error = true)
-            if (conflict) TextButton(onClick = { reloadConfirmation = true }) { Text("Reload latest…") }
+            if (conflict) TextButton(enabled = !state.loading, onClick = { reloadConfirmation = true }) { Text("Reload latest…") }
+            else if (page == AccessLevelPage.REVIEW && state.errorCode == "level-in-use") {
+                original?.rules?.firstOrNull { it.capability == AccessCapability.ANSWER }?.let { answer ->
+                    TextButton(enabled = !state.loading, onClick = { update(draft.setRule(answer)) }) { Text("Restore Answer") }
+                }
+                TextButton(enabled = !state.loading && draft.validFor(overview), onClick = save) { Text("Retry save after moving integrations") }
+            }
             else if (page == AccessLevelPage.REVIEW) TextButton(onClick = { if (draft.pageError(page, overview) == null) save() }, enabled = !state.loading && draft.validFor(overview)) { Text("Retry save") }
         }
         if (attempted && error != null) AccessNotice(error, error = true)
@@ -123,12 +131,12 @@ internal fun AccessLevelEditor(
         when (page) {
             AccessLevelPage.OVERVIEW -> AccessLevelOverview(draft, overview) { if (!state.loading) page = it }
             AccessLevelPage.PERMISSIONS -> AccessPermissionsQuestion(draft, overview, edit)
-            AccessLevelPage.ANSWER_DATA, AccessLevelPage.DIRECT_DATA -> AccessDataQuestion(draft, overview, page.capability()!!, iconFor, nameFor, edit) { source, capability -> if (!state.loading) filter = source to capability }
+            AccessLevelPage.ANSWER_DATA, AccessLevelPage.DIRECT_DATA -> AccessDataQuestion(draft, overview, page.capability()!!, iconFor, nameFor, edit, session) { source, capability -> if (!state.loading) filter = source to capability }
             AccessLevelPage.DIRECT_CHOICE -> AccessDirectQuestion(draft, overview, edit)
             AccessLevelPage.FUTURE -> AccessFutureQuestion(draft, overview, edit)
             AccessLevelPage.RELEASE -> AccessReleaseQuestion(draft, overview, edit)
             AccessLevelPage.REVIEW -> AccessLevelReview(draft, overview, session, edit) { target ->
-                if (!state.loading) { reviewCapabilities = draft.readingCapabilities.toSet(); requiredReviewPages = emptyList(); returnToReview = true; page = target }
+                if (!state.loading) { reviewCapabilities = draft.readingCapabilities.toSet(); requiredReviewPages = emptyList(); returnToReview = true; page = if (creating && target == AccessLevelPage.DIRECT_DATA && draft.directSameAsAnswer && draft.rule(AccessCapability.ANSWER) != null) AccessLevelPage.DIRECT_CHOICE else target }
             }
         }
         }

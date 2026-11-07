@@ -110,4 +110,27 @@ class AccessLevelFlowTest {
         assertNotNull(draft(AccessCapability.NOTES).copy(name = "x".repeat(121)).nameError(state))
         assertNull(AccessLevelDraft.opening(level, state).nameError(state))
     }
+    @Test fun providerTitlesKeepAFriendlyAccountAndAvoidDuplicatingFormattedIdentifiers() {
+        val phone = AccessSourceInstance("chat:+15550100141", "Chat · +1 (555) 010-0141")
+        assertNull(phone.accountLabel())
+        assertEquals("+1 (555) 010-0141", phone.accountLabel("Chat"))
+        val mail = AccessSourceInstance("mail:reader@example.org", "Mail · reader@example.org")
+        assertNull(mail.accountLabel())
+        assertEquals("reader@example.org", mail.accountLabel("Mail"))
+    }
+    @Test fun returningToTheOriginalChoiceDoesNotSaveAListOrderOrWhitespaceChange() {
+        val original = draft(AccessCapability.ANSWER, AccessCapability.DIRECT).rules
+        val level = AccessLevelSummary("saved", "Helper", 1, original, 0)
+        val state = overview.copy(levels = listOf(level))
+        val answer = original.first { it.capability == AccessCapability.ANSWER }
+        val changed = AccessLevelDraft.opening(level, state).setRule(answer.copy(release = AccessAnswerRelease.reviewed("policy-example"))).setRule(answer).copy(name = " Helper ")
+        assertFalse(changed.isChangedFrom(level))
+        assertTrue(changed.changes(state).isEmpty())
+    }
+    @Test fun savedUnavailableUnfilteredAccountsStillCountInTheBoundarySummary() {
+        val rule = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("mail:unavailable@example.org")))
+        assertEquals("1 source · all content", ruleDataSummary(rule, overview.copy(sources = emptyList())))
+        val excluded = rule.copy(sources = AccessSourceBoundary(AccessSourceMode.DENYLIST, listOf("mail:unavailable@example.org")))
+        assertEquals("0 sources · all content", ruleDataSummary(excluded, overview.copy(sources = emptyList())))
+    }
 }

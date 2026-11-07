@@ -5,24 +5,30 @@ package dev.omnesis.android.ui.access
 import dev.omnesis.android.transport.dto.*
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import java.util.concurrent.ConcurrentHashMap
 
 /** Labels are presentation-only; counts and Apply validation always require a fresh response. */
 internal class ScopePreviewSession(private val delegate: ScopeEditorGateway) : ScopeEditorGateway {
     private val admission = Semaphore(2)
-    private val labels = ConcurrentHashMap<Pair<String, ScopeRef>, String>()
-    fun label(sourceId: String, ref: ScopeRef): String? = labels[sourceId to ref] ?: ref.label
+    private val mutableLabels = MutableStateFlow<Map<Pair<String, ScopeRef>, String>>(emptyMap())
+    val labels = mutableLabels.asStateFlow()
+    fun label(sourceId: String, ref: ScopeRef): String? = labels.value[sourceId to ref] ?: ref.label
+    private fun rememberLabels(sourceId: String, values: List<Pair<ScopeRef, String>>) {
+        mutableLabels.update { previous -> previous + values.associate { (ref, label) -> (sourceId to ref) to label } }
+    }
     override suspend fun preview(policy: ScopePolicy): ScopePreview = admission.withPermit {
         withContext(NonCancellable) { delegate.preview(policy) }.also { result ->
             check(result.sourceId == policy.sourceId) { "The preview belongs to another source. Reopen this filter." }
-            result.items.filter { it.missing != true }.forEach { labels[policy.sourceId to it.ref] = it.label }
+            rememberLabels(policy.sourceId, result.items.filter { it.missing != true }.map { it.ref to it.label })
         }
     }
     override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions =
         admission.withPermit { withContext(NonCancellable) { delegate.options(sourceId, kind, query, parentId, cursor) }.also { result ->
             check(result.sourceId == sourceId) { "The choices belong to another source. Reopen this filter." }
-            result.items.forEach { labels[sourceId to it.ref] = it.label }
+            rememberLabels(sourceId, result.items.map { it.ref to it.label })
         } }
 }
