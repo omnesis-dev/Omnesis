@@ -10,7 +10,7 @@
  *
  * `ioGateFromScheduler(scheduler)` returns a typed `IoGate`
  * so callers (the periodic backfill orchestrators) can write
- * `compute.peopleCounts()` instead of constructing the raw enqueue.
+ * `compute.peopleCountsChunk()` instead of constructing the raw enqueue.
  *
  * All compute ops default to `background` priority — they're the read
  * halves of background work like the merge pass. There's no expectation
@@ -26,7 +26,6 @@ import type {
   AutoMergePair,
   InteractionScoresSnapshot,
   MergeEquivalenceSnapshot,
-  PeopleCountRow,
   SeedFromContactsPlan,
   TransitiveCollapseRow,
 } from "../people.js";
@@ -216,12 +215,10 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
   /** Graph context for search's top hits, each on its own; see `enrichGraphContextHits`. */
   graphContextProvenance: AgentProvenanceReads["graphContextProvenance"];
   /**
-   * Compute `(personId, docCount, aliasCount)` for every unmerged person in
-   * one read. Heavy — a full scan of `document_people` — which is why it
-   * runs out here rather than on the writer thread.
+   * One page of `(personId, docCount, aliasCount)` for the sweep-accumulate
+   * refresh. A full scan of `document_people` is too long for this pool: a
+   * user read queued behind it waits for the whole scan.
    */
-  peopleCounts(): Promise<PeopleCountRow[]>;
-  /** Cursor-paginated variant, for the sweep-accumulate refresh. */
   peopleCountsChunk(cursor: string | null, batchSize: number): Promise<PeopleCountsChunkResult>;
   /**
    * Pick up to `perStepLimit` candidate pairs for merging. Two LIMIT 50
@@ -548,7 +545,6 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.knowledgeDocumentsReadable", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.agentSearchProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.graphContextProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
-  { name: "io.peopleCounts", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCountsChunk", priority: "background" },
   { name: "io.mergeCandidates", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.resolvePairWinner", priority: "background" },
@@ -591,7 +587,6 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.mergeEquivalences", priority: "background", latencyBudgetMs: 5_000 },
   { name: "io.mergeEquivalencesData", priority: "background", latencyBudgetMs: 5_000 },
   // 3s — full alias join scanning the entire person_aliases table.
-  // Comparable to compute.peopleCounts.
   { name: "io.autoDetectedRules", priority: "background", latencyBudgetMs: 3_000 },
   { name: "io.autoDetectData", priority: "background", latencyBudgetMs: 3_000 },
   { name: "io.mergeRulesMeta", priority: "background" },
@@ -694,7 +689,6 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
       call("io.agentSearchProvenance", [[...results], options]),
     graphContextProvenance: (hits, options) =>
       call("io.graphContextProvenance", [[...hits], options]),
-    peopleCounts: () => call("io.peopleCounts", []),
     peopleCountsChunk: (cursor, batchSize) => call("io.peopleCountsChunk", [cursor, batchSize]),
     mergeCandidates: (perStepLimit) => call("io.mergeCandidates", [perStepLimit]),
     resolvePairWinner: (a, b) => call("io.resolvePairWinner", [a, b]),
