@@ -146,6 +146,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "db.promoteSourceWireContract", priority: "realtime" },
   { name: "db.preparePendingSourcePage", priority: "realtime" },
   { name: "db.acknowledgePendingSourcePage", priority: "realtime" },
+  { name: "db.abandonPendingSourcePage", priority: "realtime" },
   { name: "db.revokeSyncAttempt", priority: "realtime" },
   // A per-device resync: the operator waits on it, like the wipes above.
   { name: "db.resetMemberCursor", priority: "user" },

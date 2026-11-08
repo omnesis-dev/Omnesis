@@ -6,7 +6,7 @@
  * suitable for DuckDB analytics ingestion.
  */
 
-import { sanitizeColumnName } from "./schema-mapper.js";
+import { mapPropertyColumns } from "./schema-mapper.js";
 import type {
   PageObjectResponse,
   DataSourceObjectResponse,
@@ -136,32 +136,15 @@ function extractFormulaValue(formula: {
 
 // ── Property → Column Name Map ─────────────────────────────────────────
 
-const SYSTEM_COLUMN_NAMES = new Set(["id", "notion_url", "created_time", "last_edited_time"]);
-const SKIP_TYPES = new Set(["verification", "button", "created_time", "last_edited_time"]);
-
 /**
  * Build a map from Notion property name to sanitized DuckDB column name.
- * Uses the same sanitization logic as schema-mapper to ensure consistency.
+ * Reads the schema mapper's own column assignment, so every key a row
+ * record carries is a column of the table the schema declared.
  */
 export function buildPropertyColumnMap(database: DataSourceObjectResponse): Map<string, string> {
-  const usedNames = new Set(SYSTEM_COLUMN_NAMES);
-  const map = new Map<string, string>();
-
-  for (const [propName, propConfig] of Object.entries(database.properties)) {
-    if (SKIP_TYPES.has(propConfig.type)) continue;
-
-    const sanitized = sanitizeColumnName(propName, usedNames);
-    map.set(propName, sanitized);
-
-    // Reserve the column name (and _start/_end for date properties)
-    usedNames.add(sanitized);
-    if (propConfig.type === "date") {
-      usedNames.add(`${sanitized}_start`);
-      usedNames.add(`${sanitized}_end`);
-    }
-  }
-
-  return map;
+  return new Map(
+    mapPropertyColumns(database).map(({ propName, mapped }) => [propName, mapped.columnName]),
+  );
 }
 
 // ── Row Record Extraction ──────────────────────────────────────────────
