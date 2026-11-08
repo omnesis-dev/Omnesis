@@ -101,11 +101,12 @@ export function computeSourceStatsRow(db: Db, sourceId: string): SourceStatsAggr
   // value is 0 and the matching INSERT path in upsertSourceStatsRow
   // also writes 0 — consistent.
   const versionRow = db
-    .prepare<[string], { dirty_version: number }>(
-      "SELECT dirty_version FROM source_stats WHERE source_id = ?",
+    .prepare<[string], { dirty_version: number; doc_count: number }>(
+      "SELECT dirty_version, doc_count FROM source_stats WHERE source_id = ?",
     )
     .get(sourceId);
   const capturedVersion = versionRow?.dirty_version ?? 0;
+  const capturedDocCount = versionRow?.doc_count ?? 0;
 
   const row = db
     .prepare<
@@ -139,17 +140,22 @@ export function computeSourceStatsRow(db: Db, sourceId: string): SourceStatsAggr
     dataSize: row?.dataSize ?? 0,
     totalUnits: row?.totalUnits ?? null,
     capturedVersion,
+    capturedDocCount,
   };
 }
 
 /**
- * Pure-write companion to `computeSourceStatsRow`. Upserts the
- * aggregation into `source_stats` only if `dirty_version` hasn't
- * moved since `compute` captured it. If a concurrent
- * `markSourceStatsDirty` (or `upsertDocuments`'s inline dirty-bump)
- * fired during compute, the aggregation is stale: we skip the row
- * data update AND leave `needs_refresh = 1` so the backfill worker
- * picks the source up again on the next tick and re-computes.
+ * Pure-write companion to `computeSourceStatsRow`. Upserts the aggregation
+ * into `source_stats`. When `dirty_version` has not moved since `compute`
+ * captured it, the row is current and `needs_refresh` clears. When it has —
+ * a concurrent `markSourceStatsDirty`, or `upsertDocuments` for this source
+ * — the aggregation is still written: its size, units and date range are at
+ * most a few documents behind, and the writes that landed during the scan
+ * are folded into the count from the inline `doc_count` bumps they made
+ * (`count + (doc_count now − doc_count at capture)`). `needs_refresh` stays
+ * set so the source is scanned again. Discarding the scan instead left a
+ * source that is always ingesting with numbers from before its first scan,
+ * however many scans it got.
  *
  * The `INSERT` path (no existing row) is unconditional — there's no
  * existing row to race against; the brand-new-source case is handled
@@ -166,14 +172,19 @@ export function upsertSourceStatsRow(db: Db, sourceId: string, agg: SourceStatsA
        needs_refresh, last_computed_at, dirty_version
      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
      ON CONFLICT(source_id) DO UPDATE SET
-       doc_count = excluded.doc_count,
+       doc_count = CASE
+         WHEN source_stats.dirty_version = excluded.dirty_version THEN excluded.doc_count
+         ELSE MAX(excluded.doc_count + source_stats.doc_count - ?, 0)
+       END,
        data_size_bytes = excluded.data_size_bytes,
        total_units = excluded.total_units,
        earliest_source_date = excluded.earliest_source_date,
        latest_source_date = excluded.latest_source_date,
-       needs_refresh = 0,
-       last_computed_at = excluded.last_computed_at
-     WHERE source_stats.dirty_version = excluded.dirty_version`,
+       needs_refresh = CASE
+         WHEN source_stats.dirty_version = excluded.dirty_version THEN 0
+         ELSE 1
+       END,
+       last_computed_at = excluded.last_computed_at`,
   ).run(
     sourceId,
     agg.count,
@@ -183,6 +194,7 @@ export function upsertSourceStatsRow(db: Db, sourceId: string, agg: SourceStatsA
     agg.latest,
     now,
     agg.capturedVersion,
+    agg.capturedDocCount,
   );
 }
 
