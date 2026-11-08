@@ -134,12 +134,78 @@ final class MobileJourneyUITests: XCTestCase {
         )
     }
 
+    /// Settings → the gateway goes away → the row says it is retrying, without
+    /// asking to pair again → the gateway returns and the user comes back to the
+    /// app → connected on the same pairing. The forwarder stands in for the
+    /// network, because a simulator shares its host's and cannot lose it.
+    func testGatewayOutageRecoversWithoutPairingAgain() throws {
+        let host = try XCTUnwrap(gateway.url.host)
+        let forwarder = LoopbackForwarder(targetHost: host, targetPort: UInt16(gateway.url.port ?? 443))
+        defer { forwarder.stop() }
+        let port = try runAsync { try await forwarder.start() }
+        try launchPaired(pairedUrl: XCTUnwrap(URL(string: "https://127.0.0.1:\(port)")))
+        tap(app.buttons["phoneSetup.choose"], "Choose what to add", timeout: 60)
+        tap(app.buttons["phoneSetup.skip"], "Skip for now")
+
+        tap(app.buttons["menu.toggle"], "the menu button")
+        tap(app.buttons["menu.settings"], "the Settings menu row")
+        XCTAssertTrue(
+            app.staticTexts["Connected"].waitForExistence(timeout: 30),
+            "Settings never showed the live connection"
+        )
+
+        forwarder.stop()
+        XCTAssertTrue(
+            element(containing: "Reconnecting to gateway").waitForExistence(timeout: 30),
+            "the outage did not read as a temporary state"
+        )
+        XCTAssertFalse(element(containing: "Authentication failed").exists)
+        XCTAssertFalse(element(containing: "Couldn't verify gateway certificate").exists)
+        XCTAssertTrue(
+            element(containing: "Could not connect to the server").waitForExistence(timeout: 30),
+            "the row dropped the transport's diagnostic"
+        )
+        XCTAssertFalse(
+            element(containing: "re-pair using").exists,
+            "a brief outage must not suggest pairing again"
+        )
+
+        _ = try runAsync { try await forwarder.start(port: port) }
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(
+            app.staticTexts["Connected"].waitForExistence(timeout: 30),
+            "the app did not reconnect on the same pairing"
+        )
+    }
+
     // MARK: - Steps
 
-    private func launchPaired() throws {
+    private func launchPaired(pairedUrl: URL? = nil) throws {
         let deviceName = "Journey iPhone \(UUID().uuidString.prefix(8))"
-        app.launchEnvironment["DEMO_PAIRING_JSON"] = try gateway.automationPairingJSON(deviceName: deviceName)
+        app.launchEnvironment["DEMO_PAIRING_JSON"] = try gateway.automationPairingJSON(
+            deviceName: deviceName,
+            pairedUrl: pairedUrl
+        )
         app.launch()
+    }
+
+    /// Runs async setup from a synchronous test, which XCUITest's main-thread
+    /// tapping needs to stay.
+    private func runAsync(_ work: @escaping @Sendable () async throws -> UInt16) throws -> UInt16 {
+        let done = expectation(description: "async step")
+        final class Box: @unchecked Sendable { var result: Result<UInt16, Error>? }
+        let box = Box()
+        Task {
+            do {
+                box.result = try await .success(work())
+            } catch {
+                box.result = .failure(error)
+            }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 30)
+        return try XCTUnwrap(box.result).get()
     }
 
     private func search(for query: String) {

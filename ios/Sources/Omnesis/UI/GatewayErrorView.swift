@@ -171,6 +171,7 @@ struct GatewayErrorView: View {
     /// Friendly buckets every thrown `Error` maps into. Keeps the view
     /// free of raw `NSURLError` / GatewayClient internals.
     enum Kind: Equatable {
+        case offline
         case gatewayUnreachable
         case certificate
         case unauthorized
@@ -182,6 +183,7 @@ struct GatewayErrorView: View {
 
         var symbol: String {
             switch self {
+            case .offline: "wifi.slash"
             case .gatewayUnreachable: "wifi.exclamationmark"
             case .certificate: "lock.trianglebadge.exclamationmark"
             case .unauthorized, .forbidden: "lock.shield"
@@ -192,7 +194,7 @@ struct GatewayErrorView: View {
 
         var tint: Color {
             switch self {
-            case .gatewayUnreachable: Theme.textMuted
+            case .offline, .gatewayUnreachable: Theme.textMuted
             case .certificate: Theme.warning
             case .agentNotConfigured: Theme.accent
             case .unauthorized, .forbidden, .server, .unknown, .voice: Theme.warning
@@ -201,6 +203,7 @@ struct GatewayErrorView: View {
 
         var title: String {
             switch self {
+            case .offline: "This phone is offline"
             case .gatewayUnreachable: "Couldn't connect to gateway"
             case .certificate: "Couldn't verify gateway certificate"
             case .unauthorized: "Authentication failed"
@@ -214,6 +217,8 @@ struct GatewayErrorView: View {
 
         func detail(for context: String) -> String {
             switch self {
+            case .offline:
+                "Connect to Wi-Fi or mobile data, then retry. Your pairing is unchanged."
             case .gatewayUnreachable:
                 "Check that the gateway is running and this phone has internet. If you use Tailscale away from home, connect it on both devices and pair using the gateway's Tailscale hostname. A home-network address works only at home."
             case .certificate:
@@ -278,6 +283,8 @@ struct GatewayErrorView: View {
                  .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot,
                  .secureConnectionFailed:
                 return .certificate
+            case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
+                return .offline
             default:
                 break
             }

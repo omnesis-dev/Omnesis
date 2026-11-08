@@ -398,7 +398,9 @@ TLS: the test uses a `URLSession` with an "accept any cert" delegate (`LiveSessi
 
 Timings: the same delegate logs a `[live-e2e]` line per request with its DNS, connect, TLS, first-byte and body phases. When a request is slow or times out, read those lines first: `unfinished` names the phase it was stuck in.
 
-Not covered by this suite (intentional follow-ups): pairing-flow E2E (the test uses the bootstrap admin token directly) and DeviceSocket SSE subscription.
+The suite also runs the real `DeviceSocket` over the real WebSocket and TLS stack: a `LoopbackForwarder` takes the gateway away and brings it back, and path reports are scripted, because a simulator shares its host's network and `NWPathMonitor` never sees a change there. Radio transitions and iOS suspension can only be checked on a device.
+
+Not covered by this suite (intentional follow-up): pairing-flow E2E (the transport tests use the bootstrap admin token directly).
 
 ## Remote deploy via TestFlight
 
