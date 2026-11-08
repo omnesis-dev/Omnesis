@@ -93,6 +93,47 @@ function stubUsearch(
   } as unknown as UsearchReadHandle;
 }
 
+function unit(angle: number): Float32Array {
+  const v = new Float32Array(EMBEDDING_DIM);
+  v[0] = Math.cos(angle);
+  v[1] = Math.sin(angle);
+  return v;
+}
+
+describe("hnswSearchCandidates — re-ranking by the stored vectors", () => {
+  test("orders the graph's candidates by cosine with their stored vectors, not by its distance", () => {
+    // The graph (binary, Hamming) names `coarse` nearest, but `fine` is the
+    // closer vector by cosine; the stored vectors decide.
+    upsertChunks(db, [
+      chunk({ id: "a", documentId: "coarse", content: "alpha", embedding: unit(0.6) }),
+      chunk({ id: "b", documentId: "fine", content: "bravo", embedding: unit(0.1) }),
+      chunk({ id: "c", documentId: "far", content: "charlie", embedding: unit(2.5) }),
+    ]);
+    const graph = stubUsearch([
+      { key: rowidOf("coarse"), distance: 3 },
+      { key: rowidOf("fine"), distance: 9 },
+      { key: rowidOf("far"), distance: 40 },
+    ]);
+    (graph as unknown as { encoding: () => string }).encoding = () => "b1";
+    const out = hnswSearchCandidates(graph, db, unit(0), {}, 3);
+    expect(out.map((c) => c.documentId)).toEqual(["fine", "coarse", "far"]);
+    expect(out[0].score).toBeCloseTo(Math.cos(0.1), 5);
+    expect(out[1].score).toBeCloseTo(Math.cos(0.6), 5);
+    expect(out.map((c) => c.rank)).toEqual([1, 2, 3]);
+  });
+
+  test("a row without a stored vector scores by the graph's bits when the graph is binary", () => {
+    upsertChunks(db, [
+      chunk({ id: "a", documentId: "unscored", content: "alpha", embedding: null }),
+    ]);
+    const graph = stubUsearch([{ key: rowidOf("unscored"), distance: EMBEDDING_DIM / 4 }]);
+    (graph as unknown as { encoding: () => string }).encoding = () => "b1";
+    const out = hnswSearchCandidates(graph, db, unit(0), {}, 1);
+    expect(out).toHaveLength(1);
+    expect(out[0].score).toBeCloseTo(0.75, 5);
+  });
+});
+
 describe("hnswSearchCandidates — score conversion, sort, rank, slice", () => {
   test("hides source-deleted documents while their bounded index purge is pending", () => {
     upsertChunks(db, [

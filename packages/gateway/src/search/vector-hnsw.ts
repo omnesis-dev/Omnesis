@@ -10,13 +10,18 @@
  * over-fetch by a configurable multiplier, JOIN to `chunks` for
  * metadata, then post-filter in JS. An adaptive retry doubles the
  * over-fetch if the first pass yields too few results after filtering.
+ *
+ * The graph ranks its candidates by one bit per dimension (see
+ * `VECTOR_ENCODING`), which is enough to find the neighbourhood but not to
+ * order it. Each candidate's stored vector, read with its metadata, re-ranks
+ * the over-fetched set by cosine before it is cut to `limit`.
  */
 
 import { hasPostJoinFilter, normalizeDateTo } from "./metadata.js";
 import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
 import { visibleChunkClause } from "./visible-chunks.js";
 import type Database from "better-sqlite3";
-import type { VectorReadSource } from "../indexer/usearch-index.js";
+import type { VectorEncoding, VectorReadSource } from "../indexer/usearch-index.js";
 import type { SearchCandidate, SearchFilters } from "./types.js";
 
 type Db = Database.Database;
@@ -101,6 +106,7 @@ function fetchAndFilter(
   const rowids = hnswResults.map((r) => r.key);
   const distanceByRowid = new Map<bigint, number>();
   for (const r of hnswResults) distanceByRowid.set(r.key, r.distance);
+  const encoding = usearch.encoding?.() ?? "f32";
 
   // Batch fetch chunk metadata via rowid IN (...).
   const placeholders = rowids.map(() => "?").join(",");
@@ -112,8 +118,11 @@ function fetchAndFilter(
       // top-k — is pure waste. The vector stage scores by distance, never by
       // text; the pipeline hydrates `chunkText` for the FINAL results by
       // chunkRowid (see hydrate-chunks.ts), exactly as the BM25 + browse paths do.
+      // `embedding` is selected: the stored vector re-ranks what the graph's
+      // bit codes found.
       `SELECT c.rowid, c.document_id, c.source_id, c.document_type,
-              c.title, c.source_url, c.source_created_at, c.author, c.tags, c.relevance_score
+              c.title, c.source_url, c.source_created_at, c.author, c.tags, c.relevance_score,
+              c.embedding
          FROM chunks c
         WHERE c.rowid IN (${placeholders})
           AND ${visibleChunkClause("c")}`,
@@ -129,9 +138,11 @@ function fetchAndFilter(
     author: string | null;
     tags: string | null;
     relevance_score: number | null;
+    embedding: Buffer | null;
   }>;
 
   const docIdSet = documentIds ? new Set(documentIds) : undefined;
+  const queryNorm = Math.sqrt(queryEmbedding.reduce((sum, x) => sum + x * x, 0));
 
   // Tags filter: case-insensitive JSON-array membership check in JS.
   const filterTags = filters.tags?.map((t) => t.toLowerCase());
@@ -165,7 +176,9 @@ function fetchAndFilter(
       if (!filterTags.every((ft) => lower.includes(ft))) continue;
     }
 
-    const distance = distanceByRowid.get(BigInt(row.rowid)) ?? 1;
+    const score =
+      rescore(queryEmbedding, queryNorm, row.embedding) ??
+      graphScore(distanceByRowid.get(BigInt(row.rowid)), queryEmbedding.length, encoding);
     candidates.push({
       documentId: row.document_id,
       chunkRowid: row.rowid,
@@ -177,7 +190,7 @@ function fetchAndFilter(
       author: row.author,
       tags: row.tags,
       chunkText: "", // hydrated for final results by chunkRowid (hydrate-chunks.ts)
-      score: 1 - distance,
+      score,
       rank: 0,
       relevanceScore: row.relevance_score,
     });
@@ -186,4 +199,33 @@ function fetchAndFilter(
   candidates.sort((a, b) => b.score - a.score);
   for (let i = 0; i < candidates.length; i++) candidates[i].rank = i + 1;
   return candidates.slice(0, limit);
+}
+
+/**
+ * Cosine similarity of the query with a candidate's stored vector, or null
+ * when the row holds no vector of the query's dimension (an orphan the graph
+ * still names, or a row mid-re-embed), in which case the graph's own distance
+ * scores it.
+ */
+function rescore(query: Float32Array, queryNorm: number, stored: Buffer | null): number | null {
+  if (!stored || stored.byteLength !== query.length * 4 || queryNorm === 0) return null;
+  const vector = new Float32Array(stored.buffer, stored.byteOffset, query.length);
+  let dot = 0;
+  let norm = 0;
+  for (let i = 0; i < query.length; i++) {
+    dot += query[i] * vector[i];
+    norm += vector[i] * vector[i];
+  }
+  if (norm === 0) return null;
+  return dot / (queryNorm * Math.sqrt(norm));
+}
+
+/** A similarity in [0, 1] from the graph's distance: cosine, or bits that differ. */
+function graphScore(
+  distance: number | undefined,
+  dimensions: number,
+  encoding: VectorEncoding,
+): number {
+  if (distance === undefined) return 0;
+  return encoding === "b1" ? 1 - distance / dimensions : 1 - distance;
 }
