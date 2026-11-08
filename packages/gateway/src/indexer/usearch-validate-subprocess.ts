@@ -12,14 +12,20 @@
  * can observe. This process exits:
  *
  *   - 0  → the file loaded cleanly at the expected dimension (safe to open)
- *   - 1  → a catchable error (wrong dimension, unreadable) — treat as corrupt
+ *   - `USEARCH_FILE_REJECTED_EXIT_CODE` → the file was refused with a catchable
+ *     error (wrong dimension, unreadable); the reason goes to stderr
  *   - 2  → bad invocation (missing args)
  *   - (killed by signal) → native abort — the corruption fingerprint
+ *
+ * Exit 1 is deliberately not part of this contract: it is what Node reports for
+ * anything that goes wrong before this module runs, such as a failed import, and
+ * says nothing about the file.
  *
  * Argv: <usearchFilePath> <expectedDimension>. Never import this module; it is
  * only ever the spawned entry point.
  */
 
+import { USEARCH_FILE_REJECTED_EXIT_CODE } from "./usearch-boot-guard.js";
 import { validateUsearchFile } from "./usearch-index.js";
 
 const path = process.argv[2];
@@ -33,8 +39,9 @@ if (!path || !dimStr || !Number.isInteger(dim) || dim <= 0) {
 try {
   validateUsearchFile(path, dim);
   process.exit(0);
-} catch {
+} catch (err) {
   // Catchable failure (wrong dimension / unreadable). A structurally corrupt
-  // file never reaches here — it aborts the process inside load().
-  process.exit(1);
+  // file may never reach here — it can abort the process inside load().
+  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(USEARCH_FILE_REJECTED_EXIT_CODE);
 }

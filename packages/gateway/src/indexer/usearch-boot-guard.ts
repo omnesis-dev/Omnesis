@@ -14,31 +14,41 @@
  *
  * This guard closes that gap: before the gateway opens the sidecar in-process
  * (read registry on the main thread, write handle in the worker), it probes
- * the file in a throwaway subprocess. If the subprocess aborts / exits
- * non-zero, the file is quarantined (moved aside) so the in-process open sees
- * no file and rebuilds from `index.db`. The gateway boots instead of dying.
+ * the file in a throwaway subprocess. If the subprocess aborts or rejects the
+ * file, it is quarantined (moved aside) so the in-process open sees no file and
+ * rebuilds from `index.db`. The gateway boots instead of dying. One quarantined
+ * copy is kept for diagnosis; a graph can be gigabytes, so older ones are deleted.
  */
 
-import { existsSync, renameSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { createLogger, resolveSubprocessEntry } from "@omnesis/core";
+import { createLogger, resolveSubprocessEntry, type SubprocessEntry } from "@omnesis/core";
 
 const log = createLogger("gateway:usearch").child("boot-guard");
 
-// Generous: a healthy index of millions of vectors loads in seconds, so a
-// timeout means the load is wedged (treat as corrupt). Erring toward
-// quarantine is safe — the sidecar always rebuilds from index.db.
+// Generous: a healthy index of millions of vectors loads in seconds. A timeout
+// is inconclusive, like every other way of not reaching a verdict.
 const VALIDATE_TIMEOUT_MS = 120_000;
+
+/**
+ * The validator's "this file is bad" exit status: sysexits' EX_DATAERR, which
+ * Node never reports on its own. Exit 1 cannot carry this meaning, because it is
+ * also what Node reports for a validator that failed to load.
+ */
+export const USEARCH_FILE_REJECTED_EXIT_CODE = 65;
+
+// How much of the validator's stderr to log; a failed import's stack is long
+// and leads with its cause.
+const VALIDATOR_OUTPUT_LOG_CHARS = 500;
 
 export type UsearchGuardResult = "ok" | "absent" | "quarantined" | "inconclusive";
 
 // Signals a native abort raises when it dies inside usearch's load()/view().
-const CORRUPT_SIGNALS = new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL"]);
-// Their 128+n exit-code equivalents, for when a wrapper (tsx/node) reports the
-// crash as an exit status rather than a signal.
-// 128+signal. Signal *numbers* differ by OS — SIGBUS is 7 on Linux (135) but
-// 10 on macOS (138); SIGTRAP (5 → 133) can also surface a native abort.
-const CORRUPT_EXIT_CODES = new Set([132, 133, 134, 135, 138, 139]);
+const CORRUPT_SIGNALS = new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP"]);
+
+// A quarantined copy of any generation's graph, plain or from a temp file.
+const QUARANTINED_COPY = /\.usearch(?:\.tmp)?\.corrupt-/;
 
 /**
  * Validate the usearch file at `path` (expected dimension `dimensions`) in an
@@ -46,20 +56,33 @@ const CORRUPT_EXIT_CODES = new Set([132, 133, 134, 135, 138, 139]);
  * corrupt. Returns what happened. Safe to call when the file doesn't exist
  * (`"absent"`).
  *
- * Crucially, "the validator couldn't run to a verdict" (spawn failure,
- * OOM-kill, timeout) is NOT treated as corruption — quarantining a healthy
- * multi-GB index because `npx` was missing or the OOM killer reaped the probe
- * would force an expensive, needless rebuild on every such boot. Those return
+ * Crucially, "the validator couldn't run to a verdict" (spawn failure, a module
+ * that failed to load, OOM-kill, timeout) is NOT treated as corruption —
+ * quarantining a healthy multi-GB index because the probe never got to look at
+ * it would force an expensive, needless rebuild on every such boot. Those return
  * `"inconclusive"`: the file is left in place and we let the in-process open
  * proceed (it will succeed if the file is in fact fine).
+ *
+ * Copies quarantined by earlier boots are pruned whatever this boot finds.
+ *
+ * `validator` is the process to probe with; tests stand in for the real one to
+ * reach the failures it cannot be made to produce on demand.
  */
-export function quarantineCorruptUsearch(path: string, dimensions: number): UsearchGuardResult {
+export function quarantineCorruptUsearch(
+  path: string,
+  dimensions: number,
+  validator: SubprocessEntry = resolveSubprocessEntry(
+    "./usearch-validate-subprocess.ts",
+    import.meta.url,
+  ),
+): UsearchGuardResult {
+  pruneQuarantinedCopies(path);
   if (!existsSync(path)) return "absent";
 
-  const entry = resolveSubprocessEntry("./usearch-validate-subprocess.ts", import.meta.url);
-  const result = spawnSync(entry.command, [...entry.args, path, String(dimensions)], {
+  const result = spawnSync(validator.command, [...validator.args, path, String(dimensions)], {
     timeout: VALIDATE_TIMEOUT_MS,
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
+    encoding: "utf8",
   });
 
   if (result.status === 0 && !result.signal && !result.error) {
@@ -67,15 +90,15 @@ export function quarantineCorruptUsearch(path: string, dimensions: number): Usea
     return "ok";
   }
 
-  // Corrupt iff the validator actually ran and reported the file bad: exit 1
-  // (a catchable load error / wrong dimension) or a crash (native abort by
-  // signal or its 128+n exit code). Everything else — spawn error, SIGKILL
+  const validatorSaid = summarizeValidatorOutput(result.stderr);
+
+  // Corrupt iff the validator actually ran and reported the file bad: its
+  // rejection status (a catchable load error / wrong dimension) or a native
+  // abort. Everything else — spawn error, exit 1 (it could not load), SIGKILL
   // (OOM), SIGTERM (timeout), exit 2 (bad args) — is inconclusive.
-  const crashedNatively =
-    (result.signal != null && CORRUPT_SIGNALS.has(result.signal)) ||
-    (result.status != null && CORRUPT_EXIT_CODES.has(result.status));
-  const catchableFailure = result.status === 1;
-  const isCorrupt = !result.error && (crashedNatively || catchableFailure);
+  const crashedNatively = result.signal != null && CORRUPT_SIGNALS.has(result.signal);
+  const rejected = result.status === USEARCH_FILE_REJECTED_EXIT_CODE;
+  const isCorrupt = !result.error && (crashedNatively || rejected);
 
   if (!isCorrupt) {
     const why = result.error
@@ -84,22 +107,19 @@ export function quarantineCorruptUsearch(path: string, dimensions: number): Usea
         ? `killed by ${result.signal}`
         : `exit ${result.status}`;
     log.warn(
-      `usearch sidecar ${path} could not be validated (${why}); leaving it in place — the gateway will open it as-is`,
+      `usearch sidecar ${path} could not be validated (${why}${validatorSaid}); leaving it in place — the gateway will open it as-is`,
     );
     return "inconclusive";
   }
 
-  const reason = result.signal
-    ? `native abort (${result.signal})`
-    : result.status != null && CORRUPT_EXIT_CODES.has(result.status)
-      ? `native abort (exit ${result.status})`
-      : `invalid file (exit ${result.status})`;
+  const reason = `${result.signal ? `native abort (${result.signal})` : "invalid file"}${validatorSaid}`;
   const quarantinePath = `${path}.corrupt-${fsSafeTimestamp()}`;
   try {
     renameSync(path, quarantinePath);
     log.warn(
       `usearch sidecar ${path} failed validation (${reason}); moved to ${quarantinePath} — rebuilding from index.db`,
     );
+    pruneQuarantinedCopies(path);
   } catch (err) {
     // Move failed (file vanished, permissions). We've logged loudly; the
     // in-process open may still abort, but there's nothing more to do here.
@@ -110,6 +130,44 @@ export function quarantineCorruptUsearch(path: string, dimensions: number): Usea
     );
   }
   return "quarantined";
+}
+
+/** The validator's stderr as a one-line clause to append to a log reason. */
+function summarizeValidatorOutput(stderr: string | null): string {
+  const output = stderr?.trim().replace(/\s*\n\s*/g, " | ");
+  return output ? `: ${output.slice(0, VALIDATOR_OUTPUT_LOG_CHARS)}` : "";
+}
+
+/**
+ * Keep only the newest quarantined copy of the sidecar at `path`, and none of
+ * any other generation's, which nothing can come back to. The names' timestamps
+ * sort chronologically. Failure is logged and left for the next boot: disk
+ * usage should not stop the gateway from starting.
+ */
+function pruneQuarantinedCopies(path: string): void {
+  const dir = dirname(path);
+  let copies: string[];
+  try {
+    copies = readdirSync(dir).filter((name) => QUARANTINED_COPY.test(name));
+  } catch {
+    return; // No directory, so nothing to prune.
+  }
+  const ownPrefix = `${basename(path)}.corrupt-`;
+  const kept = copies
+    .filter((name) => name.startsWith(ownPrefix))
+    .sort()
+    .at(-1);
+  for (const name of copies) {
+    if (name === kept) continue;
+    try {
+      rmSync(join(dir, name), { force: true });
+      log.info(`removed older quarantined usearch sidecar ${name}`);
+    } catch (err) {
+      log.warn(
+        `could not remove quarantined usearch sidecar ${name}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 }
 
 /** Filesystem-safe UTC timestamp: `YYYYMMDDTHHMMSS`. */

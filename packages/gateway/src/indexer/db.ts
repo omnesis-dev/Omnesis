@@ -623,7 +623,7 @@ export const USEARCH_FILE_NAME = DERIVED_INDEX_FILE_PATTERN;
  * rebuilds it from encrypted `index.db` on boot.
  */
 export function purgeUsearchSidecars(configDir: string): number {
-  const sidecarName = /^index(?:-\d+)?\.usearch(?:\.tmp)?(?:\.corrupt-\d+)?$/;
+  const sidecarName = /^index(?:-\d+)?\.usearch(?:\.tmp)?(?:\.corrupt-[0-9T]+)?$/;
   let removed = 0;
   let entries: Dirent<string>[];
   try {

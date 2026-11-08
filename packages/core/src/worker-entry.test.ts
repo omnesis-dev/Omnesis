@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 import { isCompiledModule, resolveWorkerEntry, resolveSubprocessEntry } from "./worker-entry.js";
 
@@ -40,10 +45,34 @@ describe("resolveWorkerEntry", () => {
 });
 
 describe("resolveSubprocessEntry", () => {
-  test("source mode spawns npx tsx on the .ts entry", () => {
+  test("source mode spawns this node with the tsx loader on the .ts entry", () => {
     const entry = resolveSubprocessEntry("./auth-subprocess.ts", SRC_URL);
-    expect(entry.command).toBe("npx");
-    expect(entry.args).toEqual(["tsx", "/repo/packages/gateway/src/auth-subprocess.ts"]);
+    expect(entry.command).toBe(process.execPath);
+    expect(entry.args).toEqual([
+      "--import",
+      expect.stringMatching(/^file:.*\/tsx\/.*\.mjs$/),
+      "/repo/packages/gateway/src/auth-subprocess.ts",
+    ]);
+  });
+
+  test("a source-mode entry runs TypeScript from outside the workspace", () => {
+    const dir = mkdtempSync(join(tmpdir(), "subprocess-entry-"));
+    try {
+      const script = join(dir, "entry.ts");
+      writeFileSync(script, "const answer: number = 42;\nprocess.stdout.write(String(answer));\n");
+      const entry = resolveSubprocessEntry(
+        "./entry.ts",
+        pathToFileURL(join(dir, "caller.ts")).href,
+      );
+
+      const result = spawnSync(entry.command, entry.args, { cwd: dir, encoding: "utf8" });
+
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toBe("42");
+      expect(result.status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("compiled mode spawns node on the emitted .js entry", () => {

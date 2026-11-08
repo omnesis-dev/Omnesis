@@ -103,12 +103,7 @@ export function atomicWriteFileSync(
       // umask can mask the mode on some systems; force.
       chmodSync(tmp, opts.mode);
     }
-    const fd = openSync(tmp, "r");
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
+    fsyncFileSync(tmp);
     renameSync(tmp, path);
   } catch (err) {
     discardScratchSync(tmp);
@@ -165,7 +160,18 @@ async function discardScratch(tmp: string): Promise<void> {
   }
 }
 
-function fsyncDirSync(dir: string): void {
+/** Flush a file's contents to stable storage. Throws if the flush fails. */
+export function fsyncFileSync(path: string): void {
+  const fd = openSync(path, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Flush a directory entry, so a rename inside it survives a power loss. Best effort. */
+export function fsyncDirSync(dir: string): void {
   // Directory fsync is unsupported on Windows. Skip silently — the
   // file is already durable, only the rename atomicity is at risk.
   if (process.platform === "win32") return;

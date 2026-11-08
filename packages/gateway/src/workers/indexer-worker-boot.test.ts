@@ -1504,6 +1504,8 @@ describe("indexer worker boot persistence", () => {
       const graphAfter = statSync(paths.usearchIndexPath);
       expect(graphAfter.mtimeMs).toBe(graphBefore.mtimeMs);
       expect(graphAfter.size).toBe(graphBefore.size);
+      // No graph is held in memory, so the shutdown flush saved nothing and says so.
+      await expect(proxy.flushSave()).resolves.toBe(false);
     } finally {
       await proxy?.dispose();
       await closeServer(embedder.server);

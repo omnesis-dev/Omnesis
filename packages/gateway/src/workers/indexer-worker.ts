@@ -1620,13 +1620,14 @@ async function handlePauseIndexing(id: number): Promise<void> {
  * RESTORES instead of rebuilding (~18 min for ~800k vectors). This is terminal:
  * stops new cycles and cooperatively stops the current index pass after its
  * pending embedding page settles, leaving the backlog for the next boot.
- * It then saves. `ok` is false if the save
- * threw — the gateway proceeds and the next boot rebuilds (fail-safe).
+ * It then saves. `ok` is false if no graph is held in memory to save (before
+ * init, keyword-only, or a graph over the memory budget) or the save threw — the
+ * gateway proceeds and the next boot rebuilds or reopens the file (fail-safe).
  */
 async function handleFlushSave(id: number): Promise<void> {
   if (!state) {
-    // Pre-init: no graph in memory, nothing to save.
-    post({ type: "flushSaveComplete", id, ok: true });
+    // Pre-init: no graph in memory, nothing was saved.
+    post({ type: "flushSaveComplete", id, ok: false });
     return;
   }
   state.paused = true;
@@ -1640,14 +1641,15 @@ async function handleFlushSave(id: number): Promise<void> {
     // The in-flight job's own handler logged; we only need it settled so the
     // graph is no longer moving before we save.
   }
-  let ok = true;
+  const handle = state.usearchHandle;
+  let ok = handle !== undefined && !handle.isDetached;
   const purgeError = drainPendingSourcePurges();
   if (purgeError) {
     ok = false;
     log("error", "indexer-worker", `flush-save deferred with source purge pending: ${purgeError}`);
   } else {
     try {
-      state.usearchHandle?.save();
+      handle?.save();
     } catch (err) {
       ok = false;
       log(

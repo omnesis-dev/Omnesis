@@ -27,7 +27,8 @@
 
 import { existsSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { createLogger } from "@omnesis/core";
+import { dirname } from "node:path";
+import { createLogger, fsyncDirSync, fsyncFileSync } from "@omnesis/core";
 import usearch from "usearch";
 
 import { shrinkPageCacheForScan } from "./scan-page-cache.js";
@@ -299,9 +300,13 @@ export class UsearchWriteHandle {
     // HNSW graph traversal. This writes only the plaintext working copy; on
     // an encrypted install the gateway's shutdown re-materialises the durable
     // `index.usearch.enc` from it (see the boot/shutdown flow in `index.ts`).
+    // The syncs extend that atomicity to a power loss: without them the rename
+    // can reach the disk before the file's contents, leaving a torn graph that
+    // `usearch_saved_seq` would still vouch for.
     const tmp = `${this.path}.tmp`;
     this.index.save(tmp);
     try {
+      fsyncFileSync(tmp);
       renameSync(tmp, this.path);
     } catch (err) {
       try {
@@ -311,6 +316,7 @@ export class UsearchWriteHandle {
       }
       throw err;
     }
+    fsyncDirSync(dirname(this.path));
     this.dirty = false;
     // The on-disk graph is now committed; let the worker record the seq it
     // reflects. Runs AFTER the atomic rename so the stamp can never claim more
