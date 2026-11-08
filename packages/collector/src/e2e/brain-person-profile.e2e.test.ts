@@ -237,6 +237,19 @@ it("requires a complete profile read, blocks growth before verification and atom
   secondId = (await bench.obs.personAnnotations(personId)).annotations.find(
     (a) => a.id !== firstId,
   )!.id;
+  // Each new fact's first review is scheduled on its node `soonDelay` after it is
+  // saved, outside the work queue drainUntilQuiet watches. Let both run first:
+  // a review falling due while the third email is mid-plan reserves that fact, and
+  // the consolidation is then correctly handed off to a later offer of the email.
+  const reviewed = bench.sql.prepare(
+    "SELECT COUNT(DISTINCT subject_id) AS n FROM knowledge_work WHERE subject_kind='node' AND reason='review' AND status='completed' AND subject_id IN (?,?)",
+  );
+  await waitFor(
+    "the first review of both observations",
+    () => ((reviewed.get(firstId, secondId) as { n: number }).n === 2 ? true : null),
+    60_000,
+  );
+  await bench.drainUntilQuiet();
   const [thirdSource] = await bench.pushAndSettle([thirdDoc]);
   expect(transition).toBeDefined();
   const original = transition!;
@@ -248,6 +261,9 @@ it("requires a complete profile read, blocks growth before verification and atom
   const calls = nextFrontier < 0 ? offerTools : offerTools.slice(0, nextFrontier);
   expect(
     calls.filter((c) => c.tool === "annotation_search").map((c) => c.result?.data?.profile),
+    calls
+      .map((c) => `${c.tool}: ${c.result?.code ?? c.result?.resultType ?? "no result"}`)
+      .join(", "),
   ).toMatchObject([
     { totalFacts: 2, readComplete: false },
     { totalFacts: 2, readComplete: true },

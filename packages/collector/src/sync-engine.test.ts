@@ -538,6 +538,31 @@ describe("SyncEngine status tracking", () => {
     expect(gateway.documents).toHaveLength(0);
   });
 
+  test("a brokered account's needs-auth hint sends the operator to the broker, not to a sign-in here", async () => {
+    const source = makeSource("notion-pages:workspace-1", "notion:workspace-1", async () => {
+      throw new Error("invalid_grant: Token has been expired or revoked.");
+    });
+    let brokered = true;
+    engine.registerProvider({
+      ...makeProvider("notion:workspace-1", true, [source]),
+      brokered: () => brokered,
+    });
+    await engine.syncAll();
+
+    const status = engine.getStatuses().find((s) => s.sourceId === "notion-pages:workspace-1");
+    expect(status?.state).toBe("needs-auth");
+    expect(status?.lastError).toMatch(/^needs reauth: /);
+    expect(status?.lastError).toContain("sign the connection in again at the broker");
+    expect(status?.lastError).toContain("omnesis broker unlink notion workspace-1");
+    expect(status?.lastError).not.toContain("sources reauth");
+
+    // Once unlinked, the account is signed in here again, so the usual hint.
+    brokered = false;
+    await engine.syncAll();
+    const after = engine.getStatuses().find((s) => s.sourceId === "notion-pages:workspace-1");
+    expect(after?.lastError).toContain("cli -- sources reauth notion:workspace-1");
+  });
+
   test("auth-failure thrown from sync() (e.g. invalid_grant) flips state to needs-auth", async () => {
     const source = makeSource("gmail:a@b.com", "google:a@b.com", async () => {
       // Mimic googleapis throwing invalid_grant after a refresh-token revoke.

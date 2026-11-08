@@ -11,6 +11,7 @@ import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.transport.HostedSourceOptIn
 import dev.omnesis.android.transport.PermissionHealthCoordinator
 import dev.omnesis.android.transport.PermissionHealthReporter
+import dev.omnesis.android.transport.SourceRemovalReconciler
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +26,7 @@ object PermissionHealthModule {
         reporters: Set<@JvmSuppressWildcards PermissionHealthReporter>,
         optIns: Set<@JvmSuppressWildcards HostedSourceOptIn>,
         sessions: SessionManager,
+        activations: SourceRemovalReconciler,
     ): PermissionHealthCoordinator = PermissionHealthCoordinator(
         reporters = { reporters },
         admin = { sessions.session?.admin },
@@ -32,5 +34,7 @@ object PermissionHealthModule {
         deviceId = { sessions.session?.pairing?.deviceId },
         // A source this device does not host on its gateway has a stale opt-in: it goes off as on a new pairing.
         forgetSource = { sourceId -> optIns.firstOrNull { it.sourceId == sourceId }?.forget() },
+        // ...unless that opt-in is being turned on right now and its row is still on the way.
+        activations = activations,
     )
 }

@@ -280,25 +280,26 @@ private fun EphemeralRotation(
         onFlush(toolCallId)
     }
 
+    val hold = agentHold()
     LaunchedEffect(toolCallId, hasResult, expedite, hasPendingAnswerText) {
         if (!hasResult) return@LaunchedEffect
         if (expedite) {
             // The card may already have been visible a while; only wait out the
             // remaining min-visible floor before dismissing.
-            delay(if (hasPendingAnswerText) PostTextMinVisibleMs else MinVisibleMs)
+            hold(if (hasPendingAnswerText) PostTextMinVisibleMs else MinVisibleMs)
             dismissAndFlush()
             return@LaunchedEffect
         }
         if (count == 0) {
-            delay(HoldMs + RevealIntervalMs)
+            hold(HoldMs + RevealIntervalMs)
             dismissAndFlush()
             return@LaunchedEffect
         }
         for (i in 0 until count) {
             setIndex(i)
-            delay(RevealIntervalMs)
+            hold(RevealIntervalMs)
         }
-        delay(HoldMs)
+        hold(HoldMs)
         dismissAndFlush()
     }
 }
@@ -1027,27 +1028,28 @@ fun AgentEphemeralSqlCard(
     // static (header + spinner + parked query line), so a snapshot of the pending
     // state has nothing suspended to wait on. When the result arrives the query
     // line rolls in (if it wasn't already shown), then the rows roll, then fade.
+    val hold = agentHold()
     if (!freeze && hasResult) {
         LaunchedEffect(call.toolCallId, expedite, hasPendingAnswerText) {
             if (expedite) {
-                delay(if (hasPendingAnswerText) PostTextMinVisibleMs else MinVisibleMs)
+                hold(if (hasPendingAnswerText) PostTextMinVisibleMs else MinVisibleMs)
                 dismissAndFlush()
                 return@LaunchedEffect
             }
             if (sqlLine.isNotEmpty() && sqlIndex == null) {
                 sqlIndex = 0
-                delay(RevealIntervalMs)
+                hold(RevealIntervalMs)
             }
             if (rows.isEmpty()) {
-                delay(HoldMs + RevealIntervalMs)
+                hold(HoldMs + RevealIntervalMs)
                 dismissAndFlush()
                 return@LaunchedEffect
             }
             for (i in rows.indices) {
                 rowIndex = i
-                delay(RevealIntervalMs)
+                hold(RevealIntervalMs)
             }
-            delay(HoldMs)
+            hold(HoldMs)
             dismissAndFlush()
         }
     }

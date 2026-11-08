@@ -13,6 +13,7 @@ import {
   RELAY_RATE_LIMIT_DAILY,
   RELAY_RATE_LIMIT_HOURLY,
   RELAY_RATE_WINDOW_HOUR_MS,
+  RELAY_RATE_WINDOW_DAY_MS,
 } from "./store.js";
 import type { RelayTarget } from "./types.js";
 
@@ -56,6 +57,62 @@ function addCredential(
 }
 
 describe("RelayStore challenge and credential semantics", () => {
+  it("counts distinct unrevoked credentials with notification activity in (now - 24h, now]", () => {
+    const store = new RelayStore();
+    const now = RELAY_RATE_WINDOW_DAY_MS * 2;
+    const cutoff = now - RELAY_RATE_WINDOW_DAY_MS;
+    const old = addCredential(store, "old", cutoff - 1);
+    addCredential(store, "boundary", cutoff, { ...target, token: "boundary-token" });
+    addCredential(store, "recent", cutoff + 1, { ...target, token: "recent-token" });
+    addCredential(store, "future", now + 1, { ...target, token: "future-token" });
+    const android = addCredential(store, "android", cutoff - 1, {
+      platform: "android",
+      token: "android-token",
+      appId: "example.android",
+    });
+    expect(store.operationalSnapshot(now).activeCredentials24h).toEqual({ ios: 0, android: 0 });
+    const future = addCredential(store, "future-wake", cutoff - 1, {
+      ...target,
+      token: "future-wake-token",
+    });
+    store.consumeRateLimit(future.hash, now + 1);
+    expect(store.operationalSnapshot(now).activeCredentials24h.ios).toBe(0);
+    store.consumeRateLimit(old.hash, cutoff);
+    expect(store.operationalSnapshot(now).activeCredentials24h.ios).toBe(0);
+    store.consumeRateLimit(old.hash, cutoff + 1);
+    store.consumeRateLimit(old.hash, now);
+    store.consumeRateLimit(android.hash, now);
+    expect(store.operationalSnapshot(now)).toEqual({
+      activeCredentials: { ios: 5, android: 1 },
+      activeCredentials24h: { ios: 1, android: 1 },
+    });
+    store.revokeCredential(old.hash, now);
+    expect(store.operationalSnapshot(now).activeCredentials24h).toEqual({ ios: 0, android: 1 });
+    store.prune(now);
+    expect(store.operationalSnapshot(now).activeCredentials24h).toEqual({ ios: 0, android: 1 });
+    store.close();
+  });
+
+  it("retains recent activity across reopen without a schema migration or backfill", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-relay-recent-"));
+    dirs.push(dir);
+    const path = join(dir, "relay.db");
+    const store = new RelayStore(path);
+    const { hash } = addCredential(store, "persisted", 100);
+    const now = RELAY_RATE_WINDOW_DAY_MS + 100;
+    store.consumeRateLimit(hash, now);
+    store.close();
+    const reopened = new RelayStore(path);
+    expect(reopened.operationalSnapshot(now).activeCredentials24h.ios).toBe(1);
+    expect(
+      reopened.operationalSnapshot(now + RELAY_RATE_WINDOW_DAY_MS).activeCredentials24h.ios,
+    ).toBe(0);
+    expect(reopened.operationalSnapshot(now + RELAY_RATE_WINDOW_DAY_MS).activeCredentials.ios).toBe(
+      1,
+    );
+    reopened.close();
+  });
+
   it("recognizes only an active credential for the exact carrier target", () => {
     const store = new RelayStore();
     expect(store.hasActiveCredentialForTarget(target)).toBe(false);
@@ -124,8 +181,9 @@ describe("RelayStore challenge and credential semantics", () => {
     expect(store.challengePlatform("unanswered")).toBe("ios");
     expect(store.challengePlatform("unknown")).toBeNull();
     addCredential(store, "active", 100);
-    expect(store.operationalSnapshot()).toEqual({
+    expect(store.operationalSnapshot(100)).toEqual({
       activeCredentials: { ios: 1, android: 0 },
+      activeCredentials24h: { ios: 0, android: 0 },
     });
     expect(store.prune(600).unansweredChallenges).toEqual({ ios: 1, android: 0 });
     store.close();

@@ -440,6 +440,12 @@ const credentialsEntrySchema = z.object({
   providerName: z.string(),
   spec: z.unknown(),
   configured: z.boolean(),
+  /**
+   * Accounts of this provider whose credential the credential broker holds.
+   * Such an account needs nothing pasted here, so an add that would otherwise
+   * open the credentials wizard offers it instead. Absent from older collectors.
+   */
+  brokeredAccounts: z.array(z.string()).optional(),
 });
 const credentialsStatusResponse = z.object({
   hostname: z.string(),

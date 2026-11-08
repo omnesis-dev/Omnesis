@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,6 +70,7 @@ import dev.omnesis.android.designsystem.theme.OmRadius
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.dto.AgentToolResult
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -406,6 +408,24 @@ private fun ThinkingDots() {
 private const val WorkingRevealMs = 350L
 
 /**
+ * Holds the transcript's timed transitions at their first step, for screenshot captures only.
+ *
+ * Roborazzi's capture runs against the wall clock, not a test clock: a capture that stalls past
+ * these timers on a slow CI runner photographs a later state than the golden (the working dots
+ * revealed, a finished tool card gone). `LocalInspectionMode` can't be the switch, because the
+ * tests that drive these timers with a manual frame clock run under it too.
+ */
+internal val LocalAgentTimersFrozen = staticCompositionLocalOf { false }
+
+private val LiveAgentHold: suspend (Long) -> Unit = { delay(it) }
+private val FrozenAgentHold: suspend (Long) -> Unit = { awaitCancellation() }
+
+/** A `delay` for the transcript's timed transitions that [LocalAgentTimersFrozen] can hold still. */
+@Composable
+internal fun agentHold(): suspend (Long) -> Unit =
+    if (LocalAgentTimersFrozen.current) FrozenAgentHold else LiveAgentHold
+
+/**
  * The debounced visibility of the turn-level "working" dots — the transcript's answer to "is
  * anything still happening?" during the beats where no per-item card carries its own affordance:
  * a finished text block before the next tool call, `message.start` before the first delta, or a
@@ -421,12 +441,13 @@ private const val WorkingRevealMs = 350L
 @Composable
 internal fun rememberWorkingDotsRevealed(active: Boolean, revision: Int): Boolean {
     var revealed by remember { mutableStateOf(false) }
+    val hold = agentHold()
     LaunchedEffect(active, revision) {
         // A fresh token (revision change), a flip in eligibility, or first composition hides the
         // dots and re-arms the quiet timer; a real gap lets the delay run out and reveals them.
         revealed = false
         if (active) {
-            delay(WorkingRevealMs)
+            hold(WorkingRevealMs)
             revealed = true
         }
     }

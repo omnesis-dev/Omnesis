@@ -812,6 +812,16 @@ export class HttpGatewayClient implements GatewayClient {
     });
   }
 
+  async abandonStructuredPage(
+    sourceId: SourceId,
+    page: { id: string; writeEpoch: number },
+  ): Promise<{ abandoned: boolean }> {
+    return this.request(`/sync-state/${encodeURIComponent(sourceId)}/pending-page/abandon`, {
+      method: "POST",
+      body: JSON.stringify(page),
+    });
+  }
+
   /**
    * Push the full list of per-source URL canonicalizers to the gateway.
    * Sent at collector startup before the first sync runs; gateway holds

@@ -552,6 +552,11 @@ export interface GatewayClient {
     sourceId: SourceId,
     page: { id: string; writeEpoch: number },
   ): Promise<{ acknowledged: boolean }>;
+  /** Discard a page the gateway refused before its cursor committed. */
+  abandonStructuredPage?(
+    sourceId: SourceId,
+    page: { id: string; writeEpoch: number },
+  ): Promise<{ abandoned: boolean }>;
   /** Refresh source display/query metadata without reading or rewriting its cursor. */
   setSourceMeta?(sourceId: SourceId, meta: SourceSyncMeta): Promise<void>;
 

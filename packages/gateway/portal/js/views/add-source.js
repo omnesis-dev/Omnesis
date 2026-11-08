@@ -73,14 +73,23 @@ function descriptorIcon(d) {
  * `alreadyCollected` is the re-entrancy guard and is load-bearing: for a
  * `perAccount` spec the answer is otherwise always "yes", so the wizard's own
  * resume would reopen it, forever.
+ *
+ * `isAdded(accountId)` says whether the gateway already lists an account's
+ * source (see {@link isAccountRegistered}), so a brokered account that is
+ * skips nothing.
  */
-export function shouldOpenCredentialsWizard(spec, entry, alreadyCollected) {
+export function shouldOpenCredentialsWizard(spec, entry, alreadyCollected, isAdded = () => false) {
   if (alreadyCollected) return false;
   if (!spec) return false;
   // A provider-wide credential is asked for only when absent; a per-account one
   // belongs to the account being added, so an existing one says nothing.
   if (!spec.required && !spec.perAccount) return false;
   if (!entry) return false;
+  // A brokered account not added yet needs nothing pasted here: its credential
+  // is the broker's, and discovery offers it. Once every brokered account is
+  // added, the account being added is a new one, signed in here like any other.
+  // Same rule as the CLI's add.
+  if (entry.brokeredAccounts?.some((accountId) => !isAdded(accountId))) return false;
   if (!spec.perAccount && entry.configured) return false;
   return true;
 }
@@ -346,6 +355,15 @@ export function splitConfiguredAccounts(descriptorId, accountIds, registeredSour
     else fresh.push(accountId);
   }
   return { fresh, configured };
+}
+
+/**
+ * Whether the gateway already lists a source of this type for an account, on
+ * any device and enabled or not: the CLI add's rule for an added account.
+ */
+export function isAccountRegistered(descriptorId, registeredSources) {
+  return (accountId) =>
+    splitConfiguredAccounts(descriptorId, [accountId], registeredSources).fresh.length === 0;
 }
 
 /** Ask the selected collector to resolve a local source's account identity. */
@@ -1006,7 +1024,8 @@ export function AddSourceModal({ onClose, onAdded }) {
     try {
       const status = await getCredentialsStatus(deviceIdRef.current);
       const entry = (status.items || []).find((e) => e.fileKey === spec.fileKey);
-      if (!shouldOpenCredentialsWizard(spec, entry, false)) return false;
+      const isAdded = isAccountRegistered(d.id, registeredSources);
+      if (!shouldOpenCredentialsWizard(spec, entry, false, isAdded)) return false;
       setCredsWizard({ entry, descriptor: d, collectedParams, perAccount: !!spec.perAccount });
       return true;
     } catch {

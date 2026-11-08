@@ -68,13 +68,36 @@ export function buildRateLimitedHint(retryAfterMs: number, providerMessage?: str
  * <source-type>` when the providerId is unknown — the CLI accepts both
  * forms.
  */
-export function buildReauthHint(sourceId: string, providerId?: string): string {
+export function buildReauthHint(
+  sourceId: string,
+  providerId?: string,
+  opts: { brokered?: boolean } = {},
+): string {
+  if (opts.brokered) return brokeredReauthHint(sourceId, providerId);
   // Prefer the provider-id form (`google:user@gmail.com`) when we have it.
   // Falls back to source-type when called from a code path that hasn't
   // wired providerId through yet.
   const target =
     providerId && providerId.length > 0 ? providerId : parseSourceKey(sourceId).sourceType;
   return `${NEEDS_AUTH_ERROR_PREFIX}run \`cli -- sources reauth ${target}\` to re-authenticate`;
+}
+
+/**
+ * The remedy for an account whose credential the credential broker holds.
+ * Signing in here is refused for it (`auth.begin`), so the grant is renewed at
+ * the broker, or the link is dropped so the account can be signed in here.
+ */
+function brokeredReauthHint(sourceId: string, providerId?: string): string {
+  const key = providerId && providerId.length > 0 ? providerId : sourceId;
+  const separator = key.indexOf(":");
+  const unlink =
+    separator > 0
+      ? `omnesis broker unlink ${key.slice(0, separator)} ${key.slice(separator + 1)}`
+      : "omnesis broker unlink <provider> <account>";
+  return (
+    `${NEEDS_AUTH_ERROR_PREFIX}its credential comes from the credential broker: ` +
+    `sign the connection in again at the broker, or run \`${unlink}\` to sign it in here instead`
+  );
 }
 
 /** A registered source combining definition metadata with a live instance. */
@@ -183,6 +206,15 @@ export interface RegisteredProvider {
    * problem from the sync path where the concrete local error is.
    */
   renewableCredential: boolean;
+  /**
+   * Whether this account takes its credential from the credential broker.
+   *
+   * Read when the account needs signing in again, because the remedy differs:
+   * the broker renews the grant, and signing in here is refused. Read then
+   * rather than at registration, since `omnesis broker unlink` drops the
+   * binding while the source stays registered.
+   */
+  brokered?: () => boolean;
   sources: RegisteredSource[];
 }
 

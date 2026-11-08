@@ -319,21 +319,41 @@ class HealthSyncCoordinatorTest {
         )
     }
 
-    // ── sync-state write elision ──────────────────────────────────────
+    // ── a pass that moved nothing still records the sync ───────────────
 
     @Test
-    fun unchanged_cursor_with_existing_state_elides_the_write() = runTest {
+    fun unchanged_cursor_with_existing_state_still_records_the_sync() = runTest {
         // No permission granted anywhere → every type skips, cursor untouched.
         val fake = FakeHealthConnectClient(permissionController = FakePermissionController(grantAll = false))
         enqueueOk("""{"cursor":{},"lastSyncedAt":"2026-06-01T00:00:00Z"}""")
+        enqueueOk()
 
         val result = coordinator(fake).syncNow()
 
         assertEquals(HealthSyncCoordinator.SyncResult.Success(0), result)
-        // Only the GET — no ingest, and crucially no sync-state POST.
-        assertEquals(1, server.requestCount)
+        // No ingest, but the sync-state POST that stamps the gateway's last-synced time.
+        assertEquals(2, server.requestCount)
         assertEquals("GET", server.takeRequest().method)
+        val write = server.takeRequest()
+        assertEquals("POST", write.method)
+        assertEquals("/sync-state/health-connect:local", write.path)
         assertEquals(listOf("syncing", "completed"), eventStates())
+    }
+
+    @Test
+    fun never_synced_state_from_the_gateway_gets_its_first_write() = runTest {
+        // The gateway answers a source that never synced with 200 and null fields, not 404.
+        val fake = FakeHealthConnectClient(permissionController = FakePermissionController(grantAll = false))
+        enqueueOk("""{"cursor":null,"lastSyncedAt":null,"wipeEpoch":0}""")
+        enqueueOk()
+
+        val result = coordinator(fake).syncNow()
+
+        assertEquals(HealthSyncCoordinator.SyncResult.Success(0), result)
+        assertEquals(2, server.requestCount)
+        server.takeRequest()
+        val state = body(server.takeRequest())
+        assertEquals("Health Connect", state["label"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -573,13 +593,15 @@ class HealthSyncCoordinatorTest {
     @Test
     fun sequential_sync_now_calls_each_run_their_own_drain() = runTest {
         val fake = FakeHealthConnectClient(permissionController = FakePermissionController(grantAll = false))
-        enqueueOk("""{"cursor":{},"lastSyncedAt":"2026-06-01T00:00:00Z"}""")
-        enqueueOk("""{"cursor":{},"lastSyncedAt":"2026-06-01T00:00:00Z"}""")
+        repeat(2) {
+            enqueueOk("""{"cursor":{},"lastSyncedAt":"2026-06-01T00:00:00Z"}""")
+            enqueueOk() // each pass records its sync
+        }
 
         val c = coordinator(fake)
         assertEquals(HealthSyncCoordinator.SyncResult.Success(0), c.syncNow())
         assertEquals(HealthSyncCoordinator.SyncResult.Success(0), c.syncNow())
-        assertEquals(2, server.requestCount)
+        assertEquals(4, server.requestCount)
     }
 
     // ── push rejection: source removed / paused in Omnesis ────────────

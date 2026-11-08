@@ -513,14 +513,20 @@ describe("hardened-gateway.sh helpers", () => {
       const open = join(scratch, "open-dir");
       mkdirSync(open);
       chmodSync(open, 0o777);
+      const envLink = join(scratch, "env-link");
+      symlinkSync("/usr/bin/env", envLink);
       const res = sourced(`
-      if root_controlled /usr/bin/env; then echo "env:yes"; else echo "env:no:$UNSAFE_PATH"; fi
+      env_path="$(readlink -f "${envLink}")"
+      if root_controlled "$env_path"; then echo "env:yes"; else echo "env:no:$UNSAFE_PATH"; fi
       if root_controlled "${open}"; then echo "open:yes"; else echo "open:no:$UNSAFE_PATH"; fi
+      if root_controlled "${envLink}"; then echo "link:yes"; else echo "link:no:$UNSAFE_PATH"; fi
     `);
       expect(res.status, res.output).toBe(0);
       expect(res.stdout).toContain(`open:no:${open}`);
-      // /usr/bin is root's on every host this suite runs on.
+      // Like require_node, check the resolved executable: /usr/bin/env can
+      // itself be a symlink, whose mode is 777 even when its target is safe.
       expect(res.stdout).toContain("env:yes");
+      expect(res.stdout).toContain(`link:no:${envLink}`);
     },
   );
 

@@ -141,6 +141,7 @@ import { reconcileConfig } from "./config-reconcile.js";
 import {
   createIndexDatabase,
   purgeUsearchSidecars,
+  getUsearchEncoding,
   getUsearchSavedSeq,
   getUsearchSavedChangeSeq,
   getUsearchBackfillCursor,
@@ -3330,26 +3331,6 @@ const offNearDupInbox = subscribeNearDupInbox({
   }
 }
 
-// Boot-time seed of materialized people counts. Fire-and-forget so it
-// doesn't block startIndexer() — the people-counts periodic task does the
-// same refresh on every cycle, so a delayed boot-seed is fine.
-void (async () => {
-  const startMs = Date.now();
-  try {
-    const rows = await ioGate.peopleCounts();
-    const computedMs = Date.now() - startMs;
-    const { updated } = await writeGate.upsertPeopleCounts(rows);
-    const tookMs = Date.now() - startMs;
-    log.info(
-      `startup refreshPeopleCounts in ${tookMs}ms (compute=${computedMs}ms, ${updated} of ${rows.length} rows changed)`,
-    );
-  } catch (err) {
-    log.error(
-      `startup refreshPeopleCounts failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-})();
-
 // Token-usage flush — periodic drain of the buffer the auth middleware
 // fills. One task replaces the inline Map+coalesce in server.ts.
 const tokenUsageBundle = tokenUsageFlushTask(
@@ -3877,6 +3858,7 @@ const doShutdown = async (): Promise<void> => {
           vectorWriteSeq: savedSeq,
           embedModel: model.name,
           embedDim: model.dim,
+          encoding: getUsearchEncoding(indexDb),
           ...(savedChangeSeq !== null ? { changeSeq: savedChangeSeq } : {}),
           backfillCursor: getUsearchBackfillCursor(indexDb),
         });

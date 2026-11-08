@@ -87,13 +87,23 @@ installer_failure_diagnostics() {
     printf '[install-e2e] installer diagnostics unavailable after restoration\n' >&2
     return 0
   fi
-  local label
+  # Enforce the byte bound with fixed-size reads, independent of host tail tools.
+  local label byte_tail='import sys
+tail = b""
+while True:
+    chunk = sys.stdin.buffer.read(8192)
+    if not chunk:
+        break
+    tail = (tail + chunk)[-8192:]
+sys.stdout.buffer.write(tail)
+'
   # Redact complete lines before byte truncation, which must never expose a
   # token fragment stripped of its field name. Post-setup daemon logs stay private.
+  # Save the console on fd3; tool and pipeline-coordinator stderr stay private.
   for label in client absence no-service; do
     if [ -s "$SESSION/$label.private.log" ] && [ ! -L "$SESSION/$label.private.log" ]; then
       printf '[install-e2e] redacted %s installer tail\n' "$label" >&2
-      if ! tail -n 50 "$SESSION/$label.private.log" | redact | tail -c 8192 >&2; then
+      if ! { tail -n 50 "$SESSION/$label.private.log" | redact | "$PYTHON" -c "$byte_tail" >&3; } 3>&2 2>/dev/null; then
         printf '[install-e2e] installer diagnostic filtering unavailable\n' >&2
       fi
     fi
@@ -112,7 +122,7 @@ PYDIAG
   then
     if [ -f "$SESSION/gateway.private.log" ] && [ ! -L "$SESSION/gateway.private.log" ]; then
       printf '[install-e2e] redacted gateway pre-readiness tail\n' >&2
-      if ! tail -n 50 "$SESSION/gateway.private.log" | redact | tail -c 8192 >&2; then
+      if ! { tail -n 50 "$SESSION/gateway.private.log" | redact | "$PYTHON" -c "$byte_tail" >&3; } 3>&2 2>/dev/null; then
         printf '[install-e2e] startup diagnostic filtering unavailable\n' >&2
       fi
     fi

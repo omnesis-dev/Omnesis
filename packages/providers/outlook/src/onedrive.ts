@@ -19,6 +19,7 @@ import {
   DeltaExpiredError,
   AuthError,
   toConnectionAuthError,
+  type GraphAccessToken,
 } from "./graph-client.js";
 import {
   ONEDRIVE_PAGE_SIZE,
@@ -125,7 +126,7 @@ export class OneDriveSource {
   private extractAttachment?: AttachmentExtractFn;
 
   constructor(
-    getAccessToken: () => Promise<string>,
+    getAccessToken: GraphAccessToken,
     sourceId: string,
     providerId: string,
     dataCutoff?: string,

@@ -429,6 +429,9 @@ export function peopleCountsRefreshTask(
 
 // ── Source-stats refresh drip ─────────────────────────────────────────
 
+/** A source's stats scans take at most one part in this many of a read worker's time. */
+const SOURCE_STATS_SCAN_SHARE = 20;
+
 export function sourceStatsRefreshTask(
   opts: BackfillTaskOptsInternal,
 ): PeriodicTask<unknown, IdleResult> {
@@ -444,6 +447,19 @@ export function sourceStatsRefreshTask(
   // messages, a digest of browser visits — that is a different number, and two
   // clients end up disagreeing about the same source.
   let nextDirtyIndex = 0;
+  // A source's scan reads every one of its documents, so a source that is
+  // always ingesting — marked dirty again by every sync — would otherwise be
+  // scanned on every tick, each scan holding a read worker for as long as the
+  // source is large. A source waits out a cooldown proportional to its last
+  // scan before it is scanned again, so scanning it takes at most a fixed
+  // share of a read worker; its count stays exact meanwhile through the
+  // inline bumps, and only its size, units and date range age.
+  const lastScan = new Map<string, { at: number; ms: number }>();
+  const coolingDown = (sid: string, now: number): boolean => {
+    const last = lastScan.get(sid);
+    if (!last) return false;
+    return now - last.at < Math.max(statsRefreshIntervalMs, last.ms * SOURCE_STATS_SCAN_SHARE);
+  };
   return {
     name: taskName,
     runner: "main",
@@ -463,14 +479,21 @@ export function sourceStatsRefreshTask(
           trackers.sourceStatsRefresh.setRemaining(0);
           return { idle: true };
         }
+        const now = Date.now();
+        const due = dirty.filter((sid) => !coolingDown(sid, now));
+        if (due.length === 0) {
+          trackers.sourceStatsRefresh.setRemaining(dirty.length);
+          return { idle: true };
+        }
 
         // Round-robin, so a source that cannot commit yields its turn.
-        if (nextDirtyIndex >= dirty.length) nextDirtyIndex = 0;
-        const sid = dirty[nextDirtyIndex];
+        if (nextDirtyIndex >= due.length) nextDirtyIndex = 0;
+        const sid = due[nextDirtyIndex];
         nextDirtyIndex += 1;
         const startMs = Date.now();
         const agg = await ioGate.sourceStatsRow(sid);
         const computedMs = Date.now() - startMs;
+        lastScan.set(sid, { at: startMs, ms: computedMs });
         await writeGate.upsertSourceStatsRow(sid, agg);
         // Push the actual remaining dirty count straight from the
         // compute-side query — it's already cheap (PK lookup on small

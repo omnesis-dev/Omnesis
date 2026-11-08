@@ -167,6 +167,16 @@ credential or digest, nonce, app identity, gateway identity, notification data,
 raw carrier response, or request source. `relay_abuse_rejections_total` uses
 only fixed endpoint and reason labels.
 
+`relay_active_credentials{platform}` counts all unrevoked registrations.
+`relay_active_credentials_24h{platform}` counts each unrevoked credential once
+if an authenticated, rate-admitted wake request occurred in the rolling interval
+`(now - 24 hours, now]`. Enrolment alone does not count. It uses retained wake
+rate-limit events, so no schema migration or additional identifying data is
+needed. Inactivity ages out of the 24-hour gauge without revoking the registration.
+Wake activity comes from a gateway and counts even if carrier delivery fails,
+unless that failure revokes the credential; it does not prove the phone was
+online or received a push. Revoked credentials are excluded.
+
 ## Offline credential revocation
 
 An operator can revoke one credential without loading APNs or FCM configuration.

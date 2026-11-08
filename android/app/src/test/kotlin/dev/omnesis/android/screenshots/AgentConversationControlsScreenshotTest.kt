@@ -32,6 +32,7 @@ import dev.omnesis.android.transport.client.ConversationControls
 import dev.omnesis.android.transport.client.ConversationSubmission
 import dev.omnesis.android.transport.client.ConversationSubmissionBody
 import dev.omnesis.android.ui.agent.*
+import dev.omnesis.android.ui.agent.LocalAgentTimersFrozen
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -119,7 +120,7 @@ class AgentConversationControlsScreenshotTest {
         queuedMessages = listOf(ConversationSubmission("failed-example", "Compare estimates", "failed", "Could not start this message"))))
     private fun capture(name: String, dark: Boolean, state: AgentCoordinator.UiState) {
         compose.setContent {
-            CompositionLocalProvider(LocalInspectionMode provides true) {
+            CompositionLocalProvider(LocalInspectionMode provides true, LocalAgentTimersFrozen provides true) {
                 OmnesisTheme(darkTheme = dark) {
                     AgentContent(state = state, catalog = SourceCatalog(), onOpenMenu = {}, onSend = { _, _ -> }, onStop = {}, onRetry = {}, onNewConversation = {}, onFlushEphemeral = {}, onOpenDocument = {})
                 }

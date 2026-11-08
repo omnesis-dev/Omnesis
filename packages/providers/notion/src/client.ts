@@ -80,6 +80,26 @@ export function isTransientNotionError(err: unknown): boolean {
   return false;
 }
 
+/**
+ * True if Notion refused to return the object to this integration: it no longer
+ * exists, or it lives somewhere the integration was never shared (a synced
+ * block's original, an inline database in an unshared page), or search, which
+ * is eventually consistent with retrieve and query, listed it a moment before
+ * it became readable. A retry within the request does not change the answer,
+ * and none of these says anything about the rest of the workspace.
+ */
+export function isInaccessibleNotionError(err: unknown): boolean {
+  return (
+    APIResponseError.isAPIResponseError(err) &&
+    (err.code === APIErrorCode.ObjectNotFound || err.code === APIErrorCode.RestrictedResource)
+  );
+}
+
+/** True if Notion answered that the object does not exist (or is not shared). */
+export function isNotionObjectNotFound(err: unknown): boolean {
+  return APIResponseError.isAPIResponseError(err) && err.code === APIErrorCode.ObjectNotFound;
+}
+
 export interface WithRetryOptions {
   sleepFn?: (ms: number) => Promise<void>;
   maxAttempts?: number;
@@ -342,11 +362,23 @@ export class NotionClient {
   private client: Client;
   private sleepFn: (ms: number) => Promise<void>;
 
-  constructor(accessToken: string, opts: NotionClientOptions = {}) {
-    this.client = new Client({
-      auth: accessToken,
-      timeoutMs: NOTION_REQUEST_TIMEOUT_MS,
-    });
+  /**
+   * `accessToken` is the workspace's token, or — for a workspace whose grant
+   * the credential broker holds — a function asked for the current one before
+   * every request, so a token the broker rotates is picked up mid-run.
+   */
+  constructor(accessToken: string | (() => Promise<string>), opts: NotionClientOptions = {}) {
+    this.client =
+      typeof accessToken === "string"
+        ? new Client({ auth: accessToken, timeoutMs: NOTION_REQUEST_TIMEOUT_MS })
+        : new Client({
+            timeoutMs: NOTION_REQUEST_TIMEOUT_MS,
+            fetch: async (url, init) => {
+              const headers = new Headers(init?.headers);
+              headers.set("authorization", `Bearer ${await accessToken()}`);
+              return fetch(url, { ...init, headers });
+            },
+          });
     this.sleepFn = opts.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
@@ -448,11 +480,28 @@ export class NotionClient {
     return pMap(
       blocks,
       async (block) => {
-        const children = block.has_children ? await this.fetchBlockTree(block.id) : [];
+        const children = block.has_children ? await this.fetchChildTree(block) : [];
         return { block, children };
       },
       { concurrency: NOTION_BLOCK_TREE_CONCURRENCY },
     );
+  }
+
+  /**
+   * A nested block whose children Notion will not return renders without
+   * them, so one unreadable subtree costs that subtree and not the page — or,
+   * as an escaping error, every page after it in the run.
+   */
+  private async fetchChildTree(block: BlockObjectResponse): Promise<BlockWithChildren[]> {
+    try {
+      return await this.fetchBlockTree(block.id);
+    } catch (err) {
+      if (!isInaccessibleNotionError(err)) throw err;
+      log.warn(
+        `Children of ${block.type} block ${block.id} are not readable; rendered without them`,
+      );
+      return [];
+    }
   }
 
   private async fetchAllBlocks(blockId: string): Promise<BlockObjectResponse[]> {

@@ -26,11 +26,20 @@ export class DeltaExpiredError extends Error {
  * resource was unreadable.
  */
 export class AuthError extends Error {
-  constructor(message?: string) {
-    super(message ?? "Authentication failed (401)");
+  constructor(message?: string, options?: ErrorOptions) {
+    super(message ?? "Authentication failed (401)", options);
     this.name = "AuthError";
   }
 }
+
+/**
+ * Where a Graph request gets its bearer token. Asked before every request, and
+ * once more with `forceRefresh` when Graph answers 401 — a token the issuer has
+ * since replaced (the credential broker rotating a grant other software shares)
+ * is renewed rather than read as a dead credential. A source that cannot renew
+ * returns the same token again, and the 401 stands.
+ */
+export type GraphAccessToken = (opts?: { forceRefresh?: boolean }) => Promise<string>;
 
 /**
  * One Microsoft account backs Outlook Email, Calendar, and OneDrive alike —
@@ -125,7 +134,7 @@ function isRedirect(status: number): boolean {
  * entire sync cycle and lose the per-folder progress.
  */
 export class GraphClient {
-  constructor(private getAccessToken: () => Promise<string>) {}
+  constructor(private getAccessToken: GraphAccessToken) {}
 
   async get<T>(
     path: string,
@@ -163,14 +172,23 @@ export class GraphClient {
   ): Promise<T> {
     return retry<T>(
       async () => {
+        const send = (token: string) =>
+          fetch(urlString, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              ...opts.headers,
+            },
+            redirect: opts.allowUnauthenticatedRedirect ? "manual" : "follow",
+          });
         const token = await this.getAccessToken();
-        const res = await fetch(urlString, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            ...opts.headers,
-          },
-          redirect: opts.allowUnauthenticatedRedirect ? "manual" : "follow",
-        });
+        let res = await send(token);
+        if (res.status === 401) {
+          // Once, and only with a token that differs from the one refused:
+          // the same token again means nothing upstream renewed it, and the
+          // 401 below is the answer.
+          const renewed = await this.getAccessToken({ forceRefresh: true });
+          if (renewed !== token) res = await send(renewed);
+        }
 
         if (res.ok) return parse(res);
 
