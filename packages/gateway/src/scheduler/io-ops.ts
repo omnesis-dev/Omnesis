@@ -75,6 +75,7 @@ import type { LikeSearchArgs, LikeSearchRow } from "../search/like-search.js";
 import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
 import type { KnowledgeReadabilityReads } from "../brain/knowledge/retrieval-fence.js";
 import type { AgentProvenanceReads } from "../search/agent-provenance.js";
+import type { PrivacyExchangeReads } from "../privacy/exchange-reads.js";
 import type {
   PersonSummary as LookupPersonSummary,
   UrlCanonicalizerSpec,
@@ -215,6 +216,10 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
   agentSearchProvenance: AgentProvenanceReads["agentSearchProvenance"];
   /** Graph context for search's top hits, each on its own; see `enrichGraphContextHits`. */
   graphContextProvenance: AgentProvenanceReads["graphContextProvenance"];
+  /** One page of the Privacy page's exchange feed; see `listPrivacyExchangeFeed`. */
+  privacyExchangeFeed: PrivacyExchangeReads["privacyExchangeFeed"];
+  /** One page of a privacy conversation's exchanges; see `listPrivacyExchangePresentations`. */
+  privacyConversationExchanges: PrivacyExchangeReads["privacyConversationExchanges"];
   /**
    * Compute `(personId, docCount, aliasCount)` for every unmerged person in
    * one read. Heavy — a full scan of `document_people` — which is why it
@@ -548,6 +553,9 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.knowledgeDocumentsReadable", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.agentSearchProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.graphContextProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  // The Privacy page's exchange pages: a person is waiting on each.
+  { name: "io.privacyExchangeFeed", priority: "user" },
+  { name: "io.privacyConversationExchanges", priority: "user" },
   { name: "io.peopleCounts", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCountsChunk", priority: "background" },
   { name: "io.mergeCandidates", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -694,6 +702,9 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
       call("io.agentSearchProvenance", [[...results], options]),
     graphContextProvenance: (hits, options) =>
       call("io.graphContextProvenance", [[...hits], options]),
+    privacyExchangeFeed: (request, now) => call("io.privacyExchangeFeed", [request, now]),
+    privacyConversationExchanges: (request, now) =>
+      call("io.privacyConversationExchanges", [request, now]),
     peopleCounts: () => call("io.peopleCounts", []),
     peopleCountsChunk: (cursor, batchSize) => call("io.peopleCountsChunk", [cursor, batchSize]),
     mergeCandidates: (perStepLimit) => call("io.mergeCandidates", [perStepLimit]),

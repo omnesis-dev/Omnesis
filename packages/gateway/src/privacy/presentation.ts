@@ -59,8 +59,25 @@ interface ExchangeRow {
   candidate_payload_json: string | null;
   failure_display_json: string | null;
   failure_payload_json: string | null;
-  agent_trace_payload_json: string | null;
 }
+
+/** A presented failure, before the stage it happened in is attributed. */
+interface PresentedFailure {
+  code: string;
+  message: string;
+  detail?: string;
+}
+
+/**
+ * What a failed exchange's own failure record says. A record that names its
+ * condition settles the failure; one that is missing, unreadable or generic
+ * leaves it to the agent transcript, which may carry a vetted terminal
+ * condition. `generic` is what an unsettled record presents when the
+ * transcript has none.
+ */
+type RecordedFailure =
+  | { settled: true; failure: PresentedFailure | null }
+  | { settled: false; generic: PresentedFailure | null };
 
 interface ExchangeCursor {
   createdAt: number;
@@ -217,6 +234,7 @@ function presentExchangeRows(
     includeAgentTracesTaskId && rows.some((row) => row.id === includeAgentTracesTaskId)
       ? recordedAgentTraces(db, [includeAgentTracesTaskId])
       : new Map<string, PresentedAgentTraces>();
+  const failures = presentedFailures(db, rows);
   return rows.map((row) =>
     toExchangePresentation(
       row,
@@ -224,9 +242,64 @@ function presentExchangeRows(
       sharedAtByTaskId.get(row.id) ?? null,
       tracesByTaskId.get(row.id)?.traces ?? [],
       tracesByTaskId.get(row.id)?.omittedAttempts ?? 0,
+      failures.get(row.id) ?? null,
       now,
     ),
   );
+}
+
+/**
+ * The failure each failed or canceled exchange presents. A transcript can run
+ * to megabytes, so it is read only for the exchanges whose own failure record
+ * leaves the failure to it, in one statement for the page.
+ */
+function presentedFailures(
+  db: PrivacyDb,
+  rows: readonly ExchangeRow[],
+): Map<string, PresentedFailure | null> {
+  const recorded = new Map<string, RecordedFailure>();
+  for (const row of rows) {
+    if (presentsFailure(normalizeTaskStatus(row.status))) {
+      recorded.set(row.id, readRecordedFailure(row.failure_display_json, row.failure_payload_json));
+    }
+  }
+  const transcripts = latestAgentTracePayloads(
+    db,
+    [...recorded].filter(([, failure]) => !failure.settled).map(([taskId]) => taskId),
+  );
+  return new Map(
+    [...recorded].map(([taskId, failure]) => [
+      taskId,
+      failure.settled
+        ? failure.failure
+        : (legacyTraceFailure(transcripts.get(taskId) ?? null) ?? failure.generic),
+    ]),
+  );
+}
+
+function presentsFailure(status: AnswerTaskAuditStatus): boolean {
+  return status === "failed" || status === "canceled";
+}
+
+/** The payload of each task's latest recorded agent transcript. */
+function latestAgentTracePayloads(
+  db: PrivacyDb,
+  taskIds: readonly string[],
+): Map<string, string | null> {
+  if (taskIds.length === 0) return new Map();
+  const rows = db
+    .prepare<string[], { id: string; payload_json: string | null }>(
+      `SELECT t.id,
+              (SELECT payload.payload_json
+                 FROM answer_audit_events trace
+                 JOIN answer_audit_payloads payload ON payload.id = trace.payload_id
+                WHERE trace.task_id = t.id AND trace.event_type = 'agent_trace'
+                ORDER BY trace.sequence DESC LIMIT 1) AS payload_json
+         FROM answer_tasks t
+        WHERE t.id IN (${taskIds.map(() => "?").join(", ")})`,
+    )
+    .all(...taskIds);
+  return new Map(rows.map((row) => [row.id, row.payload_json]));
 }
 
 /**
@@ -295,12 +368,7 @@ function readExchangeRows(
                  FROM answer_audit_events failed
                  LEFT JOIN answer_audit_payloads payload ON payload.id = failed.payload_id
                 WHERE failed.task_id = t.id AND failed.event_type = 'failed'
-                ORDER BY failed.sequence DESC LIMIT 1) AS failure_payload_json,
-              (SELECT payload.payload_json
-                 FROM answer_audit_events trace
-                 JOIN answer_audit_payloads payload ON payload.id = trace.payload_id
-                WHERE trace.task_id = t.id AND trace.event_type = 'agent_trace'
-                ORDER BY trace.sequence DESC LIMIT 1) AS agent_trace_payload_json
+                ORDER BY failed.sequence DESC LIMIT 1) AS failure_payload_json
          FROM answer_tasks t
          JOIN answer_workflows w ON w.id = t.workflow_id
          LEFT JOIN answer_releases r ON r.task_id = t.id
@@ -584,6 +652,7 @@ function toExchangePresentation(
   sharedAt: number | null,
   agentTraces: PrivacyAnswerAgentTrace[],
   agentTraceOmittedAttempts: number,
+  presentedFailure: PresentedFailure | null,
   now: number,
 ): PrivacyExchangePresentation {
   const approvalStatus = effectiveApprovalStatus(
@@ -604,17 +673,9 @@ function toExchangePresentation(
   const shared =
     externallyShared && (status === "released" || status === "released_with_reductions");
   const draft = recordedDraft(row.candidate_display_json, row.candidate_payload_json);
-  const parsedFailure =
-    status === "failed" || status === "canceled"
-      ? parseFailure(
-          row.failure_display_json,
-          row.failure_payload_json,
-          row.agent_trace_payload_json,
-        )
-      : null;
-  const failure = parsedFailure
+  const failure = presentedFailure
     ? {
-        ...parsedFailure,
+        ...presentedFailure,
         stage:
           row.candidate_display_json !== null || isTechnicalReviewFailure(fallbackCause)
             ? ("privacy_check" as const)
@@ -918,28 +979,27 @@ function normalizeDenialReason(value: string | null): PrivacyExchangePresentatio
   }
 }
 
-function parseFailure(
+function readRecordedFailure(
   displayJson: string | null,
   payloadJson: string | null,
-  agentTracePayloadJson: string | null,
-): { code: string; message: string; detail?: string } | null {
-  const legacyFailure = legacyTraceFailure(agentTracePayloadJson);
-  if (!displayJson || !payloadJson) return legacyFailure;
+): RecordedFailure {
+  if (!displayJson || !payloadJson) return { settled: false, generic: null };
   try {
     const display = JSON.parse(displayJson) as { text?: unknown; detail?: unknown };
     const payload = JSON.parse(payloadJson) as { reason?: unknown };
-    if (typeof display.text !== "string" || typeof payload.reason !== "string") return null;
+    if (typeof display.text !== "string" || typeof payload.reason !== "string") {
+      return { settled: true, failure: null };
+    }
     // Older rows only said "Nothing was released.". Do not echo model data;
     // use a strictly mapped, vetted terminal condition from their trace instead.
-    if (
-      display.text === "Nothing was released." ||
-      (legacyFailure && isGenericFailure(payload.reason, display.text))
-    )
-      return legacyFailure;
+    if (display.text === "Nothing was released.") return { settled: false, generic: null };
     const detail = typeof display.detail === "string" ? display.detail.trim() : "";
-    return { code: payload.reason, message: display.text, ...(detail ? { detail } : {}) };
+    const failure = { code: payload.reason, message: display.text, ...(detail ? { detail } : {}) };
+    return isGenericFailure(payload.reason, display.text)
+      ? { settled: false, generic: failure }
+      : { settled: true, failure };
   } catch {
-    return legacyFailure;
+    return { settled: false, generic: null };
   }
 }
 

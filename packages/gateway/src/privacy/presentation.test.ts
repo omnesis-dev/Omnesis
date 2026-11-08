@@ -562,6 +562,206 @@ describe("privacy exchange presentation", () => {
     });
   });
 
+  describe("a failure, from its record or its latest transcript", () => {
+    const HTTP_FAILURE = {
+      code: "http_request_error",
+      message:
+        "The model request could not reach the selected model. Check that the backend is running and reachable, then try again.",
+      stage: "answer_generation",
+    };
+    const GENERIC = { code: "answer_failed", message: "Omnesis could not complete this answer." };
+
+    function transcript(taskId: string, id: string, text: string, now = 125) {
+      appendAnswerAuditEvent(db, {
+        id,
+        taskId,
+        ownerId: "token:external-token",
+        kind: "agent_trace",
+        display: auditDisplay({ title: "Agent activity" }),
+        payload: { terminalStopReason: "error", messages: [{ parts: [{ text }] }] },
+        now,
+      });
+    }
+    const HTTP_TRANSCRIPT = "Model request failed: http_request_error: private diagnostic";
+
+    function failureRecord(taskId: string, displayJson: string, payloadJson?: string) {
+      db.prepare(
+        "UPDATE answer_audit_events SET display_json = ? WHERE task_id = ? AND event_type = 'failed'",
+      ).run(displayJson, taskId);
+      if (payloadJson !== undefined) {
+        db.prepare(
+          `UPDATE answer_audit_payloads SET payload_json = ?
+            WHERE event_id = (SELECT id FROM answer_audit_events
+                               WHERE task_id = ? AND event_type = 'failed')`,
+        ).run(payloadJson, taskId);
+      }
+    }
+
+    function feedFailure(taskId: string) {
+      return listPrivacyExchangeFeed(db, { limit: 50 }, FIXTURE_NOW).exchanges.find(
+        (exchange) => exchange.taskId === taskId,
+      )?.failure;
+    }
+
+    it("keeps a named failure and its detail, whatever the transcript says", () => {
+      const task = begin("A fictional question.");
+      transcript(task.taskId, "named-trace", HTTP_TRANSCRIPT);
+      failAnswerTask(db, task.taskId, "token:external-token", 150, {
+        code: "rate_limited",
+        message: "The model provider rate-limited this request. Try again shortly.",
+        detail: "  status 429  ",
+      });
+      expect(feedFailure(task.taskId)).toEqual({
+        code: "rate_limited",
+        message: "The model provider rate-limited this request. Try again shortly.",
+        detail: "status 429",
+        stage: "answer_generation",
+      });
+    });
+
+    it("keeps a generic failure when the transcript names no condition", () => {
+      const task = begin("A fictional question.");
+      transcript(task.taskId, "plain-trace", "An ordinary partial reply.");
+      failAnswerTask(db, task.taskId, "token:external-token", 150, GENERIC);
+      expect(feedFailure(task.taskId)).toEqual({ ...GENERIC, stage: "answer_generation" });
+    });
+
+    it("presents a generic failure without any transcript as the record says", () => {
+      const task = begin("A fictional question.");
+      failAnswerTask(db, task.taskId, "token:external-token", 150);
+      expect(feedFailure(task.taskId)).toEqual({
+        code: "answer_generation_or_review_failed",
+        message: "Omnesis could not complete this answer.",
+        stage: "answer_generation",
+      });
+    });
+
+    it("reads the latest attempt's transcript, not an earlier one", () => {
+      const task = begin("A fictional question.");
+      transcript(task.taskId, "earlier-trace", HTTP_TRANSCRIPT, 120);
+      transcript(task.taskId, "latest-trace", "The latest attempt says nothing vetted.", 130);
+      failAnswerTask(db, task.taskId, "token:external-token", 150, GENERIC);
+      expect(feedFailure(task.taskId)).toEqual({ ...GENERIC, stage: "answer_generation" });
+    });
+
+    it("presents nothing for a legacy record whose transcript names no condition", () => {
+      const task = begin("A fictional question.");
+      transcript(task.taskId, "plain-legacy-trace", "An ordinary partial reply.");
+      failAnswerTask(db, task.taskId, "token:external-token", 150);
+      failureRecord(task.taskId, '{"text":"Nothing was released."}');
+      expect(feedFailure(task.taskId)).toBeNull();
+    });
+
+    it("falls back to the transcript when the record cannot be read", () => {
+      const task = begin("A fictional question.");
+      transcript(task.taskId, "unreadable-record-trace", HTTP_TRANSCRIPT);
+      failAnswerTask(db, task.taskId, "token:external-token", 150, {
+        code: "rate_limited",
+        message: "Rate limited.",
+      });
+      failureRecord(task.taskId, "{not json");
+      expect(feedFailure(task.taskId)).toEqual(HTTP_FAILURE);
+    });
+
+    it("presents nothing for a record without text, even beside a vetted transcript", () => {
+      const task = begin("A fictional question.");
+      transcript(task.taskId, "textless-record-trace", HTTP_TRANSCRIPT);
+      failAnswerTask(db, task.taskId, "token:external-token", 150, GENERIC);
+      failureRecord(task.taskId, '{"text":null}');
+      expect(feedFailure(task.taskId)).toBeNull();
+    });
+
+    it("presents a canceled exchange with no failure record from its transcript", () => {
+      const stopped = begin("A fictional question.");
+      appendAnswerAuditEvent(db, {
+        id: "canceled-row-trace",
+        taskId: stopped.taskId,
+        ownerId: "token:external-token",
+        kind: "agent_trace",
+        display: auditDisplay({ title: "Agent activity" }),
+        payload: { terminalStopReason: "canceled" },
+        now: 125,
+      });
+      const silent = begin("Another fictional question.");
+      // Earlier gateways stored canceled exchanges; nothing writes them now.
+      db.prepare("UPDATE answer_tasks SET status = 'canceled' WHERE id IN (?, ?)").run(
+        stopped.taskId,
+        silent.taskId,
+      );
+      expect(feedFailure(stopped.taskId)).toEqual({
+        code: "answer_canceled",
+        message: "The request was canceled before Omnesis completed it.",
+        stage: "answer_generation",
+      });
+      expect(feedFailure(silent.taskId)).toBeNull();
+    });
+
+    it("reads a transcript only for the exchanges whose record leaves the failure open", () => {
+      // A shared answer, a refusal and a named failure, each with a large
+      // transcript, and two generic failures whose transcripts decide theirs.
+      const released = begin("A fictional released question.");
+      transcript(released.taskId, "released-trace", "x".repeat(200_000));
+      completeAnswerTask(db, {
+        taskId: released.taskId,
+        ownerId: "token:external-token",
+        review: baseReview,
+        now: 150,
+        outcome: {
+          kind: "release",
+          releaseId: "release-pinned",
+          answer: "A fictional answer.",
+          citations: [],
+          expectedDisclosureRevision: 0,
+        },
+      });
+      const refused = begin("A fictional refused question.");
+      transcript(refused.taskId, "refused-trace", "x".repeat(200_000));
+      completeAnswerTask(db, {
+        taskId: refused.taskId,
+        ownerId: "token:external-token",
+        review: { ...baseReview, fallbackCause: "hard_stop" },
+        now: 250,
+        outcome: { kind: "deny", reason: "hard_stop" },
+      });
+      const named = begin("A fictional failed question.");
+      transcript(named.taskId, "named-failure-trace", HTTP_TRANSCRIPT);
+      failAnswerTask(db, named.taskId, "token:external-token", 350, {
+        code: "rate_limited",
+        message: "Rate limited.",
+      });
+      const firstGeneric = begin("A fictional generic failure.");
+      transcript(firstGeneric.taskId, "first-generic-trace", HTTP_TRANSCRIPT);
+      failAnswerTask(db, firstGeneric.taskId, "token:external-token", 450, GENERIC);
+      const secondGeneric = begin("Another fictional generic failure.");
+      failAnswerTask(db, secondGeneric.taskId, "token:external-token", 550, GENERIC);
+
+      statements.length = 0;
+      const page = listPrivacyExchangeFeed(db, { limit: 50 }, FIXTURE_NOW);
+      const transcriptReads = statements.filter((sql) => sql.includes("'agent_trace'"));
+      // One statement for the whole page, naming only the two generic failures.
+      expect(transcriptReads).toHaveLength(1);
+      expect(transcriptReads[0]).toContain(`'${firstGeneric.taskId}'`);
+      expect(transcriptReads[0]).toContain(`'${secondGeneric.taskId}'`);
+      for (const settled of [released, refused, named]) {
+        expect(transcriptReads[0]).not.toContain(`'${settled.taskId}'`);
+      }
+      expect(page.exchanges.find((e) => e.taskId === firstGeneric.taskId)?.failure).toEqual(
+        HTTP_FAILURE,
+      );
+
+      // The next page, whose failures are all settled, reads no transcript at all.
+      const cursor = listPrivacyExchangeFeed(db, { limit: 2 }, FIXTURE_NOW).nextCursor!;
+      statements.length = 0;
+      const settledPage = listPrivacyExchangeFeed(db, { limit: 3, cursor }, FIXTURE_NOW);
+      expect(settledPage.exchanges.map((exchange) => exchange.taskId)).toEqual([
+        named.taskId,
+        refused.taskId,
+        released.taskId,
+      ]);
+      expect(statements.filter((sql) => sql.includes("'agent_trace'"))).toHaveLength(0);
+    });
+  });
+
   it("batches latest outcomes across conversations", () => {
     const ready = begin("What is the fictional project status?", 300);
     completeAnswerTask(db, {

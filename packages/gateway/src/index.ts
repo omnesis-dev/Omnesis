@@ -1436,6 +1436,8 @@ const agentLifecycle = new AgentLifecycle({
   mentionWorthGateActive,
   // `temporal_query` reads its window's store half off the main loop.
   temporalStoreReads: ioGate,
+  // The Privacy page's exchange pages read off the main loop.
+  privacyExchangeReads: ioGate,
   deleteDocumentIndexBatch: async (documentId, limit, sourceDeleted) => {
     return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);
   },

@@ -20,9 +20,12 @@ import {
   listPrivacyAuditEvents,
   listPrivacyConversations,
   listPrivacyDecisions,
-  listPrivacyExchangeFeed,
-  listPrivacyExchangePresentations,
 } from "./store.js";
+import {
+  directPrivacyExchangeReads,
+  exchangePage,
+  type PrivacyExchangeReads,
+} from "./exchange-reads.js";
 import {
   listPrivacyPolicyFamilies,
   listPrivacyPolicyVersions,
@@ -102,6 +105,11 @@ export interface PrivacyAdminServiceDeps {
   >;
   now?: () => number;
   releaseIdGen?: () => string;
+  /**
+   * Where the exchange pages are read. The gateway passes its read worker;
+   * without one they read on `db`.
+   */
+  exchangeReads?: PrivacyExchangeReads;
 }
 
 /**
@@ -116,10 +124,12 @@ export interface PrivacyAdminServiceDeps {
 export class PrivacyAdminService {
   private readonly now: () => number;
   private readonly releaseIdGen: () => string;
+  private readonly exchangeReads: PrivacyExchangeReads;
 
   constructor(private readonly deps: PrivacyAdminServiceDeps) {
     this.now = deps.now ?? Date.now;
     this.releaseIdGen = deps.releaseIdGen ?? (() => `release_${randomUUID()}`);
+    this.exchangeReads = deps.exchangeReads ?? directPrivacyExchangeReads(deps.db);
   }
 
   getPolicy(): Promise<PrivacyPolicyDocument> {
@@ -400,24 +410,32 @@ export class PrivacyAdminService {
     return listPrivacyAuditEvents(this.deps.db, conversationId, limit, cursor);
   }
 
-  listExchanges(
+  async listExchanges(
     conversationId: string,
     limit: number,
     cursor?: string,
     includeAgentTracesTaskId?: string,
-  ): PrivacyExchangePresentationPage | null {
-    return listPrivacyExchangePresentations(
-      this.deps.db,
-      conversationId,
-      limit,
-      cursor,
-      this.now(),
-      includeAgentTracesTaskId,
+  ): Promise<PrivacyExchangePresentationPage | null> {
+    return exchangePage(
+      await this.exchangeReads.privacyConversationExchanges(
+        {
+          conversationId,
+          limit,
+          ...(cursor !== undefined ? { cursor } : {}),
+          ...(includeAgentTracesTaskId !== undefined ? { includeAgentTracesTaskId } : {}),
+        },
+        this.now(),
+      ),
     );
   }
 
-  listExchangeFeed(limit: number, cursor?: string): PrivacyExchangeFeedPage {
-    return listPrivacyExchangeFeed(this.deps.db, { limit, cursor }, this.now());
+  async listExchangeFeed(limit: number, cursor?: string): Promise<PrivacyExchangeFeedPage> {
+    return exchangePage(
+      await this.exchangeReads.privacyExchangeFeed(
+        { limit, ...(cursor !== undefined ? { cursor } : {}) },
+        this.now(),
+      ),
+    );
   }
 
   getReviewerHealth(): PrivacyReviewerHealth {
