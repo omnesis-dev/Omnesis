@@ -216,6 +216,90 @@ describe("AnthropicCatalogService", () => {
     expect(anthropicIds(service)).toEqual(["anthropic/claude-sonnet-5"]);
   });
 
+  it("retries soon, backing off, when discovery fails before any list has loaded", async () => {
+    vi.useFakeTimers();
+    try {
+      const failing = () =>
+        clientFrom(async function* () {
+          await Promise.resolve();
+          yield* [];
+          throw new Error("Request was aborted.");
+        });
+      const clients = [
+        failing(),
+        failing(),
+        clientFrom(() => records(model("claude-sonnet-5", "Sonnet", { output: 128_000 }))),
+      ];
+      const createClient = vi.fn(() => clients.shift()!);
+      const service = new AnthropicCatalogService({
+        readApiKey: () => "same-key",
+        createClient,
+        refreshIntervalMs: 60 * 60_000,
+        retryDelayMs: 15_000,
+      });
+      service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(service.getCatalogEntry("anthropic/claude-sonnet-5")).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(createClient).toHaveBeenCalledTimes(2);
+      // The second failure doubles the delay.
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(createClient).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(createClient).toHaveBeenCalledTimes(3);
+      expect(service.getCatalogEntry("anthropic/claude-sonnet-5")).toMatchObject({
+        maxOutputTokens: 128_000,
+      });
+
+      // Loaded: nothing more until the periodic refresh.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(createClient).toHaveBeenCalledTimes(3);
+      service.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry early when a failure keeps a last-known-good list, or once stopped", async () => {
+    vi.useFakeTimers();
+    try {
+      const failing = () =>
+        clientFrom(async function* () {
+          await Promise.resolve();
+          yield* [];
+          throw new Error("temporary outage");
+        });
+      const clients = [clientFrom(() => records(model("claude-sonnet-5"))), failing(), failing()];
+      const createClient = vi.fn(() => clients.shift()!);
+      const service = new AnthropicCatalogService({
+        readApiKey: () => "same-key",
+        createClient,
+        refreshIntervalMs: 60 * 60_000,
+        retryDelayMs: 15_000,
+      });
+      service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await service.refresh();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(createClient).toHaveBeenCalledTimes(2);
+      service.stop();
+
+      const lone = new AnthropicCatalogService({
+        readApiKey: () => "same-key",
+        createClient: vi.fn(() => failing()),
+        refreshIntervalMs: 60 * 60_000,
+        retryDelayMs: 15_000,
+      });
+      await lone.refresh();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(lone.getCatalogEntry("anthropic/claude-sonnet-5")).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retains metadata for an assigned model removed from the authoritative picker list", async () => {
     const clients = [
       clientFrom(() =>
