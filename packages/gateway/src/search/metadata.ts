@@ -20,6 +20,7 @@
 
 import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
 import type { SearchFilters } from "./types.js";
+import type { LexicalFilter } from "./bm25.js";
 
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -90,6 +91,26 @@ export function buildMetadataFilter(filters: SearchFilters, tableAlias: string =
 
   const clause = conditions.length > 0 ? conditions.join(" AND ") : "1=1";
   return { clause, params };
+}
+
+/**
+ * The same filter as {@link buildMetadataFilter}, for a lexical ranker to apply
+ * while it scores. Null when the filter holds a predicate a ranker cannot
+ * evaluate (tags), so the ranker scores unfiltered and the SQL join filters.
+ */
+export function buildLexicalFilter(filters: SearchFilters): LexicalFilter | null {
+  if (filters.tags && filters.tags.length > 0) return null;
+  const hiddenSourceIds = hiddenSourceIdsToExclude(filters);
+  const filter: LexicalFilter = {
+    ...(filters.sourceIds && filters.sourceIds.length > 0 ? { sourceIds: filters.sourceIds } : {}),
+    ...(filters.documentTypes && filters.documentTypes.length > 0
+      ? { documentTypes: filters.documentTypes }
+      : {}),
+    ...(filters.dateFrom ? { dateFrom: filters.dateFrom } : {}),
+    ...(filters.dateTo ? { dateTo: normalizeDateTo(filters.dateTo) } : {}),
+    ...(hiddenSourceIds.length > 0 ? { excludeSourceIds: hiddenSourceIds } : {}),
+  };
+  return Object.keys(filter).length > 0 ? filter : null;
 }
 
 /**
