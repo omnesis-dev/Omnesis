@@ -42,6 +42,7 @@ import {
   peopleBackfillTask,
   tokenIdentityClassifyTask,
 } from "./backfill-tasks.js";
+import { sweepCollapsedCandidates } from "./backfill-helpers.js";
 import type { BackfillTaskOptsInternal } from "./backfill.js";
 import type { TaskContext } from "../types.js";
 
@@ -79,17 +80,18 @@ function makeEvalOpts(overrides: {
   applied: { added: number; changed: number; removed: number };
 }) {
   const kicked: string[] = [];
-  const sweep = vi.fn(async () => ({ swept: 0 }));
+  const sweep = vi.fn(async (): Promise<string[]> => []);
   const compute = vi.fn(async () => ({
     equivalences: [],
     dirtyVersion: overrides.meta.dirtyVersion,
   }));
   const opts = {
     writeGate: {
-      sweepCollapsedMergeCandidates: sweep,
+      acceptCollapsedMergeCandidates: vi.fn(async (ids: string[]) => ({ swept: ids.length })),
       upsertMergeEquivalences: vi.fn(async () => overrides.applied),
     },
     ioGate: {
+      collapsedMergeCandidates: sweep,
       mergeRulesMeta: vi.fn(async () => overrides.meta),
       mergeEquivalencesData: vi.fn(async () => ({})),
     },
@@ -356,6 +358,31 @@ describe("mergeCandidatesDetectTask — completion report", () => {
 
     expect(deferred).toEqual({ kind: "done", value: { idle: true } });
     expect(opts.cpuGate.scoreMergeCandidates).toHaveBeenCalledOnce();
+  });
+});
+
+describe("sweepCollapsedCandidates", () => {
+  test("finds candidates on the io gate and hands the writer only their ids", async () => {
+    const accept = vi.fn(async (ids: string[]) => ({ swept: ids.length }));
+    const found = vi.fn(async () => ["synth-candidate-1", "synth-candidate-2"]);
+    expect(
+      await sweepCollapsedCandidates(
+        { collapsedMergeCandidates: found },
+        { acceptCollapsedMergeCandidates: accept },
+      ),
+    ).toEqual({ swept: 2 });
+    expect(accept).toHaveBeenCalledWith(["synth-candidate-1", "synth-candidate-2"]);
+  });
+
+  test("asks nothing of the writer when nothing collapsed", async () => {
+    const accept = vi.fn(async (ids: string[]) => ({ swept: ids.length }));
+    expect(
+      await sweepCollapsedCandidates(
+        { collapsedMergeCandidates: async () => [] },
+        { acceptCollapsedMergeCandidates: accept },
+      ),
+    ).toEqual({ swept: 0 });
+    expect(accept).not.toHaveBeenCalled();
   });
 });
 

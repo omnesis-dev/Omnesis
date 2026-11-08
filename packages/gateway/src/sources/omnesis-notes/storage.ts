@@ -513,7 +513,9 @@ export function listNoteEntriesHistory(
   const where: string[] = [];
   const params: unknown[] = [];
   if (cursor) {
-    where.push(`(captured_at < ? OR (captured_at = ? AND id > ?))`);
+    // Newest first with ascending ids: bound the leading column, then
+    // exclude the cursor's own tie and the ids before it.
+    where.push(`captured_at <= ? AND NOT (captured_at = ? AND id <= ?)`);
     params.push(cursor.capturedAt, cursor.capturedAt, cursor.id);
   } else if (beforeDay) {
     where.push(`captured_at <= (SELECT MAX(captured_at) FROM note_entries WHERE day <= ?)`);

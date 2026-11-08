@@ -37,7 +37,12 @@ import {
   resolveTypeSafeApiKey,
 } from "./model-credentials.js";
 import { DecisionService } from "./inference/decision/decision-service.js";
-import { createDatabase, getDocumentTitlesAndSources, openReadOnlyDatabase } from "./db.js";
+import {
+  closeDrainingWal,
+  createDatabase,
+  getDocumentTitlesAndSources,
+  openReadOnlyDatabase,
+} from "./db.js";
 import { createServer } from "./server.js";
 import { GATEWAY_VERSION } from "./version.js";
 import { ReleaseCheckService } from "./release-check/service.js";
@@ -242,6 +247,7 @@ import { BackgroundJobsRegistry } from "./background-jobs/index.js";
 import { periodicJob } from "./background-jobs/scheduler-job.js";
 import { StatelessTracker } from "./background-jobs/trackers.js";
 import { derivationSlaTasks } from "./scheduler/tasks/derivation-sla.js";
+import { sweepCollapsedCandidates } from "./scheduler/tasks/backfill-helpers.js";
 import { DERIVATION_STAGES, type DerivationStage } from "./domain/DocumentDerivation.js";
 import { subscribeDerivationNudge } from "./scheduler/tasks/derivation-nudge.js";
 import { SubscriptionDeliveryService } from "./subscriptions/delivery.js";
@@ -500,7 +506,10 @@ const indexerStatus = new IndexerStatusReporter();
 // only connection with write access from this point on.
 {
   const bootDb = createDatabase(DB_PATH, { encryptionKey: storageEncryption.mainDbKey });
-  bootDb.close();
+  const drained = closeDrainingWal(bootDb, (frames) =>
+    log.info(`draining ${frames}-frame WAL before start`),
+  );
+  if (drained.frames > 0) log.info(`drained ${drained.frames}-frame WAL in ${drained.ms}ms`);
 }
 
 // Scheduler is the single brain for "an IO task that needs to be done"
@@ -1722,6 +1731,7 @@ const indexerLifecycle = new IndexerLifecycle({
   indexDb,
   configDir,
   memoryBudget,
+  isUserActive: () => scheduler.isAdmissionPaused(),
   initialModelInfo: {
     name: embeddingModelName,
     path: embeddingModelPath,
@@ -2622,7 +2632,7 @@ const app = createServer(db, DB_PATH, {
         if (result.added + result.changed + result.removed > 0) {
           scheduler.kickPeriodic("backfill.interactionScoresRefresh");
           scheduler.kickPeriodic("backfill.peopleCountsRefresh");
-          await writeGate.sweepCollapsedMergeCandidates();
+          await sweepCollapsedCandidates(ioGate, writeGate);
         }
       }),
   },

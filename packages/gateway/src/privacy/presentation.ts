@@ -260,8 +260,8 @@ function readExchangeRows(
     filterParams.push(options.taskId);
   }
   if (before) {
-    filters.push("(t.created_at < ? OR (t.created_at = ? AND t.id < ?))");
-    filterParams.push(before.createdAt, before.createdAt, before.id);
+    filters.push("(t.created_at, t.id) < (?, ?)");
+    filterParams.push(before.createdAt, before.id);
   }
   const rows = db
     .prepare<unknown[], ExchangeRow>(

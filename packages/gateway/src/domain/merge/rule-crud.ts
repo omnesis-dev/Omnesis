@@ -360,8 +360,8 @@ export function listMergeRules(db: Db, opts: ListMergeRulesOpts = {}): MergeRule
     params.push(opts.touchesPersonId, opts.touchesPersonId);
   }
   if (opts.beforeCreated) {
-    where.push("(created_at < ? OR (created_at = ? AND id < ?))");
-    params.push(opts.beforeCreated.createdAt, opts.beforeCreated.createdAt, opts.beforeCreated.id);
+    where.push("(created_at, id) < (?, ?)");
+    params.push(opts.beforeCreated.createdAt, opts.beforeCreated.id);
   }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const sql = `SELECT * FROM merge_rules ${whereSql}

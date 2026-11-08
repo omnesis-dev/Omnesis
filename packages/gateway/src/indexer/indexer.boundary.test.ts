@@ -68,6 +68,9 @@ class MockSource implements DocumentSource {
   async listAllIds() {
     return this.allIds;
   }
+  async listIndexableIds() {
+    return this.allIds;
+  }
   async getByIds(ids: string[]) {
     this.getByIdsCalls += 1;
     const ix = new Map(this.documents.map((d) => [d.id, d]));

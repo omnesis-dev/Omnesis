@@ -686,8 +686,9 @@ function readWatchNotificationWakeOutcomes(
  * Writing the actionable set as a bare `state = 'pending' OR (state = 'leased'
  * AND leased_until <= ?)` does not reach that column: SQLite can only turn an
  * OR into two index seeks through its cost-based multi-index-OR optimization,
- * and the gateway never runs ANALYZE, so with no `sqlite_stat1` the planner
- * falls back to `(device_id=?)` alone and walks every row the device holds.
+ * and with no `sqlite_stat1` — a database not yet analyzed, or a statistics row
+ * that rates the index coarsely — the planner falls back to `(device_id=?)`
+ * alone and walks every row the device holds.
  * Naming the two states in an `IN` list constrains the index prefix
  * unconditionally, leaving the disjunction as a filter over the rows that
  * survive it. The statements are exported so the plan regression test in

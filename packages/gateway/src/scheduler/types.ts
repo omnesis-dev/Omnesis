@@ -39,9 +39,18 @@ export type RunnerKind = "writer" | "io" | "main" | "indexer" | "cpu";
  *                                   as the new args. The original enqueue Promise
  *                                   stays unresolved — only a final "done" wins.
  */
-export type TaskOutcome<TArgs, TResult> =
-  | { kind: "done"; value: TResult; cpuUserUs?: number; cpuSystemUs?: number }
-  | { kind: "yield"; resume: TArgs; cpuUserUs?: number; cpuSystemUs?: number };
+export type TaskOutcome<TArgs, TResult> = (
+  { kind: "done"; value: TResult } | { kind: "yield"; resume: TArgs }
+) & {
+  cpuUserUs?: number;
+  cpuSystemUs?: number;
+  /**
+   * Time the task waited inside its worker before it started, such as behind
+   * a WAL checkpoint the writer ran between ops. Recorded as queue time,
+   * not as the task's own execution.
+   */
+  workerQueueMs?: number;
+};
 
 /**
  * Per-execution context passed to a Task's run() function.

@@ -505,8 +505,8 @@ export function listAllSubscriptions(
     params.push(status);
   }
   if (after) {
-    conditions.push("(s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))");
-    params.push(after.timestamp, after.timestamp, after.id);
+    conditions.push("(s.updated_at, s.id) < (?, ?)");
+    params.push(after.timestamp, after.id);
   }
   const rows = db
     .prepare<unknown[], StoredSubscriptionRow>(
@@ -718,12 +718,8 @@ export function listSubscriptionApprovalPage(
         : status === "expired"
           ? ["(a.status = 'expired' OR (a.status = 'pending' AND a.expires_at <= ?))", [now]]
           : ["a.status = ?", [status]];
-  const cursorWhere = after ? "AND (a.created_at < ? OR (a.created_at = ? AND a.id < ?))" : "";
-  const params = [
-    ...statusParams,
-    ...(after ? [after.createdAt, after.createdAt, after.id] : []),
-    safeLimit + 1,
-  ];
+  const cursorWhere = after ? "AND (a.created_at, a.id) < (?, ?)" : "";
+  const params = [...statusParams, ...(after ? [after.createdAt, after.id] : []), safeLimit + 1];
   const rows = db
     .prepare<unknown[], StoredSubscriptionApprovalRow>(
       `${APPROVAL_SELECT}
@@ -822,11 +818,11 @@ export function listSubscriptionFirings(
          LEFT JOIN subscription_revisions r
            ON r.subscription_id = f.subscription_id AND r.revision = f.revision
         WHERE f.subscription_id = ?
-          ${after ? "AND (f.fired_at < ? OR (f.fired_at = ? AND f.id < ?))" : ""}
+          ${after ? "AND (f.fired_at, f.id) < (?, ?)" : ""}
         ORDER BY f.fired_at DESC, f.id DESC
         LIMIT ?`,
     )
-    .all(subscriptionId, ...(after ? [after.timestamp, after.timestamp, after.id] : []), limit + 1);
+    .all(subscriptionId, ...(after ? [after.timestamp, after.id] : []), limit + 1);
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);
   const last = page.at(-1);

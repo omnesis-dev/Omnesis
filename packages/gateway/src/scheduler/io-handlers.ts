@@ -70,6 +70,7 @@ import { resolvePersonId } from "../domain/PeopleResolutionService.js";
 import { computeAutoMergePairs, computeTransitiveCollapse, pickMergeWinner } from "../people.js";
 import {
   computeEnrichedMergeCandidates,
+  findCollapsedMergeCandidates,
   explainMergeCandidateVisibility,
   fetchMergeCandidatesData,
   selectTokensNeedingClassification,
@@ -336,6 +337,8 @@ export const ioHandlers = {
   // ── source-stats ───────────────────────────────────────────────────
   "io.dirtyStatsSourceIds": (db: Db) => listDirtyStatsSourceIds(db),
   "io.sourceStatsRow": (db: Db, sourceId: string) => computeSourceStatsRow(db, sourceId),
+  // ── merge candidates (read half of people.acceptCollapsedMergeCandidates) ─
+  "io.collapsedMergeCandidates": (db: Db) => findCollapsedMergeCandidates(db),
 
   // ── links compute (read half of links.upsertLinkResolutions split) ─
   "io.linkResolutions": (

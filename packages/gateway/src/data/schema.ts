@@ -18,7 +18,10 @@ import {
 import { createLiveVoiceUsageTable } from "../realtime/live-voice-usage.js";
 import { createConversationReadStateTables } from "../agent/conversation-read-state.js";
 import { createDevAnnotationsTables } from "../dev-annotations/store.js";
-import { createExtractedDatesTables } from "../enrichment/dates/storage.js";
+import {
+  createDatesPendingAgeIndex,
+  createExtractedDatesTables,
+} from "../enrichment/dates/storage.js";
 import { createWorthAnswersTable } from "../worth/answers.js";
 import { createTemporalAnnotationTables } from "../enrichment/temporal-annotations/storage.js";
 import { createDocumentTemporalProjectionTables } from "../enrichment/temporal-projections/document-storage.js";
@@ -1399,6 +1402,8 @@ function runSchemaSetupInTxn(db: Db): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_documents_dates_unprocessed ON documents(id) WHERE dates_extracted_at IS NULL",
   );
+  // The date pass's batch order, newest first (see `fetchDateExtractionBatch`).
+  createDatesPendingAgeIndex(db);
 
   // The retrospective lane's pair of marker indexes, over the unset and set
   // sides of bootstrap_processed_at. Owned by the Brain module, which guards

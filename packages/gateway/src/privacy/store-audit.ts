@@ -288,14 +288,12 @@ export function listPrivacyConversations(
   const rows = db
     .prepare<unknown[], ConversationRow>(
       `${conversationProjectionSql()}
-       ${after ? "WHERE (c.updated_at < ? OR (c.updated_at = ? AND c.id < ?))" : ""}
+       ${after ? "WHERE (c.updated_at, c.id) < (?, ?)" : ""}
        ORDER BY c.updated_at DESC, c.id DESC
        LIMIT ?`,
     )
     .all(
-      ...(after
-        ? [now, now, after.updatedAt, after.updatedAt, after.id, safeLimit + 1]
-        : [now, now, safeLimit + 1]),
+      ...(after ? [now, now, after.updatedAt, after.id, safeLimit + 1] : [now, now, safeLimit + 1]),
     );
   const hasMore = rows.length > safeLimit;
   const page = rows.slice(0, safeLimit);

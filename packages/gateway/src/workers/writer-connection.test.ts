@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { openEncryptedSqlite } from "../sqlite-encryption.js";
+import { DEFAULT_WAL_CHECKPOINT_POLICY, WAL_SIZE_LIMIT_BYTES } from "./wal-checkpoint.js";
 import { openWriteConn } from "./writer-connection.js";
 
 const opened: Database.Database[] = [];
@@ -73,6 +75,30 @@ describe("openWriteConn", () => {
     // Once the writer commits, the other connection writes normally.
     other.prepare("UPDATE counters SET value = value + 1 WHERE key = 'hits'").run();
     expect(value(writer)).toBe(11);
+  });
+
+  it.each([
+    ["plaintext", undefined],
+    ["encrypted", randomBytes(32)],
+  ])("configures a %s WAL handle for checkpoints made between ops", (_label, key) => {
+    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    if (key) {
+      const seedDb = openEncryptedSqlite(path, { key });
+      seedDb.exec("PRAGMA journal_mode = WAL");
+      seedDb.exec("CREATE TABLE counters (key TEXT PRIMARY KEY, value INTEGER NOT NULL)");
+      seedDb.close();
+    } else {
+      seed();
+    }
+    const writer = track(openWriteConn(path, "WAL", key?.toString("hex")));
+    const pragma = (name: string) => writer.pragma(name, { simple: true });
+    expect(pragma("journal_mode")).toBe("wal");
+    expect(pragma("wal_autocheckpoint")).toBe(0);
+    expect(pragma("journal_size_limit")).toBe(WAL_SIZE_LIMIT_BYTES);
+    expect(pragma("checkpoint_fullfsync")).toBe(1);
+    expect(pragma("synchronous")).toBe(2);
+    expect(pragma("mmap_size")).toBe(0);
+    expect(pragma("busy_timeout")).toBe(DEFAULT_WAL_CHECKPOINT_POLICY.busyTimeoutMs);
   });
 
   it("keeps nested transactions as savepoints and the explicit variants available", () => {

@@ -77,8 +77,8 @@ export function listAccessAuditEvents(
     params.push(input.grantId);
   }
   if (input.after) {
-    clauses.push("(occurred_at < ? OR (occurred_at = ? AND id < ?))");
-    params.push(input.after.occurredAt, input.after.occurredAt, input.after.id);
+    clauses.push("(occurred_at, id) < (?, ?)");
+    params.push(input.after.occurredAt, input.after.id);
   }
   const rows = db
     .prepare<Array<string | number>, AuditRow>(

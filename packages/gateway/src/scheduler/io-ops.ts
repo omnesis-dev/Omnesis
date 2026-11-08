@@ -238,6 +238,11 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
    */
   sourceStatsRow(sourceId: string): Promise<SourceStatsAggregation>;
   /**
+   * Ids of the pending merge candidates whose two sides now resolve to one
+   * identity. Pairs with the writer's `acceptCollapsedMergeCandidates`.
+   */
+  collapsedMergeCandidates(): Promise<string[]>;
+  /**
    * Walk up to `limit` unresolved `document_links` rows past the
    * persisted reconcile cursor and compute the resolution for each on
    * the read handle. Pairs with the writer's `upsertLinkResolutions`,
@@ -550,6 +555,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.resolvePairWinner", priority: "background" },
   { name: "io.dirtyStatsSourceIds", priority: "background" },
   { name: "io.sourceStatsRow", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.collapsedMergeCandidates", priority: "background" },
   { name: "io.linkResolutions", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "io.seedFromContactsPlan",
@@ -694,6 +700,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     resolvePairWinner: (a, b) => call("io.resolvePairWinner", [a, b]),
     dirtyStatsSourceIds: () => call("io.dirtyStatsSourceIds", []),
     sourceStatsRow: (sourceId) => call("io.sourceStatsRow", [sourceId]),
+    collapsedMergeCandidates: () => call("io.collapsedMergeCandidates", []),
     linkResolutions: (
       limit,
       fallbackRepresentationSourcePrefixes,

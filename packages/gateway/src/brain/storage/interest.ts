@@ -411,13 +411,13 @@ export function listUnembeddedInterestSignals(
 ): InterestSignal[] {
   const after = opts.after ?? { createdAt: -1, id: "" };
   return db
-    .prepare<[number, number, number, string, number], SignalRow>(
+    .prepare<[number, number, string, number], SignalRow>(
       `SELECT ${SIGNAL_COLUMNS} FROM interest_signals
         WHERE embedding IS NULL AND superseded_at IS NULL AND embed_after <= ?
-          AND (created_at > ? OR (created_at = ? AND id > ?))
+          AND (created_at, id) > (?, ?)
         ORDER BY created_at ASC, id ASC LIMIT ?`,
     )
-    .all(opts.now, after.createdAt, after.createdAt, after.id, opts.limit)
+    .all(opts.now, after.createdAt, after.id, opts.limit)
     .map(toSignal);
 }
 

@@ -7,8 +7,10 @@
  * generates embeddings, and stores in the index database.
  *
  * Watermark safety: the watermark only advances to the max updated_at
- * of successfully processed documents. Failed documents are tracked
- * and retried on the next cycle to prevent permanent data loss.
+ * of successfully processed documents, and only once a scan is complete.
+ * Failed documents are tracked and retried on the next cycle to prevent
+ * permanent data loss. An unfinished scan keeps its position in index.db
+ * instead (scan-progress.ts), so a stop or a restart resumes it.
  */
 
 import { createHash } from "node:crypto";
@@ -39,8 +41,17 @@ import {
   type ChunkUpsertInput,
 } from "./db.js";
 import { buildDocumentEmbeddingPreamble } from "./chunker.js";
+import { isBeforeCutoff } from "./indexable-documents.js";
 import { normalizeContent } from "./normalize.js";
 import { embedChunksResilient } from "./resilient-embed.js";
+import { ScanPacer, type ScanPacingOptions, type ScanPressureSignal } from "./scan-pacer.js";
+import {
+  clearScanProgress,
+  readScanProgress,
+  writeScanProgress,
+  VERIFIED_WATERMARK_KEY,
+  type ScanProgress,
+} from "./scan-progress.js";
 import type {
   DocumentSource,
   Chunker,
@@ -70,20 +81,9 @@ const DEFAULT_DB_WRITE_BATCH_SIZE = 50;
 // (16KB kernel buffer) and stalled HTTP. 5000 keeps the progress visible
 // without flooding.
 const PROGRESS_LOG_INTERVAL = 5000;
-
-/**
- * Document types the retention cutoff does not apply to.
- *
- * The gateway boundary already refuses to drop these on ingest
- * (`DocumentService.applyMaxAgeCutoff` — a contact stays relevant however
- * old the record is), so a cutoff applied here would silently keep them out
- * of search: ingested, retained, and permanently unsearchable.
- */
-const CUTOFF_EXEMPT_DOCUMENT_TYPES = new Set(["contact"]);
-
-function isCutoffExempt(documentType: string | null | undefined): boolean {
-  return documentType != null && CUTOFF_EXEMPT_DOCUMENT_TYPES.has(documentType);
-}
+/** How often an unfinished scan records its position, at most. */
+const DEFAULT_PROGRESS_WRITE_INTERVAL_MS = 1_000;
+const NO_PRESSURE: ScanPressureSignal = { userActive: false, walPendingFrames: 0 };
 
 export class Indexer {
   private dataCutoff: string | null;
@@ -91,6 +91,9 @@ export class Indexer {
   private pageSize: number;
   private betweenPageSleepMs: number;
   private dbWriteBatchSize: number;
+  private pacing: ScanPacingOptions;
+  private getPressure: () => ScanPressureSignal;
+  private progressWriteIntervalMs: number;
   /** Document IDs that failed in a previous cycle, to be retried */
   private failedDocIds = new Set<string>();
   /**
@@ -131,6 +134,15 @@ export class Indexer {
       betweenPageSleepMs?: number;
       /** Docs per batch DB transaction. Default 50. */
       dbWriteBatchSize?: number;
+      /**
+       * Catch-up pacing (see scan-pacer.ts). Absent, every page keeps
+       * `pageSize` and `betweenPageSleepMs`.
+       */
+      catchUp?: { enabled: boolean; maxPageSize: number; minSleepMs: number };
+      /** Backpressure the scan consults between pages. */
+      getPressure?: () => ScanPressureSignal;
+      /** Least time between two writes of an unfinished scan's position, ms. Default 1s. */
+      progressWriteIntervalMs?: number;
       /** Optional usearch HNSW handle for dual-index writes. */
       indexWriteOptions?: import("./db.js").IndexWriteOptions;
     },
@@ -140,6 +152,16 @@ export class Indexer {
     this.pageSize = opts?.pageSize ?? DEFAULT_PAGE_SIZE;
     this.betweenPageSleepMs = opts?.betweenPageSleepMs ?? DEFAULT_BETWEEN_PAGE_SLEEP_MS;
     this.dbWriteBatchSize = opts?.dbWriteBatchSize ?? DEFAULT_DB_WRITE_BATCH_SIZE;
+    this.pacing = {
+      basePageSize: this.pageSize,
+      baseSleepMs: this.betweenPageSleepMs,
+      adaptive: opts?.catchUp?.enabled ?? false,
+      maxPageSize: opts?.catchUp?.maxPageSize ?? this.pageSize,
+      minSleepMs: opts?.catchUp?.minSleepMs ?? this.betweenPageSleepMs,
+    };
+    this.getPressure = opts?.getPressure ?? (() => NO_PRESSURE);
+    this.progressWriteIntervalMs =
+      opts?.progressWriteIntervalMs ?? DEFAULT_PROGRESS_WRITE_INTERVAL_MS;
     this.indexWriteOptions = opts?.indexWriteOptions;
     if (this.dataCutoff) {
       log.info(`Data cutoff: ${this.dataCutoff}`);
@@ -147,28 +169,14 @@ export class Indexer {
   }
 
   /**
-   * Resolve the effective cutoff for a doc, preferring the per-doc resolver
-   * (hot-reloadable) over the static `dataCutoff` (boot snapshot).
+   * Resolve the effective cutoff for a source, preferring the per-doc resolver
+   * (hot-reloadable) over the static `dataCutoff` (boot snapshot). The
+   * resolver reads only `sourceId` (see `resolveCutoff` in indexer-worker.ts),
+   * so a minimal stub satisfies it wherever only the source is known: a
+   * lightweight header, or the per-source query behind `reindexMissing`.
    */
-  private cutoffFor(doc: IndexableDocument): string | null {
-    if (this.getCutoffForDoc) return this.getCutoffForDoc(doc);
-    return this.dataCutoff;
-  }
-
-  /**
-   * Cutoff check for lightweight headers (two-phase fetch path). The
-   * header carries `sourceId` and `sourceCreatedAt` which is all the
-   * per-doc cutoff resolver needs — it resolves by source ID, not by
-   * full document metadata.
-   */
-  private cutoffForHeader(header: LightweightDocumentHeader): string | null {
-    if (this.getCutoffForDoc) {
-      // The getCutoff callback only reads `doc.sourceId`, so we can
-      // satisfy it with a minimal stub. The cast is safe because the
-      // callback contract (see `resolveCutoff` in indexer-worker.ts)
-      // only accesses `sourceId`.
-      return this.getCutoffForDoc({ sourceId: header.sourceId } as IndexableDocument);
-    }
+  private cutoffForSource(sourceId: string): string | null {
+    if (this.getCutoffForDoc) return this.getCutoffForDoc({ sourceId } as IndexableDocument);
     return this.dataCutoff;
   }
 
@@ -204,33 +212,101 @@ export class Indexer {
     errors: number;
     /** Fully scanned input boundary, not proof every document embedded successfully. */
     scannedThrough?: string;
+    /** True when this call continued a scan an earlier call or process left in progress. */
+    resumed?: boolean;
   }> {
-    const watermark = getWatermark(this.db, "last_updated_at");
+    // A scan a stop or a restart interrupted resumes with the bounds it began
+    // with, after the last page it committed (see scan-progress.ts).
+    const resumedScan = this.stopping ? null : readScanProgress(this.db);
+    const watermark = resumedScan ? resumedScan.since : getWatermark(this.db, "last_updated_at");
     // UUID pagination can pass a write before its transaction commits. Hold
     // the checkpoint at the highest timestamp already committed when the
     // scan begins, rather than wall-clock time: an in-flight transaction can
     // have an older stamp than the clock, but serialized monotonic writers
     // cannot give it an older stamp than this committed boundary.
-    const committedBoundary = await this.source.getUpdatedAtBoundary();
+    const committedBoundary = resumedScan
+      ? resumedScan.boundary
+      : await this.source.getUpdatedAtBoundary();
     let indexed = 0;
     let updated = 0;
     let skipped = 0;
     let errors = 0;
     let total = 0;
-    let safeWatermark = watermark; // only advances past successful docs
-    let afterId: string | undefined;
+    let safeWatermark = resumedScan ? resumedScan.maxSeen : watermark; // only advances past successful docs
+    let afterId: string | undefined = resumedScan?.afterId ?? undefined;
+    /** Last id through which every page's writes are committed. */
+    let durableAfterId: string | undefined = afterId;
     let hasMore = true;
+    let pageAbandoned = false;
     let lastProgressLog = 0;
     const newFailedIds = new Set<string>();
+    const pacer = new ScanPacer(this.pacing);
+
+    const runStartedAt = new Date().toISOString();
+    const progress: ScanProgress = resumedScan
+      ? {
+          ...resumedScan,
+          resumes: resumedScan.resumes + 1,
+          runStartedAt,
+          runScanned: 0,
+          runIndexed: 0,
+        }
+      : {
+          version: 1,
+          since: watermark,
+          boundary: committedBoundary,
+          afterId: null,
+          maxSeen: watermark,
+          startedAt: runStartedAt,
+          resumes: 0,
+          runStartedAt,
+          scanned: 0,
+          indexed: 0,
+          runScanned: 0,
+          runIndexed: 0,
+          pageSize: pacer.current().pageSize,
+          sleepMs: pacer.current().sleepMs,
+          pressure: "none",
+          updatedAt: runStartedAt,
+        };
+    const progressBase = { scanned: progress.scanned, indexed: progress.indexed };
+    let progressWritten = resumedScan !== null;
+    let lastProgressWriteMs = Number.NEGATIVE_INFINITY;
+    const saveProgress = (): void => {
+      progress.afterId = durableAfterId ?? null;
+      progress.maxSeen = safeWatermark;
+      progress.scanned = progressBase.scanned + total;
+      progress.indexed = progressBase.indexed + indexed;
+      progress.runScanned = total;
+      progress.runIndexed = indexed;
+      Object.assign(progress, pacer.current());
+      progress.updatedAt = new Date().toISOString();
+      writeScanProgress(this.db, progress);
+      progressWritten = true;
+      lastProgressWriteMs = performance.now();
+    };
+
+    if (resumedScan) {
+      // Documents that failed before the restart were behind the cursor and
+      // their in-memory retry set is gone; their durable error rows bring them
+      // back into this scan's retry pass.
+      for (const id of getErroredDocumentIds(this.db)) this.failedDocIds.add(id);
+      log.info(
+        `Resuming indexing scan after ${resumedScan.afterId ?? "the first page"}: ${resumedScan.scanned} scanned, ${resumedScan.indexed} indexed since ${resumedScan.startedAt} (resume ${resumedScan.resumes + 1})`,
+      );
+    }
 
     // Pipelining state: the in-flight embed promise from the previous
     // page, plus the prepared data it operates on. Resolved and written
     // at the top of the next iteration (or after the loop for the last
     // page).
-    let pendingEmbed: {
+    type PendingEmbed = {
       embedPromise: Promise<Float32Array[] | null>;
       toEmbed: Prepared[];
-    } | null = null;
+      /** Last id of the page; committed once these writes land. */
+      lastId: string | undefined;
+    };
+    let pendingEmbed: PendingEmbed | null = null;
 
     type Prepared = {
       doc: IndexableDocument;
@@ -241,7 +317,7 @@ export class Indexer {
     /** Resolve a pending embed and write results to the DB. */
     const flushPendingEmbed = async (): Promise<void> => {
       if (!pendingEmbed) return;
-      const { embedPromise, toEmbed } = pendingEmbed;
+      const { embedPromise, toEmbed, lastId } = pendingEmbed;
       pendingEmbed = null;
 
       let allEmbeddings = await embedPromise;
@@ -338,29 +414,28 @@ export class Indexer {
         if (!safeWatermark || doc.updatedAt > safeWatermark) safeWatermark = doc.updatedAt;
         this.failedDocIds.delete(doc.id);
       }
+      durableAfterId = lastId;
     };
 
     while (hasMore) {
       if (this.stopping) break;
+      const pageStartMs = performance.now();
+      const sizing = pacer.next();
       // ── Phase 1: lightweight scan ─────────────────────────────────
       // Fetch only (id, content_hash, source_created_at, updated_at)
       // to determine which docs need re-embedding.
-      const lightPage = await this.source.listUpdatedLightweight(watermark, this.pageSize, afterId);
+      const lightPage = await this.source.listUpdatedLightweight(
+        watermark,
+        sizing.pageSize,
+        afterId,
+      );
+      const headers = lightPage.documents;
 
-      // Filter: cutoff + indexed event-state comparison (batched).
+      // Indexed event-state comparison, batched over every header the
+      // retention cutoff keeps.
       const candidateIds: string[] = [];
-      const headerById = new Map<string, LightweightDocumentHeader>();
-      for (const header of lightPage.documents) {
-        total++;
-        headerById.set(header.id, header);
-
-        const cutoff = this.cutoffForHeader(header);
-        if (cutoff && header.sourceCreatedAt < cutoff && !isCutoffExempt(header.documentType)) {
-          skipped++;
-          if (!safeWatermark || header.updatedAt > safeWatermark) safeWatermark = header.updatedAt;
-          continue;
-        }
-        candidateIds.push(header.id);
+      for (const header of headers) {
+        if (!this.cutoffSkips(header)) candidateIds.push(header.id);
       }
 
       // A matching content hash alone is insufficient: title and selected
@@ -369,8 +444,17 @@ export class Indexer {
       // current vectors can be reused.
       const indexedStates = getIndexedDocumentStates(this.db, candidateIds);
       const needFetchIds: string[] = [];
-      for (const id of candidateIds) {
-        const header = headerById.get(id)!;
+      // The page ends early once it holds as many documents to embed as the
+      // pacer allows; the headers after that are the next page's.
+      let processed = 0;
+      for (const header of headers) {
+        const id = header.id;
+        if (this.cutoffSkips(header)) {
+          skipped++;
+          if (!safeWatermark || header.updatedAt > safeWatermark) safeWatermark = header.updatedAt;
+          processed++;
+          continue;
+        }
         const existing = indexedStates.get(id);
         if (
           existing &&
@@ -390,6 +474,7 @@ export class Indexer {
             skipped++;
           }
           if (!safeWatermark || header.updatedAt > safeWatermark) safeWatermark = header.updatedAt;
+          processed++;
           continue;
         }
         if (
@@ -409,110 +494,157 @@ export class Indexer {
             skipped++;
           }
           if (!safeWatermark || header.updatedAt > safeWatermark) safeWatermark = header.updatedAt;
+          processed++;
           continue;
         }
+        if (needFetchIds.length >= sizing.embedDocs) break;
         needFetchIds.push(id);
+        processed++;
       }
+      total += processed;
+      const embedLimited = processed < headers.length;
+      const pageLastId = processed > 0 ? headers[processed - 1].id : afterId;
 
       // ── Phase 2: full fetch + chunk (only changed docs) ───────────
       const toEmbed: Prepared[] = [];
-      if (needFetchIds.length > 0 && !this.stopping) {
-        const fullDocs = await this.source.getByIds(needFetchIds);
-        for (const doc of fullDocs) {
-          if (this.stopping) break;
-          // Structured offsets refer to the literal stored content. The chunker
-          // normalizes each extracted section or conversation turn.
-          if (
-            (doc.metadata.documentType !== "conversation" ||
-              doc.metadata.extra?.conversationTurns === undefined) &&
-            doc.metadata.extra?.chunkBoundaries === undefined
-          ) {
-            doc.content = normalizeContent(doc.content);
+      if (needFetchIds.length > 0) {
+        if (this.stopping) {
+          pageAbandoned = true;
+        } else {
+          const fullDocs = await this.source.getByIds(needFetchIds);
+          for (const doc of fullDocs) {
+            if (this.stopping) {
+              pageAbandoned = true;
+              break;
+            }
+            // Structured offsets refer to the literal stored content. The chunker
+            // normalizes each extracted section or conversation turn.
+            if (
+              (doc.metadata.documentType !== "conversation" ||
+                doc.metadata.extra?.conversationTurns === undefined) &&
+              doc.metadata.extra?.chunkBoundaries === undefined
+            ) {
+              doc.content = normalizeContent(doc.content);
+            }
+            const existing = indexedStates.get(doc.id);
+            const embeddingChanged =
+              !existing ||
+              existing.contentHash !== doc.contentHash ||
+              existing.embeddingPreamble !== buildDocumentEmbeddingPreamble(doc);
+            if (!embeddingChanged) {
+              // A source timestamp, URL, tags, relevance, or other non-preamble
+              // metadata field changed. Preserve the current vectors but stamp a
+              // fresh semantic event so every real corpus update still reaches
+              // the subscription precision pipeline.
+              const metadataTouched = updateChunkNonEmbeddingMetadata(this.db, doc.id, {
+                sourceUrl: doc.metadata.sourceUrl ?? null,
+                tags: doc.metadata.tags,
+                relevanceScore: doc.metadata.relevanceScore,
+              });
+              const eventTouched = markIndexedDocumentEvent(this.db, doc.id, doc.updatedAt);
+              if (eventTouched || metadataTouched > 0) updated++;
+              else skipped++;
+              if (!safeWatermark || doc.updatedAt > safeWatermark) safeWatermark = doc.updatedAt;
+              this.failedDocIds.delete(doc.id);
+              continue;
+            }
+            const chunks = this.chunker.chunk(doc);
+            // A doc that chunks to nothing (e.g. whitespace-only large content)
+            // still flows through so it gets a terminal indexed marker (zero
+            // chunks) — it counts toward 100% and isn't reprocessed every cycle.
+            toEmbed.push({ doc, chunks, isUpdate: existing !== undefined });
           }
-          const existing = indexedStates.get(doc.id);
-          const embeddingChanged =
-            !existing ||
-            existing.contentHash !== doc.contentHash ||
-            existing.embeddingPreamble !== buildDocumentEmbeddingPreamble(doc);
-          if (!embeddingChanged) {
-            // A source timestamp, URL, tags, relevance, or other non-preamble
-            // metadata field changed. Preserve the current vectors but stamp a
-            // fresh semantic event so every real corpus update still reaches
-            // the subscription precision pipeline.
-            const metadataTouched = updateChunkNonEmbeddingMetadata(this.db, doc.id, {
-              sourceUrl: doc.metadata.sourceUrl ?? null,
-              tags: doc.metadata.tags,
-              relevanceScore: doc.metadata.relevanceScore,
-            });
-            const eventTouched = markIndexedDocumentEvent(this.db, doc.id, doc.updatedAt);
-            if (eventTouched || metadataTouched > 0) updated++;
-            else skipped++;
-            if (!safeWatermark || doc.updatedAt > safeWatermark) safeWatermark = doc.updatedAt;
-            this.failedDocIds.delete(doc.id);
-            continue;
-          }
-          const chunks = this.chunker.chunk(doc);
-          // A doc that chunks to nothing (e.g. whitespace-only large content)
-          // still flows through so it gets a terminal indexed marker (zero
-          // chunks) — it counts toward 100% and isn't reprocessed every cycle.
-          toEmbed.push({ doc, chunks, isUpdate: existing !== undefined });
         }
       }
 
       // ── Phase 3: pipeline — fire embed, flush previous ────────────
-      // Before starting the embed for this page, flush the previous
-      // page's embed result (if any). This ensures writes happen in
-      // page order.
-      await flushPendingEmbed();
-
-      if (toEmbed.length > 0 && !this.stopping) {
-        const allInputs = toEmbed.flatMap(({ chunks }) => chunks.map((c) => c.embeddingInput));
-        const embedPromise = this.embedder
-          ? this.embedder.embed(allInputs).catch((): null => null)
-          : Promise.resolve(null);
-        pendingEmbed = { embedPromise, toEmbed };
+      // Fire this page's embedding first, then write the previous page's
+      // result: the embedder starts on this page while the previous one is
+      // written instead of idling until it is. Writes still happen in page
+      // order, since each flush awaits its own page before the next.
+      let nextEmbed: PendingEmbed | null = null;
+      if (toEmbed.length > 0) {
+        if (this.stopping) {
+          pageAbandoned = true;
+        } else {
+          const allInputs = toEmbed.flatMap(({ chunks }) => chunks.map((c) => c.embeddingInput));
+          const embedPromise = this.embedder
+            ? this.embedder.embed(allInputs).catch((): null => null)
+            : Promise.resolve(null);
+          nextEmbed = { embedPromise, toEmbed, lastId: pageLastId };
+        }
       }
+      await flushPendingEmbed();
+      pendingEmbed = nextEmbed;
+      // Every page before this one is written. This page is too unless its
+      // embedding is still in flight or a stop cut it short.
+      if (!pendingEmbed && !pageAbandoned) durableAfterId = pageLastId;
 
       // Periodic progress logging
       if (total - lastProgressLog >= PROGRESS_LOG_INTERVAL) {
         lastProgressLog = total;
         const stats = this.getStats();
+        const pace = pacer.current();
         log.info(
-          `Indexing progress: ${total} processed, ${indexed} indexed, ${updated} updated, ${skipped} skipped, ${errors} errors, ${stats.chunks} chunks`,
+          `Indexing progress: ${total} processed, ${indexed} indexed, ${updated} updated, ${skipped} skipped, ${errors} errors, ${stats.chunks} chunks (page ${pace.pageSize}, pause ${pace.sleepMs}ms, pressure ${pace.pressure})`,
         );
       }
 
-      hasMore = lightPage.hasMore;
-      if (lightPage.documents.length > 0) {
-        afterId = lightPage.documents[lightPage.documents.length - 1].id;
-      }
+      hasMore = lightPage.hasMore || embedLimited;
+      afterId = pageLastId;
+      if (pageAbandoned) break;
 
       // Yield between pages so the writer worker's commits have gaps
       // to land in without a reader mid-page. Skipped when there's no
       // more work so the cycle ends promptly once caught up.
-      if (hasMore && !this.stopping && this.betweenPageSleepMs > 0) {
-        await new Promise((r) => setTimeout(r, this.betweenPageSleepMs));
+      if (hasMore && !this.stopping) {
+        const sleepMs = pacer.settle(
+          { elapsedMs: performance.now() - pageStartMs, embedLimited },
+          this.getPressure(),
+        );
+        if (performance.now() - lastProgressWriteMs >= this.progressWriteIntervalMs) saveProgress();
+        if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs));
       }
     }
-
-    // Keep the boundary inclusive: another transaction can commit the same
-    // millisecond after the cursor passed its ID. An initially empty source
-    // has no safe checkpoint even if documents arrive during this scan.
-    const persistWatermark = (): void => {
-      if (!safeWatermark || !committedBoundary) return;
-      const next = safeWatermark > committedBoundary ? committedBoundary : safeWatermark;
-      if (!watermark || next > watermark) setWatermark(this.db, "last_updated_at", next);
-    };
 
     // Flush the last page's embed (the loop only flushes at the top of
     // the *next* iteration, so the final page is still pending here).
     await flushPendingEmbed();
 
-    // Cooperative shutdown: persist any watermark progress and bail before
+    const scanComplete = !hasMore && !pageAbandoned;
+    // Keep the boundary inclusive: another transaction can commit the same
+    // millisecond after the cursor passed its ID. An initially empty source
+    // has no safe checkpoint even if documents arrive during this scan.
+    // The watermark moves only when the scan is complete: a cursor walks ids,
+    // not timestamps, so the highest timestamp an unfinished scan has seen says
+    // nothing about the documents it has not reached yet.
+    const finishScan = (): void => {
+      this.db.transaction(() => {
+        const verified =
+          watermark === null || getWatermark(this.db, VERIFIED_WATERMARK_KEY) === watermark;
+        if (safeWatermark && committedBoundary) {
+          const next = safeWatermark > committedBoundary ? committedBoundary : safeWatermark;
+          if (!watermark || next > watermark) setWatermark(this.db, "last_updated_at", next);
+        }
+        const published = getWatermark(this.db, "last_updated_at");
+        if (verified && published) setWatermark(this.db, VERIFIED_WATERMARK_KEY, published);
+        if (progressWritten) clearScanProgress(this.db);
+      })();
+    };
+
+    // Cooperative shutdown: keep the scan's position and bail before
     // retry/reconcile work that would keep the disposed embedder busy.
     if (this.stopping) {
-      persistWatermark();
-      return { indexed, updated, skipped, errors };
+      if (scanComplete) finishScan();
+      else if (progressWritten || durableAfterId !== undefined) saveProgress();
+      return {
+        indexed,
+        updated,
+        skipped,
+        errors,
+        ...(scanComplete && committedBoundary ? { scannedThrough: committedBoundary } : {}),
+        ...(resumedScan ? { resumed: true } : {}),
+      };
     }
 
     // Retry previously failed documents that are now behind the watermark
@@ -534,7 +666,7 @@ export class Indexer {
     this.failedDocIds = newFailedIds;
 
     // Advance watermark only to the safe point
-    persistWatermark();
+    finishScan();
 
     if (indexed > 0 || updated > 0 || errors > 0) {
       log.info(
@@ -548,7 +680,17 @@ export class Indexer {
       skipped,
       errors,
       ...(!this.stopping && committedBoundary ? { scannedThrough: committedBoundary } : {}),
+      ...(resumedScan ? { resumed: true } : {}),
     };
+  }
+
+  /** Whether the retention cutoff keeps this document out of the index. */
+  private cutoffSkips(header: LightweightDocumentHeader): boolean {
+    return isBeforeCutoff(
+      this.cutoffForSource(header.sourceId),
+      header.sourceCreatedAt,
+      header.documentType,
+    );
   }
 
   /**
@@ -615,11 +757,12 @@ export class Indexer {
         const doc = docsById.get(docId);
         if (!doc) continue; // Document may have been deleted from the source
 
-        const cutoff = this.cutoffFor(doc);
         if (
-          cutoff &&
-          doc.metadata.sourceCreatedAt < cutoff &&
-          !isCutoffExempt(doc.metadata.documentType)
+          isBeforeCutoff(
+            this.cutoffForSource(doc.sourceId),
+            doc.metadata.sourceCreatedAt,
+            doc.metadata.documentType,
+          )
         ) {
           continue; // Intentionally skipped
         }
@@ -667,13 +810,20 @@ export class Indexer {
    * all chunks to `embedder.embed()` in one call, then distributes vectors
    * and writes per-doc. On batch embed failure, falls back to per-doc
    * embedding so one bad doc doesn't block the rest of the page.
+   *
+   * "Missing" counts only documents the retention cutoff leaves in scope
+   * (`indexable-documents.ts`): an older document a source keeps but the
+   * indexer skips is neither listed nor fetched, and comes back into scope on
+   * the next pass once its cutoff is widened or lifted.
    */
   async reindexMissing(): Promise<{ indexed: number; errors: number }> {
-    const gatewayIds = new Set(await this.source.listAllIds());
+    const indexableIds = new Set(
+      await this.source.listIndexableIds((sourceId) => this.cutoffForSource(sourceId)),
+    );
     const indexedIds = getAllIndexedDocumentIds(this.db);
 
     const missingIds: string[] = [];
-    for (const id of gatewayIds) {
+    for (const id of indexableIds) {
       if (!indexedIds.has(id)) {
         missingIds.push(id);
       }
@@ -687,14 +837,22 @@ export class Indexer {
       log.info(`Found ${missingIds.length} documents missing from index, re-indexing...`);
     }
 
-    for (let batchStart = 0; batchStart < missingIds.length; batchStart += this.pageSize) {
+    // Every document here needs embedding, so the batch is the pacer's
+    // embedding bound: the configured page size under pressure, adapted to the
+    // page time while catching up.
+    const pacer = new ScanPacer(this.pacing);
+    for (let batchStart = 0; batchStart < missingIds.length;) {
       if (this.stopping) break;
+      const batchStartMs = performance.now();
 
-      const batchIds = missingIds.slice(batchStart, batchStart + this.pageSize);
+      const batchIds = missingIds.slice(batchStart, batchStart + pacer.next().embedDocs);
       const docs = await this.source.getByIds(batchIds);
       const docsProcessed = batchStart + batchIds.length;
+      batchStart = docsProcessed;
 
-      // Phase 1: chunk all docs in this batch, filtering cutoff-skipped docs.
+      // Phase 1: chunk all docs in this batch. `listIndexableIds` already
+      // left cutoff-skipped docs out of the missing set; the re-check costs
+      // nothing and holds if the cutoff narrowed since the list was read.
       type Prepared = {
         doc: IndexableDocument;
         chunks: ReturnType<Chunker["chunk"]>;
@@ -703,12 +861,12 @@ export class Indexer {
 
       for (const doc of docs) {
         if (this.stopping) break;
-
-        const cutoff = this.cutoffFor(doc);
         if (
-          cutoff &&
-          doc.metadata.sourceCreatedAt < cutoff &&
-          !isCutoffExempt(doc.metadata.documentType)
+          isBeforeCutoff(
+            this.cutoffForSource(doc.sourceId),
+            doc.metadata.sourceCreatedAt,
+            doc.metadata.documentType,
+          )
         )
           continue;
 
@@ -822,9 +980,13 @@ export class Indexer {
       }
 
       // Yield between batches so other work (HTTP, writer commits) can land.
-      const hasMoreBatches = batchStart + this.pageSize < missingIds.length;
-      if (hasMoreBatches && !this.stopping && this.betweenPageSleepMs > 0) {
-        await new Promise((r) => setTimeout(r, this.betweenPageSleepMs));
+      const hasMoreBatches = batchStart < missingIds.length;
+      if (hasMoreBatches && !this.stopping) {
+        const sleepMs = pacer.settle(
+          { elapsedMs: performance.now() - batchStartMs, embedLimited: true },
+          this.getPressure(),
+        );
+        if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs));
       }
     }
 

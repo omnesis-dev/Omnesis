@@ -192,6 +192,21 @@ function rescanDocumentsWithDates(db: Db, datePredicate: string): void {
 }
 
 /**
+ * The partial index over pending documents by `ingested_at`, which
+ * `fetchDateExtractionBatch` walks newest first. Migration 100 created it,
+ * migration 203 dropped it with its link and people siblings when the backlog
+ * observers moved to `updated_at`, and migration 212 restores this one:
+ * without it each batch of fifty sorted the whole backlog.
+ */
+export const DATES_PENDING_AGE_INDEX = "idx_documents_dates_pending_age";
+
+export function createDatesPendingAgeIndex(db: Db): void {
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS ${DATES_PENDING_AGE_INDEX} ON documents(ingested_at) WHERE dates_extracted_at IS NULL`,
+  );
+}
+
+/**
  * Partial index over un-extracted documents — the extraction pass's cheap
  * "find work" query (mirrors idx_documents_links_unprocessed). References
  * `documents.dates_extracted_at`, which the migration adds by ALTER, so this
@@ -216,6 +231,16 @@ export function createDatesUnprocessedIndex(db: Db): void {
  * drains behind it. `excludeIds` skips documents the caller is deliberately
  * leaving for later, so they never fill a batch ahead of the rest. Runs on the
  * io pool's read-only handle.
+ *
+ * The index is named, not left to the planner. Without an index in
+ * `ingested_at` order the planner scans another pending index and sorts:
+ * that evaluates the selected columns, a read of every pending document's
+ * whole `content`, for the entire backlog before the `LIMIT` applies. While a
+ * large source is ingesting, that was a statement of tens of seconds every
+ * tick, holding one snapshot of the WAL the whole time. Walking the
+ * pending-age index backwards stops after `limit` rows, and naming it makes
+ * a missing index an error rather than a silent full sort. `rowid` orders
+ * ties on `ingested_at` the way the index stores them.
  */
 export function fetchDateExtractionBatch(
   db: Db,
@@ -236,9 +261,9 @@ export function fetchDateExtractionBatch(
                 json_extract(metadata, '$.extra.threadId'),
                 json_extract(metadata, '$.extra.conversationId')
               ) AS threadKey
-         FROM documents
+         FROM documents INDEXED BY ${DATES_PENDING_AGE_INDEX}
         WHERE dates_extracted_at IS NULL ${excluded}
-        ORDER BY ingested_at DESC
+        ORDER BY ingested_at DESC, rowid DESC
         LIMIT ?`,
     )
     .all(maxChars, ...excludeIds, limit)

@@ -85,8 +85,8 @@ export function getNearDupEdges(
   if (cursor) {
     const sql =
       baseSql +
-      ` AND (jaccard < ? OR (jaccard = ? AND
-              (CASE WHEN doc_a = ? THEN doc_b ELSE doc_a END) > ?))` +
+      ` AND jaccard <= ? AND NOT (jaccard = ? AND
+              (CASE WHEN doc_a = ? THEN doc_b ELSE doc_a END) <= ?)` +
       orderAndLimit;
     rows = db
       .prepare<unknown[], EdgeRow>(sql)

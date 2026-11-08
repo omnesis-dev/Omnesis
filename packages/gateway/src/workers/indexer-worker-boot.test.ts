@@ -29,6 +29,7 @@ import {
   listPendingDocumentIndexPurges,
   getIndexedDocumentCount,
   getWatermark,
+  setWatermark,
   getIndexEmbedModel,
   hasLexicalWrites,
   listPendingSourceIndexPurges,
@@ -39,6 +40,7 @@ import {
   upsertChunks,
 } from "../indexer/db.js";
 import { UsearchReadHandle } from "../indexer/usearch-index.js";
+import { readScanProgress, VERIFIED_WATERMARK_KEY } from "../indexer/scan-progress.js";
 import { prepareEncryptedGraphForBoot } from "../indexer/usearch-sidecar-boot.js";
 import { IndexerWorkerProxy, type IndexerWorkerOptions } from "./indexer-worker-proxy.js";
 import type { MemoryBudget } from "../memory-budget.js";
@@ -63,6 +65,8 @@ type FakeEmbedderServer = {
   server: Server;
   url: string;
   holds: FakeEmbedderHold[];
+  /** Every input the server embedded, in arrival order. */
+  inputs: string[];
 };
 
 async function startFakeEmbedder(holdTexts: string[] = []): Promise<FakeEmbedderServer> {
@@ -77,6 +81,7 @@ async function startFakeEmbedder(holdTexts: string[] = []): Promise<FakeEmbedder
     });
     return { text, started, released, markStarted, release, used: false };
   });
+  const received: string[] = [];
 
   const server = createServer(async (request, response) => {
     if (request.method !== "POST" || request.url !== "/v1/embeddings") {
@@ -88,6 +93,7 @@ async function startFakeEmbedder(holdTexts: string[] = []): Promise<FakeEmbedder
     for await (const chunk of request) raw += chunk.toString();
     const body = JSON.parse(raw) as { input: string | string[] };
     const inputs = Array.isArray(body.input) ? body.input : [body.input];
+    received.push(...inputs);
     const hold = holdControllers.find(
       (candidate) => !candidate.used && inputs.some((input) => input.includes(candidate.text)),
     );
@@ -114,6 +120,7 @@ async function startFakeEmbedder(holdTexts: string[] = []): Promise<FakeEmbedder
     server,
     url: `http://127.0.0.1:${port}`,
     holds: holdControllers.map(({ started, release }) => ({ started, release })),
+    inputs: received,
   };
 }
 
@@ -188,6 +195,7 @@ function makeWorkerOptions(
     embedConcurrency: 1,
     indexerPageSize: 50,
     indexerBetweenPageSleepMs: 0,
+    indexerCatchUp: { enabled: true, maxPageSize: 1000, minSleepMs: 0 },
     reindexMissingAtBoot: options.reindexMissingAtBoot ?? false,
     chunkerChunkSize: 512,
     chunkerOverlap: 64,
@@ -465,7 +473,9 @@ describe("indexer worker boot persistence", () => {
       await fakeEmbedder.holds[0]!.started;
       const indexDb = openIndexDb(paths.indexDbPath, { readonly: true });
       try {
-        expect(getIndexedDocumentCount(indexDb)).toBe(1);
+        // The second page's embedding is fired before the first page is
+        // written, so the first page lands while the second is held.
+        await waitUntil(() => getIndexedDocumentCount(indexDb) === 1, "the first page's write");
         expect(getWatermark(indexDb, "last_updated_at")).toBeNull();
         expect(getWatermark(indexDb, "published_scan_boundary")).toBeNull();
       } finally {
@@ -691,8 +701,9 @@ describe("indexer worker boot persistence", () => {
         const writeSeq = getVectorWriteSeq(indexDb);
         expect(writeSeq).toBeGreaterThan(0);
         expect(getUsearchSavedSeq(indexDb)).toBe(writeSeq);
-        expect(reader.size()).toBe(1);
-        expect(getIndexedDocumentCount(indexDb)).toBe(1);
+        // The held page and the one already submitted behind it; no page after.
+        expect(reader.size()).toBe(2);
+        expect(getIndexedDocumentCount(indexDb)).toBe(2);
       } finally {
         reader.close();
         indexDb.close();
@@ -716,6 +727,134 @@ describe("indexer worker boot persistence", () => {
       fakeEmbedder.holds[0]!.release();
       await proxy.dispose();
       await closeServer(fakeEmbedder.server);
+    }
+  }, 30_000);
+
+  test("a restart mid-scan resumes after the committed pages instead of rescanning", async () => {
+    const paths = createFixture(
+      Array.from({ length: 4 }, (_, i) =>
+        makeDocument(`settled-${i}`, `Invented settled note ${i}.`),
+      ),
+    );
+    const fakeEmbedder = await startFakeEmbedder(["Invented resume step"]);
+    const fixedPace = {
+      indexerPageSize: 1,
+      indexerCatchUp: { enabled: false, maxPageSize: 1, minSleepMs: 0 },
+    };
+    const first = new IndexerWorkerProxy({
+      ...makeWorkerOptions(paths, fakeEmbedder.url),
+      ...fixedPace,
+    });
+    let settledWatermark: string | null;
+    try {
+      await first.whenReady();
+      await waitForCycleRuns(first, 1);
+    } finally {
+      await first.dispose();
+    }
+    {
+      const indexDb = openIndexDb(paths.indexDbPath, { readonly: true });
+      settledWatermark = getWatermark(indexDb, "last_updated_at");
+      indexDb.close();
+    }
+    expect(settledWatermark).toBeTruthy();
+
+    // A backlog that leaves the index far below the boot-time reset's 90%.
+    insertDocuments(
+      paths.gatewayDbPath,
+      Array.from({ length: 12 }, (_, i) =>
+        makeDocument(`backlog-${i}`, `Invented resume step ${i}.`),
+      ),
+    );
+    const interrupted = new IndexerWorkerProxy({
+      ...makeWorkerOptions(paths, fakeEmbedder.url),
+      ...fixedPace,
+    });
+    try {
+      await interrupted.whenReady();
+      await fakeEmbedder.holds[0]!.started;
+      const flush = interrupted.flushSave();
+      await interrupted.embedQuery("flush barrier");
+      fakeEmbedder.holds[0]!.release();
+      await expect(flush).resolves.toBe(true);
+    } finally {
+      fakeEmbedder.holds[0]!.release();
+      await interrupted.dispose();
+    }
+
+    let committed: number;
+    {
+      const indexDb = openIndexDb(paths.indexDbPath, { readonly: true });
+      const progress = readScanProgress(indexDb);
+      committed = getIndexedDocumentCount(indexDb);
+      // The stopped scan kept its bounds and position and moved no watermark.
+      expect(progress?.since).toBe(settledWatermark);
+      expect(progress?.afterId).toBeTruthy();
+      expect(getWatermark(indexDb, "last_updated_at")).toBe(settledWatermark);
+      indexDb.close();
+    }
+    expect(committed).toBeGreaterThan(4);
+    expect(committed).toBeLessThan(16);
+
+    const resumed = new IndexerWorkerProxy({
+      ...makeWorkerOptions(paths, fakeEmbedder.url),
+      ...fixedPace,
+    });
+    try {
+      await resumed.whenReady();
+      await waitForCycleRuns(resumed, 1);
+    } finally {
+      await resumed.dispose();
+      await closeServer(fakeEmbedder.server);
+    }
+    const indexDb = openIndexDb(paths.indexDbPath, { readonly: true });
+    try {
+      expect(getIndexedDocumentCount(indexDb)).toBe(16);
+      expect(readScanProgress(indexDb)).toBeNull();
+      expect(getWatermark(indexDb, "last_updated_at")! > settledWatermark!).toBe(true);
+    } finally {
+      indexDb.close();
+    }
+    // Each backlog document reached the embedder exactly once across the
+    // interrupted run and the resumed one; the settled ones never again.
+    for (let i = 0; i < 12; i += 1) {
+      const step = `Invented resume step ${i}.`;
+      expect(fakeEmbedder.inputs.filter((input) => input.includes(step))).toHaveLength(1);
+    }
+    for (let i = 0; i < 4; i += 1) {
+      const note = `Invented settled note ${i}.`;
+      expect(fakeEmbedder.inputs.filter((input) => input.includes(note))).toHaveLength(1);
+    }
+  }, 60_000);
+
+  test("a watermark no complete scan verified is still reset when most documents are unindexed", async () => {
+    const paths = createFixture(
+      Array.from({ length: 6 }, (_, i) =>
+        makeDocument(`legacy-${i}`, `Invented legacy note ${i}.`),
+      ),
+    );
+    // What an earlier version left after an interrupted scan: a watermark past
+    // documents the scan never reached, with no verification mark.
+    const legacy = createIndexDatabase(paths.indexDbPath);
+    setWatermark(legacy, "last_updated_at", "2099-01-01T00:00:00.000Z");
+    legacy.close();
+    const fakeEmbedder = await startFakeEmbedder();
+    const proxy = createProxy(paths, fakeEmbedder.url);
+    try {
+      await proxy.whenReady();
+      await waitForCycleRuns(proxy, 1);
+    } finally {
+      await proxy.dispose();
+      await closeServer(fakeEmbedder.server);
+    }
+    const indexDb = openIndexDb(paths.indexDbPath, { readonly: true });
+    try {
+      expect(getIndexedDocumentCount(indexDb)).toBe(6);
+      const watermark = getWatermark(indexDb, "last_updated_at");
+      expect(watermark).not.toBe("2099-01-01T00:00:00.000Z");
+      expect(getWatermark(indexDb, VERIFIED_WATERMARK_KEY)).toBe(watermark);
+    } finally {
+      indexDb.close();
     }
   }, 30_000);
 

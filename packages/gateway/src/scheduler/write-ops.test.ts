@@ -153,6 +153,14 @@ describe("writeGateFromScheduler", () => {
     }
   });
 
+  test("the knowledge cascade is dispatched yieldably", () => {
+    // It runs on every install, Brain or not, against a backlog of one job per
+    // ingested source write; its slices must give way to a waiting write.
+    const name = "knowledge.advanceCascade";
+    expect(Object.keys(writerYieldableHandlers), `${name} lost its preempt seam`).toContain(name);
+    expect(Object.keys(writerHandlers), `${name} is registered twice`).not.toContain(name);
+  });
+
   test("a pairing minted through the gate keeps every option, the access level included", async () => {
     const gate = writeGateFromScheduler(scheduler);
     const levelId = "00000000-0000-4000-8000-00000000a1e1";
