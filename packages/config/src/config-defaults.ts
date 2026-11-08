@@ -591,7 +591,7 @@ const SOURCE_UNSET_DESCRIPTIONS: Readonly<Record<string, string>> = {
   attachmentMaxTextLength:
     "Effective precedence: account setting, source-type setting, sources.default.attachmentMaxTextLength, then 512000 characters.",
   maxAge:
-    "Effective precedence: account setting, source-type setting, sources.default.maxAge, then dataRetention.maxAge; without any of them, there is no age limit.",
+    'Effective precedence: account setting, source-type setting, sources.default.maxAge, then dataRetention.maxAge; without any of them, there is no age limit. "unlimited" sets no age limit whatever a broader setting says.',
 };
 
 export function configUnsetDescriptionAt(path: readonly string[]): string | undefined {

@@ -40,11 +40,12 @@ export const gmailStateSpec: SourceStateSpec<GmailSyncCursor> = {
 };
 
 /**
- * Drive's cursor is a phase tag plus one pagination or `startPageToken`
- * string — fixed in size regardless of how many files the account holds.
+ * Drive's cursor is a phase tag, a pagination or `startPageToken` string, and
+ * during the bootstrap the query and `modifiedTime` mark that page belongs
+ * to — fixed in size regardless of how many files the account holds.
  *
- * A `startPageToken` that Drive has expired (410) already falls back to a
- * fresh `files.list` bootstrap inside `sync`; an unreadable cursor takes the
+ * A `startPageToken` that Drive refuses already falls back to a fresh
+ * `files.list` bootstrap inside `sync`; an unreadable cursor takes the
  * identical path. Drive doesn't purge files on its own, so the cost is a full
  * re-list, not a loss.
  */

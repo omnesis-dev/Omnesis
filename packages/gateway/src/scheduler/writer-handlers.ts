@@ -229,7 +229,9 @@ import {
   invalidateTemporalAnnotation,
   invalidateTemporalAnnotationsForDoc,
   markTemporalAnnotationsRefilePresented,
+  relinkTemporalAnnotationProjections,
   type CreateTemporalAnnotationInput,
+  type TemporalProjectionMove,
   type UpdateTemporalAnnotationPatch,
   type TemporalAnnotationInvalidationResult,
 } from "../enrichment/temporal-annotations/storage.js";
@@ -1803,6 +1805,10 @@ export const writerHandlers = {
     markTemporalAnnotationsRefilePresented(db, ids, runId);
     return null;
   },
+  "temporalAnnotations.relinkProjections": (
+    db: Db,
+    moves: readonly TemporalProjectionMove[],
+  ): number => relinkTemporalAnnotationProjections(db, moves),
   "cognition.observationCreate": (
     db: Db,
     input: CreateObservationInput,

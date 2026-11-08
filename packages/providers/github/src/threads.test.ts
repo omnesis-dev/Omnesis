@@ -159,6 +159,32 @@ describe("GithubThreadsSource incremental", () => {
     return { fake, cursor };
   }
 
+  it("a bootstrap materializes threads before every repository is enumerated", async () => {
+    const fake = new FakeGithub();
+    const base = "2026-03-01T00:00:00Z";
+    fake.addRepo("acme/alpha", {
+      threads: Array.from({ length: 520 }, (_, i) => issueAt(i + 1, tick(base, i * 60))),
+    });
+    fake.addRepo("acme/beta", { threads: [issueAt(1, "2026-04-05T10:00:00Z")] });
+    const source = build(fake);
+    let cursor: GithubThreadsCursor | null = null;
+    let docsWhileBetaQueued = 0;
+    const docs: DocumentInput[] = [];
+    let presentExternalIds: string[] | undefined;
+    for (let i = 0; i < 300; i++) {
+      const result = await source.sync(cursor);
+      docs.push(...result.documents);
+      if (result.cursor.discoveryQueue?.includes("acme/beta"))
+        docsWhileBetaQueued += result.documents.length;
+      if (result.presentExternalIds) presentExternalIds = result.presentExternalIds;
+      cursor = result.cursor;
+      if (!result.hasMore) break;
+    }
+    expect(docsWhileBetaQueued).toBeGreaterThan(0);
+    expect(new Set(docs.map((d) => d.externalId)).size).toBe(521);
+    expect(presentExternalIds).toHaveLength(521);
+  });
+
   it("a second cycle with nothing changed emits nothing", async () => {
     const { fake, cursor } = await bootstrap();
     const later = build(fake, "2026-05-01T01:00:00Z"); // < 24h: incremental

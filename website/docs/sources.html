@@ -218,7 +218,15 @@
                 <td>
                   Every email as a document, dated by when it was sent, with attachment text
                   extracted (scans and images are OCR'd when an OCR model is assigned); senders and
-                  recipients, Bcc included, feed the people graph.
+                  recipients, Bcc included, feed the people graph. Requests are paced to Gmail's
+                  per-user quota: a first sync reads about 66 messages a minute while it runs, fewer
+                  when they carry attachments, and pauses between runs, so it averages about 53 a
+                  minute and a large mailbox takes days. Other apps signed in to the same account
+                  through the same Google Cloud project spend the same quota; when Google refuses a
+                  request, the source slows down by a quarter, down to about 25 messages a minute,
+                  and speeds up again in steps after ten minutes without a refusal. A rate limit
+                  shows the source as rate-limited; it resumes on its own after a wait that doubles
+                  while the limit persists.
                 </td>
               </tr>
               <tr>
@@ -1865,7 +1873,9 @@
                 <td>
                   <strong>Resync</strong>, or <code>omnesis sources resync &lt;id&gt;</code>.<br />
                   Deletes everything the source has indexed and syncs it again from scratch. Use it
-                  only when the indexed data must be rebuilt. The CLI asks first; pass
+                  only when the indexed data must be rebuilt, or after widening the source's
+                  <code>maxAge</code> to fetch the older history (see
+                  <a href="operating#configuration">Configuration</a>). The CLI asks first; pass
                   <code>--yes</code> in scripts. Pages captured by the browser extension cannot be
                   resynced, because the gateway has nowhere to fetch them again from. A phone source
                   is resynced from the CLI only; the phone sends its data again.

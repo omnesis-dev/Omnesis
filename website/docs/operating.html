@@ -506,13 +506,46 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           corpora.
         </p>
         <p>
-          <code>dataRetention.maxAge</code> limits how old ingested source data may be;
+          <code>dataRetention.maxAge</code> limits how old ingested source data may be: an item
+          created before the window, other than a contact, is neither ingested nor indexed.
           <code>maxAge</code> under a <code>sources</code> entry overrides it for those sources, in
-          the same order as every other source setting. <code>activityRetention.maxAge</code> is
-          separate: it removes expired operational history and unpinned agent conversations in small
-          background batches, never data ingested from sources, and never pinned, running or pending
-          work. Without it, activity is kept forever. Deleted data frees space inside the databases
-          for reuse, but a database file may not shrink on disk.
+          the same order as every other source setting. Removing a <code>maxAge</code> falls back to
+          the next setting in that order, and to no limit when none is left;
+          <code>unlimited</code> sets no limit for that entry whatever a broader setting says.
+          <code>omnesis config ls</code> lists every <code>maxAge</code> that is set, including one
+          under a single source, which outranks its type. A change applies from the next sync,
+          without restarting the gateway or a collector.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis config set /sources/gmail/maxAge 5y</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis config set /sources/google-drive/maxAge unlimited</span>
+            </p>
+            <p class="t-dim"># remove the global window; sources without their own have no limit</p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis config set /dataRetention/maxAge null</span>
+            </p>
+          </div>
+        </div>
+        <p>
+          Widening the window, or setting it to <code>unlimited</code>, admits older items from then
+          on, but a source that has finished its first sync reads only what changes, so it does not
+          go back for the older history by itself. To fetch it, run
+          <code>omnesis sources resync &lt;id&gt;</code> after widening: resync first deletes
+          everything the source has indexed, then syncs it again from scratch under the new window.
+          Narrowing the window keeps older items out from then on and deletes nothing already
+          stored. <code>activityRetention.maxAge</code> is separate: it removes expired operational
+          history and unpinned agent conversations in small background batches, never data ingested
+          from sources, and never pinned, running or pending work. Without it, activity is kept
+          forever. Deleted data frees space inside the databases for reuse, but a database file may
+          not shrink on disk.
         </p>
         <p>
           <code>gateway.snapshotAbsence</code> controls how cautiously Omnesis deletes items that a

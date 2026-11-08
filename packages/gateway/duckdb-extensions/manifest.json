@@ -1,24 +1,24 @@
 {
   "description": "DuckDB extensions the gateway loads from this directory instead of downloading them at run time. Each pin is the SHA-256 and size of the decompressed, DuckDB-signed binary DuckDB's repository serves for this exact DuckDB version and platform. scripts/duckdb-extensions.mjs fetches and verifies them into <duckdbVersion>/<platform>/<name>.duckdb_extension; `node scripts/duckdb-extensions.mjs pin` rewrites this file for a new DuckDB version.",
-  "duckdbVersion": "v1.5.0",
+  "duckdbVersion": "v1.5.6",
   "repository": "https://extensions.duckdb.org",
   "extensions": {
     "httpfs": {
       "linux_amd64": {
-        "sha256": "8d37def867e654c6af70e2a3e4c622b1dd66dcee1cc52091d20426d261aab0ab",
-        "size": 20562094
+        "sha256": "ff36e7d2561e21b958c243c6bd5f6a10cfc055a98ea76c0280b94728b57588e2",
+        "size": 21580734
       },
       "linux_arm64": {
-        "sha256": "931145d6d0e4e8b12782c002a82fe505d4a0f5d819af8eec0e46378f5f616ec6",
-        "size": 18850430
+        "sha256": "ae940d800b7f938a4848d0eebcffb28dda0bbed76987f11dc55faa6d1a86db0d",
+        "size": 19864758
       },
       "osx_amd64": {
-        "sha256": "3bd3347ac90f74e9fd67ce70e5030d9ac32673e6273bf35b99dc06b19b40fc95",
-        "size": 17044686
+        "sha256": "acf7f025758c71069a97507659ba890f90b7e5ce96f45acc71f3d9391c92b86b",
+        "size": 17551102
       },
       "osx_arm64": {
-        "sha256": "ad6da82921baaa9c6186b86da6edb119e21f50ca0b87e2a63f1b1a8daf78578e",
-        "size": 15529326
+        "sha256": "0cde1f5acd1970bfd414b11f5e945a1eddd8425e96e273f6411538d8fe3d951d",
+        "size": 16030718
       }
     }
   }

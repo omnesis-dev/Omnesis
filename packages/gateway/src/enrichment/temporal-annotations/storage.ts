@@ -1410,3 +1410,36 @@ export function countTemporalAnnotations(db: Db): number {
       .get() as { c: number }
   ).c;
 }
+
+/** One temporal projection whose id changed: the id it had, and the one it has now. */
+export interface TemporalProjectionMove {
+  from: string;
+  to: string;
+}
+
+/**
+ * Carry annotation links across projection ids that changed in the analytics
+ * store, in the order the moves were made, so a chain `a → b → c` lands on
+ * `c`. A link already naming the new id keeps that row, and the old one goes.
+ * Re-running a move that was already applied finds nothing to change, which is
+ * what lets the analytics store replay its ledger after a crash.
+ */
+export function relinkTemporalAnnotationProjections(
+  db: Db,
+  moves: readonly TemporalProjectionMove[],
+): number {
+  if (moves.length === 0) return 0;
+  const relink = db.prepare(
+    "UPDATE OR IGNORE temporal_annotation_projections SET projection_id = ? WHERE projection_id = ?",
+  );
+  const drop = db.prepare("DELETE FROM temporal_annotation_projections WHERE projection_id = ?");
+  return db.transaction(() => {
+    let relinked = 0;
+    for (const move of moves) {
+      if (move.from === move.to) continue;
+      relinked += relink.run(move.to, move.from).changes;
+      drop.run(move.from);
+    }
+    return relinked;
+  })();
+}

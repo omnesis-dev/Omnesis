@@ -336,6 +336,8 @@ const testDescriptors: SourceDescriptor[] = [
 
 /** Params every `test-source` instance was created with, newest last. */
 const testSourceCreations: Array<Record<string, unknown> | undefined> = [];
+/** The data cutoff every `test-source` instance was created with, newest last. */
+const testSourceCutoffs: Array<string | undefined> = [];
 
 function createTestDefinitions(): SourceOrProviderDefinition[] {
   return [
@@ -350,6 +352,7 @@ function createTestDefinitions(): SourceOrProviderDefinition[] {
         testSourceCreations.push(
           (options.sourceConfig as { params?: Record<string, unknown> } | undefined)?.params,
         );
+        testSourceCutoffs.push(options.dataCutoff);
         return {
           sync: async () => ({
             documents: [],
@@ -2376,6 +2379,111 @@ describe("SourceManager", () => {
         },
       },
     });
+  });
+
+  test("removing dataRetention.maxAge rebuilds a source cut by it with no cutoff, without a restart", async () => {
+    const manager = createManager({ dataRetention: { maxAge: "2y" } });
+    await manager.applySourcesSnapshot([
+      { id: "test-source:acct1", type: "test-source", accountId: "acct1", enabled: true },
+    ]);
+    expect(testSourceCutoffs.at(-1)).toBeDefined();
+    const loopsBefore = engine.calls.filter((c) => c.method === "startSourceSyncLoops").length;
+
+    await manager.handleConfigChange({});
+
+    expect(testSourceCutoffs.at(-1)).toBeUndefined();
+    expect(engine.calls.filter((c) => c.method === "startSourceSyncLoops").length).toBe(
+      loopsBefore + 1,
+    );
+  });
+
+  test("dataRetention.maxAge set to unlimited lifts a source's cutoff live, and widening moves it", async () => {
+    const manager = createManager({ dataRetention: { maxAge: "1y" } });
+    await manager.applySourcesSnapshot([
+      { id: "test-source:acct1", type: "test-source", accountId: "acct1", enabled: true },
+    ]);
+    const oneYear = Date.parse(testSourceCutoffs.at(-1)!);
+
+    await manager.handleConfigChange({ dataRetention: { maxAge: "5y" } });
+    expect(Date.parse(testSourceCutoffs.at(-1)!)).toBeLessThan(oneYear);
+
+    await manager.handleConfigChange({ dataRetention: { maxAge: "unlimited" } });
+    expect(testSourceCutoffs.at(-1)).toBeUndefined();
+  });
+
+  test("a rebuild does not hold later config changes and snapshots behind its first sync", async () => {
+    const manager = createManager({ dataRetention: { maxAge: "2y" } });
+    const record = {
+      id: "test-source:acct1",
+      type: "test-source",
+      accountId: "acct1",
+      enabled: true,
+    };
+    await manager.applySourcesSnapshot([record]);
+    const firstSyncNeverEnds = new Promise<void>(() => {});
+    engine.startSourceSyncLoops = () => firstSyncNeverEnds;
+    const settled = (work: Promise<void>) =>
+      Promise.race([
+        work.then(() => "settled"),
+        new Promise((resolve) => setTimeout(() => resolve("held"), 1_000)),
+      ]);
+
+    expect(await settled(manager.handleConfigChange({ dataRetention: { maxAge: "5y" } }))).toBe(
+      "settled",
+    );
+    expect(await settled(manager.handleConfigChange({}))).toBe("settled");
+    expect(
+      await settled(
+        manager.applySourcesSnapshot([{ ...record, config: { enabled: true, maxAge: "1y" } }], {
+          merge: true,
+        }),
+      ),
+    ).toBe("settled");
+    expect(testSourceCutoffs.at(-1)).toBeDefined();
+  });
+
+  test("a rebuilt source whose loops fail to start leaves the config change applied", async () => {
+    const manager = createManager({ dataRetention: { maxAge: "2y" } });
+    await manager.applySourcesSnapshot([
+      { id: "test-source:acct1", type: "test-source", accountId: "acct1", enabled: true },
+    ]);
+    engine.startSourceSyncLoops = () => Promise.reject(new Error("loop start refused"));
+
+    await expect(manager.handleConfigChange({})).resolves.toBeUndefined();
+
+    expect(testSourceCutoffs.at(-1)).toBeUndefined();
+    expect(manager.getConfig().dataRetention).toBeUndefined();
+  });
+
+  test("an unchanged retention setting rebuilds nothing", async () => {
+    const manager = createManager({ dataRetention: { maxAge: "2y" } });
+    await manager.applySourcesSnapshot([
+      { id: "test-source:acct1", type: "test-source", accountId: "acct1", enabled: true },
+    ]);
+    const creations = testSourceCutoffs.length;
+
+    await manager.handleConfigChange({
+      dataRetention: { maxAge: "2y" },
+      defaultSyncInterval: "5m",
+    });
+
+    expect(testSourceCutoffs.length).toBe(creations);
+  });
+
+  test("a source update whose row drops maxAge rebuilds the source with no cutoff", async () => {
+    const manager = createManager({});
+    const record = {
+      id: "test-source:acct1",
+      type: "test-source",
+      accountId: "acct1",
+      enabled: true,
+    };
+    await manager.applySourcesSnapshot([{ ...record, config: { enabled: true, maxAge: "2y" } }]);
+    expect(testSourceCutoffs.at(-1)).toBeDefined();
+
+    await manager.applySourcesSnapshot([{ ...record, config: { enabled: true } }], { merge: true });
+
+    expect(testSourceCutoffs.at(-1)).toBeUndefined();
   });
 
   test("applySourcesSnapshot propagates per-source maxAge", async () => {

@@ -195,6 +195,41 @@ describe("resolveSourceMaxAge", () => {
   });
 });
 
+describe("an unlimited maxAge", () => {
+  test("lifts the limit at its level instead of falling back to a broader one", () => {
+    const config = {
+      dataRetention: { maxAge: "1y" },
+      sources: {
+        default: { maxAge: "6M" },
+        "google-drive": { maxAge: "unlimited" },
+        "google-drive:jamie@example.org": { maxAge: "30d" },
+      },
+    };
+    expect(resolveSourceMaxAge(config, "google-drive:maya@example.com")).toBeUndefined();
+    expect(getSourceCutoffDate(config, "google-drive:maya@example.com")).toBeNull();
+    expect(resolveSourceMaxAge(config, "google-drive:jamie@example.org")).toBe("30d");
+    expect(resolveSourceMaxAge(config, "gmail:maya@example.com")).toBe("6M");
+  });
+
+  test("on dataRetention or sources.default sets no limit for sources without their own", () => {
+    expect(getDataCutoffDate({ dataRetention: { maxAge: "unlimited" } })).toBeNull();
+    expect(
+      getSourceCutoffDate({ dataRetention: { maxAge: "unlimited" } }, "gmail:maya@example.com"),
+    ).toBeNull();
+    expect(
+      getSourceCutoffDate(
+        { dataRetention: { maxAge: "1y" }, sources: { default: { maxAge: "unlimited" } } },
+        "gmail:maya@example.com",
+      ),
+    ).toBeNull();
+  });
+
+  test("removing a source's maxAge falls back rather than lifting the limit", () => {
+    const config = { sources: { default: { maxAge: "2y" }, gmail: {} } };
+    expect(resolveSourceMaxAge(config, "gmail:maya@example.com")).toBe("2y");
+  });
+});
+
 describe("getSourceCutoffDate", () => {
   test("returns null when nothing is configured", () => {
     expect(getSourceCutoffDate({}, "gmail:a@b.com")).toBeNull();
