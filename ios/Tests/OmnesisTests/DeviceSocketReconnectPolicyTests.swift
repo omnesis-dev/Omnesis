@@ -42,9 +42,10 @@ final class DeviceSocketReconnectPolicyTests: XCTestCase {
             attempts.append(now)
         }
         func most(within window: Duration) -> Int {
-            attempts.indices.map { start in
+            let counts = attempts.indices.map { start in
                 attempts[start...].prefix { $0 - attempts[start] < window }.count
-            }.max() ?? 0
+            }
+            return counts.max() ?? 0
         }
         XCTAssertLessThanOrEqual(most(within: .seconds(61)), 8)
         XCTAssertLessThan(most(within: .seconds(3600)), 200)

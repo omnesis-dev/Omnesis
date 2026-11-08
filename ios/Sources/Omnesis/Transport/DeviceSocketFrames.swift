@@ -126,7 +126,7 @@ extension DeviceSocket {
     }
 
     static func sourceId(from payload: JSONValue) -> String? {
-        guard case .object(let p) = payload, case .string(let sid)? = p["sourceId"] else { return nil }
+        guard case .object(let object) = payload, case .string(let sid)? = object["sourceId"] else { return nil }
         return sid
     }
 }
@@ -148,10 +148,10 @@ struct WsCommandFrame: Decodable {
     enum CodingKeys: String, CodingKey { case id, type, payload }
 
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try c.decode(String.self, forKey: .id)
-        self.type = try c.decode(String.self, forKey: .type)
-        self.payload = (try? c.decode(JSONValue.self, forKey: .payload)) ?? .null
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.type = try container.decode(String.self, forKey: .type)
+        self.payload = (try? container.decode(JSONValue.self, forKey: .payload)) ?? .null
     }
 }
 
@@ -163,9 +163,9 @@ struct WsEventFrame: Decodable {
     enum CodingKeys: String, CodingKey { case type, payload }
 
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.type = try c.decode(String.self, forKey: .type)
-        self.payload = (try? c.decode(JSONValue.self, forKey: .payload)) ?? .null
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.type = try container.decode(String.self, forKey: .type)
+        self.payload = (try? container.decode(JSONValue.self, forKey: .payload)) ?? .null
     }
 }
 
@@ -189,15 +189,15 @@ struct WsResponseFrame: Decodable {
     enum CodingKeys: String, CodingKey { case correlationId, ok, result, error }
 
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.correlationId = try c.decode(String.self, forKey: .correlationId)
-        let ok = try c.decode(Bool.self, forKey: .ok)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.correlationId = try container.decode(String.self, forKey: .correlationId)
+        let ok = try container.decode(Bool.self, forKey: .ok)
         if ok {
             // Tolerate a non-object result by falling back to an empty dict.
-            let result = (try? c.decode([String: JSONValue].self, forKey: .result)) ?? [:]
+            let result = (try? container.decode([String: JSONValue].self, forKey: .result)) ?? [:]
             self.body = .ok(result: result)
         } else {
-            let err = try c.decode(WsResponseError.self, forKey: .error)
+            let err = try container.decode(WsResponseError.self, forKey: .error)
             self.body = .err(err)
         }
     }
@@ -216,8 +216,8 @@ enum WsFrame: Decodable {
     private enum Kind: String, Decodable { case event, command, response }
 
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        let kind = try c.decode(Kind.self, forKey: .kind)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decode(Kind.self, forKey: .kind)
         switch kind {
         case .event: self = try .event(WsEventFrame(from: decoder))
         case .command: self = try .command(WsCommandFrame(from: decoder))

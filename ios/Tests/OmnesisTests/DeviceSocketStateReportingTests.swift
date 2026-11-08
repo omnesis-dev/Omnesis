@@ -44,7 +44,7 @@ final class DeviceSocketStateReportingTests: DeviceSocketLifecycleTestCase {
         XCTAssertEqual(during, before)
     }
 
-    func testAuthenticationRefusalIsPersistentAndIgnoresNetworkChanges() async throws {
+    func testAuthenticationRefusalIsPersistentAndIgnoresNetworkChanges() async {
         connector.configure = { $0.setHandshakeStatus(401) }
         await startObservingPath(wifi)
         let delay = await failAttempt(0, sleepNumber: 1, error: URLError(.badServerResponse))
@@ -74,7 +74,7 @@ final class DeviceSocketStateReportingTests: DeviceSocketLifecycleTestCase {
         XCTAssertEqual(state, .failed(.init(kind: .incompatible, detail: "client protocol 1 != gateway 2")))
     }
 
-    func testPinRejectionReportsCertificateAndEveryRetryKeepsTheSameRequest() async throws {
+    func testPinRejectionReportsCertificateAndEveryRetryKeepsTheSameRequest() async {
         await startObservingPath(wifi)
         // `.cancelAuthenticationChallenge` surfaces as URLError.cancelled.
         let delay = await failAttempt(0, sleepNumber: 1, error: URLError(.cancelled))
@@ -93,7 +93,7 @@ final class DeviceSocketStateReportingTests: DeviceSocketLifecycleTestCase {
         }
     }
 
-    func testRateLimitedUpgradeWaitsOutTheLimiterWindowAndIgnoresWakes() async throws {
+    func testRateLimitedUpgradeWaitsOutTheLimiterWindowAndIgnoresWakes() async {
         connector.configure = { $0.setHandshakeStatus(429) }
         await startObservingPath(wifi)
         let delay = await failAttempt(0, sleepNumber: 1, error: URLError(.badServerResponse))

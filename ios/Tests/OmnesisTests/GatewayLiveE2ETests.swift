@@ -281,7 +281,8 @@ extension GatewayLiveE2ETests {
         token: String,
         paths: ScriptedPaths,
         session: URLSession? = nil
-    ) throws -> DeviceSocket {
+    ) throws
+        -> DeviceSocket {
         try DeviceSocket(
             gatewayUrl: XCTUnwrap(URL(string: "https://127.0.0.1:\(port)")),
             token: token,
@@ -477,7 +478,7 @@ extension GatewayLiveE2ETests {
 
     /// The simulator's path is its host's, so this proves the wrapper runs and
     /// reports a path; only a device can show one changing.
-    func testSystemPathObserverReportsTheCurrentPath() async throws {
+    func testSystemPathObserverReportsTheCurrentPath() async {
         let first = await withTaskGroup(of: NetworkPathSnapshot?.self) { group in
             group.addTask {
                 for await path in SystemNetworkPathObserver().paths() {
@@ -489,14 +490,13 @@ extension GatewayLiveE2ETests {
                 try? await Task.sleep(for: .seconds(10))
                 return nil
             }
-            let result = await group.next() ?? nil
-            group.cancelAll()
+            defer { group.cancelAll() }
+            guard let result = await group.next() else { return nil }
             return result
         }
         XCTAssertNotNil(first, "NWPathMonitor reports the current path as soon as it starts")
     }
 }
-
 
 // MARK: - Helpers
 

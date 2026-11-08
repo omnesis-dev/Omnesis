@@ -40,37 +40,43 @@ enum DeviceSocketAttemptFailure: Equatable, Sendable {
     /// session both do when a certificate fails verification.
     static func classify(_ error: Error, handshakeStatus: Int?, helloCompleted: Bool) -> Self {
         if helloCompleted { return .network(detail: error.localizedDescription) }
-        if let rejection = error as? HelloRejection {
-            switch rejection.code {
-            case "invalid_token", "device_not_found": return .authentication(detail: rejection.message)
-            case "rate_limited": return .rateLimited
-            default: return .incompatible(detail: rejection.message)
-            }
-        }
-        if let handshakeStatus, handshakeStatus != 101 {
-            switch handshakeStatus {
-            case 401, 403: return .authentication(detail: "The gateway answered with status \(handshakeStatus).")
-            case 429: return .rateLimited
-            default: return .server(status: handshakeStatus)
-            }
-        }
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid,
-                 .serverCertificateHasUnknownRoot, .clientCertificateRejected, .clientCertificateRequired:
-                return .trust(detail: urlError.localizedDescription)
-            case .secureConnectionFailed:
-                let status = (urlError as NSError).userInfo[streamErrorKey] as? Int
-                if status.map(connectionClosedDuringHandshake.contains) != true {
-                    return .trust(detail: urlError.localizedDescription)
-                }
-            case .cancelled where handshakeStatus == nil:
-                return .trust(detail: urlError.localizedDescription)
-            default:
-                break
-            }
+        if let rejection = error as? HelloRejection { return classify(rejection) }
+        if let handshakeStatus, handshakeStatus != 101 { return classify(status: handshakeStatus) }
+        if let urlError = error as? URLError, isTrustFailure(urlError, handshakeStatus: handshakeStatus) {
+            return .trust(detail: urlError.localizedDescription)
         }
         return .network(detail: error.localizedDescription)
+    }
+
+    private static func classify(_ rejection: HelloRejection) -> Self {
+        switch rejection.code {
+        case "invalid_token", "device_not_found": .authentication(detail: rejection.message)
+        case "rate_limited": .rateLimited
+        default: .incompatible(detail: rejection.message)
+        }
+    }
+
+    private static func classify(status: Int) -> Self {
+        switch status {
+        case 401, 403: .authentication(detail: "The gateway answered with status \(status).")
+        case 429: .rateLimited
+        default: .server(status: status)
+        }
+    }
+
+    private static func isTrustFailure(_ error: URLError, handshakeStatus: Int?) -> Bool {
+        switch error.code {
+        case .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid,
+             .serverCertificateHasUnknownRoot, .clientCertificateRejected, .clientCertificateRequired:
+            return true
+        case .secureConnectionFailed:
+            let status = (error as NSError).userInfo[streamErrorKey] as? Int
+            return status.map(connectionClosedDuringHandshake.contains) != true
+        case .cancelled:
+            return handshakeStatus == nil
+        default:
+            return false
+        }
     }
 }
 
@@ -137,11 +143,11 @@ struct DeviceSocketReconnectPolicy: Sendable {
     func accepts(_ signal: WakeSignal) -> Bool {
         switch lastFailure {
         case .rateLimited:
-            return false
+            false
         case .authentication, .incompatible:
-            return signal == .foreground
+            signal == .foreground
         case .network, .server, .trust, nil:
-            return true
+            true
         }
     }
 
@@ -162,13 +168,13 @@ struct DeviceSocketReconnectPolicy: Sendable {
     /// The wait the most recent failure earned. `jitter` is in `0...1`.
     func retryDelay(jitter: Double) -> Duration {
         let backoff = jitteredBackoff(jitter: jitter)
-        switch lastFailure {
+        return switch lastFailure {
         case .authentication, .incompatible:
-            return limits.refusedDelay
+            limits.refusedDelay
         case .rateLimited:
-            return max(backoff, limits.rateLimitedDelay)
+            max(backoff, limits.rateLimitedDelay)
         case .network, .server, .trust, nil:
-            return backoff
+            backoff
         }
     }
 
@@ -185,6 +191,6 @@ struct DeviceSocketReconnectPolicy: Sendable {
     private func jitteredBackoff(jitter: Double) -> Duration {
         let exponent = min(max(consecutiveFailures - 1, 0), 5)
         let base = min(limits.baseDelay * (1 << exponent), limits.maxDelay)
-        return base + (base / 1_000) * Int((limits.jitterFraction * jitter * 1_000).rounded())
+        return base + (base / 1000) * Int((limits.jitterFraction * jitter * 1000).rounded())
     }
 }

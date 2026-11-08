@@ -9,7 +9,8 @@ final class GatewayConnectionStatusTests: XCTestCase {
     private func reconnecting(
         _ network: DeviceSocket.ReconnectStatus.Network,
         attempts: Int = 1
-    ) -> GatewayConnectionStatus {
+    )
+        -> GatewayConnectionStatus {
         GatewayConnectionStatus(.reconnecting(.init(
             network: network,
             lastError: "Could not connect to the server.",

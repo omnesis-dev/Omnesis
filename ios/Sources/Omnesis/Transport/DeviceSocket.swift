@@ -3,6 +3,40 @@
 
 import Foundation
 
+/// The temporary state: no session is up and retries are expected to restore one.
+public struct DeviceSocketReconnectStatus: Equatable, Sendable {
+    public enum Network: Equatable, Sendable {
+        case unknown, available, unavailable
+    }
+
+    public let network: Network
+    /// The most recent attempt's failure, kept for diagnosis.
+    public let lastError: String?
+    /// Failures while the network looked usable, since it last changed.
+    public let failedAttemptsOnNetwork: Int
+
+    public init(network: Network, lastError: String?, failedAttemptsOnNetwork: Int) {
+        self.network = network
+        self.lastError = lastError
+        self.failedAttemptsOnNetwork = failedAttemptsOnNetwork
+    }
+}
+
+/// A refusal that retries are unlikely to change on their own.
+public struct DeviceSocketFailure: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        case authentication, certificate, incompatible
+    }
+
+    public let kind: Kind
+    public let detail: String
+
+    public init(kind: Kind, detail: String) {
+        self.kind = kind
+        self.detail = detail
+    }
+}
+
 /// Bidirectional WebSocket client for the gateway's `/device/ws` endpoint.
 ///
 /// Protocol (see `packages/core/src/ws-messages.ts` for the typed registry):
@@ -45,37 +79,8 @@ public actor DeviceSocket {
         case failed(Failure)
     }
 
-    public struct ReconnectStatus: Equatable, Sendable {
-        public enum Network: Equatable, Sendable {
-            case unknown, available, unavailable
-        }
-
-        public let network: Network
-        /// The most recent attempt's failure, kept for diagnosis.
-        public let lastError: String?
-        /// Failures while the network looked usable, since it last changed.
-        public let failedAttemptsOnNetwork: Int
-
-        public init(network: Network, lastError: String?, failedAttemptsOnNetwork: Int) {
-            self.network = network
-            self.lastError = lastError
-            self.failedAttemptsOnNetwork = failedAttemptsOnNetwork
-        }
-    }
-
-    public struct Failure: Equatable, Sendable {
-        public enum Kind: Equatable, Sendable {
-            case authentication, certificate, incompatible
-        }
-
-        public let kind: Kind
-        public let detail: String
-
-        public init(kind: Kind, detail: String) {
-            self.kind = kind
-            self.detail = detail
-        }
-    }
+    public typealias ReconnectStatus = DeviceSocketReconnectStatus
+    public typealias Failure = DeviceSocketFailure
 
     /// A raw event from the gateway. The `type` field routes to a handler;
     /// `payload` is the parsed JSON value (caller decodes further).
@@ -540,12 +545,12 @@ public actor DeviceSocket {
 }
 
 @available(iOS 17.0, *)
-private extension DeviceSocket {
+extension DeviceSocket {
     // MARK: - Waiting and waking
 
     /// Waits for the backoff and the budget, whichever is later. A wake signal
     /// can shorten the wait, but never to before the budget allows an attempt.
-    func waitForNextAttempt(atLeast backoff: Duration) async {
+    private func waitForNextAttempt(atLeast backoff: Duration) async {
         let delay = max(backoff, policy.budgetDelay(at: clock.now))
         guard delay > .zero else { return }
         log.info("WS reconnect in \(delay.description, privacy: .public)")
@@ -557,7 +562,7 @@ private extension DeviceSocket {
         if !stopped { phase = .idle }
     }
 
-    func armWaitTimer(after delay: Duration) {
+    private func armWaitTimer(after delay: Duration) {
         waitTimer?.cancel()
         let id = UUID()
         waitTimerID = id
@@ -572,11 +577,11 @@ private extension DeviceSocket {
         }
     }
 
-    func waitTimerFired(_ id: UUID) {
+    private func waitTimerFired(_ id: UUID) {
         if id == waitTimerID { finishWait() }
     }
 
-    func finishWait() {
+    private func finishWait() {
         waitTimer?.cancel()
         waitTimer = nil
         let continuation = waitContinuation
@@ -584,7 +589,7 @@ private extension DeviceSocket {
         continuation?.resume()
     }
 
-    func handlePath(_ path: NetworkPathSnapshot) {
+    private func handlePath(_ path: NetworkPathSnapshot) {
         guard !stopped else { return }
         let transition = path.transition(from: currentPath)
         currentPath = path
@@ -599,7 +604,7 @@ private extension DeviceSocket {
         }
     }
 
-    func wake(_ signal: DeviceSocketReconnectPolicy.WakeSignal) {
+    private func wake(_ signal: DeviceSocketReconnectPolicy.WakeSignal) {
         guard runner != nil else { return }
         if case .authenticated(let connection) = phase {
             startProbe(on: connection)
@@ -638,7 +643,7 @@ private extension DeviceSocket {
 
     /// The request's timeout covers the upgrade, but a peer that vanishes after
     /// it would otherwise leave the hello waiting with no end.
-    func armHelloTimer(for connection: any DeviceSocketConnection) {
+    private func armHelloTimer(for connection: any DeviceSocketConnection) {
         let clock = clock
         let timeout = policy.limits.helloTimeout
         helloTimer = Task { [weak self, weak connection] in
@@ -652,20 +657,20 @@ private extension DeviceSocket {
         }
     }
 
-    func helloTimerFired(for connection: any DeviceSocketConnection) {
+    private func helloTimerFired(for connection: any DeviceSocketConnection) {
         guard case .attempting(let current, _) = phase, current === connection else { return }
         helloTimedOut = true
         connection.cancel()
     }
 
-    func cancelHelloTimer() {
+    private func cancelHelloTimer() {
         helloTimer?.cancel()
         helloTimer = nil
     }
 
     // MARK: - Liveness probe
 
-    func startProbe(on connection: any DeviceSocketConnection) {
+    private func startProbe(on connection: any DeviceSocketConnection) {
         guard probeID == nil else { return }
         let id = UUID()
         probeID = id
@@ -684,25 +689,25 @@ private extension DeviceSocket {
         }
     }
 
-    func probeAnswered(_ id: UUID, error: Error?) {
+    private func probeAnswered(_ id: UUID, error: Error?) {
         guard id == probeID else { return }
         endProbe()
         if error != nil { abandonUnresponsiveConnection() }
     }
 
-    func probeTimedOut(_ id: UUID) {
+    private func probeTimedOut(_ id: UUID) {
         guard id == probeID else { return }
         endProbe()
         abandonUnresponsiveConnection()
     }
 
-    func endProbe() {
+    private func endProbe() {
         probeID = nil
         probeTimer?.cancel()
         probeTimer = nil
     }
 
-    func abandonUnresponsiveConnection() {
+    private func abandonUnresponsiveConnection() {
         guard case .authenticated(let connection) = phase else { return }
         log.info("WS connection did not answer its ping; reconnecting")
         connectionProbeFailed = true
@@ -712,7 +717,7 @@ private extension DeviceSocket {
 
     // MARK: - State transitions
 
-    func updateState(_ state: ConnectionState) {
+    private func updateState(_ state: ConnectionState) {
         guard state != currentState else { return }
         currentState = state
         stateContinuation.yield(state)
@@ -721,11 +726,11 @@ private extension DeviceSocket {
     /// A first connection shows its progress. After a failure the state keeps
     /// saying what is wrong through each retry, so the UI does not flicker back
     /// to "connecting" every time an attempt starts.
-    func publishAttemptProgress(_ state: ConnectionState) {
+    private func publishAttemptProgress(_ state: ConnectionState) {
         if policy.lastFailure == nil { updateState(state) }
     }
 
-    func record(_ failure: DeviceSocketAttemptFailure) {
+    private func record(_ failure: DeviceSocketAttemptFailure) {
         switch failure {
         case .network(let detail):
             noteTemporaryFailure(detail)
@@ -742,13 +747,13 @@ private extension DeviceSocket {
         }
     }
 
-    func noteTemporaryFailure(_ detail: String) {
+    private func noteTemporaryFailure(_ detail: String) {
         lastConnectionError = detail
         if currentPath?.isUsable != false { failedAttemptsOnNetwork += 1 }
         publishReconnecting()
     }
 
-    func publishReconnecting() {
+    private func publishReconnecting() {
         let network: ReconnectStatus.Network = switch currentPath?.isUsable {
         case true?: .available
         case false?: .unavailable

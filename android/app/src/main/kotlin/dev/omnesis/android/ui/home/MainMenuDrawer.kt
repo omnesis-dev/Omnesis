@@ -383,6 +383,7 @@ private fun MenuActionBar(
                         .fillMaxSize()
                         .clip(CircleShape)
                         .background(colors.bgSecondary)
+                        .testTag("menu.settings")
                         .clickable(onClick = onOpenSettings)
                         .semantics { contentDescription = "Settings" },
                     contentAlignment = Alignment.Center,

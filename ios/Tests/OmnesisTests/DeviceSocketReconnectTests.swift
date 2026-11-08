@@ -189,7 +189,7 @@ final class DeviceSocketReconnectTests: DeviceSocketLifecycleTestCase {
         XCTAssertEqual(delay, .seconds(30), "returning to the app says nothing about the network")
     }
 
-    func testPathRestoredInBackgroundWaitsForForegroundAndThenCountsAsRestoration() async throws {
+    func testPathRestoredInBackgroundWaitsForForegroundAndThenCountsAsRestoration() async {
         await startObservingPath(noNetwork)
         let delay = await failAttempt(0, sleepNumber: 1)
         await socket.appDidEnterBackground()
