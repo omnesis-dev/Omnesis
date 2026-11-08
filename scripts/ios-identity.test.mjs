@@ -795,6 +795,7 @@ describe("iOS live gateway startup", () => {
         `
         echo "$1:$OMNESIS_SYNTH_READY_TIMEOUT" >> "$TEST_CALLS"
         if [[ "$1" == start ]]; then
+          echo "\${OMNESIS_E2E_DISABLE_ICON_FETCH:-}:\${OMNESIS_E2E_DISABLE_RELEASE_CHECK:-}" > "$TEST_CALLS.network"
           mkdir -p "$OMNESIS_CONFIG_DIR/logs"
           echo "synthetic startup diagnostic" > "$OMNESIS_CONFIG_DIR/logs/gateway.stdout.log"
           echo "SYNTH_GATEWAY_NOT_READY" >&2
@@ -810,6 +811,8 @@ describe("iOS live gateway startup", () => {
         TEST_CALLS: calls,
       };
       delete env.OMNESIS_E2E_DEST;
+      delete env.OMNESIS_E2E_DISABLE_ICON_FETCH;
+      delete env.OMNESIS_E2E_DISABLE_RELEASE_CHECK;
       if (destination) env.OMNESIS_E2E_DEST = destination;
       const result = spawnSync("bash", [join(scripts, "run-ios-e2e.sh")], {
         env,
@@ -819,6 +822,8 @@ describe("iOS live gateway startup", () => {
       return {
         ...result,
         calls: readFileSync(calls, "utf8").trim().split("\n"),
+        gatewayNetworkFlags:
+          simulatorFails || discoveryFails ? undefined : readFileSync(`${calls}.network`, "utf8"),
         log:
           simulatorFails || discoveryFails
             ? undefined
@@ -843,6 +848,10 @@ describe("iOS live gateway startup", () => {
     expect(result.stderr).toContain("SYNTH_GATEWAY_NOT_READY");
     expect(result.stderr).toContain("synthetic startup diagnostic");
     expect(result.log).toBe("synthetic startup diagnostic\n");
+  });
+
+  it("boots a gateway that fetches no hosted icons and checks no releases", () => {
+    expect(failedStartup().gatewayNetworkFlags).toBe("1:1\n");
   });
 
   it("honors a destination already prepared by CI", () => {

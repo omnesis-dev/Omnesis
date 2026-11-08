@@ -29,7 +29,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
@@ -3092,14 +3092,15 @@ describe("install.sh --docker: a compose plugin too old for the project", () => 
  * A PATH on which no `docker` resolves, real or fake: every other command the
  * installer runs, linked into one directory from wherever this host keeps it.
  */
-function pathWithoutDocker() {
-  const tools = fixturePath("tools-without-docker");
-  mkdirSync(tools, { recursive: true });
-  const dirs = [
+function pathWithoutDocker(
+  dirs = [
     fixturePath("fake-bin"),
     dirname(process.execPath),
     ...(process.env.PATH ?? "").split(delimiter),
-  ];
+  ],
+) {
+  const tools = fixturePath("tools-without-docker");
+  mkdirSync(tools, { recursive: true });
   for (const dir of dirs) {
     let names;
     try {
@@ -3108,14 +3109,37 @@ function pathWithoutDocker() {
       continue;
     }
     for (const name of names) {
-      if (name === "docker" || existsSync(join(tools, name))) continue;
-      symlinkSync(join(dir, name), join(tools, name));
+      const source = resolve(dir, name);
+      // A shell skips dangling PATH entries and can find a later working command.
+      if (name === "docker" || existsSync(join(tools, name)) || !existsSync(source)) continue;
+      symlinkSync(source, join(tools, name));
     }
   }
   return tools;
 }
 
 describe("install.sh --docker: a docker CLI off this terminal's PATH", () => {
+  test("the isolated PATH skips dangling tools and preserves the first working command", () => {
+    const first = fixturePath("path-first");
+    const later = fixturePath("path-later");
+    mkdirSync(first);
+    mkdirSync(later);
+    symlinkSync(join(first, "missing"), join(first, "unavailable"));
+    symlinkSync(join(first, "missing"), join(first, "available"));
+    writeExecutable(join(later, "available"), "#!/bin/sh\necho available\n");
+    writeExecutable(join(first, "preferred"), "#!/bin/sh\necho first\n");
+    writeExecutable(join(later, "preferred"), "#!/bin/sh\necho later\n");
+    writeExecutable(join(later, "docker"), DOCKER_SHIM);
+    const bare = pathWithoutDocker([first, first, later]);
+    expect(readdirSync(bare).sort()).toEqual(["available", "preferred"]);
+    const proc = spawnSync("/bin/sh", ["-c", "available; preferred"], {
+      env: { PATH: bare },
+      encoding: "utf8",
+    });
+    expect(proc.status, proc.stderr).toBe(0);
+    expect(proc.stdout).toBe("available\nfirst\n");
+  });
+
   test("a CLI in ~/.docker/bin is used, and only docker typed by hand needs PATH", () => {
     const home = prepareHome("docker-off-path");
     const dockerDir = join(home, ".docker", "bin");

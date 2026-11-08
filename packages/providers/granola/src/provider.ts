@@ -4,8 +4,10 @@
 import { createHash } from "node:crypto";
 import {
   clearProviderAccountAndLegacyCredentials,
+  clearProviderAccountCredentials,
   createLogger,
   CredentialPersistError,
+  hasBrokerBinding,
   hasProviderAccountCredentials,
   hasProviderCredentials,
   listProviderAccountDirs,
@@ -13,6 +15,7 @@ import {
   loadOrAdoptProviderAccountCredentials,
   MissingCredentialsError,
   writeProviderAccountCredentials,
+  type BrokeredCredentials,
 } from "@omnesis/core";
 import { AccountId, SyncError } from "@omnesis/types";
 import { AuthFailure, credentialsChallenge } from "@omnesis/source-sdk";
@@ -84,6 +87,26 @@ const KEY_FINGERPRINT_PREFIX = "granola-";
  */
 export function isKeyFingerprintAccount(accountId: string): boolean {
   return new RegExp(`^${KEY_FINGERPRINT_PREFIX}[0-9a-f]{12}$`).test(accountId);
+}
+
+/**
+ * Which account a key held by the credential broker belongs to: the same probe
+ * and the same derivation as a sign-in here, so linking a key yields the id a
+ * paste of that key would have.
+ *
+ * When the workspace has no notes yet the id is the key's fingerprint, taken
+ * from the key as it is at link time. A binding is read by its directory and
+ * never re-derived, so the account keeps that id if the key is later rotated
+ * at the broker — it then no longer matches what pasting the new key would
+ * produce, and adding the new key here directly would make a second account.
+ */
+export async function resolveBrokeredAccount(
+  credentials: BrokeredCredentials,
+): Promise<{ accountId: string }> {
+  // Trimmed as a pasted key is, so a fingerprint id comes out the same.
+  const apiKey = (await credentials.token()).trim();
+  const { ownerEmail } = await new GranolaClient(apiKey).probe();
+  return { accountId: String(deriveAccountId(apiKey, ownerEmail).accountId) };
 }
 
 /**
@@ -271,7 +294,18 @@ export function discoverAccounts(configDir?: string): AccountId[] {
   });
 }
 
+/**
+ * Remove an account's local credential. A brokered account loses only its own
+ * directory, binding included: the key is the broker's and other software
+ * shares it, and the provider-wide legacy file belongs to whichever account
+ * predates per-account storage, never to one linked through the broker.
+ */
 export async function cleanupCredentials(accountId: string, configDir?: string): Promise<void> {
+  if (hasBrokerBinding(GRANOLA_FILE_KEY, accountId, configDir)) {
+    await clearProviderAccountCredentials(GRANOLA_FILE_KEY, accountId, configDir);
+    log.info(`Unlinked brokered Granola account ${accountId}`);
+    return;
+  }
   await clearProviderAccountAndLegacyCredentials(GRANOLA_FILE_KEY, accountId, configDir);
   log.info(`Cleaned up Granola credentials for account ${accountId}`);
 }

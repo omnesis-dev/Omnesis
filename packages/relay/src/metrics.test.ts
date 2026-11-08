@@ -17,9 +17,14 @@ describe("relay Prometheus metrics", () => {
     metrics.credentialPruned("ios", "bad_device_token");
     metrics.abuseRejected("enrol", "source_rate");
 
-    const text = metrics.render({ activeCredentials: { ios: 3, android: 4 } });
+    const text = metrics.render({
+      activeCredentials: { ios: 3, android: 4 },
+      activeCredentials24h: { ios: 1, android: 2 },
+    });
     expect(text).toContain("relay_build_info{version=");
     expect(text).toContain('relay_active_credentials{platform="ios"} 3');
+    expect(text).toContain('relay_active_credentials_24h{platform="ios"} 1');
+    expect(text).toContain('relay_active_credentials_24h{platform="android"} 2');
     expect(text).toContain('relay_enrolments_total{platform="ios",outcome="accepted"} 1');
     expect(text).toContain('relay_wake_total{platform="android",result="sent"} 1');
     expect(text).toContain('relay_wake_rejected_total{reason="rate_limited"} 1');

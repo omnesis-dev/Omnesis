@@ -2,7 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { defineProvider, emptySync, readConnectionState } from "@omnesis/source-sdk";
-import { readProviderAccountOrLegacyCredentials } from "@omnesis/core";
+import {
+  BrokeredCredentials,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
+  readBrokerBinding,
+  readProviderAccountOrLegacyCredentials,
+} from "@omnesis/core";
 import { GranolaClient } from "./client.js";
 import {
   authenticate as granolaAuthenticate,
@@ -12,6 +18,7 @@ import {
   isKeyFingerprintAccount,
   hasCredentials,
   loadApiKey,
+  resolveBrokeredAccount,
 } from "./provider.js";
 import { granolaCredentialsSpec } from "./credentials-spec.js";
 import { granolaIcon } from "./icons.js";
@@ -33,6 +40,16 @@ export default defineProvider<GranolaContext>({
   authType: "api-key",
   credentials: granolaCredentialsSpec,
 
+  /**
+   * Granola through the credential broker: a personal API key held by Nango's
+   * `granola` integration (API_KEY, the `grn_…` key in `apiKey`).
+   */
+  broker: {
+    fileKey: "granola",
+    purposes: [{ id: "default", label: "Granola", brokerProviders: ["granola"] }],
+    resolveAccount: (credentials) => resolveBrokeredAccount(credentials),
+  },
+
   // Resolve the authenticated account offline from the marker dir authFlow
   // writes. The collector's provider-instantiation path derives accounts
   // from discover() alone, so this must return them or the source is skipped.
@@ -41,11 +58,13 @@ export default defineProvider<GranolaContext>({
   // builds both forms, so it tells them apart by its own format rather than by
   // looking for an `@`.
   async discover(ctx) {
-    return discoverAccounts(ctx?.configDir).map((id) => ({
-      id: String(id),
+    const ids = new Set(discoverAccounts(ctx?.configDir).map(String));
+    for (const id of listBrokeredAccountIds("granola", ctx?.configDir)) ids.add(id);
+    return [...ids].map((id) => ({
+      id,
       subject: {
-        kind: isKeyFingerprintAccount(String(id)) ? ("opaque" as const) : ("email" as const),
-        value: String(id),
+        kind: isKeyFingerprintAccount(id) ? ("opaque" as const) : ("email" as const),
+        value: id,
       },
     }));
   },
@@ -66,10 +85,19 @@ export default defineProvider<GranolaContext>({
   },
 
   async createContext({ accountId, dataCutoff, host }) {
-    // Keyed by account: every instance previously loaded whatever key the
-    // shared file held, so a second account would have synced the first's data.
-    const apiKey = await loadApiKey(accountId, host?.configDir);
-    const client = new GranolaClient(apiKey);
+    let client: GranolaClient;
+    if (hasBrokerBinding("granola", accountId, host?.configDir)) {
+      // Asked of the broker per request and never written down: the binding
+      // is all this account keeps on disk.
+      const credentials = await BrokeredCredentials.load("granola", accountId, host?.configDir);
+      client = new GranolaClient(() => credentials.token(), {
+        invalidateApiKey: () => credentials.invalidate(),
+      });
+    } else {
+      // Keyed by account: every instance previously loaded whatever key the
+      // shared file held, so a second account would have synced the first's data.
+      client = new GranolaClient(await loadApiKey(accountId, host?.configDir));
+    }
     return { client, accountId, dataCutoff, configDir: host?.configDir };
   },
 
@@ -83,6 +111,13 @@ export default defineProvider<GranolaContext>({
     // the remedy differs: one asks the operator to connect, the other to
     // authenticate again.
     return readConnectionState(async () => {
+      if (hasBrokerBinding("granola", String(ctx.accountId), ctx.configDir)) {
+        // The broker holds the key; a binding that reads is the stored answer.
+        // A connection the broker has lost surfaces on the next sync as an
+        // `auth` failure.
+        await readBrokerBinding("granola", String(ctx.accountId), ctx.configDir);
+        return { status: "connected" };
+      }
       if (!hasCredentials(String(ctx.accountId), ctx.configDir))
         return { status: "never-connected" };
       const fields = await readProviderAccountOrLegacyCredentials(

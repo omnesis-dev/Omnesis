@@ -77,6 +77,7 @@ describe("computeSourceStatsRow reads a source in chunks", () => {
       for (const chunkRows of [1, 2, 7, 64, 153, 154, 155, 10_000]) {
         const {
           capturedVersion: _v,
+          capturedDocCount: _c,
           provisional: _p,
           ...agg
         } = computeSourceStatsRow(db, sourceId, chunkRows);

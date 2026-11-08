@@ -678,6 +678,23 @@ describe("people counts sweep — merge chains are flattened first", () => {
     expect(opts.writeGate.advancePeopleCountsWatermark).toHaveBeenCalledWith(8);
   });
 
+  // The gateway no longer seeds the counts at boot with one whole-graph read:
+  // on a large graph that read held the single io worker for minutes, and
+  // every user read queued behind it (search provenance among them) waited
+  // for it. A first boot has no computed counts, and this sweep is what
+  // computes them, one bounded chunk at a time.
+  test("sweeps on a first boot, when the counts have never been computed", async () => {
+    const opts = metaOpts({
+      dirtyVersion: 0,
+      lastComputedVersion: 0,
+      lastComputedAt: null,
+    });
+    const task = peopleCountsRefreshTask(opts);
+    await task.run(task.initialArgs, ctx);
+    expect(opts.ioGate.peopleCountsChunk).toHaveBeenCalled();
+    expect(opts.writeGate.upsertPeopleCounts).toHaveBeenCalled();
+  });
+
   test("sweeps anyway once the counts are old enough", async () => {
     const opts = metaOpts({
       dirtyVersion: 7,

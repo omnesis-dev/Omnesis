@@ -106,6 +106,7 @@ describe("encrypted-sidecar persistence (real graph)", () => {
       vectorWriteSeq: getUsearchSavedSeq(db),
       embedModel: MODEL,
       embedDim: EMBEDDING_DIM,
+      encoding: w.encoding,
     });
     return size;
   }
@@ -136,6 +137,26 @@ describe("encrypted-sidecar persistence (real graph)", () => {
     // the same checkpoint remains decryptable.
     setLexicalWrites(db, false);
     expect(prepareEncryptedGraphForBoot(db, dir, KEY).restored).toBe(true);
+  });
+
+  it("does not restore a sidecar saved under another vector encoding", () => {
+    seedChunks(3);
+    setIndexEmbedModel(db, MODEL, EMBEDDING_DIM);
+    const w = new UsearchWriteHandle(usearchPath, EMBEDDING_DIM, { encoding: "f32" });
+    w.setOnSaved(() => setUsearchSavedSeq(db, getVectorWriteSeq(db)));
+    w.backfillFromDb(db);
+    w.close();
+    encryptSidecar(usearchPath, encPath, KEY, {
+      vectorWriteSeq: getUsearchSavedSeq(db),
+      embedModel: MODEL,
+      embedDim: EMBEDDING_DIM,
+    });
+    rmSync(usearchPath);
+    const restore = prepareEncryptedGraphForBoot(db, dir, KEY);
+    expect(restore.restored).toBe(false);
+    expect(restore.reason).toMatch(/vector encoding changed \(sidecar=f32 build=b1\)/);
+    expect(existsSync(usearchPath)).toBe(false);
+    rebuildFromVectors(3);
   });
 
   it("saves an encrypted sidecar whose fingerprint matches the write-seq", () => {

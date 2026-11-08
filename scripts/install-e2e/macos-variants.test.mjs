@@ -117,13 +117,14 @@ nested >"$SESSION/client.private.log" 2>&1
       `Bearer ${secret}\n${"x".repeat(10000)}\n${"omn_fixture_abcdefghijklmnopqrstuvwxyz012345"}\n`,
     );
     writeFileSync(join(directory, "collector.private.log"), "COLLECTOR-PRIVATE-CANARY");
-    function execute() {
+    function execute(stub = "") {
       return spawnSync(
         "bash",
         [
           "-c",
           `set -uo pipefail
 redact() { node "$REDACTOR"; }
+${stub}
 ${diagnostics}
 installer_failure_diagnostics 1
 exit 23
@@ -166,6 +167,18 @@ exit 23
         expect(allowed.stderr).not.toContain(canary);
       expect(Buffer.byteLength(allowed.stderr)).toBeLessThanOrEqual(
         8192 + Buffer.byteLength("[install-e2e] redacted gateway pre-readiness tail\n"),
+      );
+      const noisy = execute(`redact() { node "$REDACTOR"; printf 'FILTER-PRIVATE-CANARY\\n' >&2; }
+tail() { printf 'TAIL-PRIVATE-CANARY\\n' >&2; command tail "$@"; }`);
+      expect(noisy.status).toBe(23);
+      expect(noisy.stderr).toBe(allowed.stderr);
+      const crashed = execute(`ulimit -c 0
+redact() { local data; data="$(cat)"; if [ -z "$data" ]; then return 0; fi; exec bash -c 'kill -SEGV $$'; }`);
+      expect(crashed.status).toBe(23);
+      expect(crashed.stdout).toBe("");
+      expect(crashed.stderr).toBe(
+        "[install-e2e] redacted gateway pre-readiness tail\n" +
+          "[install-e2e] startup diagnostic filtering unavailable\n",
       );
       rmSync(gateway);
       symlinkSync(join(directory, "collector.private.log"), gateway);
@@ -573,6 +586,8 @@ exit "$status"
         "DAEMON-LOG-CANARY",
         "SYMLINK-LOG-CANARY",
         "NODE-MUST-NOT-RUN",
+        "FILTER-PRIVATE-CANARY",
+        "TAIL-PRIVATE-CANARY",
       ])
         expect(result.stderr).not.toContain(canary);
       const headings = allowedLabels
@@ -586,6 +601,12 @@ exit "$status"
       for (const control of [
         { name: "restored", restored: "1", stub: "" },
         {
+          name: "noisy-tools",
+          restored: "1",
+          stub: `redact() { node "$REDACTOR"; printf 'FILTER-PRIVATE-CANARY\\n' >&2; }
+tail() { printf 'TAIL-PRIVATE-CANARY\\n' >&2; command tail "$@"; }`,
+        },
+        {
           name: "restore-failed",
           restored: "0",
           stub: "node() { echo NODE-MUST-NOT-RUN >&2; return 127; }",
@@ -594,7 +615,7 @@ exit "$status"
         { name: "redactor-unavailable", restored: "1", stub: "redact() { return 127; }" },
       ]) {
         const result = execute(control.restored, control.stub);
-        if (control.name === "restored") {
+        if (["restored", "noisy-tools"].includes(control.name)) {
           assertPrivate(result, labels);
           expect(result.stderr).toContain("Bearer ***");
           expect(result.stderr).toContain("omn_***");
@@ -607,12 +628,53 @@ exit "$status"
           );
         }
       }
+      const lastLine = "0123456789".repeat(2000) + "\n";
+      for (const label of labels)
+        writeFileSync(join(directory, `${label}.private.log`), log + lastLine);
+      const chunked = execute("1");
+      assertPrivate(chunked, labels);
+      expect(chunked.stderr).toBe(
+        labels
+          .map(
+            (label) => `[install-e2e] redacted ${label} installer tail\n` + lastLine.slice(-8192),
+          )
+          .join(""),
+      );
       writeFileSync(join(directory, "forbidden-log"), "SYMLINK-LOG-CANARY-NEVER-PRINT");
       rmSync(join(directory, "no-service.private.log"));
       symlinkSync(join(directory, "forbidden-log"), join(directory, "no-service.private.log"));
       const symlink = execute("1");
       assertPrivate(symlink, ["client", "absence"]);
       expect(symlink.stderr).not.toContain("redacted no-service installer tail");
+
+      for (const label of ["client", "absence"])
+        writeFileSync(join(directory, `${label}.private.log`), `Bearer ${bearer}\n`);
+      for (const stub of [
+        `redact() { local data; data="$(cat)"; printf '%s' "$data" | node "$REDACTOR"; printf 'FILTER-PRIVATE-CANARY\\n' >&2; [ -z "$data" ]; }`,
+        `tail() { command tail "$@"; printf 'TAIL-PRIVATE-CANARY\\n' >&2; return 7; }`,
+      ]) {
+        const failed = execute("1", stub);
+        assertPrivate(failed, ["client", "absence"]);
+        expect(failed.stderr).toContain(
+          "[install-e2e] installer diagnostic filtering unavailable\n",
+        );
+      }
+      for (const stub of [
+        `redact() { local data; data="$(cat)"; if [ -z "$data" ]; then return 0; fi; exec bash -c 'kill -SEGV $$'; }`,
+        `tail() { exec bash -c 'kill -SEGV $$'; }`,
+      ]) {
+        const crashed = execute("1", `ulimit -c 0\n${stub}`);
+        assertPrivate(crashed, ["client", "absence"]);
+        expect(crashed.stderr).toBe(
+          ["client", "absence"]
+            .map(
+              (label) =>
+                `[install-e2e] redacted ${label} installer tail\n` +
+                "[install-e2e] installer diagnostic filtering unavailable\n",
+            )
+            .join(""),
+        );
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

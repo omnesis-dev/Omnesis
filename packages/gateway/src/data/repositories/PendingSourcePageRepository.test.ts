@@ -26,6 +26,7 @@ import {
   preparePendingSourcePage,
   getPendingSourcePage,
   acknowledgePendingSourcePage,
+  abandonPendingSourcePage,
 } from "./PendingSourcePageRepository.js";
 
 let dir: string;
@@ -112,4 +113,27 @@ test("detaching the preparer cancels its shared-row page without removing siblin
   prepare();
   expect(removeSourceMember(db, source.id, device.id).removed).toBe(true);
   expect(getPendingSourcePage(db, source.id, "")).toBeNull();
+});
+
+test("a refused page is discarded only while its cursor is uncommitted", () => {
+  const page = prepare();
+  expect(abandonPendingSourcePage(db, { ...page, id: randomUUID() })).toBe(false);
+  expect(abandonPendingSourcePage(db, { ...page, writeEpoch: page.writeEpoch + 1 })).toBe(false);
+  expect(getPendingSourcePage(db, source.id, "")?.id).toBe(page.id);
+  expect(abandonPendingSourcePage(db, page)).toBe(true);
+  expect(getPendingSourcePage(db, source.id, "")).toBeNull();
+
+  const fresh = prepare();
+  expect(fresh.id).not.toBe(page.id);
+  upsertWithCursor(db, {
+    providerId: ProviderId("example"),
+    sourceId: source.id,
+    hasMore: false,
+    documents: [],
+    cursor: { bookmark: 8 },
+    wipeEpoch: fresh.writeEpoch,
+    pendingPageId: fresh.id,
+  });
+  expect(abandonPendingSourcePage(db, fresh)).toBe(false);
+  expect(getPendingSourcePage(db, source.id, "")?.cursorCommitted).toBe(true);
 });

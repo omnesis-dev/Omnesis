@@ -105,6 +105,35 @@ function ensureColumn(db: Db, table: string, column: string, ddl: string): void 
   }
 }
 
+/**
+ * The index `refreshIndexStats` scans instead of the table. Every chunk row
+ * carries its content and embedding, so a scan of the table reads the whole
+ * store; the index holds only the three columns the per-source stats need, so
+ * the scan reads a small fraction of it. Built once, which reads the table in
+ * full on an index database that predates it.
+ */
+export const CHUNK_STATS_INDEX = "idx_chunks_source_document_date";
+
+function ensureChunkStatsIndex(db: Db): void {
+  const present = db
+    .prepare<[string], { present: number }>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = ?",
+    )
+    .get(CHUNK_STATS_INDEX);
+  if (present) return;
+  const chunks = db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM chunks").get();
+  const startMs = Date.now();
+  if (chunks && chunks.count > 0) {
+    log.info(`Building ${CHUNK_STATS_INDEX} over ${chunks.count} chunks (one-time)`);
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS ${CHUNK_STATS_INDEX} ON chunks(source_id, document_id, source_created_at)`,
+  );
+  if (chunks && chunks.count > 0) {
+    log.info(`Built ${CHUNK_STATS_INDEX} in ${Date.now() - startMs}ms`);
+  }
+}
+
 export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {}): Db {
   const db = openIndexDb(path, opts);
 
@@ -137,6 +166,7 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
   db.exec("CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_chunks_type ON chunks(document_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_chunks_date ON chunks(source_created_at)");
+  ensureChunkStatsIndex(db);
 
   // Queue of chunk rowids whose HNSW vectors still need removing. The HTTP
   // delete cascade runs on the main thread, which holds only a *read*
@@ -766,6 +796,28 @@ export function setUsearchSavedChangeSeq(db: Db, seq: number | null): void {
 
 export function getUsearchBackfillCursor(db: Db): number | null {
   return getMetaInt(db, USEARCH_BACKFILL_CURSOR_KEY);
+}
+
+/**
+ * `index_meta` key: how the saved graph stores its vectors (`f32` or `b1`, see
+ * `VECTOR_ENCODING` in usearch-index.ts). Absent on a graph saved before the
+ * key existed, which held floats. The indexer rebuilds a graph saved under an
+ * encoding other than the one it runs, since usearch adopts a file's own.
+ */
+const USEARCH_ENCODING_KEY = "usearch_encoding";
+
+export function getUsearchEncoding(db: Db): string {
+  const row = db
+    .prepare<[string], { value: string }>("SELECT value FROM index_meta WHERE key = ?")
+    .get(USEARCH_ENCODING_KEY);
+  return row?.value ?? "f32";
+}
+
+export function setUsearchEncoding(db: Db, encoding: string): void {
+  db.prepare(
+    `INSERT INTO index_meta (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(USEARCH_ENCODING_KEY, encoding, new Date().toISOString());
 }
 
 export function setUsearchBackfillCursor(db: Db, rowid: number | null): void {

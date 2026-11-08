@@ -1413,12 +1413,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <h3 id="memory">Semantic search is degraded</h3>
         <p>
           Semantic search keeps an index of every embedded passage in memory, so its size grows with
-          the corpus: about 1.4 times the size of the passages' vectors. The gateway loads or builds
-          it only when it fits in the gateway's memory budget with room left for everything else,
-          and saves and releases it if memory runs short later. Until it is back, search answers
-          from keywords alone: <code>omnesis status</code> shows
-          <strong>Semantic Search Degraded</strong> with the reason,
-          <code>omnesis doctor</code> warns under Index, and the gateway log has a
+          the corpus: one bit per dimension of each passage's vector plus the links between them,
+          about 250 bytes a passage. The full vectors stay in the index database and re-rank what
+          the index finds. The gateway loads or builds it only when it fits in the gateway's memory
+          budget with room left for everything else, and saves and releases it if memory runs short
+          later. Until it is back, search answers from keywords alone:
+          <code>omnesis status</code> shows <strong>Semantic Search Degraded</strong> with the
+          reason, <code>omnesis doctor</code> warns under Index, and the gateway log has a
           <code>semantic search degraded</code> line. Indexing goes on, and passages indexed
           meanwhile join the semantic index when it returns.
         </p>
@@ -1522,10 +1523,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
               </tr>
               <tr>
-                <td><code>sources</code>, <code>creds</code>, <code>note</code></td>
                 <td>
-                  Add and manage sources and provider credentials, from a terminal or a script;
-                  capture a note
+                  <code>sources</code>, <code>creds</code>, <code>broker</code>, <code>note</code>
+                </td>
+                <td>
+                  Add and manage sources, provider credentials and credentials from a broker, from a
+                  terminal or a script; capture a note
                 </td>
                 <td>
                   <a href="sources#managing-sources">Available sources</a>;

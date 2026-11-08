@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { RELAY_PRUNE_INTERVAL_MS, RelayService } from "./service.js";
-import { RelayStore } from "./store.js";
+import { RELAY_RATE_WINDOW_DAY_MS, RelayStore } from "./store.js";
 import { RelayMetrics } from "./metrics.js";
 import { CarrierDispatchError } from "./types.js";
 import { RelayAbuseGuard, type RelayAbuseLimits } from "./abuse.js";
@@ -123,6 +123,36 @@ async function enrolAndVerify(set: ReturnType<typeof setup>): Promise<string> {
 }
 
 describe("RelayService enrolment possession proof", () => {
+  it("counts notification traffic regardless of delivery, excluding enrolments and rejected credentials", async () => {
+    let now = 10_000;
+    const set = setup("android", { clock: { now: () => now } });
+    const recent = () => set.store.operationalSnapshot(now).activeCredentials24h.android;
+    const { challengeId } = await set.service.enrol(set.target);
+    expect(recent()).toBe(0);
+    expect(() => set.service.verify(challengeId, "forged")).toThrow();
+    expect(recent()).toBe(0);
+    const { credential } = set.service.verify(challengeId, set.carrier.challenges[0]!.nonce);
+    expect(recent()).toBe(0);
+    await set.service.wake(credential);
+    await set.service.wake(credential);
+    expect(recent()).toBe(1);
+    now += RELAY_RATE_WINDOW_DAY_MS;
+    expect(recent()).toBe(0);
+    await expect(set.service.wake(`omnrelay_v1_${"z".repeat(43)}`)).rejects.toMatchObject({
+      code: "credential_rejected",
+    });
+    expect(recent()).toBe(0);
+    set.carrier.wakeError = new CarrierDispatchError("other");
+    await expect(set.service.wake(credential)).rejects.toMatchObject({ code: "carrier_failed" });
+    expect(recent()).toBe(1);
+    now += RELAY_RATE_WINDOW_DAY_MS;
+    expect(recent()).toBe(0);
+    set.carrier.wakeError = new CarrierDispatchError("stale_credential", "unregistered");
+    await expect(set.service.wake(credential)).rejects.toMatchObject({ code: "carrier_failed" });
+    expect(recent()).toBe(0);
+    await set.service.dispose();
+  });
+
   it("bounds pending challenges and uses the configured short expiry", async () => {
     const set = setup("ios", {
       abuseLimits: testAbuseLimits,

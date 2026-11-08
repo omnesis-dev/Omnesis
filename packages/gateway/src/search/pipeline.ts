@@ -643,15 +643,18 @@ export class SearchPipeline {
     let queryVector: Float32Array | null = null;
     let laneVector: Float32Array | null = null;
     let embedMs = 0;
+    let embedFailure: string | undefined;
     const embedding = async () => {
       if (mode !== "hybrid" || !this.embedder || this.vectorUnavailableReason) return;
       // Embed on this thread, only when an embedder is attached; otherwise
       // `queryVector` stays null and the core records the vector-skip reason.
-      // An embed throw propagates (the search fails rather than silently
-      // degrading) — only the usearch dimension mismatch degrades to BM25,
-      // inside the core. The temporal lane ranks its window by the query's
-      // words without the time phrase, which embeddings would otherwise blur;
-      // that embedding is best effort, like the rest of the lane.
+      // An embed failure (the indexer worker busy past the embed timeout, a
+      // model that fails to answer) degrades this one search to BM25 and is
+      // reported as the vector stage's skip reason, like a pipeline-wide
+      // degradation; the next search embeds again. The temporal lane ranks
+      // its window by the query's words without the time phrase, which
+      // embeddings would otherwise blur; that embedding is best effort, like
+      // the rest of the lane.
       // `embedMs` is the longer of the two embeddings, each timed on its own,
       // so the wait for the reading never counts as embedding time.
       const embedder = this.embedder;
@@ -675,7 +678,11 @@ export class SearchPipeline {
           : null;
       });
       [queryVector, laneVector] = await Promise.all([
-        timed(() => embedder.embedQuery(effectiveText)),
+        timed(() => embedder.embedQuery(effectiveText)).catch((err: unknown) => {
+          embedFailure = `query not embedded (${err instanceof Error ? err.message : String(err)})`;
+          log.warn(`Search: ${embedFailure}; this search answers off BM25 alone`);
+          return null;
+        }),
         laneEmbedding,
       ]);
       const laneText = (await reading)?.strippedText ?? "";
@@ -719,11 +726,12 @@ export class SearchPipeline {
       mode,
       bm25Text: effectiveText,
       prefixLastToken: options?.prefixLastToken,
-      embedderPresent: !!this.embedder && !this.vectorUnavailableReason,
+      embedderPresent: !!this.embedder && !this.vectorUnavailableReason && !embedFailure,
       queryVector,
       ...(this.vectorUnavailableReason
         ? { vectorUnavailableReason: this.vectorUnavailableReason }
         : {}),
+      ...(embedFailure ? { queryEmbedFailure: embedFailure } : {}),
       embedMs,
       // The query-model / active-generation compare that closes the
       // same-dimension embedder-swap hole is wired through the core (see

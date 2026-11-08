@@ -38,6 +38,12 @@ fi
 export OMNESIS_CONFIG_DIR="${OMNESIS_CONFIG_DIR:-/tmp/omnesis-ios-e2e}"
 export OMNESIS_GATEWAY_PORT="${OMNESIS_GATEWAY_PORT:-17601}"
 export OMNESIS_SYNTH_UNIVERSE="${OMNESIS_SYNTH_UNIVERSE:-e2e-minimal}"
+# Keep the gateway off the network, like every gateway the E2E suites spawn.
+# Synthetic sources inherit their real providers' hosted icons, and a descriptor
+# listing waits for each one, so third-party hosts would decide how long the
+# suite's requests take.
+export OMNESIS_E2E_DISABLE_ICON_FETCH=1
+export OMNESIS_E2E_DISABLE_RELEASE_CHECK=1
 
 # Resolve before starting the gateway: runtime download/boot can take minutes.
 # CI may supply a destination it has already prepared on this runner.

@@ -69,6 +69,8 @@ export interface SidecarFingerprint {
   /** Embedder stamp — a mismatch forces a rebuild (defense in depth). */
   embedModel: string;
   embedDim: number;
+  /** How the graph stores its vectors (`VECTOR_ENCODING`); absent on sidecars that hold floats. */
+  encoding?: string;
   /** The graph's vector change log position; absent on sidecars older than the log. */
   changeSeq?: number;
   /** Last rowid an unfinished cold rebuild had added; absent or null once complete. */
@@ -116,6 +118,7 @@ export function encryptSidecar(
     vectorWriteSeq: fingerprint.vectorWriteSeq,
     embedModel: fingerprint.embedModel,
     embedDim: fingerprint.embedDim,
+    ...(fingerprint.encoding !== undefined ? { encoding: fingerprint.encoding } : {}),
     ...(fingerprint.changeSeq !== undefined ? { changeSeq: fingerprint.changeSeq } : {}),
     ...(fingerprint.backfillCursor != null ? { backfillCursor: fingerprint.backfillCursor } : {}),
   };
@@ -199,6 +202,7 @@ export function readSidecarFingerprint(encPath: string): SidecarFingerprint | nu
       vectorWriteSeq: parsed.vectorWriteSeq,
       embedModel: parsed.embedModel,
       embedDim: parsed.embedDim,
+      ...(typeof parsed.encoding === "string" ? { encoding: parsed.encoding } : {}),
       ...(typeof parsed.changeSeq === "number" ? { changeSeq: parsed.changeSeq } : {}),
       ...(typeof parsed.backfillCursor === "number"
         ? { backfillCursor: parsed.backfillCursor }
@@ -307,6 +311,8 @@ export function restoreActiveSidecar(opts: {
   indexDbKey: Buffer;
   expectedSeq: number;
   expectedModel: { name: string; dim: number } | null;
+  /** The encoding this build's graphs use; a sidecar of another is rebuilt, not restored. */
+  expectedEncoding?: string;
   /** `vector_changes` entries at or below this position are gone. */
   changesPrunedThrough: number;
 }): {
@@ -335,6 +341,12 @@ export function restoreActiveSidecar(opts: {
     return {
       restored: false,
       reason: `embedder stamp mismatch (sidecar=${fp.embedModel}/${fp.embedDim} db=${opts.expectedModel.name}/${opts.expectedModel.dim})`,
+    };
+  }
+  if (opts.expectedEncoding !== undefined && (fp.encoding ?? "f32") !== opts.expectedEncoding) {
+    return {
+      restored: false,
+      reason: `vector encoding changed (sidecar=${fp.encoding ?? "f32"} build=${opts.expectedEncoding})`,
     };
   }
   try {

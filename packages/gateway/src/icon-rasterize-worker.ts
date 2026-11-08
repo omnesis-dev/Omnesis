@@ -4,10 +4,9 @@
 /**
  * Tiny dedicated worker thread for SVG → PNG rasterization.
  *
- * Resvg's `render()` is a synchronous native call that blocks for ~30–50ms
- * on a typical brand-glyph SVG. Running it on the main HTTP event loop
- * blocks every other request for that window. This worker owns the Resvg
- * native binding so the main thread just sends bytes and awaits a PNG.
+ * Resvg's `render()` is a synchronous native call. Running it on the main HTTP
+ * event loop blocks every other request for that window. This worker owns the
+ * Resvg native binding so the main thread just sends bytes and awaits a PNG.
  *
  * Pool size is 1 — rasterize is rare (memoized at the call site), and a
  * single worker keeps init cost down. If the workload ever justifies a
@@ -20,7 +19,7 @@
  */
 
 import { parentPort } from "node:worker_threads";
-import { Resvg } from "@resvg/resvg-js";
+import { rasterizeSvgToPngBase64 } from "./icon-rasterize.js";
 
 if (!parentPort) {
   throw new Error("icon-rasterize-worker must run as a Node worker_thread");
@@ -34,15 +33,10 @@ interface RasterizeRequest {
 
 parentPort.on("message", (msg: RasterizeRequest) => {
   try {
-    const resvg = new Resvg(Buffer.from(msg.svgBytes), {
-      fitTo: { mode: "width", value: msg.targetSize },
-      background: "rgba(0,0,0,0)",
-    });
-    const png = resvg.render().asPng();
     parentPort!.postMessage({
       id: msg.id,
       ok: true,
-      png: Buffer.from(png).toString("base64"),
+      png: rasterizeSvgToPngBase64(Buffer.from(msg.svgBytes), msg.targetSize),
     });
   } catch (err) {
     parentPort!.postMessage({

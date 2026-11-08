@@ -30,7 +30,6 @@ import {
   type AnalyticsSweepCandidate,
 } from "../data/repositories/AnalyticsReplicaClaimRepository.js";
 import {
-  computePeopleCounts,
   computePeopleCountsChunk,
   searchPeople,
   type PersonBrowseCursor,
@@ -312,7 +311,6 @@ export const ioHandlers = {
   ) => enrichGraphContextHits(db, hits, options),
 
   // ── people compute (read halves of compute/upsert splits) ─────────
-  "io.peopleCounts": (db: Db) => computePeopleCounts(db),
   "io.peopleCountsChunk": (db: Db, cursor: string | null, batchSize: number) =>
     computePeopleCountsChunk(db, cursor, batchSize),
   "io.mergeCandidates": (db: Db, perStepLimit?: number) => computeAutoMergePairs(db, perStepLimit),
