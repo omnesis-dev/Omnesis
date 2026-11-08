@@ -57,6 +57,15 @@ const UNRESOLVED_DOCS = 400;
 const PENDING_CANDIDATES = 3_000;
 /** The longest a single call may hold the writer. */
 const HOLD_BUDGET_MS = 250;
+/**
+ * The longest an unrelated write may wait end to end behind a call. It is
+ * measured on the caller's side, so it also pays the round trips to the writer
+ * thread and whatever the writer runs between ops; on a shared CI runner that
+ * alone has pushed it a millisecond past the hold budget. The hold itself stays
+ * held to `HOLD_BUDGET_MS`, and an unsliced call still waits far longer than
+ * this.
+ */
+const WAIT_BUDGET_MS = 2 * HOLD_BUDGET_MS;
 const CURSOR: SyncCursor = {
   type: "incremental",
   lastSyncTime: "2026-01-05T09:00:00.000Z",
@@ -172,7 +181,7 @@ describe("writer maintenance against a large encrypted corpus", () => {
     const waited = await waitBehind("user", 30);
     await refreshing;
     report("catalog.upsertSqliteTableStats", performance.now() - started);
-    expect(waited).toBeLessThan(HOLD_BUDGET_MS);
+    expect(waited).toBeLessThan(WAIT_BUDGET_MS);
     expect(writerStats("catalog.upsertSqliteTableStats").max).toBeLessThan(HOLD_BUDGET_MS);
     expect(
       scheduler.snapshot(900).perTask.some((t) => t.name === "catalog.refreshSqliteTableStats"),
@@ -216,7 +225,7 @@ describe("writer maintenance against a large encrypted corpus", () => {
     report("people.backfillManyPeople", performance.now() - started);
     expect(result.processed).toBe(UNRESOLVED_DOCS);
     expect(count("SELECT COUNT(*) AS n FROM documents WHERE people_resolved_at IS NULL")).toBe(0);
-    expect(waited).toBeLessThan(HOLD_BUDGET_MS);
+    expect(waited).toBeLessThan(WAIT_BUDGET_MS);
     const stats = writerStats("people.backfillManyPeople");
     expect(stats.yieldCount).toBeGreaterThan(0);
     expect(stats.max).toBeLessThan(HOLD_BUDGET_MS);
@@ -237,7 +246,7 @@ describe("writer maintenance against a large encrypted corpus", () => {
       );
     report("knowledge.advanceCascade", performance.now() - started);
     expect(before - count("SELECT COUNT(*) AS n FROM knowledge_cascade_jobs")).toBeGreaterThan(5);
-    expect(waited).toBeLessThan(HOLD_BUDGET_MS);
+    expect(waited).toBeLessThan(WAIT_BUDGET_MS);
     expect(writerStats("knowledge.advanceCascade").max).toBeLessThan(HOLD_BUDGET_MS);
   }, 600_000);
 
@@ -259,7 +268,7 @@ describe("writer maintenance against a large encrypted corpus", () => {
     const { analyzed } = await analyzing;
     report("db.refreshPlannerStatistics", performance.now() - started);
     expect(analyzed).toBeGreaterThan(50);
-    expect(waited).toBeLessThan(HOLD_BUDGET_MS);
+    expect(waited).toBeLessThan(WAIT_BUDGET_MS);
     const stats = writerStats("db.refreshPlannerStatistics");
     expect(stats.yieldCount).toBeGreaterThan(0);
     expect(stats.max).toBeLessThan(HOLD_BUDGET_MS);
