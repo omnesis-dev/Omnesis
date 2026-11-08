@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
@@ -331,6 +331,64 @@ describe("setupSources — per-instance label override", () => {
     expect(
       registered.flatMap((entry) => entry.sources.map((source) => String(source.id))).sort(),
     ).toEqual(["fixture-child:local", "fixture-single:local"]);
+  });
+
+  it("a provider account reads whether the broker holds its credential, at the time it is asked", async () => {
+    const brokeredProvider = defineProvider({
+      provider: { id: "fixture-brokered", name: "Fixture" },
+      authType: "oauth",
+      discover: async () => [AccountId("workspace-1")],
+      createContext: async () => ({}),
+      broker: {
+        fileKey: "fixture-brokered",
+        purposes: [{ id: "default", label: "Fixture", brokerProviders: ["fixture"] }],
+        resolveAccount: async () => ({ accountId: "workspace-1" }),
+      },
+      sources: [
+        {
+          id: "fixture-brokered-child",
+          name: "Child",
+          description: "Fixture",
+          create: async () => ({ sync: noopSync }),
+        },
+      ],
+    });
+    const plainProvider = defineProvider({
+      provider: { id: "fixture-plain", name: "Fixture" },
+      authType: "oauth",
+      discover: async () => [AccountId("workspace-1")],
+      createContext: async () => ({}),
+      sources: [
+        {
+          id: "fixture-plain-child",
+          name: "Child",
+          description: "Fixture",
+          create: async () => ({ sync: noopSync }),
+        },
+      ],
+    });
+    const registered: RegisteredProvider[] = [];
+    await setupSources(
+      makeCtx(
+        [brokeredProvider, plainProvider],
+        [
+          makeDescriptor("fixture-brokered-child", "fixture-brokered"),
+          makeDescriptor("fixture-plain-child", "fixture-plain"),
+        ],
+        registered,
+      ),
+      { "fixture-brokered-child": { enabled: true }, "fixture-plain-child": { enabled: true } },
+    );
+    const brokered = registered.find((p) => String(p.id) === "fixture-brokered:workspace-1");
+    const plain = registered.find((p) => String(p.id) === "fixture-plain:workspace-1");
+    expect(plain?.brokered).toBeUndefined();
+    expect(brokered?.brokered?.()).toBe(false);
+    const accountDir = join(isolatedConfigDir, "fixture-brokered", "workspace-1");
+    mkdirSync(accountDir, { recursive: true });
+    writeFileSync(join(accountDir, "broker.json"), "{}");
+    expect(brokered?.brokered?.()).toBe(true);
+    rmSync(join(accountDir, "broker.json"));
+    expect(brokered?.brokered?.()).toBe(false);
   });
 
   it("source definition: instance.label wins over def.name; absent label falls back", async () => {

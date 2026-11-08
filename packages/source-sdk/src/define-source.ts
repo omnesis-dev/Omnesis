@@ -78,6 +78,7 @@ import type {
   WidgetRendererSpec,
 } from "./source-descriptor.js";
 import type { SourceState } from "./source-state.js";
+import type { ProviderBrokerSpec } from "./broker-spec.js";
 import type { ProviderHost, SourceHost } from "./source-host.js";
 import type { ConfigField, ConfigSchema, InferConfig } from "./config-schema.js";
 import type {
@@ -1134,6 +1135,12 @@ export interface ProviderDefinition<TContext = unknown> {
    * this provider so each source descriptor surfaces the wizard.
    */
   credentials?: ProviderCredentialsSpec;
+
+  /**
+   * How an account can take its credential from the credential broker instead
+   * of a sign-in here. See {@link ProviderBrokerSpec}.
+   */
+  broker?: ProviderBrokerSpec;
 
   // ── Auth lifecycle (shared across all sources) ────────────────
   /** See `SourceDefinition.discover`. */

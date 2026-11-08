@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createLogger } from "@omnesis/core";
+import {
+  BrokerCredentialError,
+  createLogger,
+  DEFAULT_BROKER_PURPOSE,
+  type BrokeredCredentials,
+} from "@omnesis/core";
 import { SyncError, type SyncRemediation } from "@omnesis/types";
 import { STREAM_KEYS } from "./types.js";
 import { loadClientCredentials, saveTokens } from "./provider.js";
@@ -74,8 +79,8 @@ const REFRESH_SKEW_SECONDS = 60;
  * itself, not anything specific to that source's own state, is what died.
  */
 export class StravaAuthError extends SyncError {
-  constructor(message: string) {
-    super("auth", message, { scope: "connection" });
+  constructor(message: string, opts: { cause?: unknown } = {}) {
+    super("auth", message, { scope: "connection", cause: opts.cause });
     this.name = "StravaAuthError";
   }
 }
@@ -349,9 +354,23 @@ export interface ListActivitiesParams {
 /** Injectable fetch dependency — lets tests swap in a mock without touching globals. */
 export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Where a brokered athlete's access token comes from. Asked before every
+ * request, and with `forceRefresh` once Strava has refused the token it gave.
+ */
+export type StravaAccessToken = (opts?: { forceRefresh?: boolean }) => Promise<string>;
+
 export interface StravaClientOptions {
-  tokens: StravaTokens;
+  /** The athlete's stored grant. Required unless `accessToken` is given. */
+  tokens?: StravaTokens;
   credentials?: StravaCredentials;
+  /**
+   * For an athlete whose grant the credential broker holds. It takes the
+   * place of `tokens`, `credentials` and `onTokensRefreshed`: the broker
+   * refreshes the grant, so this client never calls Strava's token endpoint,
+   * needs no API application credentials, and has nothing to persist.
+   */
+  accessToken?: StravaAccessToken;
   /** Called whenever tokens are refreshed so the caller can persist them. */
   onTokensRefreshed?: (tokens: StravaTokens) => Promise<void> | void;
   /** Optional custom config dir for credential lookup (used in tests). */
@@ -364,8 +383,9 @@ export interface StravaClientOptions {
 
 /** Minimal Strava HTTP client — fetch + token refresh + 429 retry + quota tracker. */
 export class StravaClient {
-  private tokens: StravaTokens;
-  private credentials: StravaCredentials;
+  private tokens?: StravaTokens;
+  private credentials?: StravaCredentials;
+  private readonly brokered?: StravaAccessToken;
   private onTokensRefreshed?: (tokens: StravaTokens) => Promise<void> | void;
   private fetchFn: FetchFn;
   private sleepFn: (ms: number) => Promise<void>;
@@ -375,16 +395,21 @@ export class StravaClient {
   public readonly quota = new StravaRateLimitTracker();
 
   constructor(opts: StravaClientOptions) {
-    this.tokens = opts.tokens;
-    this.credentials = opts.credentials ?? loadClientCredentials(opts.configDir);
-    this.onTokensRefreshed = opts.onTokensRefreshed;
+    if (opts.accessToken) {
+      this.brokered = opts.accessToken;
+    } else {
+      if (!opts.tokens) throw new Error("A Strava client needs the athlete's tokens");
+      this.tokens = opts.tokens;
+      this.credentials = opts.credentials ?? loadClientCredentials(opts.configDir);
+      this.onTokensRefreshed = opts.onTokensRefreshed;
+    }
     this.fetchFn = opts.fetchFn ?? fetch;
     this.sleepFn = opts.sleepFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
   /** Current tokens (may have been refreshed since construction). */
   getTokens(): StravaTokens {
-    return this.tokens;
+    return this.storedGrant().tokens;
   }
 
   // ── Activity-listing endpoints ────────────────────────────────────
@@ -505,11 +530,11 @@ export class StravaClient {
     // 429 waits only; the flag alone bounds the refreshes to one.
     let refreshedAfter401 = false;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      await this.ensureFreshToken();
+      const accessToken = await this.currentAccessToken();
 
       const res = await this.fetchFn(url.toString(), {
         headers: {
-          Authorization: `Bearer ${this.tokens.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
           Accept: "application/json",
         },
       });
@@ -593,9 +618,27 @@ export class StravaClient {
     throw new Error("Strava client: max retries exhausted");
   }
 
+  /**
+   * The token for the next request. A brokered one is asked of the broker
+   * every time, which reuses it until it is nearly due, so a token the broker
+   * rotates mid-run is picked up on the next request.
+   */
+  private async currentAccessToken(): Promise<string> {
+    if (this.brokered) return this.brokered();
+    await this.ensureFreshToken();
+    return this.storedGrant().tokens.access_token;
+  }
+
+  private storedGrant(): { tokens: StravaTokens; credentials: StravaCredentials } {
+    if (!this.tokens || !this.credentials) {
+      throw new Error("A brokered Strava client holds no tokens of its own");
+    }
+    return { tokens: this.tokens, credentials: this.credentials };
+  }
+
   private async ensureFreshToken(): Promise<void> {
     const nowSec = Math.floor(Date.now() / 1000);
-    if (this.tokens.expires_at > nowSec + REFRESH_SKEW_SECONDS) return;
+    if (this.storedGrant().tokens.expires_at > nowSec + REFRESH_SKEW_SECONDS) return;
     await this.refreshTokens();
   }
 
@@ -611,14 +654,21 @@ export class StravaClient {
   }
 
   private async doRefresh(): Promise<void> {
+    if (this.brokered) {
+      // The broker refreshes the grant it holds and keeps what Strava sends
+      // back; the next request asks it for the token that refresh produced.
+      await this.brokered({ forceRefresh: true });
+      return;
+    }
+    const { tokens, credentials } = this.storedGrant();
     const res = await this.fetchFn(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        client_id: this.credentials.client_id,
-        client_secret: this.credentials.client_secret,
+        client_id: credentials.client_id,
+        client_secret: credentials.client_secret,
         grant_type: "refresh_token",
-        refresh_token: this.tokens.refresh_token,
+        refresh_token: tokens.refresh_token,
       }),
     });
 
@@ -641,19 +691,20 @@ export class StravaClient {
       token_type: string;
     };
 
-    this.tokens = {
-      ...this.tokens,
+    const refreshed: StravaTokens = {
+      ...tokens,
       access_token: data.access_token,
       refresh_token: data.refresh_token,
       expires_at: data.expires_at,
     };
+    this.tokens = refreshed;
 
     log.info(
-      `Refreshed Strava token for athlete ${this.tokens.athlete_id} (expires at ${new Date(this.tokens.expires_at * 1000).toISOString()})`,
+      `Refreshed Strava token for athlete ${refreshed.athlete_id} (expires at ${new Date(refreshed.expires_at * 1000).toISOString()})`,
     );
 
     if (this.onTokensRefreshed) {
-      await this.onTokensRefreshed(this.tokens);
+      await this.onTokensRefreshed(refreshed);
     }
   }
 }
@@ -706,6 +757,35 @@ export async function buildStravaClient(opts: {
     configDir: opts.configDir,
     onTokensRefreshed: async (refreshed) => {
       await saveTokens(refreshed, opts.configDir);
+    },
+  });
+}
+
+/**
+ * A client for an athlete whose grant the credential broker holds. Nothing is
+ * read from or written to disk: no API application credentials (the broker's
+ * integration holds them) and no tokens file.
+ *
+ * The broker refusing the connection — no longer held, no longer refreshable,
+ * Omnesis's key refused — is raised as `StravaAuthError`, the same failure a
+ * dead stored grant is. A broker that cannot be reached stays a `network`
+ * error and is retried.
+ */
+export function buildBrokeredStravaClient(
+  credentials: BrokeredCredentials,
+  opts: Pick<StravaClientOptions, "fetchFn" | "sleepFn"> = {},
+): StravaClient {
+  return new StravaClient({
+    ...opts,
+    accessToken: async (request) => {
+      try {
+        return await credentials.token(DEFAULT_BROKER_PURPOSE, request);
+      } catch (err) {
+        if (err instanceof BrokerCredentialError && err.kind === "auth") {
+          throw new StravaAuthError(err.message, { cause: err });
+        }
+        throw err;
+      }
     },
   });
 }
