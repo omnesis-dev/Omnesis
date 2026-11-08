@@ -316,17 +316,15 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     }
 
     const flowId = body.flowId;
-    // Source mode spawns `npx tsx <auth-subprocess.ts>` (tsx walks up from
-    // cwd looking for node_modules/tsx — anchoring cwd to the handler's dir
-    // keeps the resolver inside this package); compiled mode spawns node on
-    // the emitted dist sibling directly.
+    // Source mode spawns node with the tsx loader on `auth-subprocess.ts`;
+    // compiled mode spawns node on the emitted dist sibling directly.
     const entry = resolveSubprocessEntry("./auth-subprocess.ts", import.meta.url);
     const args = [...entry.args, body.sourceType];
     if (body.params) args.push(JSON.stringify(body.params));
 
     //
     // Pass an explicit minimal env instead of inheriting
-    // process.env. The subprocess only needs PATH (find npx/node),
+    // process.env. The subprocess only needs PATH (programs it starts),
     // HOME (token-cache lookups), LANG (locale-sensitive parsers),
     // D-Bus session handles for OS keyring access on Linux, whatever the
     // secret store declares it reads (`KEYRING_ENV_KEYS` — without those the

@@ -183,7 +183,12 @@ export {
   mailHeaderRelevancePenalty,
 } from "./mail-markup.js";
 
-export { atomicWriteFile, atomicWriteFileSync } from "./atomic-write.js";
+export {
+  atomicWriteFile,
+  atomicWriteFileSync,
+  fsyncDirSync,
+  fsyncFileSync,
+} from "./atomic-write.js";
 export {
   newerSettingsPath,
   restoreNewerSettings,

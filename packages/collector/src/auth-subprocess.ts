@@ -5,7 +5,7 @@
  * Subprocess script for running auth flows in isolation.
  * Invoked by the collector's auth endpoint to avoid Baileys state pollution.
  *
- * Usage: npx tsx auth-subprocess.ts <descriptorId> [paramsJson]
+ * Usage: node [--import <tsx loader>] auth-subprocess.ts <descriptorId> [paramsJson]
  * Output: NDJSON lines to stdout ({ type: "url"|"qr"|"complete"|"error", ... })
  */
 

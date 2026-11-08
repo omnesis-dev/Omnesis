@@ -17,7 +17,7 @@
  *
  * `node:child_process.spawn` is mocked so a hand-driven fake child (its
  * stdout a real PassThrough we push NDJSON into) replaces the real
- * `npx tsx auth-subprocess.ts` invocation — fully deterministic, no tsx
+ * `auth-subprocess.ts` process — fully deterministic, no tsx
  * cold-start, no wall-clock sleeps.
  */
 
