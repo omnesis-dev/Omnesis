@@ -39,13 +39,13 @@ import type { SyncCursor } from "@omnesis/source-sdk";
 const WORKER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
 
-/** Signed documents already in the corpus — the pilot held about 81k. */
+/** Signed documents already in the corpus, as on a large install. */
 const SIGNED_DOCS = Number(process.env.OMNESIS_NEAR_DUP_BACKLOG_DOCS ?? 80_000);
 const BANDS = 16;
 /** One compute batch, as `computeBatchSize` sizes it. */
 const BATCH_DOCS = 100;
 const BATCHES = 4;
-/** The most near-duplicate edges one document carried on the pilot. */
+/** Near-duplicate edges of one heavily duplicated document. */
 const HEAVY_EDGES = 127;
 /** The longest a single apply call may hold the writer. */
 const HOLD_BUDGET_MS = 250;

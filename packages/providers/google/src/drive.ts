@@ -56,8 +56,8 @@ export interface DriveSyncCursor extends SyncCursor {
    */
   listedThrough?: string;
   /**
-   * Set once a page came back out of `modifiedTime` order. Drive ignores the
-   * requested order for accounts of about a million files, and a mark taken
+   * Set once a page came back out of `modifiedTime` order. Drive can return a very
+   * large account's pages out of the requested order, and a mark taken
    * from an unordered listing would skip files, so this walk keeps none and a
    * refused token lists again from the first file.
    */
