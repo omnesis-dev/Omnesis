@@ -1530,8 +1530,9 @@ export class IndexerLifecycle {
    * current in-memory graph and the next boot RESTORES instead of rebuilding.
    * The save can exceed the worker's 5s dispose ack for a large graph, so it
    * runs on its own generous timeout. No-op if the indexer never started.
-   * Returns whether the graph was saved (false → next boot rebuilds; the caller
-   * proceeds either way — fail-safe).
+   * Returns whether the graph was saved (false → no graph was held in memory or
+   * the save failed, and the next boot rebuilds or reopens what is on disk; the
+   * caller proceeds either way — fail-safe).
    */
   async flushIndexerSave(): Promise<boolean> {
     const proxy = this._indexerOwner;

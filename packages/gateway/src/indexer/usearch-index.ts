@@ -133,8 +133,8 @@ function createIndex(dimensions: number, encoding: VectorEncoding): InstanceType
  * structurally corrupt file makes the native `load()` *abort the whole
  * process* (`free(): corrupted unsorted chunks`, SIGABRT) rather than throw a
  * catchable error, so no in-process try/catch can recover. Isolating the load
- * in a subprocess lets the parent observe the abort as a signal / non-zero
- * exit and quarantine the file (see `quarantineCorruptUsearch`).
+ * in a subprocess lets the parent observe the abort as a signal and quarantine
+ * the file (see `quarantineCorruptUsearch`).
  *
  * Uses the same HNSW parameters as every other handle so the load path is
  * identical to what the worker's write handle does at boot. Throws on a
@@ -292,7 +292,11 @@ export class UsearchWriteHandle {
     this.onSaved = cb;
   }
 
-  save(): void {
+  /**
+   * Persist the graph. `durable: false` skips the syncs, for a checkpoint whose
+   * loss costs nothing because the caller can rebuild the file.
+   */
+  save({ durable = true }: { durable?: boolean } = {}): void {
     if (this.detached || !this.dirty) return;
     // Atomic save: write to a temp file then rename. The reader thread
     // mmap-views the file — a non-atomic save would expose a partially-
@@ -306,7 +310,7 @@ export class UsearchWriteHandle {
     const tmp = `${this.path}.tmp`;
     this.index.save(tmp);
     try {
-      fsyncFileSync(tmp);
+      if (durable) fsyncFileSync(tmp);
       renameSync(tmp, this.path);
     } catch (err) {
       try {
@@ -316,7 +320,7 @@ export class UsearchWriteHandle {
       }
       throw err;
     }
-    fsyncDirSync(dirname(this.path));
+    if (durable) fsyncDirSync(dirname(this.path));
     this.dirty = false;
     // The on-disk graph is now committed; let the worker record the seq it
     // reflects. Runs AFTER the atomic rename so the stamp can never claim more

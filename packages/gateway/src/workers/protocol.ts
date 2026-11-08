@@ -298,8 +298,9 @@ export type IndexerToMain =
   | { type: "pausedAck"; id: number }
   // Confirms a `flushSave` request: indexing is frozen, any in-flight cycle has
   // drained, and the HNSW graph has been saved to disk (stamping
-  // `usearch_saved_seq`). `ok` is false if the save itself threw (the gateway
-  // then proceeds; the next boot rebuilds, fail-safe).
+  // `usearch_saved_seq`). `ok` is false if no graph is held in memory or the save
+  // threw (the gateway then proceeds; the next boot rebuilds or reopens what is on
+  // disk, fail-safe).
   | { type: "flushSaveComplete"; id: number; ok: boolean }
   | IndexerJobUpdate
   // Whether the HNSW graph is being built, serving, or released for lack of

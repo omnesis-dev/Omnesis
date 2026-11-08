@@ -546,8 +546,9 @@ export class IndexerWorkerProxy implements Embedder {
    * `usearch_saved_seq`) reflect the current in-memory graph. Called by the
    * gateway shutdown BEFORE {@link dispose} so the save — which can exceed the
    * 5s dispose ack for a large graph — runs on its own generous budget. Resolves
-   * `true` if the graph was saved, `false` if the save threw (the gateway
-   * proceeds either way; a false just means the next boot rebuilds). On a genuine
+   * `true` if the graph was saved, `false` if no graph is held in memory or the
+   * save threw (the gateway proceeds either way; the next boot rebuilds or reopens
+   * what is on disk). On a genuine
    * hang it rejects on timeout, and the caller treats that like a false.
    */
   async flushSave(): Promise<boolean> {

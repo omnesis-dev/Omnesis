@@ -64,6 +64,19 @@ describe("UsearchWriteHandle.save durability", () => {
     expect(events.slice(0, 3)).toEqual([`file:${path}.tmp`, `dir:${dir}`, "saved:true"]);
   });
 
+  test("a checkpoint the caller can rebuild skips the syncs", () => {
+    const handle = new UsearchWriteHandle(path, DIM);
+    handle.add(1n, vector());
+    handle.save({ durable: false });
+
+    expect(existsSync(path)).toBe(true);
+    expect(durability.events).toEqual([]);
+
+    handle.add(2n, vector());
+    handle.close();
+    expect(durability.events).toEqual([`file:${path}.tmp`, `dir:${dir}`]);
+  });
+
   test("a failed file sync keeps the previous graph and the handle dirty", () => {
     const handle = new UsearchWriteHandle(path, DIM);
     handle.add(1n, vector());

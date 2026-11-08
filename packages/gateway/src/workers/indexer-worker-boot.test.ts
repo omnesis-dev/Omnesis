@@ -1472,6 +1472,43 @@ describe("indexer worker boot persistence", () => {
     }
   }, 60_000);
 
+  test("a flush before the worker finishes init reports that nothing was saved", async () => {
+    const paths = createFixture([
+      makeDocument("preinit-plan", "Sarah Mendez drafted a fictional seating chart."),
+    ]);
+    const seedEmbedder = await startFakeEmbedder();
+    let blockingEmbedder: FakeEmbedderServer | undefined;
+    let proxy: IndexerWorkerProxy | undefined;
+    try {
+      proxy = createProxy(paths, seedEmbedder.url);
+      await proxy.whenReady();
+      await waitForCycleRuns(proxy, 1);
+      await proxy.dispose();
+      proxy = undefined;
+
+      // A changed model proves the new embedder before anything else, which
+      // holds init inside its warm-up.
+      blockingEmbedder = await startFakeEmbedder(["warmup"]);
+      proxy = new IndexerWorkerProxy({
+        ...makeWorkerOptions(paths, blockingEmbedder.url),
+        modelName: "replacement-model",
+      });
+      const ready = proxy.whenReady();
+      await blockingEmbedder.holds[0]!.started;
+
+      await expect(proxy.flushSave()).resolves.toBe(false);
+
+      // Init was not disturbed: it finishes once the warm-up is released.
+      blockingEmbedder.holds[0]!.release();
+      await ready;
+    } finally {
+      blockingEmbedder?.holds[0]?.release();
+      await proxy?.dispose();
+      await closeServer(seedEmbedder.server);
+      if (blockingEmbedder) await closeServer(blockingEmbedder.server);
+    }
+  }, 60_000);
+
   test("a graph that does not fit the memory budget leaves search keyword-only and reports it", async () => {
     const paths = createFixture([
       makeDocument("budget-plan", "David Lin drafted a fictional packing list."),
@@ -1794,6 +1831,8 @@ test("lexical boot bypasses graph admission and promotion discards obsolete file
     } finally {
       lexicalDb.close();
     }
+    // Keyword-only holds no graph, so the shutdown flush saved nothing and says so.
+    await expect(proxy.flushSave()).resolves.toBe(false);
     await proxy.dispose();
     proxy = undefined;
     proxy = createProxy(paths, fake.url, {
