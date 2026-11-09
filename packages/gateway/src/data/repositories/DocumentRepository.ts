@@ -1787,6 +1787,20 @@ export function lookupDocumentIdsByExternal(
  * resolves the row→document inverse without the account on hand; with several
  * streams the first stream's row is returned. A `sourceId` that already
  * names an account matches only itself, per the addressing rule.
+ *
+ * The lookup seeks on the external id. A bare type's `type:%` half is a `LIKE`,
+ * which folds ASCII case and so cannot use a BINARY index on `source_id`; left
+ * to the planner, the query walks an index entry for every document in the
+ * store, seconds of synchronous work on a large encrypted one, run from the
+ * agent's `cite_record` and `trace_connections` tools. `LOWER(external_id) =
+ * LOWER(?)` is implied by the equality beside it, and lets the query seek
+ * `idx_documents_external_id_source` to the few documents carrying the id; the
+ * source and stream filters then run on those rows only.
+ *
+ * Rows that tie on the account preference and the stream hold the same
+ * external id under different accounts or providers. They keep a fixed order:
+ * for a bare type, provider then account, the unique key's order; for a named
+ * account, where only the provider can differ, rowid order.
  */
 export function findDocumentIdBySourceExternalId(
   db: Db,
@@ -1796,13 +1810,15 @@ export function findDocumentIdBySourceExternalId(
   streamId?: string,
 ): string | null {
   const predicate = sourcePrefixPredicate("source_id", [sourceId]);
+  const tieOrder = sourceId.includes(":") ? "rowid" : "provider_id, source_id";
   const row = db
     .prepare<unknown[], { id: string }>(
-      `SELECT id FROM documents
-        WHERE external_id = ? AND (${predicate.sql}) AND (? = '' OR stream_id = ?)
-        ORDER BY source_id = ? DESC, stream_id LIMIT 1`,
+      `SELECT id FROM documents INDEXED BY idx_documents_external_id_source
+        WHERE LOWER(external_id) = LOWER(?) AND external_id = ?
+          AND (${predicate.sql}) AND (? = '' OR stream_id = ?)
+        ORDER BY source_id = ? DESC, stream_id, ${tieOrder} LIMIT 1`,
     )
-    .get(externalId, ...predicate.params, streamId ?? "", streamId ?? "", sourceId);
+    .get(externalId, externalId, ...predicate.params, streamId ?? "", streamId ?? "", sourceId);
   return row?.id ?? null;
 }
 
