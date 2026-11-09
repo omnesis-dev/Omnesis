@@ -22,7 +22,7 @@ class NotificationsClientTest {
 
     @Before fun setUp() {
         server = MockWebServer().also { it.start() }
-        client = NotificationsClient(GatewayHttp(OkHttpClient(), server.url("/"), "device-token"))
+        client = NotificationsClient(GatewayHttp(OkHttpClient(), server.url("/"), "device-token"), pairingNotifications = true)
     }
 
     @After fun tearDown() = server.shutdown()
@@ -40,8 +40,15 @@ class NotificationsClientTest {
         assertEquals("source-permission", claimed.route?.get("kind")?.jsonPrimitive?.contentOrNull)
         val request = server.takeRequest()
         assertEquals("/notifications/claim", request.path)
+        assertEquals("1", request.getHeader("X-Omnesis-Pairing-Notifications"))
         assertEquals("Bearer device-token", request.getHeader("Authorization"))
         assertEquals("{}", request.body.readUtf8())
+    }
+
+    @Test fun a_build_without_cloud_connectivity_does_not_ask_for_pairing_notifications() = runTest {
+        server.enqueue(MockResponse().setResponseCode(204))
+        NotificationsClient(GatewayHttp(OkHttpClient(), server.url("/"), "device-token")).claim()
+        assertNull(server.takeRequest().getHeader("X-Omnesis-Pairing-Notifications"))
     }
 
     @Test fun empty_queue_maps_204_to_null() = runTest {

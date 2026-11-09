@@ -31,6 +31,9 @@
 #   scripts/ios-logic.sh                                # the whole logic suite
 #   scripts/ios-logic.sh AgentTurnBuilderTests          # one XCTest class (filter)
 #   scripts/ios-logic.sh --filter HealthNormalizer      # a substring filter
+#   scripts/ios-logic.sh --coverage Google              # instrumented logic + JSON report
+#   scripts/ios-logic.sh --style-check                  # pinned CI lint/format checks
+#   scripts/ios-logic.sh --style-fix                    # export a changed-file formatting patch
 #
 # Configuration (all optional except the host; generic defaults — nothing
 # operator-private is committed: the host alias / paths are read at runtime):
@@ -54,13 +57,29 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # --- Argument: an optional `swift test --filter` value. ------------------------
 # Accept either a bare filter argument or an explicit `--filter <value>`.
 FILTER=""
-if [[ "${1:-}" == "--filter" ]]; then
-  shift
-  [[ -n "${1:-}" ]] || { echo "ios-logic: --filter needs a value" >&2; exit 64; }
-  FILTER="$1"
-elif [[ -n "${1:-}" ]]; then
-  FILTER="$1"
+COVERAGE=0
+STYLE_MODE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --coverage) COVERAGE=1; shift ;;
+    --style-check|--style-fix)
+      [[ -z "$STYLE_MODE" ]] || { echo "ios-logic: specify one style operation" >&2; exit 64; }
+      STYLE_MODE="${1#--style-}"; shift ;;
+    --filter)
+      shift
+      [[ -n "${1:-}" && "$1" != --* ]] || { echo "ios-logic: --filter needs a value" >&2; exit 64; }
+      [[ -z "$FILTER" ]] || { echo "ios-logic: specify one filter" >&2; exit 64; }
+      FILTER="$1"; shift ;;
+    --*) echo "ios-logic: unknown argument '$1'" >&2; exit 64 ;;
+    *)
+      [[ -z "$FILTER" ]] || { echo "ios-logic: specify one filter" >&2; exit 64; }
+      FILTER="$1"; shift ;;
+  esac
+done
+if [[ -n "$STYLE_MODE" && ( "$COVERAGE" == 1 || -n "$FILTER" ) ]]; then
+  echo "ios-logic: style operations cannot be combined with test filters or coverage" >&2; exit 64
 fi
+[[ -z "$FILTER" || "$FILTER" =~ ^[a-zA-Z0-9_:.*/=-]+$ ]] || { echo "ios-logic: unsupported filter characters" >&2; exit 64; }
 
 # --- Configuration (generic env, fail-loud on the host). -----------------------
 HOST="${OMNESIS_EPIC_MACOS_HOST:-}"
@@ -119,6 +138,10 @@ echo "→ macOS host:        $HOST"
 echo "→ warm scratch:      $RESOLVED_TARGET (persistent — .build cache reused)"
 echo "→ swift test filter: $SWIFT_FILTER_DESC"
 
+if [[ -n "$STYLE_MODE" ]]; then
+  exec bash "$ROOT/scripts/ios-style.sh" "$STYLE_MODE" "$RESOLVED_TARGET"
+fi
+
 # --- Ensure the WARM scratch dir exists on the host (never wiped). -------------
 ssh "$HOST" "mkdir -p \"$RESOLVED_TARGET/ios\"" \
   || fail "could not create the scratch dir on '$HOST'"
@@ -145,12 +168,34 @@ rsync -az --delete \
 # out, so there is no simulator, no Xcode project, no device build. Pure logic.
 SWIFT_FILTER_ARG=""
 [[ -n "$FILTER" ]] && SWIFT_FILTER_ARG="--filter $FILTER"
+SWIFT_COVERAGE_ARG=""
+[[ "$COVERAGE" == 1 ]] && SWIFT_COVERAGE_ARG="--enable-code-coverage"
 echo "→ ssh $HOST: swift test (sim-less, logic only) …"
 ssh "$HOST" "bash -lc '
   set -euo pipefail
   cd \"$RESOLVED_TARGET/ios\"
   command -v swift >/dev/null || { echo \"swift not found on \$(hostname)\" >&2; exit 1; }
-  swift test $SWIFT_FILTER_ARG
+  swift test $SWIFT_FILTER_ARG $SWIFT_COVERAGE_ARG
 '" || fail "the iOS pure-logic swift test lane failed on '$HOST' (compile or test failure)"
+
+if [[ "$COVERAGE" == 1 ]]; then
+  # SwiftPM exports llvm-cov's complete JSON, including uncovered functions and regions.
+  ssh "$HOST" "bash -lc '
+    set -euo pipefail
+    cd \"$RESOLVED_TARGET/ios\"
+    report=\$(swift test --enable-code-coverage --show-codecov-path)
+    test -s \"\$report\"
+    mkdir -p .build/coverage-output
+    cp \"\$report\" .build/coverage-output/coverage.json
+  '" || fail "SwiftPM did not produce a coverage report"
+  COVERAGE_OUT="${OMNESIS_IOS_LOGIC_COVERAGE_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/omnesis-ios-coverage.XXXXXX")}"
+  # A caller may choose an artifact directory, but reports never enter the source checkout.
+  mkdir -p "$COVERAGE_OUT"
+  COVERAGE_OUT="$(cd "$COVERAGE_OUT" && pwd -P)"
+  case "$COVERAGE_OUT" in "$ROOT"|"$ROOT"/*) fail "coverage output must be outside the checkout" ;; esac
+  rsync -az "$HOST:$RESOLVED_TARGET/ios/.build/coverage-output/" "$COVERAGE_OUT/" \
+    || fail "could not retrieve the Swift coverage report"
+  echo "→ iOS coverage report: $COVERAGE_OUT/coverage.json"
+fi
 
 echo "✓ iOS pure-logic swift test lane passed on $HOST — sim-less, fast feedback."

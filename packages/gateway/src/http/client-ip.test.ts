@@ -1,8 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { afterEach, describe, expect, test } from "vitest";
-import { clientAddress, forwardedClientAddress, isLoopbackClient } from "./client-ip.js";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import {
+  clientAddress,
+  forwardedClientAddress,
+  isLoopbackClient,
+  markRelayRequestExposure,
+  relayedClientBucket,
+} from "./client-ip.js";
+
+// The gateway only reads what its own tunnel client recorded; the table itself is tested there.
+const relayed = vi.hoisted(() => new Map<string, string>());
+vi.mock("@omnesis/cloud-relay", () => ({
+  relayedClientAddress: (peer: { remoteAddress?: string; remotePort?: number }) =>
+    relayed.get(`${peer.remoteAddress}|${peer.remotePort}`),
+}));
 
 function headers(map: Record<string, string>): (name: string) => string | undefined {
   return (name) => map[name.toLowerCase()];
@@ -115,5 +128,96 @@ describe("with OMNESIS_TRUST_PROXY=true", () => {
     expect(
       isLoopbackClient(headers({ "x-forwarded-for": "127.0.0.1" }), peer("203.0.113.10")),
     ).toBe(false);
+  });
+});
+
+test("experimental tunnel traffic never inherits local rate-limit exemptions", () => {
+  const cloudRelay = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+  try {
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
+    expect(isLoopbackClient(headers({ "x-omnesis-cloud-relay": "1" }), peer("127.0.0.1"))).toBe(
+      false,
+    );
+    expect(isLoopbackClient(headers({}), peer("127.0.0.1"))).toBe(true);
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
+    expect(isLoopbackClient(headers({ "x-omnesis-cloud-relay": "1" }), peer("127.0.0.1"))).toBe(
+      true,
+    );
+  } finally {
+    if (cloudRelay === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+    else process.env.OMNESIS_CLOUD_RELAY_ENABLED = cloudRelay;
+  }
+});
+
+test("trusted per-request relay exposure removes exemptions without affecting another app or accepting a header assertion", () => {
+  const priorCloudRelayEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED,
+    priorRelay = process.env.OMNESIS_CLOUD_RELAY_URL;
+  try {
+    delete process.env.OMNESIS_CLOUD_RELAY_URL;
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
+    const direct = peer("127.0.0.1") as object,
+      relayed = peer("127.0.0.1") as object;
+    const release = markRelayRequestExposure(relayed);
+    const releaseConcurrent = markRelayRequestExposure(relayed);
+    expect(isLoopbackClient(headers({}), direct)).toBe(true);
+    expect(isLoopbackClient(headers({}), relayed)).toBe(false);
+    expect(isLoopbackClient(headers({ "x-forwarded-for": "127.0.0.1" }), relayed)).toBe(false);
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "0";
+    expect(isLoopbackClient(headers({}), relayed)).toBe(true);
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
+    expect(isLoopbackClient(headers({}), direct)).toBe(true);
+    release();
+    release();
+    expect(isLoopbackClient(headers({}), relayed)).toBe(false);
+    releaseConcurrent();
+    expect(isLoopbackClient(headers({}), relayed)).toBe(true);
+  } finally {
+    if (priorCloudRelayEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+    else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorCloudRelayEnabled;
+    if (priorRelay === undefined) delete process.env.OMNESIS_CLOUD_RELAY_URL;
+    else process.env.OMNESIS_CLOUD_RELAY_URL = priorRelay;
+  }
+});
+
+describe("a request through this gateway's relay tunnel", () => {
+  const tunnelled = (remoteAddress: string, remotePort: number) => ({
+    incoming: { socket: { remoteAddress, remotePort } },
+  });
+  afterEach(() => relayed.clear());
+
+  test("is bucketed by the address the relay reported, apart from every real peer address", () => {
+    delete process.env.OMNESIS_TRUST_PROXY;
+    relayed.set("127.0.0.1|40100", "198.51.100.30");
+    relayed.set("127.0.0.1|40101", "198.51.100.31");
+    expect(clientAddress(headers({}), tunnelled("127.0.0.1", 40100))).toBe("relay:198.51.100.30");
+    expect(clientAddress(headers({}), tunnelled("127.0.0.1", 40101))).toBe("relay:198.51.100.31");
+    // Any other loopback socket is just a local peer.
+    expect(clientAddress(headers({}), tunnelled("127.0.0.1", 40102))).toBe("127.0.0.1");
+  });
+
+  test("ignores the relayed client's own forwarded headers, even behind a trusted proxy", () => {
+    process.env.OMNESIS_TRUST_PROXY = "true";
+    relayed.set("127.0.0.1|40100", "198.51.100.30");
+    const spoofed = headers({ "x-forwarded-for": "203.0.113.99" });
+    expect(clientAddress(spoofed, tunnelled("127.0.0.1", 40100))).toBe("relay:198.51.100.30");
+  });
+
+  test("is looked up only for a loopback peer with a port, and grants no loopback exemption", () => {
+    delete process.env.OMNESIS_TRUST_PROXY;
+    relayed.set("203.0.113.5|40100", "198.51.100.30");
+    expect(relayedClientBucket(tunnelled("203.0.113.5", 40100))).toBeUndefined();
+    expect(relayedClientBucket(peer("127.0.0.1"))).toBeUndefined();
+    expect(relayedClientBucket(undefined)).toBeUndefined();
+    relayed.set("127.0.0.1|40100", "198.51.100.30");
+    const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
+    try {
+      expect(
+        isLoopbackClient(headers({ "x-omnesis-cloud-relay": "1" }), tunnelled("127.0.0.1", 40100)),
+      ).toBe(false);
+    } finally {
+      if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+      else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
+    }
   });
 });

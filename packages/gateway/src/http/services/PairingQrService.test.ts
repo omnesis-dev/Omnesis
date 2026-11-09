@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hostNetworkFromText, type HostNetwork, type NetworkIdentity } from "@omnesis/core";
-import { PairingQrService } from "./PairingQrService.js";
+import {
+  PairingQrService,
+  relayPairingAddress,
+  type RelayPairingAddress,
+} from "./PairingQrService.js";
 import type { DeviceKind } from "@omnesis/types";
 
 const IDENTITIES: NetworkIdentity[] = [
@@ -32,10 +36,18 @@ function qr(
     hostNames?: string[];
     inContainer?: boolean;
     hostNetwork?: HostNetwork | null;
+    strictPinOrigins?: readonly string[];
+    tlsSpkiFingerprint?: string | (() => string);
+    strictPinSpkiFingerprint?: () => string | undefined;
+    relayAddress?: () => Promise<RelayPairingAddress | null>;
   } = {},
 ): PairingQrService {
   return new PairingQrService({
     tlsFingerprint,
+    strictPinOrigins: extra.strictPinOrigins,
+    tlsSpkiFingerprint: extra.tlsSpkiFingerprint,
+    strictPinSpkiFingerprint: extra.strictPinSpkiFingerprint,
+    relayAddress: extra.relayAddress,
     systemTrustOrigins,
     pairingKind: () => kind,
     discoverIdentities: async () => extra.identities ?? IDENTITIES,
@@ -51,7 +63,53 @@ function qr(
   });
 }
 
+// The strict modes below exist only with the cloud relay opt-in.
+beforeEach(() => vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1"));
+afterEach(() => vi.unstubAllEnvs());
+
+it("refuses the strict trust modes without the cloud relay opt-in", () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+  const gatewayUrl = "https://public-gateway.example.com";
+  const service = qr("b".repeat(64), [gatewayUrl], "ios", { tlsSpkiFingerprint: "a".repeat(64) });
+  for (const trustMode of ["pinned-leaf-strict", "pinned-key-strict"] as const)
+    expect(() => service.encode({ gatewayUrl, pairingCode: "ABCDEF0123", trustMode })).toThrow(
+      "unsupported TLS trust mode",
+    );
+  // The modes a gateway has always had are untouched.
+  expect(
+    JSON.parse(service.encode({ gatewayUrl, pairingCode: "ABCDEF0123", trustMode: "pinned-leaf" }))
+      .tls,
+  ).toEqual({ mode: "pinned-leaf", fingerprint: "b".repeat(64) });
+});
+
 describe("PairingQrService", () => {
+  it("relay QR pairing canonicalizes origins and preserves strict pins even on a publicly trusted hostname", () => {
+    const fingerprint = "ab".repeat(32),
+      gatewayUrl = "https://gateway.example.test";
+    const service = qr(fingerprint, [gatewayUrl], "ios", {
+      strictPinOrigins: ["https://GATEWAY.example.test:443/"],
+    });
+    for (const trustMode of [undefined, "auto", "pinned-leaf", "pinned-leaf-strict"] as const)
+      expect(
+        JSON.parse(service.encode({ gatewayUrl, pairingCode: "ABCDEF0123", trustMode })).tls,
+      ).toEqual({ mode: "pinned-leaf-strict", fingerprint });
+    expect(() =>
+      service.encode({ gatewayUrl, pairingCode: "ABCDEF0123", trustMode: "system" }),
+    ).toThrow("certificate pin");
+    expect(() =>
+      qr(undefined, [gatewayUrl], "ios", { strictPinOrigins: [gatewayUrl] }).encode({
+        gatewayUrl,
+        pairingCode: "ABCDEF0123",
+      }),
+    ).toThrow("fingerprint");
+    expect(
+      JSON.parse(
+        qr(fingerprint, [gatewayUrl], "ios", {
+          strictPinOrigins: ["https://different.example.test"],
+        }).encode({ gatewayUrl, pairingCode: "ABCDEF0123" }),
+      ).tls,
+    ).toEqual({ mode: "system" });
+  });
   it("reads the served fingerprint at encode time; system trust carries none", () => {
     let served = "ab12cd34".repeat(8);
     const service = qr(() => served, ["https://public-gateway.example.com"]);
@@ -726,6 +784,420 @@ describe("PairingQrService", () => {
         { requestHost: "192.168.1.20", requestPort: "" },
       );
       expect(result.recommendedUrl).toBe("https://192.168.1.20");
+    });
+  });
+});
+
+describe("stable key trust", () => {
+  it("strict relay QRs bind the served SPKI at encode time", () => {
+    const gatewayUrl = "https://public-gateway.example.com";
+    let spki = "a".repeat(64);
+    const service = qr("b".repeat(64), [gatewayUrl], "ios", {
+      strictPinOrigins: [gatewayUrl],
+      tlsSpkiFingerprint: () => spki,
+    });
+    const encode = () => JSON.parse(service.encode({ gatewayUrl, pairingCode: "ABCDEF0123" }));
+    expect(encode().tls).toEqual({ mode: "pinned-key-strict", spkiFingerprint: spki });
+    spki = "c".repeat(64);
+    expect(encode().tls.spkiFingerprint).toBe(spki);
+  });
+  it("explicit key pinning requires a well formed SPKI, separate from a leaf fingerprint", () => {
+    const gatewayUrl = "https://public-gateway.example.com";
+    for (const spki of [undefined, "invalid"]) {
+      expect(() =>
+        qr("b".repeat(64), [gatewayUrl], "ios", { tlsSpkiFingerprint: spki }).encode({
+          gatewayUrl,
+          pairingCode: "ABCDEF0123",
+          trustMode: "pinned-key-strict",
+        }),
+      ).toThrow("SPKI");
+    }
+    expect(
+      JSON.parse(
+        qr(undefined, [gatewayUrl], "ios", { tlsSpkiFingerprint: "a".repeat(64) }).encode({
+          gatewayUrl,
+          pairingCode: "ABCDEF0123",
+          trustMode: "pinned-key-strict",
+        }),
+      ).tls,
+    ).toEqual({ mode: "pinned-key-strict", spkiFingerprint: "a".repeat(64) });
+  });
+});
+
+describe("duplicate and invalid route metadata", () => {
+  it("offers each recorded host once when configured names and container advertisements overlap", async () => {
+    const service = qr("a".repeat(64), ["https://192.168.1.20"], "android", {
+      inContainer: true,
+      hostNames: ["192.168.1.20"],
+      identities: IDENTITIES,
+      hostNetwork: hostNetworkFromText(
+        "port 443\nlocal-name studio.local\ninterface en0 192.168.1.20",
+      ),
+      advertisedLocalName: "studio.local",
+    });
+    const plan = await service.pairingAddresses({
+      pairingCode: "fictional",
+      requestHost: "192.168.1.20",
+      requestPort: "443",
+    });
+    const urls = plan.addresses.map((a) => a.gatewayUrl);
+    expect(new Set(urls).size).toBe(urls.length);
+    expect(urls.filter((url) => url === "https://192.168.1.20")).toHaveLength(1);
+    expect(urls.filter((url) => url === "https://studio.local")).toHaveLength(1);
+    const withoutAdvertisement = qr("a".repeat(64), [], "android", {
+      inContainer: true,
+      hostNames: ["192.168.1.20"],
+      advertisedLocalName: null,
+      identities: [{ kind: "lan", address: "172.20.0.5", label: "Container", offLan: false }],
+    });
+    expect(
+      (
+        await withoutAdvertisement.pairingAddresses({
+          pairingCode: "fictional",
+          requestHost: "gateway",
+          requestPort: "443",
+        })
+      ).addresses.some((a) => a.host === "192.168.1.20"),
+    ).toBe(true);
+  });
+  it("fails closed for a malformed strict-origin configuration and an unsupported internal policy", () => {
+    const gatewayUrl = "https://public-gateway.example.com";
+    expect(() =>
+      qr("a".repeat(64), [gatewayUrl], "ios", { strictPinOrigins: ["bad"] }).encode({
+        gatewayUrl,
+        pairingCode: "fictional",
+      }),
+    ).toThrow("absolute HTTPS origin");
+    expect(() =>
+      qr("a".repeat(64), [gatewayUrl], "ios").encode({
+        gatewayUrl,
+        pairingCode: "fictional",
+        trustMode: "unsupported" as never,
+      }),
+    ).toThrow();
+  });
+});
+
+it("deduplicates an allowlisted host repeated by configuration and the local advertiser", async () => {
+  const service = qr(
+    "a".repeat(64),
+    ["https://studio.local", "https://gateway.example.test"],
+    "android",
+    {
+      hostNames: ["gateway.example.test"],
+      advertisedLocalName: "studio.local",
+      identities: [],
+      listenPort: 443,
+    },
+  );
+  const plan = await service.pairingAddresses({
+    pairingCode: "fictional",
+    requestHost: "gateway.example.test",
+    requestPort: "443",
+  });
+  expect(plan.addresses.map((a) => a.gatewayUrl).sort()).toEqual([
+    "https://gateway.example.test",
+    "https://studio.local",
+  ]);
+});
+
+it("keeps direct and Tailscale pairings unchanged beside relay key-pinned pairings on one gateway", () => {
+  const relayOrigin = "https://relay-gateway.example.test";
+  const tailscaleOrigin = "https://studio.tail-example.ts.net";
+  const fingerprint = "a".repeat(64);
+  const spkiFingerprint = "b".repeat(64);
+  const service = qr(fingerprint, [relayOrigin, tailscaleOrigin], "ios", {
+    strictPinOrigins: [relayOrigin],
+    tlsSpkiFingerprint: spkiFingerprint,
+  });
+  const encode = (gatewayUrl: string) =>
+    JSON.parse(service.encode({ gatewayUrl, pairingCode: "fictional" }));
+  expect(encode(relayOrigin).tls).toEqual({ mode: "pinned-key-strict", spkiFingerprint });
+  expect(encode(tailscaleOrigin).tls).toEqual({ mode: "system" });
+  expect(encode("https://192.168.1.20:7600")).toMatchObject({ v: 3, fingerprint });
+  const directOnly = qr(fingerprint, [tailscaleOrigin], "ios", {
+    tlsSpkiFingerprint: spkiFingerprint,
+  });
+  expect(
+    JSON.parse(directOnly.encode({ gatewayUrl: tailscaleOrigin, pairingCode: "fictional" })).tls,
+  ).toEqual({ mode: "system" });
+  expect(
+    JSON.parse(
+      directOnly.encode({ gatewayUrl: "https://192.168.1.20:7600", pairingCode: "fictional" }),
+    ),
+  ).toMatchObject({ v: 3, fingerprint });
+});
+
+it("keeps public SNI and direct key pins separate and refuses uninitialized public trust", () => {
+  const publicOrigin = "https://public-gateway.example.com";
+  const directOrigin = "https://studio.tail-example.ts.net";
+  let publicKey: string | undefined = "c".repeat(64);
+  const service = qr("a".repeat(64), [publicOrigin, directOrigin], "ios", {
+    strictPinOrigins: [publicOrigin],
+    tlsSpkiFingerprint: "b".repeat(64),
+    strictPinSpkiFingerprint: () => publicKey,
+  });
+  const encode = (gatewayUrl: string) =>
+    JSON.parse(
+      service.encode({ gatewayUrl, pairingCode: "fictional", trustMode: "pinned-key-strict" }),
+    );
+  expect(encode(publicOrigin).tls).toEqual({
+    mode: "pinned-key-strict",
+    spkiFingerprint: publicKey,
+  });
+  expect(encode(directOrigin).tls).toEqual({
+    mode: "pinned-key-strict",
+    spkiFingerprint: "b".repeat(64),
+  });
+  publicKey = undefined;
+  expect(() => encode(publicOrigin)).toThrow("not ready");
+  expect(encode(directOrigin).tls.spkiFingerprint).toBe("b".repeat(64));
+});
+
+describe("the gateway's Omnesis address", () => {
+  const relayOrigin = "https://g-fictional1.relay.example.test";
+  const fingerprint = "a".repeat(64);
+  const spki = "c".repeat(64);
+  const lanOnly: NetworkIdentity[] = [
+    { address: "192.168.1.20", label: "LAN (en0)", kind: "lan", offLan: false },
+  ];
+  const input = { pairingCode: "fictional", requestHost: "192.168.1.20", requestPort: "7600" };
+  /** A service whose relay address is whatever `relay.current` holds at each request. */
+  function connected(
+    kind: DeviceKind,
+    relay: { current: RelayPairingAddress | null },
+    extra: Parameters<typeof qr>[3] = {},
+    systemTrustOrigins: readonly string[] = [],
+  ): PairingQrService {
+    return qr(fingerprint, systemTrustOrigins, kind, {
+      identities: lanOnly,
+      listenPort: 7600,
+      strictPinSpkiFingerprint: () => spki,
+      relayAddress: async () => relay.current,
+      ...extra,
+    });
+  }
+  const status = (over: Record<string, unknown> = {}) => ({
+    enabled: true,
+    publicOrigin: relayOrigin,
+    enrollment: { state: "enrolled" },
+    certificate: { state: "valid" },
+    publicMcp: { ready: true },
+    ...over,
+  });
+
+  it("is ready only while connected, with remote access on, reachable and publicly certified", () => {
+    expect(relayPairingAddress(status())).toEqual({ origin: relayOrigin, ready: true });
+    expect(relayPairingAddress(status({ certificate: { state: "expiring" } }))?.ready).toBe(true);
+    for (const off of [
+      { enabled: false },
+      { enrollment: { state: "pending" } },
+      { publicMcp: { ready: false } },
+      { certificate: { state: "bootstrap" } },
+      { certificate: { state: "expired" } },
+    ]) {
+      expect(relayPairingAddress(status(off))).toEqual({ origin: relayOrigin, ready: false });
+    }
+    expect(relayPairingAddress(status({ publicOrigin: undefined }))).toBeNull();
+  });
+
+  for (const kind of ["ios", "android"] as const) {
+    it(`is offered to an ${kind} phone and recommended when nothing else reaches beyond home`, async () => {
+      const plan = await connected(kind, {
+        current: { origin: relayOrigin, ready: true },
+      }).pairingAddresses(input);
+      expect(plan.recommendedUrl).toBe(relayOrigin);
+      expect(plan.awayFromHome).toBeNull();
+      expect(plan.addresses[0]).toEqual({
+        gatewayUrl: relayOrigin,
+        host: "g-fictional1.relay.example.test",
+        label: "Omnesis address",
+        kind: "relay",
+        usable: true,
+        reach: "anywhere",
+        systemTrust: false,
+        summary: "Works from anywhere. Needs remote access to stay on.",
+      });
+      expect(plan.addresses.slice(1).map((a) => a.gatewayUrl)).toEqual([
+        "https://192.168.1.20:7600",
+      ]);
+    });
+  }
+
+  it("stays behind a trusted Tailscale name and ahead of the local network", async () => {
+    const plan = await connected(
+      "ios",
+      { current: { origin: relayOrigin, ready: true } },
+      { identities: IDENTITIES, publiclyTrustedHosts: ["studio.tail-example.ts.net"] },
+    ).pairingAddresses(input);
+    const usable = plan.addresses.filter((a) => a.usable).map((a) => a.gatewayUrl);
+    expect(usable).toEqual([
+      "https://studio.tail-example.ts.net:7600",
+      relayOrigin,
+      "https://192.168.1.20:7600",
+    ]);
+    expect(plan.recommendedUrl).toBe("https://studio.tail-example.ts.net:7600");
+  });
+
+  it("stays behind a Tailscale address an Android phone pins", async () => {
+    const plan = await connected(
+      "android",
+      { current: { origin: relayOrigin, ready: true } },
+      { identities: IDENTITIES },
+    ).pairingAddresses(input);
+    expect(plan.addresses.filter((a) => a.usable).map((a) => a.gatewayUrl)).toEqual([
+      "https://studio.tail-example.ts.net:7600",
+      "https://100.101.102.103:7600",
+      relayOrigin,
+      "https://192.168.1.20:7600",
+    ]);
+  });
+
+  it("follows the relay as it comes and goes while the gateway runs", async () => {
+    const relay: { current: RelayPairingAddress | null } = { current: null };
+    const service = connected("ios", relay);
+    const urls = async () =>
+      (await service.pairingAddresses(input)).addresses.map((a) => a.gatewayUrl);
+    expect(await urls()).toEqual(["https://192.168.1.20:7600"]);
+    relay.current = { origin: relayOrigin, ready: true };
+    expect(await urls()).toEqual([relayOrigin, "https://192.168.1.20:7600"]);
+    // Remote access turned off: the address is still the gateway's, but not offered.
+    relay.current = { origin: relayOrigin, ready: false };
+    const off = await service.pairingAddresses(input);
+    expect(off.addresses.map((a) => a.gatewayUrl)).toEqual(["https://192.168.1.20:7600"]);
+    expect(off.recommendedUrl).toBe("https://192.168.1.20:7600");
+    expect(off.awayFromHome).not.toBeNull();
+    relay.current = null;
+    expect(await urls()).toEqual(["https://192.168.1.20:7600"]);
+  });
+
+  it("is not offered when the portal is open at it while remote access is not ready", async () => {
+    const service = connected("android", { current: { origin: relayOrigin, ready: false } });
+    const plan = await service.pairingAddresses({
+      pairingCode: "fictional",
+      requestHost: "g-fictional1.relay.example.test",
+      requestPort: "",
+    });
+    expect(plan.addresses.map((a) => a.gatewayUrl)).toEqual(["https://192.168.1.20:7600"]);
+  });
+
+  it("replaces the address the portal is open at, rather than listing it twice", async () => {
+    const service = connected("android", { current: { origin: relayOrigin, ready: true } });
+    const plan = await service.pairingAddresses({
+      pairingCode: "fictional",
+      requestHost: "g-fictional1.relay.example.test",
+      requestPort: "",
+    });
+    expect(plan.addresses.map((a) => [a.gatewayUrl, a.label])).toEqual([
+      [relayOrigin, "Omnesis address"],
+      ["https://192.168.1.20:7600", "Local network"],
+    ]);
+  });
+
+  it("is left out when its status cannot be read", async () => {
+    const service = connected(
+      "ios",
+      { current: null },
+      {
+        relayAddress: async () => {
+          throw new Error("fictional failure");
+        },
+      },
+    );
+    expect((await service.pairingAddresses(input)).addresses.map((a) => a.gatewayUrl)).toEqual([
+      "https://192.168.1.20:7600",
+    ]);
+  });
+
+  it("is never read without the cloud relay opt-in", async () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+    const read = vi.fn(async () => ({ origin: relayOrigin, ready: true }));
+    const service = connected("ios", { current: null }, { relayAddress: read });
+    const plan = await service.pairingAddresses(input);
+    expect(plan.addresses.map((a) => a.gatewayUrl)).toEqual(["https://192.168.1.20:7600"]);
+    expect(plan.addresses.every((a) => !("kind" in a))).toBe(true);
+    expect(await service.relayAddress()).toBeNull();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  for (const kind of ["ios", "android"] as const) {
+    it(`pins the gateway's public key in an ${kind} phone's QR code`, async () => {
+      const service = connected(kind, { current: { origin: relayOrigin, ready: true } });
+      const relay = await service.relayAddress();
+      expect(
+        JSON.parse(service.encode({ pairingCode: "fictional", gatewayUrl: relayOrigin }, relay)),
+      ).toEqual({
+        v: 4,
+        gatewayUrl: relayOrigin,
+        pairingCode: "fictional",
+        tls: { mode: "pinned-key-strict", spkiFingerprint: spki },
+      });
+      expect(() =>
+        service.encode(
+          { pairingCode: "fictional", gatewayUrl: relayOrigin, trustMode: "system" },
+          relay,
+        ),
+      ).toThrow("Relay pairing requires a verified gateway certificate pin");
+      // Another address on the same gateway keeps its own trust.
+      expect(
+        JSON.parse(
+          service.encode(
+            { pairingCode: "fictional", gatewayUrl: "https://192.168.1.20:7600" },
+            relay,
+          ),
+        ),
+      ).toMatchObject({ v: 3, fingerprint });
+    });
+  }
+
+  it("refuses a QR code for it until its public key is known", async () => {
+    const service = connected(
+      "android",
+      { current: { origin: relayOrigin, ready: true } },
+      { strictPinSpkiFingerprint: () => undefined },
+    );
+    expect(() =>
+      service.encode(
+        { pairingCode: "fictional", gatewayUrl: relayOrigin },
+        { origin: relayOrigin, ready: true },
+      ),
+    ).toThrow("Public gateway TLS identity is not ready for pairing");
+  });
+
+  it("refuses a QR code for it while remote access is off", async () => {
+    const service = connected("android", { current: { origin: relayOrigin, ready: false } });
+    expect(() =>
+      service.encode(
+        { pairingCode: "fictional", gatewayUrl: relayOrigin },
+        { origin: relayOrigin, ready: false },
+      ),
+    ).toThrow("Turn on remote access, or pair with another address.");
+  });
+
+  it("treats an address that is not an origin as not the relay's, and refuses it as usual", async () => {
+    const service = connected("android", { current: { origin: relayOrigin, ready: true } });
+    expect(() =>
+      service.encode(
+        { pairingCode: "fictional", gatewayUrl: "not an address" },
+        { origin: relayOrigin, ready: true },
+      ),
+    ).toThrow("This is not a valid gateway address.");
+  });
+
+  it("leaves an origin the operator allowlisted as it was while the relay is not ready", async () => {
+    const relay = { current: { origin: relayOrigin, ready: false } };
+    const service = connected("ios", relay, {}, [relayOrigin]);
+    const plan = await service.pairingAddresses(input);
+    expect(plan.addresses[0]).toMatchObject({
+      gatewayUrl: relayOrigin,
+      label: "Public address",
+      systemTrust: true,
+    });
+    expect(plan.addresses[0]).not.toHaveProperty("kind");
+    relay.current = { origin: relayOrigin, ready: true };
+    expect((await service.pairingAddresses(input)).addresses[0]).toMatchObject({
+      label: "Omnesis address",
+      kind: "relay",
     });
   });
 });

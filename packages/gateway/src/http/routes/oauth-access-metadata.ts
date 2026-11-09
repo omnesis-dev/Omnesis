@@ -30,16 +30,29 @@ import type { AppEnv, RouteApp } from "./types.js";
 export function mountOAuthMetadataRoutes(
   app: RouteApp,
   access: AccessService,
-  options: { publicBaseUrl?: string; mcpResourceUrls?: readonly string[] },
+  options: {
+    publicBaseUrl?: string;
+    mcpResourceUrls?: readonly string[];
+    additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
+  },
 ): void {
   const registrationLimiter = oauthRegistrationRateLimiter();
-  const metadataPaths = resolveOAuthMetadataPaths(options.publicBaseUrl, options.mcpResourceUrls);
+  const metadataPaths = resolveOAuthMetadataPaths(
+    options.publicBaseUrl,
+    options.mcpResourceUrls,
+    options.additionalOAuthIssuerUrls,
+  );
   const rateLimitRegistration: MiddlewareHandler<AppEnv> = async (c, next) => {
     if (registrationLimiter.consume(clientIp(c))) return oauthRateLimitError(c);
     return next();
   };
   const protectedResourceMetadata: Handler<AppEnv> = (c) => {
-    const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
+    const urls = resolveOAuthUrls(
+      c.req.url,
+      options.publicBaseUrl,
+      options.mcpResourceUrls,
+      options.additionalOAuthIssuerUrls,
+    );
     if (!urls) return oauthConfigurationRequired(c);
     const resource =
       resolveMetadataRequestResource(c.req.url, urls.supportedResources) ??
@@ -55,7 +68,12 @@ export function mountOAuthMetadataRoutes(
     });
   };
   const authorizationServerMetadata: Handler<AppEnv> = (c) => {
-    const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
+    const urls = resolveOAuthUrls(
+      c.req.url,
+      options.publicBaseUrl,
+      options.mcpResourceUrls,
+      options.additionalOAuthIssuerUrls,
+    );
     if (!urls) return oauthConfigurationRequired(c);
     return c.json({
       issuer: urls.issuer,
@@ -93,18 +111,25 @@ export function mountOAuthMetadataRoutes(
   for (const path of protectedResourcePaths) {
     app.get(path, noStore, scope.public(), protectedResourceMetadata);
   }
-  app.get(
-    metadataPaths?.authorizationServer ?? "/.well-known/oauth-authorization-server",
-    noStore,
-    scope.public(),
-    authorizationServerMetadata,
+  const issuerPaths = [
+    metadataPaths,
+    ...(typeof options.additionalOAuthIssuerUrls === "function"
+      ? options.additionalOAuthIssuerUrls()
+      : (options.additionalOAuthIssuerUrls ?? [])
+    ).map((issuer) => resolveOAuthMetadataPaths(issuer, options.mcpResourceUrls)),
+  ];
+  const authorizationPaths = new Set(
+    issuerPaths.map(
+      (paths) => paths?.authorizationServer ?? "/.well-known/oauth-authorization-server",
+    ),
   );
-  app.get(
-    metadataPaths?.openIdConfiguration ?? "/.well-known/openid-configuration",
-    noStore,
-    scope.public(),
-    authorizationServerMetadata,
+  const openIdPaths = new Set(
+    issuerPaths.map((paths) => paths?.openIdConfiguration ?? "/.well-known/openid-configuration"),
   );
+  for (const path of authorizationPaths)
+    app.get(path, noStore, scope.public(), authorizationServerMetadata);
+  for (const path of openIdPaths)
+    app.get(path, noStore, scope.public(), authorizationServerMetadata);
   app.post(
     "/oauth/register",
     noStore,

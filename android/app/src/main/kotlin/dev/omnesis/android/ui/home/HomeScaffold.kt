@@ -51,7 +51,9 @@ import androidx.navigation.navArgument
 import dev.omnesis.android.ui.agent.AgentScreen
 import dev.omnesis.android.access.AccessAuthorizationPairingIdentity
 import dev.omnesis.android.ui.access.AccessAuthorizationScreen
+import dev.omnesis.android.access.PairingPendingRequests
 import dev.omnesis.android.ui.access.AccessPendingRequestBanner
+import dev.omnesis.android.ui.access.PairingRequestBanner
 import dev.omnesis.android.ui.common.GlobalHealthWarningBanner
 import dev.omnesis.android.ui.common.NotificationSetupIssue
 import dev.omnesis.android.ui.common.showsNotificationIssueGlobally
@@ -64,6 +66,7 @@ import dev.omnesis.android.ui.devannotate.DevAnnotationDialog
 import dev.omnesis.android.ui.devannotate.ShakeToAnnotate
 import dev.omnesis.android.ui.devannotate.devTargetForRoute
 import dev.omnesis.android.ui.devices.DevicesScreen
+import dev.omnesis.android.ui.devices.GatewayPairingApprovalSheet
 import dev.omnesis.android.ui.document.DocumentDetailScreen
 import dev.omnesis.android.ui.models.BackendDetailScreen
 import dev.omnesis.android.ui.models.BackendsScreen
@@ -87,6 +90,7 @@ import dev.omnesis.android.ui.privacy.PrivacyScreen
 import dev.omnesis.android.ui.privacy.PrivacySubscriptionApprovalScreen
 import dev.omnesis.android.ui.search.SearchScreen
 import dev.omnesis.android.ui.tasks.TasksScreen
+import dev.omnesis.android.ui.settings.CloudAccountScreen
 import dev.omnesis.android.ui.settings.SettingsScreen
 import dev.omnesis.android.setup.flow.PhoneSetupEntry
 import dev.omnesis.android.ui.phonesetup.PhoneSetupScreen
@@ -126,6 +130,11 @@ fun HomeScaffold(
     val watchFiringRequest by vm.watchFiringRequest.collectAsStateWithLifecycle()
     val sourcePermissionRequest by vm.sourcePermissionRequest.collectAsStateWithLifecycle()
     val remoteSourcePermissionRequest by vm.remoteSourcePermissionRequest.collectAsStateWithLifecycle()
+    val devicesRequest by vm.devicesRequest.collectAsStateWithLifecycle()
+    val pairingRequestsRequest by vm.pairingRequestsRequest.collectAsStateWithLifecycle()
+    val pairingPending by vm.pairingPending.collectAsStateWithLifecycle()
+    val pairingPendingNudge by vm.pairingPendingNudge.collectAsStateWithLifecycle()
+    var showPairingRequests by rememberSaveable { mutableStateOf(false) }
     val pendingNotes by vm.pendingNotes.collectAsStateWithLifecycle()
     val permissionHealth by vm.permissionHealthState.collectAsStateWithLifecycle()
     val notificationHealth by vm.notificationHealth.collectAsStateWithLifecycle()
@@ -286,7 +295,8 @@ fun HomeScaffold(
         captureRequest != null || searchRequest != null || taskWidgetRequest != null || privacyApprovalRequest != null ||
             accessAuthorizationRequest != null ||
             agentConversationRequest != null || watchFiringRequest != null ||
-            sourcePermissionRequest != null || remoteSourcePermissionRequest != null,
+            sourcePermissionRequest != null || remoteSourcePermissionRequest != null || devicesRequest != null ||
+            pairingRequestsRequest != null,
     )
     val latestAgentRouteActive by rememberUpdatedState(currentRoute == "agent")
     val latestRestoreForeground by rememberUpdatedState(
@@ -422,6 +432,48 @@ fun HomeScaffold(
             focusedDeviceId = null
             nav.navigate(SETTINGS_ROUTE) { launchSingleTop = true }
             vm.consumeSourcePermissionRequest()
+        }
+    }
+
+    // The devices waiting for approval are read while the app is in front, every half minute,
+    // and at once when a pairing notification arrives. A build without cloud connectivity
+    // never starts the loop.
+    if (PairingPendingRequests.polls()) {
+        LaunchedEffect(lifecycleOwner, pairingPendingNudge) {
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    vm.refreshPairingPending()
+                    delay(PairingPendingRequests.POLL_MILLIS)
+                }
+            }
+        }
+    }
+
+    // Pairing requests open over the devices they add to: Settings → Devices, with the list on top.
+    fun openPairingRequests() {
+        closeDrawer()
+        focusedSourcePermissionId = null
+        focusedDeviceId = null
+        openSettingsChild(DEVICES_ROUTE)
+        // A phone that may not list the requests still lands on Devices.
+        showPairingRequests = vm.pairingApprovalClient() != null
+    }
+
+    // A tap on a pairing-request notification.
+    LaunchedEffect(pairingRequestsRequest, setupPresenting) {
+        if (vm.setupPresenting.value || pairingRequestsRequest == null) return@LaunchedEffect
+        vm.recordExplicitLaunch()
+        openPairingRequests()
+        vm.consumePairingRequestsRequest()
+    }
+
+    LaunchedEffect(devicesRequest, setupPresenting) {
+        if (vm.setupPresenting.value) return@LaunchedEffect
+        devicesRequest?.let { request ->
+            vm.recordExplicitLaunch()
+            focusedDeviceId = request.deviceId
+            openSettingsChild(DEVICES_ROUTE)
+            vm.consumeDevicesRequest()
         }
     }
 
@@ -661,6 +713,9 @@ fun HomeScaffold(
                         )
                     },
                 )
+            }
+            composable(OMNESIS_ACCOUNT_ROUTE) {
+                CloudAccountScreen(onBack = { nav.returnToSettings() })
             }
             composable(POLICIES_ROUTE) {
                 PoliciesListScreen(
@@ -977,6 +1032,7 @@ fun HomeScaffold(
                         openSettingsChild(DEVICES_ROUTE)
                     },
                     onOpenPolicies = { openSettingsChild(POLICIES_ROUTE) },
+                    onOpenOmnesisAccount = { openSettingsChild(OMNESIS_ACCOUNT_ROUTE) },
                     onOpenAccessAuthorization = {
                         openSettingsChild(ACCESS_AUTHORIZATION_ROUTE)
                     },
@@ -1015,12 +1071,38 @@ fun HomeScaffold(
                     onDismiss = vm::dismissAccessPending,
                 )
             }
+            // One banner however many devices wait; it sits with the access banner, not over it.
+            val pairingOffer = pairingPending.banner
+            if (pairingOffer != null && !showPairingRequests) {
+                PairingRequestBanner(
+                    offer = pairingOffer,
+                    onReview = ::openPairingRequests,
+                    onDismiss = vm::dismissPairingPending,
+                )
+            }
             if (currentRoute != SETTINGS_ROUTE) {
                 GlobalHealthWarningBanner(
                     notificationNeedsAttention = notificationNeedsAttention,
                     permissionIssueCount = permissionHealth.sumOf { it.actionable.size },
                     onOpenSettings = openSettings,
                     onDismissNotification = dismissNotificationWarning,
+                )
+            }
+        }
+
+        if (showPairingRequests) {
+            val approvals = vm.pairingApprovalClient()
+            if (approvals == null) {
+                showPairingRequests = false
+            } else {
+                GatewayPairingApprovalSheet(
+                    client = approvals,
+                    onOpenSettings = openSettings,
+                    onRequests = vm::pairingPendingListed,
+                    onDismiss = {
+                        showPairingRequests = false
+                        vm.refreshPairingPending()
+                    },
                 )
             }
         }

@@ -5,6 +5,7 @@
 // connected to the gateway (collectors, CLI, portal, iOS, Android, agents).
 // Pair new devices, revoke devices and their credentials.
 
+import { DeviceConnectionPill } from "../components/device-connection-pill.js";
 import { html } from "htm/preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import QRCode from "qrcode";
@@ -35,6 +36,8 @@ import { answerPrivacySummary, reachSummary } from "./access/terms.js";
 import { CHROME_WEB_STORE_URL } from "../lib/extension-links.js";
 import { KindIcon, PairKindIcon } from "../lib/device-kind-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
+import { CloudPairingRequests } from "../components/cloud-pairing-requests.js";
+import { deviceJoinedLabel } from "../components/relay-device-enrollment.js";
 import { DoctorReportView } from "./doctor.js";
 import {
   currentDeviceIdForKind,
@@ -907,6 +910,7 @@ export function DeviceCard({
   onRevokeToken,
   accessOverview,
   onSetDeviceLevel,
+  cloudRelay = false,
 }) {
   const d = device;
   const hostname = d.capabilities?.hostname;
@@ -921,7 +925,9 @@ export function DeviceCard({
     d.kind === "ios" || d.kind === "android"
       ? `Notifications: ${notificationTransportLabel(d)}`
       : null;
-  const sub = [kindLabel, hostname || harness, phoneTransport].filter(Boolean).join(" · ");
+  // How a device joined exists only with the optional cloud relay switched on.
+  const joined = cloudRelay ? deviceJoinedLabel(d.enrollment) : null;
+  const sub = [kindLabel, hostname || harness, phoneTransport, joined].filter(Boolean).join(" · ");
   const revoked = Boolean(d.revokedAt);
   const needsPairing = revoked && Boolean(d.needsPairing);
   const activeNow = !revoked && (isThis || d.online);
@@ -945,6 +951,7 @@ export function DeviceCard({
             <span class="devices-card-titlerow">
               <span class="devices-card-name">${d.name}</span>
               ${isThis && html`<span class="devices-card-badge">This device</span>`}
+              ${cloudRelay && html`<${DeviceConnectionPill} path=${d.connectionPath} revoked=${revoked} />`}
               ${revoked && html`<span class=${`devices-card-badge ${needsPairing ? "needs-pairing" : "revoked"}`}>${needsPairing ? "Needs re-pairing" : "Revoked"}</span>`}
               ${!revoked && versionChip(d)}
               ${!revoked && updateChip(d)}
@@ -1345,7 +1352,7 @@ export function resolvePairKindRequest(pairKindRequest) {
   return DEVICE_KINDS.includes(pairKindRequest) ? pairKindRequest : null;
 }
 
-export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {}) {
+export function DevicesView({ pairKindRequest = null, focusDeviceId = null, cloudRelay = false } = {}) {
   const requestedPairKind = resolvePairKindRequest(pairKindRequest);
   const [devices, setDevices] = useState([]);
   const [tokens, setTokens] = useState([]);
@@ -1817,10 +1824,11 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
       onRevokeToken=${handleRevokeToken}
       accessOverview=${accessOverview}
       onSetDeviceLevel=${handleSetDeviceLevel}
+      cloudRelay=${cloudRelay}
     />`;
 
   return html`
-    <div class="devices-view">
+    <div class=${cloudRelay ? "devices-view relay-on" : "devices-view"}>
       ${pairPageOpen
         ? html`
           <${PairPage}
@@ -1893,6 +1901,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
             </div>
           </div>
 
+          ${cloudRelay && html`<${CloudPairingRequests} />`}
           ${error && html`<div class="devices-banner error">${error}</div>`}
           ${doctorError && html`<div class="devices-banner error">${doctorError}</div>`}
           ${showHealthProgress && !doctorError && html`

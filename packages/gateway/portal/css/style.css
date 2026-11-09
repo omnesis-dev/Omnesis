@@ -19118,3 +19118,177 @@ summary.decision-card-head {
   border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
   background: color-mix(in srgb, var(--warning) 7%, var(--bg-secondary));
 }
+
+/* cloud-relay:start
+   Everything for the optional cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1)
+   lives between these markers. Every selector is namespaced (.relay-*,
+   .cloud-pairing-*, .device-connection-*, .google-sign-in-button) or scoped
+   under .relay-on, a class the portal adds only when the flag is on, so with
+   the flag off nothing here can match. js/stylesheet-cloud-relay.test.ts
+   enforces it. */
+
+/* Pages that gain an Omnesis account tab or relay rows when the flag is on. */
+.settings-view.relay-on { min-width: 0; }
+.settings-view.relay-on > .config-tabs { overflow-x: auto; min-width: 0; }
+.settings-view.relay-on > .config-tabs .config-tab { flex-shrink: 0; white-space: nowrap; }
+
+/* Settings → Omnesis account: one headline, flat rows, one box for problems. */
+.relay-view { max-width: 880px; min-width: 0; padding-bottom: 32px; color: var(--text-primary); }
+.relay-view p { margin: 0; }
+.relay-view a { color: var(--text-link); text-decoration: none; }
+.relay-view a:hover { text-decoration: underline; }
+.relay-view :is(button, a, summary, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-sm); }
+
+/* Dot | text | quiet aside. The dot sits in its own column so the headline
+   and the lede share one left edge. */
+.relay-hero { display: grid; grid-template-columns: 10px minmax(0, 1fr); column-gap: 14px; align-items: start; padding: 4px 0 32px; }
+.relay-hero-plain { grid-template-columns: minmax(0, 1fr); }
+.relay-hero > .relay-dot { margin-top: 10px; }
+.relay-hero-text { min-width: 0; }
+.relay-hero-action { margin-top: 20px; }
+.relay-headline { margin: 0; font-size: 21px; line-height: 1.35; font-weight: 600; letter-spacing: -0.015em; overflow-wrap: anywhere; }
+.relay-hostname { font-weight: 600; color: var(--text-primary); }
+.relay-lede { margin-top: 8px !important; max-width: 62ch; font-size: 14px; line-height: 1.6; color: var(--text-secondary); }
+
+.relay-dot { display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
+.relay-dot-ok { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent); }
+.relay-dot-warning { background: var(--warning); }
+.relay-dot-danger { background: var(--danger); }
+.relay-dot-progress { background: var(--accent); animation: relay-pulse 1.4s ease-in-out infinite; }
+@keyframes relay-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .relay-dot-progress { animation: none; } }
+
+.relay-view .btn-primary, .relay-view .btn-secondary { min-height: 36px; padding: 8px 16px; font-size: 13px; white-space: nowrap; }
+.relay-view .btn-secondary.google-sign-in-button { padding: 7px 12px; }
+.relay-button-link { display: inline-flex; align-items: center; color: #fff !important; text-decoration: none !important; }
+.relay-quiet { min-height: 36px; padding: 6px 4px; background: none; border: 0; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.relay-quiet:hover:not(:disabled) { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
+.relay-quiet:disabled { opacity: 0.5; cursor: default; }
+.relay-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.relay-link { display: inline-block; font-size: 13px; }
+.relay-view a.relay-secondary-link { display: inline-flex; align-items: center; color: var(--text-primary); text-decoration: none; }
+.relay-view .btn-secondary.relay-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+
+/* A tooltip for keyboard focus; a pointer gets the button's own title. */
+.relay-tip-anchor { position: relative; display: inline-flex; }
+.relay-tip { display: none; position: absolute; z-index: 5; top: calc(100% + 6px); right: 0; width: min(300px, 78vw); padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-secondary); box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); font-size: 12px; line-height: 1.5; font-weight: 400; white-space: normal; text-align: left; color: var(--text-primary); }
+.relay-hero .relay-tip { right: auto; left: 0; }
+.relay-tip-anchor > button:focus-visible + .relay-tip { display: block; }
+
+.relay-hint { font-size: 12px; line-height: 1.55; color: var(--text-muted); }
+.relay-mono { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.relay-notice { margin: 0 0 16px !important; padding: 2px 0 2px 12px; border-left: 2px solid var(--warning); font-size: 13px; line-height: 1.55; color: var(--text-primary); }
+
+/* Problems: the one box on the page, so it cannot be missed. */
+.relay-problems { margin: 0 0 28px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border)); border-left-width: 3px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--warning) 8%, transparent); }
+.relay-problems-title { margin: 0; font-size: 14px; font-weight: 600; }
+.relay-problem { margin-top: 8px !important; max-width: 70ch; font-size: 14px; line-height: 1.55; color: var(--text-primary); }
+.relay-problems > .relay-hint { margin-top: 10px !important; max-width: 70ch; }
+.relay-problems-actions { margin-top: 12px; }
+.relay-problems-text { display: block; width: 100%; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); resize: vertical; }
+
+/* Waiting for sign-in: the button is the main path, the code the fallback. */
+.relay-elsewhere { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border-light); max-width: 520px; font-size: 13px; color: var(--text-secondary); }
+.relay-code-line { display: flex; align-items: center; gap: 8px; margin-top: 10px !important; }
+.relay-code { font-family: var(--font-mono); font-size: 24px; font-weight: 600; letter-spacing: 0.12em; color: var(--text-primary); }
+.relay-elsewhere .relay-hint { margin-top: 6px !important; }
+.relay-copy { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; background: none; border: 1px solid transparent; border-radius: var(--radius-md); color: var(--text-secondary); cursor: pointer; }
+.relay-copy:hover { color: var(--text-primary); border-color: var(--border); }
+
+/* Flat rows: label, value, one quiet action. */
+.relay-row { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto; gap: 2px 24px; align-items: start; padding: 7px 0; }
+.relay-row-label { padding-top: 1px; font-size: 13px; color: var(--text-secondary); }
+.relay-row-body { min-width: 0; }
+.relay-row-value { font-size: 14px; line-height: 1.45; color: var(--text-primary); }
+.relay-row-body .relay-hint { margin-top: 3px !important; }
+.relay-row-action { display: flex; align-items: center; gap: 12px; justify-content: flex-end; margin-top: -2px; }
+.relay-row-action .relay-quiet { min-height: 24px; padding: 0; }
+.relay-row-actions { margin-top: 10px; }
+.relay-row-actions:empty { display: none; }
+.relay-row-actions > .relay-quiet { padding-left: 0; padding-right: 0; }
+.relay-confirm { flex-basis: 100%; max-width: 62ch; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.relay-confirm .relay-hint { margin-top: 6px !important; font-size: 13px; color: var(--text-secondary); }
+.relay-confirm .relay-actions { margin-top: 12px; }
+.relay-row-action .relay-copy { margin-top: -6px; }
+.relay-row-action:empty { display: none; }
+.relay-address { font-size: 13px; }
+
+/* Account, remote access, new devices. */
+.relay-section { margin-top: 28px; }
+.relay-hero + .relay-section { margin-top: 0; }
+.relay-section > .relay-rows { margin-top: 6px; }
+.relay-section > .relay-hint { margin-top: 4px !important; }
+.relay-section-title { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.005em; }
+.relay-options { margin-top: 6px; }
+.relay-option { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; padding: 7px 0; cursor: pointer; }
+.relay-option input { margin: 3px 0 0; accent-color: var(--accent); width: 15px; height: 15px; }
+.relay-option-title { display: block; font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.relay-option-text { display: block; margin-top: 2px; max-width: 64ch; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
+.relay-option:has(input:disabled) { cursor: default; }
+
+/* Loading. */
+.relay-skeleton-line { display: block; height: 12px; width: 52ch; max-width: 100%; margin-top: 10px; border-radius: var(--radius-sm); background: var(--bg-tertiary); animation: relay-pulse 1.4s ease-in-out infinite; }
+.relay-skeleton-title { height: 20px; width: 34ch; margin-top: 2px; }
+.relay-skeleton-short { width: 30ch; }
+@media (prefers-reduced-motion: reduce) { .relay-skeleton-line { animation: none; } }
+
+@media (max-width: 760px) {
+  .relay-hero { column-gap: 12px; padding-bottom: 24px; }
+  .relay-headline { font-size: 19px; }
+  .relay-hero > .relay-dot { margin-top: 8px; }
+  .relay-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .relay-row-label { grid-column: 1 / -1; font-size: 12px; }
+  .relay-code { font-size: 22px; }
+  .relay-view .btn-primary, .relay-view .btn-secondary, .relay-quiet { min-height: 44px; }
+}
+
+/* Devices: how a device joined. */
+.relay-joined { color: var(--text-secondary); }
+
+/* Device rows gain a connection pill; let titles wrap on phones so it fits. */
+.device-connection-pill { display: inline-flex; align-items: center; padding: 2px 7px; border: 1px solid var(--border); border-radius: 12px; font-size: 10px; line-height: 1.5; color: var(--text-secondary); font-weight: 500; }
+.device-connection-local { color: var(--success); }
+.device-connection-relay { color: var(--accent); }
+.device-connection-reconnecting { color: var(--warning); }
+@media (max-width: 760px) {
+  .devices-view.relay-on .devices-card-toggle { display: grid; grid-template-columns: 18px minmax(0, 1fr) 10px; gap: 8px; }
+  .devices-view.relay-on .devices-card-icon { grid-column: 1; grid-row: 1 / 3; }
+  .devices-view.relay-on .devices-card-main { grid-column: 2; grid-row: 1; }
+  .devices-view.relay-on .devices-card-status { grid-column: 2; grid-row: 2; }
+  .devices-view.relay-on .devices-card-chevron { grid-column: 3; grid-row: 1 / 3; }
+  .devices-view.relay-on .devices-card-titlerow { flex-wrap: wrap; row-gap: 5px; }
+  .devices-view.relay-on .devices-card-name { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .device-connection-pill { flex-shrink: 0; }
+}
+
+/* Account sign-in and device approval. */
+.cloud-pairing-requests { margin: 24px 0; }
+.cloud-pairing-request { margin-top: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); }
+.cloud-pairing-request h3 { margin: 0 0 4px; font-size: 14px; }
+.cloud-pairing-request p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; }
+.cloud-pairing-request > .devices-muted { margin-bottom: 14px; }
+/* Equal space above the first line and below the last one, whatever the card ends with. */
+.cloud-pairing-request > :last-child { margin-bottom: 0; }
+.cloud-pairing-request > .devices-banner { margin-top: 14px; }
+/* The code is whatever the gateway sent: shown large, and wrapped if it is long. */
+.cloud-pairing-code { display: block; margin: 16px 0; padding: 0; background: none; border: 0; color: var(--text-primary); font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 1.9rem; font-weight: 600; line-height: 1.25; letter-spacing: 0.08em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cloud-pairing-trust { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 0; font-size: 13px; line-height: 1.5; color: var(--text-primary); cursor: pointer; }
+.cloud-pairing-trust input { flex: none; margin: 3px 0 0; accent-color: var(--accent); }
+.cloud-pairing-trust small { display: block; color: var(--text-secondary); font-size: 12px; }
+.cloud-pairing-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+/* The waiting strip above every page. It is part of the page flow, so it never covers content. */
+.cloud-pairing-notice { flex: none; }
+.cloud-pairing-notice .access-pending-client { color: var(--text-primary); font-size: 13px; }
+/* The landing page bleeds over the page padding; below the strip it starts under it instead. */
+.cloud-pairing-notice + .agent-page-hero { margin-top: 0; }
+.cloud-pairing-login { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.cloud-pairing-login h2 { font-size: 1.1rem; }
+.cloud-pairing-login .btn-secondary { margin-top: 10px; }
+
+/* Google identity artwork keeps its original colors in either portal theme. */
+.login-button.google-sign-in-button,
+.btn-secondary.google-sign-in-button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: #fff; color: #1f1f1f; border: 1px solid #747775; border-radius: 8px; padding: 10px 12px; font-weight: 500; }
+.google-sign-in-button img { flex: none; object-fit: contain; }
+:is(.login-button, .btn-secondary).google-sign-in-button:hover:not(:disabled) { background: #f2f2f2; color: #1f1f1f; }
+
+/* cloud-relay:end */

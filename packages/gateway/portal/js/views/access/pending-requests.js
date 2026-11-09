@@ -10,6 +10,7 @@
 import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
 
+import { WaitingStrip } from "../../components/waiting-strip.js";
 import { navigate } from "../../lib/router.js";
 import { expiresInLabel } from "./shared.js";
 
@@ -36,20 +37,15 @@ export function PendingRequests({ requests }) {
   const waiting = requests.filter((request) => request.expiresAt > now);
   if (waiting.length === 0) return null;
 
-  return html`<section class="access-pending" aria-labelledby="access-pending-title">
-    <h3 id="access-pending-title">
-      ${waiting.length === 1 ? "1 access request waiting" : `${waiting.length} access requests waiting`}
-    </h3>
-    <ul class="access-pending-list">
-      ${waiting.map((request) => html`<li key=${request.id} class="access-pending-item">
-        <span class="access-pending-client"><strong>${request.clientName}</strong> wants to connect</span>
-        <span class="access-pending-expiry">${expiresInLabel(request.expiresAt, now)}</span>
-        <button
-          type="button"
-          class="btn-primary access-pending-review"
-          onClick=${() => navigate(authorizationReviewPath(request.id))}
-        >Configure & Approve</button>
-      </li>`)}
-    </ul>
-  </section>`;
+  return html`<${WaitingStrip}
+    titleId="access-pending-title"
+    title=${waiting.length === 1 ? "1 access request waiting" : `${waiting.length} access requests waiting`}
+    items=${waiting.map((request) => ({
+      key: request.id,
+      text: html`<strong>${request.clientName}</strong> wants to connect`,
+      meta: expiresInLabel(request.expiresAt, now),
+      actionLabel: "Configure & Approve",
+      onAction: () => navigate(authorizationReviewPath(request.id)),
+    }))}
+  />`;
 }

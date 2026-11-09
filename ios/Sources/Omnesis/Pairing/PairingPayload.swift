@@ -51,40 +51,6 @@ public enum PairingPayload: Equatable, Sendable {
     case v1(V1)
 
     public struct V4: Codable, Equatable, Sendable {
-        public enum TLS: Codable, Equatable, Sendable {
-            case system
-            case pinnedLeaf(fingerprint: String)
-
-            private enum CodingKeys: String, CodingKey { case mode, fingerprint }
-            private enum Mode: String, Codable {
-                case system
-                case pinnedLeaf = "pinned-leaf"
-            }
-
-            public init(from decoder: Decoder) throws {
-                let container = try decoder.container(keyedBy: CodingKeys.self)
-                switch try container.decode(Mode.self, forKey: .mode) {
-                case .system:
-                    self = .system
-                case .pinnedLeaf:
-                    self = try .pinnedLeaf(
-                        fingerprint: container.decode(String.self, forKey: .fingerprint)
-                    )
-                }
-            }
-
-            public func encode(to encoder: Encoder) throws {
-                var container = encoder.container(keyedBy: CodingKeys.self)
-                switch self {
-                case .system:
-                    try container.encode(Mode.system, forKey: .mode)
-                case .pinnedLeaf(let fingerprint):
-                    try container.encode(Mode.pinnedLeaf, forKey: .mode)
-                    try container.encode(fingerprint, forKey: .fingerprint)
-                }
-            }
-        }
-
         public let v: Int
         public let gatewayUrl: String
         public let pairingCode: String
@@ -200,10 +166,60 @@ extension PairingPayload {
             .replacingOccurrences(of: "\u{201D}", with: "\"")
     }
 
+    private static func decodeVersion<Value: Decodable>(
+        _ type: Value.Type,
+        from data: Data,
+        cloudRelayEnabled: Bool = true
+    ) throws
+        -> Value {
+        do {
+            let decoder = JSONDecoder()
+            decoder.userInfo[.pairingStrictTLSAllowed] = cloudRelayEnabled
+            return try decoder.decode(type, from: data)
+        } catch {
+            throw PairingPayloadError.invalidShape("\(error)")
+        }
+    }
+
+    private static func decodeV3(from data: Data) throws -> V3 {
+        let v3 = try decodeVersion(V3.self, from: data)
+        if v3.gatewayUrl.isEmpty { throw PairingPayloadError.missingField("gatewayUrl") }
+        if v3.pairingCode.isEmpty { throw PairingPayloadError.missingField("pairingCode") }
+        if v3.fingerprint.isEmpty { throw PairingPayloadError.missingField("fingerprint") }
+        try validateGatewayOrigin(v3.gatewayUrl)
+        try validateFingerprint(v3.fingerprint)
+        return v3
+    }
+
+    private static func decodeV4(from data: Data, cloudRelayEnabled: Bool) throws -> V4 {
+        let v4 = try decodeVersion(V4.self, from: data, cloudRelayEnabled: cloudRelayEnabled)
+        if v4.gatewayUrl.isEmpty { throw PairingPayloadError.missingField("gatewayUrl") }
+        if v4.pairingCode.isEmpty { throw PairingPayloadError.missingField("pairingCode") }
+        try validateGatewayOrigin(v4.gatewayUrl)
+        switch v4.tls {
+        case .system:
+            break
+        case .pinnedKeyStrict(let spkiFingerprint):
+            if spkiFingerprint.isEmpty { throw PairingPayloadError.missingField("tls.spkiFingerprint") }
+            try validateFingerprint(spkiFingerprint)
+        case .pinnedLeaf(let fingerprint), .pinnedLeafStrict(let fingerprint):
+            if fingerprint.isEmpty {
+                throw PairingPayloadError.missingField("tls.fingerprint")
+            }
+            try validateFingerprint(fingerprint)
+        }
+        return v4
+    }
+
     /// Decode a pairing payload from raw QR-decoded text. Trims whitespace,
     /// straightens typographic quotes, validates invariants, and returns a
-    /// tagged case.
-    public static func decode(from raw: String) throws -> PairingPayload {
+    /// tagged case. Off the cloud build flag the strict V4 trust modes are
+    /// unknown modes, refused as any other unknown mode is.
+    public static func decode(
+        from raw: String,
+        cloudRelayEnabled: Bool = CloudRelayFeature.enabled
+    ) throws
+        -> PairingPayload {
         let trimmed = straighteningQuotes(in: raw).trimmingCharacters(in: .whitespacesAndNewlines)
         guard let data = trimmed.data(using: .utf8) else {
             throw PairingPayloadError.invalidJSON
@@ -220,67 +236,20 @@ extension PairingPayload {
 
         switch peek.v {
         case 4:
-            let v4: V4
-            do {
-                v4 = try JSONDecoder().decode(V4.self, from: data)
-            } catch let error as DecodingError {
-                throw PairingPayloadError.invalidShape("\(error)")
-            } catch {
-                throw PairingPayloadError.invalidJSON
-            }
-            if v4.gatewayUrl.isEmpty { throw PairingPayloadError.missingField("gatewayUrl") }
-            if v4.pairingCode.isEmpty { throw PairingPayloadError.missingField("pairingCode") }
-            try validateGatewayOrigin(v4.gatewayUrl)
-            switch v4.tls {
-            case .system:
-                break
-            case .pinnedLeaf(let fingerprint):
-                if fingerprint.isEmpty {
-                    throw PairingPayloadError.missingField("tls.fingerprint")
-                }
-                try validateFingerprint(fingerprint)
-            }
-            return .v4(v4)
+            return try .v4(decodeV4(from: data, cloudRelayEnabled: cloudRelayEnabled))
 
         case 3:
-            let v3: V3
-            do {
-                v3 = try JSONDecoder().decode(V3.self, from: data)
-            } catch let e as DecodingError {
-                throw PairingPayloadError.invalidShape("\(e)")
-            } catch {
-                throw PairingPayloadError.invalidJSON
-            }
-            if v3.gatewayUrl.isEmpty { throw PairingPayloadError.missingField("gatewayUrl") }
-            if v3.pairingCode.isEmpty { throw PairingPayloadError.missingField("pairingCode") }
-            if v3.fingerprint.isEmpty { throw PairingPayloadError.missingField("fingerprint") }
-            try validateGatewayOrigin(v3.gatewayUrl)
-            try validateFingerprint(v3.fingerprint)
-            return .v3(v3)
+            return try .v3(decodeV3(from: data))
 
         case 2:
-            let v2: V2
-            do {
-                v2 = try JSONDecoder().decode(V2.self, from: data)
-            } catch let e as DecodingError {
-                throw PairingPayloadError.invalidShape("\(e)")
-            } catch {
-                throw PairingPayloadError.invalidJSON
-            }
+            let v2 = try decodeVersion(V2.self, from: data)
             if v2.gatewayUrl.isEmpty { throw PairingPayloadError.missingField("gatewayUrl") }
             if v2.pairingCode.isEmpty { throw PairingPayloadError.missingField("pairingCode") }
             try validateGatewayOrigin(v2.gatewayUrl)
             return .v2(v2)
 
         case 1:
-            let v1: V1
-            do {
-                v1 = try JSONDecoder().decode(V1.self, from: data)
-            } catch let e as DecodingError {
-                throw PairingPayloadError.invalidShape("\(e)")
-            } catch {
-                throw PairingPayloadError.invalidJSON
-            }
+            let v1 = try decodeVersion(V1.self, from: data)
             if v1.url.isEmpty { throw PairingPayloadError.missingField("url") }
             if v1.token.isEmpty { throw PairingPayloadError.missingField("token") }
             if v1.accountId.isEmpty { throw PairingPayloadError.missingField("accountId") }
@@ -338,4 +307,8 @@ extension PairingPayload {
             }
         }
     }
+}
+
+extension PairingPayload.V4 {
+    public typealias TLS = PairingV4TLS
 }

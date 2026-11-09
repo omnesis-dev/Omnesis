@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   deviceTlsFollowsPublicRenewal,
   deviceTlsTrust,
@@ -9,6 +9,8 @@ import {
   type TlsTrustDeviceFacts,
   type TlsTrustSnapshotFacts,
 } from "./tls-device-trust.js";
+
+afterEach(() => vi.unstubAllEnvs());
 
 const FINGERPRINT = "ab".repeat(32);
 const ROTATED_AT = "2026-09-10T00:00:00.000Z";
@@ -140,13 +142,36 @@ describe("deviceTlsTrust", () => {
     );
   });
 
+  test("the strict modes read as unreported without the cloud relay opt-in", () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+    for (const mode of ["pinned-leaf-strict", "pinned-key-strict"])
+      expect(deviceTlsTrustMode({ tls: { mode } })).toBeNull();
+    expect(deviceTlsTrustMode({ tls: { mode: "pinned-leaf" } })).toBe("pinned-leaf");
+  });
+
   test("the reported mode narrows to the known ones; anything else reads as unreported", () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    expect(deviceTlsTrustMode({ tls: { mode: "pinned-leaf-strict" } })).toBe("pinned-leaf-strict");
     expect(deviceTlsTrustMode({ tls: { mode: "pinned-leaf" } })).toBe("pinned-leaf");
     expect(deviceTlsTrustMode({ tls: { mode: "pinned-ca", extra: 1 } })).toBe("pinned-ca");
     expect(deviceTlsTrustMode({ tls: { mode: "future-mode" } })).toBeNull();
     expect(deviceTlsTrustMode({ tls: "system" })).toBeNull();
     expect(deviceTlsTrustMode({})).toBeNull();
     expect(deviceTlsTrustMode(null)).toBeNull();
+  });
+
+  test("strict pins remain visible at public renewal and never recommend a system-trust downgrade", () => {
+    for (const kind of ["ios", "android", "cli", "collector"]) {
+      const strict = device({ kind, tlsMode: "pinned-leaf-strict", tlsFollowsPublicRenewal: true });
+      expect(deviceTlsTrust(strict, snapshot({ renewsAt: RENEWS_AT }))).toMatchObject({
+        status: "pinned-renews",
+        remedy: expect.stringContaining("Keep strict certificate pinning enabled"),
+      });
+      const stranded = deviceTlsTrust(strict, rotated);
+      expect(stranded?.status).toBe("stranded");
+      expect(stranded?.remedy).not.toContain("omnesis tls trust");
+      expect(stranded?.remedy).not.toContain("follow renewals");
+    }
   });
 
   test("only an explicit true reports that a pin follows a public renewal", () => {
@@ -229,5 +254,31 @@ describe("deviceTlsTrust", () => {
     expect(deviceTlsTrust(device({ kind: "agent", harness: "hermes" }), unreadable)?.remedy).toBe(
       "On the machine running it: `omnesis connect hermes --refresh`.",
     );
+  });
+});
+
+test("stable public-key pins follow certificate renewal without masquerading as a leaf pin", () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  expect(deviceTlsTrustMode({ tls: { mode: "pinned-key-strict" } })).toBe("pinned-key-strict");
+  expect(
+    deviceTlsTrust(device({ tlsMode: "pinned-key-strict" }), snapshot({ renewsAt: RENEWS_AT })),
+  ).toBeNull();
+});
+
+test("renewal and stranded remedies remain actionable for key-pinned non-phone clients and agents without harness metadata", () => {
+  expect(
+    deviceTlsTrust(
+      device({ kind: "cli", tlsMode: "pinned-leaf" }),
+      snapshot({ renewsAt: RENEWS_AT }),
+    ),
+  ).toMatchObject({ remedy: "After the renewal, run `omnesis tls trust` on that machine." });
+  expect(
+    deviceTlsTrust(
+      device({ kind: "agent", tlsMode: "pinned-leaf" }),
+      snapshot({ renewsAt: RENEWS_AT }),
+    ),
+  ).toMatchObject({ remedy: expect.stringContaining("omnesis connect <harness> --refresh") });
+  expect(deviceTlsTrust(device({ kind: "agent", tlsMode: "pinned-leaf" }), rotated)).toMatchObject({
+    remedy: expect.stringContaining("omnesis connect <harness> --refresh"),
   });
 });

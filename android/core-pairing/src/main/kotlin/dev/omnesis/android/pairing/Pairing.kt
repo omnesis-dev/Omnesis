@@ -4,12 +4,18 @@
 package dev.omnesis.android.pairing
 
 import kotlinx.serialization.Serializable
+import dev.omnesis.android.transport.routing.DirectGatewayCandidate
 
 enum class PairingTlsMode(val persistedValue: String) {
     LEGACY("legacy"),
     SYSTEM("system"),
     PINNED_LEAF("pinned-leaf"),
+    PINNED_LEAF_STRICT("pinned-leaf-strict"),
+    PINNED_KEY_STRICT("pinned-key-strict"),
     ;
+
+    val isStrict: Boolean get() = this == PINNED_LEAF_STRICT || this == PINNED_KEY_STRICT
+    val requiresPin: Boolean get() = this == PINNED_LEAF || this == PINNED_LEAF_STRICT || this == PINNED_KEY_STRICT
 
     companion object {
         fun fromPersisted(value: String?, fingerprint: String?): PairingTlsMode? =
@@ -36,6 +42,11 @@ data class Pairing(
     val scopes: List<String> = emptyList(),
     val fingerprint: String? = null,
     val tlsMode: PairingTlsMode = PairingTlsMode.LEGACY,
+    val spkiFingerprint: String? = null,
+    val directCandidates: List<DirectGatewayCandidate> = emptyList(),
+    /** The gateway holds this install's device key, so this token can be rotated. */
+    val deviceKeyRecorded: Boolean = false,
+    val tokenRotatedAt: Long? = null,
 )
 
 /** Complete pairing transaction persisted under one encrypted-store key. */
@@ -50,4 +61,8 @@ internal data class PairingCredentialBundle(
     val scopes: List<String>,
     val tlsMode: String,
     val fingerprint: String? = null,
+    val spkiFingerprint: String? = null,
+    val directCandidates: List<DirectGatewayCandidate> = emptyList(),
+    val deviceKeyRecorded: Boolean = false,
+    val tokenRotatedAt: Long? = null,
 )

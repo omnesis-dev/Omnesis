@@ -270,3 +270,19 @@ describe("push transport contracts", () => {
     ).toThrow();
   });
 });
+
+test("device pairing notifications carry no enrollment secrets or granting authority", () => {
+  const message = notificationMessageSchema.parse({
+    kind: "device-pairing",
+    title: "Pairing request",
+    body: "Review on your trusted device.",
+    collapseId: "pairing:fixture",
+    data: {},
+  });
+  expect(notificationTargetId(message)).toBe("pairing");
+  expect(notificationRoute(message)).toEqual({ kind: "device-pairing" });
+  expect(
+    notificationMessageSchema.safeParse({ ...message, data: { verificationCode: "FICTIONAL" } })
+      .success,
+  ).toBe(false);
+});

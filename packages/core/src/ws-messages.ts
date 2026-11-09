@@ -29,6 +29,7 @@
 
 import { z } from "zod";
 import { MULTI_DEVICE_MODES } from "@omnesis/types";
+import { connectionPathSchema } from "./connection-path.js";
 import { sourceContractWireRangeSchema } from "./source-contract-wire.js";
 import { syncRemediationSchema } from "./sync-remediation.js";
 import { syncIssuesSchema, syncIssueAssessmentsSchema } from "./sync-issues.js";
@@ -986,6 +987,7 @@ const modelDownloadCancelledEvent = z
 export const wsEventSchemas = {
   ping: pingEvent,
   "device.status": deviceStatusEvent,
+  "connection.path": z.object({ path: connectionPathSchema }).strict(),
   "documents.upserted": documentsUpsertedEvent,
   "push.available": pushAvailableEvent,
   "config.changed": configChangedEvent,

@@ -10,25 +10,28 @@ import SwiftUI
 ///
 /// The gateway mints a one-time pairing code (`POST /admin/devices/pair`,
 /// ~10-min TTL). The new device exchanges it for a real token via the public
-/// `POST /devices/pair`. We render the code AND a scannable QR — the QR payload
-/// is encoded server-side (`POST /admin/devices/pair-qr`) so every client
-/// shares the versioned trust policy; the user picks which network identity bakes into the
-/// QR's `gatewayUrl` from `GET /admin/network-identities`.
+/// `POST /devices/pair`. We render the code AND a scannable QR. The gateway
+/// judges every address it could put in the code (`POST /admin/devices/pair-addresses`)
+/// and encodes the chosen one (`POST /admin/devices/pair-qr`), so every client
+/// shares the versioned trust policy and the same choice of addresses.
 ///
 /// The form asks for the device kind only: the gateway grants the kind's
 /// canonical scopes. A narrower or custom grant is minted from the CLI.
+///
+/// With the cloud build flag off the sheet is `LegacyPairDeviceView`, unchanged from a
+/// build without cloud connectivity (see `PairDeviceSheetStyle`).
 @available(iOS 17.0, *)
 struct PairDeviceView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    // See #103 — planned: take the address from /admin/devices/pair-addresses.
-    @State private var identities: [NetworkIdentity] = []
     @State private var phase: Phase = .form
     let repairTarget: DeviceRecord?
+    private let style: PairDeviceSheetStyle
 
-    init(repairTarget: DeviceRecord? = nil) {
+    init(repairTarget: DeviceRecord? = nil, cloudRelayEnabled: Bool = CloudRelayFeature.enabled) {
         self.repairTarget = repairTarget
+        style = PairDeviceSheetStyle(cloudRelayEnabled: cloudRelayEnabled)
     }
 
     enum Phase: Equatable {
@@ -37,6 +40,15 @@ struct PairDeviceView: View {
     }
 
     var body: some View {
+        switch style {
+        case .networkIdentities:
+            LegacyPairDeviceView(repairTarget: repairTarget)
+        case .addressPlan:
+            addressPlanSheet
+        }
+    }
+
+    private var addressPlanSheet: some View {
         NavigationStack {
             content
                 .background(Theme.bgPrimary.ignoresSafeArea())
@@ -47,7 +59,6 @@ struct PairDeviceView: View {
                         Button("Close") { dismiss() }
                     }
                 }
-                .task { await loadIdentities() }
                 .omnesisColorScheme()
         }
     }
@@ -66,24 +77,7 @@ struct PairDeviceView: View {
                 }
             }
         case .paired(let pending, let kind):
-            PairingResultView(
-                pending: pending,
-                kind: kind,
-                identities: identities,
-                gatewayOrigin: store.admin?.baseURL,
-                repairDeviceName: repairTarget?.name
-            ) { code, gatewayUrl in
-                try await store.admin?.buildPairQr(pairingCode: code, gatewayUrl: gatewayUrl) ?? ""
-            }
-        }
-    }
-
-    private func loadIdentities() async {
-        guard let client = store.admin else { return }
-        do {
-            identities = try await client.listNetworkIdentities()
-        } catch {
-            identities = []
+            PairingResultView(pending: pending, kind: kind, client: store.admin, repairDeviceName: repairTarget?.name)
         }
     }
 
@@ -241,107 +235,125 @@ struct PairDeviceForm: View {
     }
 }
 
-// MARK: - Pairing result (pure)
+// MARK: - Pairing result
 
-/// The result surface: the one-time code, an expiry countdown, a host picker,
-/// and the generated QR. Re-encodes the QR payload whenever the chosen host
-/// changes (the gateway owns the V2/V3 spec).
+/// The result surface: the one-time code, an expiry countdown, and for a phone
+/// the QR for the address the gateway recommends, with its other addresses.
 @available(iOS 17.0, *)
 struct PairingResultView: View {
     let pending: PendingPairing
     /// The kind the code was minted for — gates whether we show a scannable QR
     /// (mobile apps) or code-exchange instructions (CLI/portal/collector).
     let kind: String
-    let identities: [NetworkIdentity]
-    /// The gateway's own origin (scheme + host + port). The chosen network
-    /// identity's address is swapped into this so the QR's `gatewayUrl`
-    /// preserves the real scheme and port the gateway is served on — mirrors
-    /// the portal's `swapHostForUrl(window.location.origin, …)`.
-    let gatewayOrigin: URL?
-    /// Encodes the QR payload server-side for (pairingCode, gatewayUrl).
-    var encodeQr: (String, String) async throws -> String = { _, _ in "" }
-    /// Preview/snapshot seam: a pre-resolved payload so the QR renders without
-    /// waiting on the async `.task`. nil in production (the task fills it).
-    var initialPayload: String?
+    let client: (any PairingAddressProviding)?
     let repairDeviceName: String?
 
-    @State private var selectedIdx = 0
-    @State private var payload: String?
-    @State private var qrError: String?
+    @State private var model: PairingAddressModel
+    @State private var alternativesOpen: Bool
+    @State private var manualOpen: Bool
     @State private var copied = false
 
+    /// `plan`, `initialPayload` and `expanded` seed a preview or snapshot: the plan and
+    /// the QR render without a gateway, with both disclosures open.
     init(
         pending: PendingPairing,
         kind: String,
-        identities: [NetworkIdentity],
-        gatewayOrigin: URL? = nil,
+        client: (any PairingAddressProviding)? = nil,
         repairDeviceName: String? = nil,
-        encodeQr: @escaping (String, String) async throws -> String = { _, _ in "" },
-        initialPayload: String? = nil
+        plan: PairingAddressPlan? = nil,
+        initialPayload: String? = nil,
+        expanded: Bool = false
     ) {
         self.pending = pending
         self.kind = kind
-        self.identities = identities
-        self.gatewayOrigin = gatewayOrigin
-        self.encodeQr = encodeQr
-        self.initialPayload = initialPayload
+        self.client = client
         self.repairDeviceName = repairDeviceName
-        self._payload = State(initialValue: initialPayload)
+        _model = State(initialValue: PairingAddressModel(
+            pairingCode: pending.pairingCode,
+            encodesQr: DeviceKindMeta.usesQr(kind),
+            plan: plan,
+            payload: initialPayload
+        ))
+        _alternativesOpen = State(initialValue: expanded)
+        _manualOpen = State(initialValue: expanded)
     }
 
-    private var hosts: [NetworkIdentity] {
-        identities.isEmpty
-            ? [NetworkIdentity(address: "", label: "No network identity discovered", kind: "none", offLan: false)]
-            : identities
+    /// Only a phone or an agent is told which address to use.
+    private var choosesAddress: Bool {
+        DeviceKindMeta.usesQr(kind) || kind == "agent"
     }
 
-    private var chosen: NetworkIdentity {
-        hosts[min(selectedIdx, hosts.count - 1)]
+    private var noun: String {
+        PairingAddressPresentation.noun(kind: kind)
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
                 codeBlock
-                if DeviceKindMeta.usesQr(kind) {
-                    hostPicker
-                    qrBlock
-                } else {
-                    if kind == "agent" {
-                        hostPicker
-                    }
-                    codeInstructions
-                }
+                if choosesAddress { addressed } else { codeInstructions(gatewayURL: nil) }
             }
             .frame(maxWidth: .infinity)
             .padding(Theme.Spacing.lg)
         }
-        .task(id: chosen.address) {
-            if DeviceKindMeta.usesQr(kind), initialPayload == nil { await refreshPayload() }
+        .task {
+            if choosesAddress, let client { await model.load(client: client) }
         }
+    }
+
+    @ViewBuilder
+    private var addressed: some View {
+        if let error = model.planError {
+            problem("Couldn't prepare the \(DeviceKindMeta.usesQr(kind) ? "QR code" : "address"): \(deviceGatewayMessage(error))")
+        } else if let plan = model.plan {
+            if let selected = model.selected {
+                if DeviceKindMeta.usesQr(kind) {
+                    qrBlock(selected)
+                    reach(selected)
+                    awayFromHome(plan)
+                    alternatives(plan, selected: selected)
+                    cantScan(selected)
+                } else {
+                    reach(selected)
+                    alternatives(plan, selected: selected)
+                    codeInstructions(gatewayURL: selected.gatewayUrl)
+                }
+            } else {
+                let who = PairingAddressPresentation.withArticle(noun)
+                problem(
+                    DeviceKindMeta.usesQr(kind)
+                        ? "None of this gateway's addresses can be used by \(who), so there is no QR code to scan."
+                        : "None of this gateway's addresses can be used by \(who)."
+                )
+                PairingRefusedAddresses(plan: plan, noun: noun)
+                awayFromHome(plan)
+            }
+        } else {
+            Text("Finding the addresses this \(noun) can use…")
+                .font(.footnote)
+                .foregroundStyle(Theme.textMuted)
+        }
+    }
+
+    private func problem(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote)
+            .foregroundStyle(Theme.danger)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// For non-app kinds there is no QR to scan. Agent integrations have their
     /// own one-shot installer commands; other kinds retain the generic exchange
     /// guidance.
     @ViewBuilder
-    private var codeInstructions: some View {
+    private func codeInstructions(gatewayURL: String?) -> some View {
         if kind == "agent" {
             VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                 Text("Run one command on the agent host. The pairing code is single-use.")
                     .font(.footnote)
                     .foregroundStyle(Theme.textSecondary)
-                ForEach(
-                    agentConnectCommands(
-                        gatewayURL: agentGatewayURL(
-                            gatewayOrigin: gatewayOrigin,
-                            identityAddresses: identities.map(\.address),
-                            selectedIndex: selectedIdx
-                        ),
-                        pairingCode: pending.pairingCode
-                    ),
-                    id: \.self
-                ) { command in
+                ForEach(agentConnectCommands(gatewayURL: gatewayURL, pairingCode: pending.pairingCode), id: \.self) { command in
                     Text(command)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(Theme.textPrimary)
@@ -379,36 +391,96 @@ struct PairingResultView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private var hostPicker: some View {
-        if identities.count > 1 {
-            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                Text(repairDeviceName.map { "Address \($0) will connect to" } ?? "Address the new device will connect to")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                Picker("Host", selection: $selectedIdx) {
-                    ForEach(Array(hosts.enumerated()), id: \.offset) { idx, host in
-                        Text("\(host.address) — \(host.label)\(host.offLan ? " (off-LAN)" : "")").tag(idx)
-                    }
-                }
-                .pickerStyle(.menu)
-                .tint(Theme.accent)
+    private func qrBlock(_ selected: PairingAddressOption) -> some View {
+        VStack(spacing: Theme.Spacing.sm) {
+            Text("Scan with the Omnesis app on \(repairDeviceName ?? "your \(noun)")")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+            if let payload = model.payload {
+                QRCodeView(payload: payload)
+                    .accessibilityLabel("Pairing QR code for \(selected.host)")
+            } else if let error = model.qrError {
+                Text("Couldn't make the QR code: \(deviceGatewayMessage(error))")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.danger)
+                    .frame(width: 220, height: 220)
+                    .multilineTextAlignment(.center)
+            } else {
+                ProgressView()
+                    .frame(width: 220, height: 220)
+                    .accessibilityLabel("Making the QR code…")
             }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Where a device paired with the chosen address works, in the gateway's words.
+    private func reach(_ selected: PairingAddressOption) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let summary = selected.summary {
+                Text(summary)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("\(selected.label) · \(selected.host)")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(Theme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous))
+        .accessibilityIdentifier("pair.reach")
+    }
+
+    @ViewBuilder
+    private func awayFromHome(_ plan: PairingAddressPlan) -> some View {
+        if let hint = plan.awayFromHome {
+            PairingAwayFromHome(hint: hint, platform: plan.platform, noun: noun)
         }
     }
 
-    private var qrBlock: some View {
-        VStack(spacing: Theme.Spacing.sm) {
-            Text(repairDeviceName.map { "Scan with the Omnesis app on \($0)" } ?? "Scan with the Omnesis app on the new device")
-                .font(.footnote)
-                .foregroundStyle(Theme.textSecondary)
-            if let payload {
-                QRCodeView(payload: payload)
-                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+    @ViewBuilder
+    private func alternatives(_ plan: PairingAddressPlan, selected: PairingAddressOption) -> some View {
+        if let title = PairingAddressPresentation.alternativesTitle(plan) {
+            DisclosureGroup(title, isExpanded: $alternativesOpen) {
+                VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                    if plan.usable.count > 1 {
+                        ForEach(plan.usable) { option in
+                            PairingAddressChoiceRow(
+                                title: plan.title(option),
+                                detail: option.summary,
+                                selected: option.gatewayUrl == selected.gatewayUrl
+                            ) {
+                                copied = false
+                                Task { await model.select(option, client: client) }
+                            }
+                        }
+                    }
+                    PairingRefusedAddresses(plan: plan, noun: noun)
+                }
+                .padding(.top, Theme.Spacing.sm)
+            }
+            .font(.subheadline.weight(.semibold))
+            .tint(Theme.accent)
+            .accessibilityIdentifier("pair.alternatives")
+        }
+    }
+
+    /// The same pairing by hand. Typing the address and the code is offered only where
+    /// the phone's own trust accepts the gateway; anywhere else the JSON carries the pin.
+    @ViewBuilder
+    private func cantScan(_ selected: PairingAddressOption) -> some View {
+        if let payload = model.payload {
+            DisclosureGroup("Can't scan the code?", isExpanded: $manualOpen) {
+                VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                     HStack(spacing: Theme.Spacing.sm) {
-                        Text("Or paste this payload manually")
-                            .font(.system(size: 12))
+                        Text("In the Omnesis app, choose **Paste JSON** and paste:")
+                            .font(.footnote)
                             .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                         Button {
                             UIPasteboard.general.string = payload
@@ -419,41 +491,135 @@ struct PairingResultView: View {
                                 .foregroundStyle(Theme.accent)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Copy pairing payload")
+                        .accessibilityLabel("Copy pairing JSON")
                     }
                     Text(payload)
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(Theme.textMuted)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    if model.offersManualEntry {
+                        let url = Text(selected.gatewayUrl).monospaced()
+                        let code = Text(pending.pairingCode).monospaced()
+                        Text("Or choose **Manual entry** and type the gateway URL \(url) and the pairing code \(code).")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.textSecondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("pair.manualEntry")
+                    }
                 }
-            } else if let qrError {
-                Text("Couldn't build QR: \(qrError)")
+                .padding(.top, Theme.Spacing.sm)
+            }
+            .font(.subheadline.weight(.semibold))
+            .tint(Theme.accent)
+            .accessibilityIdentifier("pair.cantScan")
+        }
+    }
+}
+
+/// One usable address to choose, named and explained by the gateway.
+@available(iOS 17.0, *)
+struct PairingAddressChoiceRow: View {
+    let title: String
+    let detail: String?
+    let selected: Bool
+    let choose: () -> Void
+
+    var body: some View {
+        Button(action: choose) {
+            HStack(alignment: .top, spacing: Theme.Spacing.sm) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.body)
+                    .foregroundStyle(selected ? Theme.accent : Theme.textMuted)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail {
+                        Text(detail)
+                            .font(.footnote.weight(.regular))
+                            .foregroundStyle(Theme.textSecondary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// The addresses the gateway will not give this device, each with the gateway's reason.
+@available(iOS 17.0, *)
+struct PairingRefusedAddresses: View {
+    let plan: PairingAddressPlan
+    let noun: String
+
+    var body: some View {
+        if !plan.refused.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Text("Not offered for \(PairingAddressPresentation.withArticle(noun))")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(plan.refused) { option in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(plan.title(option))
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Theme.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let reason = option.reason {
+                            Text(reason)
+                                .font(.footnote.weight(.regular))
+                                .foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("pair.refused")
+        }
+    }
+}
+
+/// Shown when no offered address reaches beyond the gateway's own network.
+@available(iOS 17.0, *)
+struct PairingAwayFromHome: View {
+    let hint: PairingAwayFromHomeHint
+    let platform: String?
+    let noun: String
+
+    var body: some View {
+        let steps = PairingAddressPresentation.awayFromHomeSteps(hint, platform: platform, noun: noun)
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("To use this \(noun) away from home")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                Text("\(index + 1). \(step)")
                     .font(.footnote)
-                    .foregroundStyle(Theme.danger)
-                    .frame(width: 220, height: 220)
-                    .multilineTextAlignment(.center)
-            } else {
-                ProgressView().frame(width: 220, height: 220)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let docs = PairingAddressPresentation.awayFromHomeDocs {
+                Link("Set up access away from home", destination: docs)
+                    .font(.footnote.weight(.semibold))
+                    .tint(Theme.accent)
             }
         }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func refreshPayload() async {
-        guard !chosen.address.isEmpty else {
-            qrError = "no reachable address"
-            return
-        }
-        payload = nil
-        qrError = nil
-        copied = false
-        let gatewayUrl = swapHost(into: gatewayOrigin, host: chosen.address)
-        do {
-            payload = try await encodeQr(pending.pairingCode, gatewayUrl)
-        } catch {
-            qrError = deviceGatewayMessage(error)
-        }
+        .padding(Theme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.bgSecondary, in: RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous))
+        .accessibilityIdentifier("pair.awayFromHome")
     }
 }
 
@@ -490,26 +656,46 @@ struct ExpiryCountdown: View {
 }
 
 @available(iOS 17.0, *)
-#Preview("Pair — result") {
+private func pairingResultPreview(_ plan: PairingAddressPlan, kind: String = "ios", expanded: Bool = false) -> some View {
     PairingResultView(
         pending: PreviewMocks.pendingPairing,
-        kind: "ios",
-        identities: PreviewMocks.networkIdentities,
-        encodeQr: { code, url in "{\"v\":4,\"gatewayUrl\":\"\(url)\",\"pairingCode\":\"\(code)\",\"tls\":{\"mode\":\"system\"}}" },
-        initialPayload: #"{"v":4,"gatewayUrl":"https://gateway.example:7600","pairingCode":"7K3M-9QX2","tls":{"mode":"system"}}"#
+        kind: kind,
+        plan: plan,
+        initialPayload: kind == "agent" ? nil : PreviewMocks.pairingQrPayload,
+        expanded: expanded
     )
     .background(Theme.bgPrimary.ignoresSafeArea())
 }
 
 @available(iOS 17.0, *)
+#Preview("Pair — result") {
+    pairingResultPreview(PreviewMocks.pairingAddressPlan)
+}
+
+@available(iOS 17.0, *)
+#Preview("Pair — result, addresses open") {
+    pairingResultPreview(PreviewMocks.pairingAddressPlan, expanded: true)
+}
+
+@available(iOS 17.0, *)
+#Preview("Pair — result, home only") {
+    pairingResultPreview(PreviewMocks.pairingAddressPlanHomeOnly, expanded: true)
+}
+
+@available(iOS 17.0, *)
+#Preview("Pair — result, no usable address") {
+    pairingResultPreview(PreviewMocks.pairingAddressPlanNoneUsable)
+}
+
+@available(iOS 17.0, *)
+#Preview("Pair — finding addresses") {
+    PairingResultView(pending: PreviewMocks.pendingPairing, kind: "ios")
+        .background(Theme.bgPrimary.ignoresSafeArea())
+}
+
+@available(iOS 17.0, *)
 #Preview("Pair — agent result") {
-    PairingResultView(
-        pending: PreviewMocks.pendingPairing,
-        kind: "agent",
-        identities: PreviewMocks.networkIdentities,
-        gatewayOrigin: URL(string: "https://gateway.example:7600")
-    )
-    .background(Theme.bgPrimary.ignoresSafeArea())
+    pairingResultPreview(PreviewMocks.pairingAddressPlanAgent, kind: "agent", expanded: true)
 }
 #endif
 #endif

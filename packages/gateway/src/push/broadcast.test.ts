@@ -21,6 +21,7 @@ import {
   digestCandidate,
 } from "../privacy/store.js";
 import { NotifyRunner } from "../watch/notify-runner.js";
+import { PairingNotifier } from "./pairing-notifier.js";
 import { PushBroadcaster } from "./broadcast.js";
 import { NeedsAuthNotifier } from "./producers/needs-auth.js";
 import {
@@ -48,7 +49,7 @@ function makeDb(deviceIds: readonly DeviceId[]): Database.Database {
   const db = new Database(":memory:");
   databases.push(db);
   db.pragma("foreign_keys = ON");
-  db.exec("CREATE TABLE devices (id TEXT PRIMARY KEY)");
+  db.exec("CREATE TABLE devices (id TEXT PRIMARY KEY, capabilities TEXT NOT NULL DEFAULT '{}')");
   const insert = db.prepare("INSERT INTO devices (id) VALUES (?)");
   for (const deviceId of deviceIds) insert.run(deviceId);
   createNotificationQueueTables(db);
@@ -559,4 +560,144 @@ describe("PushBroadcaster", () => {
       "Fictional answer",
     );
   });
+});
+
+test("pairing reminders publish and claim over existing private delivery without exposing enrollment details or duplicating wakes", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(1_000));
+  try {
+    const admin = id(41),
+      reader = id(42);
+    const db = makeDb([admin, reader]);
+    db.prepare("UPDATE devices SET capabilities=? WHERE id=?").run(
+      JSON.stringify({ pairingNotifications: true }),
+      admin,
+    );
+    const sendEventToDevice = vi.fn(() => true);
+    const phones = [
+      device(admin, { pushTransport: "socket", capabilities: { pairingNotifications: true } }),
+      device(reader, { pushTransport: "socket" }),
+    ];
+    const publisher = new PushBroadcaster({
+      queue: notificationQueue(db),
+      listDevices: () => phones,
+      apnsClient: null,
+      fcmClient: null,
+      relayClient: { wake: vi.fn() },
+      socket: { isConnected: () => true, sendEventToDevice },
+      now: () => 1_000,
+    });
+    const notifier = new PairingNotifier(
+      publisher,
+      () => phones,
+      () => [admin],
+    );
+    const request = { requestId: "00000000-0000-4000-8000-000000000043", expiresAt: 601_000 };
+    await notifier.notify(request);
+    await notifier.notify(request);
+    expect(sendEventToDevice).toHaveBeenCalledExactlyOnceWith(
+      admin,
+      expect.objectContaining({ type: "push.available", payload: {} }),
+    );
+    const claim = claimNotification(db, {
+      deviceId: admin,
+      now: 1_001,
+      supportsPairingNotifications: true,
+    });
+    expect(claim).toMatchObject({
+      kind: "device-pairing",
+      targetId: "pairing",
+      route: { kind: "device-pairing" },
+    });
+    expect(claimNotification(db, { deviceId: reader, now: 1_001 })).toBeNull();
+    expect(db.prepare("SELECT expires_at FROM notifications").get()).toEqual({
+      expires_at: request.expiresAt,
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM notifications").get()).toEqual({ count: 1 });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("without the cloud relay opt-in a claim runs no pairing-reminder query", () => {
+  const device = id(46);
+  const db = makeDb([device]);
+  enqueueNotification(db, {
+    message: {
+      kind: "diagnostic",
+      title: "Fictional diagnostic",
+      body: "Ordinary notification.",
+      data: {},
+      collapseId: "diagnostic:fixture",
+    },
+    deviceIds: [device],
+    createdAt: 1_000,
+    expiresAt: 601_000,
+  });
+  const prepare = vi.spyOn(db, "prepare");
+  const pairingQueries = () =>
+    prepare.mock.calls.filter(([sql]) => String(sql).includes("device-pairing")).length;
+  try {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+    expect(claimNotification(db, { deviceId: device, now: 1_001 })).toMatchObject({
+      kind: "diagnostic",
+    });
+    expect(pairingQueries()).toBe(0);
+    // The same claim with the opt-in does look, so the absence above means something.
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    claimNotification(db, { deviceId: device, now: 1_002 });
+    expect(pairingQueries()).toBe(1);
+  } finally {
+    vi.unstubAllEnvs();
+    prepare.mockRestore();
+  }
+});
+
+test("an app downgrade drops only its unsupported reminder and does not block ordinary notifications or another administrator", () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  const downgraded = id(44),
+    current = id(45);
+  const db = makeDb([downgraded, current]);
+  db.prepare("UPDATE devices SET capabilities=?").run(
+    JSON.stringify({ pairingNotifications: true }),
+  );
+  enqueueNotification(db, {
+    message: {
+      kind: "device-pairing",
+      title: "Pairing request",
+      body: "Review the request.",
+      data: {},
+      collapseId: "pairing:fixture",
+    },
+    deviceIds: [downgraded, current],
+    createdAt: 1_000,
+    expiresAt: 601_000,
+  });
+  db.prepare("UPDATE devices SET capabilities='{}' WHERE id=?").run(downgraded);
+  enqueueNotification(db, {
+    message: {
+      kind: "diagnostic",
+      title: "Fictional diagnostic",
+      body: "Ordinary notification.",
+      data: {},
+      collapseId: "diagnostic:fixture",
+    },
+    deviceIds: [downgraded],
+    createdAt: 1_001,
+    expiresAt: 601_000,
+  });
+  expect(claimNotification(db, { deviceId: downgraded, now: 1_002 })).toMatchObject({
+    kind: "diagnostic",
+  });
+  expect(
+    claimNotification(db, { deviceId: current, now: 1_002, supportsPairingNotifications: true }),
+  ).toMatchObject({ kind: "device-pairing" });
+  expect(
+    db
+      .prepare(
+        "SELECT state,wake_state FROM notification_deliveries WHERE device_id=? AND notification_id IN (SELECT id FROM notifications WHERE kind='device-pairing')",
+      )
+      .get(downgraded),
+  ).toEqual({ state: "superseded", wake_state: "terminal" });
+  vi.unstubAllEnvs();
 });

@@ -73,67 +73,17 @@ struct AccessPendingRequestBanner: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button(action: onReview) {
-                HStack(spacing: 10) {
-                    Image(systemName: "person.badge.key.fill").foregroundStyle(Theme.accent)
-                    // The action stays in words at every size: beside the
-                    // title while both fit on one line, under the client
-                    // name once they do not.
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: Theme.Spacing.sm) {
-                            titleAndDetail
-                            actionText
-                                .fixedSize()
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            titleAndDetail
-                            actionText
-                        }
-                    }
-                }
-                .padding(.leading, Theme.Spacing.lg)
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Access request waiting from \(offer.detail)")
-            .accessibilityHint("Opens the request to configure and approve it")
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Theme.textMuted)
-                    .frame(width: Theme.tapTarget, height: Theme.tapTarget)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss access request")
-            .padding(.trailing, Theme.Spacing.xs)
-        }
-        .background(Theme.bgSecondary)
-        .overlay(alignment: .bottom) { Divider().background(Theme.borderLight) }
-    }
-
-    private var titleAndDetail: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Access request waiting")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.textPrimary)
-            // Asks for no width of its own and is cut to whatever the row
-            // leaves, so a long client name never decides where the action
-            // goes.
-            Text(offer.detail)
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-                .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var actionText: some View {
-        Text(AccessPendingRequestBannerOffer.actionTitle)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Theme.accent)
+        PendingRequestBanner(
+            symbol: "person.badge.key.fill",
+            title: "Access request waiting",
+            detail: offer.detail,
+            actionTitle: AccessPendingRequestBannerOffer.actionTitle,
+            reviewLabel: "Access request waiting from \(offer.detail)",
+            reviewHint: "Opens the request to configure and approve it",
+            dismissLabel: "Dismiss access request",
+            onReview: onReview,
+            onDismiss: onDismiss
+        )
     }
 }
 

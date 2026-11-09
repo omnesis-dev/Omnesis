@@ -155,3 +155,57 @@ Falls back to "Paste JSON" for simulators without a physical camera.
 iOS does not reveal whether individual HealthKit read permissions were denied, so an empty Health query is never treated as proof of revocation. Users can re-run the Health permission prompt from Settings. Apple Health, Activity Segments, and Photos report Background App Refresh health separately from source authorization. Photos deletion reconciliation runs only from a complete Full Access snapshot; Limited or denied access never makes inaccessible assets look deleted. Notification deliveries remain unconfirmed at the gateway when current iOS settings cannot visibly present them, so restoring notification access can retry the leased delivery.
 
 Per-category toggles persist via `HealthSettings` (UserDefaults-backed). Disabled categories are filtered out of the `AppleHealthSource` catalog rotation on the fly — no re-pair needed.
+
+## Optional Google pairing through the experimental relay
+
+QR and manual pairing work without Google. To offer Google sign-in in a build,
+configure these public values in the ignored `Local.xcconfig`:
+
+```xcconfig
+OMNESIS_CLOUD_RELAY_ENABLED = 1
+OMNESIS_GOOGLE_CLIENT_ID = fictional-ios.apps.googleusercontent.com
+OMNESIS_GOOGLE_CALLBACK_SCHEME = com.googleusercontent.apps.fictional-ios
+OMNESIS_CLOUD_RELAY_URL = https:/$()/relay.example.test
+```
+
+With the flag on, a build phase (`scripts/cloud-relay-info-plist.py`) adds the
+local network usage text and registers the callback scheme in the built
+`Info.plist` of the production app, the demo app and the extensions. A default
+build declares neither.
+
+Use an **iOS** OAuth client registered for the app's bundle identifier. The
+callback scheme is its reversed client ID; the `$()` spelling prevents xcconfig
+from interpreting the URL's slashes as a comment. The gateway and relay must
+allow the iOS client ID. Client secrets do not belong in the app.
+
+The system browser uses PKCE, state and a request-bound nonce. The app verifies
+Google's signature directly, discovers an untrusted gateway candidate, and shows
+a code computed locally from that certificate and the private pairing challenge.
+Compare every group on the gateway's **local** portal or trusted terminal before
+approving. A portal opened through an operator-controlled public hostname is not
+an independent trust anchor against that operator. Google sign-in does not grant
+device access; approval and local code comparison are both required.
+
+The resulting pairing retains a separate SHA-256 pin of the gateway's complete
+DER SubjectPublicKeyInfo across HTTP, WebSocket, notification and widget
+requests. The initial certificate comparison authenticates that key. Strict
+transport checks the current certificate's validity and canonical hostname,
+accepts certificate renewal with the same key, and never upgrades to generic
+public certificate trust. A changed gateway key requires a fresh trusted pairing.
+On the direct home-network path only, a certificate that carries the pinned key
+is still accepted after it expired: a gateway whose remote access is off keeps
+serving its last certificate and cannot renew it, and the pinned key is what
+authenticates it. Connections through the relay always require a current one.
+Existing exact certificate pins retain their original behavior and are not
+silently reinterpreted as public-key pins.
+
+With the same flag on, Settings lists **Omnesis account** when the paired gateway
+offers one (`GET /admin/cloud-relay` answers; a 404 keeps the row away). The
+screen mirrors the portal's page of that name: connect the gateway by signing
+in, manage the account or disconnect the gateway from it, the remote address
+with its on/off switch, and the choice for new devices. Anything wrong is said
+in one box whose **Copy details** button copies a plain-text block without
+secrets. Custom
+addresses, certificate directories, invitation files and linking an already
+registered gateway to an account stay in the portal. A build without the flag
+never asks the gateway and shows no row.

@@ -19,6 +19,7 @@ import dev.omnesis.android.ui.tasks.TaskFocusBus
 import java.time.Duration
 import javax.inject.Inject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Rule
@@ -230,5 +231,35 @@ class MainActivityLaunchReplayTest {
         activity.killedAndRebuiltWith(first)
 
         assertNull(notifications.agentConversation.value)
+    }
+
+    private fun devicesTap(stamp: Long, pairingRequests: Boolean = false, deviceId: String? = null) =
+        shortcut(MainActivity.ACTION_DEVICES)
+            .putExtra(MainActivity.EXTRA_DEVICES_LAUNCH_STAMP, stamp)
+            .putExtra(MainActivity.EXTRA_DEVICES_PAIRING_REQUESTS, pairingRequests)
+            .apply { deviceId?.let { putExtra(MainActivity.EXTRA_DEVICES_DEVICE_ID, it) } }
+
+    @Test
+    fun a_devices_notification_tap_opens_devices_once_and_only_with_cloud_connectivity() {
+        val first = devicesTap(stamp = 1_000, deviceId = "device-joined")
+        val activity = created(first)
+        if (!BuildConfig.CLOUD_RELAY_ENABLED) {
+            // As on a build without the feature: nothing opens and the intent is left as it came.
+            assertNull(notifications.devices.value)
+            assertNull(notifications.pairingRequests.value)
+            assertEquals(MainActivity.ACTION_DEVICES, activity.get().intent.action)
+            return
+        }
+        assertEquals("device-joined", notifications.devices.value?.deviceId)
+        notifications.consumeDevices()
+        activity.newIntent(devicesTap(stamp = 2_000, pairingRequests = true))
+        assertNotNull(notifications.pairingRequests.value)
+        assertNull(notifications.devices.value)
+        notifications.consumePairingRequests()
+
+        activity.killedAndRebuiltWith(first)
+
+        assertNull(notifications.devices.value)
+        assertNull(notifications.pairingRequests.value)
     }
 }

@@ -182,6 +182,10 @@ public struct DeviceRecord: Decodable, Equatable, Sendable, Identifiable {
     /// Not part of the stored record — appended by `/admin/devices` based
     /// on current WS connection state.
     public let online: Bool?
+    /// Advisory live transport status; never a source of authentication.
+    public let connectionPath: String?
+    /// How this device joined, for a device that joined by signing in.
+    public let enrollment: DeviceEnrollmentInfo?
 
     /// Whether the gateway has revoked this device's access.
     public var isRevoked: Bool {
@@ -196,7 +200,9 @@ public struct DeviceRecord: Decodable, Equatable, Sendable, Identifiable {
         lastSeenAt: Int64? = nil,
         revokedAt: Int64? = nil,
         capabilities: DeviceCapabilities? = nil,
-        online: Bool? = nil
+        online: Bool? = nil,
+        connectionPath: String? = nil,
+        enrollment: DeviceEnrollmentInfo? = nil
     ) {
         self.id = id
         self.name = name
@@ -206,6 +212,8 @@ public struct DeviceRecord: Decodable, Equatable, Sendable, Identifiable {
         self.revokedAt = revokedAt
         self.capabilities = capabilities
         self.online = online
+        self.connectionPath = connectionPath
+        self.enrollment = enrollment
     }
 }
 

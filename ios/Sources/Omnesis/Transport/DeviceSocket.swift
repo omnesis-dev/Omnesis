@@ -60,6 +60,8 @@ public struct DeviceSocketFailure: Equatable, Sendable {
 ///     open with no peer behind it.
 ///   - `.reconnecting` is the temporary state; `.failed` means retries continue
 ///     but are unlikely to help until something else changes.
+///   - A routed pairing proves its loopback endpoint before the retry that
+///     follows a wake signal or a refused connection (`GatewayRoutingCheck`).
 ///   - Each attempt goes through the one connector built at init, so a retry can
 ///     never use a different transport, token or TLS trust than the pairing's.
 ///   - `stop()` is terminal: no later signal, timer or callback has any effect.
@@ -98,7 +100,19 @@ public actor DeviceSocket {
     private let url: URL
     private let token: String
     private let connector: any DeviceSocketConnector
-    private let capabilities: PairingCapabilities
+    let capabilities: PairingCapabilities
+    let expectedDeviceId: String?
+    let routingOwner: (any GatewaySocketRouting)?
+    let hintRefresher: (any GatewayDirectHintRefreshing)?
+    let promotionClock: any GatewayPromotionWaiting
+    var routeObserver: UUID?
+    var routingCheck = GatewayRoutingCheck()
+    var promotionTask: Task<Void, Never>?
+    public nonisolated let pathChanges: AsyncStream<GatewayConnectionPath>
+    let pathContinuation: AsyncStream<GatewayConnectionPath>.Continuation
+    private var connectionGeneration = UUID()
+    let heartbeatInterval: Duration?
+    private var heartbeatTask: Task<Void, Never>?
     private let pathObserver: any NetworkPathObserving
     private let clock: any DeviceSocketClock
     private let randomUnit: @Sendable () -> Double
@@ -165,26 +179,6 @@ public actor DeviceSocket {
 
     let log = AppLog.make(category: "transport.ws")
 
-    public init(
-        gatewayUrl: URL,
-        token: String,
-        session: URLSession = OmnesisURLSession.shared,
-        capabilities: PairingCapabilities = .ios()
-    ) {
-        // OmnesisURLSession.shared pins the gateway's TLS leaf cert when a
-        // fingerprint is in Keychain (post-pair) and falls through to
-        // URLSession.shared otherwise. URLSessionWebSocketTask is supported
-        // by both shapes — both .ephemeral (PinnedSession) and .default.
-        self.init(
-            gatewayUrl: gatewayUrl,
-            token: token,
-            connector: URLSessionDeviceSocketConnector(session: session),
-            capabilities: capabilities,
-            pathObserver: SystemNetworkPathObserver(),
-            clock: ContinuousDeviceSocketClock()
-        )
-    }
-
     init(
         gatewayUrl: URL,
         token: String,
@@ -193,12 +187,25 @@ public actor DeviceSocket {
         pathObserver: any NetworkPathObserving,
         clock: any DeviceSocketClock,
         limits: DeviceSocketReconnectPolicy.Limits = .init(),
+        routingOwner: (any GatewaySocketRouting)? = nil,
+        expectedDeviceId: String? = nil,
+        promotionClock: any GatewayPromotionWaiting = GatewayPromotionClock(),
+        hintRefresher: (any GatewayDirectHintRefreshing)? = nil,
+        heartbeatInterval: Duration? = nil,
         randomUnit: @escaping @Sendable () -> Double = { Double.random(in: 0 ... 1) }
     ) {
         self.url = DeviceSocket.deriveWsURL(from: gatewayUrl)
         self.token = token
         self.connector = connector
         self.capabilities = capabilities
+        self.routingOwner = routingOwner
+        self.expectedDeviceId = expectedDeviceId
+        self.promotionClock = promotionClock
+        self.hintRefresher = hintRefresher
+        self.heartbeatInterval = heartbeatInterval
+        var pathContinuation: AsyncStream<GatewayConnectionPath>.Continuation!
+        self.pathChanges = AsyncStream { pathContinuation = $0 }
+        self.pathContinuation = pathContinuation
         self.pathObserver = pathObserver
         self.clock = clock
         self.policy = DeviceSocketReconnectPolicy(limits: limits)
@@ -216,6 +223,10 @@ public actor DeviceSocket {
     deinit {
         eventsContinuation.finish()
         stateContinuation.finish()
+        pathContinuation.finish()
+        promotionTask?.cancel()
+        heartbeatTask?.cancel()
+        routingOwner?.retireRouting()
     }
 
     /// Start the connect / reconnect loop. Safe to call once — subsequent
@@ -224,6 +235,7 @@ public actor DeviceSocket {
     /// races the coordinator's asynchronous startup task.
     public func start() {
         guard !stopped, runner == nil else { return }
+        startRouting()
         runner = Task { [weak self] in
             await self?.runLoop()
         }
@@ -238,6 +250,9 @@ public actor DeviceSocket {
     /// Close the socket and stop reconnecting.
     public func stop() {
         stopped = true
+        connectionGeneration = UUID()
+        retireRouting()
+        cancelHeartbeat()
         pathTask?.cancel()
         pathTask = nil
         endProbe()
@@ -280,6 +295,34 @@ public actor DeviceSocket {
 
     public func state() -> ConnectionState {
         currentState
+    }
+
+    var frameGeneration: UUID {
+        connectionGeneration
+    }
+
+    var routeIsActive: Bool {
+        !stopped
+    }
+
+    func requireCurrentFrame(generation: UUID) throws {
+        guard !stopped, !Task.isCancelled, generation == connectionGeneration else { throw CancellationError() }
+    }
+
+    /// Route promotion replaces only this socket and spends the normal attempt budget.
+    @discardableResult
+    func requestRouteReplacement(generation: UUID) -> Bool {
+        guard !stopped, runner != nil, generation == connectionGeneration,
+              case .authenticated(let connection) = phase else { return false }
+        connectionGeneration = UUID()
+        attemptSuperseded = true
+        retryWithoutBackoff = true
+        endProbe()
+        cancelHeartbeat()
+        phase = .idle
+        updateState(.connecting)
+        connection.cancel()
+        return true
     }
 
     /// Resolves true once the socket has completed a hello. The gateway
@@ -379,6 +422,7 @@ public actor DeviceSocket {
                 || (retryWithoutBackoff && policy.accepts(.connectivityRestored))
             let backoff: Duration = skipsBackoff ? .zero : policy.retryDelay(jitter: randomUnit())
             await waitForNextAttempt(atLeast: backoff)
+            await verifyRoutingIfNeeded()
         }
     }
 
@@ -395,6 +439,8 @@ public actor DeviceSocket {
         request.timeoutInterval = 30
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
+        connectionGeneration = UUID()
+        let generation = connectionGeneration
         publishAttemptProgress(.connecting)
         let connection = connector.open(request)
         phase = .attempting(connection, startedAt: clock.now)
@@ -402,6 +448,7 @@ public actor DeviceSocket {
         defer {
             connection.cancel()
             endProbe()
+            cancelHeartbeat()
             cancelHelloTimer()
             if !stopped { phase = .idle }
         }
@@ -414,6 +461,7 @@ public actor DeviceSocket {
             while !Task.isCancelled, !stopped, !attemptSuperseded {
                 let message = try await connection.receive()
                 guard !Task.isCancelled, !stopped, !attemptSuperseded else { return .superseded }
+                try requireCurrentFrame(generation: generation)
                 guard let frame = decodeFrame(message) else { continue }
 
                 if authenticated {
@@ -428,6 +476,7 @@ public actor DeviceSocket {
         } catch {
             if Task.isCancelled || stopped || attemptSuperseded { return .superseded }
             log.warning("WS connection ended: \(String(describing: error), privacy: .private)")
+            noteRoutingFailure(error, at: clock.now)
             if connectionProbeFailed {
                 return .failed(.network(detail: URLError(.networkConnectionLost).localizedDescription))
             }
@@ -446,6 +495,11 @@ public actor DeviceSocket {
         switch response.body {
         case .ok(let result):
             let deviceId = extractString(result["deviceId"]) ?? ""
+            guard expectedDeviceId == nil || expectedDeviceId == deviceId else {
+                throw DeviceSocketAttemptFailure.HelloRejection(
+                    code: "device_not_found", message: "The gateway answered for a different device."
+                )
+            }
             let deviceName = extractString(result["deviceName"]) ?? ""
             let scopes = extractStringArray(result["scopes"]) ?? []
             cancelHelloTimer()
@@ -455,6 +509,8 @@ public actor DeviceSocket {
             retryWithoutBackoff = false
             phase = .authenticated(connection)
             updateState(.connected(deviceId: deviceId, deviceName: deviceName, scopes: scopes))
+            armHeartbeat(on: connection)
+            didAuthenticateRouting()
             log.info("WS authenticated as \(deviceName, privacy: .public) (\(deviceId, privacy: .public))")
         case .err(let error):
             throw DeviceSocketAttemptFailure.HelloRejection(code: error.code, message: error.message)
@@ -479,68 +535,6 @@ public actor DeviceSocket {
         case .response:
             break
         }
-    }
-
-    // MARK: - Send helpers
-
-    func send(object: [String: JSONValue], via connection: any DeviceSocketConnection) async throws {
-        let data = try JSONEncoder().encode(JSONValue.object(object))
-        guard let text = String(data: data, encoding: .utf8) else {
-            throw GatewayClient.Error.decoding("ws encode")
-        }
-        try await connection.send(text)
-    }
-
-    // MARK: - Decoding
-
-    /// Parse a raw WebSocket message into a typed `WsFrame`. Returns nil
-    /// (and logs at debug) for non-JSON or unknown-shape frames.
-    private func decodeFrame(_ m: URLSessionWebSocketTask.Message) -> WsFrame? {
-        let data: Data
-        switch m {
-        case .data(let d): data = d
-        case .string(let s): data = Data(s.utf8)
-        @unknown default: return nil
-        }
-        do {
-            return try JSONDecoder().decode(WsFrame.self, from: data)
-        } catch {
-            log.debug("WS drop non-JSON frame: \(String(describing: error), privacy: .private)")
-            return nil
-        }
-    }
-
-    private func extractString(_ v: JSONValue?) -> String? {
-        if case .string(let s)? = v { return s }
-        return nil
-    }
-
-    private func extractStringArray(_ v: JSONValue?) -> [String]? {
-        guard case .array(let arr)? = v else { return nil }
-        var out: [String] = []
-        for item in arr {
-            if case .string(let s) = item { out.append(s) }
-        }
-        return out
-    }
-
-    // MARK: - URL munging
-
-    /// Converts an `http(s)://` gateway URL into the matching `ws(s)://` URL
-    /// for the `/device/ws` endpoint. Preserves host, port, and any base path.
-    private static func deriveWsURL(from gatewayUrl: URL) -> URL {
-        guard var comps = URLComponents(url: gatewayUrl, resolvingAgainstBaseURL: false) else {
-            return gatewayUrl
-        }
-        switch comps.scheme?.lowercased() {
-        case "https": comps.scheme = "wss"
-        case "http": comps.scheme = "ws"
-        default: break
-        }
-        let basePath = comps.path.hasSuffix("/") ? comps.path : (comps.path + "/")
-        comps.path = basePath + "device/ws"
-        comps.percentEncodedQuery = nil
-        return comps.url ?? gatewayUrl
     }
 }
 
@@ -606,6 +600,7 @@ extension DeviceSocket {
 
     private func wake(_ signal: DeviceSocketReconnectPolicy.WakeSignal) {
         guard runner != nil else { return }
+        noteRoutingWake()
         if case .authenticated(let connection) = phase {
             startProbe(on: connection)
             return
@@ -632,6 +627,7 @@ extension DeviceSocket {
             retryWithoutBackoff = true
             if now - startedAt >= policy.limits.supersedeInFlightAfter {
                 attemptSuperseded = true
+                connectionGeneration = UUID()
                 connection.cancel()
             }
         case .idle, .authenticated:
@@ -660,6 +656,7 @@ extension DeviceSocket {
     private func helloTimerFired(for connection: any DeviceSocketConnection) {
         guard case .attempting(let current, _) = phase, current === connection else { return }
         helloTimedOut = true
+        connectionGeneration = UUID()
         connection.cancel()
     }
 
@@ -670,8 +667,31 @@ extension DeviceSocket {
 
     // MARK: - Liveness probe
 
+    private func armHeartbeat(on connection: any DeviceSocketConnection) {
+        cancelHeartbeat()
+        guard let heartbeatInterval else { return }
+        let clock = clock
+        heartbeatTask = Task { [weak self, weak connection] in
+            do { try await clock.sleep(for: heartbeatInterval) } catch { return }
+            guard let connection else { return }
+            await self?.heartbeatTick(on: connection)
+        }
+    }
+
+    private func heartbeatTick(on connection: any DeviceSocketConnection) {
+        guard !stopped, case .authenticated(let current) = phase, current === connection else { return }
+        heartbeatTask = nil
+        startProbe(on: connection)
+    }
+
+    private func cancelHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+    }
+
     private func startProbe(on connection: any DeviceSocketConnection) {
         guard probeID == nil else { return }
+        cancelHeartbeat()
         let id = UUID()
         probeID = id
         connection.sendPing { [weak self] error in
@@ -692,7 +712,11 @@ extension DeviceSocket {
     private func probeAnswered(_ id: UUID, error: Error?) {
         guard id == probeID else { return }
         endProbe()
-        if error != nil { abandonUnresponsiveConnection() }
+        if error != nil {
+            abandonUnresponsiveConnection()
+        } else if case .authenticated(let connection) = phase {
+            armHeartbeat(on: connection)
+        }
     }
 
     private func probeTimedOut(_ id: UUID) {
@@ -711,6 +735,7 @@ extension DeviceSocket {
         guard case .authenticated(let connection) = phase else { return }
         log.info("WS connection did not answer its ping; reconnecting")
         connectionProbeFailed = true
+        connectionGeneration = UUID()
         retryWithoutBackoff = true
         connection.cancel()
     }

@@ -14,6 +14,41 @@ final class PinnedSessionTests: XCTestCase {
     /// Smoke-test the `Data.sha256Hex` extension that the verify
     /// helper relies on. This guards against any future refactor that
     /// silently changes the hashing path.
+    func testProductionRootEvaluatorDoesNotTrustAnUnregisteredSelfSignedGateway() throws {
+        let trust = try TrustFixtures.servedTrust(TrustFixtures.leafOne)
+        XCTAssertFalse(PinnedSession.systemRoots(trust, TrustFixtures.host))
+    }
+
+    func testPasswordAndMissingServerTrustChallengesNeverReceiveAPinnedCredential() throws {
+        let owner = try PinnedSession(fingerprintHex: TrustFixtures.fingerprint(TrustFixtures.leafOne))
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        for method in [NSURLAuthenticationMethodHTTPBasic, NSURLAuthenticationMethodServerTrust] {
+            let space = URLProtectionSpace(
+                host: TrustFixtures.host,
+                port: 443,
+                protocol: "https",
+                realm: nil,
+                authenticationMethod: method
+            )
+            let challenge = URLAuthenticationChallenge(
+                protectionSpace: space,
+                proposedCredential: nil,
+                previousFailureCount: 0,
+                failureResponse: nil,
+                error: nil,
+                sender: NoopChallengeSender()
+            )
+            var resolved = false
+            owner.urlSession(session, didReceive: challenge) { disposition, credential in
+                resolved = true
+                XCTAssertEqual(disposition, .cancelAuthenticationChallenge)
+                XCTAssertNil(credential)
+            }
+            XCTAssertTrue(resolved)
+        }
+    }
+
     func testSha256HexLowercasedDigest() {
         let input = Data("hello".utf8)
         let expected = SHA256.hash(data: input)

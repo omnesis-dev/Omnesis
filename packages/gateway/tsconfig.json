@@ -7,5 +7,10 @@
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../core" }, { "path": "../agent" }, { "path": "../watch" }]
+  "references": [
+    { "path": "../core" },
+    { "path": "../agent" },
+    { "path": "../watch" },
+    { "path": "../cloud-relay" }
+  ]
 }

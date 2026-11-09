@@ -25,19 +25,24 @@ protocol DeviceSocketConnector: Sendable {
 /// always carries the pairing's TLS trust.
 struct URLSessionDeviceSocketConnector: DeviceSocketConnector {
     let session: URLSession
+    var ping: @Sendable (URLSessionWebSocketTask, @escaping @Sendable (Error?) -> Void) -> Void = { task, completion in
+        task.sendPing(pongReceiveHandler: completion)
+    }
 
     func open(_ request: URLRequest) -> any DeviceSocketConnection {
         let task = session.webSocketTask(with: request)
         task.resume()
-        return URLSessionDeviceSocketConnection(task: task)
+        return URLSessionDeviceSocketConnection(task: task, ping: ping)
     }
 }
 
 private final class URLSessionDeviceSocketConnection: DeviceSocketConnection, @unchecked Sendable {
     private let task: URLSessionWebSocketTask
 
-    init(task: URLSessionWebSocketTask) {
+    private let ping: @Sendable (URLSessionWebSocketTask, @escaping @Sendable (Error?) -> Void) -> Void
+    init(task: URLSessionWebSocketTask, ping: @escaping @Sendable (URLSessionWebSocketTask, @escaping @Sendable (Error?) -> Void) -> Void) {
         self.task = task
+        self.ping = ping
     }
 
     func send(_ text: String) async throws {
@@ -49,7 +54,7 @@ private final class URLSessionDeviceSocketConnection: DeviceSocketConnection, @u
     }
 
     func sendPing(_ completion: @escaping @Sendable (Error?) -> Void) {
-        task.sendPing(pongReceiveHandler: completion)
+        ping(task, completion)
     }
 
     func cancel() {

@@ -107,7 +107,7 @@ class GatewayHttp(
                     val envelope = parseErrorEnvelope(body)
                     throw when (it.code) {
                         401 -> GatewayException.Unauthorized()
-                        403 -> GatewayException.Forbidden()
+                        403 -> GatewayException.Forbidden(envelope?.message, envelope?.code)
                         404 -> GatewayException.NotFound(envelope?.message)
                         else ->
                             GatewayException.ServerError(

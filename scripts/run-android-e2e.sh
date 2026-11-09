@@ -15,6 +15,9 @@ export OMNESIS_GATEWAY_PORT="${OMNESIS_GATEWAY_PORT:-17700}"
 export OMNESIS_SYNTH_UNIVERSE="${OMNESIS_SYNTH_UNIVERSE:-e2e-minimal}"
 
 URL="https://localhost:${OMNESIS_GATEWAY_PORT}"
+# The cloud opt-in mounts the device-key routes the enrollment suite drives. No
+# relay is configured, so nothing leaves the machine.
+export OMNESIS_CLOUD_RELAY_ENABLED=1
 CONFIG_FILE="/tmp/omnesis-android-e2e-config.json"
 
 # Compile the test classes before the gateway boots, so the build does not
@@ -23,7 +26,7 @@ CONFIG_FILE="/tmp/omnesis-android-e2e-config.json"
   cd "$ROOT/android"
   # shellcheck disable=SC1091
   source scripts/android-env.sh
-  ./gradlew :core-transport:compileDebugUnitTestKotlin -PomnesisE2e
+  ./gradlew :core-transport:compileDebugUnitTestKotlin :core-pairing:compileDebugUnitTestKotlin -PomnesisE2e
 )
 
 # Wipe previous state so each run is deterministic.
@@ -96,26 +99,29 @@ echo "→ Running Android live-gateway E2E (host JVM, real TLS pinning)…"
 cd "$ROOT/android"
 # shellcheck disable=SC1091
 source scripts/android-env.sh
-TEST_CLASS=dev.omnesis.android.transport.e2e.GatewayLiveE2ETest
-TEST_SOURCE=core-transport/src/test/kotlin/${TEST_CLASS//.//}.kt
-RESULT_XML=core-transport/build/test-results/testDebugUnitTest/TEST-$TEST_CLASS.xml
-rm -f "$RESULT_XML"
-# `--rerun` re-executes only the test task; the compiled classes stay.
-./gradlew -PomnesisE2e :core-transport:testDebugUnitTest --rerun --tests "$TEST_CLASS"
-
 # Every test assumes the gateway config, and a failed assumption is a skip that
-# Gradle reports as success. The lane passes only when every test in the class
+# Gradle reports as success. The lane passes only when every test in each class
 # ran against the gateway.
-python3 - "$RESULT_XML" "$TEST_SOURCE" <<'PY'
+run_suite() {
+  local module="$1" test_class="$2"
+  local test_source="${module#:}/src/test/kotlin/${test_class//.//}.kt"
+  local result_xml="${module#:}/build/test-results/testDebugUnitTest/TEST-$test_class.xml"
+  rm -f "$result_xml"
+  # `--rerun` re-executes only the test task; the compiled classes stay.
+  ./gradlew -PomnesisE2e "$module:testDebugUnitTest" --rerun --tests "$test_class"
+  python3 - "$result_xml" "$test_source" "$test_class" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
-result_xml, source = sys.argv[1:3]
+result_xml, source, name = sys.argv[1:4]
 expected = len(re.findall(r"^\s*@Test\b", open(source).read(), re.M))
 suite = ET.parse(result_xml).getroot()
 tests, skipped = int(suite.get("tests")), int(suite.get("skipped"))
 failed = int(suite.get("failures")) + int(suite.get("errors"))
-print(f"GatewayLiveE2ETest: {tests} run, {skipped} skipped, {failed} failed; the class declares {expected}")
+print(f"{name.rsplit('.', 1)[-1]}: {tests} run, {skipped} skipped, {failed} failed; the class declares {expected}")
 if expected == 0 or tests != expected or skipped or failed:
     sys.exit("✗ Android live-gateway E2E did not run every test against the gateway.")
 PY
+}
+run_suite :core-transport dev.omnesis.android.transport.e2e.GatewayLiveE2ETest
+run_suite :core-pairing dev.omnesis.android.pairing.e2e.DeviceEnrollmentLiveE2ETest
 
 echo "✓ Android live-gateway E2E complete."

@@ -41,4 +41,23 @@ class TaskWidgetTransportTest {
             assertEquals("""{"action":"complete"}""", complete.body.readUtf8())
         }
     }
+    @Test fun key_paired_widget_keeps_strict_key_host_and_bearer_on_real_https() = runTest {
+        val certificate = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+        MockWebServer().use { server ->
+            server.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
+            server.enqueue(MockResponse().setBody("{\"tasks\":[]}"))
+            server.start()
+            val paired = Pairing(url = server.url("/").toString(), token = "widget-test-token", pairingGeneration = "widget-generation",
+                deviceId = "widget-device", gatewayName = "Test gateway", tlsMode = PairingTlsMode.PINNED_KEY_STRICT,
+                spkiFingerprint = LeafCertPinner.sha256Hex(certificate.certificate.publicKey.encoded))
+            assertTrue(PairedWidgetTasksGateway(paired).tasks(TaskView.TODAY, "2026-10-14").isEmpty())
+            assertEquals("Bearer widget-test-token", server.takeRequest().getHeader("Authorization"))
+            try {
+                PairedWidgetTasksGateway(paired.copy(spkiFingerprint = "0".repeat(64))).tasks(TaskView.TODAY, "2026-10-14")
+                fail("Replacement key released a widget credential")
+            } catch (_: Exception) { }
+            assertEquals(1, server.requestCount)
+        }
+    }
+
 }

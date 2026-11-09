@@ -5,6 +5,7 @@ import {
   deviceTlsFollowsPublicRenewal,
   deviceTlsTrust,
   deviceTlsTrustMode,
+  cloudRelayEnabled,
   normalizeEmail,
   normalizePhone,
 } from "@omnesis/core";
@@ -35,7 +36,7 @@ import {
   revokePairingBody,
   setApnsTokenBody,
 } from "../../schemas/index.js";
-import { PairingQrService } from "../../services/PairingQrService.js";
+import { PairingQrService, relayPairingAddress } from "../../services/PairingQrService.js";
 import { PairingService } from "../../services/PairingService.js";
 import { isStaleDeviceRevocationImpactError } from "../../../access/agent-device-authorization.js";
 import { deviceVersionState } from "../../../device-version.js";
@@ -129,13 +130,27 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     wsServer,
     pairingTtlMs,
     tlsFingerprintSha256,
+    tlsSpkiFingerprintSha256,
+    cloudTlsSpkiFingerprintSha256,
     systemTrustPairingOrigins,
     deviceService,
     pushRegistrationService,
     sourceService,
   } = deps;
   const pairingQrService = new PairingQrService({
+    strictPinOrigins:
+      cloudRelayEnabled() && process.env.OMNESIS_CLOUD_RELAY_URL && deps.publicBaseUrl
+        ? [deps.publicBaseUrl]
+        : [],
+    // A gateway connected from the portal gets its address at run time, so it
+    // is read from the management service on every request.
+    relayAddress:
+      cloudRelayEnabled() && deps.cloudRelayManagement
+        ? async () => relayPairingAddress(await deps.cloudRelayManagement!.status())
+        : undefined,
     tlsFingerprint: tlsFingerprintSha256,
+    tlsSpkiFingerprint: tlsSpkiFingerprintSha256,
+    strictPinSpkiFingerprint: cloudTlsSpkiFingerprintSha256,
     systemTrustOrigins: systemTrustPairingOrigins,
     publiclyTrustedHosts: deps.publiclyTrustedPairingHosts,
     pairingKind: (code) => deps.pairingService.pendingPairingKind(code),
@@ -201,9 +216,14 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
               appId: d.capabilities.pushAppId,
             })
           : null;
+      // Off the opt-in, no response mentions enrollment at all.
+      const { enrollment, ...device } = d;
       return {
-        ...d,
+        ...device,
+        ...(enrollment && cloudRelayEnabled() ? { enrollment } : {}),
         online: wsServer?.isConnected(d.id) ?? false,
+        connectionPath:
+          d.revokedAt || !cloudRelayEnabled() ? undefined : wsServer?.connectionPath(d.id),
         versionState: deviceVersionState(d),
         updateDisposition: fleetUpdate.dispositionFor(d),
         needsPairing: deviceNeedsPairing(d, statusCache.sourceHostingDeviceIds.has(d.id)),
@@ -534,9 +554,9 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   // every client. The client names the `gatewayUrl` the phone will reach; an
   // address the phone behind the code cannot use is refused with the reason.
   // Returns a JSON-encoded string ready for QR rendering.
-  app.post("/admin/devices/pair-qr", scope.admin(), validateJson(pairQrBody), (c) => {
+  app.post("/admin/devices/pair-qr", scope.admin(), validateJson(pairQrBody), async (c) => {
     const input = c.req.valid("json");
-    const qrPayload = pairingQrService.encode(input);
+    const qrPayload = pairingQrService.encode(input, await pairingQrService.relayAddress());
     return c.json({ qrPayload });
   });
 

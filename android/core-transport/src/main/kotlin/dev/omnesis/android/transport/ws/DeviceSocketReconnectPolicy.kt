@@ -68,6 +68,8 @@ data class DeviceSocketReconnectLimits(
     val attemptRefillIntervalMs: Long = 20_000,
     /** An attempt in flight this long started on a network state that may be gone. */
     val supersedeInFlightAfterMs: Long = 2_000,
+    /** How long an open socket has to answer after a network change or a return to the app. */
+    val probeTimeoutMs: Long = 5_000,
 )
 
 /**

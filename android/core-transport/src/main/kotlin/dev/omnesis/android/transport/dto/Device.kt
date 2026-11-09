@@ -22,9 +22,21 @@ data class DeviceRecord(
     val capabilities: DeviceCapabilities? = null,
     val online: Boolean? = null,
     val revokedAt: Long? = null,
+    /** Advisory transport status, never authentication evidence. */
+    val connectionPath: String? = null,
+    /** How a sign-in enrollment joined this device; absent for every other pairing. */
+    val enrollment: DeviceEnrollmentRecord? = null,
 ) {
     val revoked: Boolean get() = revokedAt != null
 }
+
+/** `method` is `automatic` or `approved`, `signIn` is `google` or `passkey`. See docs/device-enrollment.md. */
+@Serializable
+data class DeviceEnrollmentRecord(
+    val method: String = "",
+    val signIn: String? = null,
+    val joinedAt: Long? = null,
+)
 
 /**
  * Subset of a device's `capabilities` blob the device list surfaces: the

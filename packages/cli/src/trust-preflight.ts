@@ -8,6 +8,7 @@ const DEFAULT_GATEWAY_TRUST_EXEMPT_COMMANDS = new Set([
   "-h",
   "help",
   "service",
+  "gateway",
   "update",
   // Removes this machine's install; it reads only the disk and must work
   // when the gateway is gone or the install no longer starts.
@@ -35,6 +36,22 @@ const DEFAULT_GATEWAY_TRUST_EXEMPT_COMMANDS = new Set([
  * installer reaches for all three before this machine has a gateway.
  */
 const SUBCOMMAND_TRUST_EXEMPT = new Set([
+  // Discovery and pairing establish trust with their selected gateway. Owner approval commands use normal trust.
+  "cloud login",
+  "cloud register",
+  "cloud pair",
+  "cloud register-key",
+  "cloud prepare-owner",
+  "cloud issue-invite",
+  "cloud link-google",
+  "cloud unlink-google",
+  // Offline recovery must work even when the gateway and relay are unavailable.
+  "cloud recovery-create-authority",
+  "cloud recovery-sign-receipt",
+  "cloud recovery-sign-policy",
+  "cloud recovery-policy-digest",
+  "cloud recovery-rotate-session-key",
+  "cloud recovery-request",
   "model catalog",
   // Browses the LAN over multicast; it dials no gateway at all, and the
   // installer's collector role runs it before this machine has one.
@@ -55,4 +72,19 @@ export function isDefaultGatewayTrustExempt(rawArgs: readonly string[]): boolean
   // A bare `tls` (flags only) is `tls provision`.
   if (rawArgs[0] === "tls" && (rawArgs.length === 1 || rawArgs[1]!.startsWith("-"))) return true;
   return rawArgs.length >= 2 && SUBCOMMAND_TRUST_EXEMPT.has(`${rawArgs[0]} ${rawArgs[1]}`);
+}
+
+/** Local maintenance and new-target pairing must remain usable when an old cloud device file is broken. */
+export async function bootstrapCliGatewayTransport(
+  rawArgs: readonly string[],
+  start: () => Promise<void>,
+): Promise<void> {
+  const terminator = rawArgs.indexOf("--");
+  const options = rawArgs.slice(0, terminator < 0 ? undefined : terminator);
+  if (
+    options.some((value) => ["--help", "-h", "--version", "-V"].includes(value)) ||
+    (rawArgs[0] !== "doctor" && isDefaultGatewayTrustExempt(rawArgs))
+  )
+    return;
+  await start();
 }

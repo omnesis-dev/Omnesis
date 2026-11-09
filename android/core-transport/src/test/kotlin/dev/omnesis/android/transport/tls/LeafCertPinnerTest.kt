@@ -10,11 +10,99 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.SocketAddress
 import java.security.cert.CertificateException
+import java.security.cert.CertificateExpiredException
 import java.security.cert.X509Certificate
+import java.util.Date
 import java.util.concurrent.atomic.AtomicInteger
+import javax.net.ssl.X509ExtendedTrustManager
 
 class LeafCertPinnerTest {
+    @Test fun missingServerChainsFailClosedAndUnusedClientTrustNeverAddsIssuers() {
+        val certificate = leaf("gateway.example.test", issuer = null)
+        val pinner = LeafCertPinner(spkiFingerprint = LeafCertPinner.sha256Hex(certificate.certificate.publicKey.encoded))
+        pinner.trustManager.checkClientTrusted(null, null)
+        assertTrue(pinner.trustManager.acceptedIssuers.isEmpty())
+        assertThrows(CertificateException::class.java) { pinner.trustManager.checkServerTrusted(null, null) }
+        assertThrows(CertificateException::class.java) { pinner.trustManager.checkServerTrusted(emptyArray(), "RSA") }
+        pinner.check(certificate)
+    }
+
+    @Test fun legacyPublicTrustUpgradeReportsOnceAcrossSeveralRenewedCertificatesAndAllowsNoCallback() {
+        val original = leaf("gateway.example.com")
+        val upgrades = AtomicInteger()
+        val pinner = pinner(original, "gateway.example.com", upgrades)
+        pinner.check(leaf("gateway.example.com"))
+        pinner.check(leaf("gateway.example.com"))
+        assertEquals(1, upgrades.get())
+        val withoutCallback = LeafCertPinner(LeafCertPinner.sha256Hex(original.certificate.encoded), host = "gateway.example.com", systemTrust = systemTrust)
+        withoutCallback.trustManager.checkServerTrusted(arrayOf(leaf("gateway.example.com").certificate), null)
+    }
+
+    @Test
+    fun strictPinChecksDatesWithoutChangingLegacyPinBehavior() {
+        val certificate = HeldCertificate.Builder().addSubjectAlternativeName("gateway.example.test").validityInterval(1000, 2000).build()
+        val pin = LeafCertPinner.sha256Hex(certificate.certificate.encoded)
+        val valid = LeafCertPinner(pin, requireCertificateValidity = true, verificationDate = { java.util.Date(1500) })
+        valid.check(certificate)
+        for (time in listOf(0L, 3000L)) {
+            val strict = LeafCertPinner(pin, requireCertificateValidity = true, verificationDate = { java.util.Date(time) })
+            assertThrows(CertificateException::class.java) { strict.check(certificate) }
+            LeafCertPinner(pin, verificationDate = { java.util.Date(time) }).check(certificate)
+        }
+    }
+
+    /** What a TLS handshake hands the trust manager: the chain and the socket being secured. */
+    private fun LeafCertPinner.handshake(served: HeldCertificate, remote: InetSocketAddress) =
+        (trustManager as X509ExtendedTrustManager).checkServerTrusted(
+            arrayOf<X509Certificate>(served.certificate), "UNKNOWN",
+            object : Socket() { override fun getRemoteSocketAddress(): SocketAddress = remote },
+        )
+
+    @Test
+    fun anExpiredCertificateWithThePinnedKeyIsAcceptedOnlyOnTheDirectPath() {
+        val home = InetSocketAddress(InetAddress.getByAddress(byteArrayOf(192.toByte(), 168.toByte(), 1, 20)), 7600)
+        val relay = InetSocketAddress(InetAddress.getByAddress(byteArrayOf(203.toByte(), 0, 113, 7)), 443)
+        val expired = HeldCertificate.Builder().addSubjectAlternativeName("gateway.example.test").validityInterval(1000, 2000).build()
+        val otherKey = HeldCertificate.Builder().addSubjectAlternativeName("gateway.example.test").validityInterval(1000, 2000).build()
+        val key = LeafCertPinner.sha256Hex(expired.certificate.publicKey.encoded)
+        fun pinner(time: Long, direct: ((InetSocketAddress) -> Boolean)? = { it == home }) =
+            LeafCertPinner(spkiFingerprint = key, verificationDate = { Date(time) }, directPath = direct)
+
+        // Within its dates it is accepted on either path.
+        pinner(1500).handshake(expired, home)
+        pinner(1500).handshake(expired, relay)
+        // Expired: the pinned key still proves the gateway at home.
+        pinner(3000).handshake(expired, home)
+        // Through the relay a current certificate is always available, so the dates hold.
+        assertThrows(CertificateExpiredException::class.java) { pinner(3000).handshake(expired, relay) }
+        // The pin is what authenticates: another key is refused wherever it is served.
+        assertEquals(
+            "public key fingerprint mismatch",
+            assertThrows(CertificateException::class.java) { pinner(3000).handshake(otherKey, home) }.message,
+        )
+        assertThrows(CertificateException::class.java) { pinner(1500).handshake(otherKey, home) }
+        // A certificate that is not valid yet is refused on the direct path too.
+        assertThrows(CertificateException::class.java) { pinner(0).handshake(expired, home) }
+        // Without a socket, or without a route that names the direct addresses, the dates hold.
+        assertThrows(CertificateExpiredException::class.java) { pinner(3000).check(expired) }
+        assertThrows(CertificateExpiredException::class.java) { pinner(3000, direct = null).handshake(expired, home) }
+    }
+
+    @Test
+    fun anExactCertificatePinNeverSkipsTheDatesOnTheDirectPath() {
+        val home = InetSocketAddress(InetAddress.getByAddress(byteArrayOf(10, 0, 0, 5)), 7600)
+        val expired = HeldCertificate.Builder().addSubjectAlternativeName("gateway.example.test").validityInterval(1000, 2000).build()
+        val exact = LeafCertPinner(
+            LeafCertPinner.sha256Hex(expired.certificate.encoded), requireCertificateValidity = true,
+            verificationDate = { Date(3000) }, directPath = { true },
+        )
+        assertThrows(CertificateExpiredException::class.java) { exact.handshake(expired, home) }
+    }
 
     @Test
     fun sha256Hex_matchesKnownVector() {

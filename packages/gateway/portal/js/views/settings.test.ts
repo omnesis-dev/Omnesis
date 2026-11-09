@@ -52,6 +52,15 @@ describe("Settings header actions", () => {
     expect(host.querySelector(".warning-triangle")).toBeNull();
   });
 
+  test("the cloud relay adds its tab and scoping class only when the gateway enables it", async () => {
+    await act(async () => { render(h(SettingsView, { tab: "account" }), host); });
+    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
+    expect([...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent)).not.toContain("Omnesis account");
+    await act(async () => { render(h(SettingsView, { tab: "account", cloudRelay: true }), host); });
+    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view relay-on");
+    expect([...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent)).toContain("Omnesis account");
+  });
+
   test("renders logout in the settings header and invokes the app handler", async () => {
     const onLogout = vi.fn();
     await act(async () => {
