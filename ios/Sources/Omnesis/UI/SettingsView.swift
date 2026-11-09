@@ -796,36 +796,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Live WS connection state — flips immediately when the socket
-    /// drops, beats an on-appear HTTP probe.
-    @ViewBuilder
-    private var connectionRow: some View {
-        switch store.wsState {
-        case .disconnected, .connecting, .authenticating:
-            HStack {
-                ProgressView().controlSize(.small)
-                Text("Connecting…").foregroundStyle(.secondary)
-            }
-        case .connected:
-            Label("Connected", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(Theme.success)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Gateway connection failed", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Theme.warning)
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textMuted)
-                Text(
-                    "Away from home? Connect Tailscale on this phone and the gateway. If this pairing uses a home-network address, re-pair using the gateway's Tailscale hostname."
-                )
-                .font(.footnote)
-                .foregroundStyle(Theme.textMuted)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
     // MARK: - Gateway
 
     /// Gateway-owned configuration, connection identity, edit-URL escape
@@ -874,7 +844,7 @@ struct SettingsView: View {
                     }
                 }
 
-                connectionRow
+                GatewayConnectionRow(state: store.wsState)
             }
 
             NavigationLink(value: SettingsDestination.models(initialRole: nil)) {
@@ -1394,7 +1364,11 @@ struct SourceDepartureConfirmation: View {
     SettingsView(initialDestination: .root, previewData: true)
         .environment(AppStore.preview(
             pairedDeviceId: "dev_iphone",
-            wsState: .failed("Connection timed out")
+            wsState: .reconnecting(.init(
+                network: .available,
+                lastError: "The request timed out.",
+                failedAttemptsOnNetwork: 8
+            ))
         ))
 }
 

@@ -6,9 +6,9 @@ import XCTest
 
 @available(iOS 17.0, macOS 14.0, *)
 final class DeviceSocketTests: XCTestCase {
-    // DeviceSocket's actual WebSocket loop is hard to unit-test without a
-    // live server. We cover the URL derivation + initial disconnected state
-    // here; integration testing is left to the TestFlight manual plan.
+    // URL derivation, the hello frame and command replies. The connection
+    // lifecycle is in DeviceSocketReconnectTests, and GatewayLiveE2ETests runs
+    // it over the real transport against a live gateway.
 
     func testInitialStateIsDisconnected() async throws {
         let socket = try DeviceSocket(

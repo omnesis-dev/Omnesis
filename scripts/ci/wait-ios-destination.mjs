@@ -8,6 +8,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+/** Longest one Xcode query may run. A healthy cold query on a hosted runner takes up to 160 s. */
+const PROBE_TIMEOUT_MS = 300_000;
 
 function execute(command, args, timeout) {
   const options = {
@@ -79,7 +81,8 @@ export function waitForIOSDestination({
   // runner busy booting the simulator, which would abort discovery itself.
   wait = (milliseconds) =>
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
-  timeoutMs = 300_000,
+  // Room for a query that hangs to be killed and followed by a healthy cold one.
+  timeoutMs = 2 * PROBE_TIMEOUT_MS,
   log = (text) => process.stderr.write(`${text}\n`),
 } = {}) {
   const requested = fields(destination ?? "", "=");
@@ -122,8 +125,9 @@ export function waitForIOSDestination({
   let inventory = "No destination inventory returned.";
   log(`Waiting for Xcode destination ${destination} (timeout ${timeoutMs / 1000}s).`);
   while (now() < deadline) {
-    const probeBudget = deadline - now();
-    if (probeBudget <= 0) break;
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) break;
+    const probeBudget = Math.min(PROBE_TIMEOUT_MS, remainingMs);
     let probeOutput;
     try {
       probeOutput = run("xcodebuild", args, probeBudget);

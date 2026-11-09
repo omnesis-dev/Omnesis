@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.transport.e2e
 
+import dev.omnesis.android.transport.DeviceCapabilities
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.client.AdminClient
 import dev.omnesis.android.transport.client.AgentClient
@@ -16,18 +17,45 @@ import dev.omnesis.android.transport.dto.TaskMutationDto
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.http.postJson
 import dev.omnesis.android.transport.tls.PinnedOkHttp
+import dev.omnesis.android.transport.ws.DeviceSocket
+import dev.omnesis.android.transport.ws.DeviceSocketReconnectLimits
+import dev.omnesis.android.transport.ws.NetworkPathSnapshot
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.io.OutputStream
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.URI
 import java.time.LocalDate
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 
 /**
  * Live-gateway E2E — the Android port of `GatewayLiveE2ETests.swift`. Runs the REAL
@@ -51,6 +79,7 @@ class GatewayLiveE2ETest {
     private lateinit var search: SearchClient
     private lateinit var admin: AdminClient
     private lateinit var agent: AgentClient
+    private lateinit var config: Config
 
     @Before
     fun setUp() {
@@ -64,11 +93,255 @@ class GatewayLiveE2ETest {
         val file = File(CONFIG_PATH)
         assumeTrue("no live-gateway config at $CONFIG_PATH", file.exists())
         val cfg = OmnesisJson.decodeFromString<Config>(file.readText())
+        config = cfg
         http = GatewayHttp(PinnedOkHttp.build(cfg.tlsFingerprint), cfg.gatewayURL, cfg.apiToken)
         gateway = GatewayClient(http)
         search = SearchClient(http)
         admin = AdminClient(http)
         agent = AgentClient(http)
+    }
+
+    // --- DeviceSocket lifecycle ---
+    //
+    // The real socket over real OkHttp and pinned TLS against the live gateway. The outage comes
+    // from a loopback forwarder and the path reports are scripted; backoff is far longer than any
+    // wait here, so a reconnect proves the wake signal rather than the timer.
+
+    /** A TCP forwarder that can refuse connections and sever the open ones. */
+    private class LoopbackForwarder(private val targetHost: String, private val targetPort: Int) {
+        private var server: ServerSocket? = null
+        private val open = Collections.synchronizedList(mutableListOf<Socket>())
+        val accepted = AtomicInteger()
+
+        fun start(port: Int = 0): Int {
+            val socket = ServerSocket()
+            socket.reuseAddress = true
+            socket.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port))
+            server = socket
+            thread(isDaemon = true) {
+                while (!socket.isClosed) {
+                    val inbound = runCatching { socket.accept() }.getOrNull() ?: break
+                    accepted.incrementAndGet()
+                    val outbound = Socket(targetHost, targetPort)
+                    open += inbound
+                    open += outbound
+                    pump(inbound, outbound)
+                    pump(outbound, inbound)
+                }
+            }
+            return socket.localPort
+        }
+
+        fun stop() {
+            server?.close()
+            synchronized(open) {
+                open.forEach { runCatching { it.close() } }
+                open.clear()
+            }
+        }
+
+        private fun pump(from: Socket, to: Socket) = thread(isDaemon = true) {
+            runCatching { from.getInputStream().copyTo(AutoFlush(to.getOutputStream()), bufferSize = 8192) }
+            runCatching { from.close() }
+            runCatching { to.close() }
+        }
+
+        private class AutoFlush(private val out: OutputStream) : OutputStream() {
+            override fun write(b: Int) = out.write(b)
+            override fun write(b: ByteArray, off: Int, len: Int) {
+                out.write(b, off, len)
+                out.flush()
+            }
+        }
+    }
+
+    private val wifi = NetworkPathSnapshot(true, setOf(NetworkPathSnapshot.Interface.WIFI))
+    private val cellular = NetworkPathSnapshot(true, setOf(NetworkPathSnapshot.Interface.CELLULAR))
+    private val noNetwork = NetworkPathSnapshot(false)
+    private val longBackoff = DeviceSocketReconnectLimits(baseDelayMs = 120_000, maxDelayMs = 120_000)
+
+    /** Mints a device the way `omnesis devices pair` and the app do. */
+    private fun pairDeviceToken(): String {
+        val client = PinnedOkHttp.build(config.tlsFingerprint)
+        fun post(path: String, body: JsonObject, token: String? = null): JsonObject {
+            val request = Request.Builder()
+                .url(config.gatewayURL.trimEnd('/') + path)
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .apply { if (token != null) header("Authorization", "Bearer $token") }
+                .build()
+            client.newCall(request).execute().use { response ->
+                assertTrue("POST $path answered ${response.code}", response.isSuccessful)
+                return OmnesisJson.parseToJsonElement(response.body!!.string()).jsonObject
+            }
+        }
+        val code = post(
+            "/admin/devices/pair",
+            buildJsonObject { put("kind", "android") },
+            token = config.apiToken,
+        )["pairingCode"]!!.jsonPrimitive.content
+        return post(
+            "/devices/pair",
+            buildJsonObject {
+                put("pairingCode", code)
+                put(
+                    "capabilities",
+                    OmnesisJson.encodeToJsonElement(DeviceCapabilities.serializer(), DeviceCapabilities.android(emptyList())),
+                )
+            },
+        )["token"]!!.jsonPrimitive.content
+    }
+
+    private fun forwarder(): LoopbackForwarder {
+        val target = URI(config.gatewayURL)
+        return LoopbackForwarder(target.host, target.port)
+    }
+
+    private inner class Live(url: String, token: String, fingerprint: String? = config.tlsFingerprint) {
+        val paths = MutableSharedFlow<NetworkPathSnapshot>(extraBufferCapacity = 16)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val socket = DeviceSocket(
+            client = PinnedOkHttp.buildStreaming(fingerprint),
+            gatewayUrl = url,
+            token = token,
+            scope = scope,
+            pathObserver = { paths },
+            limits = longBackoff,
+        )
+
+        /** Starts the socket and hands it the first path report once it is listening. */
+        suspend fun start(initial: NetworkPathSnapshot) {
+            socket.start()
+            withTimeout(5_000) { paths.subscriptionCount.first { it > 0 } }
+            paths.emit(initial)
+        }
+
+        fun close() {
+            socket.stop()
+            scope.cancel()
+        }
+
+        suspend fun awaitState(what: String, predicate: (DeviceSocket.ConnectionState) -> Boolean) =
+            try {
+                withTimeout(20_000) { socket.state.first(predicate) }
+            } catch (timeout: TimeoutCancellationException) {
+                throw AssertionError("timed out waiting for $what; state was ${socket.state.value}", timeout)
+            }
+    }
+
+    private fun DeviceSocket.ConnectionState.isConnected() = this is DeviceSocket.ConnectionState.Connected
+
+    @Test
+    fun device_socket_reconnects_when_the_network_returns_during_a_long_backoff() = runBlocking<Unit> {
+        val forwarder = forwarder()
+        val port = forwarder.start()
+        val live = Live("https://127.0.0.1:$port", pairDeviceToken())
+        try {
+            live.start(wifi)
+            live.awaitState("the first connection") { it.isConnected() }
+
+            live.paths.emit(noNetwork)
+            forwarder.stop()
+            live.awaitState("the drop to be reported as temporary") {
+                it is DeviceSocket.ConnectionState.Reconnecting &&
+                    it.network == DeviceSocket.NetworkAvailability.UNAVAILABLE && it.lastError != null
+            }
+
+            forwarder.start(port)
+            live.paths.emit(wifi)
+            live.awaitState("the reconnection, well before the 120s backoff") { it.isConnected() }
+            assertEquals(2, forwarder.accepted.get())
+        } finally {
+            live.close()
+            forwarder.stop()
+        }
+    }
+
+    @Test
+    fun device_socket_reports_a_refused_connection_as_temporary_with_its_diagnostic() = runBlocking<Unit> {
+        val forwarder = forwarder()
+        val port = forwarder.start()
+        forwarder.stop()
+        val live = Live("https://127.0.0.1:$port", pairDeviceToken())
+        try {
+            live.start(wifi)
+            // A refused attempt can fail before the first path arrives, so the state
+            // settles on this once both have, in either order.
+            val state = live.awaitState("the failed attempt") {
+                it is DeviceSocket.ConnectionState.Reconnecting &&
+                    it.network == DeviceSocket.NetworkAvailability.AVAILABLE && it.lastError != null
+            } as DeviceSocket.ConnectionState.Reconnecting
+            assertTrue("the transport's reason stays visible: ${state.lastError}", !state.lastError.isNullOrBlank())
+
+            // A usable-looking path is only a hint: this one wakes a retry that fails too.
+            live.paths.emit(cellular)
+            delay(1_000)
+            assertTrue(live.socket.state.value is DeviceSocket.ConnectionState.Reconnecting)
+
+            forwarder.start(port)
+            live.paths.emit(wifi)
+            live.awaitState("the reconnection") { it.isConnected() }
+        } finally {
+            live.close()
+            forwarder.stop()
+        }
+    }
+
+    @Test
+    fun device_socket_treats_a_rejected_token_as_authentication_failure() = runBlocking<Unit> {
+        val live = Live(config.gatewayURL, "omn_invalid_for_this_test")
+        try {
+            live.start(wifi)
+            val state = live.awaitState("the refusal") { it is DeviceSocket.ConnectionState.Failed }
+                as DeviceSocket.ConnectionState.Failed
+            assertEquals(DeviceSocket.FailureKind.AUTHENTICATION, state.kind)
+        } finally {
+            live.close()
+        }
+    }
+
+    @Test
+    fun device_socket_fails_closed_when_the_certificate_does_not_match_the_pin() = runBlocking<Unit> {
+        val forwarder = forwarder()
+        val port = forwarder.start()
+        val live = Live("https://127.0.0.1:$port", pairDeviceToken(), fingerprint = "0".repeat(64))
+        try {
+            live.start(wifi)
+            val state = live.awaitState("the refusal") { it is DeviceSocket.ConnectionState.Failed }
+                as DeviceSocket.ConnectionState.Failed
+            assertEquals(DeviceSocket.FailureKind.CERTIFICATE, state.kind)
+
+            live.paths.emit(cellular)
+            withTimeout(20_000) {
+                while (forwarder.accepted.get() < 2) delay(50)
+            }
+            delay(500)
+            val afterRetry = live.socket.state.value
+            assertTrue("a retry stays refused, got $afterRetry", afterRetry is DeviceSocket.ConnectionState.Failed)
+        } finally {
+            live.close()
+            forwarder.stop()
+        }
+    }
+
+    @Test
+    fun device_socket_stays_down_after_stop() = runBlocking<Unit> {
+        val forwarder = forwarder()
+        val port = forwarder.start()
+        val live = Live("https://127.0.0.1:$port", pairDeviceToken())
+        try {
+            live.start(wifi)
+            live.awaitState("the first connection") { it.isConnected() }
+
+            live.socket.stop()
+            live.paths.emit(cellular)
+            live.socket.appDidBecomeActive()
+            delay(1_000)
+            assertEquals(1, forwarder.accepted.get())
+            assertEquals(DeviceSocket.ConnectionState.Disconnected, live.socket.state.value)
+        } finally {
+            live.close()
+            forwarder.stop()
+        }
     }
 
     /** Widgets use these same journal reads and completion command, without model inference. */

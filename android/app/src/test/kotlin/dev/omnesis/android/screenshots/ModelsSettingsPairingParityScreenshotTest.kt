@@ -16,7 +16,9 @@ import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
+import dev.omnesis.android.transport.ws.GatewayConnectionStatus
 import dev.omnesis.android.transport.dto.ModelsOverview
 import dev.omnesis.android.transport.dto.ModelBehaviorSettings
 import dev.omnesis.android.transport.dto.ModelBehaviorValues
@@ -549,7 +551,69 @@ class ModelsSettingsPairingParityScreenshotTest {
     fun settings_unreachable_dark() = capture("settings_unreachable_dark", dark = true) {
         SettingsContent(
             gateway = sampleGateway().copy(url = "https://gateway.tailnet.ts.net:7600"),
-            connection = ConnectionState.Failed("timeout after 5s"),
+            connection = ConnectionState.Reconnecting(
+                DeviceSocket.NetworkAvailability.AVAILABLE,
+                lastError = "timeout after 5s",
+                failedAttemptsOnNetwork = GatewayConnectionStatus.SUSTAINED_FAILURE_ATTEMPTS,
+            ),
+            mode = AppearanceMode.SYSTEM,
+            appVersion = sampleAppVersion(),
+            onClose = {}, onSetAppearance = {}, onSaveUrl = { null }, onUnpair = {},
+        )
+    }
+
+    @Test
+    fun settings_waiting_for_network_dark() = capture("settings_waiting_for_network_dark", dark = true) {
+        SettingsContent(
+            gateway = sampleGateway().copy(url = "https://gateway.tailnet.ts.net:7600"),
+            connection = ConnectionState.Reconnecting(
+                DeviceSocket.NetworkAvailability.UNAVAILABLE,
+                lastError = "Unable to resolve host",
+                failedAttemptsOnNetwork = 0,
+            ),
+            mode = AppearanceMode.SYSTEM,
+            appVersion = sampleAppVersion(),
+            onClose = {}, onSetAppearance = {}, onSaveUrl = { null }, onUnpair = {},
+        )
+    }
+
+    @Test
+    fun settings_reconnecting_light() = capture("settings_reconnecting_light", dark = false) {
+        SettingsContent(
+            gateway = sampleGateway().copy(url = "https://gateway.tailnet.ts.net:7600"),
+            connection = ConnectionState.Reconnecting(
+                DeviceSocket.NetworkAvailability.AVAILABLE,
+                lastError = "Failed to connect to gateway.tailnet.ts.net",
+                failedAttemptsOnNetwork = 1,
+            ),
+            mode = AppearanceMode.SYSTEM,
+            appVersion = sampleAppVersion(),
+            onClose = {}, onSetAppearance = {}, onSaveUrl = { null }, onUnpair = {},
+        )
+    }
+
+    @Test
+    fun settings_certificate_problem_dark() = capture("settings_certificate_problem_dark", dark = true) {
+        SettingsContent(
+            gateway = sampleGateway().copy(url = "https://gateway.tailnet.ts.net:7600"),
+            connection = ConnectionState.Failed(
+                DeviceSocket.FailureKind.CERTIFICATE,
+                "Certificate pin mismatch",
+            ),
+            mode = AppearanceMode.SYSTEM,
+            appVersion = sampleAppVersion(),
+            onClose = {}, onSetAppearance = {}, onSaveUrl = { null }, onUnpair = {},
+        )
+    }
+
+    @Test
+    fun settings_authentication_failed_light() = capture("settings_authentication_failed_light", dark = false) {
+        SettingsContent(
+            gateway = sampleGateway().copy(url = "https://gateway.tailnet.ts.net:7600"),
+            connection = ConnectionState.Failed(
+                DeviceSocket.FailureKind.AUTHENTICATION,
+                "The gateway answered with status 401.",
+            ),
             mode = AppearanceMode.SYSTEM,
             appVersion = sampleAppVersion(),
             onClose = {}, onSetAppearance = {}, onSaveUrl = { null }, onUnpair = {},

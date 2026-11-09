@@ -360,13 +360,15 @@ export class CodexAppServerRuntime {
       progressItems: new Set(),
     };
 
+    const interrupt = (): void => {
+      if (!state.threadId || !state.turnId) return;
+      void client
+        .request("turn/interrupt", { threadId: state.threadId, turnId: state.turnId }, 2_000)
+        .catch(() => {});
+    };
     const abort = (): void => {
       if (state.completed) return;
-      if (state.threadId && state.turnId) {
-        void client
-          .request("turn/interrupt", { threadId: state.threadId, turnId: state.turnId }, 2_000)
-          .catch(() => {});
-      }
+      interrupt();
       this.completeActiveTurn("canceled");
     };
 
@@ -406,34 +408,42 @@ export class CodexAppServerRuntime {
       threadId = parsedThreadId;
       state.threadId = threadId;
       this.activeTurn = state;
+      // Cancelled while thread/start was in flight, with no active turn for the
+      // abort to complete. Starting one now would only spend the model's time.
+      if (signal?.aborted) abort();
 
-      const turnResult = await client.request(
-        "turn/start",
-        {
-          threadId,
-          input: [
-            {
-              type: "text",
-              text: renderTranscriptUserInput(input.history, input.userMessage, {
-                timeZone: input.timeZone,
-              }),
-            },
-            ...(input.images ?? []).map(({ url }) => ({ type: "image", url })),
-          ],
-          approvalPolicy: "never",
-          approvalsReviewer: "user",
-          sandboxPolicy: { type: "readOnly", networkAccess: false },
-          model,
-          ...(reasoningEffort ? { effort: reasoningEffort } : {}),
-        },
-        this.requestTimeoutMs,
-      );
-      const parsedTurnId = extractTurnId(turnResult);
-      if (!parsedTurnId) throw new Error("Codex app-server did not return a turn id");
-      turnId = parsedTurnId;
-      state.turnId = turnId;
-      this.releaseHeldMessages(state);
-      this.armIdleWatchdog(state);
+      if (!state.completed) {
+        const turnResult = await client.request(
+          "turn/start",
+          {
+            threadId,
+            input: [
+              {
+                type: "text",
+                text: renderTranscriptUserInput(input.history, input.userMessage, {
+                  timeZone: input.timeZone,
+                }),
+              },
+              ...(input.images ?? []).map(({ url }) => ({ type: "image", url })),
+            ],
+            approvalPolicy: "never",
+            approvalsReviewer: "user",
+            sandboxPolicy: { type: "readOnly", networkAccess: false },
+            model,
+            ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+          },
+          this.requestTimeoutMs,
+        );
+        const parsedTurnId = extractTurnId(turnResult);
+        if (!parsedTurnId) throw new Error("Codex app-server did not return a turn id");
+        turnId = parsedTurnId;
+        state.turnId = turnId;
+        // Cancelled while turn/start was in flight: nothing could name this turn
+        // then, so it would run on unheard and hold the model until it finished.
+        if (state.completed) interrupt();
+        this.releaseHeldMessages(state);
+        this.armIdleWatchdog(state);
+      }
 
       while (true) {
         const next = await queue.shift();

@@ -152,6 +152,7 @@ struct SourcesView: View {
     /// vocabulary stays consistent across surfaces.
     private func inlineRefreshErrorText(_ error: Error) -> String {
         switch GatewayErrorView.classify(error) {
+        case .offline: "This phone is offline — showing cached sources."
         case .gatewayUnreachable: "Couldn't reach the gateway — showing cached sources."
         case .certificate: "Couldn't verify the gateway certificate — showing cached sources."
         case .unauthorized: "Authentication failed — re-pair from Settings."

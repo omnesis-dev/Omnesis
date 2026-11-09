@@ -661,6 +661,31 @@ describe("Xcode simulator destination discovery", () => {
     expect(elapsed).toBe(45000);
   });
 
+  it("kills a hung discovery probe and tries again within the default budget", () => {
+    let elapsed = 0;
+    const timeouts = [];
+    waitForIOSDestination({
+      destination: "platform=iOS Simulator,id=00000000-0000-0000-0000-000000000000",
+      now: () => elapsed,
+      wait: () => {},
+      log: () => {},
+      run: (_command, _args, timeout) => {
+        timeouts.push(timeout);
+        if (timeouts.length === 1) {
+          elapsed += timeout;
+          throw new Error("spawnSync xcodebuild ETIMEDOUT");
+        }
+        elapsed += 160_000;
+        return [
+          "Available destinations for the scheme:",
+          "{ platform:iOS Simulator, id:00000000-0000-0000-0000-000000000000, OS:26.0, name:iPhone 17 }",
+        ].join("\n");
+      },
+    });
+    expect(timeouts).toEqual([300_000, 300_000]);
+    expect(elapsed).toBe(460_000);
+  });
+
   it("bounds a slow discovery probe by the remaining wall budget and includes diagnostics", () => {
     let elapsed = 0;
     const check = discovery([], {

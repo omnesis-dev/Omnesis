@@ -5,10 +5,10 @@
  * The re-verification sweep — the PULL half of annotation correctness
  * (the entailment gate at the tool boundary is the push half). One pass
  * per day selects LIVE annotations whose entailment verdict is stale or
- * missing (`last_verified_at IS NULL OR < now - interval`), oldest-verified
- * first with never-checked rows leading and the SELF person's facts ahead of
- * everything (they are injected into every run as self-memory, so they are
- * the highest-leverage priors to keep honest), and enqueues them as
+ * missing (`last_verified_at IS NULL OR < now - interval`), least recently
+ * considered first with never-considered rows leading and the SELF person's
+ * facts ahead of everything (they are injected into every run as self-memory,
+ * so they are the highest-leverage priors to keep honest), and enqueues them as
  * `verification` agent runs — batched, one store per run. Never a blind
  * re-stamper: the sweep only ENQUEUES; re-affirm / weaken / supersede /
  * retract is always the agent's judgment against the re-read evidence.
@@ -25,6 +25,11 @@
  *   - each run's dedupe key is the sorted id batch
  *     (`verificationRunDedupeKey`), so an identically re-detected batch
  *     folds into the pending row rather than duplicating it.
+ *
+ * Queueing a row stamps `last_recheck_queued_at`, which sends it behind every
+ * other due row. A row can stay due after its run (the verifier never answered,
+ * or the agent left it alone), and without the stamp it would lead the next
+ * pass again, every day, ahead of the rows waiting behind it.
  *
  * Throughput is `maxPerSweep × batchSize` annotations per day: enough to work
  * an annotation store through its `intervalDays` freshness cycle, while
@@ -73,6 +78,11 @@ export interface ReverificationSettings {
 /** The write-gate slice the sweep mutates through. */
 export interface ReverificationSweepWriteOps extends DailyEnqueuerWriteOps {
   cancelPendingCognitionRuns(dedupeKeys: string[]): Promise<number>;
+  markAnnotationsRecheckQueued(
+    store: "doc" | "person",
+    ids: readonly string[],
+    now: number,
+  ): Promise<void>;
 }
 
 export interface ReverificationSweepDeps {
@@ -103,7 +113,7 @@ interface DueCandidate {
   id: string;
   /** 0 = a self-person fact (front of the queue), 1 = everything else. */
   selfRank: number;
-  lastVerifiedAt: number | null;
+  lastConsideredAt: number;
   createdAt: number;
 }
 
@@ -174,7 +184,7 @@ export async function runReverificationSweepPass(
         store: "person",
         id: r.id,
         selfRank: r.isSelf ? 0 : 1,
-        lastVerifiedAt: r.lastVerifiedAt,
+        lastConsideredAt: r.lastConsideredAt,
         createdAt: r.createdAt,
       });
     }
@@ -189,17 +199,17 @@ export async function runReverificationSweepPass(
         store: "doc",
         id: r.id,
         selfRank: 1,
-        lastVerifiedAt: r.lastVerifiedAt,
+        lastConsideredAt: r.lastConsideredAt,
         createdAt: r.createdAt,
       });
     }
   }
-  // Global due order: self-person facts first, then oldest-verified across
-  // both stores (never-checked rows lead), oldest-created as the tiebreak.
+  // Global due order: self-person facts first, then least recently considered
+  // across both stores (never-considered rows lead), oldest-created as the tiebreak.
   candidates.sort(
     (a, b) =>
       a.selfRank - b.selfRank ||
-      (a.lastVerifiedAt ?? 0) - (b.lastVerifiedAt ?? 0) ||
+      a.lastConsideredAt - b.lastConsideredAt ||
       a.createdAt - b.createdAt,
   );
 
@@ -228,6 +238,7 @@ export async function runReverificationSweepPass(
       },
       now,
     );
+    await deps.writeGate.markAnnotationsRecheckQueued(store, ids, now);
     enqueued += 1;
   }
 

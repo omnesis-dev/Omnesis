@@ -99,6 +99,7 @@ import type Database from "better-sqlite3";
 import type { OperatorInstructionsStore } from "../instructions/store.js";
 import type { ResolvedSpecialist } from "./subagent-service.js";
 import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
+import type { PrivacyExchangeReads } from "../privacy/exchange-reads.js";
 
 export const PRIVACY_STATE_SWEEP_INTERVAL_MS = 60_000;
 
@@ -643,6 +644,8 @@ export interface AgentLifecycleDeps {
   mentionWorthGateActive?: () => boolean;
   /** Read worker forwarded to the temporal port for off-thread `temporal_query`. */
   temporalStoreReads?: TemporalStoreReads;
+  /** Read worker for the Privacy page's exchange pages. */
+  privacyExchangeReads?: PrivacyExchangeReads;
   /** Worker-coordinated bounded index cleanup for activity retention. */
   deleteDocumentIndexBatch?: (
     documentId: string,
@@ -906,6 +909,7 @@ export class AgentLifecycle {
         db: deps.db,
         policyStore: privacyPolicyStore,
         writeGate: deps.writeGate,
+        exchangeReads: deps.privacyExchangeReads,
       }),
       disabledReason: undefined,
       agentConfig: {

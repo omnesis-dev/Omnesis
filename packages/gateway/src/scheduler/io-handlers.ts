@@ -52,6 +52,12 @@ import {
   type AgentSearchProvenanceOptions,
   type GraphContextProvenanceOptions,
 } from "../search/agent-provenance.js";
+import {
+  readPrivacyConversationExchanges,
+  readPrivacyExchangeFeed,
+  type PrivacyConversationExchangesRequest,
+  type PrivacyExchangeFeedRequest,
+} from "../privacy/exchange-reads.js";
 import { computeSeedFromContacts } from "../domain/ContactCardBootstrap.js";
 import {
   computeInteractionScores,
@@ -309,6 +315,18 @@ export const ioHandlers = {
     hits: SearchResultItem[],
     options: GraphContextProvenanceOptions,
   ) => enrichGraphContextHits(db, hits, options),
+
+  // The Privacy page's exchange pages. Each joins its exchanges with their
+  // release, approval and audit records, reads the agent transcripts a
+  // failure is presented from, and builds the page's presentation: work that
+  // grows with the transcripts' size.
+  "io.privacyExchangeFeed": (db: Db, request: PrivacyExchangeFeedRequest, now: number) =>
+    readPrivacyExchangeFeed(db, request, now),
+  "io.privacyConversationExchanges": (
+    db: Db,
+    request: PrivacyConversationExchangesRequest,
+    now: number,
+  ) => readPrivacyConversationExchanges(db, request, now),
 
   // ── people compute (read halves of compute/upsert splits) ─────────
   "io.peopleCountsChunk": (db: Db, cursor: string | null, batchSize: number) =>

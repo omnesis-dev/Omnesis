@@ -3001,10 +3001,33 @@ final class PreviewSnapshotTests: XCTestCase {
             SettingsView(initialDestination: .root, previewData: true)
                 .environment(AppStore.preview(
                     pairedDeviceId: "dev_iphone",
-                    wsState: .failed("Connection timed out")
+                    wsState: .reconnecting(.init(
+                        network: .available,
+                        lastError: "The request timed out.",
+                        failedAttemptsOnNetwork: GatewayConnectionStatus.sustainedFailureAttempts
+                    ))
                 )),
             name: "50b-settings-gateway-unreachable"
         )
+    }
+
+    func testSettingsGatewayOffline() {
+        snapshot(
+            SettingsView(initialDestination: .root, previewData: true)
+                .environment(AppStore.preview(
+                    pairedDeviceId: "dev_iphone",
+                    wsState: .reconnecting(.init(
+                        network: .unavailable,
+                        lastError: "The Internet connection appears to be offline.",
+                        failedAttemptsOnNetwork: 0
+                    ))
+                )),
+            name: "50c-settings-gateway-offline"
+        )
+    }
+
+    func testGatewayConnectionRowStates() {
+        snapshot(GatewayConnectionRowGallery(), name: "50d-gateway-connection-row-states")
     }
 
     func testSettingsNotificationTextUnavailable() {
@@ -4624,6 +4647,18 @@ final class PreviewSnapshotTests: XCTestCase {
             )
             .environment(AppStore.preview()),
             name: "80-gateway-error-unreachable"
+        )
+    }
+
+    func testGatewayErrorOffline() {
+        snapshot(
+            GatewayErrorView(
+                context: "load watches",
+                error: URLError(.notConnectedToInternet),
+                onRetry: {}
+            )
+            .environment(AppStore.preview()),
+            name: "80a-gateway-error-offline"
         )
     }
 

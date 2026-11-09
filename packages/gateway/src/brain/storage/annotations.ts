@@ -90,6 +90,7 @@ export function createAnnotationStorageTables(db: Db): void {
       invalidated_at INTEGER,
       verification_state TEXT,
       last_verified_at INTEGER,
+      last_recheck_queued_at INTEGER,
       superseded_by TEXT
     )
   `);
@@ -152,8 +153,8 @@ export interface AnnotationEvidenceRow {
 /**
  * Entailment-firewall stamp: `verified` = the verifier judged the evidence
  * quote to entail the claim at write time; `unverified` = the row awaits an
- * entailment (re-)check — persisted fail-open while a configured verifier was
- * unavailable, or re-flagged because its evidence document's content shifted
+ * entailment (re-)check — persisted fail-open on a new or reworded claim while a
+ * configured verifier was unavailable, or re-flagged because its evidence document's content shifted
  * around a surviving quote (the re-verification sweep's backlog either way);
  * NULL = written with no verifier configured. `failed` is reserved for a
  * re-check that no longer finds entailment, but no code path writes it today
@@ -743,13 +744,36 @@ export function hasAnyDocAnnotations(db: Db): boolean {
 export interface DueVerificationAnnotation {
   id: string;
   lastVerifiedAt: number | null;
+  /** When the sweep last dealt with this row, by a verdict or by queueing it. */
+  lastConsideredAt: number;
   createdAt: number;
+}
+
+/** SQL for a row's place in the due order: a row just queued waits its turn again. */
+export const REVERIFICATION_DUE_ORDER_SQL =
+  "MAX(COALESCE(last_verified_at, 0), COALESCE(last_recheck_queued_at, 0))";
+
+/** Record that the sweep queued these rows, moving them behind every other due row. */
+export function markAnnotationsRecheckQueued(
+  db: Db,
+  store: "doc" | "person",
+  ids: readonly string[],
+  now: number,
+): void {
+  const table = store === "doc" ? "doc_annotations" : "person_annotations";
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const batch = ids.slice(i, i + ID_CHUNK);
+    db.prepare<unknown[]>(
+      `UPDATE ${table} SET last_recheck_queued_at = ?
+        WHERE id IN (${batch.map(() => "?").join(", ")})`,
+    ).run(now, ...batch);
+  }
 }
 
 /**
  * LIVE doc annotations due a re-verification check — never checked, or last
- * checked before `cutoff` — oldest-verified first with never-checked rows
- * leading. Served by the migration-55 partial index on
+ * checked before `cutoff` — least recently considered first, so never-considered
+ * rows lead and a row the sweep keeps failing on cannot crowd out the rest. Served by the migration-55 partial index on
  * `(last_verified_at) WHERE invalidated_at IS NULL`. Rows whose evidence doc
  * vanished stay selectable: they are un-regroundable, and the verification
  * run's verdict for them is a retract.
@@ -774,14 +798,23 @@ export function listDueVerificationDocAnnotations(
          WHERE e.annotation_id = doc_annotations.id AND e.broken_at IS NULL AND NOT (${inclusion.sql}))`
     : "";
   return db
-    .prepare<unknown[], { id: string; last_verified_at: number | null; created_at: number }>(
-      `SELECT id, last_verified_at, created_at FROM doc_annotations
+    .prepare<
+      unknown[],
+      { id: string; last_verified_at: number | null; considered_at: number; created_at: number }
+    >(
+      `SELECT id, last_verified_at, ${REVERIFICATION_DUE_ORDER_SQL} AS considered_at, created_at
+         FROM doc_annotations
         WHERE invalidated_at IS NULL AND (last_verified_at IS NULL OR last_verified_at < ?)
         ${fence}
-        ORDER BY COALESCE(last_verified_at, 0) ASC, created_at ASC LIMIT ?`,
+        ORDER BY considered_at ASC, created_at ASC LIMIT ?`,
     )
     .all(opts.cutoff, ...(fence ? [...inclusion.params, ...inclusion.params] : []), opts.limit)
-    .map((r) => ({ id: r.id, lastVerifiedAt: r.last_verified_at, createdAt: r.created_at }));
+    .map((r) => ({
+      id: r.id,
+      lastVerifiedAt: r.last_verified_at,
+      lastConsideredAt: r.considered_at,
+      createdAt: r.created_at,
+    }));
 }
 
 /**
@@ -820,7 +853,9 @@ function stampUnverified(db: Db, table: string, ids: readonly string[]): void {
     // the current document — the row goes to the FRONT of the re-verification
     // backlog (never-verified rows lead the due ordering).
     db.prepare<unknown[]>(
-      `UPDATE ${table} SET verification_state = 'unverified', last_verified_at = NULL
+      `UPDATE ${table}
+          SET verification_state = 'unverified', last_verified_at = NULL,
+              last_recheck_queued_at = NULL
         WHERE id IN (${placeholders})`,
     ).run(...batch);
   }

@@ -266,6 +266,64 @@ print(",".join(failed))
 PY
 }
 
+# True while the emulator answers. An emulator mid-crash reads as offline for a
+# moment, so one failed probe is not enough.
+emulator_alive() {
+  local probe
+  for probe in 1 2 3; do
+    [[ "$(bounded 30 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && return 0
+    sleep 10
+  done
+  return 1
+}
+
+# Relaunches an emulator whose process died, the way the CI lane first started
+# it. Only the lane sets OMNESIS_JOURNEY_EMULATOR_OPTIONS: locally, the AVD is
+# whichever one the developer started, and it is theirs to restart.
+restart_emulator() {
+  local attempt="$1"
+  if [[ -z "${OMNESIS_JOURNEY_EMULATOR_OPTIONS:-}" ]]; then
+    return 1
+  fi
+  local avd="${OMNESIS_JOURNEY_EMULATOR_AVD:-test}"
+  adb kill-server >/dev/null 2>&1 || true
+  # A process that died leaves these behind, and the next launch then refuses
+  # the AVD as already running.
+  rm -f "$HOME/.android/avd/$avd.avd/"*.lock
+  # shellcheck disable=SC2086 # the options are a list of emulator flags.
+  nohup "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/emulator/emulator" -port 5554 -avd "$avd" \
+    $OMNESIS_JOURNEY_EMULATOR_OPTIONS >"$ARTIFACTS/emulator-restart-$attempt.log" 2>&1 &
+  disown
+  bounded 300 adb wait-for-device || return 1
+  local waited=0
+  while (( waited < 300 )); do
+    if [[ "$(bounded 30 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then
+      local scale
+      for scale in window_animation_scale transition_animation_scale animator_duration_scale; do
+        bounded 30 adb shell settings put global "$scale" 0 >/dev/null 2>&1 || true
+      done
+      return 0
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  return 1
+}
+
+# Everything a journey run needs on a booted device, and again on a restarted one.
+prepare_android_device() {
+  # A system app that stalls on a busy emulator (the launcher, typically)
+  # raises an "isn't responding" dialog over whatever the journey is driving.
+  # Those dialogs are about the emulator, not the app under test.
+  bounded 30 adb shell settings put global hide_error_dialogs 1 >/dev/null 2>&1 || true
+  bounded 30 adb shell rm -rf "$device_shots" "$device_video" >/dev/null 2>&1 || true
+  bounded 30 adb shell mkdir -p "$device_video" >/dev/null 2>&1 || true
+  # The device records itself: `screenrecord` stops after three minutes, so the
+  # loop starts a new numbered segment each time one ends.
+  bounded 30 adb shell "nohup sh -c 'i=0; while [ ! -e $device_video/stop ]; do i=\$((i+1)); screenrecord --bit-rate 2000000 --time-limit 180 $device_video/segment-\$(printf %03d \$i).mp4; done' >/dev/null 2>&1 &" \
+    >/dev/null 2>&1 || true
+}
+
 run_android() {
   command -v adb >/dev/null || { echo "adb is not on PATH." >&2; return 1; }
   bounded 120 adb wait-for-device
@@ -276,19 +334,9 @@ run_android() {
   local device_url="https://10.0.2.2:${OMNESIS_GATEWAY_PORT}"
   local results="$ROOT/android/app/build/outputs/androidTest-results/connected"
   local reports="$ROOT/android/app/build/reports/androidTests/connected"
-  local device_shots="/sdcard/omnesis-journeys"
-
-  # A system app that stalls on a busy emulator (the launcher, typically)
-  # raises an "isn't responding" dialog over whatever the journey is driving.
-  # Those dialogs are about the emulator, not the app under test.
-  bounded 30 adb shell settings put global hide_error_dialogs 1 >/dev/null 2>&1 || true
-  local device_video="/sdcard/omnesis-journeys-video"
-  bounded 30 adb shell rm -rf "$device_shots" "$device_video" >/dev/null 2>&1 || true
-  bounded 30 adb shell mkdir -p "$device_video" >/dev/null 2>&1 || true
-  # The device records itself: `screenrecord` stops after three minutes, so the
-  # loop starts a new numbered segment each time one ends.
-  bounded 30 adb shell "nohup sh -c 'i=0; while [ ! -e $device_video/stop ]; do i=\$((i+1)); screenrecord --bit-rate 2000000 --time-limit 180 $device_video/segment-\$(printf %03d \$i).mp4; done' >/dev/null 2>&1 &" \
-    >/dev/null 2>&1 || true
+  device_shots="/sdcard/omnesis-journeys"
+  device_video="/sdcard/omnesis-journeys-video"
+  prepare_android_device
 
   local filter="${OMNESIS_JOURNEY_ONLY:+dev.omnesis.android.journeys.$OMNESIS_JOURNEY_ONLY}"
   local attempt=0 status=0
@@ -318,6 +366,17 @@ run_android() {
     cp -R "$reports" "$ARTIFACTS/test-report-attempt-$attempt" 2>/dev/null || true
     if [[ "$status" == 0 ]]; then
       break
+    fi
+    if ! emulator_alive; then
+      echo "The emulator died during attempt $attempt (adb devices: $(adb devices | tr '\n' ' '))." >&2
+      { free -m; ps -eo pid,etime,rss,args --sort=-rss | head -12; sudo -n dmesg 2>/dev/null | tail -40; } \
+        >"$ARTIFACTS/host-after-emulator-loss-$attempt.txt" 2>&1 || true
+      if (( attempt > RETRIES )) || ! restart_emulator "$attempt"; then
+        break
+      fi
+      prepare_android_device
+      # Its results went with it, so the same journeys run again.
+      continue
     fi
     local failed
     failed="$(failed_journeys "$results")"

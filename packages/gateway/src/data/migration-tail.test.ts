@@ -76,6 +76,8 @@ const WOUND_BACK = [
   // 212 recreates the date pending-age index that 203 drops during the replay;
   // an install below the tail had it from migration 100.
   212,
+  // 213 adds a column idempotently; the installed schema already carries it.
+  213,
 ];
 
 let dir: string;

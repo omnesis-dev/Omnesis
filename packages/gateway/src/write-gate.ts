@@ -555,6 +555,7 @@ import {
   cancelScheduledRunsForLoop,
   addToCognitionEngineCounter,
   setCognitionEngineState,
+  markAnnotationsRecheckQueued,
   createOpenLoop,
   updateOpenLoop,
   rewriteOpenLoopPeople,
@@ -1712,6 +1713,12 @@ export interface WriteGate extends KnowledgeWriteGate {
   cancelScheduledRunsForLoop(loopId: string): Promise<number>;
   /** Upsert one Cognition Steward engine-state row (daily marker, sweep versions). */
   setCognitionEngineState(key: string, value: string): Promise<void>;
+  /** Record that the re-verification sweep queued these annotations. */
+  markAnnotationsRecheckQueued(
+    store: "doc" | "person",
+    ids: readonly string[],
+    now: number,
+  ): Promise<void>;
   /**
    * Add to a numeric engine-state counter without a read-modify-write window.
    * See `addToCognitionEngineCounter` — a lifetime counter that loses an
@@ -2753,6 +2760,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     retractUnclaimedCognitionRuns: (dedupeKeys) => call("cognition.retractUnclaimed", [dedupeKeys]),
     cancelScheduledRunsForLoop: (loopId) => call("cognition.cancelScheduledForLoop", [loopId]),
     setCognitionEngineState: (key, value) => call("cognition.engineStateSet", [key, value]),
+    markAnnotationsRecheckQueued: (store, ids, now) =>
+      call("cognition.markAnnotationsRecheckQueued", [store, [...ids], now]),
     addToCognitionEngineCounter: (key, delta) => call("cognition.engineCounterAdd", [key, delta]),
     recordLiveVoiceUsage: (input) => call("live.recordVoiceUsage", [input]),
     recordCognitionSpend: (day, mechanism, modelId, usage, opts) =>
@@ -3436,6 +3445,9 @@ export function directWriteGate(db: Db): WriteGate {
     cancelScheduledRunsForLoop: async (loopId) => cancelScheduledRunsForLoop(db, loopId),
     setCognitionEngineState: async (key, value) => {
       setCognitionEngineState(db, key, value);
+    },
+    markAnnotationsRecheckQueued: async (store, ids, now) => {
+      markAnnotationsRecheckQueued(db, store, ids, now);
     },
     addToCognitionEngineCounter: async (key, delta) => {
       addToCognitionEngineCounter(db, key, delta);

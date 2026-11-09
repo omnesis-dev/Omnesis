@@ -49,8 +49,10 @@ struct JourneyGateway {
     /// (`DEMO_PAIRING_JSON`), for journeys that start from a paired app. The
     /// credential is a real iPhone device's: the journey mints a pairing code
     /// and redeems it the way the app's pairing exchange does, so the app runs
-    /// as a paired phone rather than with the gateway's admin token.
-    func automationPairingJSON(deviceName: String) throws -> String {
+    /// as a paired phone rather than with the gateway's admin token. A journey
+    /// that needs to control the network between app and gateway passes the
+    /// address to pair with in `pairedUrl`.
+    func automationPairingJSON(deviceName: String, pairedUrl: URL? = nil) throws -> String {
         let pending = try post("/admin/devices/pair", body: ["kind": "ios", "name": deviceName])
         guard let code = pending["pairingCode"] as? String else {
             throw JourneyGatewayError.unexpectedResponse("/admin/devices/pair")
@@ -63,7 +65,7 @@ struct JourneyGateway {
             throw JourneyGatewayError.unexpectedResponse("/devices/pair")
         }
         let object: [String: String] = [
-            "url": url.absoluteString,
+            "url": (pairedUrl ?? url).absoluteString,
             "token": deviceToken,
             "deviceId": deviceId,
             "fingerprint": fingerprint,

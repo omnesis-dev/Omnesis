@@ -201,6 +201,12 @@ export interface EntailCapability {
     assessment?: "annotation_atomic" | "answer_segments";
     /** Prevent release and further attempts after cancellation; transport may finish in flight. */
     signal?: AbortSignal;
+    /**
+     * Work that can wait its turn: it yields to every other caller, may wait
+     * this long for capacity, and gets the whole call limit once it starts. A
+     * verifier with no queue ignores it, so `signal` must still bound the total.
+     */
+    background?: { queueWaitMs: number; callMs: number };
   }): Promise<EntailVerdict>;
   dispose(): Promise<void> | void;
 }

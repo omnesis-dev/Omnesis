@@ -30,7 +30,6 @@ final class GatewayErrorViewTests: XCTestCase {
     func testNetworkErrorsClassifyAsUnreachable() {
         let codes: [URLError.Code] = [
             .cannotConnectToHost,
-            .notConnectedToInternet,
             .timedOut,
             .dnsLookupFailed,
             .networkConnectionLost,
@@ -43,6 +42,22 @@ final class GatewayErrorViewTests: XCTestCase {
                 "URLError(\(code.rawValue)) should fold to .gatewayUnreachable"
             )
         }
+    }
+
+    func testOfflineErrorsNeverSuggestPairingAgain() {
+        for code: URLError.Code in [.notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff] {
+            XCTAssertEqual(GatewayErrorView.classify(URLError(code)), .offline)
+        }
+        XCTAssertFalse(GatewayErrorView.Kind.offline.detail(for: "load people").lowercased().contains("re-pair"))
+        XCTAssertFalse(GatewayErrorView.Kind.offline.detail(for: "load people").contains("pair using"))
+    }
+
+    func testConnectionRowSharesVocabularyWithThePageClassifier() {
+        func title(_ kind: DeviceSocket.Failure.Kind) -> String {
+            GatewayConnectionStatus(.failed(.init(kind: kind, detail: "x"))).title
+        }
+        XCTAssertEqual(title(.authentication), GatewayErrorView.Kind.unauthorized.title)
+        XCTAssertEqual(title(.certificate), GatewayErrorView.Kind.certificate.title)
     }
 
     func testCertificateErrorsHaveSeparateRecoveryGuidance() {

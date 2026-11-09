@@ -1247,6 +1247,52 @@ describe("CodexAppServerBackend", () => {
     }
   });
 
+  it("never starts a turn when cancelled while thread/start is in flight", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-abort-thread-start-")));
+    const codexHome = join(dir, "codex-home");
+    const logPath = join(dir, "fake-codex.jsonl");
+    const backend = makeBackend({ codexHome, logPath, scenario: "slow-thread-start" });
+    const abort = new AbortController();
+
+    try {
+      const eventsPromise = collect(backend.runTurn(baseInput(), abort.signal));
+      await waitForLog(logPath, (logs) => logs.some((line) => line.event === "thread_start"));
+      abort.abort();
+      const events = await eventsPromise;
+
+      expect(events.find((ev) => ev.type === "agent.message.end")?.payload.stopReason).toBe(
+        "canceled",
+      );
+      expect(readLog(logPath).some((line) => line.event === "turn_start")).toBe(false);
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("interrupts a turn whose cancellation arrived while turn/start was in flight", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-abort-turn-start-")));
+    const codexHome = join(dir, "codex-home");
+    const logPath = join(dir, "fake-codex.jsonl");
+    const backend = makeBackend({ codexHome, logPath, scenario: "slow-turn-start" });
+    const abort = new AbortController();
+
+    try {
+      const eventsPromise = collect(backend.runTurn(baseInput(), abort.signal));
+      await waitForLog(logPath, (logs) => logs.some((line) => line.event === "turn_start"));
+      abort.abort();
+      const events = await eventsPromise;
+
+      expect(events.find((ev) => ev.type === "agent.message.end")?.payload.stopReason).toBe(
+        "canceled",
+      );
+      await waitForLog(logPath, (logs) => logs.some((line) => line.event === "turn_interrupt"));
+    } finally {
+      await backend.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("emits the cancellation terminal when disposed before turn/start resolves", async () => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-codex-pending-dispose-")));
     const codexHome = join(dir, "codex-home");

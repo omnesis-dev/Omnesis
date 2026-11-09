@@ -424,6 +424,7 @@ targets:
     platform: iOS
     sources:
       - path: UITests/OmnesisDemoUITests
+      - path: Tests/OmnesisTests/LoopbackForwarder.swift
     dependencies:
       - target: OmnesisDemo
     settings:

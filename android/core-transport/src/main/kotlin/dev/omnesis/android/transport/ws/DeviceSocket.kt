@@ -3,12 +3,14 @@
 
 package dev.omnesis.android.transport.ws
 
+import android.util.Log
 import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.DeviceCapabilities
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,8 +18,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -29,28 +33,49 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.UUID
+import kotlin.math.max
 import kotlin.random.Random
 
 /**
  * Device WebSocket (`/device/ws`). Faithful port of the iOS `DeviceSocket`:
  * `hello` handshake (protocolVersion 1), `kind`-discriminated envelopes, ping-drop,
- * mandatory acks to inbound commands, and exponential-backoff reconnect with jitter.
- * The agent transcript streams over SSE, not this socket — the socket carries
- * presence + live status events.
+ * mandatory acks to inbound commands. The agent transcript streams over SSE, not this
+ * socket — the socket carries presence + live status events.
+ *
+ * It reconnects by itself for as long as it is started. The lifecycle contract:
+ *
+ * - A failed attempt waits out [DeviceSocketReconnectPolicy]'s backoff, and every attempt
+ *   spends from its budget, whatever triggered it.
+ * - Network-path changes and [appDidBecomeActive] are advisory wake signals: they shorten a
+ *   pending wait or replace a stale attempt, but only the hello response counts as being
+ *   connected. An open socket is left alone, because the client's ping interval already
+ *   fails one that stopped answering.
+ * - [ConnectionState.Reconnecting] is the temporary state; [ConnectionState.Failed] means
+ *   retries continue but are unlikely to help until something else changes.
+ * - Each attempt goes through the one [client], so a retry can never use a different
+ *   transport, token or TLS trust than the pairing's.
+ * - [stop] is terminal for the running loop: no later signal, timer or callback has any effect.
  */
 class DeviceSocket(
-    private val client: OkHttpClient,
+    private val client: WebSocket.Factory,
     private val gatewayUrl: String,
     private val token: String,
     private val scope: CoroutineScope,
     private val capabilities: DeviceCapabilities = DeviceCapabilities.android(emptyList()),
+    private val pathObserver: NetworkPathObserver = NetworkPathObserver.None,
+    limits: DeviceSocketReconnectLimits = DeviceSocketReconnectLimits(),
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val randomUnit: () -> Double = { Random.nextDouble() },
 ) {
+    enum class NetworkAvailability { UNKNOWN, AVAILABLE, UNAVAILABLE }
+
+    enum class FailureKind { AUTHENTICATION, CERTIFICATE, INCOMPATIBLE }
+
     sealed interface ConnectionState {
         data object Disconnected : ConnectionState
         data object Connecting : ConnectionState
@@ -61,8 +86,21 @@ class DeviceSocket(
             val scopes: List<String>,
         ) : ConnectionState
 
-        data class Failed(val message: String) : ConnectionState
+        /** No session is up and automatic retries are expected to restore one. */
+        data class Reconnecting(
+            val network: NetworkAvailability,
+            /** The most recent attempt's failure, kept for diagnosis. */
+            val lastError: String?,
+            /** Failures while the network looked usable, since it last changed. */
+            val failedAttemptsOnNetwork: Int,
+        ) : ConnectionState
+
+        /** No session is up and the gateway's answer points at something a retry is unlikely to change. */
+        data class Failed(val kind: FailureKind, val message: String) : ConnectionState
     }
+
+    /** What the run loop is doing, which decides what a wake signal means. */
+    private enum class Phase { IDLE, ATTEMPTING, CONNECTED, WAITING }
 
     data class WsEvent(val type: String, val payload: JsonObject)
 
@@ -100,10 +138,28 @@ class DeviceSocket(
     var dispatchSync: ((String) -> Boolean)? = null
 
     private var loop: Job? = null
+    private var pathJob: Job? = null
     private var helloId: String? = null
-    private var attempt = 0
     private val lifecycleLock = Any()
     private var connectionGeneration = 0L
+    private val policy = DeviceSocketReconnectPolicy(limits)
+    private var phase = Phase.IDLE
+    private var attemptStartedAtMs = 0L
+    private var attemptEnded: CompletableDeferred<Unit>? = null
+
+    /** The current attempt's outcome. Null when it was replaced, which says nothing about the gateway. */
+    private var attemptFailure: DeviceSocketAttemptFailure? = null
+
+    /** The next attempt should not wait out the backoff. */
+    private var retryWithoutBackoff = false
+    private var currentPath: NetworkPathSnapshot? = null
+    private var isForeground = true
+
+    /** A path was restored while backgrounded; the next foreground acts on it. */
+    private var restoredWhileBackgrounded = false
+    private var failedAttemptsOnNetwork = 0
+    private var lastConnectionError: String? = null
+    private val wakes = Channel<Unit>(Channel.CONFLATED)
 
     @Volatile
     private var activeWs: WebSocket? = null
@@ -122,16 +178,22 @@ class DeviceSocket(
                         if (loop?.isActive != true) return@launch
                         connectionGeneration += 1
                         activeWs = null
-                        _state.value = ConnectionState.Connecting
+                        attemptEnded = ended
+                        attemptFailure = null
+                        retryWithoutBackoff = false
+                        phase = Phase.ATTEMPTING
+                        attemptStartedAtMs = nowMs()
+                        policy.recordAttemptStarted(attemptStartedAtMs)
+                        publishAttemptProgress(ConnectionState.Connecting)
                         connectionGeneration
                     }
                     val ws = client.newWebSocket(request, listener(ended, generation))
                     val accepted = synchronized(lifecycleLock) {
-                        if (connectionGeneration == generation && loop?.isActive == true) {
-                            activeWs = ws
-                            true
-                        } else {
+                        if (loop?.isActive != true) {
                             false
+                        } else {
+                            if (connectionGeneration == generation) activeWs = ws
+                            true
                         }
                     }
                     if (!accepted) {
@@ -141,20 +203,28 @@ class DeviceSocket(
 
                     val handshakeTimeout = launch {
                         delay(HANDSHAKE_TIMEOUT_MS)
-                        if (_state.value !is ConnectionState.Connected) ws.cancel()
+                        val timedOut = synchronized(lifecycleLock) {
+                            val current = connectionGeneration == generation && phase == Phase.ATTEMPTING
+                            if (current) endAttempt(DeviceSocketAttemptFailure.Network(HANDSHAKE_TIMEOUT_MESSAGE))
+                            current
+                        }
+                        if (timedOut) ws.cancel()
                     }
                     ended.await()
                     handshakeTimeout.cancel()
+                    // A replaced attempt may still be ending; its callbacks are already ignored.
+                    ws.cancel()
                     if (!isActive) break
-
-                    val backoff = backoffDelayMs(attempt)
-                    attempt += 1
-                    if (_state.value !is ConnectionState.Failed) {
-                        _state.value = ConnectionState.Disconnected
-                    }
-                    delay(backoff)
+                    waitForNextAttempt()
                 }
-            }.also { loop = it }
+            }.also { loop = it }.also {
+                pathJob = scope.launch {
+                    pathObserver.paths()
+                        // The signal is advisory: without it the backoff still reconnects.
+                        .catch { error -> Log.w(LOG_TAG, "Network path updates stopped: $error") }
+                        .collect { path -> handlePath(path) }
+                }
+            }
         }
         job.start()
     }
@@ -164,9 +234,12 @@ class DeviceSocket(
             connectionGeneration += 1
             val stoppedJob = loop
             loop = null
+            pathJob?.cancel()
+            pathJob = null
             val stoppedWs = activeWs
             val stoppedWhileConnected = _state.value is ConnectionState.Connected
             activeWs = null
+            phase = Phase.IDLE
             _state.value = ConnectionState.Disconnected
             Triple(stoppedJob, stoppedWs, stoppedWhileConnected)
         }
@@ -176,6 +249,155 @@ class DeviceSocket(
         } else {
             ws?.cancel()
         }
+    }
+
+    /** The user returned to the app, so a retry parked on a long backoff should not make them wait. */
+    fun appDidBecomeActive() {
+        val restored = synchronized(lifecycleLock) {
+            isForeground = true
+            restoredWhileBackgrounded.also { restoredWhileBackgrounded = false }
+        }
+        if (restored) wake(DeviceSocketReconnectPolicy.WakeSignal.CONNECTIVITY_RESTORED)
+        wake(DeviceSocketReconnectPolicy.WakeSignal.FOREGROUND)
+    }
+
+    /**
+     * Path changes wait for the next foreground from here on: nobody is looking at the connection,
+     * and the backoff schedule keeps running regardless.
+     */
+    fun appDidEnterBackground() {
+        synchronized(lifecycleLock) { isForeground = false }
+    }
+
+    /** Waits for the backoff and the budget, whichever is later. A wake can shorten only the backoff. */
+    private suspend fun waitForNextAttempt() {
+        val backoff = synchronized(lifecycleLock) {
+            if (loop?.isActive != true) return
+            attemptEnded = null
+            attemptFailure?.let { failure ->
+                policy.recordFailure(failure)
+                record(failure)
+            }
+            val superseded = attemptFailure == null
+            // A refusal keeps its earned wait even if a wake arrived mid-attempt.
+            val skipsBackoff = superseded ||
+                (retryWithoutBackoff && policy.accepts(DeviceSocketReconnectPolicy.WakeSignal.CONNECTIVITY_RESTORED))
+            val earned = if (skipsBackoff) 0 else policy.retryDelayMs(randomUnit())
+            wakes.tryReceive()
+            phase = Phase.WAITING
+            earned
+        }
+        var deadline = nowMs() + max(backoff, synchronized(lifecycleLock) { policy.budgetDelayMs(nowMs()) })
+        while (true) {
+            val remaining = deadline - nowMs()
+            if (remaining <= 0) return
+            withTimeoutOrNull(remaining) { wakes.receive() } ?: return
+            deadline = minOf(deadline, nowMs() + synchronized(lifecycleLock) { policy.budgetDelayMs(nowMs()) })
+        }
+    }
+
+    private fun handlePath(path: NetworkPathSnapshot) {
+        val restored = synchronized(lifecycleLock) {
+            if (loop == null) return
+            val transition = path.transitionFrom(currentPath)
+            currentPath = path
+            // A connected socket stays as it is on LOST: only the socket itself can say the
+            // session ended, and a brief loss may not end it.
+            if (_state.value is ConnectionState.Reconnecting) publishReconnecting()
+            if (transition != NetworkPathSnapshot.Transition.RESTORED) return
+            if (!isForeground) restoredWhileBackgrounded = true
+            isForeground
+        }
+        if (restored) wake(DeviceSocketReconnectPolicy.WakeSignal.CONNECTIVITY_RESTORED)
+    }
+
+    private fun wake(signal: DeviceSocketReconnectPolicy.WakeSignal) {
+        val stale = synchronized(lifecycleLock) {
+            if (loop == null || phase == Phase.CONNECTED || !policy.accepts(signal)) return
+            if (signal == DeviceSocketReconnectPolicy.WakeSignal.CONNECTIVITY_RESTORED) {
+                policy.connectivityRestored()
+                failedAttemptsOnNetwork = 0
+                if (_state.value is ConnectionState.Reconnecting) publishReconnecting()
+            }
+            when (phase) {
+                Phase.WAITING -> {
+                    wakes.trySend(Unit)
+                    null
+                }
+
+                Phase.ATTEMPTING -> {
+                    // The attempt may have started on the network that is now gone, or just
+                    // ahead of this signal as a backoff fell due on resume.
+                    retryWithoutBackoff = true
+                    if (nowMs() - attemptStartedAtMs >= policy.limits.supersedeInFlightAfterMs) {
+                        attemptFailure = null
+                        connectionGeneration += 1
+                        val replaced = activeWs
+                        activeWs = null
+                        attemptEnded?.complete(Unit)
+                        replaced
+                    } else {
+                        null
+                    }
+                }
+
+                // The attempt has ended and the run loop is about to read its outcome.
+                else -> {
+                    retryWithoutBackoff = true
+                    null
+                }
+            }
+        }
+        stale?.cancel()
+    }
+
+    /**
+     * Records why the connection is over. The first reason wins: a timeout or a hello refusal
+     * cancels the socket after naming itself, and that cancellation then calls back. Leaving
+     * [Phase.ATTEMPTING] here keeps a wake from replacing an attempt whose outcome is known.
+     */
+    private fun endAttempt(failure: DeviceSocketAttemptFailure) {
+        attemptFailure = attemptFailure ?: failure
+        phase = Phase.IDLE
+    }
+
+    /**
+     * A first connection shows its progress. After a failure the state keeps saying what is wrong
+     * through each retry, so the UI does not flicker back to "connecting" every time one starts.
+     */
+    private fun publishAttemptProgress(state: ConnectionState) {
+        if (policy.lastFailure == null) _state.value = state
+    }
+
+    private fun record(failure: DeviceSocketAttemptFailure) {
+        when (failure) {
+            is DeviceSocketAttemptFailure.Network -> noteTemporaryFailure(failure.detail)
+            is DeviceSocketAttemptFailure.Server ->
+                noteTemporaryFailure("The gateway answered with status ${failure.status}.")
+            DeviceSocketAttemptFailure.RateLimited ->
+                noteTemporaryFailure("The gateway is limiting connection attempts.")
+            is DeviceSocketAttemptFailure.Trust ->
+                _state.value = ConnectionState.Failed(FailureKind.CERTIFICATE, failure.detail)
+            is DeviceSocketAttemptFailure.Authentication ->
+                _state.value = ConnectionState.Failed(FailureKind.AUTHENTICATION, failure.detail)
+            is DeviceSocketAttemptFailure.Incompatible ->
+                _state.value = ConnectionState.Failed(FailureKind.INCOMPATIBLE, failure.detail)
+        }
+    }
+
+    private fun noteTemporaryFailure(detail: String) {
+        lastConnectionError = detail
+        if (currentPath?.isUsable != false) failedAttemptsOnNetwork += 1
+        publishReconnecting()
+    }
+
+    private fun publishReconnecting() {
+        val network = when (currentPath?.isUsable) {
+            true -> NetworkAvailability.AVAILABLE
+            false -> NetworkAvailability.UNAVAILABLE
+            null -> NetworkAvailability.UNKNOWN
+        }
+        _state.value = ConnectionState.Reconnecting(network, lastConnectionError, failedAttemptsOnNetwork)
     }
 
     /**
@@ -206,7 +428,7 @@ class DeviceSocket(
             val accepted = synchronized(lifecycleLock) {
                 if (connectionGeneration == generation && loop?.isActive == true) {
                     activeWs = webSocket
-                    _state.value = ConnectionState.Authenticating
+                    publishAttemptProgress(ConnectionState.Authenticating)
                     true
                 } else {
                     false
@@ -243,16 +465,25 @@ class DeviceSocket(
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             synchronized(lifecycleLock) {
-                if (connectionGeneration == generation && activeWs === webSocket) activeWs = null
+                if (connectionGeneration == generation) {
+                    if (activeWs === webSocket) activeWs = null
+                    endAttempt(DeviceSocketAttemptFailure.Network("The gateway closed the connection (code $code)."))
+                }
             }
             if (!ended.isCompleted) ended.complete(Unit)
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             synchronized(lifecycleLock) {
-                if (connectionGeneration == generation && activeWs === webSocket) {
-                    activeWs = null
-                    _state.value = ConnectionState.Failed(t.message ?: "websocket failure")
+                if (connectionGeneration == generation) {
+                    if (activeWs === webSocket) activeWs = null
+                    endAttempt(
+                        DeviceSocketAttemptFailure.fromTransport(
+                            t,
+                            response?.code,
+                            helloCompleted = phase == Phase.CONNECTED,
+                        ),
+                    )
                 }
             }
             if (!ended.isCompleted) ended.complete(Unit)
@@ -269,7 +500,11 @@ class DeviceSocket(
                     val result = obj["result"]?.jsonObject
                     synchronized(lifecycleLock) {
                         if (activeWs !== webSocket) return
-                        attempt = 0
+                        policy.recordConnected()
+                        failedAttemptsOnNetwork = 0
+                        lastConnectionError = null
+                        retryWithoutBackoff = false
+                        phase = Phase.CONNECTED
                         _state.value = ConnectionState.Connected(
                             deviceId = result?.get("deviceId")?.jsonPrimitive?.contentOrNull.orEmpty(),
                             deviceName = result?.get("deviceName")?.jsonPrimitive?.contentOrNull.orEmpty(),
@@ -280,9 +515,10 @@ class DeviceSocket(
                 } else {
                     val msg = obj["error"]?.jsonObject?.get("message")
                         ?.jsonPrimitive?.contentOrNull ?: "authentication failed"
+                    val code = obj["error"]?.jsonObject?.get("code")?.jsonPrimitive?.contentOrNull
                     synchronized(lifecycleLock) {
                         if (activeWs !== webSocket) return
-                        _state.value = ConnectionState.Failed(msg)
+                        endAttempt(DeviceSocketAttemptFailure.fromHello(code, msg))
                     }
                     webSocket.cancel()
                 }
@@ -368,12 +604,6 @@ class DeviceSocket(
         return base.newBuilder().addPathSegment("device").addPathSegment("ws").build().toString()
     }
 
-    private fun backoffDelayMs(attempt: Int): Long {
-        val base = minOf(1000L * (1L shl minOf(attempt, 5)), 30_000L)
-        val jitter = Random.nextLong(0, (base / 4) + 1)
-        return base + jitter
-    }
-
     companion object {
         /**
          * Wire protocol version this client speaks. Must match the gateway's
@@ -385,6 +615,8 @@ class DeviceSocket(
          */
         const val PROTOCOL_VERSION = 1 // PARITY:device-ws-protocol-version
 
+        private const val LOG_TAG = "Omnesis"
         private const val HANDSHAKE_TIMEOUT_MS = 30_000L
+        private const val HANDSHAKE_TIMEOUT_MESSAGE = "The gateway didn't answer in time."
     }
 }

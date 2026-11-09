@@ -53,11 +53,13 @@ jobs:
         # tracks the newest formula, so the version a run uses is whatever the
         # machine last happened to resolve. See the SWIFTLINT_VERSION note
         # above; the checksum makes the download reproducible and tamper-evident.
+        # GitHub's release downloads have answered 504 for minutes at a time, so
+        # the retries span a few minutes rather than a few seconds.
         run: |
           set -euo pipefail
           dest="$RUNNER_TEMP/swiftlint-$SWIFTLINT_VERSION"
           mkdir -p "$dest"
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/portable_swiftlint.zip" \
+          curl -fsSL --retry 8 --retry-delay 20 --retry-all-errors -o "$RUNNER_TEMP/portable_swiftlint.zip" \
             "https://github.com/realm/SwiftLint/releases/download/$SWIFTLINT_VERSION/portable_swiftlint.zip"
           echo "$SWIFTLINT_SHA256  $RUNNER_TEMP/portable_swiftlint.zip" | shasum -a 256 -c -
           unzip -qo "$RUNNER_TEMP/portable_swiftlint.zip" -d "$dest"
@@ -89,7 +91,7 @@ jobs:
           set -euo pipefail
           dest="$RUNNER_TEMP/swiftformat-$SWIFTFORMAT_VERSION"
           mkdir -p "$dest"
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/swiftformat.zip" \
+          curl -fsSL --retry 8 --retry-delay 20 --retry-all-errors -o "$RUNNER_TEMP/swiftformat.zip" \
             "https://github.com/nicklockwood/SwiftFormat/releases/download/$SWIFTFORMAT_VERSION/swiftformat.zip"
           echo "$SWIFTFORMAT_SHA256  $RUNNER_TEMP/swiftformat.zip" | shasum -a 256 -c -
           unzip -qo "$RUNNER_TEMP/swiftformat.zip" -d "$dest"
