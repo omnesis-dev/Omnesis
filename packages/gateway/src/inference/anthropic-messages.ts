@@ -7,13 +7,23 @@
  * it, and the reply's text read from every text block.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
 
 /**
  * A one-shot call asks for a direct answer within a budget sized for it. A model
  * that thinks by default would spend that budget thinking and return no text.
  */
 export const NO_THINKING: Anthropic.ThinkingConfigDisabled = { type: "disabled" };
+
+/**
+ * A client for calls that send a sampling temperature, kept on API version
+ * 2023-06-01. SDK 1.x defaults to 2026-10-21, where any `temperature` is a 400
+ * even at its default value, so these calls would lose it on the models that
+ * still honour it.
+ */
+export function samplingClient(options: ClientOptions): Anthropic {
+  return new Anthropic({ ...options, defaultHeaders: { "anthropic-version": "2023-06-01" } });
+}
 
 /**
  * Newer models reject the sampling temperature outright with a 400; the first
@@ -37,6 +47,18 @@ export class AnthropicTemperature {
       return send(undefined);
     }
   }
+}
+
+/**
+ * The request with the sampling temperature added when there is one. SDK 1.x
+ * dropped `temperature` from its request types, and the API accepts it only on
+ * the version `samplingClient` sends. This is the one place it is added.
+ */
+export function withTemperature(
+  request: Anthropic.MessageCreateParamsNonStreaming,
+  temperature: number | undefined,
+): Anthropic.MessageCreateParamsNonStreaming {
+  return temperature === undefined ? request : ({ ...request, temperature } as typeof request);
 }
 
 /** A 400 whose message names the `temperature` parameter. */
