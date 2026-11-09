@@ -22,12 +22,42 @@ export npm_package_config_node_gyp_nodedir
 # See #740 — flaky npm registry idle timeout in the Docker image build.
 attempt=1
 max_attempts="${NPM_CI_ATTEMPTS:-3}"
-while ! npm ci "$@"; do
-  if [ "$attempt" -ge "$max_attempts" ]; then
-    echo "npm ci failed after $attempt attempts" >&2
-    exit 1
+retry_seconds="${NPM_CI_RETRY_SECONDS:-10}"
+
+# ffmpeg-static downloads its binary in an install script. It is an optional
+# dependency, so when that download fails (GitHub's release host answering 504)
+# npm removes the package and exits 0, and audio decoding is simply gone from
+# the tree. Only an install that runs scripts and keeps optional packages can
+# have it, and only if the lockfile lists it.
+wants_ffmpeg() {
+  for arg in "$@"; do
+    case "$arg" in
+      --ignore-scripts | --omit=optional | --no-optional) return 1 ;;
+    esac
+  done
+  [ -f package-lock.json ] && grep -q '"node_modules/ffmpeg-static"' package-lock.json
+}
+
+while :; do
+  if npm ci "$@"; then
+    if ! wants_ffmpeg "$@" || [ -e node_modules/ffmpeg-static/package.json ]; then
+      break
+    fi
+    problem="npm ci dropped ffmpeg-static, whose binary download failed"
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      # Not fatal: most jobs never decode audio, and the ones that do fail on
+      # their own. This line says why they did.
+      echo "::warning::$problem after $attempt attempts; audio decoding will not work in this tree" >&2
+      break
+    fi
+  else
+    problem="npm ci failed"
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      echo "npm ci failed after $attempt attempts" >&2
+      exit 1
+    fi
   fi
-  echo "npm ci failed (attempt $attempt of $max_attempts); retrying in $((attempt * 10))s" >&2
-  sleep "$((attempt * 10))"
+  echo "$problem (attempt $attempt of $max_attempts); retrying in $((attempt * retry_seconds))s" >&2
+  sleep "$((attempt * retry_seconds))"
   attempt=$((attempt + 1))
 done

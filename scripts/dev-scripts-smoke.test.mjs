@@ -2592,6 +2592,7 @@ describe("full-validation workflow topology", () => {
     );
     chmodSync(join(dir, "npm"), 0o755);
     const out = execFileSync(join(repoRoot, "scripts/ci/npm-ci.sh"), ["--no-audit"], {
+      cwd: dir,
       env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, npm_config_nodedir: "" },
       encoding: "utf8",
     });
