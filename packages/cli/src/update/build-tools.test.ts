@@ -7,6 +7,7 @@ import {
   buildToolsInstallCommand,
   buildToolsRefusal,
   missingBuildTools,
+  npmRefusal,
   REQUIRED_BUILD_TOOLS,
   type BuildToolProbe,
 } from "./build-tools.js";
@@ -85,5 +86,24 @@ describe("buildToolsRefusal", () => {
     const message = buildToolsRefusal(["make", "cc"], null);
     expect(message).toContain("missing make, cc");
     expect(message).toContain("C/C++ compilers, make and Python 3");
+  });
+});
+
+describe("npmRefusal", () => {
+  it("has nothing to say where npm runs", () => {
+    expect(npmRefusal(probe({ present: ["npm"] }))).toBeNull();
+  });
+
+  it("refuses on macOS too, where a service's PATH can hold node without npm", () => {
+    // Unlike the toolchain, npm is needed on every platform: the update spawns
+    // `npm ci` by name, so a launchd PATH without it fails after the checkout
+    // moved, and so does the rollback's own `npm ci`.
+    const message = npmRefusal(probe({ platform: "darwin", present: [] }));
+    expect(message).toContain("`npm ci`");
+    expect(message).toContain("`npm` does not run on this PATH");
+    expect(message).toContain("beside the `node` it runs");
+    expect(message).toMatch(
+      /Nothing has been changed, so the installation is still on its current release\.$/,
+    );
   });
 });
