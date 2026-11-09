@@ -295,10 +295,22 @@ the portal reads the gateway-computed result.
 - `transcriber`, `ocr`, and `embedder` are exclusive single-purpose roles matched
   by name families.
 - Generative models serve every text role: `agent`, `privacy-reviewer`,
-  `background-agent`, `watch-judge`, and `entailment-verifier`. The latter four
-  deliberately offer exactly the models the Agent capability does, so a model
-  that can hold a conversation can also be assigned to any of the bounded
-  passes.
+  `background-agent`, `watch-judge`, `entailment-verifier` and `decision`. The
+  latter five deliberately offer exactly the models the Agent capability does,
+  so a model that can hold a conversation can also be assigned to any of the
+  bounded passes.
+
+`decision` is narrower at runtime still. It reads each typed answer (yes/no, a
+score, a choice) from the model's next-token probabilities over single-token
+option labels (`packages/gateway/src/inference/decision/chat-decision.ts`), so
+it needs a backend that exposes them: a local GGUF (node-llama-cpp's full
+next-token distribution) or an OpenAI-compatible HTTP backend that returns
+`logprobs` from Chat Completions. Codex, Claude Code, Anthropic and
+Responses-only backends are rejected. A reply without log-probabilities, or
+whose labels hold less than half the next-token probability (a preamble, a
+thinking tag), throws, and callers fail open. TypeSafe (`typesafe/<model>`)
+remains the typed-decision backend; a loopback `inference.typesafe.url` needs
+no remote inference and no key.
 
 `watch-judge` is narrower at runtime than the shared generative classification:
 it accepts Codex, Claude Code, a local GGUF, Anthropic, or an OpenAI-compatible

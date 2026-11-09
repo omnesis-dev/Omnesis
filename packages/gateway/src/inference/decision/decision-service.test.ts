@@ -4,13 +4,15 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   formatDecisionCassetteEntry,
+  type DecisionCapability,
   type DecisionRequest,
   type ResolvedAssignment,
 } from "@omnesis/core";
 import { DecisionService } from "./decision-service.js";
+import { HttpChatDecision } from "./http-chat-decision.js";
 import { ReplayDecision } from "./replay-decision.js";
 import { TypeSafeDecision } from "./typesafe-client.js";
 
@@ -30,11 +32,47 @@ const typesafe = (
   kind: "typesafe",
   model: "jev-1.13.0",
   url: "http://127.0.0.1:9/v1/systemone",
+  selfHosted: true,
+  onHost: true,
   allowRemoteInference: true,
   hasApiKey: true,
   available: true,
   ...over,
 });
+
+const http = (
+  over: Partial<Extract<ResolvedAssignment, { kind: "http" }>> = {},
+): ResolvedAssignment => ({
+  role: "decision",
+  kind: "http",
+  backendKey: "llama",
+  url: "http://127.0.0.1:9",
+  model: "decider-7b",
+  allowRemoteInference: false,
+  available: true,
+  ...over,
+});
+
+const local = (
+  over: Partial<Extract<ResolvedAssignment, { kind: "local" }>> = {},
+): ResolvedAssignment => ({
+  role: "decision",
+  kind: "local",
+  catalogId: "decider-1b",
+  modelPath: "/models/decider-1b.gguf",
+  available: true,
+  ...over,
+});
+
+function fakeCapability(
+  modelId: string,
+): DecisionCapability & { dispose: ReturnType<typeof vi.fn<() => Promise<void>>> } {
+  return {
+    modelId,
+    decide: async () => ({ model: modelId, answers: {} }),
+    dispose: vi.fn(async () => {}),
+  };
+}
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -82,6 +120,87 @@ describe("DecisionService", () => {
     expect(second).not.toBe(first);
     resolved = typesafe({ model: "jev-1.14.0" });
     expect(service.get()?.modelId).toBe("jev-1.14.0");
+  });
+
+  it("builds a keyless TypeSafe client for a self-hosted endpoint", async () => {
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "jev-1.13.0",
+            answers: { worth_score: { type: "score", score: 1 } },
+          }),
+          { status: 200 },
+        ),
+    );
+    const service = new DecisionService({
+      resolveAssignment: () => typesafe({ hasApiKey: false }),
+      readTypeSafeApiKey: () => null,
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    const capability = service.get();
+    expect(capability).toBeInstanceOf(TypeSafeDecision);
+    await capability!.decide(request);
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>).authorization).toBeUndefined();
+  });
+
+  it("still needs a key for TypeSafe's own endpoint", () => {
+    const service = new DecisionService({
+      resolveAssignment: () => typesafe({ selfHosted: false }),
+      readTypeSafeApiKey: () => null,
+    });
+    expect(service.get()).toBeNull();
+  });
+
+  it("builds an HTTP chat backend with its key, and rebuilds when the key changes", () => {
+    let key: string | undefined = "sk-one-0000";
+    const service = new DecisionService({
+      resolveAssignment: () => http(),
+      readTypeSafeApiKey: () => null,
+      getBackendApiKey: (backend) => (backend === "llama" ? key : undefined),
+    });
+    const first = service.get();
+    expect(first).toBeInstanceOf(HttpChatDecision);
+    expect(first?.modelId).toBe("http:llama/decider-7b");
+    expect(service.get()).toBe(first);
+    key = "sk-two-0000";
+    expect(service.get()).not.toBe(first);
+  });
+
+  it("returns null for an unavailable HTTP or local assignment", () => {
+    for (const resolved of [
+      http({ available: false, reason: "down" }),
+      local({ available: false, reason: "missing" }),
+    ]) {
+      const service = new DecisionService({
+        resolveAssignment: () => resolved,
+        readTypeSafeApiKey: () => null,
+        createLocal: () => fakeCapability("never"),
+      });
+      expect(service.get()).toBeNull();
+    }
+  });
+
+  it("builds the local backend and disposes it when the assignment moves on", () => {
+    let resolved = local();
+    const built: Array<ReturnType<typeof fakeCapability>> = [];
+    const service = new DecisionService({
+      resolveAssignment: () => resolved,
+      readTypeSafeApiKey: () => null,
+      createLocal: (modelPath) => {
+        const capability = fakeCapability(`local:${modelPath}`);
+        built.push(capability);
+        return capability;
+      },
+    });
+    expect(service.get()?.modelId).toBe("local:/models/decider-1b.gguf");
+    expect(service.get()?.modelId).toBe("local:/models/decider-1b.gguf");
+    expect(built).toHaveLength(1);
+    resolved = local({ modelPath: "/models/decider-3b.gguf" });
+    expect(service.get()?.modelId).toBe("local:/models/decider-3b.gguf");
+    expect(built[0]!.dispose).toHaveBeenCalledTimes(1);
+    expect(built[1]!.dispose).not.toHaveBeenCalled();
   });
 
   it("loads a replay fixture directory and answers recorded requests only", async () => {

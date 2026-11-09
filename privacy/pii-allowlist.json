@@ -2052,8 +2052,11 @@
       "value": "10.1.2.3",
       "paths": [
         "packages/core/src/host-network.test.ts",
+        "packages/core/src/models/inference-url-policy.test.ts",
         "packages/core/src/pairing-address.test.ts",
-        "packages/gateway/src/http/services/PairingQrService.test.ts"
+        "packages/gateway/portal/js/views/models-decision.test.ts",
+        "packages/gateway/src/http/services/PairingQrService.test.ts",
+        "packages/gateway/src/inference/registry.test.ts"
       ],
       "reason": "invented private-address fixture for the RFC 1918 10/8 range"
     },

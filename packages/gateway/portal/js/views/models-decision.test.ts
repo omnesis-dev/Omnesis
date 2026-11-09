@@ -3,10 +3,11 @@
 
 // @ts-nocheck — exercises the plain-JS portal renderer from vitest.
 //
-// Settings → Models for the decision capability: its picker offers TypeSafe and
-// nothing else, asks for the API key through the credentials wizard when none
-// is configured, and assigns `typesafe/<model>` — the default Jev model unless
-// the operator edits it.
+// Settings → Models for the decision capability: its picker offers TypeSafe
+// first, then the chat-completions HTTP backends, and never a cloud chat
+// runtime. TypeSafe asks for the API key through the credentials wizard when
+// none is configured — unless the endpoint is the operator's own — and assigns
+// `typesafe/<model>`, the default Jev model unless the operator edits it.
 
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -43,7 +44,11 @@ function overviewWith(assignment, extra = {}) {
     inference: {
       allowRemoteInference: true,
       assignments: { decision: assignment },
-      backends: { openai: { type: "http", status: "ok", modelRoles: { "gpt-example": ["agent"] } } },
+      backends: {
+        openai: { type: "http", status: "ok", modelRoles: { "gpt-example": ["agent"] } },
+        "llama-box": { type: "http", status: "ok", url: "http://127.0.0.1:8080", modelRoles: { "decider-7b": ["agent"] } },
+        "responses-host": { type: "http", status: "ok", protocol: "responses", modelRoles: { "r-model": ["agent"] } },
+      },
       codex: { configured: true, loggedIn: true, status: "ok", models: ["codex-a"], modelRoles: { "codex-a": ["agent"] } },
       ...extra,
     },
@@ -67,10 +72,18 @@ describe("Models — the Decision model picker", () => {
     await act(async () => { button(text).dispatchEvent(new window.Event("click", { bubbles: false })); });
     await flush();
   };
+  const cardTitles = () => [...host.querySelectorAll(".backend-opt-title")].map((n) => n.textContent);
   const openPicker = async () => {
     await act(async () => { render(h(ModelsView, { section: "decision" }), host); });
     await flush();
     await click("Choose model");
+  };
+  const openTypeSafe = async () => {
+    await openPicker();
+    const card = [...host.querySelectorAll(".backend-opt-title")].find((n) => n.textContent === "TypeSafe");
+    expect(card, "TypeSafe card").toBeTruthy();
+    await act(async () => { card.closest("button").dispatchEvent(new window.Event("click", { bubbles: false })); });
+    await flush();
   };
 
   beforeEach(() => {
@@ -101,26 +114,60 @@ describe("Models — the Decision model picker", () => {
     expect(host.textContent).toContain("TypeSafe");
   });
 
-  it("offers no way to add a chat backend to the Decision model", async () => {
+  it("lets a chat backend be added for the Decision model", async () => {
     await act(async () => { render(h(ModelsView, { section: "decision" }), host); });
     await flush();
     expect(host.textContent).toContain("Decision model");
     expect(button("Choose model")).toBeTruthy();
-    expect(button("Add backend")).toBeUndefined();
+    expect(button("Add backend")).toBeTruthy();
   });
 
-  it("opens on TypeSafe with the default Jev model, and its grid holds TypeSafe alone", async () => {
+  it("offers TypeSafe first, then chat-completions backends, and no cloud chat runtime", async () => {
     await openPicker();
+    const titles = cardTitles();
+    expect(titles[0]).toBe("TypeSafe");
+    expect(titles).toContain("llama-box");
+    expect(titles).not.toContain("responses-host");
+    expect(titles).not.toContain("Codex");
+    expect(titles).not.toContain("Anthropic");
+  });
+
+  it("starts the TypeSafe pane from the default Jev model", async () => {
+    await openTypeSafe();
     const input = host.querySelector("input[aria-label='TypeSafe model id']");
     expect(input.value).toBe("jev-1.13.0");
     expect(host.textContent).toContain("Not configured");
-    await click("← Back");
-    const titles = [...host.querySelectorAll(".backend-opt-title")].map((n) => n.textContent);
-    expect(titles).toEqual(["TypeSafe"]);
+    expect(host.textContent).toContain("sent to TypeSafe");
+  });
+
+  it("assigns a self-hosted TypeSafe endpoint on this host with no key and no consent", async () => {
+    api.getModelsOverview.mockResolvedValue(overviewWith({ kind: "disabled", role: "decision" }, {
+      allowRemoteInference: false,
+      typesafe: { url: "http://127.0.0.1:18999/v1/systemone", selfHosted: true, onHost: true },
+    }));
+    await openTypeSafe();
+    expect(host.textContent).toContain("optional for your own endpoint");
+    expect(host.textContent).toContain("stay on this machine");
+    await click("Use");
+    expect(host.querySelector(".wizard-stub")).toBeNull();
+    expect(api.patchAdminConfig).toHaveBeenCalledExactlyOnceWith({ inference: { assignments: { decision: "typesafe/jev-1.13.0" } } });
+  });
+
+  it("asks consent naming a self-hosted endpoint off this host, not TypeSafe", async () => {
+    api.getModelsOverview.mockResolvedValue(overviewWith({ kind: "disabled", role: "decision" }, {
+      allowRemoteInference: false,
+      typesafe: { url: "http://10.1.2.3:8080/v1/systemone", selfHosted: true, onHost: false },
+    }));
+    await openTypeSafe();
+    await click("Use");
+    expect(api.patchAdminConfig).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("10.1.2.3");
+    await click("Enable cloud inference");
+    expect(api.patchAdminConfig).toHaveBeenCalledExactlyOnceWith({ inference: { allowRemoteInference: true, assignments: { decision: "typesafe/jev-1.13.0" } } });
   });
 
   it("asks for the key first when none is configured, then assigns the model", async () => {
-    await openPicker();
+    await openTypeSafe();
     await click("Use");
     expect(host.querySelector(".wizard-stub")?.textContent).toContain("Wizard for typesafe");
     expect(api.patchAdminConfig).not.toHaveBeenCalled();
@@ -129,7 +176,7 @@ describe("Models — the Decision model picker", () => {
   });
 
   it("assigns nothing when the key wizard is abandoned", async () => {
-    await openPicker();
+    await openTypeSafe();
     await click("Use");
     await click("Abandon");
     expect(api.patchAdminConfig).not.toHaveBeenCalled();
@@ -137,7 +184,7 @@ describe("Models — the Decision model picker", () => {
 
   it("assigns an edited model id directly when the key is configured", async () => {
     api.getModelCredentialsStatus.mockResolvedValue(typesafeCredential(true));
-    await openPicker();
+    await openTypeSafe();
     expect(host.textContent).toContain("Configured");
     const input = host.querySelector("input[aria-label='TypeSafe model id']");
     await act(async () => { input.value = "jev-2.0.0"; input.dispatchEvent(new window.Event("input")); });
@@ -148,7 +195,7 @@ describe("Models — the Decision model picker", () => {
 
   it("treats an environment key the resolved assignment reports as configured", async () => {
     api.getModelsOverview.mockResolvedValue(overviewWith({ role: "decision", kind: "typesafe", model: "jev-1.13.0", hasApiKey: true, allowRemoteInference: true, available: true }));
-    await openPicker();
+    await openTypeSafe();
     expect(button("Current")).toBeTruthy();
     await click("Current");
     expect(host.querySelector(".wizard-stub")).toBeNull();
@@ -158,7 +205,7 @@ describe("Models — the Decision model picker", () => {
   it("asks for cloud-inference consent before assigning TypeSafe when it is off", async () => {
     api.getModelsOverview.mockResolvedValue({ ...overviewWith({ kind: "disabled", role: "decision" }), inference: { ...overviewWith({ kind: "disabled" }).inference, allowRemoteInference: false } });
     api.getModelCredentialsStatus.mockResolvedValue(typesafeCredential(true));
-    await openPicker();
+    await openTypeSafe();
     await click("Use");
     expect(api.patchAdminConfig).not.toHaveBeenCalled();
     expect(host.textContent).toContain("TypeSafe");

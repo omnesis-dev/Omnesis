@@ -1186,6 +1186,13 @@ batch, page or pending work, and on its observation. The card loads the exact
 request and answer on demand from the payload store, or the row's retained
 copy where no exact capture exists.
 
+The ledger's `requested_model_id` is the assignment's pinned model id: the
+TypeSafe model (`jev-1.13.0`), `local:<gguf>` or `http:<backend>/<model>`.
+Judgements from different backends never mix silently: worth answers are keyed
+by it, so a new decision model is asked again rather than reusing another
+model's verdict. Settled date-mention verdicts are the exception — they are
+re-asked only when their rubric version changes.
+
 ## Bounding the spend
 
 Everything is measured in **tokens and runs**. The Brain reports no figure in
@@ -1320,7 +1327,7 @@ and reason/tier pills. A batch can contain several reasons. Discovery owns boots
 coverage and history controls. Agent runs combines current execution, scheduled
 work and completed transcripts, with a Running filter and live count.
 
-Run details expose recorded Jev judgements, including synthesis discovery and
+Run details expose recorded decision-model judgements, including synthesis discovery and
 impact gates: model, rubric, normalized score, threshold, input tokens and latency.
 A score recommendation is distinct from the engine's final action: protected work
 can still proceed. Older verdicts are associated only when retained source

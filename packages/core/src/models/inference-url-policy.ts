@@ -53,6 +53,23 @@ export function classifyInferenceIp(ip: string): InferenceAddressClass {
   return classifyIpv6(ip);
 }
 
+/**
+ * Whether an inference URL names this host without a DNS lookup: a loopback
+ * IP literal, or `localhost` and its subdomains (RFC 6761). Synchronous, for
+ * deciding availability up front; the fetch still re-checks every resolved
+ * address through {@link assertInferenceUrlAllowed}.
+ */
+export function isLoopbackInferenceUrl(rawUrl: string): boolean {
+  let host: string;
+  try {
+    host = new URL(rawUrl).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  } catch {
+    return false;
+  }
+  if (net.isIP(host)) return classifyInferenceIp(host) === "loopback";
+  return host === "localhost" || host.endsWith(".localhost");
+}
+
 function classifyIpv4(ip: string): InferenceAddressClass {
   const parts = ip.split(".").map((p) => parseInt(p, 10));
   if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) {

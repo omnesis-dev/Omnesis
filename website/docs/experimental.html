@@ -742,7 +742,7 @@
                 <td>
                   Routes urgency, discovery, dependency repair and review, checks whether new
                   records belong in durable memory, and scores observations for the morning brief.
-                  Served only by TypeSafe Jev (<code>typesafe/jev-1.13.0</code>); see
+                  Served by TypeSafe Jev or a local or self-hosted model; see
                   <a href="#brain-worth-gate">Routing maintenance</a> and
                   <a href="#brain-record-check">Checking what it writes</a>. The role itself is
                   stable; <a href="operating#models">Models</a> covers its setup.
@@ -775,8 +775,8 @@
         <p>
           The same <code>decision</code> assignment used by stable features also serves these flows.
           Assigning it does not enable the Brain or browser features by itself. Depending on the
-          flow, TypeSafe receives the query, relevant source content, memory records, task context
-          or past reactions needed for the decision.
+          flow, the decision model receives the query, relevant source content, memory records, task
+          context or past reactions needed for the decision.
         </p>
         <ul>
           <li>
@@ -1200,15 +1200,15 @@
         <p>
           The <code>decision</code> role can select an urgency tier, decide whether new evidence
           deserves interpretation, assess whether changed inputs could affect a dependent claim, and
-          prioritize proactive review. TypeSafe Jev supplies typed scores rather than prose. A low
-          relevance score can settle a work item without a synthesis turn; uncertainty or an
+          prioritize proactive review. The decision model supplies typed scores rather than prose. A
+          low relevance score can settle a work item without a synthesis turn; uncertainty or an
           unavailable judgement keeps the conservative repair path. Existing invalidated time-index
           entries still receive their evidence review.
         </p>
         <p>
-          These checks send the selected evidence context to TypeSafe, so they need
-          <code>inference.allowRemoteInference: true</code> and a TypeSafe API key. Enter the key
-          from <strong>Settings → Models → Decision model</strong>, or with
+          These checks send the selected evidence context to the decision model. With TypeSafe Jev
+          they need <code>inference.allowRemoteInference: true</code> and a TypeSafe API key. Enter
+          the key from <strong>Settings → Models → Decision model</strong>, or with
           <code>omnesis backend key set typesafe</code>, then assign the model:
         </p>
         <div class="term">
@@ -1221,6 +1221,10 @@
           </div>
         </div>
         <p>
+          A local or self-hosted model keeps the context on your network; see
+          <a href="operating#decision-model">Decision model</a> for its setup.
+        </p>
+        <p>
           Discovery checks complete sources within a 128 KiB application input budget, including the
           decision rubric. It does not truncate a document to decide it is irrelevant. Larger or
           empty inputs and missing decision models are admitted for inspection; Decision details
@@ -1228,18 +1232,19 @@
           advertise a provider context limit.
         </p>
         <p>
-          If Jev cannot be reached or returns an invalid answer, the engine records an unavailable
-          judgement and follows its conservative fallback. Inspect decisions beside the maintenance
-          work or agent run they explain by expanding Decision details. Urgency checks show the
-          captured policy, score and applied schedule. Exact requests and model results are loaded
-          on demand; older redacted records and unavailable inputs are labelled explicitly. Advanced
-          history keeps retained decisions accessible after their work or transcript is gone. Input
-          copies follow decision-history retention and deletion of contributing sources. The Brain
-          diagnostics show decision purposes, input fingerprints, normalized scores and model usage.
-          Metadata is retained separately from the bounded input snapshots. Decision tokens count
-          toward the daily token budget, not the daily agent-run budget. The key can also come from
+          If the decision model cannot be reached or returns an invalid answer, the engine records
+          an unavailable judgement and follows its conservative fallback. Inspect decisions beside
+          the maintenance work or agent run they explain by expanding Decision details. Urgency
+          checks show the captured policy, score and applied schedule. Exact requests and model
+          results are loaded on demand; older redacted records and unavailable inputs are labelled
+          explicitly. Advanced history keeps retained decisions accessible after their work or
+          transcript is gone. Input copies follow decision-history retention and deletion of
+          contributing sources. The Brain diagnostics show decision purposes, input fingerprints,
+          normalized scores and model usage. Metadata is retained separately from the bounded input
+          snapshots. Decision tokens count toward the daily token budget, not the daily agent-run
+          budget. The key can also come from
           <code>OMNESIS_TYPESAFE_API_KEY</code> or <code>TYPESAFE_API_KEY</code> in the gateway's
-          environment. To reach a private TypeSafe deployment instead of the public API, set
+          environment. To reach a TypeSafe deployment of your own instead of the public API, set
           <code>inference.typesafe.url</code>.
         </p>
         <p>
@@ -1289,25 +1294,25 @@
           <code>brain.annotations.recordCheck</code> sets what happens: <code>shadow</code> (the
           default) saves every record at once and scores it afterwards, <code>enforce</code> scores
           it first, drops a low-scored record and tells the agent not to retry it, and
-          <code>off</code> asks nothing. If Jev does not answer within 15 seconds, the record is
-          saved. Missing or unsafe source context also leaves a document annotation unjudged rather
-          than guessing its added value. Person-profile replacements and revisions are checked
-          against the useful context they would replace. Scheduled person-note reviews also reassess
-          whether to retain each fact in the current compact profile; an enforced refusal requires
-          correction, consolidation or retraction before the review completes. Autonomous
-          person-note withdrawal uses the same profile-utility standard in a separate preservation
-          check: truth alone does not make routine or incidental details useful profile context. A
-          retention refusal never authorizes deletion by itself; useful supported meaning must
-          remain in the profile or be replaced atomically. In <code>enforce</code>, an unavailable
-          withdrawal assessment leaves the old fact pending instead of deleting it. Irrelevant,
-          unsupported and redundant facts may still be removed. Ordinary evidence refreshes do not
-          repeat this editorial check. Tracked outcome creation and substantive changes are checked
-          for supported responsibility, event identity and current status; autonomous outcome
-          assertions require original evidence. Pure scheduling and dismissal, anything you hand to
-          the assistant, and memory you ask for directly are not checked. Each verdict is shown on
-          the run it was made for, with the record and the document it came from, and its tokens
-          appear as <strong>Decision model · record check</strong>. Verdicts are deleted after the
-          activity-retention window.
+          <code>off</code> asks nothing. If the decision model does not answer within 15 seconds,
+          the record is saved. Missing or unsafe source context also leaves a document annotation
+          unjudged rather than guessing its added value. Person-profile replacements and revisions
+          are checked against the useful context they would replace. Scheduled person-note reviews
+          also reassess whether to retain each fact in the current compact profile; an enforced
+          refusal requires correction, consolidation or retraction before the review completes.
+          Autonomous person-note withdrawal uses the same profile-utility standard in a separate
+          preservation check: truth alone does not make routine or incidental details useful profile
+          context. A retention refusal never authorizes deletion by itself; useful supported meaning
+          must remain in the profile or be replaced atomically. In <code>enforce</code>, an
+          unavailable withdrawal assessment leaves the old fact pending instead of deleting it.
+          Irrelevant, unsupported and redundant facts may still be removed. Ordinary evidence
+          refreshes do not repeat this editorial check. Tracked outcome creation and substantive
+          changes are checked for supported responsibility, event identity and current status;
+          autonomous outcome assertions require original evidence. Pure scheduling and dismissal,
+          anything you hand to the assistant, and memory you ask for directly are not checked. Each
+          verdict is shown on the run it was made for, with the record and the document it came
+          from, and its tokens appear as <strong>Decision model · record check</strong>. Verdicts
+          are deleted after the activity-retention window.
         </p>
 
         <p>

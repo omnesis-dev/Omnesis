@@ -59,7 +59,7 @@ import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { ProviderIcon } from "../components/provider-icon.js";
 import { navigate } from "../lib/router.js";
 import { isEnabled, isConfigured, capabilityCardState } from "../lib/capability-state.js";
-import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend, isDecisionRole } from "../lib/backend-options.js";
+import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend } from "../lib/backend-options.js";
 import {
   ModelConfigModal,
   AddBackendModal,
@@ -404,7 +404,7 @@ export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, o
 
       <div class="cap-detail-actions">
         <button class="btn-primary" onClick=${onOpenPicker}>Choose model</button>
-        ${isDecisionRole(role) ? null : html`<button class="btn-secondary" onClick=${onAddBackend}>Add backend</button>`}
+        <button class="btn-secondary" onClick=${onAddBackend}>Add backend</button>
         ${configured ? html`<button class="btn-secondary" onClick=${onDisable}>Disable</button>` : null}
       </div>
 
@@ -1167,11 +1167,16 @@ export function ModelsView({ section, onModelsRefresh }) {
     }
   };
 
-  // TypeSafe is the Decision model's only backend. Without a key the
-  // credentials wizard opens first and the assignment completes when it is
-  // saved; with one, the model is assigned straight away.
+  // TypeSafe serves only the Decision model. Without a key the credentials
+  // wizard opens first and the assignment completes when it is saved; with
+  // one, or for a self-hosted endpoint that may run without one, the model is
+  // assigned straight away.
   const pickTypeSafe = async (model) => {
     setShowPicker(false);
+    if (overview.inference.typesafe?.selfHosted) {
+      await assignTypeSafe(role, model);
+      return;
+    }
     try {
       const status = await getModelCredentialsStatus();
       const credEntry = (status.items || []).find((e) => e.fileKey === "typesafe");

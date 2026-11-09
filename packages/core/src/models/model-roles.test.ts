@@ -10,6 +10,7 @@ const GENERATIVE_ROLES = [
   "background-agent",
   "watch-judge",
   "entailment-verifier",
+  "decision",
 ];
 
 describe("classifyModelRoles", () => {

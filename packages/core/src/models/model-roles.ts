@@ -83,9 +83,10 @@ const NON_SUGGESTABLE_RE =
  * Classify a model id into the capability roles it can serve.
  *
  * Generative models serve every text-completion role: `agent`,
- * `privacy-reviewer`, `background-agent`, `watch-judge`,
- * and `entailment-verifier`. Those roles deliberately offer exactly the models the Agent
- * capability does; `embedder`, `transcriber`, and `ocr` are exclusive.
+ * `privacy-reviewer`, `background-agent`, `watch-judge`, `entailment-verifier`
+ * and `decision` (answered from the model's token probabilities). Those roles
+ * deliberately offer exactly the models the Agent capability does; `embedder`,
+ * `transcriber`, and `ocr` are exclusive.
  * Non-suggestable families (TTS / image / moderation / cross-encoder scorers)
  * return an empty array — they fulfil no role and shouldn't be suggested
  * anywhere. An id that matches no known family defaults to generative — the
@@ -101,7 +102,14 @@ export function classifyModelRoles(modelId: string): CapabilityRole[] {
   if (OCR_RE.test(modelId)) return ["ocr"];
   if (NON_SUGGESTABLE_RE.test(modelId)) return [];
   if (EMBED_RE.test(modelId)) return ["embedder"];
-  return ["agent", "privacy-reviewer", "background-agent", "watch-judge", "entailment-verifier"];
+  return [
+    "agent",
+    "privacy-reviewer",
+    "background-agent",
+    "watch-judge",
+    "entailment-verifier",
+    "decision",
+  ];
 }
 
 /** Classify a list of model ids into an id → roles map. */
