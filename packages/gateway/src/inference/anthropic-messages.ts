@@ -39,6 +39,18 @@ export class AnthropicTemperature {
   }
 }
 
+/**
+ * The request with the sampling temperature added when there is one. SDK 1.x
+ * dropped `temperature` from its request types, but the API still accepts it on
+ * the models that allow sampling; this is the one place it is added.
+ */
+export function withTemperature(
+  request: Anthropic.MessageCreateParamsNonStreaming,
+  temperature: number | undefined,
+): Anthropic.MessageCreateParamsNonStreaming {
+  return temperature === undefined ? request : ({ ...request, temperature } as typeof request);
+}
+
 /** A 400 whose message names the `temperature` parameter. */
 function rejectsTemperature(err: unknown): boolean {
   return (
