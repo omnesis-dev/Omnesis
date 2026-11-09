@@ -146,9 +146,7 @@ final class MobileJourneyUITests: XCTestCase {
         try launchPaired(pairedUrl: XCTUnwrap(URL(string: "https://127.0.0.1:\(port)")))
 
         openSettings()
-        let connected = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "Connected"))
-            .firstMatch
+        let connected = element(containing: "Connected")
         // The Form only builds the rows on screen, and the health sections above
         // the gateway's can push this one below the fold.
         if !connected.waitForExistence(timeout: 30) { app.swipeUp() }
@@ -162,6 +160,7 @@ final class MobileJourneyUITests: XCTestCase {
             element(containing: "Reconnecting to gateway").waitForExistence(timeout: 60),
             "the outage did not read as a temporary state"
         )
+        XCTAssertFalse(connected.exists, "the row still claims a connection during the outage")
         XCTAssertFalse(element(containing: "Authentication failed").exists)
         XCTAssertFalse(element(containing: "Couldn't verify gateway certificate").exists)
         XCTAssertTrue(
@@ -214,9 +213,11 @@ final class MobileJourneyUITests: XCTestCase {
     /// Opens Settings through the drawer. A row stays in the tree, disabled,
     /// while the drawer is closed, so its existence proves nothing; and the menu
     /// button can go unanswered over a just-resumed conversation, so the drawer's
-    /// arrival is what ends the wait. The gear is tapped directly because the
-    /// row's button reports the whole action bar as its frame, whose centre is
-    /// the empty space between the gear and Ask.
+    /// arrival is what ends the wait. The tap is measured from the frame's corner
+    /// because the button sometimes reports the whole action bar as its frame,
+    /// whose centre is the empty space between the gear and Ask, and exposes no
+    /// child for the gear. 34 points in is the gear's centre in that frame, and
+    /// half the button's width clamps it to the centre when the frame is the gear.
     private func openSettings() {
         let settings = app.buttons["menu.settings"]
         let arrived = NSPredicate(format: "exists == true AND enabled == true")
@@ -226,7 +227,10 @@ final class MobileJourneyUITests: XCTestCase {
             if XCTWaiter.wait(for: [opened], timeout: 15) == .completed { break }
         }
         XCTAssertTrue(settings.isEnabled, "the menu did not open")
-        tap(settings.images["gearshape"], "the Settings gear")
+        let frame = settings.frame
+        settings.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: min(frame.width / 2, 34), dy: frame.height / 2))
+            .tap()
     }
 
     private func search(for query: String) {
