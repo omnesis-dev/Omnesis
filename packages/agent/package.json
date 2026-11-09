@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.135",
+    "@anthropic-ai/sdk": "^1.6",
     "@omnesis/core": "*",
     "@openai/codex": "0.166.0",
     "zod": "^4.6.7"
