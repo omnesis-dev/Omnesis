@@ -68,12 +68,20 @@ target yourself.
 - one interactive request of 5 s or more, or one operator-tooling request of
   15 s or more;
 - three or more interactive requests over 2 s within one hour, on any routes;
-- one stall of 2 s or more, or the hourly stall budget exceeded.
+- the same stall culprit at 5 s or more at least twice within seven days;
+- the same stall culprit at 2 s or more at least three times within one day;
+- the hourly stall budget exceeded.
+
+The stall targets above are what the ledger measures against; the stall rules
+here are the bar for spending a fix on one. A culprit that stalls 2–5 s a few
+times a week, or reaches 5 s once, is recorded and watched, not fixed. A stall
+counts toward a culprit by its named activity or code location; a stall with
+neither counts toward the tool or task the stall line lists in flight.
 
 The first 15 minutes after the gateway starts are the **boot class**. A
 collector reconnecting, catch-up queues and checkpoint backlogs belong to the
 restart, not to steady use. Record boot-class violations, but leave them to the
-daily review.
+daily review, which judges them by the same stall rules.
 
 ## Where the numbers come from
 
@@ -146,9 +154,15 @@ and create it on the first run:
    │                       └── did not recur: record a blip ─▶ WATCH         │
    └────────────────────────────── PR opened ────────────────────────────────┘
 
- Once per local day: DAILY REVIEW of the last 24 h. Any culprit that blipped
- on 3 different days, or shows up after every restart, becomes a candidate.
+ Once per local day: DAILY REVIEW of the last 7 days. A culprit becomes a
+ candidate when it meets a stall rule over that window, or when its slow
+ interactive requests blipped on 3 different days.
 ```
+
+A stall rule is itself a recurrence, so a culprit that meets one goes straight
+to INVESTIGATE. A single stall of 5 s or more is not a trigger, but take an
+OBSERVE hour after it anyway: the flight recorder may capture a profile that
+names the code, which the next occurrence will need.
 
 - **WATCH**: when a trigger fires, record its evidence and switch to OBSERVE.
 - **OBSERVE**: watch for an hour, so that the investigation starts from a
