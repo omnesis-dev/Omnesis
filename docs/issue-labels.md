@@ -3,7 +3,7 @@
 Omnesis keeps its issue labels deliberately minimal. There is **no `type:` / `area:` /
 `topic:` taxonomy** and **no priority axis** — those axes were applied inconsistently,
 went stale, and added more ceremony than signal. Don't reintroduce them. The label set is
-a small group of GitHub-native states plus one workflow label.
+a small group of GitHub-native states plus a few workflow labels.
 
 ## State labels (GitHub defaults)
 
@@ -24,6 +24,7 @@ The conventional triage set. Apply when they genuinely fit; most issues need non
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `architecture-violation` | Marks an issue reporting a breach of an architectural rule — usually the source-encapsulation contract (no source-specific logic outside `packages/providers/<name>/`). The daily source-encapsulation audit files one such issue per violation. |
 | `flaky-test`             | Marks a CI failure with evidence that it is intermittent rather than caused by a commit. The `flaky-watch` skill (`.agents/skills/flaky-watch/SKILL.md`) files one such issue per flake and adds later occurrences to it.                        |
+| `test-failure`           | Marks a CI failure caused by a commit rather than an intermittent problem. The `flaky-watch` skill files one such issue per regression, with its evidence, and leaves the fix to a person.                                                       |
 
 ## When you file a new issue
 

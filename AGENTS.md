@@ -323,7 +323,7 @@ The gateway's slow-request tail comes from writer-worker queue contention. Befor
 
 ## Labelling GitHub issues
 
-The repo's issue-label set is defined in [`docs/issue-labels.md`](docs/issue-labels.md) — read it before filing or triaging an issue. It is deliberately minimal: there is **no `type:` / `area:` / `topic:` taxonomy** (those axes were removed) and **no priority axis**. The only labels are the GitHub-native states (`good-first-issue`, `help-wanted`, `question`, `duplicate`, `wontfix`, `invalid`). Don't reintroduce the old axes or mint new label families ad hoc; keep `docs/issue-labels.md` and the GitHub label set in sync when the set changes.
+The repo's issue-label set is defined in [`docs/issue-labels.md`](docs/issue-labels.md) — read it before filing or triaging an issue. It is deliberately minimal: there is **no `type:` / `area:` / `topic:` taxonomy** (those axes were removed) and **no priority axis**. The labels are the GitHub-native states (`good-first-issue`, `help-wanted`, `question`, `duplicate`, `wontfix`, `invalid`) and a few workflow labels. Don't reintroduce the old axes or mint new label families ad hoc; keep `docs/issue-labels.md` and the GitHub label set in sync when the set changes.
 
 ## Anchor GitHub issues in the code
 
