@@ -229,6 +229,7 @@ import {
   buildToolsRefusal,
   missingBuildTools,
   nodeBuildToolProbe,
+  npmRefusal,
   type BuildTool,
 } from "../update/build-tools.js";
 import { adoptSourceCheckout } from "../update/source-adoption.js";
@@ -544,6 +545,11 @@ export interface UpdateFlowDeps {
    */
   missingBuildTools?(): { missing: BuildTool[]; installCommand: string | null };
   /**
+   * Why this machine cannot run `npm ci`, or null when it can. Absent where
+   * nothing is built from source.
+   */
+  npmRefusal?(): string | null;
+  /**
    * The unit files `omnesis service install` wrote for this account's
    * daemons, brought to this build's generator ahead of their restarts and put
    * back by a rollback. Absent where no launchd or systemd unit runs them.
@@ -851,6 +857,7 @@ async function rollBackAndFail(
   let rollbackStateError: string | null = null;
   if (applyPlan.applyState) {
     try {
+      // See #853: if the rollback below fails, this phase leaves every later command refused.
       deps.applyState.write(applyPlan.applyState.rollingBack);
     } catch (err) {
       rollbackStateError = err instanceof Error ? err.message : String(err);
@@ -2334,6 +2341,8 @@ export async function updateSourceCheckout(
       `${c.dim}Commit ancestry is checked after fetching during a real update; ` +
         `a backwards or divergent target may require --force.${c.reset}`,
     );
+    const npmPreview = deps.npmRefusal?.();
+    if (npmPreview) console.log(`${c.yellow}! ${npmPreview}${c.reset}`);
     const toolsPreview = deps.missingBuildTools?.();
     if (toolsPreview && toolsPreview.missing.length > 0) {
       console.log(
@@ -2353,7 +2362,10 @@ export async function updateSourceCheckout(
   // Before the fetch, because once the checkout moves a missing compiler is a
   // failed `npm ci` and a rollback rather than a machine still sitting on its
   // own release. The tools are named here; nothing acquires root to install
-  // them in the middle of an update.
+  // them in the middle of an update. npm comes first: the toolchain's install
+  // command does not bring it back.
+  const npmMissing = deps.npmRefusal?.();
+  if (npmMissing) throw new CliError(`${c.red}${npmMissing}${c.reset}`, EXIT_USER_ERROR);
   const tools = deps.missingBuildTools?.();
   if (tools && tools.missing.length > 0) {
     throw new CliError(
@@ -3492,6 +3504,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
             installCommand: buildToolsInstallCommand(nodeBuildToolProbe),
           })
         : undefined,
+    npmRefusal: plan.kind === "source" ? () => npmRefusal(nodeBuildToolProbe) : undefined,
     serviceDefinitions:
       plan.kind !== "docker" && (process.platform === "darwin" || process.platform === "linux")
         ? serviceDefinitionUpdater({

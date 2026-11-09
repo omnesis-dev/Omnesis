@@ -86,6 +86,24 @@ export function buildToolsRefusal(missing: readonly BuildTool[], command: string
   );
 }
 
+/**
+ * The refusal for a machine where `npm` does not run, or null where it does.
+ *
+ * Asked on every platform, unlike the toolchain. The update spawns `npm ci` by
+ * name, and a service's PATH can hold `node` with no `npm` beside it. Once the
+ * checkout has moved that is exit 127, a rollback whose own `npm ci` exits 127
+ * too, and an unfinished update that refuses every later command.
+ */
+export function npmRefusal(probe: BuildToolProbe): string | null {
+  if (probe.runs("npm")) return null;
+  return (
+    "This update runs `npm ci`, and `npm` does not run on this PATH. " +
+    "An update a collector or gateway service runs uses that service's PATH, " +
+    "so put `npm` there, for example beside the `node` it runs, then re-run `omnesis update`. " +
+    "Nothing has been changed, so the installation is still on its current release."
+  );
+}
+
 function versionRuns(command: string): boolean {
   try {
     const result = spawnSync(command, ["--version"], { stdio: "ignore" });
