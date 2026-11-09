@@ -8,7 +8,12 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { AnthropicTemperature, NO_THINKING, responseText } from "./anthropic-messages.js";
+import {
+  AnthropicTemperature,
+  NO_THINKING,
+  responseText,
+  withTemperature,
+} from "./anthropic-messages.js";
 import type { CompleteCapability } from "@omnesis/core";
 
 export class AnthropicCompleter implements CompleteCapability {
@@ -41,9 +46,7 @@ export class AnthropicCompleter implements CompleteCapability {
       messages: [{ role: "user" as const, content: prompt }],
     };
     const response = await this.temperature.send(opts?.temperature ?? 0.3, (temperature) =>
-      this.client.messages.create(
-        temperature === undefined ? request : { ...request, temperature },
-      ),
+      this.client.messages.create(withTemperature(request, temperature)),
     );
 
     return responseText(response);

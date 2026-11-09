@@ -39,6 +39,19 @@ export class AnthropicTemperature {
   }
 }
 
+/**
+ * `request` with `temperature` added when one is to be sent. SDK 1.x no longer
+ * types the field, but the API still accepts it from models that allow it, so
+ * it is added past the type rather than dropped.
+ */
+export function withTemperature<T extends object>(
+  request: T,
+  temperature: number | undefined,
+): T & Anthropic.MessageCreateParamsNonStreaming {
+  return (temperature === undefined ? request : { ...request, temperature }) as T &
+    Anthropic.MessageCreateParamsNonStreaming;
+}
+
 /** A 400 whose message names the `temperature` parameter. */
 function rejectsTemperature(err: unknown): boolean {
   return (
