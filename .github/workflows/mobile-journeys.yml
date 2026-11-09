@@ -217,6 +217,10 @@ jobs:
         env:
           OMNESIS_JOURNEY_ARTIFACTS: ${{ runner.temp }}/mobile-journeys
           OMNESIS_CONFIG_DIR: ${{ runner.temp }}/mobile-journeys-gateway
+          # The script relaunches an emulator whose process dies, with these flags.
+          # ANGLE over SwiftShader: with swiftshader_indirect or guest rendering
+          # the emulator process dies while the app draws its Ask screen.
+          OMNESIS_JOURNEY_EMULATOR_OPTIONS: -no-window -gpu swangle_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
@@ -225,9 +229,7 @@ jobs:
           profile: pixel_6
           ram-size: 4096M
           disk-size: 6000M
-          # ANGLE over SwiftShader: with swiftshader_indirect or guest rendering
-          # the emulator process dies while the app draws its Ask screen.
-          emulator-options: -no-window -gpu swangle_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          emulator-options: ${{ env.OMNESIS_JOURNEY_EMULATOR_OPTIONS }}
           disable-animations: true
           script: scripts/run-mobile-journeys.sh android
 

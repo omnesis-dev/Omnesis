@@ -99,6 +99,9 @@ embedding model (about 150 MB) into `~/.cache/omnesis-journeys/` and checks its
 SHA-256.
 
 A failed journey is retried once (`OMNESIS_JOURNEY_RETRIES=0` turns that off).
+In CI, an emulator whose process dies counts as that retry: the lane relaunches
+it with `OMNESIS_JOURNEY_EMULATOR_OPTIONS` and runs the same journeys again.
+Locally, restart your own AVD.
 After a failure, `/tmp/omnesis-mobile-journeys/artifacts/` holds a screen
 recording of the whole run, the failure screenshots (inside the `.xcresult`
 bundle and exported to `failure-attachments/` on iOS; `failure-screenshots/`
