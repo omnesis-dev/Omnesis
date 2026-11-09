@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { setLogLevel, LogLevel, type EntailCapability, type EntailVerdict } from "@omnesis/core";
 import * as loader from "./entailment-loader.js";
 import { EntailmentVerifierService } from "./entailment-service.js";
@@ -598,4 +598,122 @@ test("native generation admits one healthy verification at a time", async () => 
     await service.dispose();
     load.mockRestore();
   }
+});
+
+describe("background verifies", () => {
+  const verdict: EntailVerdict = { label: "entailment", probability: 1 };
+
+  /** One-slot service whose verifier obeys its signal until `release` is called for it. */
+  async function oneSlot() {
+    const started: string[] = [];
+    const releases = new Map<string, () => void>();
+    const verify = vi.fn(
+      ({ claim, signal }: { claim: string; signal?: AbortSignal }) =>
+        new Promise<EntailVerdict>((resolve, reject) => {
+          started.push(claim);
+          releases.set(claim, () => resolve(verdict));
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+    vi.spyOn(loader, "loadEntailmentFromResolved").mockResolvedValue({ verify, dispose() {} });
+    const { service } = fixtureService();
+    const facade = (await service.get())!;
+    return { facade, service, started, releases, verify };
+  }
+  const settled = async (condition: () => boolean) =>
+    vi.waitFor(() => expect(condition()).toBe(true));
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  test("time spent waiting for a slot does not count against the call limit", async () => {
+    const { facade, service, started, releases } = await oneSlot();
+    const first = facade.verify({ claim: "first", evidence: "E" });
+    await settled(() => started.includes("first"));
+    const waiting = facade.verify({
+      claim: "waiting",
+      evidence: "E",
+      background: { queueWaitMs: 600_000, callMs: 45_000 },
+    });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    releases.get("first")!();
+    await first;
+    await settled(() => started.includes("waiting"));
+    await vi.advanceTimersByTimeAsync(44_000);
+    releases.get("waiting")!();
+
+    await expect(waiting).resolves.toEqual(verdict);
+    await service.dispose();
+  });
+
+  test("a running call stops at its own limit, and a queued one at the queue limit", async () => {
+    const { facade, service, started } = await oneSlot();
+    const budget = { queueWaitMs: 300_000, callMs: 45_000 };
+    const running = facade.verify({ claim: "running", evidence: "E", background: budget });
+    const queued = facade.verify({
+      claim: "queued",
+      evidence: "E",
+      background: { queueWaitMs: 10_000, callMs: 45_000 },
+    });
+    const outcomes = Promise.all([
+      expect(queued).rejects.toThrow("Timed out waiting for verifier capacity"),
+      expect(running).rejects.toThrow("Verifier call timed out"),
+    ]);
+    await settled(() => started.includes("running"));
+
+    await vi.advanceTimersByTimeAsync(46_000);
+
+    await outcomes;
+    expect(started).toEqual(["running"]);
+    await service.dispose();
+  });
+
+  test("every other caller goes ahead of queued background work", async () => {
+    const { facade, service, started, releases } = await oneSlot();
+    const budget = { queueWaitMs: 300_000, callMs: 45_000 };
+    const holder = facade.verify({ claim: "holder", evidence: "E" });
+    await settled(() => started.includes("holder"));
+    const backgroundOne = facade.verify({ claim: "bg1", evidence: "E", background: budget });
+    const backgroundTwo = facade.verify({ claim: "bg2", evidence: "E", background: budget });
+    const interactive = facade.verify({ claim: "interactive", evidence: "E" });
+
+    releases.get("holder")!();
+    await holder;
+    await settled(() => started.length === 2);
+    releases.get("interactive")!();
+    await interactive;
+    await settled(() => started.length === 3);
+    releases.get("bg1")!();
+    await backgroundOne;
+    await settled(() => started.length === 4);
+    releases.get("bg2")!();
+    await backgroundTwo;
+
+    expect(started).toEqual(["holder", "interactive", "bg1", "bg2"]);
+    await service.dispose();
+  });
+
+  test("the caller's cancellation reaches the running call", async () => {
+    const { facade, service, started } = await oneSlot();
+    const caller = new AbortController();
+    const running = facade.verify({
+      claim: "running",
+      evidence: "E",
+      signal: caller.signal,
+      background: { queueWaitMs: 300_000, callMs: 45_000 },
+    });
+    const refused = expect(running).rejects.toThrow("caller stopped");
+    await settled(() => started.includes("running"));
+
+    caller.abort(new Error("caller stopped"));
+
+    await refused;
+    await service.dispose();
+  });
 });

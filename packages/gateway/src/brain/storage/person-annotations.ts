@@ -36,6 +36,7 @@ import {
   breakAnnotationEvidenceForDoc,
   insertAnnotationEvidenceRows,
   listAnnotationEvidenceRows,
+  REVERIFICATION_DUE_ORDER_SQL,
   replaceAnnotationEvidenceRows,
 } from "./annotations.js";
 import type Database from "better-sqlite3";
@@ -67,6 +68,7 @@ export function createPersonAnnotationStorageTables(db: Db): void {
       invalidated_at INTEGER,
       verification_state TEXT,
       last_verified_at INTEGER,
+      last_recheck_queued_at INTEGER,
       superseded_by TEXT
     )
   `);
@@ -739,7 +741,9 @@ function regroundPersonAnnotations(
       // Cleared, not just aged — a previous entailment verdict no longer
       // speaks to the shifted evidence, so the row leads the sweep's backlog.
       db.prepare<unknown[]>(
-        `UPDATE person_annotations SET verification_state = 'unverified', last_verified_at = NULL
+        `UPDATE person_annotations
+            SET verification_state = 'unverified', last_verified_at = NULL,
+                last_recheck_queued_at = NULL
           WHERE id IN (${placeholders})`,
       ).run(...batch);
     }
@@ -755,6 +759,8 @@ function regroundPersonAnnotations(
 export interface DueVerificationPersonAnnotation {
   id: string;
   lastVerifiedAt: number | null;
+  /** When the sweep last dealt with this row, by a verdict or by queueing it. */
+  lastConsideredAt: number;
   createdAt: number;
   isSelf: boolean;
 }
@@ -784,23 +790,30 @@ export function listDueVerificationPersonAnnotations(
   return db
     .prepare<
       unknown[],
-      { id: string; last_verified_at: number | null; created_at: number; is_self: number }
+      {
+        id: string;
+        last_verified_at: number | null;
+        considered_at: number;
+        created_at: number;
+        is_self: number;
+      }
     >(
       `SELECT pa.id, pa.last_verified_at, pa.created_at,
+              ${REVERIFICATION_DUE_ORDER_SQL} AS considered_at,
               COALESCE(p.is_self, 0) AS is_self
          FROM person_annotations pa
          LEFT JOIN people p ON p.id = pa.person_id
         WHERE pa.invalidated_at IS NULL
           AND (pa.last_verified_at IS NULL OR pa.last_verified_at < ?)
           ${fence}
-        ORDER BY COALESCE(p.is_self, 0) DESC, COALESCE(pa.last_verified_at, 0) ASC,
-                 pa.created_at ASC
+        ORDER BY COALESCE(p.is_self, 0) DESC, considered_at ASC, pa.created_at ASC
         LIMIT ?`,
     )
     .all(opts.cutoff, ...(fence ? inclusion.params : []), opts.limit)
     .map((r) => ({
       id: r.id,
       lastVerifiedAt: r.last_verified_at,
+      lastConsideredAt: r.considered_at,
       createdAt: r.created_at,
       isSelf: r.is_self !== 0,
     }));

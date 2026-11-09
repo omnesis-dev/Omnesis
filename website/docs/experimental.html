@@ -1129,17 +1129,19 @@
             that the quote supports the claim; a neutral or contradicting verdict refuses the write
             and tells the agent to weaken the claim. It checks annotations, dated facts that quote
             evidence, and, at the morning recheck, the claims inside an observation. If the verifier
-            errors or takes longer than 45 seconds, an annotation is stored marked unverified for
-            the daily re-check, and an observation ships unverified. Autonomous document and person
-            notes use structured assessments of individually identified factual assertions,
-            preserving their surrounding conditions and attribution. A negative assertion refuses
-            the note; positive verification requires complete coverage and exact authorized quotes.
-            This uses one bounded verifier call; malformed output or the existing timeout leaves the
-            note unverified. These model judgments can still be wrong. Wiki and root claims also
-            check their placement context with separate assessments and source-exact positive
-            witnesses. MiniCheck does not support contextual checks; these report unavailable rather
-            than treating a literal-only result as contextual proof. Verification is a model
-            judgment, not a guarantee of correctness.
+            errors or takes longer than 45 seconds, a new or reworded annotation is stored marked
+            unverified for the daily re-check, an unchanged annotation keeps the verdict it had, and
+            an observation ships unverified. A background re-check may wait up to five minutes for a
+            free verifier before that limit starts. Autonomous document and person notes use
+            structured assessments of individually identified factual assertions, preserving their
+            surrounding conditions and attribution. A negative assertion refuses the note; positive
+            verification requires complete coverage and exact authorized quotes. This uses one
+            bounded verifier call; malformed output or the existing timeout leaves the note
+            unverified. These model judgments can still be wrong. Wiki and root claims also check
+            their placement context with separate assessments and source-exact positive witnesses.
+            MiniCheck does not support contextual checks; these report unavailable rather than
+            treating a literal-only result as contextual proof. Verification is a model judgment,
+            not a guarantee of correctness.
           </li>
           <li>
             <strong>Evidence changes.</strong> When a cited document's content changes, each

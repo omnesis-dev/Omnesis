@@ -14,6 +14,9 @@
  * Known stateless remote adapters admit at most two verifies; native contexts
  * remain serial. Caller cancellation never releases an operation lease before
  * the underlying work (including transport iterator cleanup) settles.
+ *
+ * A background verify queues behind everything else and is timed in two parts,
+ * so a burst of them cannot spend its call limit waiting for its turn.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -21,14 +24,17 @@ import {
   assertNever,
   createLogger,
   type EntailCapability,
+  type EntailVerdict,
   type ResolvedAssignment,
 } from "@omnesis/core";
 import { loadEntailmentFromResolved, type LoadEntailmentDeps } from "./entailment-loader.js";
 
 const log = createLogger("inference:entailment-service");
 type CallStage = "queued" | "load" | "verify" | "dispose";
+type VerifyInput = Omit<Parameters<EntailCapability["verify"]>[0], "background">;
 interface Admission {
   operation: "get" | "verify" | "dispose";
+  background: boolean;
   signal?: AbortSignal;
   prepare(): Promise<void>;
   start(): Promise<unknown>;
@@ -94,18 +100,10 @@ export class EntailmentVerifierService {
    * across config swaps without ever touching a disposed instance.
    */
   private readonly facade: EntailCapability = {
-    verify: (input) =>
-      this.enqueue(
-        "verify",
-        async (stage) => {
-          const capability = this.current?.capability;
-          input.signal?.throwIfAborted();
-          if (!capability) throw new Error("entailment verifier unavailable");
-          stage("verify");
-          return capability.verify(input);
-        },
-        input.signal,
-      ),
+    verify: ({ background, ...input }) =>
+      background
+        ? this.verifyInBackground(input, background)
+        : this.enqueue("verify", (stage) => this.runVerify(input, stage), input.signal),
     dispose: () => {
       // Lifecycle is owned by the service (see dispose() below).
     },
@@ -135,6 +133,50 @@ export class EntailmentVerifierService {
       const capability = this.current?.capability ?? null;
       this.current = null;
       if (capability) await Promise.resolve(capability.dispose()).catch(() => {});
+    });
+  }
+
+  private async runVerify(
+    input: VerifyInput,
+    stage: (next: Exclude<CallStage, "queued">) => void,
+  ): Promise<EntailVerdict> {
+    const capability = this.current?.capability;
+    input.signal?.throwIfAborted();
+    if (!capability) throw new Error("entailment verifier unavailable");
+    stage("verify");
+    return capability.verify(input);
+  }
+
+  private verifyInBackground(
+    input: VerifyInput,
+    budget: NonNullable<Parameters<EntailCapability["verify"]>[0]["background"]>,
+  ): Promise<EntailVerdict> {
+    const deadline = new AbortController();
+    const expireAfter = (ms: number, what: string): ReturnType<typeof setTimeout> => {
+      const timer = setTimeout(
+        () => deadline.abort(new DOMException(`${what} after ${ms} ms`, "TimeoutError")),
+        ms,
+      );
+      timer.unref?.();
+      return timer;
+    };
+    let timer = expireAfter(budget.queueWaitMs, "Timed out waiting for verifier capacity");
+    const caller = input.signal;
+    const onCaller = (): void => deadline.abort(caller?.reason);
+    if (caller?.aborted) onCaller();
+    else caller?.addEventListener("abort", onCaller, { once: true });
+    return this.enqueue(
+      "verify",
+      (stage) => {
+        clearTimeout(timer);
+        timer = expireAfter(budget.callMs, "Verifier call timed out");
+        return this.runVerify({ ...input, signal: deadline.signal }, stage);
+      },
+      deadline.signal,
+      true,
+    ).finally(() => {
+      clearTimeout(timer);
+      caller?.removeEventListener("abort", onCaller);
     });
   }
 
@@ -216,6 +258,7 @@ export class EntailmentVerifierService {
     operation: "get" | "verify" | "dispose",
     fn: (stage: (next: Exclude<CallStage, "queued">) => void) => Promise<T>,
     signal?: AbortSignal,
+    background = false,
   ): Promise<T> {
     const id = randomUUID();
     const contended = this.pending > 0;
@@ -272,6 +315,7 @@ export class EntailmentVerifierService {
     });
     const job: Admission = {
       operation,
+      background,
       signal,
       prepare: async () => {
         if (operation !== "dispose") {
@@ -290,7 +334,13 @@ export class EntailmentVerifierService {
         rejectRun(error);
       },
     };
-    this.admissions.push(job);
+    // Disposal keeps its place behind whatever already queued: it drains them.
+    const firstBackground =
+      background || operation === "dispose"
+        ? -1
+        : this.admissions.findIndex((queued) => queued.background);
+    if (firstBackground === -1) this.admissions.push(job);
+    else this.admissions.splice(firstBackground, 0, job);
     void this.pump();
     if (!signal) return run;
     return new Promise<T>((resolve, reject) => {

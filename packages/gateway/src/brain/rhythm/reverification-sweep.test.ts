@@ -21,7 +21,11 @@ import {
   getCognitionEngineState,
   COGNITION_REVERIFICATION_LAST_RUN_KEY,
 } from "../storage/engine-state.js";
-import { createDocAnnotation } from "../storage/annotations.js";
+import {
+  createDocAnnotation,
+  invalidateAnnotationsForDoc,
+  listDueVerificationDocAnnotations,
+} from "../storage/annotations.js";
 import { createPersonAnnotation } from "../storage/person-annotations.js";
 import { verificationRunDedupeKey } from "../run-payloads.js";
 import {
@@ -337,6 +341,65 @@ describe("runReverificationSweepPass", () => {
     const runs = listCognitionRuns(db, { kinds: ["verification"] });
     expect(runs).toHaveLength(1);
     expect(runs[0]!.attempts).toBe(DEFAULT_COGNITION_RUN_MAX_ATTEMPTS - 1);
+  });
+
+  test("a queued row goes behind every other due row, even if it stays due", async () => {
+    docAnno(db, "a_left_unverified", NOW - 90 * DAY);
+    docAnno(db, "b_never_considered", NOW - 80 * DAY);
+    docAnno(db, "c_stale_verified", NOW - 70 * DAY, NOW - 20 * DAY);
+    const oneRow = { ...SETTINGS, maxPerSweep: 1, batchSize: 1 };
+    const pass = (at: number) =>
+      runReverificationSweepPass({
+        db,
+        writeGate: directWriteGate(db),
+        clock: () => at,
+        getSettings: () => oneRow,
+        log,
+      });
+    const picked = () => verificationRuns(db).map((run) => run.payload.annotationIds[0]);
+    const settle = () => db.prepare("UPDATE cognition_runs SET status = 'completed'").run();
+
+    await pass(NOW);
+    settle();
+    await pass(NOW + DAY);
+    settle();
+    await pass(NOW + 2 * DAY);
+    settle();
+    await pass(NOW + 3 * DAY);
+
+    // Nothing here earned a verdict, so all stay due and each gets a turn.
+    expect(picked()).toEqual([
+      "a_left_unverified",
+      "b_never_considered",
+      "c_stale_verified",
+      "a_left_unverified",
+    ]);
+  });
+
+  test("evidence that shifted returns a queued row to the front", async () => {
+    docAnno(db, "a_shifted", NOW - 90 * DAY);
+    docAnno(db, "b_waiting", NOW - 80 * DAY);
+    await runReverificationSweepPass({
+      db,
+      writeGate: directWriteGate(db),
+      clock: () => NOW,
+      getSettings: () => ({ ...SETTINGS, maxPerSweep: 1, batchSize: 1 }),
+      log,
+    });
+    expect(listDueVerificationDocAnnotations(db, { cutoff: NOW, limit: 2 })[0]?.id).toBe(
+      "b_waiting",
+    );
+
+    db.prepare(
+      `INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,
+         source_created_at,source_updated_at,ingested_at,updated_at)
+       VALUES('doc_evidence','test','test','doc_evidence','Evidence',?,'hash',?,?,?,?)`,
+    ).run("quote a_shifted and quote b_waiting", NOW, NOW, NOW, NOW);
+    expect(invalidateAnnotationsForDoc(db, "doc_evidence", NOW).flaggedUnverified).toBe(2);
+
+    expect(listDueVerificationDocAnnotations(db, { cutoff: NOW, limit: 2 })[0]?.id).toBe(
+      "a_shifted",
+    );
   });
 
   test("maxPerSweep caps the runs enqueued per pass", async () => {

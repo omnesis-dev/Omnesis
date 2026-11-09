@@ -151,6 +151,12 @@ Only a reviewed decision may then change or remove the artifact: a canonical
 update, `open_loop_delete`, `observation_withdraw`, an annotation revise,
 supersede or retract, or a `temporal_annotation_update` or delete. An
 annotation turned `unverified` is also re-judged by the re-verification sweep.
+A revise whose check gets no answer leaves an unchanged claim's verdict and
+timestamp alone; only a reworded claim becomes `unverified`. Background revises
+yield to other verifier callers and may wait five minutes for a slot, with the
+45-second limit starting only when the call does. Queueing a row stamps
+`last_recheck_queued_at`, which sends it behind every other due row, so rows
+that stay due cannot crowd out the rest of the backlog.
 An annotation whose evidence document is gone is never served as a prior, but
 `annotation_search` lists it marked `underReview` (for a person, apart from the
 readable profile), even when its subject document was deleted, so the review

@@ -40,6 +40,7 @@ export {
   type UpdateDocAnnotationPatch,
   type DocAnnotationRow,
   type AnnotationInvalidationResult,
+  markAnnotationsRecheckQueued,
 } from "./storage/annotations.js";
 // Consumption provenance — which observations/loops were built on which annotation
 // priors. The DDL crosses the module boundary (schema setup + migration 59);

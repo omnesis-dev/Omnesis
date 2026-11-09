@@ -528,6 +528,7 @@ import {
   pullForwardReadyCognitionRun,
   cancelScheduledRunsForLoop,
   setCognitionEngineState,
+  markAnnotationsRecheckQueued,
   createOpenLoop,
   updateOpenLoop,
   rewriteOpenLoopPeople,
@@ -1556,6 +1557,12 @@ export const writerHandlers = {
     cancelScheduledRunsForLoop(db, loopId),
   "cognition.engineStateSet": (db: Db, key: string, value: string): void =>
     setCognitionEngineState(db, key, value),
+  "cognition.markAnnotationsRecheckQueued": (
+    db: Db,
+    store: "doc" | "person",
+    ids: string[],
+    now: number,
+  ): void => markAnnotationsRecheckQueued(db, store, ids, now),
   "live.recordVoiceUsage": (db: Db, input: LiveVoiceUsageSample): void =>
     recordLiveVoiceUsage(db, input),
   // Non-run spend accounting: fold one mechanism call's token usage into its

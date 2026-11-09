@@ -159,6 +159,7 @@ import { migrateV182PrivateKeyJwtClients } from "./migration-182-private-key-jwt
 import { addCredentialApprovedAudience } from "./migration-183-credential-approved-audience.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
+import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck-queued.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -4972,6 +4973,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 212,
     description: "index the date pass's pending documents by arrival again",
     up: createDatesPendingAgeIndex,
+  },
+  {
+    version: 213,
+    description: "remember when the re-verification sweep last queued each annotation",
+    up: addAnnotationRecheckQueuedAt,
   },
 ];
 
