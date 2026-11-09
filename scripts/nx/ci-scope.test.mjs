@@ -299,4 +299,10 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
       lint: ["scripts/nx/ci-scope.mjs"],
     });
   });
+
+  test("leaves symbolic links out, because Prettier refuses one named explicitly", () => {
+    expect(
+      staticTargets([".claude/skills/latency-watch", "CLAUDE.md", "docs/conventions.md"]),
+    ).toEqual({ format: ["docs/conventions.md"], lint: [] });
+  });
 });
