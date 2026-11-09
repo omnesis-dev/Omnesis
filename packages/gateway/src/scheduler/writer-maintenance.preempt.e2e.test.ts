@@ -58,14 +58,26 @@ const PENDING_CANDIDATES = 3_000;
 /** The longest a single call may hold the writer. */
 const HOLD_BUDGET_MS = 250;
 /**
- * The longest an unrelated write may wait end to end behind a call. It is
- * measured on the caller's side, so it also pays the round trips to the writer
- * thread and whatever the writer runs between ops; on a shared CI runner that
- * alone has pushed it a millisecond past the hold budget. The hold itself stays
- * held to `HOLD_BUDGET_MS`, and an unsliced call still waits far longer than
- * this.
+ * A ceiling on an unrelated write's end-to-end wait behind a call, for a write
+ * left waiting for seconds. The wait is measured on the caller's side, so it
+ * also pays the round trips to the writer thread, the checkpoints the writer
+ * runs between ops and any stall of a shared runner: 516 ms has been seen with
+ * the longest hold at 206 ms, so no budget near the hold stays green. What keeps
+ * the write from waiting behind a call is asserted without a clock: each hold
+ * stays within `HOLD_BUDGET_MS`, and the write finishes while a sliced call
+ * still has work left.
  */
-const WAIT_BUDGET_MS = 2 * HOLD_BUDGET_MS;
+const WAIT_BUDGET_MS = 10 * HOLD_BUDGET_MS;
+
+/** Whether `op` has yet to settle, read after awaiting something queued behind it. */
+function stillRunning(op: unknown): () => boolean {
+  let running = true;
+  const settled = () => {
+    running = false;
+  };
+  void Promise.resolve(op).then(settled, settled);
+  return () => running;
+}
 const CURSOR: SyncCursor = {
   type: "incremental",
   lastSyncTime: "2026-01-05T09:00:00.000Z",
@@ -220,7 +232,9 @@ describe("writer maintenance against a large encrypted corpus", () => {
     const backfilling = runWithPriority("background", () =>
       gate.backfillManyPeople(UNRESOLVED_DOCS),
     );
+    const backfillRunning = stillRunning(backfilling);
     const waited = await waitBehind("background");
+    expect(backfillRunning()).toBe(true);
     const result = await backfilling;
     report("people.backfillManyPeople", performance.now() - started);
     expect(result.processed).toBe(UNRESOLVED_DOCS);
@@ -264,7 +278,9 @@ describe("writer maintenance against a large encrypted corpus", () => {
 
     const started = performance.now();
     const analyzing = runWithPriority("background", () => gate.refreshPlannerStatistics());
+    const analyzeRunning = stillRunning(analyzing);
     const waited = await waitBehind("background");
+    expect(analyzeRunning()).toBe(true);
     const { analyzed } = await analyzing;
     report("db.refreshPlannerStatistics", performance.now() - started);
     expect(analyzed).toBeGreaterThan(50);

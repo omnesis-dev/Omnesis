@@ -50,14 +50,15 @@ const HEAVY_EDGES = 127;
 /** The longest a single apply call may hold the writer. */
 const HOLD_BUDGET_MS = 250;
 /**
- * The longest an unrelated write may wait end to end behind a call. It is
- * measured on the caller's side, so it also pays the round trips to the writer
- * thread and whatever the writer runs between ops; on a shared CI runner that
- * alone has pushed it a millisecond past the hold budget. The hold itself stays
- * held to `HOLD_BUDGET_MS`, and an unsliced call still waits far longer than
- * this.
+ * A ceiling on an unrelated write's end-to-end wait behind a call, for a write
+ * left waiting for seconds. The wait is measured on the caller's side, so it
+ * also pays the round trips to the writer thread, the checkpoints the writer
+ * runs between ops and any stall of a shared runner: 516 ms has been seen with
+ * the longest hold at 206 ms, so no budget near the hold stays green. What keeps
+ * the write from waiting behind a batch is that each hold stays within
+ * `HOLD_BUDGET_MS`.
  */
-const WAIT_BUDGET_MS = 2 * HOLD_BUDGET_MS;
+const WAIT_BUDGET_MS = 10 * HOLD_BUDGET_MS;
 const ALGO = "synth-algo-v1";
 const CURSOR: SyncCursor = {
   type: "incremental",
@@ -270,6 +271,7 @@ describe("nearDup.applyBatch on the writer against a drive-sized signed corpus",
     const waited = performance.now() - started;
     expect((await applying).inboxConsumed).toBe(BATCH_DOCS);
     expect(waited).toBeLessThan(WAIT_BUDGET_MS);
+    expect(maxApplyHoldMs()).toBeLessThan(HOLD_BUDGET_MS);
   }, 600_000);
 
   test("a background write at the batch's own priority is served promptly", async () => {
