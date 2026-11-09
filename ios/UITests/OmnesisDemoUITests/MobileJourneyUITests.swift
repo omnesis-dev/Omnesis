@@ -220,22 +220,31 @@ final class MobileJourneyUITests: XCTestCase {
     /// half the button's width clamps it to the centre when the frame is the gear.
     private func openSettings() {
         let settings = app.buttons["menu.settings"]
-        let arrived = NSPredicate(format: "exists == true AND enabled == true")
-        for _ in 0 ..< 3 {
-            tap(app.buttons["menu.toggle"], "the menu button")
-            let opened = XCTNSPredicateExpectation(predicate: arrived, object: settings)
-            if XCTWaiter.wait(for: [opened], timeout: 15) == .completed { break }
-        }
-        XCTAssertTrue(settings.isEnabled, "the menu did not open")
+        openMenu(until: settings)
         let frame = settings.frame
         settings.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: min(frame.width / 2, 34), dy: frame.height / 2))
             .tap()
     }
 
+    /// Taps the menu button until `row` is usable. A drawer row stays in the
+    /// tree, disabled, while the drawer is closed, so its existence says nothing,
+    /// and a tap on the menu button can go unanswered over a just-resumed
+    /// conversation.
+    private func openMenu(until row: XCUIElement) {
+        let arrived = NSPredicate(format: "exists == true AND enabled == true")
+        for _ in 0 ..< 3 {
+            tap(app.buttons["menu.toggle"], "the menu button")
+            let opened = XCTNSPredicateExpectation(predicate: arrived, object: row)
+            if XCTWaiter.wait(for: [opened], timeout: 15) == .completed { break }
+        }
+        XCTAssertTrue(row.isEnabled, "the menu did not open")
+    }
+
     private func search(for query: String) {
-        tap(app.buttons["menu.toggle"], "the menu button")
-        tap(app.buttons["menu.search"], "the Search menu row")
+        let row = app.buttons["menu.search"]
+        openMenu(until: row)
+        row.tap()
         let field = app.textFields["search.field"]
         tap(field, "the search field")
         field.typeText(query + "\n")
