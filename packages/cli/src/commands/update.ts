@@ -232,6 +232,7 @@ import {
   type BuildTool,
 } from "../update/build-tools.js";
 import { adoptSourceCheckout } from "../update/source-adoption.js";
+import { FINISH_ROLLBACK_SUBCOMMAND, finishSourceRollback } from "../update/finish-rollback.js";
 import { canWritePrefix, migrateSourceToPackage } from "../update/package-migration.js";
 import {
   FleetUpdateRefused,
@@ -3194,6 +3195,38 @@ export const adoptSourceCommand = defineCommand({
   },
 });
 
+/**
+ * Run by the source launcher, never typed: a daemon that meets an unfinished
+ * update restores the last completed build before it starts (see
+ * `../update/finish-rollback.ts`). The launcher hands over the host lock it
+ * holds, and an operator running it by hand takes the lock like any update.
+ */
+export const finishRollbackCommand = defineCommand({
+  meta: {
+    name: FINISH_ROLLBACK_SUBCOMMAND,
+    description: "Rebuild the last completed source build after an update that did not finish",
+  },
+  async run() {
+    const install = detectInstallMethod(process.argv[1] ?? "");
+    if (install.method !== "source") {
+      throw new CliError(
+        `${c.red}Only a source installation has a rollback to finish.${c.reset}`,
+        EXIT_USER_ERROR,
+      );
+    }
+    const configDir = resolveUpdateConfigDir();
+    await runWithUpdateLock(configDir, false, async (lock) => {
+      await finishSourceRollback(install.rootDir, {
+        run: (spec, mode) => spawnRunner(spec, mode),
+        applyState: updateApplyStateStore(configDir),
+        buildEnv: () => buildHeapEnv(),
+        setStep: (step) => lock?.setStep(step),
+        log: (message) => console.log(message),
+      });
+    });
+  },
+});
+
 export const migrateToPackageCommand = defineCommand({
   meta: {
     name: "migrate-to-package",
@@ -3691,6 +3724,7 @@ export const updateCommand = defineCommand({
   subCommands: {
     "adopt-source": adoptSourceCommand,
     "migrate-to-package": migrateToPackageCommand,
+    [FINISH_ROLLBACK_SUBCOMMAND]: finishRollbackCommand,
     [CONTINUATION_SUBCOMMAND]: continueAfterApplyCommand,
   },
   args: {
@@ -3771,6 +3805,7 @@ export const updateCommand = defineCommand({
     if (
       subcommand === "adopt-source" ||
       subcommand === "migrate-to-package" ||
+      subcommand === FINISH_ROLLBACK_SUBCOMMAND ||
       subcommand === CONTINUATION_SUBCOMMAND
     ) {
       return;

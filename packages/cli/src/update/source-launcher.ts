@@ -178,9 +178,32 @@ install_source_dependencies() {
   prepare_node_gyp_headers "$SOURCE_ROOT"
   ( cd "$SOURCE_ROOT" && with_npm_trust npm ci )
 }
+# A daemon its service manager starts cannot run 'omnesis update', and exiting
+# on every start leaves the machine down until someone does. When an update
+# left its record unfinished and nothing holds the update lock, such a daemon
+# finishes the rollback itself: the last completed commit, its dependencies and
+# its build, then the record, and it starts on the release it ran before. A
+# recovery that fails is tried again no sooner than 15 minutes later, so a
+# service that restarts every few seconds does not reinstall every few seconds.
+UPDATE_DAEMON_RECOVERY=0
+UPDATE_RECOVERY_MARKER="$RUNTIME_CONFIG_DIR/update-recovery-attempt"
+daemon_recovery() {
+  case "\${1:-} \${2:-}" in
+    "gateway serve"|"collector run") ;;
+    *) return 1 ;;
+  esac
+  if [ "$UPDATE_PHASE" != "applying" ] && [ "$UPDATE_PHASE" != "rolling-back" ]; then return 1; fi
+  if [ -n "$(find "$UPDATE_RECOVERY_MARKER" -mmin -15 2>/dev/null)" ]; then
+    printf '%s\\n' "Restoring the last completed release was attempted less than 15 minutes ago and did not finish. It is tried again when this service starts after that." >&2
+    return 1
+  fi
+  : > "$UPDATE_RECOVERY_MARKER" || return 1
+  UPDATE_DAEMON_RECOVERY=1
+  printf '%s\\n' "A source update did not finish. Restoring the last completed release before starting..." >&2
+}
 read_update_phase
 if update_unfinished; then
-  if [ "\${1:-}" != "update" ]; then
+  if [ "\${1:-}" != "update" ] && ! daemon_recovery "$@"; then
     printf '%s\\n' "A source update did not finish. Run 'omnesis update' before starting another command." >&2
     printf '%s\\n' "If its build was killed for lack of memory, first stop the collector and gateway (systemctl --user stop omnesis-collector omnesis-gateway on Linux, launchctl bootout on macOS)." >&2
     exit 1
@@ -216,6 +239,13 @@ fi
 # Import the loader in the daemon itself: the tsx CLI parent force-kills a
 # slow signal handler before the daemon's graceful shutdown can complete.
 SOURCE_LOADER_URL="$(node -e 'process.stdout.write(require("node:url").pathToFileURL(process.argv[1]).href)' "$SOURCE_ROOT/node_modules/tsx/dist/loader.mjs")" || exit 1
+if [ "$UPDATE_DAEMON_RECOVERY" = "1" ]; then
+  node --import "$SOURCE_LOADER_URL" "$SOURCE_ROOT/packages/cli/src/index.ts" update finish-rollback >&2 || {
+    printf '%s\\n' "Could not restore the last completed release. Run 'omnesis update' on this machine; this service tries again in 15 minutes." >&2
+    exit 1
+  }
+  rm -f "$UPDATE_RECOVERY_MARKER"
+fi
 if [ "$UPDATE_LOCK_HANDOFF" = "1" ]; then
   node --import "$SOURCE_LOADER_URL" "$SOURCE_ROOT/packages/cli/src/index.ts" "$@"
   UPDATE_STATUS=$?

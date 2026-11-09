@@ -56,7 +56,7 @@ function prepareSourceRecoveryLauncher(
 
 /** The installer functions render_source_wrapper calls for the trust preload. */
 function trustHelpers(installer: string): string {
-  return ["npm_trust_preload", "render_source_npm_trust"]
+  return ["npm_trust_preload", "render_source_npm_trust", "render_source_daemon_recovery"]
     .map((name) => {
       const start = installer.indexOf(`${name}() {`);
       expect(start).toBeGreaterThan(0);
