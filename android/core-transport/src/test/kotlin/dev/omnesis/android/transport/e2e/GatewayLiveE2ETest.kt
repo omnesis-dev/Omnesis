@@ -107,13 +107,20 @@ class GatewayLiveE2ETest {
     // from a loopback forwarder and the path reports are scripted; backoff is far longer than any
     // wait here, so a reconnect proves the wake signal rather than the timer.
 
-    /** A TCP forwarder that can refuse connections and sever the open ones. */
+    /**
+     * A TCP forwarder that can refuse connections and sever the open ones. While refusing it holds
+     * its port with a bound socket that is not listening: connections are refused, and nothing else
+     * on the host can take the ephemeral port before the forwarder comes back on it.
+     */
     private class LoopbackForwarder(private val targetHost: String, private val targetPort: Int) {
         private var server: ServerSocket? = null
+        private var heldPort: Socket? = null
         private val open = Collections.synchronizedList(mutableListOf<Socket>())
         val accepted = AtomicInteger()
 
         fun start(port: Int = 0): Int {
+            heldPort?.close()
+            heldPort = null
             val socket = ServerSocket()
             socket.reuseAddress = true
             socket.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port))
@@ -132,8 +139,21 @@ class GatewayLiveE2ETest {
             return socket.localPort
         }
 
+        /** Sever the open connections and refuse new ones until [start] is given this port again. */
+        fun refuse() {
+            val port = server?.localPort ?: return
+            stop()
+            heldPort = Socket().apply {
+                reuseAddress = true
+                bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port))
+            }
+        }
+
         fun stop() {
             server?.close()
+            server = null
+            heldPort?.close()
+            heldPort = null
             synchronized(open) {
                 open.forEach { runCatching { it.close() } }
                 open.clear()
@@ -240,7 +260,7 @@ class GatewayLiveE2ETest {
             live.awaitState("the first connection") { it.isConnected() }
 
             live.paths.emit(noNetwork)
-            forwarder.stop()
+            forwarder.refuse()
             live.awaitState("the drop to be reported as temporary") {
                 it is DeviceSocket.ConnectionState.Reconnecting &&
                     it.network == DeviceSocket.NetworkAvailability.UNAVAILABLE && it.lastError != null
@@ -260,7 +280,7 @@ class GatewayLiveE2ETest {
     fun device_socket_reports_a_refused_connection_as_temporary_with_its_diagnostic() = runBlocking<Unit> {
         val forwarder = forwarder()
         val port = forwarder.start()
-        forwarder.stop()
+        forwarder.refuse()
         val live = Live("https://127.0.0.1:$port", pairDeviceToken())
         try {
             live.start(wifi)
