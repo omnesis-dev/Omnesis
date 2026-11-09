@@ -20,7 +20,7 @@
     "@omnesis/types": "*",
     "citty": "^0.2.2",
     "qrcode-terminal": "^0.12.0",
-    "semver": "^7.8.5",
+    "semver": "^7.8.6",
     "yaml": "^2.9.1",
     "zod": "^4.6.5"
   },
