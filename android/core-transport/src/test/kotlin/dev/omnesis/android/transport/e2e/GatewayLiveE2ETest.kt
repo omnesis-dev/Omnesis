@@ -47,6 +47,7 @@ import org.junit.Before
 import org.junit.Test
 import java.io.File
 import java.io.OutputStream
+import java.net.BindException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -114,6 +115,7 @@ class GatewayLiveE2ETest {
      */
     private class LoopbackForwarder(private val targetHost: String, private val targetPort: Int) {
         private var server: ServerSocket? = null
+        private var acceptor: Thread? = null
         private var heldPort: Socket? = null
         private val open = Collections.synchronizedList(mutableListOf<Socket>())
         val accepted = AtomicInteger()
@@ -125,7 +127,7 @@ class GatewayLiveE2ETest {
             socket.reuseAddress = true
             socket.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port))
             server = socket
-            thread(isDaemon = true) {
+            acceptor = thread(isDaemon = true) {
                 while (!socket.isClosed) {
                     val inbound = runCatching { socket.accept() }.getOrNull() ?: break
                     accepted.incrementAndGet()
@@ -143,15 +145,35 @@ class GatewayLiveE2ETest {
         fun refuse() {
             val port = server?.localPort ?: return
             stop()
-            heldPort = Socket().apply {
-                reuseAddress = true
-                bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port))
+            heldPort = bindHeld(port)
+        }
+
+        /**
+         * Closing a listening socket while a thread is blocked in `accept()` returns before the
+         * kernel has let go of the port, and a bind in that window fails with "Address already in
+         * use". [stop] waits for the accept thread; the retry covers what is left of the window.
+         */
+        private fun bindHeld(port: Int): Socket {
+            val deadline = System.nanoTime() + 5_000_000_000
+            while (true) {
+                val socket = Socket()
+                try {
+                    socket.reuseAddress = true
+                    socket.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), port))
+                    return socket
+                } catch (busy: BindException) {
+                    socket.close()
+                    if (System.nanoTime() >= deadline) throw busy
+                    Thread.sleep(20)
+                }
             }
         }
 
         fun stop() {
             server?.close()
             server = null
+            acceptor?.join(5_000)
+            acceptor = null
             heldPort?.close()
             heldPort = null
             synchronized(open) {
