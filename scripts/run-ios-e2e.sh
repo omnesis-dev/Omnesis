@@ -124,7 +124,7 @@ echo "→ Running OmnesisTests/GatewayLiveE2ETests against the gateway…"
 # host-readable path. xcodebuild doesn't propagate env vars into the
 # simulator-side test runner, but the simulator inherits the macOS user's
 # filesystem access and CAN read `/tmp/*` paths. The test class
-# (GatewayLiveE2ETests.setUpWithError) reads this file and throws
+# (GatewayLiveE2ETests.setUp) reads this file and throws
 # XCTSkip if it's missing — so running xcodebuild test directly without
 # this wrapper script skips the suite cleanly.
 CONFIG_FILE=/tmp/omnesis-ios-e2e-config.json

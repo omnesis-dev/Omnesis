@@ -5582,6 +5582,11 @@ DOCKER_COMPOSE_MIN="2.24.0"
 DOCKER_PULL_ATTEMPTS="${OMNESIS_DOCKER_PULL_ATTEMPTS:-3}"
 DOCKER_PULL_RETRY_SECONDS="${OMNESIS_DOCKER_PULL_RETRY_SECONDS:-5}"
 
+# The same for one read of the registry while choosing the release (5s, 10s,
+# then 15s by default).
+DOCKER_REGISTRY_ATTEMPTS="${OMNESIS_DOCKER_REGISTRY_ATTEMPTS:-4}"
+DOCKER_REGISTRY_RETRY_SECONDS="${OMNESIS_DOCKER_REGISTRY_RETRY_SECONDS:-5}"
+
 # Docker Desktop installed for one user, and OrbStack, leave the CLI off the
 # default PATH and add its directory from ~/.zprofile, which a terminal opened
 # before the install has not read; and a shell that is not a login shell (ssh
@@ -5696,6 +5701,12 @@ docker_validate_values() {
   esac
   case "$DOCKER_PULL_RETRY_SECONDS" in
     ''|*[!0-9]*) fail "OMNESIS_DOCKER_PULL_RETRY_SECONDS must be a whole number of seconds; this run has '$DOCKER_PULL_RETRY_SECONDS'." ;;
+  esac
+  case "$DOCKER_REGISTRY_ATTEMPTS" in
+    ''|*[!0-9]*|0*) fail "OMNESIS_DOCKER_REGISTRY_ATTEMPTS must be a whole number of at least 1; this run has '$DOCKER_REGISTRY_ATTEMPTS'." ;;
+  esac
+  case "$DOCKER_REGISTRY_RETRY_SECONDS" in
+    ''|*[!0-9]*) fail "OMNESIS_DOCKER_REGISTRY_RETRY_SECONDS must be a whole number of seconds; this run has '$DOCKER_REGISTRY_RETRY_SECONDS'." ;;
   esac
   case "$CONFIG_DIR" in
     /*) ;;
@@ -5848,7 +5859,38 @@ $REGISTRY_AUTH_RETRY"
 }
 
 docker_registry_failure() {
-  fail "Could not resolve the newest release from $IMAGE_REPO/$REGISTRY_IMAGE. Check the registry or network connection and confirm it lists a stable X.Y.Z tag, or skip discovery with --version X.Y.Z."
+  REGISTRY_FAILURE_REASON=""
+  [ -z "${REGISTRY_FAILURE_DETAIL:-}" ] || REGISTRY_FAILURE_REASON=" (last error: $REGISTRY_FAILURE_DETAIL)"
+  fail "Could not resolve the newest release from $IMAGE_REPO/$REGISTRY_IMAGE$REGISTRY_FAILURE_REASON. Check the registry or network connection and confirm it lists a stable X.Y.Z tag, or skip discovery with --version X.Y.Z."
+}
+
+# One read of the registry, with curl's arguments in "$@". No answer, or an
+# answer that only says the registry is busy or failing, is tried again: a single
+# network hiccup should not end an install. Any other answer is the caller's to
+# judge, and a size limit or a refused certificate would fail the same way next
+# time, so neither waits. The status lands in REGISTRY_CURL_STATUS.
+docker_registry_curl() {
+  REGISTRY_ATTEMPT=1
+  while :; do
+    REGISTRY_CURL_EXIT=0
+    REGISTRY_CURL_STATUS="$(curl -sS --max-time 10 "$@" -w '%{http_code}' 2>"$REGISTRY_TMP_DIR/curl-error")" || REGISTRY_CURL_EXIT=$?
+    if [ "$REGISTRY_CURL_EXIT" = 0 ]; then
+      case "$REGISTRY_CURL_STATUS" in
+        200) REGISTRY_FAILURE_DETAIL=""; return 0 ;;
+        408|425|429|5[0-9][0-9]) REGISTRY_FAILURE_DETAIL="HTTP $REGISTRY_CURL_STATUS" ;;
+        *) REGISTRY_FAILURE_DETAIL="HTTP $REGISTRY_CURL_STATUS"; return 0 ;;
+      esac
+    else
+      REGISTRY_FAILURE_DETAIL="$(tr -d '\r' < "$REGISTRY_TMP_DIR/curl-error" | tail -n 1)"
+      [ -n "$REGISTRY_FAILURE_DETAIL" ] || REGISTRY_FAILURE_DETAIL="curl exit code $REGISTRY_CURL_EXIT"
+      case "$REGISTRY_CURL_EXIT" in 60|63) docker_registry_failure ;; esac
+    fi
+    [ "$REGISTRY_ATTEMPT" -lt "$DOCKER_REGISTRY_ATTEMPTS" ] || docker_registry_failure
+    REGISTRY_RETRY_WAIT=$((REGISTRY_ATTEMPT * DOCKER_REGISTRY_RETRY_SECONDS))
+    warn "Reading the registry failed ($REGISTRY_FAILURE_DETAIL; attempt $REGISTRY_ATTEMPT of $DOCKER_REGISTRY_ATTEMPTS); retrying in ${REGISTRY_RETRY_WAIT}s."
+    sleep "$REGISTRY_RETRY_WAIT"
+    REGISTRY_ATTEMPT=$((REGISTRY_ATTEMPT + 1))
+  done
 }
 
 docker_registry_request() {
@@ -5857,10 +5899,11 @@ docker_registry_request() {
   : > "$REGISTRY_TMP_DIR/headers"
   : > "$REGISTRY_TMP_DIR/body"
   if [ -n "$REGISTRY_TOKEN" ]; then
-    if ! REGISTRY_STATUS="$(curl -sS --max-time 10 --max-filesize 1048576 --config "$REGISTRY_TMP_DIR/curl-auth" -D "$REGISTRY_TMP_DIR/headers" -o "$REGISTRY_TMP_DIR/body" -w '%{http_code}' "$REGISTRY_URL" 2>/dev/null)"; then docker_registry_failure; fi
-  elif ! REGISTRY_STATUS="$(curl -sS --max-time 10 --max-filesize 1048576 -D "$REGISTRY_TMP_DIR/headers" -o "$REGISTRY_TMP_DIR/body" -w '%{http_code}' "$REGISTRY_URL" 2>/dev/null)"; then
-    docker_registry_failure
+    docker_registry_curl --max-filesize 1048576 --config "$REGISTRY_TMP_DIR/curl-auth" -D "$REGISTRY_TMP_DIR/headers" -o "$REGISTRY_TMP_DIR/body" "$REGISTRY_URL"
+  else
+    docker_registry_curl --max-filesize 1048576 -D "$REGISTRY_TMP_DIR/headers" -o "$REGISTRY_TMP_DIR/body" "$REGISTRY_URL"
   fi
+  REGISTRY_STATUS="$REGISTRY_CURL_STATUS"
 }
 
 # Extract one quoted parameter from the leading Bearer challenge. Commas in a
@@ -5922,11 +5965,11 @@ docker_registry_token() {
   esac
   : > "$REGISTRY_TMP_DIR/token"
   if [ -n "$TOKEN_SERVICE" ]; then
-    if ! TOKEN_STATUS="$(curl -sS --max-time 10 --max-filesize 65536 --get --data-urlencode "service=$TOKEN_SERVICE" --data-urlencode "scope=repository:$REGISTRY_REPOSITORY:pull" -o "$REGISTRY_TMP_DIR/token" -w '%{http_code}' "$TOKEN_REALM" 2>/dev/null)"; then docker_registry_failure; fi
+    docker_registry_curl --max-filesize 65536 --get --data-urlencode "service=$TOKEN_SERVICE" --data-urlencode "scope=repository:$REGISTRY_REPOSITORY:pull" -o "$REGISTRY_TMP_DIR/token" "$TOKEN_REALM"
   else
-    if ! TOKEN_STATUS="$(curl -sS --max-time 10 --max-filesize 65536 --get --data-urlencode "scope=repository:$REGISTRY_REPOSITORY:pull" -o "$REGISTRY_TMP_DIR/token" -w '%{http_code}' "$TOKEN_REALM" 2>/dev/null)"; then docker_registry_failure; fi
+    docker_registry_curl --max-filesize 65536 --get --data-urlencode "scope=repository:$REGISTRY_REPOSITORY:pull" -o "$REGISTRY_TMP_DIR/token" "$TOKEN_REALM"
   fi
-  case "$TOKEN_STATUS" in 401|403) docker_registry_auth_failure ;; 200) ;; *) docker_registry_failure ;; esac
+  case "$REGISTRY_CURL_STATUS" in 401|403) docker_registry_auth_failure ;; 200) ;; *) docker_registry_failure ;; esac
   REGISTRY_TOKEN="$(tr -d '\r\n' < "$REGISTRY_TMP_DIR/token" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
   [ -n "$REGISTRY_TOKEN" ] || REGISTRY_TOKEN="$(tr -d '\r\n' < "$REGISTRY_TMP_DIR/token" | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
   case "$REGISTRY_TOKEN" in ''|*[!A-Za-z0-9._~+/=-]*) docker_registry_failure ;; esac

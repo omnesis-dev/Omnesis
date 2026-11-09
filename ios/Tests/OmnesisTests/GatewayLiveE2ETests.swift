@@ -30,7 +30,15 @@ final class GatewayLiveE2ETests: XCTestCase {
     private var apiKey: String!
     private var session: URLSession!
 
-    override func setUpWithError() throws {
+    /// How long one reachability attempt waits. Long enough for a first
+    /// connection on a loaded runner, which has taken over 11 s.
+    private static let transportAttemptSeconds: TimeInterval = 15
+    /// How long the simulator gets to start answering before a test fails. The
+    /// longest stall seen lasted 103 s from app launch.
+    private static let transportBudgetSeconds: TimeInterval = 240
+
+    override func setUp() async throws {
+        try await super.setUp()
         let path = "/tmp/omnesis-ios-e2e-config.json"
         guard let data = FileManager.default.contents(atPath: path) else {
             throw XCTSkip(
@@ -63,6 +71,42 @@ final class GatewayLiveE2ETests: XCTestCase {
             delegate: LiveSessionDelegate(),
             delegateQueue: nil
         )
+        try await waitForTransport()
+    }
+
+    /// Waits until this process can get an answer from the gateway, so each test
+    /// judges the gateway rather than the simulator it runs in. On a loaded runner
+    /// the simulator can hold every request for over a minute before opening a
+    /// socket, past a single request's 60 s timeout, and then recover completely.
+    ///
+    /// Only a timeout is tried again. Any answer, whatever its status, and any other
+    /// failure end the wait, so the test's own request still reports them.
+    private func waitForTransport() async throws {
+        let started = Date()
+        var probe = URLRequest(url: baseURL.appendingPathComponent("health"))
+        probe.timeoutInterval = Self.transportAttemptSeconds
+        probing: while true {
+            do {
+                _ = try await session.data(for: probe)
+                break probing
+            } catch let error as URLError where error.code == .timedOut {
+                let waited = Date().timeIntervalSince(started)
+                guard waited < Self.transportBudgetSeconds else {
+                    throw URLError(.timedOut, userInfo: [
+                        NSLocalizedDescriptionKey: String(
+                            format: "No answer from the live gateway after %.0f s of /health probes.",
+                            waited
+                        ),
+                    ])
+                }
+            } catch {
+                break probing
+            }
+        }
+        let waited = Date().timeIntervalSince(started)
+        if waited >= 1 {
+            NSLog("[live-e2e] transport ready after %.1fs", waited)
+        }
     }
 
     override func tearDown() {
@@ -237,8 +281,8 @@ extension GatewayLiveE2ETests {
     /// signal rather than the timer.
     private static var longBackoff: DeviceSocketReconnectPolicy.Limits {
         var limits = DeviceSocketReconnectPolicy.Limits()
-        limits.baseDelay = .seconds(120)
-        limits.maxDelay = .seconds(120)
+        limits.baseDelay = .seconds(600)
+        limits.maxDelay = .seconds(600)
         limits.probeTimeout = .seconds(1)
         return limits
     }
@@ -301,7 +345,8 @@ extension GatewayLiveE2ETests {
 
     private func waitUntil(
         _ what: String,
-        timeout: Duration = .seconds(20),
+        // A loaded simulator can hold requests for over a minute and then recover.
+        timeout: Duration = .seconds(240),
         _ condition: () async -> Bool
     ) async throws {
         let deadline = ContinuousClock.now + timeout
@@ -339,7 +384,7 @@ extension GatewayLiveE2ETests {
         let restoredAt = ContinuousClock.now
         paths.send(Self.wifi)
         try await waitUntil("the reconnection") { await self.isConnected(socket) }
-        XCTAssertLessThan(restoredAt.duration(to: .now), .seconds(60), "the 120s timer must not have been needed")
+        XCTAssertLessThan(restoredAt.duration(to: .now), .seconds(300), "the 600s timer must not have been needed")
         XCTAssertEqual(forwarder.acceptedConnections, 2)
         await socket.stop()
     }
