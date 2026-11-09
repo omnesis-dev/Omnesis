@@ -7,8 +7,14 @@
  * sending it once a model refuses it.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import { AnthropicTemperature, NO_THINKING, responseText } from "./anthropic-messages.js";
+import {
+  AnthropicTemperature,
+  NO_THINKING,
+  responseText,
+  samplingClient,
+  withTemperature,
+} from "./anthropic-messages.js";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { CompleteCapability } from "@omnesis/core";
 
 export class AnthropicCompleter implements CompleteCapability {
@@ -19,7 +25,7 @@ export class AnthropicCompleter implements CompleteCapability {
 
   constructor(modelId: string, apiKey: string) {
     this.modelId = modelId;
-    this.client = new Anthropic({ apiKey });
+    this.client = samplingClient({ apiKey });
   }
 
   async complete(
@@ -41,9 +47,7 @@ export class AnthropicCompleter implements CompleteCapability {
       messages: [{ role: "user" as const, content: prompt }],
     };
     const response = await this.temperature.send(opts?.temperature ?? 0.3, (temperature) =>
-      this.client.messages.create(
-        temperature === undefined ? request : { ...request, temperature },
-      ),
+      this.client.messages.create(withTemperature(request, temperature)),
     );
 
     return responseText(response);

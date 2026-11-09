@@ -30,9 +30,14 @@ import {
   type ResolvedAssignment,
   type CompleteCapability,
 } from "@omnesis/core";
-import Anthropic from "@anthropic-ai/sdk";
 import { resolveAnthropicApiKey } from "../model-credentials.js";
-import { AnthropicTemperature, NO_THINKING, responseText } from "./anthropic-messages.js";
+import {
+  AnthropicTemperature,
+  NO_THINKING,
+  responseText,
+  samplingClient,
+  withTemperature,
+} from "./anthropic-messages.js";
 import { prepareAnswerWitnessRequest, parseAnswerWitnessVerdict } from "./answer-entailment.js";
 import {
   annotationEntailmentPrompt,
@@ -367,7 +372,7 @@ function withoutUsage(provider: CompleteCapability): EntailmentCompleter {
  * multi-minute default.
  */
 function anthropicEntailmentCompleter(modelId: string, apiKey: string): EntailmentCompleter {
-  const client = new Anthropic({ apiKey, timeout: 45_000, maxRetries: 1 });
+  const client = samplingClient({ apiKey, timeout: 45_000, maxRetries: 1 });
   const sampling = new AnthropicTemperature();
   return {
     modelId,
@@ -380,7 +385,7 @@ function anthropicEntailmentCompleter(modelId: string, apiKey: string): Entailme
       };
       const response = await sampling.send(opts?.temperature ?? 0, (temperature) =>
         client.messages.create(
-          temperature === undefined ? request : { ...request, temperature },
+          withTemperature(request, temperature),
           opts?.signal ? { signal: opts.signal } : undefined,
         ),
       );
