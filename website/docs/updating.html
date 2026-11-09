@@ -355,6 +355,12 @@
           <code>omnesis update</code>. Package installations need only Node 24 or newer.
         </p>
         <p>
+          A source update also refuses, before it changes anything, when <code>npm</code> does not
+          run. An update that a collector or gateway service runs uses that service's
+          <code>PATH</code>, so <code>npm</code> must be there too, for example beside the
+          <code>node</code> the service runs.
+        </p>
+        <p>
           <code>omnesis update</code> moves a machine to the newest stable release and restarts what
           runs there. It works the same for a source or Docker install, and Omnesis never starts it
           on its own. Run it on the gateway machine first, then on each other machine, or add

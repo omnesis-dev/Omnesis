@@ -14,6 +14,7 @@ import {
   UpdateLockBusyError,
 } from "@omnesis/core";
 import { assertSourceNodeVersion } from "../update/source-node.js";
+import { npmRefusal } from "../update/build-tools.js";
 import {
   prepareSourceRecoveryLauncher,
   sourceRecoveryLauncher,
@@ -3327,6 +3328,54 @@ describe("rolling back a failed update", () => {
       await source(
         makeDeps(runner, { missingBuildTools: () => ({ missing: [], installCommand: null }) }),
       );
+      expect(executed(runner)).toContain("npm ci");
+    });
+  });
+
+  describe("a machine where npm does not run", () => {
+    // A launchd or systemd PATH can hold `node` with no `npm` beside it. Once
+    // the checkout moves that is `npm ci` exiting 127, a rollback whose own
+    // `npm ci` exits 127 too, and an unfinished update that refuses every
+    // later command, so npm is demanded before the checkout moves.
+    const noNpm = () => npmRefusal({ platform: "darwin", runs: (command) => command !== "npm" });
+
+    test("the update refuses, says npm does not run, and executes nothing", async () => {
+      const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
+      const failure = await source(makeDeps(runner, { npmRefusal: noNpm })).then(
+        unexpectedSuccess,
+        (err: unknown) => err as CliError,
+      );
+      expect(failure.exitCode).toBe(EXIT_USER_ERROR);
+      expect(failure.message).toContain("`npm` does not run on this PATH");
+      expect(failure.message).toContain("still on its current release");
+      expect(executed(runner)).toEqual([]);
+    });
+
+    test("npm is named ahead of missing build tools, whose install command would not fix it", async () => {
+      const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
+      const failure = await source(
+        makeDeps(runner, {
+          npmRefusal: noNpm,
+          missingBuildTools: () => ({ missing: ["make"], installCommand: null }),
+        }),
+      ).then(unexpectedSuccess, (err: unknown) => err as Error);
+      expect(failure.message).toContain("`npm` does not run on this PATH");
+      expect(failure.message).not.toContain("missing make");
+    });
+
+    test("a dry run says so without failing, so the operator can see it coming", async () => {
+      const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
+      await updateSourceCheckout(
+        { rootDir, edge: false, dryRun: true },
+        makeDeps(runner, { npmRefusal: noNpm }),
+      );
+      expect(logged.join("\n")).toContain("`npm` does not run on this PATH");
+      expect(executed(runner)).toEqual([]);
+    });
+
+    test("a machine where npm runs is not stopped", async () => {
+      const runner = fakeRunner([...preflight, clean, clean, clean]);
+      await source(makeDeps(runner, { npmRefusal: () => null }));
       expect(executed(runner)).toContain("npm ci");
     });
   });
