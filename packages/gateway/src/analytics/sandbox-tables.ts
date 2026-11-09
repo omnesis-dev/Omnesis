@@ -205,6 +205,8 @@ export function authorizeSandboxTables(input: {
   refs: SandboxTableRefs;
   catalog: readonly SandboxCatalogEntry[];
   permittedSourceIds: ReadonlySet<string>;
+  /** Tables permitted by name whoever owns them; see `sharedTablesOfType`. */
+  permittedTables?: ReadonlySet<string>;
   /** Lowercase names of the store's non-internal macros. */
   macroNames: readonly string[];
 }): void {
@@ -220,7 +222,11 @@ export function authorizeSandboxTables(input: {
     );
     if (
       candidates.length === 0 ||
-      candidates.some((entry) => !input.permittedSourceIds.has(entry.sourceId))
+      candidates.some(
+        (entry) =>
+          !input.permittedSourceIds.has(entry.sourceId) &&
+          !input.permittedTables?.has(entry.tableName),
+      )
     ) {
       deniedTables.push(qualifyRef(ref));
     }
