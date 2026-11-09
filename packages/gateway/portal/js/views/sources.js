@@ -76,6 +76,14 @@ import { ImportHistoryModal } from "../components/import-history-modal.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { KindIcon } from "../lib/device-kind-icon.js";
 import { SourceNoticeIcons, noticesForDevice } from "../components/source-notices.js";
+import {
+  accountRowLabel,
+  groupExpanded,
+  groupSourceRows,
+  groupStateSummary,
+  sourceRowState,
+  sourceStateLabel,
+} from "../lib/source-grouping.js";
 
 const REFRESH_MS = 2000;
 // How long the "Sync sent to …" note stays on a row after a manual sync.
@@ -519,18 +527,7 @@ function WholeSourceIcon() {
 }
 
 function StatePill({ state }) {
-  // Render label: needs-auth + rate-limited surface with more readable text
-  // and distinct CSS classes (warn-yellow / info-blue). Other states are
-  // shown verbatim — they already match what humans expect.
-  const label =
-    state === "needs-auth"
-      ? "needs auth"
-      : state === "rate-limited"
-        ? "rate limited"
-        : state === "auth-expiring"
-          ? "expiring"
-          : state;
-  return html`<span class=${`sources-state state-${state}`}>${label}</span>`;
+  return html`<span class=${`sources-state state-${state}`}>${sourceStateLabel(state)}</span>`;
 }
 
 
@@ -596,6 +593,9 @@ export function SourcesView({ demo = false } = {}) {
   // Synced source ids the icon meta cache already reflects; null until the
   // first poll, whose rows the startup load covers.
   const metaCoveredSynced = useRef(null);
+  // sourceType → expanded, for the groups the operator has opened or closed
+  // themselves; a group not in here follows groupExpanded()'s default.
+  const [groupToggles, setGroupToggles] = useState({});
 
   async function refresh() {
     if (refreshing.current) return;
@@ -928,8 +928,34 @@ export function SourcesView({ demo = false } = {}) {
     setImportState({ sourceId: s.id, spec });
   }
 
+  function renderSourceRow(s, { grouped = false, label = sourceLabel(s.id) } = {}) {
+    const importSpec = importSpecByType[s.type];
+    return html`
+      <${SourceRow}
+        key=${s.id}
+        source=${s}
+        label=${label}
+        grouped=${grouped}
+        busy=${busy[s.id]}
+        importSpec=${importSpec}
+        deviceById=${deviceById}
+        joinable=${joinCandidates(s, devices).length > 0}
+        syncNote=${syncNotes[s.id]?.text}
+        onSync=${() => handleSync(s)}
+        onResync=${() => setResyncDialog(s.id)}
+        onDebug=${() => handleDebug(s)}
+        onRemove=${() => handleRemove(s)}
+        onPauseToggle=${() => handlePauseToggle(s)}
+        onJoinMember=${() => handleJoinMember(s)}
+        onDetachMember=${() => handleDetachMember(s)}
+        onImportHistory=${importSpec ? () => handleImportHistory(s, importSpec) : null}
+        onRecent=${() => navigate(`/portal/sources/${encodeURIComponent(s.id)}/recent`)}
+      />
+    `;
+  }
+
   const statesCount = sources.reduce((acc, s) => {
-    const state = s.removing ? "removing" : (s.syncStatus?.state ?? "idle");
+    const state = sourceRowState(s);
     acc[state] = (acc[state] || 0) + 1;
     return acc;
   }, {});
@@ -1019,27 +1045,24 @@ export function SourcesView({ demo = false } = {}) {
                   </tr>
                 </thead>
                 <tbody>
-                  ${sources.map((s) => {
-                      const importSpec = importSpecByType[s.type];
+                  ${groupSourceRows(sources).map((entry) => {
+                      if (entry.kind === "single") return renderSourceRow(entry.row);
+                      const expanded = groupExpanded(entry, groupToggles);
+                      const familyLabel = sourceLabel(entry.type);
                       return html`
-                        <${SourceRow}
-                          key=${s.id}
-                          source=${s}
-                          busy=${busy[s.id]}
-                          importSpec=${importSpec}
-                          deviceById=${deviceById}
-                          joinable=${joinCandidates(s, devices).length > 0}
-                          syncNote=${syncNotes[s.id]?.text}
-                          onSync=${() => handleSync(s)}
-                          onResync=${() => setResyncDialog(s.id)}
-                          onDebug=${() => handleDebug(s)}
-                          onRemove=${() => handleRemove(s)}
-                          onPauseToggle=${() => handlePauseToggle(s)}
-                          onJoinMember=${() => handleJoinMember(s)}
-                          onDetachMember=${() => handleDetachMember(s)}
-                          onImportHistory=${importSpec ? () => handleImportHistory(s, importSpec) : null}
-                          onRecent=${() => navigate(`/portal/sources/${encodeURIComponent(s.id)}/recent`)}
+                        <${SourceGroupRow}
+                          key=${`group:${entry.type}`}
+                          group=${entry}
+                          familyLabel=${familyLabel}
+                          expanded=${expanded}
+                          onToggle=${() => setGroupToggles((t) => ({ ...t, [entry.type]: !expanded }))}
                         />
+                        ${expanded && entry.rows.map((s) =>
+                          renderSourceRow(s, {
+                            grouped: true,
+                            label: accountRowLabel(s.id, sourceLabel(s.id), familyLabel),
+                          }),
+                        )}
                       `;
                     })}
                 </tbody>
@@ -1162,8 +1185,53 @@ export function SourcesView({ demo = false } = {}) {
   `;
 }
 
+/**
+ * The header of a source type with several accounts: the family's icon and
+ * name once, how many accounts it holds, their states and their combined
+ * count. Clicking it shows or hides the account rows beneath it.
+ */
+function SourceGroupRow({ group, familyLabel, expanded, onToggle }) {
+  const worst = group.states[0]?.state ?? "idle";
+  return html`
+    <tr class=${`source-group-row state-${worst}${group.attention ? " needs-attention" : ""}`}>
+      <td class="source-name-cell">
+        <button
+          type="button"
+          class="source-group-toggle"
+          aria-expanded=${expanded ? "true" : "false"}
+          title=${expanded ? `Hide ${familyLabel} accounts` : `Show ${familyLabel} accounts`}
+          onClick=${onToggle}
+        >
+          <svg aria-hidden="true" class="source-group-chevron" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>
+          <span class="source-icon-wrap">${sourceIcon(group.type)}</span>
+          <span class="source-group-name">${familyLabel}</span>
+          <span class="source-group-count">${group.rows.length} accounts</span>
+        </button>
+      </td>
+      <td class="source-state-cell">
+        <div class="source-group-states" title=${groupStateSummary(group.states)}>
+          ${group.states.map(
+            ({ state, count }) => html`<span key=${state} class=${`sources-state state-${state}`}>${count} ${sourceStateLabel(state)}</span>`,
+          )}
+        </div>
+      </td>
+      <td class="source-num">
+        ${fmtNumber(group.total)}
+        <span class="source-unit">${pluralizeUnit(group.unitName ?? "doc", group.total)}</span>
+      </td>
+      <td class="source-progress-cell"></td>
+      <td class="source-time source-lastsync-cell" data-label="Synced">${fmtTimeIso(group.lastSyncAt)}</td>
+      <td class="source-activity-cell"></td>
+      <td class="source-device-cell"></td>
+      <td class="sources-actions-v2"></td>
+    </tr>
+  `;
+}
+
 function SourceRow({
   source: s,
+  label = sourceLabel(s.id),
+  grouped = false,
   busy,
   importSpec,
   deviceById,
@@ -1184,7 +1252,7 @@ function SourceRow({
   // so we render it as-is.
   // A removing source has no sync state to report — it has already stopped.
   // `removing` describes the purge that is still draining behind it.
-  const state = s.removing ? "removing" : (s.syncStatus?.state ?? "idle");
+  const state = sourceRowState(s);
   const progress = s.syncStatus?.progress;
   const lastSyncAt = s.syncStatus?.lastSyncAt;
   const canManualSync = sourceCanManualSync(s);
@@ -1193,19 +1261,19 @@ function SourceRow({
   const memberLines = multiDevice ? buildMemberLines(s, deviceById, s.syncStatus) : [];
 
   return html`
-    <tr class=${`source-row-v2 state-${state}`}>
-      <td>
+    <tr class=${`source-row-v2 state-${state}${grouped ? " source-row-grouped" : ""}`}>
+      <td class="source-name-cell">
         <div class="source-cell-name-v2">
           <span class="source-icon-wrap">${sourceIcon(s.id)}</span>
           <div class="source-cell-name-text">
-            <span class="source-display-name">${sourceLabel(s.id)}</span>
-            <span class="source-id-inline"><code>${s.id}</code></span>
+            <span class="source-display-name" title=${s.id}>${label}</span>
+            ${!grouped && html`<span class="source-id-inline"><code>${s.id}</code></span>`}
             ${s.discoveredOnly && html`<span class="source-discovered-tag" title="Discovered via sync.status only — not in /admin/sources">discovered</span>`}
             ${!s.enabled && html`<span class="source-paused-tag">paused</span>`}
           </div>
         </div>
       </td>
-      <td>
+      <td class="source-state-cell">
         <${StatePill} state=${state} />
         ${s.removing && html`
           <div class="source-removing-line" title="Removal is durable — the source has already stopped syncing. Deleting what it ingested runs in the background and is queued behind indexing, so on a large source it can take several minutes.">
@@ -1239,10 +1307,10 @@ function SourceRow({
         ${fmtNumber(s.displayCount ?? s.documentCount)}
         <span class="source-unit">${pluralizeUnit(s.unitName ?? s.syncStatus?.unitName ?? "doc", s.displayCount ?? s.documentCount)}</span>
       </td>
-      <td class="source-progress-cell"><${ProgressCell} source=${s} /></td>
-      <td class="source-time">${fmtTimeIso(lastSyncAt)}</td>
+      <td class="source-progress-cell" data-label="Indexed"><${ProgressCell} source=${s} /></td>
+      <td class="source-time source-lastsync-cell" data-label="Synced">${fmtTimeIso(lastSyncAt)}</td>
       <td class="source-activity-cell"><${ActivityCell} activity=${s.latestActivity} /></td>
-      <td>
+      <td class="source-device-cell">
         ${s.removing
           ? html`<span class="source-device-none">—</span>`
           : memberLines.length > 1
