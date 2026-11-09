@@ -183,7 +183,12 @@ export {
   mailHeaderRelevancePenalty,
 } from "./mail-markup.js";
 
-export { atomicWriteFile, atomicWriteFileSync } from "./atomic-write.js";
+export {
+  atomicWriteFile,
+  atomicWriteFileSync,
+  fsyncDirSync,
+  fsyncFileSync,
+} from "./atomic-write.js";
 export {
   newerSettingsPath,
   restoreNewerSettings,
@@ -582,6 +587,28 @@ export {
   serializeCredentialsSpec,
   validateCredentialFields,
 } from "./credentials.js";
+
+export {
+  DEFAULT_BROKER_PURPOSE,
+  BrokerCredentialError,
+  BrokeredCredentials,
+  brokerBearerToken,
+  brokerBindingPath,
+  brokerConnectionFor,
+  credentialBrokerConfigPath,
+  fetchBrokerCredential,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
+  readBrokerBinding,
+  readCredentialBrokerConfig,
+  writeBrokerBinding,
+  writeCredentialBrokerConfig,
+  type BrokerBinding,
+  type BrokerConnectionRef,
+  type BrokerCredential,
+  type BrokerCredentialResult,
+  type CredentialBrokerConfig,
+} from "./credential-broker.js";
 
 export { AUTH_ERROR_CODES, isAuthErrorCode, type AuthErrorCode } from "./auth-error-codes.js";
 

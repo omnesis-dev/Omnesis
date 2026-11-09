@@ -206,7 +206,9 @@ export class GenerationBuilder {
 
         sinceSave += batch.length;
         if (sinceSave >= saveEvery) {
-          writer.save();
+          // A build runs on the main thread, and a resumed build rebuilds this
+          // file from the staged embeddings, so a checkpoint is not worth a sync.
+          writer.save({ durable: false });
           setIndexVersionProgress(this.db, this.version, Math.min(documents, docsTotal));
           sinceSave = 0;
         }

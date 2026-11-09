@@ -972,3 +972,38 @@ describe("SchedulerCore — reserved user slots", () => {
     await s.dispose();
   });
 });
+
+describe("SchedulerCore — time spent waiting inside a worker", () => {
+  test("is recorded as queue time, not as the task's execution", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(STARVATION_MIN_INTERVAL_MS * 100);
+    const runner: TaskRunner = {
+      kind: "writer",
+      concurrency: 1,
+      async start() {},
+      async dispose() {},
+      async exec<TArgs, TResult>(): Promise<TaskOutcome<TArgs, TResult>> {
+        vi.setSystemTime(Date.now() + 100);
+        return { kind: "done", value: undefined as TResult, workerQueueMs: 60 };
+      },
+    };
+    const scheduler = new Scheduler({ enablePreemption: false });
+    scheduler.registerRunner(runner);
+    await scheduler.start();
+    try {
+      await scheduler.enqueue(
+        makeTask({ name: "synth.behindCheckpoint", runner: "writer" }),
+        undefined,
+      );
+      const snap = scheduler.snapshot(60);
+      const row = snap.perTask.find((t) => t.name === "synth.behindCheckpoint")!;
+      expect(row.max).toBe(40);
+      expect(row.totalExecMs).toBe(40);
+      const writer = snap.perRunner.find((r) => r.runner === "writer")!;
+      expect(writer.queueAgeMaxByPriority.realtime).toBeGreaterThanOrEqual(60);
+    } finally {
+      await scheduler.dispose();
+      vi.useRealTimers();
+    }
+  });
+});

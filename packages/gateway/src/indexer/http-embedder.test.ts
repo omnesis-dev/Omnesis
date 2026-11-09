@@ -428,6 +428,22 @@ describe("HttpEmbedder", () => {
     expect(err?.message).not.toContain(echoed);
   });
 
+  test("a server error stays retryable even when its body names an overflow", async () => {
+    // A 5xx is the server's own failure; reading an overflow phrase in its body
+    // as a refused input would shrink, and at the floor drop, a chunk that a
+    // retry would have embedded whole.
+    mockFetch.mockResolvedValueOnce(
+      new Response("upstream: Input is longer than the usable context size", { status: 503 }),
+    );
+    const embedder = new HttpEmbedder({ baseUrl: "http://localhost:8001", model: "m" });
+    const err = await embedder.embed(["test"]).then(
+      () => null,
+      (e) => e as Error,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(classifyEmbedError(err)).toBe("transient");
+  });
+
   test("blocks non-loopback inference URLs by default before sending text", async () => {
     const embedder = new HttpEmbedder({ baseUrl: "https://203.0.113.10", model: "m" });
     await expect(embedder.embedQuery("private query")).rejects.toThrow(/allowRemoteInference=true/);

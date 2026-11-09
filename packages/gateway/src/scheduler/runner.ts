@@ -24,6 +24,7 @@
  */
 
 import type { RunnerKind, Task, TaskContext, TaskOutcome } from "./types.js";
+import type { WalCheckpointMetrics } from "./metrics.js";
 
 export interface TaskRunner {
   readonly kind: RunnerKind;
@@ -65,6 +66,9 @@ export interface TaskRunner {
    * SharedArrayBuffer instance lives in both threads.
    */
   attachPreemptBuffer?(buffer: SharedArrayBuffer): void;
+
+  /** Optional: the WAL checkpoints the runner's worker ran between tasks. */
+  walCheckpointMetrics?(windowSeconds: number): WalCheckpointMetrics | undefined;
 
   /** Called once at Scheduler.start(). Runner brings up workers, etc. */
   start(): Promise<void>;

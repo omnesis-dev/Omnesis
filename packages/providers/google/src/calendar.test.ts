@@ -7,6 +7,7 @@ import { rowsFor, tablesWritten, deletionsFor, writesFor } from "@omnesis/source
 import {
   SourceId,
   ProviderId,
+  SyncError,
   TEMPORAL_KINDS,
   TEMPORAL_STATUSES,
   type DocumentInput,
@@ -1068,6 +1069,29 @@ describe("GoogleCalendarSource", () => {
       const cursor = result.cursor as any;
       expect(cursor.calendarSyncTokens["empty-cal"]).toBe("sync-1");
     });
+  });
+});
+
+describe("GoogleCalendarSource rate limits", () => {
+  test("a 429 without Retry-After is a rate limit the host defers by a minute", async () => {
+    const calendar = createMockCalendar();
+    const message = "Too many requests";
+    calendar.calendarList.list = vi.fn(() =>
+      Promise.reject(
+        Object.assign(new Error(message), {
+          code: 429,
+          response: { status: 429, headers: {}, data: { error: { code: 429, message } } },
+        }),
+      ),
+    );
+
+    const error = await createCalendarSource(calendar)
+      .sync(null)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SyncError);
+    expect((error as SyncError).kind).toBe("rate-limit");
+    expect((error as SyncError).retryAfterMs).toBe(60_000);
   });
 });
 

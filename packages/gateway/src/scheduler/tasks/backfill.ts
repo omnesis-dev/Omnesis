@@ -43,6 +43,7 @@ import {
   mergeCandidatesDetectTask,
   tokenIdentityClassifyTask,
   catalogRefreshTask,
+  plannerStatisticsTask,
   nearDupComputeTask,
   nearDupDfRefreshTask,
   nearDupAlgoSweepTask,
@@ -78,6 +79,8 @@ interface BackfillTrackers {
   linkStatsRefresh: ScanTracker;
   /** Catalog refresh — purely periodic, no progress. */
   catalogRefresh: StatelessTracker;
+  /** Planner statistics — purely periodic, no progress. */
+  plannerStatistics: StatelessTracker;
   /**
    * Per-person interaction-score refresh — sweep style. Coverage =
    * 1 once the snapshot has been computed AND applied for the
@@ -146,6 +149,8 @@ export interface BackfillTaskOpts {
   statsRefreshIntervalMs: number;
   /** Cadence for catalog refresh (longer; piggybacks on stats idle). */
   catalogRefreshIntervalMs: number;
+  /** Cadence for planner statistics; 0 leaves the task unscheduled. */
+  plannerStatisticsIntervalMs: number;
   /** Cadence for link_stats refresh check (active poll). */
   linkStatsRefreshIntervalMs: number;
   /** Cadence when link_stats is up to date (no work). */
@@ -260,6 +265,7 @@ export function createBackfillTasks(opts: BackfillTaskOpts, scheduler: Scheduler
     sourceStatsRefresh: new QueueTracker({ initialRemaining: 0 }),
     linkStatsRefresh: new ScanTracker(),
     catalogRefresh: new StatelessTracker(),
+    plannerStatistics: new StatelessTracker(),
     interactionScoresRefresh: new ScanTracker(),
     mergeRulesEval: new ScanTracker(),
     mergeCandidatesDetect: new ScanTracker(),
@@ -281,6 +287,8 @@ export function createBackfillTasks(opts: BackfillTaskOpts, scheduler: Scheduler
   const peopleCountsRefresh = peopleCountsRefreshTask(internal);
   const sourceStats = sourceStatsRefreshTask(internal);
   const catalog = catalogRefreshTask(internal);
+  const plannerStatistics =
+    opts.plannerStatisticsIntervalMs > 0 ? plannerStatisticsTask(internal) : null;
   const linkStats = linkStatsRefreshTask(internal);
   const interactionScores = interactionScoresRefreshTask(internal);
   const mergeRulesEval = mergeRulesEvalTask(internal);
@@ -298,6 +306,7 @@ export function createBackfillTasks(opts: BackfillTaskOpts, scheduler: Scheduler
     peopleCountsRefresh,
     sourceStats,
     catalog,
+    ...(plannerStatistics ? [plannerStatistics] : []),
     linkStats,
     interactionScores,
     mergeRulesEval,
@@ -356,6 +365,18 @@ export function createBackfillTasks(opts: BackfillTaskOpts, scheduler: Scheduler
       category: "infra",
       tracker: trackers.catalogRefresh,
     }),
+    ...(plannerStatistics
+      ? [
+          periodicJob(plannerStatistics, {
+            scheduler,
+            displayName: "Planner statistics",
+            description:
+              "Keeps sqlite_stat1 current for the SQLite query planner: PRAGMA optimize picks the tables, each index analyzed under an analysis limit.",
+            category: "infra",
+            tracker: trackers.plannerStatistics,
+          }),
+        ]
+      : []),
     periodicJob(linkStats, {
       scheduler,
       displayName: "Link stats refresh",

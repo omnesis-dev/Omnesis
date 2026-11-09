@@ -72,6 +72,41 @@ export function recordKnowledgeSourceDeletion(db: Db, documentId: string, now: n
   })();
 }
 
+export type KnowledgeCascadeItem = {
+  job_id: number;
+  kind: "purge" | "invalidate";
+  target_kind: "source" | "node";
+  target_id: string;
+  after_node_id: string;
+  root_kind: string;
+  root_id: string;
+};
+
+export const KNOWLEDGE_CASCADE_NEXT_JOB_SQL = `SELECT j.id FROM knowledge_cascade_jobs j WHERE j.kind=?
+  AND EXISTS(SELECT 1 FROM knowledge_cascade_frontier f WHERE f.job_id=j.id AND f.done=0)
+  ORDER BY j.id LIMIT 1`;
+export const KNOWLEDGE_CASCADE_NEXT_ROW_SQL = `SELECT f.*,j.kind,j.target_kind AS root_kind,j.target_id AS root_id
+  FROM knowledge_cascade_frontier f JOIN knowledge_cascade_jobs j ON j.id=f.job_id
+  WHERE f.job_id=? AND f.done=0 ORDER BY f.rowid LIMIT 1`;
+
+/**
+ * The next frontier row in cascade order: purge jobs before invalidations,
+ * then job id, then the row's insertion order within its job. Picked as two
+ * index seeks, the job on `knowledge_cascade_jobs_kind` and its row on
+ * `knowledge_cascade_work`, so a step costs the same against a backlog of
+ * any size. A single join ordered by a `CASE` over the job kind sorted every
+ * pending row of every job on each step.
+ */
+export function nextKnowledgeCascadeItem(
+  db: Db,
+  onlyJobId: number | undefined,
+): KnowledgeCascadeItem | undefined {
+  const nextJob = db.prepare<[string], { id: number }>(KNOWLEDGE_CASCADE_NEXT_JOB_SQL);
+  const jobId = onlyJobId ?? nextJob.get("purge")?.id ?? nextJob.get("invalidate")?.id;
+  if (jobId === undefined) return undefined;
+  return db.prepare<[number], KnowledgeCascadeItem>(KNOWLEDGE_CASCADE_NEXT_ROW_SQL).get(jobId);
+}
+
 /**
  * Each step discovers at most one edge or finishes one node; callers yield between chunks.
  *
@@ -86,6 +121,7 @@ export function advanceKnowledgeCascade(
   limit: number,
   now: number,
   onlyJobId?: number,
+  token?: { requested(): boolean },
 ): { pending: boolean; deletedNodeIds: string[]; invalidatedNodeIds: string[] } {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
     throw new Error("Cascade limit must be between 1 and 1000");
@@ -111,26 +147,8 @@ export function advanceKnowledgeCascade(
     const deletedNodeIds: string[] = [];
     const invalidatedNodeIds: string[] = [];
     for (let count = 0; count < limit; count++) {
-      const item = db
-        .prepare<
-          [number | null, number | null],
-          {
-            job_id: number;
-            kind: "purge" | "invalidate";
-            target_kind: "source" | "node";
-            target_id: string;
-            after_node_id: string;
-            root_kind: string;
-            root_id: string;
-          }
-        >(
-          `
-        SELECT f.*,j.kind,j.target_kind AS root_kind,j.target_id AS root_id
-        FROM knowledge_cascade_frontier f JOIN knowledge_cascade_jobs j ON j.id=f.job_id
-        WHERE f.done=0 AND (? IS NULL OR f.job_id=?) ORDER BY CASE j.kind WHEN 'purge' THEN 0 ELSE 1 END,j.id,f.rowid LIMIT 1
-      `,
-        )
-        .get(onlyJobId ?? null, onlyJobId ?? null);
+      if (count > 0 && token?.requested()) break;
+      const item = nextKnowledgeCascadeItem(db, onlyJobId);
       if (!item) break;
       const isRoot = item.target_kind === item.root_kind && item.target_id === item.root_id;
       const erasesRoot = item.kind === "purge" && isRoot;

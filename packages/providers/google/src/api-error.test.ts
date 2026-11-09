@@ -3,7 +3,7 @@
 
 import { describe, test, expect } from "vitest";
 import { SyncError } from "@omnesis/types";
-import { mapGoogleApiError } from "./api-error.js";
+import { googleRateLimitBackoffMs, mapGoogleApiError } from "./api-error.js";
 
 describe("mapGoogleApiError", () => {
   test("passes SyncError through unchanged", () => {
@@ -143,6 +143,85 @@ describe("mapGoogleApiError", () => {
     expect(e.retryAfterMs).toBe(30_000);
   });
 
+  test("429 without Retry-After → rate-limit that defers a minute, not a plain failure", () => {
+    const e = mapGoogleApiError({
+      code: 429,
+      message: "Too many requests",
+      response: { headers: {} },
+    });
+    expect(e.kind).toBe("rate-limit");
+    expect(e.retryAfterMs).toBe(60_000);
+  });
+
+  test("403 userRateLimitExceeded without Retry-After → the same one-minute deferral", () => {
+    const e = mapGoogleApiError({
+      code: 403,
+      errors: [{ reason: "userRateLimitExceeded" }],
+      message: "quota",
+    });
+    expect(e.retryAfterMs).toBe(60_000);
+  });
+
+  test("a rate limit's default delay doubles with each one in a row, capped", () => {
+    const delays = [1, 2, 3, 6, 7, 40].map(
+      (n) =>
+        mapGoogleApiError({ code: 429, message: "x" }, { consecutiveRateLimits: n }).retryAfterMs,
+    );
+    expect(delays).toEqual([60_000, 120_000, 240_000, 1_800_000, 1_800_000, 1_800_000]);
+    expect(googleRateLimitBackoffMs(0)).toBe(60_000);
+  });
+
+  test("a Retry-After of zero gets the default delay, so the host still backs off", () => {
+    const e = mapGoogleApiError({
+      code: 429,
+      message: "x",
+      response: { headers: { "retry-after": "0" } },
+    });
+    expect(e.retryAfterMs).toBe(60_000);
+  });
+
+  test("the delay a Retry-After header names wins over the back-off", () => {
+    const e = mapGoogleApiError(
+      { code: 429, message: "x", response: { headers: { "retry-after": "30" } } },
+      { consecutiveRateLimits: 4 },
+    );
+    expect(e.retryAfterMs).toBe(30_000);
+  });
+
+  test("the time Gmail's 429 message names to retry after is the delay", () => {
+    const at = new Date(Date.now() + 90_000).toISOString();
+    const message = `User-rate limit exceeded.  Retry after ${at}`;
+    for (const err of [
+      { code: 429, message },
+      { code: 429, message: "x", response: { status: 429, data: { error: { message } } } },
+      { code: 403, errors: [{ reason: "userRateLimitExceeded", message }], message: "quota" },
+    ]) {
+      const e = mapGoogleApiError(err, { consecutiveRateLimits: 5 });
+      expect(e.retryAfterMs).toBeGreaterThan(85_000);
+      expect(e.retryAfterMs).toBeLessThanOrEqual(90_000);
+    }
+  });
+
+  test("a retry time already past gets the back-off instead", () => {
+    const at = new Date(Date.now() - 5_000).toISOString();
+    const e = mapGoogleApiError({ code: 429, message: `Retry after ${at}` });
+    expect(e.retryAfterMs).toBe(60_000);
+  });
+
+  test("a Retry-After header wins over the time in the message", () => {
+    const at = new Date(Date.now() + 90_000).toISOString();
+    const e = mapGoogleApiError({
+      code: 429,
+      message: `Retry after ${at}`,
+      response: { headers: { "retry-after": "30" } },
+    });
+    expect(e.retryAfterMs).toBe(30_000);
+  });
+
+  test("a 5xx without Retry-After gets no delay of its own", () => {
+    expect(mapGoogleApiError({ code: 503, message: "x" }).retryAfterMs).toBeUndefined();
+  });
+
   test("429 with no reason → rate-limit, no quota bucket (can't tell app vs account)", () => {
     const e = mapGoogleApiError({ code: 429, message: "Too many requests" });
     expect(e.kind).toBe("rate-limit");
@@ -162,15 +241,15 @@ describe("mapGoogleApiError", () => {
     expect(e.quota).toBeUndefined();
   });
 
-  test("userRateLimitExceeded reason → rate-limit with an account-scoped quota bucket", () => {
-    // Google documents this reason as the per-user limit specifically.
+  test("userRateLimitExceeded reason → rate-limit, no quota bucket: the per-user limit is per API", () => {
+    // A user's Gmail limit leaves their Calendar, Drive and Contacts sources running.
     const e = mapGoogleApiError({
       code: 429,
       errors: [{ reason: "userRateLimitExceeded" }],
       message: "quota",
     });
     expect(e.kind).toBe("rate-limit");
-    expect(e.quota).toEqual({ kind: "account" });
+    expect(e.quota).toBeUndefined();
   });
 
   test("403 with rateLimitExceeded reason → rate-limit", () => {
@@ -180,7 +259,7 @@ describe("mapGoogleApiError", () => {
       message: "quota",
     });
     expect(e.kind).toBe("rate-limit");
-    expect(e.quota).toEqual({ kind: "account" });
+    expect(e.quota).toBeUndefined();
   });
 
   test("403 plain → permission, default source scope, no quota bucket", () => {

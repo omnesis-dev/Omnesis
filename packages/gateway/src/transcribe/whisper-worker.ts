@@ -12,7 +12,7 @@
  * observes the non-zero/signal exit, fails the in-flight request as null, and
  * respawns on the next call.
  *
- * Usage: <node|npx tsx> whisper-worker.ts <modelPath> <gpu:0|1> <offloadSeconds>
+ * Usage: node [--import <tsx loader>] whisper-worker.ts <modelPath> <gpu:0|1> <offloadSeconds>
  * Protocol:
  *   - stdin:  length-prefixed request frames (JSON header + PCM Float32 tail).
  *   - stdout: length-prefixed JSON frames — one `ready` after the model loads,

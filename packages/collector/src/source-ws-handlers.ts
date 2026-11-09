@@ -24,6 +24,8 @@ import {
   writeProviderCredentials,
   clearProviderAccountCredentials,
   clearProviderCredentials,
+  hasBrokerBinding,
+  listBrokeredAccountIds,
   listProviderAccountIds,
   serializeCredentialsSpec,
   redactSecrets,
@@ -298,19 +300,31 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     if (!descriptor.authFlow && !descriptor.authenticate) {
       throw new Error(`Source ${body.sourceType} does not support auth flow`);
     }
+    // Renewing a brokered account here would store a credential its binding
+    // then overrides, so the operator's sign-in would be silently ignored. The
+    // grant is the broker's to renew.
+    const fileKey = descriptor.credentials?.fileKey;
+    if (
+      body.accountId &&
+      fileKey &&
+      hasBrokerBinding(fileKey, body.accountId, sourceManager.getConfigDir())
+    ) {
+      throw new Error(
+        `${descriptor.provider.name} account ${body.accountId} takes its credential from the credential broker. ` +
+          `Sign it in again at the broker, or run \`omnesis broker unlink ${descriptor.provider.id} ${body.accountId}\` to sign it in here instead.`,
+      );
+    }
 
     const flowId = body.flowId;
-    // Source mode spawns `npx tsx <auth-subprocess.ts>` (tsx walks up from
-    // cwd looking for node_modules/tsx — anchoring cwd to the handler's dir
-    // keeps the resolver inside this package); compiled mode spawns node on
-    // the emitted dist sibling directly.
+    // Source mode spawns node with the tsx loader on `auth-subprocess.ts`;
+    // compiled mode spawns node on the emitted dist sibling directly.
     const entry = resolveSubprocessEntry("./auth-subprocess.ts", import.meta.url);
     const args = [...entry.args, body.sourceType];
     if (body.params) args.push(JSON.stringify(body.params));
 
     //
     // Pass an explicit minimal env instead of inheriting
-    // process.env. The subprocess only needs PATH (find npx/node),
+    // process.env. The subprocess only needs PATH (programs it starts),
     // HOME (token-cache lookups), LANG (locale-sensitive parsers),
     // D-Bus session handles for OS keyring access on Linux, whatever the
     // secret store declares it reads (`KEYRING_ENV_KEYS` — without those the
@@ -825,6 +839,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     providerName: string;
     spec: ReturnType<typeof serializeCredentialsSpec>;
     configured: boolean;
+    brokeredAccounts: string[];
   }> {
     const seen = new Map<
       string,
@@ -854,6 +869,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
         ? listProviderAccountIds(fileKey, configDir).length > 0 ||
           hasProviderCredentials(fileKey, configDir)
         : hasProviderCredentials(fileKey, configDir),
+      brokeredAccounts: listBrokeredAccountIds(fileKey, configDir),
     }));
   }
 
@@ -897,7 +913,14 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     // the shared file would report success while every source kept syncing —
     // a revocation that does not revoke.
     if (entry.spec.perAccount) {
-      const accounts = listProviderAccountIds(body.fileKey, configDir);
+      // Brokered accounts too: their binding is this provider's credential
+      // here, and leaving it would keep them syncing past the clear.
+      const accounts = [
+        ...new Set([
+          ...listProviderAccountIds(body.fileKey, configDir),
+          ...listBrokeredAccountIds(body.fileKey, configDir),
+        ]),
+      ];
       for (const accountId of accounts) {
         await clearProviderAccountCredentials(body.fileKey, accountId, configDir);
       }

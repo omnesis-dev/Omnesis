@@ -62,7 +62,7 @@ function readConnectionsSnapshot(
   }
   const limit = Math.max(1, Math.min(100, options.limit ?? 30));
   const rows = db
-    .prepare<[string, string, string, string, number, number, number, number], EdgeRow>(
+    .prepare<[string, string, string, string, number, number, number], EdgeRow>(
       `
     SELECT * FROM (
       SELECT 0 AS bucket, rowid AS row, target_id AS neighbor, target_kind='source' AS source,
@@ -75,10 +75,10 @@ function readConnectionsSnapshot(
       SELECT 2, rowid, to_id, 0, kind, NULL, NULL FROM knowledge_links WHERE from_id=?
       UNION ALL
       SELECT 3, rowid, from_id, 0, kind, NULL, NULL FROM knowledge_links WHERE to_id=?
-    ) WHERE bucket>? OR (bucket=? AND row>?) ORDER BY bucket,row LIMIT ?
+    ) WHERE (bucket,row)>(?,?) ORDER BY bucket,row LIMIT ?
   `,
     )
-    .all(id, id, id, id, after.bucket, after.bucket, after.row, limit + 1);
+    .all(id, id, id, id, after.bucket, after.row, limit + 1);
   const page = rows.slice(0, limit);
   const items: KnowledgeConnection[] = [];
   const neighbors = new Map<string, KnowledgeConnection["node"] | null>();

@@ -19,7 +19,8 @@
  * source.
  */
 
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** True when the calling module is running from compiled `.js` output. */
 export function isCompiledModule(importMetaUrl: string): boolean {
@@ -59,16 +60,19 @@ export function resolveWorkerEntry(
 }
 
 export interface SubprocessEntry {
-  /** Executable to spawn (`node` itself in compiled mode, `npx` in source mode). */
+  /** Executable to spawn: this process's `node`, in both modes. */
   command: string;
-  /** Leading argv: loader args + the resolved entry script path. */
+  /** Leading argv: the tsx loader in source mode, then the resolved entry script path. */
   args: string[];
 }
 
 /**
  * Resolve a Node subprocess entry point relative to the calling module.
- * Source mode spawns `npx tsx <entry.ts>` (tsx resolves from the workspace);
- * compiled mode spawns `process.execPath <entry.js>` directly.
+ * Compiled mode spawns `process.execPath <entry.js>`. Source mode spawns
+ * `process.execPath --import <tsx loader> <entry.ts>`, with the loader resolved
+ * from this module: a source-mode process was itself loaded through it. `npx`
+ * would look for tsx from the child's working directory and, finding none
+ * outside the workspace, fetch one from the registry or fail with exit 1.
  */
 export function resolveSubprocessEntry(tsRelPath: string, importMetaUrl: string): SubprocessEntry {
   assertTsPath(tsRelPath);
@@ -77,7 +81,8 @@ export function resolveSubprocessEntry(tsRelPath: string, importMetaUrl: string)
     return { command: process.execPath, args: [scriptPath] };
   }
   const scriptPath = fileURLToPath(new URL(tsRelPath, importMetaUrl));
-  return { command: "npx", args: ["tsx", scriptPath] };
+  const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+  return { command: process.execPath, args: ["--import", tsxLoader, scriptPath] };
 }
 
 function assertTsPath(relPath: string): void {

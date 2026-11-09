@@ -133,6 +133,7 @@ export function createKnowledgeTables(db: Database.Database): void {
       done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(job_id,target_kind,target_id)
     );
     CREATE INDEX IF NOT EXISTS knowledge_cascade_work ON knowledge_cascade_frontier(job_id,done);
+    CREATE INDEX IF NOT EXISTS knowledge_cascade_jobs_kind ON knowledge_cascade_jobs(kind,id);
     CREATE TABLE IF NOT EXISTS knowledge_evidence (
       id TEXT PRIMARY KEY, document_id TEXT NOT NULL, content_hash TEXT NOT NULL,
       quote TEXT NOT NULL, span_start INTEGER NOT NULL, span_end INTEGER NOT NULL, created_at INTEGER NOT NULL

@@ -19,6 +19,7 @@
 
 import { sourceSettingKeys } from "@omnesis/config";
 import type { EmbedderEncoding } from "../indexer/embedder-prefixes.js";
+import type { WalCheckpointRun } from "./wal-checkpoint.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { MemoryBudget } from "../memory-budget.js";
 
@@ -65,6 +66,15 @@ export function resolveIndexerCutoffMaxAge(
   return cutoffs.default;
 }
 
+/** Catch-up pacing settings, resolved from `indexer.catchUp`. */
+export interface IndexerCatchUpSettings {
+  enabled: boolean;
+  /** Largest scan page while catching up. */
+  maxPageSize: number;
+  /** Pause between pages while catching up, ms. */
+  minSleepMs: number;
+}
+
 export type IndexerInit = {
   type: "init";
   lexicalOnly?: boolean;
@@ -104,6 +114,8 @@ export type IndexerInit = {
   indexerPageSize: number;
   /** Sleep between indexer pages under backlog, ms. */
   indexerBetweenPageSleepMs: number;
+  /** Catch-up pacing for a backlogged scan. See `indexer.catchUp`. */
+  indexerCatchUp: IndexerCatchUpSettings;
   /** Whether to run the heavy reindexMissing scan once at boot. */
   reindexMissingAtBoot: boolean;
   /** Chunker max chunk length, chars. See `indexer.chunker.chunkSize`. */
@@ -175,6 +187,10 @@ export type MainToIndexer =
   // so the indexer can pick them up without waiting for the next periodic
   // tick. Worker debounces bursts and coalesces while a cycle is in flight.
   | { type: "wake" }
+  // Backpressure from the gateway: true while a user request is in flight
+  // (the scheduler's admission control is engaged). Sent on change only. The
+  // scan returns to its configured pace while it is true.
+  | { type: "pressure"; userActive: boolean }
   // Hot-reload of per-source maxAge map. Sent on every config.changed where
   // dataRetention or sources.<id>.maxAge moved. Worker swaps the map atomically.
   | { type: "updateCutoffs"; cutoffs: IndexerCutoffMap }
@@ -282,8 +298,9 @@ export type IndexerToMain =
   | { type: "pausedAck"; id: number }
   // Confirms a `flushSave` request: indexing is frozen, any in-flight cycle has
   // drained, and the HNSW graph has been saved to disk (stamping
-  // `usearch_saved_seq`). `ok` is false if the save itself threw (the gateway
-  // then proceeds; the next boot rebuilds, fail-safe).
+  // `usearch_saved_seq`). `ok` is false if no graph is held in memory or the save
+  // threw (the gateway then proceeds; the next boot rebuilds or reopens what is on
+  // disk, fail-safe).
   | { type: "flushSaveComplete"; id: number; ok: boolean }
   | IndexerJobUpdate
   // Whether the HNSW graph is being built, serving, or released for lack of
@@ -377,6 +394,8 @@ export type WriterToMain =
   | { type: "heartbeat"; ts: number }
   | WorkerLogMessage
   | WriterResult
+  /** A WAL checkpoint the writer ran between ops. */
+  | { type: "checkpoint"; run: WalCheckpointRun }
   | { type: "shutdownComplete" };
 
 // ── Compute worker ────────────────────────────────────────────────────

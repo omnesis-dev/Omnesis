@@ -10,12 +10,14 @@ import {
   getIndexEmbedModel,
   getUsearchBackfillCursor,
   getUsearchSavedChangeSeq,
+  getUsearchSavedSeq,
   hasLexicalWrites,
   setUsearchBackfillCursor,
   setUsearchSavedChangeSeq,
+  setUsearchSavedSeq,
   upsertChunks,
 } from "./db.js";
-import { invalidateSemanticIndex } from "./invalidate-semantic-index.js";
+import { invalidateSemanticIndex, invalidateVectorGraph } from "./invalidate-semantic-index.js";
 import type Database from "better-sqlite3";
 
 let dir: string;
@@ -88,3 +90,17 @@ test.each(["plaintext", "encrypted"])(
     expect(existsSync(`${graph}.enc`)).toBe(false);
   },
 );
+
+test("invalidating the graph alone drops its files and stamps, and keeps every embedding", () => {
+  writeFileSync(graph, "graph of another encoding");
+  writeFileSync(`${graph}.enc`, "its ciphertext");
+  setUsearchSavedSeq(db, 3);
+  invalidateVectorGraph(db, graph);
+  expect(existsSync(graph)).toBe(false);
+  expect(existsSync(`${graph}.enc`)).toBe(false);
+  expect(getUsearchSavedSeq(db)).toBe(0);
+  expect(getUsearchSavedChangeSeq(db)).toBeNull();
+  expect(getUsearchBackfillCursor(db)).toBeNull();
+  expect(hasLexicalWrites(db)).toBe(false);
+  expect(db.prepare("SELECT length(embedding) AS n FROM chunks").get()).toEqual({ n: 32 });
+});

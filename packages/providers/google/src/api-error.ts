@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { SyncError, type SyncErrorKind, type FailureScope, type QuotaBucket } from "@omnesis/types";
+import { SyncError, type SyncErrorKind, type FailureScope } from "@omnesis/types";
 import { toErrorMessage } from "@omnesis/core";
+import { GOOGLE_RATE_LIMIT_BASE_DELAY_MS, GOOGLE_RATE_LIMIT_MAX_DELAY_MS } from "./constants.js";
 
 /**
  * Subset of GaxiosError fields we look at — the googleapis SDK widens the
@@ -77,6 +78,30 @@ function getRetryAfter(e: GaxiosLikeError): number | undefined {
   return undefined;
 }
 
+const RETRY_AFTER_IN_TEXT =
+  /\bretry after (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))/i;
+
+/**
+ * The wait a rate-limit message names in its text. Gmail answers a per-user
+ * limit with no `Retry-After` header but says "Retry after <timestamp>" in
+ * the error message.
+ */
+function getRetryAfterFromText(e: GaxiosLikeError, message: string): number | undefined {
+  const nested = e.response?.data?.error;
+  const texts = [
+    message,
+    typeof nested === "object" ? nested?.message : undefined,
+    ...(e.errors ?? []).map((sub) => sub.message),
+    ...(typeof nested === "object" ? (nested?.errors ?? []).map((sub) => sub.message) : []),
+  ];
+  for (const text of texts) {
+    const match = typeof text === "string" ? RETRY_AFTER_IN_TEXT.exec(text) : null;
+    const at = match ? Date.parse(match[1]!) : Number.NaN;
+    if (!Number.isNaN(at)) return Math.max(0, at - Date.now());
+  }
+  return undefined;
+}
+
 // Matched against the error's whole cause chain, not just its top message:
 // `fetch()` rejects with a bare `TypeError: fetch failed` and names the
 // actual failure only in `cause`. `UND_ERR_` covers undici's own codes
@@ -121,6 +146,26 @@ function getOAuthErrorBody(e: GaxiosLikeError): string {
 }
 
 /**
+ * How long to wait after the `consecutive`-th rate limit in a row that came
+ * with no `Retry-After`: the base delay, doubled for each one before it, and
+ * capped. Google's own 429s carry no `Retry-After`, and a rate limit without a
+ * delay would reach the host as a plain failure retried on the usual interval.
+ */
+export function googleRateLimitBackoffMs(consecutive = 1): number {
+  const doublings = Math.min(Math.max(0, Math.floor(consecutive) - 1), 30);
+  return Math.min(GOOGLE_RATE_LIMIT_BASE_DELAY_MS * 2 ** doublings, GOOGLE_RATE_LIMIT_MAX_DELAY_MS);
+}
+
+export interface GoogleApiErrorOptions {
+  /**
+   * How many rate-limited syncs in a row this one makes, counting itself. A
+   * rate limit without `Retry-After` waits {@link googleRateLimitBackoffMs} of
+   * it. Defaults to 1.
+   */
+  consecutiveRateLimits?: number;
+}
+
+/**
  * Normalise a `googleapis` SDK error into a typed `SyncError` so the
  * collector's classifier can route the source to the right state and pick
  * up any Retry-After hint without parsing free-form messages. Pass-through
@@ -131,7 +176,10 @@ function getOAuthErrorBody(e: GaxiosLikeError): string {
  * - OAuth refresh-token failures (`invalid_grant`, `Token has been expired
  *   or revoked`, etc.) → `auth` — these come back as HTTP 400 from the
  *   token endpoint, not 401
- * - 429, `rateLimitExceeded`, `userRateLimitExceeded` → `rate-limit`
+ * - 429, `rateLimitExceeded`, `userRateLimitExceeded` → `rate-limit`, with
+ *   the `Retry-After` delay when Google sent one, else the "Retry after
+ *   <timestamp>" its message names, else an exponential back-off from
+ *   {@link googleRateLimitBackoffMs}
  * - 403 → `permission` (or `rate-limit` when the reason explicitly says so)
  * - 5xx → `transient`
  * - ECONN..., ETIMEDOUT, ENOTFOUND, EAI_AGAIN, ENETUNREACH → `network`
@@ -141,16 +189,18 @@ function getOAuthErrorBody(e: GaxiosLikeError): string {
  * Calendar, Drive, Contacts) is built from the one `OAuth2Client` the
  * provider's `createContext` mints for the account, so a rejected token
  * fails all of them identically, not just the source that happened to make
- * the next request.
+ * the next request. A brokered account's sources each hold their own
+ * connection's client instead, and there the scope is that one connection.
  *
- * `rate-limit` carries `quota: { kind: "account" }` only for the
- * `userRateLimitExceeded` reason — Google's API error reference documents
- * that reason as the per-user limit specifically. The bare `rateLimitExceeded`
- * reason (and a 429/403 with no reason at all) is documented ambiguously as
- * "per project, per client, or an interaction of both", so it is left
- * unclassified rather than guessed.
+ * `rate-limit` declares no quota bucket. Google counts a per-user limit
+ * (`userRateLimitExceeded`) per API, and each of this provider's sources calls
+ * a different one (Gmail, Calendar, Drive, People), so one source's limit
+ * never means its siblings on the account are spent; the bare
+ * `rateLimitExceeded` reason (and a 429/403 with no reason) is documented
+ * ambiguously as "per project, per client, or an interaction of both" and is
+ * not guessed either. Only the source that hit a limit waits it out.
  */
-export function mapGoogleApiError(err: unknown): SyncError {
+export function mapGoogleApiError(err: unknown, opts: GoogleApiErrorOptions = {}): SyncError {
   if (err instanceof SyncError) return err;
 
   const e = (err ?? {}) as GaxiosLikeError;
@@ -199,10 +249,14 @@ export function mapGoogleApiError(err: unknown): SyncError {
 
   // Retry-After is only meaningful on rate-limit / transient classes.
   if (kind !== "rate-limit" && kind !== "transient") retryAfterMs = undefined;
+  if (kind === "rate-limit" && !(retryAfterMs !== undefined && retryAfterMs > 0)) {
+    retryAfterMs = getRetryAfterFromText(e, message);
+  }
+  if (kind === "rate-limit" && !(retryAfterMs !== undefined && retryAfterMs > 0)) {
+    retryAfterMs = googleRateLimitBackoffMs(opts.consecutiveRateLimits);
+  }
 
   const scope: FailureScope | undefined = kind === "auth" ? "connection" : undefined;
-  const quota: QuotaBucket | undefined =
-    kind === "rate-limit" && reason === "userRateLimitExceeded" ? { kind: "account" } : undefined;
 
   // A transport failure's own message is a category ("fetch failed") and its
   // stack holds only undici internals, so an unnamed one reaches the operator
@@ -214,5 +268,5 @@ export function mapGoogleApiError(err: unknown): SyncError {
       ? `Google API request failed${request ? ` (${request})` : ""}: ${chain}`
       : message;
 
-  return new SyncError(kind, text, { retryAfterMs, scope, quota, cause: err });
+  return new SyncError(kind, text, { retryAfterMs, scope, cause: err });
 }

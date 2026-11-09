@@ -511,8 +511,8 @@ export class PersonService {
       )`);
       params.push(pattern, pattern, pattern);
     }
-    const cursor = opts.before ? "WHERE (latest < ? OR (latest = ? AND display_key < ?))" : "";
-    if (opts.before) params.push(opts.before.latest, opts.before.latest, opts.before.key);
+    const cursor = opts.before ? "WHERE (latest, display_key) < (?, ?)" : "";
+    if (opts.before) params.push(opts.before.latest, opts.before.key);
     params.push(opts.limit + 1);
     const groupRows = this.db
       .prepare<

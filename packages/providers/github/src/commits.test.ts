@@ -94,6 +94,45 @@ describe("GithubCommitsSource", () => {
     expect(cursor?.repos?.[REPO]?.wm).toBe("2026-04-02T10:00:00Z");
   });
 
+  it("a bootstrap fetches commits before every repository is listed", async () => {
+    const fake = new FakeGithub();
+    const busy = Array.from({ length: 520 }, (_, i) => ({
+      sha: `${i.toString(16).padStart(12, "0")}${"e".repeat(28)}`,
+      message: `chore: step ${i}`,
+      authorLogin: "maya-reeves",
+      authorEmail: "maya@example.org",
+      date: new Date(Date.UTC(2026, 2, 1) + i * 60_000).toISOString().replace(".000Z", "Z"),
+    }));
+    fake.addRepo("acme/alpha", { commits: busy });
+    fake.addRepo("acme/beta", {
+      commits: [
+        {
+          sha: SHA_B,
+          message: "docs: readme",
+          authorLogin: "jlopez-dev",
+          date: "2026-04-02T10:00:00Z",
+        },
+      ],
+    });
+    const source = build(fake);
+    let cursor: GithubCommitsCursor | null = null;
+    let docsWhileBetaQueued = 0;
+    const docs: DocumentInput[] = [];
+    let presentExternalIds: string[] | undefined;
+    for (let i = 0; i < 300; i++) {
+      const result = await source.sync(cursor);
+      docs.push(...result.documents);
+      if (result.cursor.discoveryQueue?.includes("acme/beta"))
+        docsWhileBetaQueued += result.documents.length;
+      if (result.presentExternalIds) presentExternalIds = result.presentExternalIds;
+      cursor = result.cursor;
+      if (!result.hasMore) break;
+    }
+    expect(docsWhileBetaQueued).toBeGreaterThan(0);
+    expect(new Set(docs.map((d) => d.externalId)).size).toBe(521);
+    expect(presentExternalIds).toHaveLength(521);
+  });
+
   it("an unchanged upstream is a no-op", async () => {
     const fake = new FakeGithub();
     seed(fake);

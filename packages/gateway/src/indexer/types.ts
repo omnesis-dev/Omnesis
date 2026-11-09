@@ -84,6 +84,14 @@ export interface DocumentSource {
   listAllIds(): Promise<string[]>;
 
   /**
+   * Ids of the documents the indexer is expected to index: every current
+   * document except those created before their source's cutoff, which
+   * `cutoffFor` resolves per source (null for none). Contacts are exempt from
+   * the cutoff. The set `reindexMissing` compares against the index.
+   */
+  listIndexableIds(cutoffFor: (sourceId: string) => string | null): Promise<string[]>;
+
+  /**
    * Batch-fetch documents by id. Used by the retry path so re-trying N
    * failed docs costs one source call, not N×M paginated scans.
    * Documents not found in the source are absent from the result.

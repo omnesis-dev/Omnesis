@@ -12,6 +12,7 @@ import {
   writeProviderAccountCredentials,
   writeProviderCredentials,
 } from "./credentials.js";
+import { writeBrokerBinding } from "./credential-broker.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -83,4 +84,20 @@ test("an unclassifiable sibling credential path fails closed", async () => {
     clearProviderAccountAndLegacyCredentials("fixture", "account-one", dir),
   ).rejects.toThrow("Cannot classify");
   expect(existsSync(shared)).toBe(true);
+});
+
+test("a brokered account is not a legacy marker that keeps the shared credential", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "omnesis-cleanup-"));
+  dirs.push(dir);
+  mkdirSync(join(dir, "fixture", "account-one"), { recursive: true });
+  await writeProviderCredentials("fixture", { token: "fictional-shared" }, dir);
+  await writeBrokerBinding(
+    "fixture",
+    "brokered",
+    { broker: "nango", connections: { default: { providerConfigKey: "p", connectionId: "c" } } },
+    dir,
+  );
+  await clearProviderAccountAndLegacyCredentials("fixture", "account-one", dir);
+  expect(existsSync(providerCredentialsPath("fixture", dir))).toBe(false);
+  expect(existsSync(join(dir, "fixture", "brokered", "broker.json"))).toBe(true);
 });

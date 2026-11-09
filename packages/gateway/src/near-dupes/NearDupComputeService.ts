@@ -19,7 +19,7 @@ import {
   type PairScores,
 } from "@omnesis/near-dupes";
 import { isEligibleForNearDup } from "./eligibility.js";
-import { buildInMemoryDfFromTable, type InMemoryDf } from "./NearDupDfService.js";
+import { buildInMemoryDfFromTable, readLiveDfTable, type InMemoryDf } from "./NearDupDfService.js";
 import { peekNearDupInbox } from "./inbox.js";
 import { buildDfSab } from "./df-sab.js";
 import type { PersonIdentifierSource } from "@omnesis/types";
@@ -552,21 +552,9 @@ export function fetchNearDupCandidates(
  * reference, so there's no per-cycle clone or Map rebuild. See `df-sab.ts`.
  */
 export function fetchNearDupDfData(db: Db, algoVersion: string): SharedArrayBuffer {
-  const metaRow = db
-    .prepare<[string], { total_docs: number; live_generation: number }>(
-      `SELECT total_docs, live_generation FROM near_dup_df_meta WHERE algo_version = ?`,
-    )
-    .get(algoVersion);
-  const totalDocs = metaRow?.total_docs ?? 0;
   // One generation, the live one — a rebuild in flight is filling the next
-  // and is invisible here until it publishes.
-  const generation = metaRow?.live_generation ?? 0;
-  const entries: Array<[string, number]> = [];
-  const rows = db
-    .prepare<[string, number], { shingle: string; df: number }>(
-      `SELECT shingle, df FROM near_dup_df WHERE algo_version = ? AND generation = ?`,
-    )
-    .iterate(algoVersion, generation) as Iterable<{ shingle: string; df: number }>;
-  for (const r of rows) entries.push([r.shingle, r.df]);
-  return buildDfSab(entries, totalDocs);
+  // and is invisible here until it publishes. Read in pages; see
+  // `readLiveDfTable`.
+  const { meta, entries } = readLiveDfTable(db, algoVersion);
+  return buildDfSab(entries, meta.totalDocs);
 }

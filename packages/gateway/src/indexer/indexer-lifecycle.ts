@@ -174,6 +174,11 @@ export interface IndexerLifecycleDeps {
   /** The gateway's memory budget; the indexer worker keeps the HNSW graph within it. */
   memoryBudget?: MemoryBudget;
   /**
+   * Whether a user request is in flight (the scheduler's admission control is
+   * engaged). The indexing scan returns to its configured pace while it is.
+   */
+  isUserActive?: () => boolean;
+  /**
    * Boot-time seed for the mutable model-info snapshot. The lifecycle copies
    * these into its own stable internal object exposed by `modelInfo`; that
    * object is then mutated in place (never replaced) — its identity is
@@ -684,6 +689,8 @@ export class IndexerLifecycle {
       embedConcurrency: this.deps.runtime.embedConcurrency,
       indexerPageSize: this.deps.runtime.indexerPageSize,
       indexerBetweenPageSleepMs: this.deps.runtime.indexerBetweenPageSleepMs,
+      indexerCatchUp: this.deps.runtime.indexerCatchUp,
+      ...(this.deps.isUserActive ? { isUserActive: this.deps.isUserActive } : {}),
       reindexMissingAtBoot: this.deps.runtime.reindexMissingAtBoot,
       chunkerChunkSize: this.deps.runtime.chunkerChunkSize,
       chunkerOverlap: this.deps.runtime.chunkerOverlap,
@@ -1523,8 +1530,9 @@ export class IndexerLifecycle {
    * current in-memory graph and the next boot RESTORES instead of rebuilding.
    * The save can exceed the worker's 5s dispose ack for a large graph, so it
    * runs on its own generous timeout. No-op if the indexer never started.
-   * Returns whether the graph was saved (false → next boot rebuilds; the caller
-   * proceeds either way — fail-safe).
+   * Returns whether the graph was saved (false → no graph was held in memory or
+   * the save failed, and the next boot rebuilds or reopens what is on disk; the
+   * caller proceeds either way — fail-safe).
    */
   async flushIndexerSave(): Promise<boolean> {
     const proxy = this._indexerOwner;

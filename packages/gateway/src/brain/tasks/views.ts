@@ -221,9 +221,9 @@ export class TaskQueryService {
             WHERE state IN ('done', 'dismissed') AND (origin != 'brain' OR accepted = 1)
               AND resolved_at IS NOT NULL
               AND ${knowledgeOwnerReadPredicate(this.db, "open_loops.id")}
-              ${before ? "AND (resolved_at < ? OR (resolved_at = ? AND id < ?))" : ""}
+              ${before ? "AND (resolved_at, id) < (?, ?)" : ""}
             ORDER BY resolved_at DESC, id DESC LIMIT ?`,
-          ...(before ? [before.resolvedAt, before.resolvedAt, before.id] : []),
+          ...(before ? [before.resolvedAt, before.id] : []),
           options.limit ?? 50,
         )
           .map((id) => getOpenLoop(this.db, id))

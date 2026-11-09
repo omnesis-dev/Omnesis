@@ -65,6 +65,7 @@ import { OMNESIS_CHAT_PROVIDER_ID, OMNESIS_CHAT_SOURCE_ID } from "../sources/omn
 import { mergeFilters } from "../search/filters.js";
 import { graphContextPolicy } from "../search/graph-context-policy.js";
 import { parseQuery, type ParsedFilterToken } from "../search/query-parser.js";
+import { withActivity } from "../observability/main-activity.js";
 import { hydrateBrowserRecord } from "./record-browser-urls.js";
 import { isKnowledgeReadDocument, isKnowledgeReadSource } from "./knowledge-read-policy.js";
 import type Database from "better-sqlite3";
@@ -1006,7 +1007,11 @@ async function resolveRecordCitation(
     return { kind: "not_timeline_eligible" };
   }
 
-  const boundDocumentId = resolveBoundDocumentId(db, table, input.primaryKeyColumns);
+  // Runs after the awaits above, where the calling tool's own mark no longer
+  // covers it; this mark names the store lookup in a stall.
+  const boundDocumentId = withActivity("agent.recordCitation", () =>
+    resolveBoundDocumentId(db, table, input.primaryKeyColumns),
+  );
   const sourceType = parseSourceKey(table.sourceId).sourceType;
 
   return {

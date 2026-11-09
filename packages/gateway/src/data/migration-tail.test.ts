@@ -73,6 +73,9 @@ const WOUND_BACK = [
   210,
   // 211 lowers cursor stamps; its input is the sync_state rows a test plants.
   211,
+  // 212 recreates the date pending-age index that 203 drops during the replay;
+  // an install below the tail had it from migration 100.
+  212,
 ];
 
 let dir: string;

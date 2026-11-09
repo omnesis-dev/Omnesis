@@ -431,4 +431,20 @@ describe("analytics column type normalization", () => {
       ).toThrow(/allowedValues/);
     }
   });
+
+  it("refuses a column declared twice, in any letter case", () => {
+    const twice = (name: string): AnalyticsTableSchema => ({
+      ...schema,
+      columns: [...schema.columns, { name, type: "TIMESTAMP", description: "Due", nullable: true }],
+    });
+    expect(() => normalizeAnalyticsSchemaColumnTypes(twice("amount"), "test")).toThrow(
+      /declares column 'amount' twice/,
+    );
+    expect(() => normalizeAnalyticsSchemaColumnTypes(twice("Amount"), "test")).toThrow(
+      /declares column 'Amount' twice/,
+    );
+    expect(normalizeAnalyticsSchemaColumnTypes(twice("amount_due"), "test").columns).toHaveLength(
+      3,
+    );
+  });
 });

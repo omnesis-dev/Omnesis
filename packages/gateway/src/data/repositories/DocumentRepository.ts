@@ -1325,11 +1325,9 @@ export function getRecentDocuments(
   limit: number = 10,
   before?: { sourceCreatedAt: string; id: string },
 ): RecentDocument[] {
-  const cursorPredicate = before
-    ? "AND (document.source_created_at < ? OR (document.source_created_at = ? AND document.id < ?))"
-    : "";
+  const cursorPredicate = before ? "AND (document.source_created_at, document.id) < (?, ?)" : "";
   const params: Array<string | number> = [sourceId];
-  if (before) params.push(before.sourceCreatedAt, before.sourceCreatedAt, before.id);
+  if (before) params.push(before.sourceCreatedAt, before.id);
   params.push(limit);
   return db
     .prepare<(string | number)[], RecentDocument>(
@@ -1509,9 +1507,33 @@ export function getDocumentUpdatedAtBoundary(db: Db): string | null {
   );
 }
 
-export function listDocumentIds(db: Db): string[] {
-  const rows = db.prepare<[], { id: string }>("SELECT id FROM documents ORDER BY id").all();
-  return rows.map((r) => r.id);
+/** Ids each statement of `listDocumentIds` reads. */
+export const DOCUMENT_ID_PAGE_ROWS = 20_000;
+
+/**
+ * Every document id, in id order. Read by keyset on the primary key,
+ * `pageRows` per statement, rather than in one statement that kept a WAL
+ * snapshot open across the whole corpus (see `docs/conventions.md`, "A long
+ * read holds the WAL open"). Each id is read as of one moment during the
+ * call rather than all of them as of its start, which callers that compare
+ * against the index already tolerate: a document written while they run is
+ * picked up by their next pass either way.
+ */
+export function listDocumentIds(db: Db, pageRows: number = DOCUMENT_ID_PAGE_ROWS): string[] {
+  const limit = Math.max(1, Math.floor(pageRows));
+  const first = db
+    .prepare<[number], string>("SELECT id FROM documents ORDER BY id LIMIT ?")
+    .pluck();
+  const next = db
+    .prepare<[string, number], string>("SELECT id FROM documents WHERE id > ? ORDER BY id LIMIT ?")
+    .pluck();
+  const ids: string[] = [];
+  let rows = first.all(limit);
+  for (;;) {
+    for (const id of rows) ids.push(id);
+    if (rows.length < limit) return ids;
+    rows = next.all(rows[rows.length - 1]!, limit);
+  }
 }
 
 /**
@@ -1765,6 +1787,20 @@ export function lookupDocumentIdsByExternal(
  * resolves the row→document inverse without the account on hand; with several
  * streams the first stream's row is returned. A `sourceId` that already
  * names an account matches only itself, per the addressing rule.
+ *
+ * The lookup seeks on the external id. A bare type's `type:%` half is a `LIKE`,
+ * which folds ASCII case and so cannot use a BINARY index on `source_id`; left
+ * to the planner, the query walks an index entry for every document in the
+ * store, seconds of synchronous work on a large encrypted one, run from the
+ * agent's `cite_record` and `trace_connections` tools. `LOWER(external_id) =
+ * LOWER(?)` is implied by the equality beside it, and lets the query seek
+ * `idx_documents_external_id_source` to the few documents carrying the id; the
+ * source and stream filters then run on those rows only.
+ *
+ * Rows that tie on the account preference and the stream hold the same
+ * external id under different accounts or providers. They keep a fixed order:
+ * for a bare type, provider then account, the unique key's order; for a named
+ * account, where only the provider can differ, rowid order.
  */
 export function findDocumentIdBySourceExternalId(
   db: Db,
@@ -1774,13 +1810,15 @@ export function findDocumentIdBySourceExternalId(
   streamId?: string,
 ): string | null {
   const predicate = sourcePrefixPredicate("source_id", [sourceId]);
+  const tieOrder = sourceId.includes(":") ? "rowid" : "provider_id, source_id";
   const row = db
     .prepare<unknown[], { id: string }>(
-      `SELECT id FROM documents
-        WHERE external_id = ? AND (${predicate.sql}) AND (? = '' OR stream_id = ?)
-        ORDER BY source_id = ? DESC, stream_id LIMIT 1`,
+      `SELECT id FROM documents INDEXED BY idx_documents_external_id_source
+        WHERE LOWER(external_id) = LOWER(?) AND external_id = ?
+          AND (${predicate.sql}) AND (? = '' OR stream_id = ?)
+        ORDER BY source_id = ? DESC, stream_id, ${tieOrder} LIMIT 1`,
     )
-    .get(externalId, ...predicate.params, streamId ?? "", streamId ?? "", sourceId);
+    .get(externalId, externalId, ...predicate.params, streamId ?? "", streamId ?? "", sourceId);
   return row?.id ?? null;
 }
 

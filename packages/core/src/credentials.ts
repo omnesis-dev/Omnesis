@@ -20,6 +20,7 @@ import { safePathSegment } from "@omnesis/types";
 import { DEFAULT_CONFIG_DIR } from "./utils.js";
 import { createLogger } from "./logger.js";
 import { readSecretTextFile, writeSecretJsonFile, type SecretFileOptions } from "./secret-file.js";
+import { hasBrokerBinding } from "./credential-broker.js";
 import type { AuthErrorCode } from "./auth-error-codes.js";
 
 const log = createLogger("core:credentials");
@@ -487,6 +488,9 @@ export async function clearProviderAccountAndLegacyCredentials(
     for (const entry of entries) {
       if (entry.isSymbolicLink()) throw new Error("Cannot classify a symlinked account directory");
       if (!entry.isDirectory()) continue;
+      // A brokered account is not a legacy marker: its credential is the
+      // broker's, and the shared file never belonged to it.
+      if (hasBrokerBinding(fileKey, entry.name, configDir)) continue;
       directories++;
       try {
         const stat = lstatSync(providerAccountCredentialsPath(fileKey, entry.name, configDir));

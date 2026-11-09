@@ -93,6 +93,7 @@ describe("secure usearch sidecar purge", () => {
       "index-2.usearch",
       "index-3.usearch.tmp",
       "index-4.usearch.tmp.corrupt-123",
+      "index-5.usearch.corrupt-20260101T120000",
     ];
     const kept = ["index.db", "index-not-a-version.usearch", "notes.txt"];
     for (const name of [...removed, ...kept]) writeFileSync(join(dir, name), name);

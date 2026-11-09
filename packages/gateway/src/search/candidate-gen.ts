@@ -63,6 +63,8 @@ const SKIP_REASON_NO_INDEX =
   "HNSW index not available — the indexer is still building the initial index. Results fall back to BM25-only.";
 const SKIP_REASON_DEGRADED_PREFIX =
   "Semantic search degraded — results are BM25-only until the gateway has the memory for the HNSW index: ";
+const SKIP_REASON_QUERY_EMBED_PREFIX =
+  "Semantic search skipped for this query — results are BM25-only: ";
 const SKIP_REASON_REINDEXING =
   "HNSW index is being rebuilt (embedder swap in progress). Results fall back to BM25-only.";
 
@@ -103,6 +105,11 @@ export interface CandidateGenRequest {
    * no-embedder one.
    */
   vectorUnavailableReason?: string;
+  /**
+   * Why this query could not be embedded although an embedder is attached;
+   * reported as the vector stage's skip reason for this search alone.
+   */
+  queryEmbedFailure?: string;
   /** ms the caller spent in `embedder.embedQuery` — folded into the vector report. */
   embedMs: number;
   /**
@@ -288,6 +295,14 @@ function runVector(
       reason: `${SKIP_REASON_DEGRADED_PREFIX}${req.vectorUnavailableReason}`,
     };
     log.debug("Vector: skipped (semantic search degraded)");
+    return { candidates: [], degraded: true };
+  }
+  if (req.queryVector === null && req.queryEmbedFailure) {
+    stageReports.vector = {
+      status: "skipped",
+      reason: `${SKIP_REASON_QUERY_EMBED_PREFIX}${req.queryEmbedFailure}`,
+    };
+    log.debug("Vector: skipped (query not embedded)");
     return { candidates: [], degraded: true };
   }
   if (req.queryVector === null) {

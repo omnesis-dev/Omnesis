@@ -334,32 +334,116 @@ interface CachedDf {
 }
 const dfCaches = new WeakMap<object, CachedDf>();
 
-export function buildInMemoryDfFromTable(db: Db, algoVersion: string): InMemoryDf {
-  const metaRow = db
+/** Rows each statement of a live DF read returns. */
+export const DF_READ_CHUNK_ROWS = 50_000;
+/** Paged passes a live DF read tries before reading in one transaction. */
+const DF_READ_PAGED_ATTEMPTS = 2;
+
+export interface LiveDfMeta {
+  totalDocs: number;
+  builtAt: number | null;
+  generation: number;
+}
+
+export interface LiveDfTable {
+  meta: LiveDfMeta;
+  /** Every row of the live generation, in shingle order. */
+  entries: Array<[string, number]>;
+}
+
+function readLiveDfMeta(db: Db, algoVersion: string): LiveDfMeta {
+  const row = db
     .prepare<[string], { total_docs: number; built_at: number | null; live_generation: number }>(
       `SELECT total_docs, built_at, live_generation FROM near_dup_df_meta WHERE algo_version = ?`,
     )
     .get(algoVersion);
-  const totalDocs = metaRow?.total_docs ?? 0;
+  return {
+    totalDocs: row?.total_docs ?? 0,
+    builtAt: row?.built_at ?? null,
+    generation: row?.live_generation ?? 0,
+  };
+}
+
+function sameDfMeta(a: LiveDfMeta, b: LiveDfMeta): boolean {
+  return a.totalDocs === b.totalDocs && a.builtAt === b.builtAt && a.generation === b.generation;
+}
+
+/**
+ * Read the live generation of the DF table for `algoVersion`.
+ *
+ * The table holds a row per shingle, millions of them on a large corpus, so
+ * one statement over it held a WAL snapshot for seconds (see
+ * `docs/conventions.md`, "A long read holds the WAL open"). This reads
+ * `chunkRows` rows per statement by keyset on the primary key instead.
+ *
+ * The rows of a generation do not change while it is live: a rebuild writes
+ * the next generation beside it and publishes it by moving
+ * `live_generation`, and only then may the sweep delete the old rows. So
+ * when the meta row reads the same after the last page as before the first,
+ * no page saw a deletion, and the result is the one a single snapshot would
+ * have read. A publish in between makes the pass start again; after
+ * `DF_READ_PAGED_ATTEMPTS` of them the read takes one transaction, as it
+ * always did, since being right matters more than the snapshot's length.
+ */
+export function readLiveDfTable(
+  db: Db,
+  algoVersion: string,
+  chunkRows: number = DF_READ_CHUNK_ROWS,
+): LiveDfTable {
+  const limit = Math.max(1, Math.floor(chunkRows));
+  const first = db.prepare<[string, number, number], [string, number]>(
+    `SELECT shingle, df FROM near_dup_df
+      WHERE algo_version = ? AND generation = ?
+      ORDER BY shingle LIMIT ?`,
+  );
+  const next = db.prepare<[string, number, string, number], [string, number]>(
+    `SELECT shingle, df FROM near_dup_df
+      WHERE algo_version = ? AND generation = ? AND shingle > ?
+      ORDER BY shingle LIMIT ?`,
+  );
+  const scan = (generation: number): Array<[string, number]> => {
+    const entries: Array<[string, number]> = [];
+    let page = first.raw().all(algoVersion, generation, limit);
+    for (;;) {
+      for (const row of page) entries.push(row);
+      if (page.length < limit) return entries;
+      page = next.raw().all(algoVersion, generation, page[page.length - 1]![0], limit);
+    }
+  };
+
+  for (let attempt = 1; attempt <= DF_READ_PAGED_ATTEMPTS && !db.inTransaction; attempt++) {
+    const meta = readLiveDfMeta(db, algoVersion);
+    const entries = scan(meta.generation);
+    if (sameDfMeta(meta, readLiveDfMeta(db, algoVersion))) return { meta, entries };
+    log.info(
+      `DF read: generation ${meta.generation} was replaced during a paged read, reading again`,
+    );
+  }
+  const ownTransaction = !db.inTransaction;
+  if (ownTransaction) db.exec("BEGIN");
+  try {
+    const meta = readLiveDfMeta(db, algoVersion);
+    return { meta, entries: scan(meta.generation) };
+  } finally {
+    if (ownTransaction) db.exec("COMMIT");
+  }
+}
+
+export function buildInMemoryDfFromTable(db: Db, algoVersion: string): InMemoryDf {
   // Read one generation, named by the meta row. A rebuild in flight is
   // writing the next one, so what this sees is a whole table — the one
   // published by the last completed build — never a partially replaced
   // one. The generation belongs in the cache key for the same reason
   // `built_at` does: a swap is exactly when this must be rebuilt.
-  const generation = metaRow?.live_generation ?? 0;
-  const cacheKey = `${algoVersion}|${generation}|${metaRow?.built_at ?? "fresh"}`;
+  const cacheKeyOf = (meta: LiveDfMeta) =>
+    `${algoVersion}|${meta.generation}|${meta.builtAt ?? "fresh"}`;
   const cached = dfCaches.get(db as unknown as object);
-  if (cached?.key === cacheKey) return cached.df;
+  if (cached?.key === cacheKeyOf(readLiveDfMeta(db, algoVersion))) return cached.df;
 
-  const counts = new Map<string, number>();
-  const rows = db
-    .prepare<[string, number], { shingle: string; df: number }>(
-      `SELECT shingle, df FROM near_dup_df WHERE algo_version = ? AND generation = ?`,
-    )
-    .iterate(algoVersion, generation) as Iterable<{ shingle: string; df: number }>;
-  for (const r of rows) counts.set(r.shingle, r.df);
+  const { meta, entries } = readLiveDfTable(db, algoVersion);
+  const counts = new Map<string, number>(entries);
   const df: InMemoryDf = {
-    totalDocs,
+    totalDocs: meta.totalDocs,
     df(shingle: string): number {
       return counts.get(shingle) ?? 0;
     },
@@ -367,6 +451,6 @@ export function buildInMemoryDfFromTable(db: Db, algoVersion: string): InMemoryD
       return counts.size;
     },
   };
-  dfCaches.set(db as unknown as object, { key: cacheKey, df });
+  dfCaches.set(db as unknown as object, { key: cacheKeyOf(meta), df });
   return df;
 }

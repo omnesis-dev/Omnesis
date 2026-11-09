@@ -24,9 +24,11 @@ import { ProviderId, SourceId } from "@omnesis/types";
 import { AnalyticsDb } from "../analytics-db.js";
 import { createDatabase } from "../db.js";
 import { directWriteGate } from "../write-gate.js";
+import { captureActivity, nameStall } from "../observability/stall-test-utils.js";
 import { createGatewayRecordPort } from "./ports.js";
 import type Database from "better-sqlite3";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
+import type { ActivitySample } from "../observability/stall-protocol.js";
 
 type Db = Database.Database;
 
@@ -209,6 +211,28 @@ describe("createGatewayRecordPort", () => {
     );
     // A reference that names no stream is ambiguous on this table: no document is claimed.
     expect((await resolve([id])).boundDocumentId).toBeNull();
+  });
+
+  test("looks the bound document up under its own activity mark, after the catalog read", async () => {
+    // The lookup runs after the port's awaits, where the calling tool's mark
+    // no longer covers it: a stall there must still be named.
+    await analytics.ensureTable(txnSchema, "demo:acct2");
+    const docId = await insertBoundDoc("txn-1");
+    let seen: ActivitySample | undefined;
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      if (/FROM documents INDEXED BY idx_documents_external_id_source/.test(sql)) {
+        seen = captureActivity();
+      }
+      return prepare(sql);
+    }) as typeof db.prepare;
+    const resolved = await createGatewayRecordPort(db, analytics).resolve({
+      reference: recordReference("demo_transactions", [{ name: "id", value: "txn-1" }]),
+      snapshot: { id: "txn-1", merchant: "Stellar Sound", occurred_at: "2026-05-01T10:00:00.000Z" },
+    });
+    expect(resolved.boundDocumentId).toBe(docId);
+    expect(seen).toBeDefined();
+    expect(nameStall(seen!).inner).toBe("agent.recordCitation");
   });
 
   test("boundDocumentId is null when no co-described document exists", async () => {

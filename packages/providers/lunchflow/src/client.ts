@@ -40,12 +40,25 @@ export class LunchflowAccountGoneError extends Error {
 }
 
 export interface LunchflowClientOptions {
-  apiKey: string;
+  /**
+   * The connection's key, or — for a connection whose key the broker holds —
+   * a function asked for the current one before every request, so a key
+   * rotated at the broker is picked up mid-run.
+   */
+  apiKey: string | (() => Promise<string>);
   baseUrl?: string;
   /** Injectable for tests. Defaults to the global `fetch`. */
   fetchImpl?: typeof fetch;
   /** Injectable for tests. Defaults to the canonical retry timer. */
   sleep?: RetryOptions["sleep"];
+  /**
+   * Called when Lunch Flow rejects the key (401 or 403), before the request is
+   * retried once with whatever the key function then returns. Only for a key
+   * function: a key rotated at the broker is otherwise served from its cache,
+   * stale, until the cache lapses, and the rejection would park the source
+   * first.
+   */
+  invalidateApiKey?: () => void;
 }
 
 export interface GetTransactionsParams {
@@ -82,16 +95,18 @@ export interface LunchflowTransport {
  * API keys, bodies, account ids, or raw fetch causes.
  */
 export class LunchflowClient implements LunchflowTransport {
-  private readonly apiKey: string;
+  private readonly apiKey: string | (() => Promise<string>);
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: RetryOptions["sleep"];
+  private readonly invalidateApiKey?: () => void;
 
   constructor(opts: LunchflowClientOptions) {
     this.apiKey = opts.apiKey;
     this.baseUrl = opts.baseUrl ?? LUNCHFLOW_API_BASE;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep;
+    this.invalidateApiKey = typeof opts.apiKey === "function" ? opts.invalidateApiKey : undefined;
   }
 
   async listAccounts(): Promise<LunchflowAccount[]> {
@@ -127,16 +142,20 @@ export class LunchflowClient implements LunchflowTransport {
   private async request<T>(
     path: string,
     schema: ZodType<T>,
-    opts: { accountId?: string },
+    opts: { accountId?: string; reauthorized?: boolean },
   ): Promise<T> {
     const safePath = redactPath(path);
+    // Outside the retry below: a broker that cannot supply the key raises its
+    // own `SyncError` (`auth` or `network`), which must keep its own message
+    // rather than read as Lunch Flow being unreachable.
+    const apiKey = typeof this.apiKey === "string" ? this.apiKey : await this.apiKey();
     const res = await retry<Response, unknown>(
       async () => {
         let response: Response;
         try {
           response = await this.fetchImpl(`${this.baseUrl}${path}`, {
             headers: {
-              "x-api-key": this.apiKey,
+              "x-api-key": apiKey,
               Accept: "application/json",
             },
           });
@@ -182,6 +201,15 @@ export class LunchflowClient implements LunchflowTransport {
     if (!res.ok) {
       if (res.status === 404 && opts.accountId !== undefined) {
         throw new LunchflowAccountGoneError(opts.accountId);
+      }
+      if (
+        (res.status === 401 || res.status === 403) &&
+        this.invalidateApiKey &&
+        !opts.reauthorized
+      ) {
+        await res.body?.cancel().catch(() => undefined);
+        this.invalidateApiKey();
+        return this.request(path, schema, { ...opts, reauthorized: true });
       }
       if (res.status === 401 || res.status === 403) {
         throw new SyncError(

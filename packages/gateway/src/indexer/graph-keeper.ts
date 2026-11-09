@@ -44,11 +44,18 @@ import {
   hasPendingVectorDeletes,
   pruneVectorChanges,
   setUsearchBackfillCursor,
+  setUsearchEncoding,
   setUsearchSavedChangeSeq,
   setUsearchSavedSeq,
 } from "./db.js";
 import { encryptSidecar, readSidecarFingerprint } from "./usearch-sidecar-crypto.js";
-import type { GraphBuildOutcome, UsearchWriteHandle } from "./usearch-index.js";
+import {
+  VECTOR_ENCODING,
+  vectorBytes,
+  type GraphBuildOutcome,
+  type UsearchWriteHandle,
+  type VectorEncoding,
+} from "./usearch-index.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
 
@@ -66,8 +73,14 @@ export function planGraphAdmission(opts: {
   headroom: number;
   /** Whether the graph comes from a complete file rather than a (resumed) build. */
   loading: boolean;
+  encoding?: VectorEncoding;
 }): { admitted: true } | { admitted: false; reason: string } {
-  const estimate = estimateHnswGraphBytes(opts.vectors, opts.dim, opts.loading ? "load" : "build");
+  const estimate = estimateHnswGraphBytes(
+    opts.vectors,
+    opts.dim,
+    opts.loading ? "load" : "build",
+    vectorBytes(opts.dim, opts.encoding ?? VECTOR_ENCODING),
+  );
   const reserve = graphAdmissionReserve(opts.budget);
   if (estimate + reserve <= opts.headroom) return { admitted: true };
   const free =
@@ -232,6 +245,7 @@ export class GraphKeeper {
     setUsearchSavedSeq(indexDb, getVectorWriteSeq(indexDb));
     if (!hasPendingVectorDeletes(indexDb)) setUsearchSavedChangeSeq(indexDb, head);
     setUsearchBackfillCursor(indexDb, handle.backfillCursor);
+    setUsearchEncoding(indexDb, handle.encoding);
   }
 
   /**
@@ -257,6 +271,7 @@ export class GraphKeeper {
         vectorWriteSeq: getUsearchSavedSeq(indexDb),
         embedModel: model.name,
         embedDim: model.dim,
+        encoding: this.deps.handle.encoding,
         changeSeq,
         backfillCursor: cursor,
       });

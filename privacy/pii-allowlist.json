@@ -2884,16 +2884,18 @@
     {
       "value": "Maya Reeves",
       "paths": [
-        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
-        "evals/universes/sacha-bellamy/sources/google-drive/files.json",
-        "packages/providers/discord/src/normalizer.test.ts",
-        "packages/providers/discord/src/source.test.ts",
         "evals/universes/immich-sync/cast.json",
         "evals/universes/immich-sync/sources/immich/fake-corpus.json",
+        "evals/universes/sacha-bellamy/sources/gmail/messages.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/files.json",
         "packages/collector/src/e2e/immich-sync.e2e.test.ts",
+        "packages/providers/discord/src/normalizer.test.ts",
+        "packages/providers/discord/src/source.test.ts",
+        "packages/providers/granola/src/broker.test.ts",
         "packages/providers/immich/src/document-event-profile.test.ts",
         "packages/providers/immich/src/provider.test.ts",
-        "packages/providers/immich/src/source.test.ts"
+        "packages/providers/immich/src/source.test.ts",
+        "packages/providers/strava/src/broker.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -3780,7 +3782,10 @@
     },
     {
       "value": "Studio Northstar",
-      "paths": ["evals/universes/sacha-bellamy/_build/media_test.py"],
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/media_test.py",
+        "packages/providers/notion/src/broker.test.ts"
+      ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
@@ -5983,7 +5988,8 @@
       "value": "Bad Request",
       "paths": [
         "packages/providers/google/src/api-error.test.ts",
-        "packages/providers/google/src/contacts.test.ts"
+        "packages/providers/google/src/contacts.test.ts",
+        "packages/providers/google/src/drive.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -7468,6 +7474,7 @@
       "value": "Google Contacts",
       "paths": [
         "packages/gateway/src/people.test.ts",
+        "packages/providers/google/src/broker.test.ts",
         "packages/providers/google/src/contacts.test.ts",
         "packages/providers/google/src/setup.test.ts"
       ],
@@ -7501,6 +7508,7 @@
         "ios/Sources/Omnesis/UI/PreviewMocks.swift",
         "packages/collector/src/e2e/onedrive.e2e.test.ts",
         "packages/gateway/src/merge-candidates.test.ts",
+        "packages/providers/google/src/broker.test.ts",
         "packages/providers/google/src/setup.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -7949,7 +7957,8 @@
       "paths": [
         "packages/collector/src/error-classifier.test.ts",
         "packages/collector/src/sync-engine.test.ts",
-        "packages/providers/google/src/api-error.test.ts"
+        "packages/providers/google/src/api-error.test.ts",
+        "packages/providers/google/src/broker.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -8470,6 +8479,7 @@
       "paths": [
         "evals/universes/e2e-minimal/_build/build.mjs",
         "packages/collector/src/e2e/finance.e2e.test.ts",
+        "packages/providers/lunchflow/src/broker.test.ts",
         "packages/providers/lunchflow/src/normalizer.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -12519,6 +12529,51 @@
       "value": "Main Camera",
       "paths": ["packages/providers/immich/src/normalizer.test.ts"],
       "reason": "Invented Immich fixture name (person, album, place or camera), not corpus data."
+    },
+    {
+      "value": "Invalid Value",
+      "paths": ["packages/providers/google/src/drive.test.ts"],
+      "reason": "The message Google APIs return for a rejected request parameter, not a name."
+    },
+    {
+      "value": "Rate Limit Exceeded",
+      "paths": ["packages/providers/google/src/drive.test.ts"],
+      "reason": "Google API error message text."
+    },
+    {
+      "value": "User Rate Limit",
+      "paths": ["packages/providers/google/src/drive.test.ts"],
+      "reason": "Google API error message text (\"User Rate Limit Exceeded\")."
+    },
+    {
+      "value": "What Google",
+      "paths": ["packages/providers/google/src/broker.test.ts"],
+      "reason": "Start of a doc comment sentence, not a name."
+    },
+    {
+      "value": "Insufficient Permission",
+      "paths": ["packages/providers/google/src/broker.test.ts"],
+      "reason": "Google API error message text."
+    },
+    {
+      "value": "Neither Microsoft",
+      "paths": ["packages/providers/outlook/src/broker.test.ts"],
+      "reason": "Start of a test comment sentence, not a name."
+    },
+    {
+      "value": "Neither Strava",
+      "paths": ["packages/providers/strava/src/broker.test.ts"],
+      "reason": "Start of a test comment sentence, not a name."
+    },
+    {
+      "value": "Backend Error",
+      "paths": ["packages/providers/google/src/broker.test.ts"],
+      "reason": "Google API error message text."
+    },
+    {
+      "value": "Rate Limit Exceeded",
+      "paths": ["packages/providers/google/src/broker.test.ts"],
+      "reason": "Google API error message text."
     }
   ],
   "secretFixtures": [
@@ -12542,6 +12597,26 @@
       "kind": "private-key",
       "reason": "Documentation string names a PEM header shape without containing a real key.",
       "paths": []
+    },
+    {
+      "path": "packages/providers/google/src/broker.test.ts",
+      "kind": "bearer-token",
+      "reason": "Invented brokered access token checked in an Authorization header in a credential-broker test."
+    },
+    {
+      "path": "packages/providers/notion/src/broker.test.ts",
+      "kind": "bearer-token",
+      "reason": "Invented brokered access token checked in an Authorization header in a credential-broker test."
+    },
+    {
+      "path": "packages/providers/outlook/src/broker.test.ts",
+      "kind": "bearer-token",
+      "reason": "Invented brokered access token checked in an Authorization header in a credential-broker test."
+    },
+    {
+      "path": "packages/providers/strava/src/broker.test.ts",
+      "kind": "bearer-token",
+      "reason": "Invented brokered access token checked in an Authorization header in a credential-broker test."
     }
   ]
 }

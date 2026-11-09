@@ -22,12 +22,12 @@ import Database from "better-sqlite3";
 type Db = Database.Database;
 import { existsSync } from "node:fs";
 import { parentPort } from "node:worker_threads";
-import { parseDuration } from "@omnesis/core";
 import { describeModelFailure } from "../inference/model-health-errors.js";
 import { LlamaCppEmbedder } from "../indexer/embedder.js";
 import { Indexer } from "../indexer/indexer.js";
 import { DocumentChunker } from "../indexer/chunker.js";
 import { DirectDocumentSource } from "../indexer/direct-document-source.js";
+import { coverageBelow, cutoffFromMaxAge, indexCoverage } from "../indexer/indexable-documents.js";
 import {
   openIndexDb,
   hasLexicalWrites,
@@ -50,8 +50,13 @@ import {
   completeDocumentIndexPurges,
   getChunkCount,
   getUsearchBackfillCursor,
+  getUsearchEncoding,
 } from "../indexer/db.js";
-import { invalidateSemanticIndex } from "../indexer/invalidate-semantic-index.js";
+import { readScanProgress, VERIFIED_WATERMARK_KEY } from "../indexer/scan-progress.js";
+import {
+  invalidateSemanticIndex,
+  invalidateVectorGraph,
+} from "../indexer/invalidate-semantic-index.js";
 import { GraphKeeper, planGraphAdmission } from "../indexer/graph-keeper.js";
 import { memoryHeadroom } from "../memory-budget.js";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
@@ -140,13 +145,7 @@ let currentCutoffs: IndexerCutoffMap = { default: null, perSource: {} };
 
 /** Compute the ISO cutoff for a given sourceId at the time of the call. */
 function resolveCutoff(sourceId: string): string | null {
-  const maxAge = resolveIndexerCutoffMaxAge(currentCutoffs, sourceId);
-  if (!maxAge) return null;
-  try {
-    return new Date(Date.now() - parseDuration(maxAge)).toISOString();
-  } catch {
-    return null;
-  }
+  return cutoffFromMaxAge(resolveIndexerCutoffMaxAge(currentCutoffs, sourceId));
 }
 
 /**
@@ -165,6 +164,8 @@ const PENDING_VECTOR_DELETE_BATCH = 512;
 const GRAPH_GUARD_INTERVAL_MS = 15_000;
 const PENDING_DOCUMENT_PURGE_BATCH = 1;
 const rateHistory: IndexRateSample[] = [];
+/** Latest user-activity signal from the gateway; see the `pressure` message. */
+let userActive = false;
 
 type StartupIndexResources = {
   indexDb: Db;
@@ -665,7 +666,16 @@ async function handleInit(init: IndexerInit): Promise<void> {
     let usearchHandle: import("../indexer/usearch-index.js").UsearchWriteHandle | undefined;
     let keeper: GraphKeeper | undefined;
     if (!init.lexicalOnly) {
-      const { UsearchWriteHandle } = await import("../indexer/usearch-index.js");
+      const { UsearchWriteHandle, VECTOR_ENCODING } = await import("../indexer/usearch-index.js");
+      const savedEncoding = getUsearchEncoding(indexDb);
+      if (savedEncoding !== VECTOR_ENCODING && existsSync(init.usearchIndexPath)) {
+        log(
+          "info",
+          "indexer-worker",
+          `vector graph was saved as ${savedEncoding}, this build keeps ${VECTOR_ENCODING}: rebuilding it from the stored embeddings`,
+        );
+        invalidateVectorGraph(indexDb, init.usearchIndexPath);
+      }
       const graphFileExisted = existsSync(init.usearchIndexPath);
       const admission = init.memoryBudget
         ? planGraphAdmission({
@@ -723,11 +733,25 @@ async function handleInit(init: IndexerInit): Promise<void> {
     const chunker = new DocumentChunker(init.chunkerChunkSize, init.chunkerOverlap);
     const embedder = init.lexicalOnly ? null : (warmupEmbedder ?? (await buildEmbedder(init)));
     currentCutoffs = init.cutoffs;
+    const walProbe = indexDb.prepare<[], { log: number; checkpointed: number }>(
+      "PRAGMA wal_checkpoint(NOOP)",
+    );
     const indexer = new Indexer(indexDb, source, chunker, embedder, {
       getCutoff: (doc) => resolveCutoff(doc.sourceId),
       pageSize: init.indexerPageSize,
       betweenPageSleepMs: init.indexerBetweenPageSleepMs,
       dbWriteBatchSize: init.dbWriteBatchSize,
+      catchUp: init.indexerCatchUp,
+      getPressure: () => {
+        let walPendingFrames = 0;
+        try {
+          const wal = walProbe.get();
+          if (wal && wal.log > 0) walPendingFrames = wal.log - wal.checkpointed;
+        } catch {
+          walPendingFrames = 0;
+        }
+        return { userActive, walPendingFrames };
+      },
       indexWriteOptions: { usearch: usearchHandle },
     });
 
@@ -737,7 +761,9 @@ async function handleInit(init: IndexerInit): Promise<void> {
       `starting: model=${init.modelPath}, indexInterval=${init.indexIntervalMs}ms, ` +
         `backlogInterval=${init.indexBacklogIntervalMs}ms, dbWriteBatch=${init.dbWriteBatchSize}, ` +
         `embedConcurrency=${init.embedConcurrency}, pageSize=${init.indexerPageSize}, ` +
-        `betweenPageSleepMs=${init.indexerBetweenPageSleepMs}, reindexMissingAtBoot=${init.reindexMissingAtBoot}, ` +
+        `betweenPageSleepMs=${init.indexerBetweenPageSleepMs}, ` +
+        `catchUp=${init.indexerCatchUp.enabled ? `on(maxPage=${init.indexerCatchUp.maxPageSize},minSleep=${init.indexerCatchUp.minSleepMs}ms)` : "off"}, ` +
+        `reindexMissingAtBoot=${init.reindexMissingAtBoot}, ` +
         `chunker={size=${init.chunkerChunkSize},overlap=${init.chunkerOverlap}}, ` +
         `embedder={ctx=${init.embedderContextSize},timeout=${init.embedderTimeoutMs}ms,maxInput=${init.embedderMaxInputChars}}`,
     );
@@ -842,25 +868,34 @@ async function handleInit(init: IndexerInit): Promise<void> {
       }
 
       // If the watermark is current but most docs are unindexed, reset it.
-      // This happens when a previous run was interrupted mid-backlog (crash,
-      // stall, embedder swap) — the watermark advanced past docs that never
-      // got indexed. Resetting lets `indexUpdated` rescan from the start;
-      // the two-phase hash check skips already-indexed docs cheaply.
+      // Earlier versions advanced the watermark when a scan was interrupted,
+      // past documents the scan never reached; resetting lets `indexUpdated`
+      // rescan from the start, and the two-phase hash check skips
+      // already-indexed docs cheaply. A watermark a complete scan published
+      // (VERIFIED_WATERMARK_KEY) covers everything before it however much is
+      // still to index, so it is kept. A scan in progress is never reset: it
+      // resumes from its durable position (scan-progress.ts), and a reset
+      // would throw away every page it has committed.
       const existingWatermark = getWatermark(indexDb, "last_updated_at");
-      if (existingWatermark) {
-        const indexedCount = getIndexedDocumentCount(indexDb);
-        const gatewayCount =
-          (
-            gatewayDb.prepare<[], { c: number }>("SELECT COUNT(*) as c FROM documents").get() as {
-              c: number;
-            }
-          )?.c ?? 0;
-        if (gatewayCount > 0 && indexedCount / gatewayCount < 0.9) {
+      const scanInProgress = readScanProgress(indexDb);
+      const watermarkVerified =
+        existingWatermark !== null &&
+        getWatermark(indexDb, VERIFIED_WATERMARK_KEY) === existingWatermark;
+      if (scanInProgress) {
+        log(
+          "info",
+          "indexer-worker",
+          `resuming indexing scan begun ${scanInProgress.startedAt}: ${scanInProgress.scanned} scanned, ${scanInProgress.indexed} indexed, ${scanInProgress.resumes} earlier resume(s)`,
+        );
+      } else if (existingWatermark && !watermarkVerified) {
+        const coverage = indexCoverage(gatewayDb, indexDb, resolveCutoff);
+        if (coverageBelow(coverage, 0.9)) {
+          const covered = coverage.indexable - coverage.missing;
           indexDb.prepare("DELETE FROM watermark WHERE key = ?").run("last_updated_at");
           log(
             "info",
             "indexer-worker",
-            `watermark reset: ${indexedCount}/${gatewayCount} indexed (${Math.round((indexedCount / gatewayCount) * 100)}%) — rescan from start`,
+            `watermark reset: ${covered}/${coverage.indexable} indexed (${Math.round((covered / coverage.indexable) * 100)}%) — rescan from start`,
           );
         }
       }
@@ -1006,17 +1041,12 @@ async function handleInit(init: IndexerInit): Promise<void> {
       // (Observed after a rebuild left ~52k docs unindexed.)
       if (!init.reindexMissingAtBoot) {
         try {
-          const indexedCount = getIndexedDocumentCount(indexDb);
-          const gatewayCount =
-            (
-              gatewayDb.prepare<[], { c: number }>("SELECT COUNT(*) as c FROM documents").get() as
-                { c: number } | undefined
-            )?.c ?? 0;
-          if (gatewayCount > 0 && indexedCount / gatewayCount < 0.99 && diskOkForCycle()) {
+          const coverage = indexCoverage(gatewayDb, indexDb, resolveCutoff);
+          if (coverageBelow(coverage, 0.99) && diskOkForCycle()) {
             log(
               "info",
               "indexer-worker",
-              `initial pass left ${indexedCount}/${gatewayCount} indexed — running catch-up reindex-missing`,
+              `initial pass left ${coverage.indexable - coverage.missing}/${coverage.indexable} indexed — running catch-up reindex-missing`,
             );
             const prePhasePurgeError = drainPendingSourcePurges();
             if (prePhasePurgeError) {
@@ -1590,13 +1620,14 @@ async function handlePauseIndexing(id: number): Promise<void> {
  * RESTORES instead of rebuilding (~18 min for ~800k vectors). This is terminal:
  * stops new cycles and cooperatively stops the current index pass after its
  * pending embedding page settles, leaving the backlog for the next boot.
- * It then saves. `ok` is false if the save
- * threw — the gateway proceeds and the next boot rebuilds (fail-safe).
+ * It then saves. `ok` is false if no graph is held in memory to save (before
+ * init, keyword-only, or a graph over the memory budget) or the save threw — the
+ * gateway proceeds and the next boot rebuilds or reopens the file (fail-safe).
  */
 async function handleFlushSave(id: number): Promise<void> {
   if (!state) {
-    // Pre-init: no graph in memory, nothing to save.
-    post({ type: "flushSaveComplete", id, ok: true });
+    // Pre-init: no graph in memory, nothing was saved.
+    post({ type: "flushSaveComplete", id, ok: false });
     return;
   }
   state.paused = true;
@@ -1610,14 +1641,15 @@ async function handleFlushSave(id: number): Promise<void> {
     // The in-flight job's own handler logged; we only need it settled so the
     // graph is no longer moving before we save.
   }
-  let ok = true;
+  const handle = state.usearchHandle;
+  let ok = handle !== undefined && !handle.isDetached;
   const purgeError = drainPendingSourcePurges();
   if (purgeError) {
     ok = false;
     log("error", "indexer-worker", `flush-save deferred with source purge pending: ${purgeError}`);
   } else {
     try {
-      state.usearchHandle?.save();
+      handle?.save();
     } catch (err) {
       ok = false;
       log(
@@ -1667,6 +1699,9 @@ parentPort.on("message", (msg: MainToIndexer) => {
       break;
     case "wake":
       handleWake();
+      break;
+    case "pressure":
+      userActive = msg.userActive;
       break;
     case "updateCutoffs":
       handleUpdateCutoffs(msg.cutoffs);

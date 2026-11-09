@@ -127,14 +127,22 @@ function algForKey(key: KeyObject): CoinbaseJwtAlg {
  * (idempotent for an already multi-line PEM), strip surrounding quotes/space,
  * and on a genuinely unparseable key throw an actionable message instead of the
  * raw OpenSSL code.
+ *
+ * A key typed into a single-line password field arrives with no newlines at
+ * all: browsers strip them from an `<input>`'s value, and that is how a key
+ * reaches a credential broker's Basic-auth form. OpenSSL needs the armour
+ * lines on lines of their own, so the block is laid out again around its
+ * base64 body.
  */
 function parsePrivateKeyPem(raw: string): KeyObject {
-  const pem = raw
-    .trim()
-    .replace(/^["']|["']$/g, "")
-    .replace(/\\+r\\+n/g, "\n")
-    .replace(/\\+n/g, "\n")
-    .trim();
+  const pem = rewrapPem(
+    raw
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .replace(/\\+r\\+n/g, "\n")
+      .replace(/\\+n/g, "\n")
+      .trim(),
+  );
   try {
     return createPrivateKey(pem);
   } catch (err) {
@@ -145,6 +153,17 @@ function parsePrivateKeyPem(raw: string): KeyObject {
       { cause: err },
     );
   }
+}
+
+/** An armoured block with only base64 inside, re-laid as 64-column PEM. */
+const ARMOURED_PEM =
+  /^(-----BEGIN [A-Z0-9 ]+-----)\s*([A-Za-z0-9+/=\s]+?)\s*(-----END [A-Z0-9 ]+-----)$/;
+
+function rewrapPem(pem: string): string {
+  const match = ARMOURED_PEM.exec(pem);
+  if (!match) return pem;
+  const body = match[2]!.replace(/\s+/g, "").match(/.{1,64}/g) ?? [];
+  return `${[match[1], ...body, match[3]].join("\n")}\n`;
 }
 
 /**

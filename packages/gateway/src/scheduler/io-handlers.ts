@@ -30,7 +30,6 @@ import {
   type AnalyticsSweepCandidate,
 } from "../data/repositories/AnalyticsReplicaClaimRepository.js";
 import {
-  computePeopleCounts,
   computePeopleCountsChunk,
   searchPeople,
   type PersonBrowseCursor,
@@ -77,6 +76,7 @@ import { resolvePersonId } from "../domain/PeopleResolutionService.js";
 import { computeAutoMergePairs, computeTransitiveCollapse, pickMergeWinner } from "../people.js";
 import {
   computeEnrichedMergeCandidates,
+  findCollapsedMergeCandidates,
   explainMergeCandidateVisibility,
   fetchMergeCandidatesData,
   selectTokensNeedingClassification,
@@ -329,7 +329,6 @@ export const ioHandlers = {
   ) => readPrivacyConversationExchanges(db, request, now),
 
   // ── people compute (read halves of compute/upsert splits) ─────────
-  "io.peopleCounts": (db: Db) => computePeopleCounts(db),
   "io.peopleCountsChunk": (db: Db, cursor: string | null, batchSize: number) =>
     computePeopleCountsChunk(db, cursor, batchSize),
   "io.mergeCandidates": (db: Db, perStepLimit?: number) => computeAutoMergePairs(db, perStepLimit),
@@ -356,6 +355,8 @@ export const ioHandlers = {
   // ── source-stats ───────────────────────────────────────────────────
   "io.dirtyStatsSourceIds": (db: Db) => listDirtyStatsSourceIds(db),
   "io.sourceStatsRow": (db: Db, sourceId: string) => computeSourceStatsRow(db, sourceId),
+  // ── merge candidates (read half of people.acceptCollapsedMergeCandidates) ─
+  "io.collapsedMergeCandidates": (db: Db) => findCollapsedMergeCandidates(db),
 
   // ── links compute (read half of links.upsertLinkResolutions split) ─
   "io.linkResolutions": (

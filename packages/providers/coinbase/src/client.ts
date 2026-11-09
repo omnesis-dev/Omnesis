@@ -6,7 +6,8 @@
  *
  * - Mints a fresh per-request JWT (signed with the user's CDP key) for every
  *   call; the key never leaves this process — only the short-lived Bearer JWT
- *   travels on the wire.
+ *   travels on the wire. The key is the stored one, or — for an account whose
+ *   key the credential broker holds — asked of the broker for each request.
  * - Errors map to typed `SyncError`s so the collector routes the source:
  *   401/403 → `auth` (invalid / revoked / wrong-scope key → needs-auth),
  *   429 → `rate-limit` with a self-derived backoff (Coinbase sends no
@@ -82,11 +83,23 @@ const REQUEST_TIMEOUT_MS = 30_000;
 /** Injectable fetch dependency — tests swap in a mock without touching globals. */
 export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
-export interface CoinbaseClientOptions {
+/** A CDP key: what every request's JWT is signed with. */
+export interface CoinbaseSigningKey {
   /** CDP key id (key name) — the JWT `kid`/`sub`. */
   keyId: string;
   /** CDP private key, PEM (EC P-256 / Ed25519). */
   privateKeyPem: string;
+}
+
+/**
+ * Where the key comes from when the credential broker holds it: asked for
+ * before every request, so a key rotated at the broker reaches a running sync.
+ * `fresh` asks past any cached copy, after Coinbase refused the one in hand.
+ */
+export type CoinbaseSigningKeySource = (opts?: { fresh?: boolean }) => Promise<CoinbaseSigningKey>;
+
+/** How the client reaches Coinbase — everything but the key. */
+export interface CoinbaseTransportOptions {
   /** Injectable for tests. Defaults to the global `fetch`. */
   fetchImpl?: FetchFn;
   /** Injectable clock (epoch ms) for deterministic JWT `nbf`/`exp` in tests. */
@@ -97,17 +110,20 @@ export interface CoinbaseClientOptions {
   timeoutMs?: number;
 }
 
+export type CoinbaseClientOptions = CoinbaseTransportOptions &
+  (CoinbaseSigningKey | { signingKey: CoinbaseSigningKeySource });
+
 export class CoinbaseClient {
-  private readonly keyId: string;
-  private readonly privateKeyPem: string;
+  private readonly key?: CoinbaseSigningKey;
+  private readonly signingKey?: CoinbaseSigningKeySource;
   private readonly fetchImpl: FetchFn;
   private readonly now: () => number;
   private readonly host: string;
   private readonly timeoutMs: number;
 
   constructor(opts: CoinbaseClientOptions) {
-    this.keyId = opts.keyId;
-    this.privateKeyPem = opts.privateKeyPem;
+    if ("signingKey" in opts) this.signingKey = opts.signingKey;
+    else this.key = { keyId: opts.keyId, privateKeyPem: opts.privateKeyPem };
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.now = opts.now ?? Date.now;
     this.host = opts.host ?? COINBASE_API_HOST;
@@ -247,30 +263,17 @@ export class CoinbaseClient {
 
   private async get<T>(path: string): Promise<T> {
     const fullPath = path.startsWith("/") ? path : `/${path}`;
-    const url = `https://${this.host}${fullPath}`;
-    const jwt = signCoinbaseJwt({
-      keyId: this.keyId,
-      privateKeyPem: this.privateKeyPem,
-      // Coinbase signs METHOD + host + PATH only — the query string is
-      // excluded from the `uri` claim (a `?limit=1` mismatch would 401).
-      request: { method: "GET", host: this.host, path: stripQuery(fullPath) },
-      nowEpochSeconds: this.now() / 1000,
-    });
+    const key = this.key ?? (await this.signingKey!());
+    let res = await this.send(fullPath, key);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    let res: Response;
-    try {
-      res = await this.fetchImpl(url, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${jwt}`, Accept: "application/json" },
-        signal: controller.signal,
-      });
-    } catch (err) {
-      const reason = (err as Error)?.name === "AbortError" ? "timed out" : "failed";
-      throw new SyncError("network", `Coinbase request ${reason}.`, { cause: err });
-    } finally {
-      clearTimeout(timer);
+    // A brokered key can be replaced at the broker while a copy of the old one
+    // is still cached here. Coinbase refusing it is the moment to look, and
+    // the request is worth repeating only when the broker now holds another.
+    if (res.status === 401 && this.signingKey) {
+      const fresh = await this.signingKey({ fresh: true });
+      if (fresh.keyId !== key.keyId || fresh.privateKeyPem !== key.privateKeyPem) {
+        res = await this.send(fullPath, fresh);
+      }
     }
 
     if (res.ok) {
@@ -308,6 +311,34 @@ export class CoinbaseClient {
       throw new SyncError("transient", `Coinbase server error (HTTP ${res.status}).`);
     }
     throw new SyncError("unknown", `Coinbase request failed (HTTP ${res.status}).`);
+  }
+
+  /** One signed GET; only a transport failure throws. */
+  private async send(fullPath: string, key: CoinbaseSigningKey): Promise<Response> {
+    const url = `https://${this.host}${fullPath}`;
+    const jwt = signCoinbaseJwt({
+      keyId: key.keyId,
+      privateKeyPem: key.privateKeyPem,
+      // Coinbase signs METHOD + host + PATH only — the query string is
+      // excluded from the `uri` claim (a `?limit=1` mismatch would 401).
+      request: { method: "GET", host: this.host, path: stripQuery(fullPath) },
+      nowEpochSeconds: this.now() / 1000,
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      return await this.fetchImpl(url, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${jwt}`, Accept: "application/json" },
+        signal: controller.signal,
+      });
+    } catch (err) {
+      const reason = (err as Error)?.name === "AbortError" ? "timed out" : "failed";
+      throw new SyncError("network", `Coinbase request ${reason}.`, { cause: err });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 

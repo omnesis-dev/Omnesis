@@ -27,7 +27,8 @@
 
 import { existsSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { createLogger } from "@omnesis/core";
+import { dirname } from "node:path";
+import { createLogger, fsyncDirSync, fsyncFileSync } from "@omnesis/core";
 import usearch from "usearch";
 
 import { shrinkPageCacheForScan } from "./scan-page-cache.js";
@@ -35,6 +36,24 @@ import type Database from "better-sqlite3";
 
 const { Index, MetricKind, ScalarKind } = usearch;
 const log = createLogger("gateway:usearch");
+
+/**
+ * How the graph stores each vector. `b1` keeps one bit per dimension (the
+ * sign) and ranks by Hamming distance, so a graph holds about a thirtieth of
+ * the vectors' float bytes and a corpus of millions of passages fits in a few
+ * hundred megabytes of mapped file; the search lane re-ranks its candidates
+ * with the full vectors kept in `chunks.embedding`. `f32` is the graph as it
+ * was: the vectors themselves, ranked by cosine. usearch adopts a file's own
+ * encoding when it opens one, so `index_meta` records which one the saved
+ * graph holds and the indexer rebuilds a graph saved under another.
+ */
+export type VectorEncoding = "f32" | "b1";
+export const VECTOR_ENCODING: VectorEncoding = "b1";
+
+/** Bytes one vector of `dim` dimensions takes in a graph of this encoding. */
+export function vectorBytes(dim: number, encoding: VectorEncoding): number {
+  return encoding === "b1" ? Math.ceil(dim / 8) : dim * 4;
+}
 
 const HNSW_CONNECTIVITY = 16;
 const HNSW_EXPANSION_ADD = 128;
@@ -94,11 +113,11 @@ function resolveBackfillThreads(override?: number): number {
   return Math.max(1, Math.floor(availableParallelism() / 2));
 }
 
-function createIndex(dimensions: number): InstanceType<typeof Index> {
+function createIndex(dimensions: number, encoding: VectorEncoding): InstanceType<typeof Index> {
   return new Index({
     dimensions,
-    metric: MetricKind.Cos,
-    quantization: ScalarKind.F32,
+    metric: encoding === "b1" ? MetricKind.Hamming : MetricKind.Cos,
+    quantization: encoding === "b1" ? ScalarKind.B1 : ScalarKind.F32,
     connectivity: HNSW_CONNECTIVITY,
     expansion_add: HNSW_EXPANSION_ADD,
     expansion_search: HNSW_EXPANSION_SEARCH,
@@ -114,22 +133,26 @@ function createIndex(dimensions: number): InstanceType<typeof Index> {
  * structurally corrupt file makes the native `load()` *abort the whole
  * process* (`free(): corrupted unsorted chunks`, SIGABRT) rather than throw a
  * catchable error, so no in-process try/catch can recover. Isolating the load
- * in a subprocess lets the parent observe the abort as a signal / non-zero
- * exit and quarantine the file (see `quarantineCorruptUsearch`).
+ * in a subprocess lets the parent observe the abort as a signal and quarantine
+ * the file (see `quarantineCorruptUsearch`).
  *
  * Uses the same HNSW parameters as every other handle so the load path is
  * identical to what the worker's write handle does at boot. Throws on a
  * wrong-dimension file (a catchable condition); native corruption can abort
  * before this returns.
  */
-export function validateUsearchFile(path: string, dimensions: number): void {
+export function validateUsearchFile(
+  path: string,
+  dimensions: number,
+  encoding: VectorEncoding = VECTOR_ENCODING,
+): void {
   // Map before loading: view() bounds the declared vector matrix against the
   // file length, whereas load() allocates from its untrusted row/column counts
   // first. Even a tiny garbage file can exhaust memory on the allocating path.
   // The reader's search probe also catches graph corruption that only trips
   // lazy traversal (such as "Linking to missing level"). Native failures still
   // require subprocess isolation; a mapped view is not a complete validator.
-  const viewer = createIndex(dimensions);
+  const viewer = createIndex(dimensions, encoding);
   viewer.view(path);
   const viewed = viewer.dimensions();
   if (viewed !== dimensions) {
@@ -141,7 +164,7 @@ export function validateUsearchFile(path: string, dimensions: number): void {
 
   // Also exercise the write handle's full deserialize path: a successful
   // reader probe alone does not prove that a writable index can be loaded.
-  const loader = createIndex(dimensions);
+  const loader = createIndex(dimensions, encoding);
   loader.load(path);
   const loaded = loader.dimensions();
   if (loaded !== dimensions) {
@@ -152,6 +175,7 @@ export function validateUsearchFile(path: string, dimensions: number): void {
 // ── Write handle (indexer worker) ───────────────────────────────────
 
 export class UsearchWriteHandle {
+  readonly encoding: VectorEncoding;
   private index: InstanceType<typeof Index>;
   private dirty = false;
   private onSaved?: () => void;
@@ -167,9 +191,10 @@ export class UsearchWriteHandle {
   constructor(
     private readonly path: string,
     private readonly dimensions: number,
-    opts: { detached?: boolean } = {},
+    opts: { detached?: boolean; encoding?: VectorEncoding } = {},
   ) {
-    this.index = createIndex(dimensions);
+    this.encoding = opts.encoding ?? VECTOR_ENCODING;
+    this.index = createIndex(dimensions, this.encoding);
     this.detached = opts.detached === true;
     if (!this.detached && existsSync(path)) {
       this.index.load(path);
@@ -192,7 +217,7 @@ export class UsearchWriteHandle {
         } catch {
           // file vanished — fine
         }
-        this.index = createIndex(dimensions);
+        this.index = createIndex(dimensions, this.encoding);
       } else {
         log.info(`loaded HNSW index: ${this.index.size()} vectors from ${path}`);
       }
@@ -223,7 +248,7 @@ export class UsearchWriteHandle {
   release(): void {
     if (this.detached) return;
     if (existsSync(this.path)) this.index.view(this.path);
-    this.index = createIndex(this.dimensions);
+    this.index = createIndex(this.dimensions, this.encoding);
     this.detached = true;
     this.dirty = false;
   }
@@ -267,7 +292,11 @@ export class UsearchWriteHandle {
     this.onSaved = cb;
   }
 
-  save(): void {
+  /**
+   * Persist the graph. `durable: false` skips the syncs, for a checkpoint whose
+   * loss costs nothing because the caller can rebuild the file.
+   */
+  save({ durable = true }: { durable?: boolean } = {}): void {
     if (this.detached || !this.dirty) return;
     // Atomic save: write to a temp file then rename. The reader thread
     // mmap-views the file — a non-atomic save would expose a partially-
@@ -275,9 +304,13 @@ export class UsearchWriteHandle {
     // HNSW graph traversal. This writes only the plaintext working copy; on
     // an encrypted install the gateway's shutdown re-materialises the durable
     // `index.usearch.enc` from it (see the boot/shutdown flow in `index.ts`).
+    // The syncs extend that atomicity to a power loss: without them the rename
+    // can reach the disk before the file's contents, leaving a torn graph that
+    // `usearch_saved_seq` would still vouch for.
     const tmp = `${this.path}.tmp`;
     this.index.save(tmp);
     try {
+      if (durable) fsyncFileSync(tmp);
       renameSync(tmp, this.path);
     } catch (err) {
       try {
@@ -287,6 +320,7 @@ export class UsearchWriteHandle {
       }
       throw err;
     }
+    if (durable) fsyncDirSync(dirname(this.path));
     this.dirty = false;
     // The on-disk graph is now committed; let the worker record the seq it
     // reflects. Runs AFTER the atomic rename so the stamp can never claim more
@@ -308,7 +342,7 @@ export class UsearchWriteHandle {
     } catch {
       // file may not exist
     }
-    this.index = createIndex(this.dimensions);
+    this.index = createIndex(this.dimensions, this.encoding);
     this.dirty = false;
     this.cursor = null;
   }
@@ -615,6 +649,12 @@ export interface VectorReadSource {
   search(vector: Float32Array, k: number): Array<{ key: bigint; distance: number }>;
   size(): number;
   /**
+   * How the graph ranks: `b1` distances are Hamming bit counts, `f32` cosine
+   * distances. Absent, cosine is assumed. The search lane re-ranks either with
+   * the stored vectors; the encoding only shapes its fallback score.
+   */
+  encoding?(): VectorEncoding;
+  /**
    * Embedding-model identifier of the generation this source currently serves,
    * or null when unknown (a raw single-file handle carries no generation
    * identity). The candidate-generation core compares it against the model that
@@ -641,11 +681,16 @@ export class UsearchReadHandle implements VectorReadSource {
   private constructor(
     private path: string,
     dimensions: number,
+    private readonly graphEncoding: VectorEncoding,
   ) {
     // Start with an empty shell so the handle is always usable even before
     // the writer has produced an index file. `maybeRefresh()` fills it in.
-    this.index = createIndex(dimensions);
+    this.index = createIndex(dimensions, graphEncoding);
     this.reload();
+  }
+
+  encoding(): VectorEncoding {
+    return this.graphEncoding;
   }
 
   private fileSignature(path: string = this.path): string | null {
@@ -664,8 +709,12 @@ export class UsearchReadHandle implements VectorReadSource {
    * lets a gateway that booted before its first index build pick up vectors
    * without a restart.
    */
-  static open(path: string, dimensions: number): UsearchReadHandle {
-    return new UsearchReadHandle(path, dimensions);
+  static open(
+    path: string,
+    dimensions: number,
+    encoding: VectorEncoding = VECTOR_ENCODING,
+  ): UsearchReadHandle {
+    return new UsearchReadHandle(path, dimensions, encoding);
   }
 
   /**

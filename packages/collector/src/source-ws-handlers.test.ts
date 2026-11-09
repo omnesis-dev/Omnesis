@@ -537,6 +537,102 @@ describe("source-ws-handlers (descriptors / credentials)", () => {
     expect(typeof result.entries[0].configured).toBe("boolean");
   });
 
+  test("credentials.status lists the accounts the credential broker holds", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { writeBrokerBinding } = await import("@omnesis/core");
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-ws-broker-"));
+    try {
+      await writeBrokerBinding(
+        "test-cred",
+        "workspace-1",
+        {
+          broker: "nango",
+          connections: { default: { providerConfigKey: "p", connectionId: "c" } },
+        },
+        dir,
+      );
+      const credSpec = {
+        fileKey: "test-cred",
+        required: true,
+        fields: [{ name: "client_id", label: "Client ID" }],
+        wizard: { intro: "x", why: "y", estMinutes: 1, steps: [] },
+      };
+      const handlers = createSourceWsHandlers({
+        sourceManager: {
+          ...fakeManager({
+            descriptors: [fakeDescriptor({ id: SourceType("a"), credentials: credSpec })],
+          }),
+          getConfigDir: () => dir,
+        } as never,
+        gateway: fakeGateway,
+        emitEvent: () => {},
+      });
+      const result = (await handlers.handle(makeCommand("credentials.status", {}))) as {
+        entries: Array<{ configured: boolean; brokeredAccounts: string[] }>;
+      };
+      expect(result.entries[0]).toMatchObject({
+        configured: false,
+        brokeredAccounts: ["workspace-1"],
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("auth.begin refuses to renew an account the credential broker holds", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { writeBrokerBinding } = await import("@omnesis/core");
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-ws-broker-"));
+    try {
+      await writeBrokerBinding(
+        "test-cred",
+        "workspace-1",
+        {
+          broker: "nango",
+          connections: { default: { providerConfigKey: "p", connectionId: "c" } },
+        },
+        dir,
+      );
+      const credSpec = {
+        fileKey: "test-cred",
+        required: true,
+        fields: [{ name: "client_id", label: "Client ID" }],
+        wizard: { intro: "x", why: "y", estMinutes: 1, steps: [] },
+      };
+      const handlers = createSourceWsHandlers({
+        sourceManager: {
+          ...fakeManager({
+            descriptors: [
+              fakeDescriptor({
+                id: SourceType("a"),
+                credentials: credSpec,
+                authFlow: async () => AccountId("workspace-1"),
+              }),
+            ],
+          }),
+          getConfigDir: () => dir,
+        } as never,
+        gateway: fakeGateway,
+        emitEvent: () => {},
+      });
+      await expect(
+        handlers.handle(
+          makeCommand("auth.begin", {
+            flowId: "flow-1",
+            sourceType: "a",
+            accountId: "workspace-1",
+          }),
+        ),
+      ).rejects.toThrow(/credential broker/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("credentials.set rejects unknown fileKey", async () => {
     const handlers = createSourceWsHandlers({
       sourceManager: fakeManager() as never,

@@ -742,9 +742,10 @@ describe("notification queue", () => {
  * a device with any history the terminal `delivered` / `superseded` / `expired`
  * rows vastly outnumber the actionable ones. `idx_notification_deliveries_claim`
  * carries `state` right after `device_id` precisely so a claim costs what the
- * device still owes rather than everything it has ever been sent — and the
- * gateway never runs `ANALYZE`, so a predicate the planner can only exploit
- * with `sqlite_stat1` present does not reach that column at all.
+ * device still owes rather than everything it has ever been sent — and a
+ * database is not analyzed until the planner statistics task first runs, so a
+ * predicate the planner can only exploit with `sqlite_stat1` present must not
+ * be what reaches that column.
  */
 describe("notification claim query plans", () => {
   function explain(sql: string, params: Array<string | number>): string {

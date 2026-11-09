@@ -1,0 +1,5 @@
+---
+"omnesis": patch
+---
+
+Indexing catches up across restarts. An unfinished indexing scan now records its position in `index.db` and resumes from it after a stop or a restart, instead of starting over from the first document; an interrupted scan no longer moves the watermark past documents it never reached, and the boot-time reset only applies to a watermark that no complete scan verified. While a backlog drains and nothing else needs the machine, scan pages grow to `indexer.catchUp.maxPageSize` (default 1000) and the pause drops to `indexer.catchUp.minBetweenPageSleep` (default 10ms); a user request in flight, or an `index.db` WAL that checkpoints cannot keep up with, returns the scan to `indexer.pageSize` and `indexer.betweenPageSleep`. `indexer.catchUp.enabled: false` keeps the configured pace on every page. The next page's embedding now starts while the previous page is written. `GET /status` reports the documents without an index row (`index.backlog`) and the scan in progress (`index.scan`: position, documents per second, page size, pause and what is holding it back); `GET /index/stats` reports the same scan and uses its rate for the ETA.

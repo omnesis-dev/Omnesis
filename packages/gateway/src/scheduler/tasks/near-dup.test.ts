@@ -227,11 +227,16 @@ function stubGates(state: NearDupStubState): { compute: IoGate; write: WriteGate
   };
 }
 
-function buildTasks(state: NearDupStubState): {
+function buildTasks(
+  state: NearDupStubState,
+  plannerStatisticsIntervalMs = 0,
+): {
   nearDupCompute: PeriodicTask<unknown, IdleResult>;
   nearDupDfRefresh: PeriodicTask<unknown, IdleResult>;
   nearDupAlgoSweep: PeriodicTask<unknown, IdleResult>;
   scheduler: Scheduler;
+  taskNames: string[];
+  jobIds: string[];
 } {
   const { compute, write, cpu } = stubGates(state);
   // In-memory DB with the schema applied — the drip task does query
@@ -258,6 +263,7 @@ function buildTasks(state: NearDupStubState): {
       peopleCountsRefreshIntervalMs: 1_000_000,
       statsRefreshIntervalMs: 1_000_000,
       catalogRefreshIntervalMs: 1_000_000,
+      plannerStatisticsIntervalMs,
       linkStatsRefreshIntervalMs: 1_000_000,
       linkStatsIdleDelayMs: 1_000_000,
       interactionScoresRefreshIntervalMs: 1_000_000,
@@ -278,6 +284,8 @@ function buildTasks(state: NearDupStubState): {
     nearDupDfRefresh: byName.get("backfill.nearDupDfRefresh") as PeriodicTask<unknown, IdleResult>,
     nearDupAlgoSweep: byName.get("backfill.nearDupAlgoSweep") as PeriodicTask<unknown, IdleResult>,
     scheduler,
+    taskNames: bundle.tasks.map((t) => t.name),
+    jobIds: bundle.jobs.map((j) => j.id),
   };
 }
 
@@ -495,5 +503,27 @@ describe("nearDupDfRefreshTask — wall-clock trigger", () => {
 
   test("a never-built table rebuilds whatever the hour", async () => {
     expect(await runTrigger({ builtHoursAgo: null, filesArrived: false, atHour: 14 })).toBe(1);
+  });
+});
+
+describe("planner statistics task", () => {
+  const state = (): NearDupStubState => ({
+    dfBuiltAt: null,
+    batches: [],
+    computeBatchCalls: 0,
+    applyBatchCalls: 0,
+    applyDfCalls: 0,
+    algoSweepCalls: 0,
+  });
+
+  test("is not scheduled while its interval is off", () => {
+    const off = buildTasks(state());
+    expect(off.taskNames).not.toContain("backfill.plannerStatistics");
+    expect(off.jobIds.some((id) => id.includes("plannerStatistics"))).toBe(false);
+  });
+
+  test("is scheduled at the configured cadence once an interval is set", () => {
+    const on = buildTasks(state(), 3_600_000);
+    expect(on.taskNames).toContain("backfill.plannerStatistics");
   });
 });

@@ -41,6 +41,7 @@ import {
   sweepAccumulateTask,
   runBackfillTick,
   isIdleResult,
+  sweepCollapsedCandidates,
   type IdleResult,
 } from "./backfill-helpers.js";
 import type { TokenLabelRow } from "../../merge-candidates.js";
@@ -429,6 +430,9 @@ export function peopleCountsRefreshTask(
 
 // ── Source-stats refresh drip ─────────────────────────────────────────
 
+/** A source's stats scans take at most one part in this many of a read worker's time. */
+const SOURCE_STATS_SCAN_SHARE = 20;
+
 export function sourceStatsRefreshTask(
   opts: BackfillTaskOptsInternal,
 ): PeriodicTask<unknown, IdleResult> {
@@ -444,6 +448,19 @@ export function sourceStatsRefreshTask(
   // messages, a digest of browser visits — that is a different number, and two
   // clients end up disagreeing about the same source.
   let nextDirtyIndex = 0;
+  // A source's scan reads every one of its documents, so a source that is
+  // always ingesting — marked dirty again by every sync — would otherwise be
+  // scanned on every tick, each scan holding a read worker for as long as the
+  // source is large. A source waits out a cooldown proportional to its last
+  // scan before it is scanned again, so scanning it takes at most a fixed
+  // share of a read worker; its count stays exact meanwhile through the
+  // inline bumps, and only its size, units and date range age.
+  const lastScan = new Map<string, { at: number; ms: number }>();
+  const coolingDown = (sid: string, now: number): boolean => {
+    const last = lastScan.get(sid);
+    if (!last) return false;
+    return now - last.at < Math.max(statsRefreshIntervalMs, last.ms * SOURCE_STATS_SCAN_SHARE);
+  };
   return {
     name: taskName,
     runner: "main",
@@ -463,14 +480,21 @@ export function sourceStatsRefreshTask(
           trackers.sourceStatsRefresh.setRemaining(0);
           return { idle: true };
         }
+        const now = Date.now();
+        const due = dirty.filter((sid) => !coolingDown(sid, now));
+        if (due.length === 0) {
+          trackers.sourceStatsRefresh.setRemaining(dirty.length);
+          return { idle: true };
+        }
 
         // Round-robin, so a source that cannot commit yields its turn.
-        if (nextDirtyIndex >= dirty.length) nextDirtyIndex = 0;
-        const sid = dirty[nextDirtyIndex];
+        if (nextDirtyIndex >= due.length) nextDirtyIndex = 0;
+        const sid = due[nextDirtyIndex];
         nextDirtyIndex += 1;
         const startMs = Date.now();
         const agg = await ioGate.sourceStatsRow(sid);
         const computedMs = Date.now() - startMs;
+        lastScan.set(sid, { at: startMs, ms: computedMs });
         await writeGate.upsertSourceStatsRow(sid, agg);
         // Push the actual remaining dirty count straight from the
         // compute-side query — it's already cheap (PK lookup on small
@@ -721,7 +745,7 @@ export function mergeRulesEvalTask(
     // (queries only `pending` rows). Catches ongoing drift and
     // pre-deploy stale rows that aren't tied to a rule-version bump.
     preStep: async () => {
-      const candSweep = await writeGate.sweepCollapsedMergeCandidates();
+      const candSweep = await sweepCollapsedCandidates(ioGate, writeGate);
       lastCandSweep = candSweep.swept;
       if (candSweep.swept > 0) {
         log.info(`merge rules eval: ${candSweep.swept} stale-candidates-swept`);
@@ -753,7 +777,7 @@ export function mergeRulesEvalTask(
         // failure (writer backpressure) the next tick's pre-step
         // catches up.
         try {
-          const postSweep = await writeGate.sweepCollapsedMergeCandidates();
+          const postSweep = await sweepCollapsedCandidates(ioGate, writeGate);
           lastCandSweep += postSweep.swept;
         } catch (err) {
           log.warn(
@@ -1071,6 +1095,42 @@ export function catalogRefreshTask(
           `refreshed catalog_table_stats for ${rows.length} table(s) in ${Date.now() - startMs}ms (reads ${readMs}ms)`,
         );
         return { idle: false };
+      });
+    },
+  };
+}
+
+// ── Planner statistics (off by default) ───────────────────────────────
+//
+// SQLite's advice for a long-lived connection: `PRAGMA optimize` with the
+// all-tables bit when it opens and plain `PRAGMA optimize` every hour or day.
+// One task covers both — its first tick after boot also picks up any index a
+// migration created — and the writer op splits the ANALYZE work per index.
+// Statistics change query plans, so the task runs only when the operator sets
+// `gateway.backfill.plannerStatistics.interval`.
+
+export function plannerStatisticsTask(
+  opts: BackfillTaskOptsInternal,
+): PeriodicTask<unknown, IdleResult> {
+  const { writeGate, log, plannerStatisticsIntervalMs } = opts;
+  const taskName = "backfill.plannerStatistics";
+  return {
+    name: taskName,
+    runner: "main",
+    priority: "background",
+    periodMs: plannerStatisticsIntervalMs,
+    startDelayMs: Math.min(10 * 60_000, plannerStatisticsIntervalMs),
+    initialArgs: undefined,
+    async run() {
+      return runBackfillTick(taskName, log, async () => {
+        const startMs = Date.now();
+        const { analyzed, tables } = await writeGate.refreshPlannerStatistics();
+        if (analyzed > 0) {
+          log.info(
+            `planner statistics: analyzed ${analyzed} indexes or tables across ${tables} tables in ${Date.now() - startMs}ms`,
+          );
+        }
+        return { idle: analyzed === 0 };
       });
     },
   };

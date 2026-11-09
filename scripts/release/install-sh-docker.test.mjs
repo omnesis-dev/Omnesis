@@ -248,6 +248,11 @@ done
 case "$URL" in
   */token)
     [ "\${OMNESIS_TEST_REGISTRY_MODE:-challenge}" = token-fail ] && exit 7
+    if [ -n "\${OMNESIS_TEST_TOKEN_STATUS_TIMES:-}" ] && [ "$(grep -c 'example.test/token' "$OMNESIS_TEST_CURL_LOG")" -le "$OMNESIS_TEST_TOKEN_STATUS_TIMES" ]; then
+      : > "$OUT"
+      printf '%s' "$OMNESIS_TEST_TOKEN_STATUS"
+      exit 0
+    fi
     if [ "\${OMNESIS_TEST_OVERSIZE:-}" = token ] && [ -n "$MAX_FILESIZE" ]; then exit 63; fi
     if [ "\${OMNESIS_TEST_REGISTRY_MODE:-challenge}" = token-auth ]; then
       : > "$OUT"
@@ -264,6 +269,16 @@ case "$URL" in
     exit 0 ;;
   */v2/*/tags/list*)
     [ "\${OMNESIS_TEST_REGISTRY_MODE:-challenge}" = fail ] && exit 7
+    if [ -n "\${OMNESIS_TEST_TAGS_FAIL_TIMES:-}" ] && [ "$(grep -c 'tags/list' "$OMNESIS_TEST_CURL_LOG")" -le "$OMNESIS_TEST_TAGS_FAIL_TIMES" ]; then
+      if [ -n "\${OMNESIS_TEST_TAGS_FAIL_STATUS:-}" ]; then
+        printf 'HTTP/1.1 %s Failure\\r\\n\\r\\n' "$OMNESIS_TEST_TAGS_FAIL_STATUS" > "$HEADERS"
+        : > "$OUT"
+        printf '%s' "$OMNESIS_TEST_TAGS_FAIL_STATUS"
+        exit 0
+      fi
+      echo "curl: (28) Operation timed out after 10002 milliseconds" >&2
+      exit 28
+    fi
     [ "\${OMNESIS_TEST_OVERSIZE:-}" = tags ] && [ -n "$MAX_FILESIZE" ] && exit 63
     if [ "\${OMNESIS_TEST_REGISTRY_MODE:-challenge}" = direct-auth ]; then
       printf 'HTTP/1.1 403 Forbidden\\r\\n\\r\\n' > "$HEADERS"
@@ -335,8 +350,14 @@ function dockerLog(home) {
 }
 
 function withDockerEnv(home, extra) {
-  // A failed pull is retried after a pause; no run here waits for it.
-  return { OMNESIS_TEST_DOCKER: dockerLog(home), OMNESIS_DOCKER_PULL_RETRY_SECONDS: "0", ...extra };
+  // A failed pull or registry read is retried after a pause; no run here waits
+  // for it.
+  return {
+    OMNESIS_TEST_DOCKER: dockerLog(home),
+    OMNESIS_DOCKER_PULL_RETRY_SECONDS: "0",
+    OMNESIS_DOCKER_REGISTRY_RETRY_SECONDS: "0",
+    ...extra,
+  };
 }
 
 function readDockerCalls(home) {
@@ -1133,6 +1154,123 @@ describe("install.sh --docker: what it puts on this host", () => {
     expect(run.output).not.toContain("fixture-token");
     expect(run.docker.some((call) => call.startsWith("docker login"))).toBe(false);
     expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+  });
+
+  describe("a registry read that fails", () => {
+    function resolveWith(name, env) {
+      writeExecutable(fixturePath("fake-bin", "curl"), REGISTRY_CURL_SHIM);
+      const log = fixturePath(`${name}-curl.log`);
+      writeFileSync(log, "");
+      const run = runInstaller(name, ["--docker", "--no-model", "--no-keyring"], {
+        OMNESIS_TEST_CURL_LOG: log,
+        OMNESIS_TEST_REGISTRY_MODE: "direct",
+        OMNESIS_TEST_REGISTRY_TAGS: '{"tags":["1.0.0"]}',
+        ...env,
+      });
+      const tagReads = readFileSync(log, "utf8")
+        .split("\n")
+        .filter((call) => call.includes("tags/list"));
+      return { ...run, tagReads };
+    }
+
+    test.each([
+      ["a timeout", { OMNESIS_TEST_TAGS_FAIL_TIMES: "2" }, "curl: (28) Operation timed out"],
+      [
+        "a busy registry",
+        { OMNESIS_TEST_TAGS_FAIL_TIMES: "2", OMNESIS_TEST_TAGS_FAIL_STATUS: "429" },
+        "HTTP 429",
+      ],
+      [
+        "a registry outage",
+        { OMNESIS_TEST_TAGS_FAIL_TIMES: "2", OMNESIS_TEST_TAGS_FAIL_STATUS: "503" },
+        "HTTP 503",
+      ],
+    ])("recovers from %s and still installs that release", (_label, env, detail) => {
+      const run = resolveWith(`recovers-${env.OMNESIS_TEST_TAGS_FAIL_STATUS ?? "timeout"}`, env);
+      expect(run.status).toBe(0);
+      expect(run.output).toContain(detail);
+      expect(run.output).toContain("attempt 1 of 4");
+      expect(run.output).toContain("attempt 2 of 4");
+      expect(run.output).not.toContain("attempt 3 of 4");
+      expect(run.envFile()).toContain("OMNESIS_IMAGE_TAG=1.0.0");
+    });
+
+    test("stops after its attempts, names the cause, and writes nothing", () => {
+      const run = resolveWith("keeps-failing", { OMNESIS_TEST_TAGS_FAIL_TIMES: "99" });
+      expect(run.status).not.toBe(0);
+      expect(run.tagReads).toHaveLength(4);
+      expect(run.output).toContain("Could not resolve the newest release");
+      expect(run.output).toContain("(last error: curl: (28) Operation timed out");
+      expect(run.output).toContain("--version X.Y.Z");
+      expect(existsSync(join(run.configDir, "docker-compose.yml"))).toBe(false);
+    });
+
+    test("a curl failure with nothing on stderr still names its exit code", () => {
+      const run = resolveWith("silent-curl", { OMNESIS_TEST_REGISTRY_MODE: "fail" });
+      expect(run.status).not.toBe(0);
+      expect(run.tagReads).toHaveLength(4);
+      expect(run.output).toContain("(last error: curl exit code 7)");
+    });
+
+    test("honors a configured number of attempts", () => {
+      const run = resolveWith("one-attempt", {
+        OMNESIS_TEST_TAGS_FAIL_TIMES: "99",
+        OMNESIS_DOCKER_REGISTRY_ATTEMPTS: "1",
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.tagReads).toHaveLength(1);
+      expect(run.output).not.toContain("attempt 1 of");
+    });
+
+    test.each([
+      ["401", "docker login"],
+      ["403", "docker login"],
+      ["404", "(last error: HTTP 404)"],
+    ])("does not try again after a definite HTTP %s", (status, message) => {
+      const run = resolveWith(`definite-${status}`, {
+        OMNESIS_TEST_TAGS_FAIL_TIMES: "99",
+        OMNESIS_TEST_TAGS_FAIL_STATUS: status,
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.tagReads).toHaveLength(1);
+      expect(run.output).toContain(message);
+      expect(run.output).not.toContain("attempt 1 of");
+    });
+
+    test("does not try again after an oversized response", () => {
+      const run = resolveWith("oversized-once", { OMNESIS_TEST_OVERSIZE: "tags" });
+      expect(run.status).not.toBe(0);
+      expect(run.tagReads).toHaveLength(1);
+      expect(run.output).not.toContain("attempt 1 of");
+    });
+
+    test("recovers when the token endpoint is the part that failed", () => {
+      const run = resolveWith("token-recovers", {
+        OMNESIS_TEST_REGISTRY_MODE: "challenge",
+        OMNESIS_TEST_TOKEN_STATUS_TIMES: "1",
+        OMNESIS_TEST_TOKEN_STATUS: "502",
+      });
+      expect(run.status).toBe(0);
+      expect(run.output).toContain("HTTP 502; attempt 1 of 4");
+      expect(run.envFile()).toContain("OMNESIS_IMAGE_TAG=1.0.0");
+    });
+
+    test.each(["0", "two", "03"])("OMNESIS_DOCKER_REGISTRY_ATTEMPTS=%s is refused", (attempts) => {
+      const run = resolveWith(`registry-attempts-${attempts}`, {
+        OMNESIS_DOCKER_REGISTRY_ATTEMPTS: attempts,
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.output).toContain("OMNESIS_DOCKER_REGISTRY_ATTEMPTS must be a whole number");
+      expect(run.tagReads).toHaveLength(0);
+    });
+
+    test("OMNESIS_DOCKER_REGISTRY_RETRY_SECONDS must be a whole number", () => {
+      const run = resolveWith("registry-seconds", {
+        OMNESIS_DOCKER_REGISTRY_RETRY_SECONDS: "soon",
+      });
+      expect(run.status).not.toBe(0);
+      expect(run.output).toContain("OMNESIS_DOCKER_REGISTRY_RETRY_SECONDS must be a whole number");
+    });
   });
 
   test("a token endpoint transport failure remains a network error", () => {

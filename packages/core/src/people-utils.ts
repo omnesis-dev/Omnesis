@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  addressMatches,
+  splitAddressParenName,
+  splitNameAngleAddress,
+  withoutClosingBracketTail,
+} from "./address-scan.js";
 import { VALID_TLDS } from "./valid-tlds.js";
 import { personIdentifierIsReadable, personIdentifiers } from "./document.js";
 import { lazyRequire } from "./lazy-require.js";
@@ -520,10 +526,10 @@ export function parseEmailHeader(raw: string): { name?: string; email?: string }
   // The `\s*` (not `\s+`) before `<` matches gmail quirks that emit
   // `"sender"<addr>` with no whitespace. The inner `[^>]*` (not `[^>]+`)
   // allows the empty address form `Name <>` — we treat that as name-only.
-  const angleMatch = trimmed.match(/^(.+?)\s*<([^>]*)>$/);
+  const angleMatch = splitNameAngleAddress(trimmed);
   if (angleMatch) {
-    const name = stripSurroundingQuotes(angleMatch[1].trim());
-    const inner = angleMatch[2].trim();
+    const name = stripSurroundingQuotes(angleMatch.name.trim());
+    const inner = angleMatch.inner.trim();
     const email = inner.includes("@") ? normalizeEmail(inner) : undefined;
     return { name: name || undefined, email };
   }
@@ -535,9 +541,9 @@ export function parseEmailHeader(raw: string): { name?: string; email?: string }
   }
 
   // Format: email (Name)
-  const parenMatch = trimmed.match(/^([^\s(]+@[^\s(]+)\s*\((.+?)\)$/);
+  const parenMatch = splitAddressParenName(trimmed);
   if (parenMatch) {
-    return { name: parenMatch[2].trim(), email: normalizeEmail(parenMatch[1]) };
+    return { name: parenMatch.name.trim(), email: normalizeEmail(parenMatch.address) };
   }
 
   // Bare email
@@ -658,9 +664,6 @@ export function splitEmailList(raw: string): string[] {
   return results;
 }
 
-// Known bug: #236 — backtracks quadratically on long runs of address characters.
-const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
-
 /**
  * Strip Turndown-style markdown backslash escapes from a text block.
  *
@@ -747,8 +750,8 @@ function extractEmailsFromUnescaped(unescaped: string): string[] {
 
   const seen = new Set<string>();
   const result: string[] = [];
-  for (const found of unescaped.matchAll(EMAIL_REGEX)) {
-    const raw = found[0];
+  for (const found of addressMatches(unescaped)) {
+    const raw = found.match;
     if (isFileNameMatch(unescaped, found.index, raw)) continue;
     const m = trimGluedDomainSuffix(raw);
     const domain = m.split("@")[1]?.toLowerCase();
@@ -860,7 +863,7 @@ function recoverMailAddress(raw: string): string | undefined {
   let candidate = raw.trim();
   const open = candidate.lastIndexOf("<");
   if (open !== -1) candidate = candidate.slice(open + 1);
-  candidate = candidate.replace(/>.*$/, "").trim();
+  candidate = withoutClosingBracketTail(candidate).trim();
   if (/\s/.test(candidate)) {
     candidate =
       candidate

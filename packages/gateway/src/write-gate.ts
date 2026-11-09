@@ -90,6 +90,7 @@ import type {
 import {
   preparePendingSourcePage,
   acknowledgePendingSourcePage,
+  abandonPendingSourcePage,
   type PendingSourcePage,
   type PreparePendingSourcePage,
 } from "./data/repositories/PendingSourcePageRepository.js";
@@ -273,7 +274,7 @@ import {
   applyMergeAdjudication,
   autoApproveHighConfidenceCandidates,
   denyMergeCandidate,
-  sweepCollapsedMergeCandidates,
+  acceptCollapsedMergeCandidates,
   pruneSuppressedMergeCandidates,
   reconcilePendingMergeCandidates,
   upsertTokenLabels,
@@ -316,7 +317,9 @@ import {
   invalidateTemporalAnnotation,
   invalidateTemporalAnnotationsForDoc,
   markTemporalAnnotationsRefilePresented,
+  relinkTemporalAnnotationProjections,
   type CreateTemporalAnnotationInput,
+  type TemporalProjectionMove,
   type UpdateTemporalAnnotationPatch,
   type TemporalAnnotation,
   type TemporalAnnotationInvalidationResult,
@@ -454,6 +457,7 @@ import {
   recomputeNamePrimaries,
 } from "./data/repositories/PersonRepository.js";
 import { upsertSqliteTableStats, type SqliteTableStatsRow } from "./sqlite-catalog.js";
+import { refreshPlannerStatistics } from "./data/planner-statistics.js";
 import { reconcileSelfFromConfig } from "./domain/SelfIdentity.js";
 import type { SelfIdentitySource } from "./self-identity-sources.js";
 import {
@@ -850,6 +854,7 @@ export interface WriteGate extends KnowledgeWriteGate {
   ): Promise<void>;
   preparePendingSourcePage(args: PreparePendingSourcePage): Promise<PendingSourcePage | null>;
   acknowledgePendingSourcePage(args: Omit<PreparePendingSourcePage, "payload">): Promise<boolean>;
+  abandonPendingSourcePage(args: Omit<PreparePendingSourcePage, "payload">): Promise<boolean>;
   /** Revoke `expectedEpoch` only when no newer attempt has claimed that row. */
   revokeSyncAttempt(sourceId: string, expectedEpoch: number, cursorRow?: string): Promise<boolean>;
   /** Send one member's cursor row back to a bootstrap: no cursor, its epoch advanced, the row kept. */
@@ -1123,12 +1128,12 @@ export interface WriteGate extends KnowledgeWriteGate {
    */
   denyMergeCandidate(candidateId: string): Promise<MergeCandidateRow>;
   /**
-   * Sweep `pending` candidates whose two sides currently resolve to
-   * the same single person — these are stale (drift collapsed them
-   * post-detection) and the operator shouldn't see them as
-   * decisions to make. Marks them `accepted` with `rule_id=NULL`.
+   * Accept the `pending` candidates an io reader found collapsed — both sides
+   * now resolve to the same single person, so they are stale and the operator
+   * shouldn't see them as decisions to make. Re-checks each on the writer and
+   * marks it `accepted` with `rule_id=NULL`. See `sweepCollapsedCandidates`.
    */
-  sweepCollapsedMergeCandidates(): Promise<{ swept: number }>;
+  acceptCollapsedMergeCandidates(ids: string[]): Promise<{ swept: number }>;
 
   /**
    * Delete `pending` candidates the role-mailbox suppression rule now
@@ -1242,6 +1247,12 @@ export interface WriteGate extends KnowledgeWriteGate {
    * row-count and MIN/MAX scans stay on the read worker.
    */
   upsertSqliteTableStats(rows: readonly SqliteTableStatsRow[]): Promise<void>;
+  /**
+   * Analyze the tables `PRAGMA optimize` says need it, one bounded ANALYZE
+   * per index; see `data/planner-statistics.ts`. `analyzed` counts indexes
+   * and index-less tables, `tables` the tables they belong to.
+   */
+  refreshPlannerStatistics(): Promise<{ analyzed: number; tables: number }>;
 
   // ── access / MCP OAuth ────────────────────────────────────────────
   registerOAuthClient(input: OAuthClientRegistrationInput): Promise<OAuthClientRegistration>;
@@ -2016,6 +2027,11 @@ export interface WriteGate extends KnowledgeWriteGate {
    * lookup once that run completes.
    */
   markTemporalAnnotationsRefilePresented(ids: readonly string[], runId: string): Promise<void>;
+  /**
+   * Point annotation links at the ids their projections moved to; see
+   * `relinkTemporalAnnotationProjections`. Returns how many links moved.
+   */
+  relinkTemporalAnnotationProjections(moves: readonly TemporalProjectionMove[]): Promise<number>;
   /** Atomically create an observation and record its live annotation dependencies. */
   createObservation(
     input: CreateObservationInput,
@@ -2438,6 +2454,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     replaceSourceSyncIssues: (sourceId, deviceId, issues, assessments) =>
       call("db.replaceSourceSyncIssues", [sourceId, deviceId, issues, assessments]),
     acknowledgePendingSourcePage: (args) => call("db.acknowledgePendingSourcePage", [args]),
+    abandonPendingSourcePage: (args) => call("db.abandonPendingSourcePage", [args]),
     revokeSyncAttempt: (sourceId, expectedEpoch, cursorRow) =>
       call("db.revokeSyncAttempt", [sourceId, expectedEpoch, cursorRow]),
     resetMemberCursor: (sourceId, deviceId) => call("db.resetMemberCursor", [sourceId, deviceId]),
@@ -2514,7 +2531,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     upsertMergeCandidates: (proposals) => call("people.upsertMergeCandidates", [proposals]),
     acceptMergeCandidate: (input) => call("people.acceptMergeCandidate", [input]),
     denyMergeCandidate: (candidateId) => call("people.denyMergeCandidate", [candidateId]),
-    sweepCollapsedMergeCandidates: () => call("people.sweepCollapsedMergeCandidates", []),
+    acceptCollapsedMergeCandidates: (ids) => call("people.acceptCollapsedMergeCandidates", [ids]),
     pruneSuppressedMergeCandidates: () => call("people.pruneSuppressedMergeCandidates", []),
     autoApproveHighConfidenceCandidates: () =>
       call("people.autoApproveHighConfidenceCandidates", []),
@@ -2543,6 +2560,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     reconcileLinkStatsCounters: () => call("links.reconcileLinkStatsCounters", []),
 
     upsertSqliteTableStats: (rows) => call("catalog.upsertSqliteTableStats", [[...rows]]),
+    refreshPlannerStatistics: () => call("db.refreshPlannerStatistics", []),
 
     registerOAuthClient: (input) => call("access.oauthClientRegister", [input]),
     upsertOAuthMetadataClient: (input) => call("access.oauthMetadataClientUpsert", [input]),
@@ -2841,6 +2859,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     markTemporalAnnotationsRefilePresented: async (ids, runId) => {
       await call("temporalAnnotations.refilePresented", [ids, runId]);
     },
+    relinkTemporalAnnotationProjections: (moves) =>
+      call("temporalAnnotations.relinkProjections", [[...moves]]),
     reviewBrainArtifactsForDeletedDocs: (deletedDocIds) =>
       call("cognition.sourceDeletionReview", [deletedDocIds]),
     createObservation: (input, dependencies, now) =>
@@ -3014,6 +3034,7 @@ export function directWriteGate(db: Db): WriteGate {
     replaceSourceSyncIssues: async (sourceId, deviceId, issues, assessments) =>
       replaceSourceSyncIssues(db, sourceId, deviceId, issues, undefined, assessments),
     acknowledgePendingSourcePage: async (args) => acknowledgePendingSourcePage(db, args),
+    abandonPendingSourcePage: async (args) => abandonPendingSourcePage(db, args),
     revokeSyncAttempt: async (sourceId, expectedEpoch, cursorRow) =>
       revokeSyncAttempt(db, sourceId, expectedEpoch, cursorRow ?? ""),
     resetMemberCursor: async (sourceId, deviceId) => {
@@ -3118,7 +3139,9 @@ export function directWriteGate(db: Db): WriteGate {
     upsertMergeCandidates: async (proposals) => upsertMergeCandidates(db, proposals),
     acceptMergeCandidate: async (input) => acceptMergeCandidate(db, input),
     denyMergeCandidate: async (candidateId) => denyMergeCandidate(db, candidateId),
-    sweepCollapsedMergeCandidates: async () => sweepCollapsedMergeCandidates(db),
+    acceptCollapsedMergeCandidates: async (ids) => ({
+      swept: acceptCollapsedMergeCandidates(db, ids).swept,
+    }),
     pruneSuppressedMergeCandidates: async () => pruneSuppressedMergeCandidates(db),
     autoApproveHighConfidenceCandidates: async () => autoApproveHighConfidenceCandidates(db),
     applyMergeAdjudication: async (input) => applyMergeAdjudication(db, input),
@@ -3149,6 +3172,10 @@ export function directWriteGate(db: Db): WriteGate {
 
     upsertSqliteTableStats: async (rows) => {
       upsertSqliteTableStats(db, rows);
+    },
+    refreshPlannerStatistics: async () => {
+      const result = refreshPlannerStatistics(db, undefined);
+      return { analyzed: result.analyzed.length, tables: result.tables.length };
     },
 
     registerOAuthClient: async (input) => registerOAuthClient(db, input),
@@ -3546,6 +3573,8 @@ export function directWriteGate(db: Db): WriteGate {
       invalidateTemporalAnnotationsForDoc(db, docId, now),
     markTemporalAnnotationsRefilePresented: async (ids, runId) =>
       markTemporalAnnotationsRefilePresented(db, ids, runId),
+    relinkTemporalAnnotationProjections: async (moves) =>
+      relinkTemporalAnnotationProjections(db, moves),
     createObservation: async (input, dependencies, now) =>
       mutateWithConsumptionDependencies(db, dependencies, "observation", input.id, now, () =>
         createObservation(db, input, now),

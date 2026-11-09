@@ -84,6 +84,34 @@ export function acknowledgePendingSourcePage(
   })();
 }
 
+/**
+ * Discard a page the gateway refused as invalid, while its cursor is still
+ * uncommitted. What it already wrote is what the next fetch from the same
+ * cursor writes again: analytics rows and, for a page too large for one
+ * transaction, its earlier document chunks are upserts, and its tombstones
+ * reflect the source at fetch time. Snapshot evidence counts only after the
+ * cursor commits, so none of it is lost or forged. This makes the page
+ * at-least-once rather than exactly-once, the same as a collector stopping
+ * before it prepared the page. A committed page is never discarded: its
+ * remaining work must finish exactly as recorded.
+ */
+export function abandonPendingSourcePage(
+  db: Db,
+  args: Omit<PreparePendingSourcePage, "payload">,
+): boolean {
+  return db.transaction(() => {
+    if (getWipeEpoch(db, args.sourceId, args.cursorRow) !== args.writeEpoch) return false;
+    return (
+      db
+        .prepare(
+          `DELETE FROM pending_source_pages WHERE source_id = ? AND cursor_row = ?
+      AND page_id = ? AND cursor_committed = 0`,
+        )
+        .run(args.sourceId, args.cursorRow, args.id).changes > 0
+    );
+  })();
+}
+
 /** Used by explicit resets, never by claiming a new attempt after a failure. */
 export function clearPendingSourcePages(db: Db, sourceId: string, cursorRow?: string): void {
   if (cursorRow === undefined)

@@ -5,6 +5,7 @@ import { vi } from "vitest";
 import { GmailSource } from "../gmail.js";
 import { GoogleCalendarSource } from "../calendar.js";
 import { GoogleDriveSource } from "../drive.js";
+import { QuotaPacer } from "../quota-pacer.js";
 import type { gmail_v1, calendar_v3, drive_v3 } from "googleapis";
 
 // ── Gmail ──────────────────────────────────────────────────────────
@@ -118,6 +119,8 @@ export function createGmailSource(
     dataCutoff?: string;
     attachmentConfig?: import("@omnesis/core").AttachmentExtractionConfig;
     extractAttachment?: import("@omnesis/core").AttachmentExtractFn;
+    /** Paces the source's requests; unpaced unless a test is about pacing. */
+    quota?: QuotaPacer;
   },
 ): GmailSource {
   const accountId = opts?.accountId ?? "test@example.com";
@@ -125,6 +128,7 @@ export function createGmailSource(
     isTranscriptionVocabularyEnabled: opts?.isTranscriptionVocabularyEnabled,
     attachmentConfig: opts?.attachmentConfig,
     extractAttachment: opts?.extractAttachment,
+    quota: opts?.quota ?? QuotaPacer.unlimited(),
   });
   Object.defineProperty(source, "gmail", {
     value: mockGmail,

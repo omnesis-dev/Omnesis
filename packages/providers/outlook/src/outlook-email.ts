@@ -10,6 +10,7 @@ import {
   DeltaExpiredError,
   AuthError,
   toConnectionAuthError,
+  type GraphAccessToken,
 } from "./graph-client.js";
 import {
   PAGE_SIZE,
@@ -69,7 +70,7 @@ export class OutlookEmailSource {
   private extractAttachment?: AttachmentExtractFn;
 
   constructor(
-    getAccessToken: () => Promise<string>,
+    getAccessToken: GraphAccessToken,
     sourceId: string,
     providerId: string,
     dataCutoff?: string,

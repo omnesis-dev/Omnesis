@@ -10,7 +10,7 @@
  *
  * `ioGateFromScheduler(scheduler)` returns a typed `IoGate`
  * so callers (the periodic backfill orchestrators) can write
- * `compute.peopleCounts()` instead of constructing the raw enqueue.
+ * `compute.peopleCountsChunk()` instead of constructing the raw enqueue.
  *
  * All compute ops default to `background` priority — they're the read
  * halves of background work like the merge pass. There's no expectation
@@ -26,7 +26,6 @@ import type {
   AutoMergePair,
   InteractionScoresSnapshot,
   MergeEquivalenceSnapshot,
-  PeopleCountRow,
   SeedFromContactsPlan,
   TransitiveCollapseRow,
 } from "../people.js";
@@ -221,12 +220,10 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
   /** One page of a privacy conversation's exchanges; see `listPrivacyExchangePresentations`. */
   privacyConversationExchanges: PrivacyExchangeReads["privacyConversationExchanges"];
   /**
-   * Compute `(personId, docCount, aliasCount)` for every unmerged person in
-   * one read. Heavy — a full scan of `document_people` — which is why it
-   * runs out here rather than on the writer thread.
+   * One page of `(personId, docCount, aliasCount)` for the sweep-accumulate
+   * refresh. A full scan of `document_people` is too long for this pool: a
+   * user read queued behind it waits for the whole scan.
    */
-  peopleCounts(): Promise<PeopleCountRow[]>;
-  /** Cursor-paginated variant, for the sweep-accumulate refresh. */
   peopleCountsChunk(cursor: string | null, batchSize: number): Promise<PeopleCountsChunkResult>;
   /**
    * Pick up to `perStepLimit` candidate pairs for merging. Two LIMIT 50
@@ -245,6 +242,11 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
    * sum of content/title/metadata sizes. Multi-second on large sources.
    */
   sourceStatsRow(sourceId: string): Promise<SourceStatsAggregation>;
+  /**
+   * Ids of the pending merge candidates whose two sides now resolve to one
+   * identity. Pairs with the writer's `acceptCollapsedMergeCandidates`.
+   */
+  collapsedMergeCandidates(): Promise<string[]>;
   /**
    * Walk up to `limit` unresolved `document_links` rows past the
    * persisted reconcile cursor and compute the resolution for each on
@@ -556,12 +558,12 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // The Privacy page's exchange pages: a person is waiting on each.
   { name: "io.privacyExchangeFeed", priority: "user" },
   { name: "io.privacyConversationExchanges", priority: "user" },
-  { name: "io.peopleCounts", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.peopleCountsChunk", priority: "background" },
   { name: "io.mergeCandidates", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.resolvePairWinner", priority: "background" },
   { name: "io.dirtyStatsSourceIds", priority: "background" },
   { name: "io.sourceStatsRow", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  { name: "io.collapsedMergeCandidates", priority: "background" },
   { name: "io.linkResolutions", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "io.seedFromContactsPlan",
@@ -599,7 +601,6 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.mergeEquivalences", priority: "background", latencyBudgetMs: 5_000 },
   { name: "io.mergeEquivalencesData", priority: "background", latencyBudgetMs: 5_000 },
   // 3s — full alias join scanning the entire person_aliases table.
-  // Comparable to compute.peopleCounts.
   { name: "io.autoDetectedRules", priority: "background", latencyBudgetMs: 3_000 },
   { name: "io.autoDetectData", priority: "background", latencyBudgetMs: 3_000 },
   { name: "io.mergeRulesMeta", priority: "background" },
@@ -705,12 +706,12 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     privacyExchangeFeed: (request, now) => call("io.privacyExchangeFeed", [request, now]),
     privacyConversationExchanges: (request, now) =>
       call("io.privacyConversationExchanges", [request, now]),
-    peopleCounts: () => call("io.peopleCounts", []),
     peopleCountsChunk: (cursor, batchSize) => call("io.peopleCountsChunk", [cursor, batchSize]),
     mergeCandidates: (perStepLimit) => call("io.mergeCandidates", [perStepLimit]),
     resolvePairWinner: (a, b) => call("io.resolvePairWinner", [a, b]),
     dirtyStatsSourceIds: () => call("io.dirtyStatsSourceIds", []),
     sourceStatsRow: (sourceId) => call("io.sourceStatsRow", [sourceId]),
+    collapsedMergeCandidates: () => call("io.collapsedMergeCandidates", []),
     linkResolutions: (
       limit,
       fallbackRepresentationSourcePrefixes,

@@ -488,12 +488,14 @@ export class SchedulerCore {
       ),
     )
       .then((outcome: TaskOutcome<unknown, unknown>) => {
-        const execMs = Date.now() - startMs;
+        const wallMs = Date.now() - startMs;
+        const workerQueueMs = Math.min(wallMs, Math.max(0, outcome.workerQueueMs ?? 0));
+        const execMs = wallMs - workerQueueMs;
         this.recordSample(
           pending.task.name,
           pending.task.latencyBudgetMs,
           pending.task.runner,
-          queueMs,
+          queueMs + workerQueueMs,
           execMs,
           pending.priority,
           outcomeKind(outcome),
@@ -510,7 +512,7 @@ export class SchedulerCore {
         // "writer" runner ops contribute (matching the existing
         // semantics of writerQueueMs/writerExecMs).
         if (pending.task.runner === "writer") {
-          recordWriterCall(pending.timing, queueMs, execMs);
+          recordWriterCall(pending.timing, queueMs + workerQueueMs, execMs);
         }
         if (outcome.kind === "yield") {
           // Re-enqueue at the back of the same priority lane.

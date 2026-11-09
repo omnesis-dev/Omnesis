@@ -214,6 +214,13 @@ export interface SourceStatsAggregation {
   dataSize: number;
   totalUnits: number | null;
   capturedVersion: number;
+  /**
+   * Read in several statements with no stats row whose version could show
+   * a write between them; stored with `needs_refresh` still set.
+   */
+  provisional?: true;
+  /** `doc_count` as the row held it when the aggregation started; see `upsertSourceStatsRow`. */
+  capturedDocCount: number;
 }
 
 export interface LatestActivity {

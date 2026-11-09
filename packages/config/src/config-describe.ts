@@ -21,7 +21,7 @@
  */
 
 import { z } from "zod";
-import { omnesisConfigSchema, durationRegex } from "./config-schema.js";
+import { omnesisConfigSchema, durationRegex, maxAgeRegex } from "./config-schema.js";
 import { configDefaultAt, configUnsetDescriptionAt } from "./config-defaults.js";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -276,6 +276,8 @@ function numberConstraints(schema: z.ZodNumber): ConfigConstraints | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+const DURATION_PATTERNS = new Set([durationRegex.source, maxAgeRegex.source]);
+
 function isDurationString(schema: z.ZodString): boolean {
   const checks = defOf(schema).checks ?? [];
   return checks.some((c) => {
@@ -283,11 +285,11 @@ function isDurationString(schema: z.ZodString): boolean {
     return (
       (check.kind === "regex" &&
         check.regex instanceof RegExp &&
-        check.regex.source === durationRegex.source) ||
+        DURATION_PATTERNS.has(check.regex.source)) ||
       (check.check === "string_format" &&
         check.format === "regex" &&
         check.pattern instanceof RegExp &&
-        check.pattern.source === durationRegex.source)
+        DURATION_PATTERNS.has(check.pattern.source))
     );
   });
 }

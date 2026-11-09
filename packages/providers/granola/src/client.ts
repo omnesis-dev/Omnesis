@@ -15,7 +15,17 @@ export interface GranolaClientOptions {
   fetchImpl?: typeof fetch;
   /** Injectable sleep for tests. Defaults to a real timer. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Called when Granola rejects the key (401), before the request is retried
+   * once with whatever the key function then returns. Only for a key function:
+   * a key rotated at the broker is otherwise served from its cache, stale,
+   * until the cache lapses, and the 401 would park the source first.
+   */
+  invalidateApiKey?: () => void;
 }
+
+/** A fixed API key, or a function asked for the current one before every request. */
+export type GranolaApiKey = string | (() => Promise<string>);
 
 export interface ListNotesParams {
   pageSize?: number;
@@ -34,16 +44,23 @@ const defaultSleep = (ms: number): Promise<void> =>
  * `transient`/`network` retry on the next tick.
  */
 export class GranolaClient {
-  private readonly apiKey: string;
+  private readonly apiKey: GranolaApiKey;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly invalidateApiKey?: () => void;
 
-  constructor(apiKey: string, opts: GranolaClientOptions = {}) {
+  /**
+   * `apiKey` is the account's key, or — for an account whose key the broker
+   * holds — a function asked for the current one before every request, so a
+   * key rotated at the broker is picked up mid-run.
+   */
+  constructor(apiKey: GranolaApiKey, opts: GranolaClientOptions = {}) {
     this.apiKey = apiKey;
     this.baseUrl = opts.baseUrl ?? GRANOLA_API_BASE;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep ?? defaultSleep;
+    this.invalidateApiKey = typeof apiKey === "function" ? opts.invalidateApiKey : undefined;
   }
 
   /** List notes, newest first. Pagination via the opaque `cursor`. */
@@ -83,13 +100,17 @@ export class GranolaClient {
   private async request<T>(
     path: string,
     attempt = 0,
-    opts: { notFoundIsOneItem?: boolean } = {},
+    opts: { notFoundIsOneItem?: boolean; reauthorized?: boolean } = {},
   ): Promise<T> {
+    // Outside the try below: a broker that cannot supply the key raises its
+    // own `SyncError` (`auth` or `network`), which must keep its own message
+    // rather than read as Granola being unreachable.
+    const apiKey = typeof this.apiKey === "string" ? this.apiKey : await this.apiKey();
     let res: Response;
     try {
       res = await this.fetchImpl(`${this.baseUrl}${path}`, {
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           Accept: "application/json",
         },
       });
@@ -101,6 +122,12 @@ export class GranolaClient {
 
     if (res.ok) {
       return (await res.json()) as T;
+    }
+
+    if (res.status === 401 && this.invalidateApiKey && !opts.reauthorized) {
+      await res.body?.cancel().catch(() => undefined);
+      this.invalidateApiKey();
+      return this.request<T>(path, attempt, { ...opts, reauthorized: true });
     }
 
     // 401 means the key itself is bad — re-auth can fix it. 403 means the key

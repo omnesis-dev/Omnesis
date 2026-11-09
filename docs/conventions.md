@@ -532,6 +532,44 @@ read through an index. Where the plan is load-bearing, pin it (`CROSS JOIN`,
 `INDEXED BY`) and assert it in a test: both shapes return the same rows, and
 only the plan says what it cost.
 
+The gateway can keep `sqlite_stat1` current (`data/planner-statistics.ts`, off
+unless `gateway.backfill.plannerStatistics.interval` is set): `PRAGMA optimize`
+names the tables that need analysis, the writer analyzes them one index at a
+time under an analysis limit, and a finished pass moves the schema cookie so
+read connections reload the statistics together. Statistics help, but they do
+not replace a pin: an install without the task has none, and an approximate
+analysis rates every key repeated more than the limit alike. Write a keyset
+cursor as a row value, `(ts, id) < (?, ?)`, never as `ts < ? OR (ts = ? AND
+id < ?)`: with statistics the planner splits that OR into a multi-index OR
+and sorts the whole match. For mixed directions, bound the leading column and
+exclude the cursor's tie: `ts <= ? AND NOT (ts = ? AND id <= ?)`.
+
+**A long read holds the WAL open.** The writer checkpoints between ops once
+about 2,000 frames wait and rewinds the WAL once it passes `journal_size_limit`
+(`workers/wal-checkpoint.ts`), but SQLite gives a checkpoint no frame limit, and
+a reader holding an old snapshot pins every frame written after it. A
+statement or open iterator that runs for a minute on an `omnesis.db` read
+handle therefore lets a minute of writes pile up uncopied, and the first
+checkpoint after it ends copies all of them in one writer hold. It also keeps
+the WAL from rewinding: the writer can rewind only at an instant when no reader
+is mid-statement, waits about 100 ms for one, then backs off, so back-to-back
+long scans let the WAL grow for as long as they last. Page a full-table read
+by keyset in separate statements rather than iterating it under one snapshot.
+Pages read different snapshots, so say why the combined result is still the
+one a single snapshot would give: an optimistic version the write path bumps
+and the apply path checks (`computeSourceStatsRow`), a value that changes only
+by publishing a new generation, re-read after the last page
+(`readLiveDfTable`), or an argument that the caller tolerates each row being
+read as of its own page (`listDocumentIds`). Where none holds, read in one
+transaction and say so. A `LIMIT` is no bound if no index matches its
+`ORDER BY`: the planner sorts the whole filtered set first, evaluating every
+selected column for every row. Name the index with `INDEXED BY`, as
+`fetchDateExtractionBatch` does, so that losing it is an error rather than a
+silent full sort.
+A backlog left in the WAL by an earlier gateway is likewise one uncapped copy;
+the gateway drains it at boot, when the migration handle closes, before the
+writer starts.
+
 **A new source is a new load.** A source that emits an unusual number of links,
 people or documents per item changes the arithmetic every consumer of that data
 assumed. Before enabling one, look at what it costs the writer.
@@ -688,6 +726,31 @@ SQL column types before encoding them. The same path names arrivals, snapshots,
 tombstones and replica verdicts, preserving timestamp precision and numeric
 representations without duplicating DuckDB's coercion rules in JavaScript.
 Structured or missing tuple-key values are rejected at the boundary.
+
+A table several accounts write needs a primary key that is unique across
+them. When upstream ids are only unique within one account — two linked
+accounts that both see a shared calendar list the same event under the same
+id — the account column joins the primary key, and `deleteKey` keeps naming a
+row by the upstream id, which is unique inside the account scope every delete
+and snapshot already runs in. A table created under the narrower key is rebuilt
+with the wider one when its source next registers the schema (`widenPrimaryKey`
+in the table manager): adding columns to a unique key keeps it unique, so every
+row survives, and its temporal projections are re-keyed in the same
+transaction. A key that would replace a column is never rebuilt. While a gained
+column is NULL on some row the widening waits — one warning, the old key kept,
+pages still landing with its meaning — and the next registration after those
+rows are claimed or dropped performs it. A producer that predates the widening,
+such as a rolled-back collector, declares a strict subset of the wider key; when
+it addresses rows by the same delete key, the table keeps its wider key and that
+producer's rows land under it.
+
+A projection's id is derived from its row key, so a rekey changes ids that
+temporal annotations in the main store link to. The analytics store cannot
+commit with the SQLite writer, so every id change is recorded in
+`_temporal_projection_moves` in the DuckDB transaction that makes it, and the
+gateway drains that ledger onto `temporal_annotation_projections` after the
+commit and again at boot. Replaying a generation is harmless, which is what
+covers a crash between the two commits.
 
 A producer that predates the declaration keeps working: a page naming a column
 for a table that declares no key adopts it as that table's key and records the
