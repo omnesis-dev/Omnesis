@@ -479,7 +479,7 @@ extension GatewayLiveE2ETests {
     /// The simulator's path is its host's, so this proves the wrapper runs and
     /// reports a path; only a device can show one changing.
     func testSystemPathObserverReportsTheCurrentPath() async {
-        let first = await withTaskGroup(of: NetworkPathSnapshot?.self) { group in
+        let first = await withTaskGroup(of: NetworkPathSnapshot?.self) { group -> NetworkPathSnapshot? in
             group.addTask {
                 for await path in SystemNetworkPathObserver().paths() {
                     return path

@@ -270,6 +270,19 @@ struct GatewayErrorView: View {
         }
     }
 
+    private static func classify(_ error: URLError) -> Kind {
+        switch error.code {
+        case .serverCertificateUntrusted, .serverCertificateHasBadDate,
+             .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot,
+             .secureConnectionFailed:
+            .certificate
+        case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
+            .offline
+        default:
+            .gatewayUnreachable
+        }
+    }
+
     /// Map any `Error` into one of the friendly `Kind`s above. `nil`
     /// collapses to `gatewayUnreachable` so callers that just want to
     /// signal "we couldn't reach the gateway" without an exception can
@@ -277,19 +290,7 @@ struct GatewayErrorView: View {
     static func classify(_ error: Error?) -> Kind {
         guard let error else { return .gatewayUnreachable }
         if let failure = error as? RealtimeCallFailure { return .voice(failure) }
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .serverCertificateUntrusted, .serverCertificateHasBadDate,
-                 .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot,
-                 .secureConnectionFailed:
-                return .certificate
-            case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
-                return .offline
-            default:
-                break
-            }
-            return .gatewayUnreachable
-        }
+        if let urlError = error as? URLError { return classify(urlError) }
         if let gw = error as? GatewayClient.Error {
             switch gw {
             case .unauthorized: return .unauthorized

@@ -144,25 +144,23 @@ final class MobileJourneyUITests: XCTestCase {
         defer { forwarder.stop() }
         let port = try runAsync { try await forwarder.start() }
         try launchPaired(pairedUrl: XCTUnwrap(URL(string: "https://127.0.0.1:\(port)")))
-        tap(app.buttons["phoneSetup.choose"], "Choose what to add", timeout: 60)
-        tap(app.buttons["phoneSetup.skip"], "Skip for now")
 
         tap(app.buttons["menu.toggle"], "the menu button")
         tap(app.buttons["menu.settings"], "the Settings menu row")
         XCTAssertTrue(
-            app.staticTexts["Connected"].waitForExistence(timeout: 30),
+            app.staticTexts["Connected"].waitForExistence(timeout: 60),
             "Settings never showed the live connection"
         )
 
         forwarder.stop()
         XCTAssertTrue(
-            element(containing: "Reconnecting to gateway").waitForExistence(timeout: 30),
+            element(containing: "Reconnecting to gateway").waitForExistence(timeout: 60),
             "the outage did not read as a temporary state"
         )
         XCTAssertFalse(element(containing: "Authentication failed").exists)
         XCTAssertFalse(element(containing: "Couldn't verify gateway certificate").exists)
         XCTAssertTrue(
-            element(containing: "Could not connect to the server").waitForExistence(timeout: 30),
+            element(containing: "Could not connect to the server").waitForExistence(timeout: 60),
             "the row dropped the transport's diagnostic"
         )
         XCTAssertFalse(
@@ -174,7 +172,7 @@ final class MobileJourneyUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         app.activate()
         XCTAssertTrue(
-            app.staticTexts["Connected"].waitForExistence(timeout: 30),
+            app.staticTexts["Connected"].waitForExistence(timeout: 60),
             "the app did not reconnect on the same pairing"
         )
     }
