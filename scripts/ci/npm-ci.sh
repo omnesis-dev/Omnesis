@@ -45,8 +45,14 @@ while :; do
     fi
     problem="npm ci dropped ffmpeg-static, whose binary download failed"
     if [ "$attempt" -ge "$max_attempts" ]; then
-      # Not fatal: most jobs never decode audio, and the ones that do fail on
+      # A published image must be able to decode audio, and its build can simply
+      # run again: NPM_CI_REQUIRE_FFMPEG=1 fails it here. Anywhere else this is
+      # not fatal: most jobs never decode audio, and the ones that do fail on
       # their own. This line says why they did.
+      if [ "${NPM_CI_REQUIRE_FFMPEG:-0}" = 1 ]; then
+        echo "$problem after $attempt attempts, and this build requires it" >&2
+        exit 1
+      fi
       echo "::warning::$problem after $attempt attempts; audio decoding will not work in this tree" >&2
       break
     fi

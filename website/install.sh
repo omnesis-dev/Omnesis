@@ -1351,6 +1351,16 @@ try {
 ' "$1"
 }
 
+# ffmpeg-static fetches its binary in an install script. It is an optional
+# dependency, so when that download fails npm removes it and exits 0, and every
+# voice note then fails to decode. The rest of the install is fine, so this says
+# so rather than stopping. $1 is the tree that was installed.
+warn_if_ffmpeg_missing() {
+  if [ "$CLIENT_ONLY" = 1 ] || [ "$COLLECTOR" = 1 ]; then return 0; fi
+  [ -n "$(find "$1" -type f -path '*/node_modules/ffmpeg-static/package.json' -print -quit 2>/dev/null)" ] && return 0
+  warn "ffmpeg's download failed during this install, so voice notes can't be transcribed on this machine yet. Everything else works. To fetch it, run the installer again: curl -fsSL https://omnesis.dev/install.sh | sh"
+}
+
 install_package() {
   ensure_writable_prefix
   PACKAGE_PREFIX="$(npm prefix -g)"
@@ -1413,6 +1423,7 @@ install_package() {
   PACKAGE_INSTALLED_VERSION="$("$OMNESIS_BIN" --version 2>/dev/null || true)"
   [ "$PACKAGE_INSTALLED_VERSION" = "$PACKAGE_EXPECTED_VERSION" ] || \
     fail "The package registry resolved $PACKAGE_EXPECTED_VERSION, but $OMNESIS_BIN reports ${PACKAGE_INSTALLED_VERSION:-(no version)}. The source launcher was left unchanged."
+  warn_if_ffmpeg_missing "$PACKAGE_PREFIX/lib/node_modules/$CLI_PKG"
   if [ "$SOURCE_WRAPPER_UNSAFE" = 1 ] && installed_package_wrapper_is_owned; then
     SOURCE_WRAPPER_UNSAFE=0
     PACKAGE_WRAPPER_MANAGED=1
@@ -2895,6 +2906,7 @@ install_source() {
   fi
   [ "$BUILD_STATUS" = 0 ] || \
     source_step_failed "$BUILD_STATUS" "The build" "The build failed — its error is above. Its dependencies were reinstalled from scratch first, so this is the code or this machine, not a half-finished earlier run. Fix the error above and re-run; it continues from the checkout it already made."
+  warn_if_ffmpeg_missing "$SOURCE_DIR/node_modules"
   SOURCE_ROOT="$(cd "$SOURCE_DIR" && pwd -P)"
   SOURCE_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
   write_source_wrapper "$SOURCE_ROOT" installed

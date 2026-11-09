@@ -54,6 +54,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
+import { createRequire } from "node:module";
 import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
@@ -454,6 +455,12 @@ export interface UpdateFlowDeps {
    * (`prepareNodeGypHeaders`). Best effort: it never fails the update.
    */
   prepareNodeGypHeaders?(rootDir: string): Promise<void>;
+  /**
+   * Whether the tree just installed lacks ffmpeg-static, which npm drops without
+   * an error when its binary download fails. Absent where the install is not
+   * npm's: an image is built with it or not at all.
+   */
+  ffmpegMissing?(): boolean;
   /** The environment a source build runs with: the heap sized for this machine. */
   buildEnv?(): Record<string, string> | undefined;
   /** Version of the running CLI (`readPackageVersion`). */
@@ -1674,6 +1681,13 @@ async function executeHostPlan(
         ? `${c.green}✔${c.reset} Installed ${targetLabel}. Finish the update with the steps above.`
         : `${c.green}✔${c.reset} Updated to ${targetLabel}.`,
     );
+    if (deps.roles.gateway.present && deps.ffmpegMissing?.()) {
+      console.log(
+        `${c.yellow}! ffmpeg's download failed during this update, so voice notes can't be ` +
+          `transcribed on this machine yet. Everything else works. To fetch it, run the ` +
+          `installer again: curl -fsSL https://omnesis.dev/install.sh | sh${c.reset}`,
+      );
+    }
   } finally {
     release?.();
     await daemons.startAll();
@@ -3332,6 +3346,14 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
       }
     },
     prepareNodeGypHeaders: (rootDir) => prepareNodeGypHeaders(rootDir),
+    ffmpegMissing: () => {
+      try {
+        createRequire(import.meta.url).resolve("ffmpeg-static/package.json");
+        return false;
+      } catch {
+        return true;
+      }
+    },
     buildEnv: () => buildHeapEnv(),
     currentVersion: ctx.currentVersion,
     reportHarnessResult: async (harness, result) => {
