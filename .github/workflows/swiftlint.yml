@@ -76,8 +76,9 @@ jobs:
         # reformat above all) can unmatch entries, and needs the baseline
         # regenerated in the same commit.
         run: |
-          swiftlint version
-          swiftlint lint --strict --baseline .swiftlint-baseline.json --reporter github-actions-logging
+          tool="$RUNNER_TEMP/swiftlint-$SWIFTLINT_VERSION/swiftlint"
+          test "$("$tool" version)" = "$SWIFTLINT_VERSION"
+          "$tool" lint --strict --baseline .swiftlint-baseline.json --reporter github-actions-logging
 
       # Runs even when SwiftLint failed, so one run reports both linters.
       - name: Install SwiftFormat
@@ -100,5 +101,6 @@ jobs:
       - name: lane [swiftformat]
         if: ${{ !cancelled() }}
         run: |
-          swiftformat --version
-          swiftformat --lint ios
+          tool="$RUNNER_TEMP/swiftformat-$SWIFTFORMAT_VERSION/swiftformat"
+          test "$("$tool" --version)" = "$SWIFTFORMAT_VERSION"
+          "$tool" --lint ios
