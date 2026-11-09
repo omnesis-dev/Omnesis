@@ -93,14 +93,24 @@ export function buildToolsRefusal(missing: readonly BuildTool[], command: string
  * name, and a service's PATH can hold `node` with no `npm` beside it. Once the
  * checkout has moved that is exit 127, a rollback whose own `npm ci` exits 127
  * too, and an unfinished update that refuses every later command.
+ *
+ * With `host`, the refusal ends by naming the directory of the Node running
+ * the update and the PATH that was searched. An operator reading a fleet
+ * update's result is not on that machine and cannot see either, and "beside
+ * the node it runs" is that directory. They come last because a PATH can be
+ * any length and a collector relays only the start of a long message.
  */
-export function npmRefusal(probe: BuildToolProbe): string | null {
+export function npmRefusal(
+  probe: BuildToolProbe,
+  host?: { nodeDir: string; path: string | undefined },
+): string | null {
   if (probe.runs("npm")) return null;
   return (
     "This update runs `npm ci`, and `npm` does not run on this PATH. " +
     "An update a collector or gateway service runs uses that service's PATH, " +
     "so put `npm` there, for example beside the `node` it runs, then re-run `omnesis update`. " +
-    "Nothing has been changed, so the installation is still on its current release."
+    "Nothing has been changed, so the installation is still on its current release." +
+    (host ? ` That node is in ${host.nodeDir}, and the PATH is ${host.path || "empty"}.` : "")
   );
 }
 

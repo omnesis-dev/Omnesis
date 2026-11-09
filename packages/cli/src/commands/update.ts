@@ -3471,7 +3471,14 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
             installCommand: buildToolsInstallCommand(nodeBuildToolProbe),
           })
         : undefined,
-    npmRefusal: plan.kind === "source" ? () => npmRefusal(nodeBuildToolProbe) : undefined,
+    npmRefusal:
+      plan.kind === "source"
+        ? () =>
+            npmRefusal(nodeBuildToolProbe, {
+              nodeDir: stableNodeBinDir(process.execPath),
+              path: process.env.PATH,
+            })
+        : undefined,
     serviceDefinitions:
       plan.kind !== "docker" && (process.platform === "darwin" || process.platform === "linux")
         ? serviceDefinitionUpdater({
