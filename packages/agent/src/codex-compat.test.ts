@@ -31,7 +31,8 @@ describe("Codex runtime compatibility", () => {
     expect(isSupportedCodexCliVersion("0.150.0")).toBe(false);
     expect(isTestedCodexCliVersion("0.163.0")).toBe(false);
     expect(isSupportedCodexCliVersion("0.166.7")).toBe(true);
-    expect(isTestedCodexCliVersion("0.166.0")).toBe(true);
+    expect(isSupportedCodexCliVersion("0.167.2")).toBe(true);
+    expect(isTestedCodexCliVersion("0.167.0")).toBe(true);
     expect(isTestedCodexCliVersion("0.166.1")).toBe(false);
   });
 });
