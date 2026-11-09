@@ -24,7 +24,7 @@
  * and lint over the changed files named in `$CHANGED_FILES`.
  */
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, lstatSync } from "node:fs";
 
 export const E2E_SHARDS = 8;
 /**
@@ -270,9 +270,13 @@ function changedFiles() {
   return diff.stdout.split("\n").filter(Boolean);
 }
 
-/** Files the pull-request floor formats and lints: changed and still present. */
+/**
+ * Files the pull-request floor formats and lints: changed, still present and regular. Prettier
+ * rejects a symbolic link named on its command line, and a link's target is checked in its own
+ * right when it changes.
+ */
 export function staticTargets(files) {
-  const present = files.filter((file) => existsSync(file));
+  const present = files.filter((file) => lstatSync(file, { throwIfNoEntry: false })?.isFile());
   return { format: present, lint: present.filter((file) => sourceCode.test(file)) };
 }
 
