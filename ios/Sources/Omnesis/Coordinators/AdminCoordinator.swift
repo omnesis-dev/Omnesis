@@ -355,6 +355,16 @@ final class AdminCoordinator {
         Task { await refreshGatewayStats() }
     }
 
+    func appDidBecomeActive() {
+        guard let socket = deviceSocket else { return }
+        Task { await socket.appDidBecomeActive() }
+    }
+
+    func appDidEnterBackground() {
+        guard let socket = deviceSocket else { return }
+        Task { await socket.appDidEnterBackground() }
+    }
+
     func stopAdmin() {
         sourceRegistryRevision += 1
         socketEventTask?.cancel()

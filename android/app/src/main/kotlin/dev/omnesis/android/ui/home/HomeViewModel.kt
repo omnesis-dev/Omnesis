@@ -375,6 +375,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun recordAppBackgrounded(agentRouteActive: Boolean) {
+        session.appDidEnterBackground()
         coordinator.appVisibilityChanged(false)
         val surface = if (!agentRouteActive) {
             AppForegroundSurface.OutsideAgent
@@ -388,6 +389,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun onForeground() {
+        session.appDidBecomeActive()
         coordinator.appVisibilityChanged(true)
         coordinator.onForeground()
         permissionHealth.refresh()

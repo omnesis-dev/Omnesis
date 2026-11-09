@@ -134,12 +134,103 @@ final class MobileJourneyUITests: XCTestCase {
         )
     }
 
+    /// Settings → the gateway goes away → the row says it is retrying, without
+    /// asking to pair again → the gateway returns and the user comes back to the
+    /// app → connected on the same pairing. The forwarder stands in for the
+    /// network, because a simulator shares its host's and cannot lose it.
+    func testGatewayOutageRecoversWithoutPairingAgain() throws {
+        let host = try XCTUnwrap(gateway.url.host)
+        let forwarder = LoopbackForwarder(targetHost: host, targetPort: UInt16(gateway.url.port ?? 443))
+        defer { forwarder.stop() }
+        let port = try runAsync { try await forwarder.start() }
+        try launchPaired(pairedUrl: XCTUnwrap(URL(string: "https://127.0.0.1:\(port)")))
+
+        openSettings()
+        let connected = element(containing: "Connected")
+        // The Form only builds the rows on screen, and the health sections above
+        // the gateway's can push this one below the fold.
+        if !connected.waitForExistence(timeout: 30) { app.swipeUp() }
+        XCTAssertTrue(
+            connected.waitForExistence(timeout: 60),
+            "Settings never showed the live connection"
+        )
+
+        forwarder.stop()
+        XCTAssertTrue(
+            element(containing: "Reconnecting to gateway").waitForExistence(timeout: 60),
+            "the outage did not read as a temporary state"
+        )
+        XCTAssertFalse(connected.exists, "the row still claims a connection during the outage")
+        XCTAssertFalse(element(containing: "Authentication failed").exists)
+        XCTAssertFalse(element(containing: "Couldn't verify gateway certificate").exists)
+        XCTAssertTrue(
+            element(containing: "Could not connect to the server").waitForExistence(timeout: 60),
+            "the row dropped the transport's diagnostic"
+        )
+        XCTAssertFalse(
+            element(containing: "re-pair using").exists,
+            "a brief outage must not suggest pairing again"
+        )
+
+        _ = try runAsync { try await forwarder.start(port: port) }
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(
+            connected.waitForExistence(timeout: 60),
+            "the app did not reconnect on the same pairing"
+        )
+    }
+
     // MARK: - Steps
 
-    private func launchPaired() throws {
+    private func launchPaired(pairedUrl: URL? = nil) throws {
         let deviceName = "Journey iPhone \(UUID().uuidString.prefix(8))"
-        app.launchEnvironment["DEMO_PAIRING_JSON"] = try gateway.automationPairingJSON(deviceName: deviceName)
+        app.launchEnvironment["DEMO_PAIRING_JSON"] = try gateway.automationPairingJSON(
+            deviceName: deviceName,
+            pairedUrl: pairedUrl
+        )
         app.launch()
+    }
+
+    /// Runs async setup from a synchronous test, which XCUITest's main-thread
+    /// tapping needs to stay.
+    private func runAsync(_ work: @escaping @Sendable () async throws -> UInt16) throws -> UInt16 {
+        let done = expectation(description: "async step")
+        final class Box: @unchecked Sendable { var result: Result<UInt16, Error>? }
+        let box = Box()
+        Task {
+            do {
+                box.result = try await .success(work())
+            } catch {
+                box.result = .failure(error)
+            }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 30)
+        return try XCTUnwrap(box.result).get()
+    }
+
+    /// Opens Settings through the drawer. A row stays in the tree, disabled,
+    /// while the drawer is closed, so its existence proves nothing; and the menu
+    /// button can go unanswered over a just-resumed conversation, so the drawer's
+    /// arrival is what ends the wait. The tap is measured from the frame's corner
+    /// because the button sometimes reports the whole action bar as its frame,
+    /// whose centre is the empty space between the gear and Ask, and exposes no
+    /// child for the gear. 34 points in is the gear's centre in that frame, and
+    /// half the button's width clamps it to the centre when the frame is the gear.
+    private func openSettings() {
+        let settings = app.buttons["menu.settings"]
+        let arrived = NSPredicate(format: "exists == true AND enabled == true")
+        for _ in 0 ..< 3 {
+            tap(app.buttons["menu.toggle"], "the menu button")
+            let opened = XCTNSPredicateExpectation(predicate: arrived, object: settings)
+            if XCTWaiter.wait(for: [opened], timeout: 15) == .completed { break }
+        }
+        XCTAssertTrue(settings.isEnabled, "the menu did not open")
+        let frame = settings.frame
+        settings.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: min(frame.width / 2, 34), dy: frame.height / 2))
+            .tap()
     }
 
     private func search(for query: String) {

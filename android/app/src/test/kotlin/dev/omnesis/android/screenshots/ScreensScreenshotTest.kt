@@ -46,6 +46,7 @@ import dev.omnesis.android.transport.dto.AgentDocRef
 import dev.omnesis.android.transport.dto.AgentPlanItem
 import dev.omnesis.android.transport.dto.AgentToolResult
 import dev.omnesis.android.transport.dto.ConversationSummary
+import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.ui.agent.AgentChatState
@@ -773,7 +774,11 @@ class ScreensScreenshotTest {
     fun settings_dark() = capture("settings_dark", dark = true) {
         SettingsContent(
             gateway = SettingsViewModel.GatewayInfo("Studio Northstar", "https://gateway.tailnet.ts.net:7600", "dev-abc123", listOf("read", "admin")),
-            connection = ConnectionState.Failed("timeout"),
+            connection = ConnectionState.Reconnecting(
+                DeviceSocket.NetworkAvailability.AVAILABLE,
+                lastError = "timeout",
+                failedAttemptsOnNetwork = 1,
+            ),
             mode = AppearanceMode.DARK,
             appVersion = sampleAppVersion(),
             onClose = {}, onSetAppearance = {}, onSaveUrl = { null }, onUnpair = {},

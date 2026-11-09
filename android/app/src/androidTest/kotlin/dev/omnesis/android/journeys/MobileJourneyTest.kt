@@ -33,6 +33,7 @@ import dev.omnesis.android.MainActivity
 import java.util.UUID
 import java.util.regex.Pattern
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -158,7 +159,39 @@ class MobileJourneyTest {
         waitFor(hasText(AGENT_ANSWER, substring = true), "the agent's answer did not mention \"$AGENT_ANSWER\"", AGENT_TIMEOUT_MS)
     }
 
+    /**
+     * Settings → airplane mode → the row says the phone is offline, without asking
+     * to pair again → airplane mode off → connected on the same pairing, well inside
+     * the backoff the outage earned. Real radios on a real emulator: this is the one
+     * place the system's network callback and the socket are exercised together.
+     */
+    @Test
+    fun losingTheNetworkRecoversWithoutPairingAgain() {
+        launchPaired()
+        tap("menu.toggle")
+        tap("menu.settings")
+        waitFor(hasText("Connected"), "Settings never showed the live connection", PAIRING_TIMEOUT_MS)
+
+        try {
+            setAirplaneMode(true)
+            waitFor(hasText("Waiting for network"), "losing the network did not read as offline", PAIRING_TIMEOUT_MS)
+            assertFalse(
+                "being offline must not suggest pairing again",
+                onScreen(hasText("re-pair using", substring = true)),
+            )
+            // Long enough for the ladder to reach a wait the reconnect below must not sit out.
+            Thread.sleep(OFFLINE_SOAK_MS)
+        } finally {
+            setAirplaneMode(false)
+        }
+        waitFor(hasText("Connected"), "the app did not reconnect on the same pairing", RECONNECT_TIMEOUT_MS)
+    }
+
     // --- steps ---
+
+    private fun setAirplaneMode(enabled: Boolean) {
+        device.executeShellCommand("cmd connectivity airplane-mode ${if (enabled) "enable" else "disable"}")
+    }
 
     /** Launches the app paired through the DEBUG seam, which runs the real code exchange. */
     private fun launchPaired() {
@@ -225,6 +258,10 @@ class MobileJourneyTest {
         const val AGENT_ANSWER = "Studio Northstar"
         const val STEP_TIMEOUT_MS = 30_000L
         const val PAIRING_TIMEOUT_MS = 60_000L
+        const val OFFLINE_SOAK_MS = 40_000L
+
+        // Well under the 30s backoff the soak earned, on top of the radios coming back.
+        const val RECONNECT_TIMEOUT_MS = 25_000L
         const val AGENT_TIMEOUT_MS = 60_000L
     }
 }

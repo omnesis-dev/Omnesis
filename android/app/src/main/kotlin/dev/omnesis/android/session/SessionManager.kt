@@ -556,6 +556,7 @@ class SessionManager @Inject constructor(
             token = pairing.token,
             scope = scope,
             capabilities = deviceCapabilities.withTlsMode(pairing.tlsMode.persistedValue),
+            pathObserver = SystemNetworkPathObserver(applicationContext),
         )
         val agent = AgentClient(http)
         val admin = AdminClient(http)
@@ -701,6 +702,15 @@ class SessionManager @Inject constructor(
     /** Start one foreground visit before its queued registration retry runs. */
     fun beginForegroundVisit() {
         relayConsentDeferral.beginForegroundVisit()
+    }
+
+    /** Tell the device socket the user is back, so a pending retry need not wait out its backoff. */
+    fun appDidBecomeActive() {
+        session?.socket?.appDidBecomeActive()
+    }
+
+    fun appDidEnterBackground() {
+        session?.socket?.appDidEnterBackground()
     }
 
     /** Retry the best-effort registration queued by the foreground owner. */

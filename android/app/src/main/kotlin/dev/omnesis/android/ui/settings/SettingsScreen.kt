@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -85,6 +86,7 @@ import dev.omnesis.android.transport.PermissionHealthEntry
 import dev.omnesis.android.transport.PushHealth
 import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
+import dev.omnesis.android.transport.ws.GatewayConnectionStatus
 import dev.omnesis.android.ui.common.NotificationHealthBanner
 import dev.omnesis.android.ui.common.NotificationSetupBanner
 import dev.omnesis.android.ui.common.NotificationSetupIssue
@@ -709,38 +711,43 @@ private fun NavigationRow(label: String, onClick: () -> Unit, warning: Boolean =
 }
 
 /**
- * Connection state as an icon + word label, ported from the iOS `connectionRow`. Connected →
- * green check; Connecting/Authenticating → spinner + grey; Failed → amber triangle + reason.
+ * Live device-socket state as an icon + title, ported from the iOS `GatewayConnectionRow`. A
+ * temporary state says recovery is automatic; the wording comes from [GatewayConnectionStatus].
  */
 @Composable
 private fun ConnectionRowLabel(connection: ConnectionState) {
     val c = OmTheme.colors
-    Row(
+    val status = GatewayConnectionStatus.of(connection)
+    val titleColor = when (status.tone) {
+        GatewayConnectionStatus.Tone.SUCCESS -> c.success
+        GatewayConnectionStatus.Tone.WARNING -> c.warning
+        GatewayConnectionStatus.Tone.PROGRESS, GatewayConnectionStatus.Tone.WAITING -> c.textSecondary
+    }
+    Column(
         Modifier.fillMaxWidth().padding(vertical = OmSpacing.xs),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm),
+        verticalArrangement = Arrangement.spacedBy(OmSpacing.xs),
     ) {
-        when (connection) {
-            is ConnectionState.Connected -> {
-                Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = c.success, modifier = Modifier.size(18.dp))
-                Text("Connected", style = MaterialTheme.typography.bodyMedium, color = c.success)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm),
+        ) {
+            when (status.tone) {
+                GatewayConnectionStatus.Tone.SUCCESS ->
+                    Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = titleColor, modifier = Modifier.size(18.dp))
+                GatewayConnectionStatus.Tone.PROGRESS ->
+                    OmSpinner(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = titleColor)
+                GatewayConnectionStatus.Tone.WAITING ->
+                    Icon(Icons.Outlined.WifiOff, contentDescription = null, tint = titleColor, modifier = Modifier.size(18.dp))
+                GatewayConnectionStatus.Tone.WARNING ->
+                    Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = titleColor, modifier = Modifier.size(18.dp))
             }
-            // iOS folds disconnected/connecting/authenticating into one "Connecting…" arm — match
-            // it so there's no settled grey "Disconnected" state the iOS shell never shows.
-            ConnectionState.Disconnected, ConnectionState.Connecting, ConnectionState.Authenticating -> {
-                OmSpinner(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = c.textSecondary)
-                Text("Connecting…", style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
-            }
-            is ConnectionState.Failed -> {
-                Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = c.warning, modifier = Modifier.size(18.dp))
-                Text(
-                    "Can't reach gateway: ${connection.message}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = c.warning,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Text(status.title, style = MaterialTheme.typography.bodyMedium, color = titleColor)
+        }
+        status.explanation?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = c.textMuted)
+        }
+        status.diagnostic?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = c.textMuted)
         }
     }
 }
@@ -783,7 +790,11 @@ private fun SettingsPreviewDark() {
     OmnesisTheme(darkTheme = true) {
         SettingsContent(
             gateway = sampleGateway().copy(url = "https://gateway.tailnet.ts.net:7600"),
-            connection = ConnectionState.Failed("timeout after 5s"),
+            connection = ConnectionState.Reconnecting(
+                DeviceSocket.NetworkAvailability.AVAILABLE,
+                lastError = "timeout after 5s",
+                failedAttemptsOnNetwork = GatewayConnectionStatus.SUSTAINED_FAILURE_ATTEMPTS,
+            ),
             mode = AppearanceMode.DARK,
             appVersion = sampleAppVersion(),
             onClose = {}, onSetAppearance = {}, onSaveUrl = { null }, onUnpair = {},

@@ -250,6 +250,292 @@ final class GatewayLiveE2ETests: XCTestCase {
     }
 }
 
+// MARK: - DeviceSocket lifecycle
+
+/// Drives the real `DeviceSocket`, `URLSession` WebSocket stack and TLS against
+/// the live gateway. The simulator shares its host's network, so the outage comes
+/// from `LoopbackForwarder` and the matching path reports are scripted; the real
+/// `NWPathMonitor` wrapper is exercised by its own smoke test.
+@available(iOS 17.0, *)
+extension GatewayLiveE2ETests {
+    private final class ScriptedPaths: NetworkPathObserving, @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: AsyncStream<NetworkPathSnapshot>.Continuation?
+
+        func paths() -> AsyncStream<NetworkPathSnapshot> {
+            AsyncStream { continuation in
+                self.lock.withLock { self.continuation = continuation }
+            }
+        }
+
+        var isObserved: Bool {
+            lock.withLock { continuation != nil }
+        }
+
+        func send(_ path: NetworkPathSnapshot) {
+            lock.withLock { continuation }?.yield(path)
+        }
+    }
+
+    /// Longer than any wait below, so a reconnect that happens proves the wake
+    /// signal rather than the timer.
+    private static var longBackoff: DeviceSocketReconnectPolicy.Limits {
+        var limits = DeviceSocketReconnectPolicy.Limits()
+        limits.baseDelay = .seconds(600)
+        limits.maxDelay = .seconds(600)
+        limits.probeTimeout = .seconds(1)
+        return limits
+    }
+
+    private static let wifi = NetworkPathSnapshot(isUsable: true, interfaces: [.wifi])
+    private static let cellular = NetworkPathSnapshot(isUsable: true, interfaces: [.cellular])
+    private static let noNetwork = NetworkPathSnapshot(isUsable: false, interfaces: [])
+
+    /// Mints a device the way `omnesis devices pair` and the app do.
+    private func pairDeviceToken() async throws -> String {
+        var mint = URLRequest(url: baseURL.appendingPathComponent("admin/devices/pair"))
+        mint.httpMethod = "POST"
+        mint.setValue("Bearer \(apiKey!)", forHTTPHeaderField: "Authorization")
+        mint.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        mint.httpBody = Data(#"{"kind":"ios"}"#.utf8)
+        let (minted, _) = try await session.data(for: mint)
+        struct Minted: Decodable { let pairingCode: String }
+        let code = try JSONDecoder().decode(Minted.self, from: minted).pairingCode
+
+        var redeem = URLRequest(url: baseURL.appendingPathComponent("devices/pair"))
+        redeem.httpMethod = "POST"
+        redeem.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        redeem.httpBody = try JSONEncoder().encode(JSONValue.object([
+            "pairingCode": .string(code),
+            "capabilities": .object(PairingCapabilities.ios().jsonObject),
+        ]))
+        let (paired, _) = try await session.data(for: redeem)
+        return try JSONDecoder().decode(DevicePairResponse.self, from: paired).token
+    }
+
+    private func forwarder() throws -> LoopbackForwarder {
+        try LoopbackForwarder(
+            targetHost: XCTUnwrap(baseURL.host),
+            targetPort: UInt16(XCTUnwrap(baseURL.port))
+        )
+    }
+
+    private func socket(
+        port: UInt16,
+        token: String,
+        paths: ScriptedPaths,
+        session: URLSession? = nil
+    ) throws
+        -> DeviceSocket {
+        try DeviceSocket(
+            gatewayUrl: XCTUnwrap(URL(string: "https://127.0.0.1:\(port)")),
+            token: token,
+            connector: URLSessionDeviceSocketConnector(session: session ?? self.session),
+            pathObserver: paths,
+            clock: ContinuousDeviceSocketClock(),
+            limits: Self.longBackoff
+        )
+    }
+
+    private func start(_ socket: DeviceSocket, paths: ScriptedPaths, initial: NetworkPathSnapshot) async throws {
+        await socket.start()
+        try await waitUntil("the path observer") { paths.isObserved }
+        paths.send(initial)
+    }
+
+    private func waitUntil(
+        _ what: String,
+        // A loaded simulator can hold requests for over a minute and then recover.
+        timeout: Duration = .seconds(240),
+        _ condition: () async -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("timed out waiting for \(what)")
+        throw GatewayClient.Error.invalidResponse
+    }
+
+    private func isConnected(_ socket: DeviceSocket) async -> Bool {
+        if case .connected = await socket.state() { return true }
+        return false
+    }
+
+    func testDeviceSocketReconnectsWhenTheNetworkReturnsDuringALongBackoff() async throws {
+        let token = try await pairDeviceToken()
+        let forwarder = try forwarder()
+        defer { forwarder.stop() }
+        let port = try await forwarder.start()
+        let paths = ScriptedPaths()
+        let socket = try socket(port: port, token: token, paths: paths)
+        try await start(socket, paths: paths, initial: Self.wifi)
+        try await waitUntil("the first connection") { await self.isConnected(socket) }
+
+        paths.send(Self.noNetwork)
+        forwarder.stop()
+        try await waitUntil("the drop to be reported as temporary") {
+            guard case .reconnecting(let status) = await socket.state() else { return false }
+            return status.network == .unavailable && status.lastError != nil
+        }
+
+        _ = try await forwarder.start(port: port)
+        let restoredAt = ContinuousClock.now
+        paths.send(Self.wifi)
+        try await waitUntil("the reconnection") { await self.isConnected(socket) }
+        XCTAssertLessThan(restoredAt.duration(to: .now), .seconds(300), "the 600s timer must not have been needed")
+        XCTAssertEqual(forwarder.acceptedConnections, 2)
+        await socket.stop()
+    }
+
+    func testDeviceSocketReportsARefusedConnectionAsTemporaryWithItsDiagnostic() async throws {
+        let token = try await pairDeviceToken()
+        let forwarder = try forwarder()
+        defer { forwarder.stop() }
+        let port = try await forwarder.start()
+        forwarder.stop()
+        let paths = ScriptedPaths()
+        let socket = try socket(port: port, token: token, paths: paths)
+        try await start(socket, paths: paths, initial: Self.wifi)
+
+        // A refused attempt can fail before the first path arrives, so the state
+        // settles on this once both have, in either order.
+        let temporaryFailure = DeviceSocket.ConnectionState.reconnecting(.init(
+            network: .available,
+            lastError: "Could not connect to the server.",
+            failedAttemptsOnNetwork: 1
+        ))
+        try await waitUntil("the failed attempt") { await socket.state() == temporaryFailure }
+
+        // A usable-looking path is only a hint: this one wakes a retry that
+        // fails too, and the state stays temporary rather than alarming.
+        paths.send(Self.cellular)
+        try await Task.sleep(for: .seconds(1))
+        try await waitUntil("the woken retry's failure") { await socket.state() == temporaryFailure }
+
+        _ = try await forwarder.start(port: port)
+        paths.send(Self.wifi)
+        try await waitUntil("the reconnection") { await self.isConnected(socket) }
+        await socket.stop()
+    }
+
+    func testDeviceSocketTreatsARejectedTokenAsAuthenticationFailure() async throws {
+        let forwarder = try forwarder()
+        defer { forwarder.stop() }
+        let port = try await forwarder.start()
+        let paths = ScriptedPaths()
+        let socket = try socket(port: port, token: "omn_invalid_for_this_test", paths: paths)
+        try await start(socket, paths: paths, initial: Self.wifi)
+
+        try await waitUntil("the refusal") {
+            if case .failed = await socket.state() { return true }
+            return false
+        }
+        let state = await socket.state()
+        guard case .failed(let failure) = state else { return XCTFail("got \(state)") }
+        XCTAssertEqual(failure.kind, .authentication)
+        await socket.stop()
+    }
+
+    func testDeviceSocketFailsClosedWhenTheCertificateDoesNotMatchThePin() async throws {
+        let token = try await pairDeviceToken()
+        let pinned = PinnedSession(fingerprintHex: String(repeating: "0", count: 64))
+        let forwarder = try forwarder()
+        defer { forwarder.stop() }
+        let port = try await forwarder.start()
+        let paths = ScriptedPaths()
+        let socket = try socket(
+            port: port,
+            token: token,
+            paths: paths,
+            session: pinned.session
+        )
+        try await start(socket, paths: paths, initial: Self.wifi)
+
+        try await waitUntil("the refusal") {
+            if case .failed = await socket.state() { return true }
+            return false
+        }
+        let state = await socket.state()
+        guard case .failed(let failure) = state else { return XCTFail("got \(state)") }
+        XCTAssertEqual(failure.kind, .certificate)
+
+        // A network change retries, and through the same pinned session.
+        paths.send(Self.cellular)
+        try await waitUntil("the retry") { forwarder.acceptedConnections >= 2 }
+        try await Task.sleep(for: .milliseconds(500))
+        let afterRetry = await socket.state()
+        guard case .failed(let retried) = afterRetry else { return XCTFail("got \(afterRetry)") }
+        XCTAssertEqual(retried.kind, .certificate)
+        await socket.stop()
+    }
+
+    func testDeviceSocketReplacesAConnectionThatStoppedAnsweringOnForeground() async throws {
+        let token = try await pairDeviceToken()
+        let forwarder = try forwarder()
+        defer { forwarder.stop() }
+        let port = try await forwarder.start()
+        let paths = ScriptedPaths()
+        let socket = try socket(port: port, token: token, paths: paths)
+        try await start(socket, paths: paths, initial: Self.wifi)
+        try await waitUntil("the first connection") { await self.isConnected(socket) }
+
+        forwarder.muteExistingConnections()
+        await socket.appDidBecomeActive()
+        try await waitUntil("a second connection after the unanswered ping") {
+            forwarder.acceptedConnections == 2
+        }
+        try await waitUntil("the reconnection") { await self.isConnected(socket) }
+        await socket.stop()
+    }
+
+    func testDeviceSocketKeepsAHealthyConnectionThroughAForegroundProbe() async throws {
+        let token = try await pairDeviceToken()
+        let forwarder = try forwarder()
+        defer { forwarder.stop() }
+        let port = try await forwarder.start()
+        let paths = ScriptedPaths()
+        let socket = try socket(port: port, token: token, paths: paths)
+        try await start(socket, paths: paths, initial: Self.wifi)
+        try await waitUntil("the first connection") { await self.isConnected(socket) }
+
+        await socket.appDidBecomeActive()
+        // Past the probe timeout, so a missing pong would already have replaced it.
+        try await Task.sleep(for: .seconds(2))
+        let connected = await isConnected(socket)
+        XCTAssertTrue(connected)
+        XCTAssertEqual(forwarder.acceptedConnections, 1)
+
+        await socket.stop()
+        paths.send(Self.cellular)
+        await socket.appDidBecomeActive()
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertEqual(forwarder.acceptedConnections, 1, "a stopped socket stays down")
+    }
+
+    /// The simulator's path is its host's, so this proves the wrapper runs and
+    /// reports a path; only a device can show one changing.
+    func testSystemPathObserverReportsTheCurrentPath() async {
+        let first = await withTaskGroup(of: NetworkPathSnapshot?.self) { group -> NetworkPathSnapshot? in
+            group.addTask {
+                for await path in SystemNetworkPathObserver().paths() {
+                    return path
+                }
+                return nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(10))
+                return nil
+            }
+            defer { group.cancelAll() }
+            guard let result = await group.next() else { return nil }
+            return result
+        }
+        XCTAssertNotNil(first, "NWPathMonitor reports the current path as soon as it starts")
+    }
+}
+
 // MARK: - Helpers
 
 /// The live suite's session delegate. Test-only — production uses

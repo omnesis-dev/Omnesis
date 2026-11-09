@@ -2400,6 +2400,7 @@ public final class AppStore {
     }
 
     func onActive() async {
+        adminCoord.appDidBecomeActive()
         TaskWidgetAppBridge.configure(pairing: pairingCoord.pairing)
         Task { await TranscriptionVocabularyCache.shared.refreshIfDue() }
         // Decide navigation before any sync/network await. This gives the
@@ -2496,6 +2497,7 @@ public final class AppStore {
     }
 
     func onBackground() async {
+        adminCoord.appDidEnterBackground()
         // Withdraw first: leaving the app means nothing is being read, and
         // waiting behind a full sync risks the app suspending before the mark
         // goes out. An answer arriving right after the phone goes in a pocket

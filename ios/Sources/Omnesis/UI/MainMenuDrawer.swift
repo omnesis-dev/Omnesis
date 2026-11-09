@@ -170,6 +170,7 @@ struct MainMenuDrawer: View {
             .buttonStyle(.plain)
             .accessibilityLabel(store.statusSnapshot?.modelHealth?.needsAttention == true
                 ? "Settings, models need attention" : "Settings")
+            .accessibilityIdentifier("menu.settings")
 
             Spacer(minLength: 0)
 
