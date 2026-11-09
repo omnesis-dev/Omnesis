@@ -70,12 +70,12 @@ const HOLD_BUDGET_MS = 250;
 const WAIT_BUDGET_MS = 10 * HOLD_BUDGET_MS;
 
 /** Whether `op` has yet to settle, read after awaiting something queued behind it. */
-function stillRunning(op: Promise<unknown>): () => boolean {
+function stillRunning(op: unknown): () => boolean {
   let running = true;
   const settled = () => {
     running = false;
   };
-  void op.then(settled, settled);
+  void Promise.resolve(op).then(settled, settled);
   return () => running;
 }
 const CURSOR: SyncCursor = {
