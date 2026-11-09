@@ -661,6 +661,40 @@ describe("Xcode simulator destination discovery", () => {
     expect(elapsed).toBe(45000);
   });
 
+  it("restarts a stuck discovery query while retaining time for a successful fresh query", () => {
+    let elapsed = 0;
+    const budgets = [];
+    const check = discovery([], {
+      timeoutMs: 300000,
+      now: () => elapsed,
+      wait: (milliseconds) => {
+        elapsed += milliseconds;
+      },
+      run: (_command, _args, timeout) => {
+        budgets.push(timeout);
+        if (budgets.length === 1) {
+          elapsed += timeout;
+          throw Object.assign(new Error("spawnSync xcodebuild ETIMEDOUT"), {
+            stderr: "Stalled inventory",
+          });
+        }
+        return `${heading}\n${phone}`;
+      },
+    });
+    check.invoke();
+    expect(budgets).toHaveLength(2);
+    expect(budgets[0]).toBeLessThan(300000);
+    expect(elapsed).toBeLessThan(300000);
+  });
+
+  it("validates the per-query timeout before starting discovery", () => {
+    for (const probeTimeoutMs of [0, -1, NaN, Infinity, 1.5]) {
+      const check = discovery([], { probeTimeoutMs });
+      expect(check.invoke).toThrow("Invalid discovery probe timeout");
+      expect(check.calls).toEqual([]);
+    }
+  });
+
   it("bounds a slow discovery probe by the remaining wall budget and includes diagnostics", () => {
     let elapsed = 0;
     const check = discovery([], {

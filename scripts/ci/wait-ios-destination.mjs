@@ -80,6 +80,8 @@ export function waitForIOSDestination({
   wait = (milliseconds) =>
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds),
   timeoutMs = 300_000,
+  // Allow cold inventory to initialize while leaving a stuck query time for a fresh process.
+  probeTimeoutMs = 120_000,
   log = (text) => process.stderr.write(`${text}\n`),
 } = {}) {
   const requested = fields(destination ?? "", "=");
@@ -94,6 +96,8 @@ export function waitForIOSDestination({
     );
   }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("Invalid destination timeout");
+  if (!Number.isSafeInteger(probeTimeoutMs) || probeTimeoutMs <= 0)
+    throw new Error("Invalid discovery probe timeout");
   const deadline = now() + timeoutMs;
   if (requested.OS === "latest") {
     // Resolve from installed runtimes, not the incomplete Xcode destination
@@ -122,7 +126,7 @@ export function waitForIOSDestination({
   let inventory = "No destination inventory returned.";
   log(`Waiting for Xcode destination ${destination} (timeout ${timeoutMs / 1000}s).`);
   while (now() < deadline) {
-    const probeBudget = deadline - now();
+    const probeBudget = Math.min(probeTimeoutMs, deadline - now());
     if (probeBudget <= 0) break;
     let probeOutput;
     try {
