@@ -42,7 +42,11 @@ import {
   type ProvenanceRecheckSettings,
   type ProvenanceRecheckSweepWriteOps,
 } from "./provenance-recheck-sweep.js";
-import { runReverificationSweepPass, type ReverificationSettings } from "./reverification-sweep.js";
+import {
+  runReverificationSweepPass,
+  type ReverificationSettings,
+  type ReverificationSweepWriteOps,
+} from "./reverification-sweep.js";
 import { runSweepEnqueuePass } from "./sweep-enqueuer.js";
 import type { CollisionSweepReads } from "./collision-sweep-reads.js";
 import type { PruneObservationsResult } from "../storage/observations.js";
@@ -78,7 +82,8 @@ export interface CognitionRhythmOpts {
     DecaySweepWriteOps &
     ObservationRetentionWriteOps &
     BootstrapEnqueuerWriteOps &
-    ProvenanceRecheckSweepWriteOps;
+    ProvenanceRecheckSweepWriteOps &
+    ReverificationSweepWriteOps;
   log: Logger;
   /** Live kill-switch — the Briefs feature-gate verdict, re-read per tick. */
   isEnabled: () => boolean;

@@ -439,7 +439,9 @@ function ownToolsInput(
     ...(deps.validateAnnotationEvidence
       ? { validateAnnotationEvidence: deps.validateAnnotationEvidence }
       : {}),
-    ...(deps.getEntailmentVerifier ? { getEntailmentVerifier: deps.getEntailmentVerifier } : {}),
+    ...(deps.getEntailmentVerifier
+      ? { getEntailmentVerifier: deps.getEntailmentVerifier, backgroundEntailmentRechecks: true }
+      : {}),
     ...(deps.getTaskAutoApply ? { taskAutoApply: deps.getTaskAutoApply() } : {}),
     ...(deps.taskChecks ? { taskChecks: deps.taskChecks } : {}),
     ...(deps.taskPropose ? { taskPropose: deps.taskPropose } : {}),

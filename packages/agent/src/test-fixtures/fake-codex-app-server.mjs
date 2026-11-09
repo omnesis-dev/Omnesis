@@ -155,7 +155,9 @@ rl.on("line", (line) => {
       params: msg.params,
       dynamicToolNames: dynamicTools.map((tool) => tool.name),
     });
-    send({ id: msg.id, result: { thread: { id: threadId } } });
+    const threadStarted = { id: msg.id, result: { thread: { id: threadId } } };
+    if (scenario === "slow-thread-start") setTimeout(() => send(threadStarted), 150);
+    else send(threadStarted);
     return;
   }
 
@@ -173,6 +175,15 @@ rl.on("line", (line) => {
       return;
     }
     if (scenario === "pending-turn-start") return;
+    if (scenario === "slow-turn-start") {
+      // The turn is accepted late and then runs until something interrupts it.
+      setTimeout(
+        () =>
+          send({ id: msg.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } }),
+        150,
+      );
+      return;
+    }
     const firstTurn = !turnStarted;
     turnStarted = true;
     // These scenarios pin the stream orders that race the client's read loop:

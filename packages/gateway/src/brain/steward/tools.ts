@@ -303,6 +303,12 @@ export interface CognitionToolDeps {
    */
   getEntailmentVerifier?: (signal?: AbortSignal) => Promise<EntailCapability | null>;
   /**
+   * This toolset runs unattended, so a revise may wait for a verifier slot
+   * instead of failing open while someone waits on it. Absent for interactive
+   * memory.
+   */
+  backgroundEntailmentRechecks?: boolean;
+  /**
    * The record check bound to this run, consulted when a NEW annotation is
    * saved: in enforce mode its answer decides whether the write happens.
    * Absent (interactive memory, unchecked lanes, no decision model) every
@@ -683,15 +689,23 @@ type EntailmentGateOutcome =
  * decide whether the agent can remember.
  */
 async function runEntailmentGate(
-  deps: Pick<CognitionToolDeps, "getEntailmentVerifier" | "log">,
+  deps: Pick<CognitionToolDeps, "backgroundEntailmentRechecks" | "getEntailmentVerifier" | "log">,
   input: { claim: string; evidence: string; context?: string; assessment?: "annotation_atomic" },
   now: number,
   callerSignal?: AbortSignal,
+  recheck = false,
 ): Promise<EntailmentGateOutcome> {
   callerSignal?.throwIfAborted();
+  const background =
+    recheck && deps.backgroundEntailmentRechecks
+      ? { queueWaitMs: ENTAILMENT_RECHECK_QUEUE_WAIT_MS, callMs: ENTAILMENT_GATE_TIMEOUT_MS }
+      : undefined;
+  const limit = background
+    ? background.queueWaitMs + background.callMs
+    : ENTAILMENT_GATE_TIMEOUT_MS;
   const signal = callerSignal
-    ? AbortSignal.any([callerSignal, AbortSignal.timeout(ENTAILMENT_GATE_TIMEOUT_MS)])
-    : AbortSignal.timeout(ENTAILMENT_GATE_TIMEOUT_MS);
+    ? AbortSignal.any([callerSignal, AbortSignal.timeout(limit)])
+    : AbortSignal.timeout(limit);
   if (!deps.getEntailmentVerifier) return { kind: "pass", state: null, verifiedAt: null };
   let verifier: EntailCapability | null = null;
   let resolveFailed = false;
@@ -719,7 +733,10 @@ async function runEntailmentGate(
     // generates on the main event loop — see llama-cpp.ts — so a local judge
     // trades a few seconds of gateway latency per write until the local
     // models move off-thread.)
-    const verdict = await raceAbort(verifier.verify({ ...input, signal }), signal);
+    const verdict = await raceAbort(
+      verifier.verify({ ...input, signal, ...(background ? { background } : {}) }),
+      signal,
+    );
     if (verdict.label === "entailment") {
       return { kind: "pass", state: "verified", verifiedAt: now };
     }
@@ -741,6 +758,28 @@ async function runEntailmentGate(
 
 /** Hard ceiling on one entailment check; beyond it the gate fails open. */
 const ENTAILMENT_GATE_TIMEOUT_MS = 45_000;
+
+/**
+ * How long a background re-check may wait for a verifier slot. A verification
+ * run revises its whole batch in one burst, and the verifier takes a couple at
+ * a time, so most of a burst waits. Nobody is watching a background run.
+ */
+const ENTAILMENT_RECHECK_QUEUE_WAIT_MS = 5 * 60_000;
+
+/**
+ * What a revise writes to the verification stamps. A check that got no answer
+ * says nothing about the claim, so an unchanged claim keeps the verdict it had;
+ * a changed claim has outlived that verdict either way.
+ */
+function reviseVerificationStamp(
+  gate: Extract<EntailmentGateOutcome, { kind: "pass" }>,
+  claimChanged: boolean,
+  now: number,
+): { verificationState?: "verified" | "unverified"; lastVerifiedAt?: number | null } {
+  if (gate.state === null) return { lastVerifiedAt: now };
+  if (gate.state === "unverified" && !claimChanged) return {};
+  return { verificationState: gate.state, lastVerifiedAt: gate.verifiedAt };
+}
 
 /** Capture privacy ancestry before evidence reads or asynchronous verification. */
 function captureRecordCheckPayload(
@@ -3324,6 +3363,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
 /** Dependencies of durable memory, independent of background cognition. */
 export type AnnotationToolDeps = Pick<
   CognitionToolDeps,
+  | "backgroundEntailmentRechecks"
   | "db"
   | "clock"
   | "runId"
@@ -3866,20 +3906,20 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           ),
         },
         clock(),
+        undefined,
+        true,
       );
       if (gate.kind === "refused") return entailmentRefusal(gate.verdict, gate.assertions);
-      const patch: UpdateDocAnnotationPatch = {};
-      if (gate.state !== null) {
-        patch.verificationState = gate.state;
-        patch.lastVerifiedAt = gate.verifiedAt;
-      } else {
-        // No verifier configured (state null): the quote firewall above still
-        // mechanically re-checked the evidence, so a successful revise counts
-        // as a re-grounding — advance the last-checked stamp (otherwise the
-        // row would stay permanently due under the re-verification sweep)
-        // while leaving the verification STATE to a configured verifier.
-        patch.lastVerifiedAt = clock();
-      }
+      // No verifier configured (state null): the quote firewall above still
+      // mechanically re-checked the evidence, so a successful revise counts
+      // as a re-grounding — advance the last-checked stamp (otherwise the
+      // row would stay permanently due under the re-verification sweep)
+      // while leaving the verification STATE to a configured verifier.
+      const patch: UpdateDocAnnotationPatch = reviseVerificationStamp(
+        gate,
+        a.claimText !== undefined && a.claimText !== existing.claimText,
+        clock(),
+      );
       if (a.claimType !== undefined) patch.claimType = a.claimType;
       if (a.claimText !== undefined) patch.claimText = a.claimText;
       if (a.claimBasis !== undefined) patch.claimBasis = a.claimBasis;
@@ -4663,6 +4703,8 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           ),
         },
         clock(),
+        undefined,
+        true,
       );
       if (gate.kind === "refused") return entailmentRefusal(gate.verdict, gate.assertions);
       const patch: UpdatePersonAnnotationPatch = {
@@ -4674,9 +4716,11 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
         // successful revise still advances the last-checked stamp (the quote
         // firewall re-checked the evidence — see annotation_revise) and
         // leaves the verification state untouched.
-        ...(gate.state !== null
-          ? { verificationState: gate.state, lastVerifiedAt: gate.verifiedAt }
-          : { lastVerifiedAt: clock() }),
+        ...reviseVerificationStamp(
+          gate,
+          rest.claimText !== undefined && rest.claimText !== existing.claimText,
+          clock(),
+        ),
       };
       const writing = await writeProfile(() =>
         writeGate.revisePersonAnnotation(id, patch, clock(), profileBudget),
