@@ -12,8 +12,8 @@ the same folders for Claude Code. Edit only the canonical files; do not add
 copies under `.claude/commands/` or `.claude/skills/`.
 
 Invoke a skill as `$skill-name` in Codex or `/skill-name` in Claude Code. The
-shared workflows are `omnesis-review`, `source-review`, `dev-annotations`, and
-`latency-watch`. Agent-specific scheduling and delegation behavior is described
+shared workflows are `omnesis-review`, `source-review`, `dev-annotations`,
+`latency-watch`, and `flaky-watch`. Agent-specific scheduling and delegation behavior is described
 inside the relevant skill.
 
 ## Where to read what
