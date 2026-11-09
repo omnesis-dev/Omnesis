@@ -78,6 +78,10 @@ case "$1" in
       if [ "\${FAKE_NPM_FAIL_INSTALL:-0}" = 1 ]; then exit 42; fi
       mkdir -p "$FAKE_EFFECTIVE_PREFIX/bin"
       mkdir -p "$FAKE_EFFECTIVE_PREFIX/lib/node_modules/omnesis/dist"
+      if [ "\${FAKE_NPM_DROP_FFMPEG:-0}" != 1 ]; then
+        mkdir -p "$FAKE_EFFECTIVE_PREFIX/lib/node_modules/omnesis/node_modules/ffmpeg-static"
+        echo '{}' > "$FAKE_EFFECTIVE_PREFIX/lib/node_modules/omnesis/node_modules/ffmpeg-static/package.json"
+      fi
       printf '%s\\n' "$3" > "$FAKE_EFFECTIVE_PREFIX/installed-spec"
       printf '%s\\n' "$*" > "$FAKE_EFFECTIVE_PREFIX/installed-argv"
       case "$3" in
@@ -130,6 +134,10 @@ EOF
     fi
     exit 0 ;;
   ci)
+    if [ "\${FAKE_NPM_DROP_FFMPEG:-0}" != 1 ]; then
+      mkdir -p node_modules/ffmpeg-static
+      echo '{}' > node_modules/ffmpeg-static/package.json
+    fi
     mkdir -p node_modules/.bin
     printf '#!/bin/sh\\necho source-version\\n' > node_modules/.bin/tsx
     chmod +x node_modules/.bin/tsx
@@ -152,6 +160,7 @@ function install(
     hasPackage = true,
     clientOnly = true,
     failPackageInstall = false,
+    dropFfmpeg = false,
     failGit = false,
     failHealth = false,
     healthVersion = "0.10.0",
@@ -244,6 +253,7 @@ function install(
     FAKE_NPM_PREFIX: prefix,
     FAKE_NPM_HAS_PACKAGE: hasPackage ? "1" : "0",
     FAKE_NPM_FAIL_INSTALL: failPackageInstall ? "1" : "0",
+    FAKE_NPM_DROP_FFMPEG: dropFfmpeg ? "1" : "0",
     FAKE_GIT_FAIL: failGit ? "1" : "0",
     FAKE_GIT_CALLED_FILE: join(home, "git-called"),
     FAKE_HEALTH_FAIL: failHealth ? "1" : "0",
@@ -502,6 +512,47 @@ describe("install.sh package channel", () => {
     expect(read(join(result.prefix, "installed-argv"))).toBe(
       `install -g omnesis@latest --registry ${registry}`,
     );
+  });
+
+  describe("when npm drops ffmpeg-static", () => {
+    const warning = "ffmpeg's download failed during this install";
+
+    test("a full install still succeeds and says what to do", () => {
+      const result = install(["--method", "package"], "ffmpeg-dropped", {
+        clientOnly: false,
+        dropFfmpeg: true,
+      });
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain(warning);
+      expect(result.output).toContain("run the installer again");
+    });
+
+    test("an install that kept it says nothing", () => {
+      const result = install(["--method", "package"], "ffmpeg-kept", { clientOnly: false });
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).not.toContain(warning);
+    });
+
+    test("a source install says so too", () => {
+      const result = install(["--method", "source"], "ffmpeg-source-dropped", {
+        clientOnly: false,
+        dropFfmpeg: true,
+      });
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain(warning);
+    });
+
+    test("a source install that kept it says nothing", () => {
+      const result = install(["--method", "source"], "ffmpeg-source-kept", { clientOnly: false });
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).not.toContain(warning);
+    });
+
+    test("a client-only install never decodes audio, so it says nothing", () => {
+      const result = install(["--method", "package"], "ffmpeg-client", { dropFfmpeg: true });
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).not.toContain(warning);
+    });
   });
 
   test("--method auto installs the package when the registry serves it", () => {

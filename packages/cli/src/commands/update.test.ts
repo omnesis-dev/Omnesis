@@ -404,6 +404,46 @@ describe("updateNpmGlobal", () => {
     expect(output()).toContain("Updated to 0.3.0.");
   });
 
+  describe("when the update's install lost ffmpeg-static", () => {
+    const warning = "ffmpeg's download failed during this update";
+    const updateRunner = () =>
+      fakeRunner([
+        { code: 0, stdout: "0.3.0\n" },
+        { code: 0, stdout: "" },
+      ]);
+
+    test("a gateway host is told what to do, and the update still succeeds", async () => {
+      await updateNpmGlobal(
+        { channel: "stable", dryRun: false },
+        makeDeps(updateRunner(), {
+          roles: hostRoles({ gateway: supervised }),
+          ffmpegMissing: () => true,
+        }),
+      );
+      expect(output()).toContain("Updated to 0.3.0.");
+      expect(output()).toContain(warning);
+    });
+
+    test("a gateway host that kept it hears nothing", async () => {
+      await updateNpmGlobal(
+        { channel: "stable", dryRun: false },
+        makeDeps(updateRunner(), {
+          roles: hostRoles({ gateway: supervised }),
+          ffmpegMissing: () => false,
+        }),
+      );
+      expect(output()).not.toContain(warning);
+    });
+
+    test("a host without a gateway never decodes audio, so it hears nothing", async () => {
+      await updateNpmGlobal(
+        { channel: "stable", dryRun: false },
+        makeDeps(updateRunner(), { ffmpegMissing: () => true }),
+      );
+      expect(output()).not.toContain(warning);
+    });
+  });
+
   test("a signal stops the package process tree before rollback", async () => {
     const interruptions = new UpdateInterruptionRouter((code) => {
       throw new Error(`Unexpected direct exit ${code}`);
