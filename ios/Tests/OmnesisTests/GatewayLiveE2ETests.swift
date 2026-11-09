@@ -399,27 +399,20 @@ extension GatewayLiveE2ETests {
         let socket = try socket(port: port, token: token, paths: paths)
         try await start(socket, paths: paths, initial: Self.wifi)
 
-        try await waitUntil("the failed attempt") {
-            if case .reconnecting = await socket.state() { return true }
-            return false
-        }
-        let state = await socket.state()
-        XCTAssertEqual(state, .reconnecting(.init(
+        // A refused attempt can fail before the first path arrives, so the state
+        // settles on this once both have, in either order.
+        let temporaryFailure = DeviceSocket.ConnectionState.reconnecting(.init(
             network: .available,
             lastError: "Could not connect to the server.",
             failedAttemptsOnNetwork: 1
-        )))
+        ))
+        try await waitUntil("the failed attempt") { await socket.state() == temporaryFailure }
 
         // A usable-looking path is only a hint: this one wakes a retry that
         // fails too, and the state stays temporary rather than alarming.
         paths.send(Self.cellular)
         try await Task.sleep(for: .seconds(1))
-        let afterWake = await socket.state()
-        XCTAssertEqual(afterWake, .reconnecting(.init(
-            network: .available,
-            lastError: "Could not connect to the server.",
-            failedAttemptsOnNetwork: 1
-        )))
+        try await waitUntil("the woken retry's failure") { await socket.state() == temporaryFailure }
 
         _ = try await forwarder.start(port: port)
         paths.send(Self.wifi)

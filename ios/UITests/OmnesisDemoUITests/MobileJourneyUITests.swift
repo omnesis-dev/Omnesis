@@ -145,10 +145,15 @@ final class MobileJourneyUITests: XCTestCase {
         let port = try runAsync { try await forwarder.start() }
         try launchPaired(pairedUrl: XCTUnwrap(URL(string: "https://127.0.0.1:\(port)")))
 
-        tap(app.buttons["menu.toggle"], "the menu button")
-        tap(app.buttons["menu.settings"], "the Settings menu row")
+        openSettings()
+        let connected = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Connected"))
+            .firstMatch
+        // The Form only builds the rows on screen, and the health sections above
+        // the gateway's can push this one below the fold.
+        if !connected.waitForExistence(timeout: 30) { app.swipeUp() }
         XCTAssertTrue(
-            app.staticTexts["Connected"].waitForExistence(timeout: 60),
+            connected.waitForExistence(timeout: 60),
             "Settings never showed the live connection"
         )
 
@@ -172,7 +177,7 @@ final class MobileJourneyUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         app.activate()
         XCTAssertTrue(
-            app.staticTexts["Connected"].waitForExistence(timeout: 60),
+            connected.waitForExistence(timeout: 60),
             "the app did not reconnect on the same pairing"
         )
     }
@@ -204,6 +209,24 @@ final class MobileJourneyUITests: XCTestCase {
         }
         wait(for: [done], timeout: 30)
         return try XCTUnwrap(box.result).get()
+    }
+
+    /// Opens Settings through the drawer. A row stays in the tree, disabled,
+    /// while the drawer is closed, so its existence proves nothing; and the menu
+    /// button can go unanswered over a just-resumed conversation, so the drawer's
+    /// arrival is what ends the wait. The gear is tapped directly because the
+    /// row's button reports the whole action bar as its frame, whose centre is
+    /// the empty space between the gear and Ask.
+    private func openSettings() {
+        let settings = app.buttons["menu.settings"]
+        let arrived = NSPredicate(format: "exists == true AND enabled == true")
+        for _ in 0 ..< 3 {
+            tap(app.buttons["menu.toggle"], "the menu button")
+            let opened = XCTNSPredicateExpectation(predicate: arrived, object: settings)
+            if XCTWaiter.wait(for: [opened], timeout: 15) == .completed { break }
+        }
+        XCTAssertTrue(settings.isEnabled, "the menu did not open")
+        tap(settings.images["gearshape"], "the Settings gear")
     }
 
     private func search(for query: String) {

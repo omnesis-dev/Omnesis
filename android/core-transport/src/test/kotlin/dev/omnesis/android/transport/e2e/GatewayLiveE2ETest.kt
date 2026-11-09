@@ -264,9 +264,12 @@ class GatewayLiveE2ETest {
         val live = Live("https://127.0.0.1:$port", pairDeviceToken())
         try {
             live.start(wifi)
-            val state = live.awaitState("the failed attempt") { it is DeviceSocket.ConnectionState.Reconnecting }
-                as DeviceSocket.ConnectionState.Reconnecting
-            assertEquals(DeviceSocket.NetworkAvailability.AVAILABLE, state.network)
+            // A refused attempt can fail before the first path arrives, so the state
+            // settles on this once both have, in either order.
+            val state = live.awaitState("the failed attempt") {
+                it is DeviceSocket.ConnectionState.Reconnecting &&
+                    it.network == DeviceSocket.NetworkAvailability.AVAILABLE && it.lastError != null
+            } as DeviceSocket.ConnectionState.Reconnecting
             assertTrue("the transport's reason stays visible: ${state.lastError}", !state.lastError.isNullOrBlank())
 
             // A usable-looking path is only a hint: this one wakes a retry that fails too.
