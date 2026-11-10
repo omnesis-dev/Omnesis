@@ -96,6 +96,7 @@ export const bundles = {
       "transcribe.e2e.test.ts",
       "transcription-vocabulary.e2e.test.ts",
       "voice-notes.e2e.test.ts",
+      "recordings.e2e.test.ts",
       "mobile-source-modes.e2e.test.ts",
       "local-transcripts-multi-device.e2e.test.ts",
       "packages/providers/**/*.e2e.test.ts",

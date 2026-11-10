@@ -515,6 +515,20 @@ import {
   type NewPendingVoiceNote,
 } from "../voice-notes/storage.js";
 import {
+  insertRecordingSession,
+  insertRecordingChunk,
+  finishRecordingSession,
+  abandonRecordingSession,
+  rescheduleRecordingChunk,
+  settleRecordingChunk,
+  markRecordingSessionProjected,
+  deleteRecordingSession,
+  type NewRecordingSession,
+  type NewRecordingChunk,
+  type InsertRecordingChunkOutcome,
+  type FinishRecordingOutcome,
+} from "../recordings/storage.js";
+import {
   insertAgentMessage,
   type AgentMessageRow,
 } from "../sources/agent-conversations/storage.js";
@@ -2001,6 +2015,37 @@ export const writerHandlers = {
   "voiceNotes.reschedule": (db: Db, noteId: string, attempts: number, nextAttemptAt: string) =>
     reschedulePendingVoiceNote(db, noteId, attempts, nextAttemptAt),
   "voiceNotes.delete": (db: Db, noteId: string) => deletePendingVoiceNote(db, noteId),
+  // Recorded conversations: a phone's session and its uploaded chunks, and
+  // the transcription queue's bookkeeping over them.
+  "recordings.createSession": (db: Db, session: NewRecordingSession): boolean =>
+    insertRecordingSession(db, session),
+  "recordings.insertChunk": (db: Db, chunk: NewRecordingChunk): InsertRecordingChunkOutcome =>
+    insertRecordingChunk(db, chunk),
+  "recordings.finishSession": (
+    db: Db,
+    id: string,
+    chunkCount: number,
+    endedAt: string,
+    now: string,
+  ): FinishRecordingOutcome => finishRecordingSession(db, id, chunkCount, endedAt, now),
+  "recordings.abandonSession": (db: Db, id: string, now: string): boolean =>
+    abandonRecordingSession(db, id, now),
+  "recordings.rescheduleChunk": (
+    db: Db,
+    sessionId: string,
+    seq: number,
+    attempts: number,
+    nextAttemptAt: string,
+  ) => rescheduleRecordingChunk(db, sessionId, seq, attempts, nextAttemptAt),
+  "recordings.settleChunk": (
+    db: Db,
+    sessionId: string,
+    seq: number,
+    outcome: { status: "transcribed"; text: string } | { status: "failed" },
+  ): boolean => settleRecordingChunk(db, sessionId, seq, outcome),
+  "recordings.markProjected": (db: Db, id: string, revision: number) =>
+    markRecordingSessionProjected(db, id, revision),
+  "recordings.deleteSession": (db: Db, id: string): boolean => deleteRecordingSession(db, id),
   "notes.applyTranscript": (db: Db, id: string, expected: string, text: string, nowIso: string) =>
     applyNoteEntryTranscript(db, id, expected, text, nowIso),
 
