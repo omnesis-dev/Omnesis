@@ -30,6 +30,7 @@ import { StatusCache } from "./http/services/StatusCache.js";
 import { STATUS_CACHE_READS } from "./http/services/status-cache-reads.js";
 import { ANALYTICS_REPLICA_READS } from "./http/services/analytics-replica-reads.js";
 import { directReadPort } from "./scheduler/read-port.js";
+import { SchedulerQueueFullError } from "./scheduler/types.js";
 import {
   addSourceMember,
   createSource,
@@ -9201,6 +9202,24 @@ describe("POST /sql", () => {
     const data = await res.json();
     expect(data.code).toBe("INTERNAL_ERROR");
     expect(JSON.stringify(data)).not.toContain("io worker exited");
+  });
+
+  test("answers 503 with Retry-After when the read worker's queue is full", async () => {
+    const gateApp = createServer(db, undefined, {
+      ioGate: {
+        sqliteQuery: vi.fn(async () => {
+          throw new SchedulerQueueFullError("io.sqliteQuery", "io", "user", 500, 500);
+        }),
+      } as unknown as IComputeScheduler,
+    });
+    const res = await gateApp.request("/sql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${TEST_TOKEN}` },
+      body: JSON.stringify({ sql: "SELECT 1" }),
+    });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("1");
+    expect((await res.json()).code).toBe("QUEUE_FULL");
   });
 });
 
