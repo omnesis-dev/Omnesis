@@ -54,6 +54,8 @@ import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.dto.WatchCaptureStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.http.GatewayHttp
+import dev.omnesis.android.feature.recording.ui.RecordingAvailability
+import dev.omnesis.android.transport.client.RecordingsClient
 import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.ui.agent.AgentCoordinator
 import dev.omnesis.android.voice.SpeechVocabulary
@@ -248,6 +250,7 @@ class SessionManager @Inject constructor(
         val admin: AdminClient,
         val agent: AgentClient,
         val notes: NotesClient,
+        val recordings: RecordingsClient,
         val watches: WatchesClient,
         val tasks: TasksClient,
         val socket: DeviceSocket,
@@ -324,6 +327,15 @@ class SessionManager @Inject constructor(
 
     private val _experimentalEnabled = MutableStateFlow(false)
     val experimentalEnabled: StateFlow<Boolean> = _experimentalEnabled.asStateFlow()
+
+    /**
+     * Whether the gateway takes conversations recorded on this phone
+     * (experimental): experimental mode, the `recordings` capability, and
+     * whether the operator left gateway transcription on. Reset on every
+     * rebuild like the other status-derived gates.
+     */
+    private val _recordingAvailability = MutableStateFlow(RecordingAvailability.Availability.UNAVAILABLE)
+    val recordingAvailability: StateFlow<RecordingAvailability.Availability> = _recordingAvailability.asStateFlow()
 
     /**
      * Whether the connected gateway runs in developer mode (`OMNESIS_DEV_MODE=1`),
@@ -579,6 +591,7 @@ class SessionManager @Inject constructor(
         _experimentalEnabled.value = false
         _labAvailable.value = false
         _lab.value = dev.omnesis.android.transport.dto.LabFlags()
+        _recordingAvailability.value = RecordingAvailability.Availability.UNAVAILABLE
         _developerEnabled.value = false
         tailscaleJoinNotified = false
         _tailscaleEmbed.value = false
@@ -667,6 +680,7 @@ class SessionManager @Inject constructor(
             admin = admin,
             agent = agent,
             notes = NotesClient(http),
+            recordings = RecordingsClient(http),
             watches = WatchesClient(http),
             tasks = TasksClient(http),
             socket = socket,
@@ -944,6 +958,11 @@ class SessionManager @Inject constructor(
         _experimentalEnabled.value = status.experimental
         _labAvailable.value = status.labAvailable
         _lab.value = status.effectiveLabFlags
+        _recordingAvailability.value = when {
+            !status.experimental || !status.recordings -> RecordingAvailability.Availability.UNAVAILABLE
+            status.dictation?.enabled == false -> RecordingAvailability.Availability.TRANSCRIPTION_OFF
+            else -> RecordingAvailability.Availability.AVAILABLE
+        }
         _developerEnabled.value = status.developer
         _tailscaleEmbed.value = status.tailscaleEmbed || tailscaleJoinNotified
         val tasksWereAvailable = _tasksAvailable.value
