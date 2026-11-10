@@ -92,7 +92,7 @@ describe("materializeConfigSecrets", () => {
       inference: {
         decisionBackends: { x: { url: "http://127.0.0.1:1/v1/systemone", apiKeySecret: ref } },
       },
-    } as OmnesisConfig;
+    } as unknown as OmnesisConfig;
 
     const second = materializeConfigSecrets(
       { inference: { decisionBackends: { x: null } } },
