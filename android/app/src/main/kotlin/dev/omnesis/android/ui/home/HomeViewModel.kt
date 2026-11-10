@@ -98,6 +98,11 @@ class HomeViewModel @Inject constructor(
     val lab = session.lab
     val labAvailable = session.labAvailable
 
+    /** The experimental Recordings entry: shown whenever the gateway speaks the recordings capability. */
+    val recordingsVisible: StateFlow<Boolean> = session.recordingAvailability
+        .map { it != dev.omnesis.android.feature.recording.ui.RecordingAvailability.Availability.UNAVAILABLE }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     /**
      * Whether the gateway runs in developer mode — reveals the
      * shake-to-annotate capture affordance. Mirrors the iOS

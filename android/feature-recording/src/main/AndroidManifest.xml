@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Conversation-recording manifest (experimental). Merged into :app by the
+  manifest merger, keeping the foreground-service declaration in this module.
+
+  The service records with the screen off, so it runs as a foreground service
+  of type microphone with a persistent notification; Android 14+ requires the
+  type-specific permission and only lets it start while the app is visible,
+  which is the only way it is started.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <service
+            android:name=".RecordingForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+    </application>
+
+</manifest>
