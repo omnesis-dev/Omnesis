@@ -13,6 +13,7 @@ export {
   OMNESIS_NOTES_ACCENT_COLOR,
   OMNESIS_NOTES_BG_COLOR,
   seedOmnesisNotesSourceMeta,
+  omnesisBrandIcon,
 } from "./source-meta.js";
 export {
   bootOmnesisNotes,
