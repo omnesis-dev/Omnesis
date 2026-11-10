@@ -55,6 +55,7 @@ export const bundles = {
       "agent-*.e2e.test.ts",
       "*-agent.e2e.test.ts",
       "brain-*.e2e.test.ts",
+      "decision-*.e2e.test.ts",
       "briefs-*.e2e.test.ts",
       "interactive-memory.e2e.test.ts",
       "omnesis-chat.e2e.test.ts",

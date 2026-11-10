@@ -123,6 +123,7 @@ export {
   InferenceUrlPolicyError,
   assertInferenceUrlAllowed,
   classifyInferenceIp,
+  isLoopbackInferenceUrl,
   fetchWithInferenceUrlPolicy,
 } from "./inference-url-policy.js";
 

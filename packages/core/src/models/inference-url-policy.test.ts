@@ -7,6 +7,7 @@ import {
   assertInferenceUrlAllowed,
   classifyInferenceIp,
   fetchWithInferenceUrlPolicy,
+  isLoopbackInferenceUrl,
 } from "./inference-url-policy.js";
 
 const loopbackLookup = async () => [{ address: "127.0.0.1", family: 4 as const }];
@@ -116,5 +117,27 @@ describe("inference URL policy", () => {
         },
       ),
     ).rejects.toThrow(/cross-origin redirect/);
+  });
+});
+
+describe("isLoopbackInferenceUrl", () => {
+  test.each([
+    "http://127.0.0.1:8080/v1",
+    "http://127.5.0.1/v1",
+    "http://[::1]:8080/v1",
+    "http://localhost:8080/v1",
+    "http://LOCALHOST/v1",
+    "http://decider.localhost/v1",
+  ])("%s is on this host", (url) => {
+    expect(isLoopbackInferenceUrl(url)).toBe(true);
+  });
+
+  test.each([
+    "https://api.example.com/v1",
+    "http://10.1.2.3/v1",
+    "http://localhost.example.com/v1",
+    "not a url",
+  ])("%s is not", (url) => {
+    expect(isLoopbackInferenceUrl(url)).toBe(false);
   });
 });

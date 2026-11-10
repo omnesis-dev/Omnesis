@@ -1068,6 +1068,7 @@ describe("InferenceRegistry.getOverview", () => {
         "background-agent",
         "watch-judge",
         "entailment-verifier",
+        "decision",
       ]);
       expect(roles["gpt-4o"]).toEqual([
         "agent",
@@ -1075,6 +1076,7 @@ describe("InferenceRegistry.getOverview", () => {
         "background-agent",
         "watch-judge",
         "entailment-verifier",
+        "decision",
       ]);
       // Anything not served by the live probe is absent.
       expect(roles["text-embedding-3-small"]).toBeUndefined();
@@ -1164,6 +1166,7 @@ describe("InferenceRegistry.probeBackends", () => {
         "background-agent",
         "watch-judge",
         "entailment-verifier",
+        "decision",
       ]);
     } finally {
       globalThis.fetch = originalFetch;
@@ -2765,10 +2768,68 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
       kind: "typesafe",
       model: "jev-1.13.0",
       url: "https://api.typesafe.ai/v1/systemone",
+      selfHosted: false,
+      onHost: false,
       allowRemoteInference: true,
       hasApiKey: true,
       available: true,
     });
+  });
+
+  it.each(["http://127.0.0.1:18999/v1/systemone", "http://localhost:18999/v1/systemone"])(
+    "serves a TypeSafe endpoint on this host (%s) without remote inference or a key",
+    (url) => {
+      const reg = registryWithTypeSafeKey(false);
+      reg.loadConfig({
+        inference: { assignments: { decision: "typesafe/jev-1.13.0" }, typesafe: { url } },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision")).toMatchObject({
+        kind: "typesafe",
+        selfHosted: true,
+        onHost: true,
+        hasApiKey: false,
+        available: true,
+      });
+    },
+  );
+
+  it("keeps a self-hosted TypeSafe endpoint on the LAN behind remote inference", () => {
+    const reg = registryWithTypeSafeKey(false);
+    const config = (allowRemoteInference: boolean) =>
+      ({
+        inference: {
+          allowRemoteInference,
+          assignments: { decision: "typesafe/jev-1.13.0" },
+          typesafe: { url: "http://10.1.2.3:8080/v1/systemone" },
+        },
+      }) as OmnesisConfig;
+    reg.loadConfig(config(false));
+    expect(reg.resolve("decision")).toMatchObject({
+      available: false,
+      reason: CLOUD_EGRESS_DISABLED_REASON,
+    });
+    // Once allowed, a deployment of the operator's own needs no key.
+    reg.loadConfig(config(true));
+    expect(reg.resolve("decision")).toMatchObject({ selfHosted: true, available: true });
+  });
+
+  it("still asks for a key on any TypeSafe-hosted spelling of the endpoint", () => {
+    const reg = registryWithTypeSafeKey(false);
+    for (const url of [
+      "https://api.typesafe.ai/v1/systemone/",
+      "https://API.typesafe.ai/v2/systemone",
+      "https://eu.api.typesafe.ai/v1/systemone",
+      "not a url",
+    ]) {
+      reg.loadConfig({
+        inference: {
+          allowRemoteInference: true,
+          assignments: { decision: "typesafe/jev-1.13.0" },
+          typesafe: { url },
+        },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision"), url).toMatchObject({ selfHosted: false, available: false });
+    }
   });
 
   it("honours an endpoint override", () => {
@@ -2822,8 +2883,8 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
     expect(reg.resolve("decision")).toMatchObject({ kind: "replay" });
   });
 
-  it.each(["codex/gpt-5.4", "anthropic/claude-sonnet-4-6", "local/nomic-embed-text-v1.5.Q8_0"])(
-    "refuses a chat or local model (%s) for the decision role",
+  it.each(["codex/gpt-5.4", "anthropic/claude-sonnet-4-6", "claude-code/sonnet"])(
+    "refuses a cloud chat runtime (%s) for the decision role",
     (value) => {
       const reg = registryWithTypeSafeKey(true);
       reg.loadConfig({
@@ -2831,10 +2892,96 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
       } as OmnesisConfig);
       expect(reg.resolve("decision")).toMatchObject({
         kind: "unresolved",
-        reason: expect.stringMatching(/typed-decision backends/),
+        reason: expect.stringMatching(/needs token probabilities/),
       });
     },
   );
+
+  it("refuses a local or HTTP chat model outside experimental mode", () => {
+    writeFileSync(join(modelsDir, "decider-1b.Q4_K_M.gguf"), "");
+    const reg = registryWithTypeSafeKey(false);
+    withExperimentalEnv(undefined, () => {
+      for (const decision of [
+        "local/decider-1b.Q4_K_M.gguf",
+        "decider-1b.Q4_K_M.gguf",
+        "llama/decider-7b",
+      ]) {
+        reg.loadConfig({ inference: { assignments: { decision } } } as OmnesisConfig);
+        expect(reg.resolve("decision"), decision).toMatchObject({
+          kind: "unresolved",
+          reason: expect.stringMatching(/experimental mode/),
+        });
+      }
+    });
+  });
+
+  describe("in experimental mode", () => {
+    let previous: string | undefined;
+    beforeEach(() => {
+      previous = process.env.OMNESIS_EXPERIMENTAL;
+      process.env.OMNESIS_EXPERIMENTAL = "1";
+    });
+    afterEach(() => {
+      if (previous === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
+      else process.env.OMNESIS_EXPERIMENTAL = previous;
+    });
+
+    it("resolves a local GGUF chat model for the decision role", () => {
+      writeFileSync(join(modelsDir, "decider-1b.Q4_K_M.gguf"), "");
+      const reg = registryWithTypeSafeKey(false);
+      reg.loadConfig({
+        inference: { assignments: { decision: "local/decider-1b.Q4_K_M.gguf" } },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision")).toMatchObject({
+        kind: "local",
+        modelPath: join(modelsDir, "decider-1b.Q4_K_M.gguf"),
+        available: true,
+      });
+    });
+
+    it("refuses a catalog embedding model for the decision role", () => {
+      const reg = registryWithTypeSafeKey(false);
+      reg.loadConfig({
+        inference: { assignments: { decision: "local/nomic-embed-text-v1.5.Q8_0" } },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision")).toMatchObject({
+        kind: "local",
+        available: false,
+        reason: expect.stringMatching(/not a chat model/),
+      });
+    });
+
+    it("resolves an HTTP chat backend for the decision role", () => {
+      const reg = registryWithTypeSafeKey(false);
+      reg.loadConfig({
+        inference: {
+          backends: { llama: { type: "http", url: "http://127.0.0.1:18997" } },
+          assignments: { decision: "llama/decider-7b" },
+        },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision")).toMatchObject({
+        kind: "http",
+        backendKey: "llama",
+        model: "decider-7b",
+      });
+    });
+
+    it("refuses a Responses-only HTTP backend for the decision role", () => {
+      const reg = registryWithTypeSafeKey(false);
+      reg.loadConfig({
+        inference: {
+          backends: {
+            cloud: { type: "http", url: "http://127.0.0.1:18997", protocol: "responses" },
+          },
+          assignments: { decision: "cloud/decider-7b" },
+        },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision")).toMatchObject({
+        kind: "unresolved",
+        reason: expect.stringMatching(/chat completions/i),
+      });
+    });
+  });
 
   it("leaves a configured HTTP backend named typesafe serving the other roles", () => {
     const reg = registryWithTypeSafeKey(true);

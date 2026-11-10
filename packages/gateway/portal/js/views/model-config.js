@@ -6,9 +6,9 @@
 //
 //   • ModelConfigModal   — "Choose a <capability> model": a grid of backend
 //                          options (Local, presets, custom HTTP backends,
-//                          Codex, Claude Code, Anthropic, + a custom backend
-//                          — or TypeSafe alone
-//                          for the Decision model), each leading to the
+//                          Codex, Claude Code, Anthropic, + a custom backend;
+//                          for the Decision model, TypeSafe first and no
+//                          cloud chat runtime), each leading to the
 //                          model selection (configuring the backend inline
 //                          first when it isn't set up yet).
 //   • AddBackendModal    — "Add a backend": the same grid in configure-only
@@ -35,7 +35,6 @@ import {
   isAnthropicConfigured,
   catalogProviderForBackend,
   TYPESAFE_DEFAULT_MODEL,
-  isDecisionRole,
   isClaudeCodeReady,
   httpBackendModelSummary,
 } from "../lib/backend-options.js";
@@ -823,6 +822,21 @@ export function typesafeKeyConfigured(credentialEntry, assignment) {
   );
 }
 
+/**
+ * Where the TypeSafe pane says scored content goes: TypeSafe's cloud, or the
+ * operator's own endpoint, on this host or off it.
+ */
+export function typesafeEndpointNote(endpoint, allowRemoteInference) {
+  if (endpoint?.onHost) {
+    return `On this host · each scored document's subject, sender and opening text go to ${endpoint.url} and stay on this machine.`;
+  }
+  const consent = allowRemoteInference ? "" : " You'll be asked to allow cloud inference first.";
+  if (endpoint?.selfHosted) {
+    return `Your endpoint · each scored document's subject, sender and opening text are sent to ${endpoint.url}.${consent}`;
+  }
+  return `Cloud · each scored document's subject, sender and opening text are sent to TypeSafe.${consent}`;
+}
+
 /** The model id the TypeSafe pane starts from: the current one, else the default. */
 export function typesafeInitialModel(assignment) {
   return assignment?.kind === "typesafe" && assignment.model ? assignment.model : TYPESAFE_DEFAULT_MODEL;
@@ -846,6 +860,7 @@ function TypeSafeModelPane({ role, overview, onPick, onConfigureKey, onBack }) {
     };
   }, []);
   const keyConfigured = typesafeKeyConfigured(credential, assignment);
+  const endpoint = overview.inference?.typesafe;
   const trimmed = model.trim();
   const current = assignment?.kind === "typesafe" ? assignment.model : null;
   const use = () => {
@@ -866,6 +881,8 @@ function TypeSafeModelPane({ role, overview, onPick, onConfigureKey, onBack }) {
                 ? "Checking…"
                 : keyConfigured
                 ? "Configured"
+                : endpoint?.selfHosted
+                ? "Not configured — optional for your own endpoint"
                 : "Not configured — you'll be asked for it when you use a model"}</span>
             </div>
           </div>
@@ -889,10 +906,7 @@ function TypeSafeModelPane({ role, overview, onPick, onConfigureKey, onBack }) {
             </button>
           </span>
         </label>
-        <div class="picker-note">
-          Cloud · each scored document's subject, sender and opening text are sent to TypeSafe.
-          ${overview.inference?.allowRemoteInference === true ? null : " You'll be asked to allow cloud inference first."}
-        </div>
+        <div class="picker-note">${typesafeEndpointNote(endpoint, overview.inference?.allowRemoteInference === true)}</div>
       </div>
     </div>
   `;
@@ -991,7 +1005,7 @@ function RecentModels({ role, onPick }) {
 export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow, codexRefreshing, codexRuntimeUpdate, claudeCodeRefreshing, onClose, onAddHttp, onPickHttp, onPickLocal, onPickAnthropic, onPickCodex, onPickClaudeCode, onRefreshClaudeCode, onPickTypeSafe, onConfigureTypeSafeKey, onPickRecent, onStartCodexLogin, onCancelCodexLogin, onRefreshCodex, onCodexRuntimeUpdate, onCancelCodexRuntimeUpdate, onDismissCodexRuntimeResult, onInstall, onUninstall, onCancelDownload }) {
   // step.name: "grid" | "http" | "select" | "local" | "anthropic" | "codex" | "claude-code" | "typesafe"
   // A decision role has one backend, so its picker opens on it directly.
-  const [step, setStep] = useState(() => (isDecisionRole(role) ? { name: "typesafe" } : { name: "grid" }));
+  const [step, setStep] = useState({ name: "grid" });
   const toGrid = () => setStep({ name: "grid" });
 
   const onSelect = (opt) => {

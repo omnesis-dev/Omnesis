@@ -727,8 +727,13 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <strong>Allow cloud inference</strong>. Add its key under
           <strong>Settings → Models → Decision model</strong> or with
           <code>omnesis backend key set typesafe</code>, then assign
-          <code>omnesis model assign decision typesafe/jev-1.13.0</code>. The iPhone and Android
-          apps show the assignment; change it from the portal or terminal.
+          <code>omnesis model assign decision typesafe/jev-1.13.0</code>. To use a
+          TypeSafe-compatible deployment of your own, set <code>inference.typesafe.url</code> to its
+          endpoint. An endpoint on the gateway host (a loopback address or <code>localhost</code>)
+          needs neither a key nor <strong>Allow cloud inference</strong>; one elsewhere on your
+          network needs <strong>Allow cloud inference</strong> but no key. Any endpoint under
+          <code>typesafe.ai</code> is TypeSafe's own and needs its key. The iPhone and Android apps
+          show the assignment; change it from the portal or terminal.
         </p>
         <p>Backend support depends on the capability. Available backend families are:</p>
 

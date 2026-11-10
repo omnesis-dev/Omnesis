@@ -318,9 +318,17 @@ export interface ResolvedTypeSafe extends ResolvedBase {
   /** System One endpoint (the public API unless `inference.typesafe.url` overrides it). */
   url: string;
   /**
-   * Whether config permits sending data to this cloud backend. TypeSafe is
-   * unconditionally off-host, so `inference.allowRemoteInference` is the gate.
+   * Whether `inference.typesafe.url` points somewhere other than TypeSafe's
+   * public API: a deployment of the operator's own, which may run without a
+   * key.
    */
+  selfHosted: boolean;
+  /**
+   * Whether the endpoint is on this host (a loopback address or `localhost`),
+   * the one case that needs no `inference.allowRemoteInference`.
+   */
+  onHost: boolean;
+  /** Whether config permits sending data off this host. */
   allowRemoteInference: boolean;
   /** Whether an API key is configured (the value is never exposed). */
   hasApiKey: boolean;
@@ -650,6 +658,18 @@ export interface InferenceOverview {
   codex?: CodexBackendStatus;
   /** Built-in Claude Code backend status: the operator's own `claude` CLI and login. */
   claudeCode?: ClaudeCodeBackendStatus;
+  /**
+   * The TypeSafe endpoint the Decision model would use, so a client can tell
+   * a deployment of the operator's own from the TypeSafe cloud before it is
+   * assigned. Absent on gateways that predate self-hosted endpoints.
+   */
+  typesafe?: { url: string; selfHosted: boolean; onHost: boolean };
+  /**
+   * True when a local or HTTP chat model may serve the Decision model: only in
+   * experimental mode, because the decisions' thresholds were tuned on
+   * TypeSafe Jev. Absent on gateways that predate chat-model decisions.
+   */
+  decisionChatModels?: boolean;
   assignments: Record<CapabilityRole, ResolvedAssignment>;
 }
 

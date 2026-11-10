@@ -54,6 +54,12 @@ export interface DecisionServerOptions {
   policy: DecisionPolicy;
   /** Billed input tokens reported per answered call. Defaults to a length estimate. */
   inputTokens?: number;
+  /**
+   * Answer calls that present no bearer credential, as a self-hosted
+   * deployment without a key does. Off by default: TypeSafe's own API
+   * refuses them.
+   */
+  acceptKeyless?: boolean;
 }
 
 /** One served call, for assertions about what the gate asked. */
@@ -193,7 +199,7 @@ export async function startDecisionServer(opts: DecisionServerOptions): Promise<
       const request = body as DecisionServerRequest;
       let status: number;
       let reply: Record<string, unknown>;
-      if (!authorization || !/^Bearer \S+$/.test(authorization)) {
+      if (authorization ? !/^Bearer \S+$/.test(authorization) : opts.acceptKeyless !== true) {
         status = 401;
         reply = { error: { message: "missing bearer credential" } };
       } else {

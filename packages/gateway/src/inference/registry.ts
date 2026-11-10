@@ -25,6 +25,7 @@ import {
   readConfigSecretRefSync,
   fetchWithInferenceUrlPolicy,
   InferenceUrlPolicyError,
+  isLoopbackInferenceUrl,
   CAPABILITY_ROLES,
   type Manifest,
   type CapabilityRole,
@@ -188,8 +189,35 @@ const ROLE_TO_CATALOG_ROLE = {
 /** TypeSafe's public System One endpoint, used unless `inference.typesafe.url` overrides it. */
 export const TYPESAFE_DEFAULT_URL = "https://api.typesafe.ai/v1/systemone";
 
-const DECISION_ONLY_REASON =
-  'The Decision model is served only by typed-decision backends: assign "typesafe/<model>" (e.g. typesafe/jev-1.13.0) or "replay".';
+/**
+ * True when a TypeSafe URL points at the operator's own deployment rather than
+ * TypeSafe's cloud: any host outside `typesafe.ai`. Compared by host, not by
+ * string, so the default URL with a trailing slash or another path, or a
+ * regional TypeSafe host, still counts as TypeSafe's and still needs its key.
+ * An unparseable URL is treated as TypeSafe's, the stricter reading.
+ */
+export function isSelfHostedTypeSafeUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return false;
+  }
+  return host !== "typesafe.ai" && !host.endsWith(".typesafe.ai");
+}
+
+const DECISION_CHAT_MODEL_EXPERIMENTAL_REASON =
+  'A local or HTTP chat model serves the Decision model only in experimental mode (OMNESIS_EXPERIMENTAL=1): its scores do not match the thresholds the decisions were tuned on. Assign "typesafe/<model>".';
+
+const DECISION_BACKENDS_REASON =
+  'The Decision model needs token probabilities, which this backend does not return: assign "typesafe/<model>", a local GGUF chat model, an OpenAI-compatible HTTP backend ("<backend>/<model>"), or "replay".';
+
+/** Cloud chat runtimes that return no token probabilities, so cannot serve the decision role. */
+const DECISION_REFUSED_PREFIXES: ReadonlySet<string> = new Set([
+  "anthropic",
+  "codex",
+  "claude-code",
+]);
 
 /**
  * Heal backend URLs that carry the OpenAI-compatible version path inline. Many
@@ -529,11 +557,27 @@ export class InferenceRegistry {
     const slashIndex = value.indexOf("/");
     const prefixOf = slashIndex === -1 ? value : value.slice(0, slashIndex);
 
-    // The decision role takes only typed-decision backends, and TypeSafe
-    // serves no other role: neither is a chat model. A configured HTTP backend
-    // that happens to be named `typesafe` keeps serving the other roles.
-    if (role === "decision" && prefixOf !== "typesafe" && prefixOf !== "replay") {
-      return { role, kind: "unresolved", reason: DECISION_ONLY_REASON };
+    // The decision role reads answers from token probabilities, which the
+    // cloud chat runtimes do not return; TypeSafe serves no other role. An
+    // HTTP backend that happens to share one of these names keeps its role.
+    if (
+      role === "decision" &&
+      DECISION_REFUSED_PREFIXES.has(prefixOf) &&
+      !this.httpBackends.has(prefixOf)
+    ) {
+      return { role, kind: "unresolved", reason: DECISION_BACKENDS_REASON };
+    }
+    // Every decision threshold was chosen on TypeSafe Jev's scores, and a chat
+    // model read through its token probabilities scores on another scale
+    // (small local models keep 69–85% of the mail Jev keeps at the worth
+    // gate's threshold), so they stay experimental.
+    if (
+      role === "decision" &&
+      prefixOf !== "typesafe" &&
+      prefixOf !== "replay" &&
+      !experimentalEnabled()
+    ) {
+      return { role, kind: "unresolved", reason: DECISION_CHAT_MODEL_EXPERIMENTAL_REASON };
     }
     if (role !== "decision" && prefixOf === "typesafe" && !this.httpBackends.has("typesafe")) {
       return {
@@ -1210,6 +1254,12 @@ export class InferenceRegistry {
       allowRemoteInference: this.allowRemoteInference,
       backends,
       assignments,
+      typesafe: {
+        url: this.typesafeUrl,
+        selfHosted: isSelfHostedTypeSafeUrl(this.typesafeUrl),
+        onHost: isLoopbackInferenceUrl(this.typesafeUrl),
+      },
+      decisionChatModels: experimentalEnabled(),
       health: this.modelHealth(),
     };
   }
@@ -1297,6 +1347,10 @@ export class InferenceRegistry {
 
     const embedDim =
       ggufEntry && typeof ggufEntry.embedDim === "number" ? ggufEntry.embedDim : undefined;
+    // A decision is read from a chat model's next token; an embedding or
+    // speech model in the catalog has none to give.
+    const notAChatModel =
+      role === "decision" && ggufEntry !== undefined && !ggufEntry.roles.includes("agent");
 
     return {
       role,
@@ -1305,8 +1359,12 @@ export class InferenceRegistry {
       catalogEntry: ggufEntry,
       modelPath: manifestEntry ? join(this.modelsDir, manifestEntry.filename) : modelPath,
       embedDim,
-      available: fileExists,
-      reason: fileExists ? undefined : `Model file not found at ${modelPath}`,
+      available: fileExists && !notAChatModel,
+      reason: notAChatModel
+        ? `${catalogId} is not a chat model; the Decision model needs one`
+        : fileExists
+          ? undefined
+          : `Model file not found at ${modelPath}`,
     };
   }
 
@@ -1349,6 +1407,15 @@ export class InferenceRegistry {
         role,
         kind: "unresolved",
         reason: `HTTP backend "${backendKey}" not declared in inference.backends`,
+      };
+    }
+
+    if (role === "decision" && entry.config.protocol === "responses") {
+      return {
+        role,
+        kind: "unresolved",
+        reason:
+          "The Decision model requires an HTTP backend using Chat Completions; Responses-only backends cannot serve it",
       };
     }
 
@@ -1446,11 +1513,15 @@ export class InferenceRegistry {
   private resolveTypeSafe(role: CapabilityRole, model: string): ResolvedTypeSafe {
     const allowRemoteInference = this.allowRemoteInference;
     const hasApiKey = this.checkTypeSafeKey();
+    const selfHosted = isSelfHostedTypeSafeUrl(this.typesafeUrl);
+    const onHost = isLoopbackInferenceUrl(this.typesafeUrl);
     const base = {
       role,
       kind: "typesafe" as const,
       model,
       url: this.typesafeUrl,
+      selfHosted,
+      onHost,
       allowRemoteInference,
       hasApiKey,
     };
@@ -1461,12 +1532,15 @@ export class InferenceRegistry {
         reason: 'TypeSafe assignment must include a model id, e.g. "typesafe/jev-1.13.0"',
       };
     }
-    // Remote-inference-off is the more fundamental block — TypeSafe is
-    // always off-host — so it is reported before a missing key.
-    if (!allowRemoteInference) {
+    // Remote-inference-off is the more fundamental block, so it is reported
+    // before a missing key. An endpoint on this host needs neither: nothing
+    // leaves the machine, and a deployment of the operator's own may run
+    // without a key (one off this host still needs remote inference, as any
+    // HTTP backend does).
+    if (!allowRemoteInference && !onHost) {
       return { ...base, available: false, reason: CLOUD_EGRESS_DISABLED_REASON };
     }
-    if (!hasApiKey) {
+    if (!hasApiKey && !selfHosted) {
       return {
         ...base,
         available: false,

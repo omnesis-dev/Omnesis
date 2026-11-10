@@ -27,6 +27,8 @@ export const CAPABILITY_TO_CATALOG = {
   "privacy-reviewer": "agent",
   "entailment-verifier": "agent",
   "watch-judge": "agent",
+  // A decision is read from a chat model's next token.
+  decision: "agent",
   transcriber: "transcribe",
   ocr: undefined,
   "speech-to-speech": undefined,
@@ -39,10 +41,11 @@ export const CAPABILITY_TO_CATALOG = {
 export const TYPESAFE_DEFAULT_MODEL = "jev-1.13.0";
 
 /**
- * Whether a capability is served only by typed-decision backends. The
- * gateway resolves such a role to TypeSafe (or replay, for tests) and refuses
- * every chat backend, and it refuses TypeSafe for every other role — so the
- * picker mirrors both halves.
+ * Whether a capability is the Decision model. The gateway serves it from
+ * TypeSafe, a local chat model, or an OpenAI-compatible HTTP backend that
+ * returns token probabilities, and refuses the cloud chat runtimes (Codex,
+ * Claude Code, Anthropic), which return none; it refuses TypeSafe for every
+ * other role. The picker mirrors both halves.
  */
 export function isDecisionRole(role) {
   return role === "decision";
@@ -114,8 +117,11 @@ export function catalogProviderForBackend(overview, backendKey) {
  * Codex and Claude Code for roles they advertise, Anthropic, then "add a
  * custom HTTP backend".
  * Local/Anthropic cards appear only when the role has bundled catalog entries
- * for them. A decision role gets the TypeSafe card alone: no chat backend
- * can serve it, and TypeSafe serves nothing else.
+ * for them. A decision role gets the TypeSafe card first, then — only when the
+ * gateway allows chat models for it (`decisionChatModels`, experimental mode)
+ * — Local and the Chat Completions HTTP backends; Codex, Claude Code and
+ * Anthropic return no token probabilities, so they are withheld, and TypeSafe
+ * serves nothing else.
  *
  * Each option carries the data a card needs: `configured` (is the backend set
  * up), `fitCount` (role-matching models it serves, when configured), and the
@@ -126,7 +132,10 @@ export function catalogProviderForBackend(overview, backendKey) {
  *   "add-custom" | "typesafe".
  */
 export function buildModelPickerOptions(overview, role) {
-  if (isDecisionRole(role)) return [{ kind: "typesafe" }];
+  const decision = isDecisionRole(role);
+  // Roles that need a Chat Completions backend (the Responses API has no
+  // single-token judgement shape they use).
+  const needsChatCompletions = decision || role === "watch-judge";
 
   const presets = overview.presets ?? [];
   const backends = overview.inference?.backends ?? {};
@@ -149,7 +158,8 @@ export function buildModelPickerOptions(overview, role) {
   }
 
 
-  const options = [];
+  const options = decision ? [{ kind: "typesafe" }] : [];
+  if (decision && overview.inference?.decisionChatModels !== true) return options;
 
   const localCount = localCatalogCount(catalog, catalogRole);
   if (localCount > 0) options.push({ kind: "local", count: localCount });
@@ -157,7 +167,7 @@ export function buildModelPickerOptions(overview, role) {
   const presetIds = new Set(presets.map((p) => p.id));
   for (const preset of presets) {
     const backend = backends[preset.id];
-    if (role === "watch-judge" && backend?.protocol === "responses") continue;
+    if (needsChatCompletions && backend?.protocol === "responses") continue;
     const configured = !!backend && backend.type === "http";
     options.push({
       kind: "preset",
@@ -171,7 +181,7 @@ export function buildModelPickerOptions(overview, role) {
 
   for (const [key, backend] of Object.entries(backends)) {
     if (backend.type !== "http" || presetIds.has(key)) continue;
-    if (role === "watch-judge" && backend.protocol === "responses") continue;
+    if (needsChatCompletions && backend.protocol === "responses") continue;
     options.push({
       kind: "custom",
       id: key,
@@ -182,7 +192,7 @@ export function buildModelPickerOptions(overview, role) {
     });
   }
 
-  const codexCount = cliBackendFitCount(codex, role);
+  const codexCount = decision ? 0 : cliBackendFitCount(codex, role);
   if (codex?.configured === true && codexCount > 0) {
     options.push({
       kind: "codex",
@@ -193,7 +203,7 @@ export function buildModelPickerOptions(overview, role) {
     });
   }
 
-  const claudeCodeCount = cliBackendFitCount(claudeCode, role);
+  const claudeCodeCount = decision ? 0 : cliBackendFitCount(claudeCode, role);
   if (claudeCode?.installed === true && claudeCodeCount > 0) {
     options.push({
       kind: "claude-code",
@@ -205,7 +215,7 @@ export function buildModelPickerOptions(overview, role) {
     });
   }
 
-  const anthropicCount = anthropicCatalogCount(catalog, catalogRole);
+  const anthropicCount = decision ? 0 : anthropicCatalogCount(catalog, catalogRole);
   if (anthropicCount > 0) {
     options.push({
       kind: "anthropic",

@@ -52,6 +52,7 @@ export {
   InferenceUrlPolicyError,
   assertInferenceUrlAllowed,
   classifyInferenceIp,
+  isLoopbackInferenceUrl,
   fetchWithInferenceUrlPolicy,
   BACKGROUND_RATE_LIMIT_PATIENCE,
   rateLimitRetryDelayMs,

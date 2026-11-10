@@ -22,6 +22,12 @@ export function cloudProviderLabel(providerId, fallbackLabel) {
 
 export function remoteAssignmentConsent(overview, backendKey, modelName) {
   if (overview.inference.allowRemoteInference === true) return null;
+  // TypeSafe at an endpoint of the operator's own: on this host it needs no
+  // consent, elsewhere the consent names that endpoint rather than TypeSafe.
+  const typesafe = overview.inference.typesafe;
+  if (backendKey === "typesafe" && typesafe?.selfHosted) {
+    return typesafe.onHost ? null : { modelName, providerLabel: typesafe.url };
+  }
   const builtIn = cloudProviderLabel(backendKey, null);
   if (builtIn) return { modelName, providerLabel: builtIn };
   const backend = overview.inference.backends[backendKey];

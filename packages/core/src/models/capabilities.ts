@@ -298,9 +298,10 @@ export interface CapabilityMetadata {
   readonly section: "core" | "cognition";
   /**
    * Set when only a special family of backend can serve the role, so a
-   * client's ordinary model picker (local models, chat backends) offers
-   * nothing that works for it. `typed-decision` roles take only
-   * typed-decision backends such as TypeSafe. Absent for every role an
+   * client's ordinary model picker (local models, chat backends) does not
+   * describe what works for it. `typed-decision` roles take typed-decision
+   * backends such as TypeSafe, or in experimental mode a local or HTTP chat
+   * model read through its token probabilities — never a cloud chat runtime. Absent for every role an
    * ordinary model serves.
    */
   readonly backendFamily?: "typed-decision" | "speech-to-speech";
@@ -401,14 +402,16 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     backendFamily: "speech-to-speech",
   },
   // Typed decisions select a route or score significance; the selected agent
-  // handles any subsequent work. Only typed-decision backends serve this role.
+  // handles any subsequent work. TypeSafe serves this role; in experimental
+  // mode a local or HTTP chat model whose token probabilities give the typed
+  // answer can serve it too.
   decision: {
     role: "decision",
     title: "Decision model",
     description:
       "Makes small routing and scoring decisions. For Apple Watch complication captures, chooses Ask for a response or Tell to save a note; explicit Ask and Tell bypass this choice. Also filters low-value email dates from time queries when the mention worth gate is on. Uses TypeSafe Jev: the transcript or email excerpt is sent to TypeSafe. The Agent answers Ask requests and processes saved Tell Omnesis notes.",
     experimentalDescription:
-      "In experimental mode, also routes browser Find between index search and agent research, and helps the Brain prioritize evidence and reviews, check memory and task changes, learn from your reactions, and select observations for briefs. These decisions send the relevant query, source, memory or task context to TypeSafe.",
+      "In experimental mode, also routes browser Find between index search and agent research, and helps the Brain prioritize evidence and reviews, check memory and task changes, learn from your reactions, and select observations for briefs. These decisions send the relevant query, source, memory or task context to the decision model. A local GGUF chat model or an OpenAI-compatible HTTP server that returns token log-probabilities can also serve the role: a local model keeps the content on this machine, and an HTTP backend sends it to that server. Their scores are read against thresholds tuned on TypeSafe Jev, so they keep less of what Jev would keep.",
     icon: "scale",
     section: "cognition",
     backendFamily: "typed-decision",

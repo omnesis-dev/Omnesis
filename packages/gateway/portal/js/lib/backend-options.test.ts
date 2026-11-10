@@ -389,7 +389,8 @@ describe("Claude Code options", () => {
   });
 
   it("is withheld from the Decision model", () => {
-    expect(buildModelPickerOptions(overview({ inference: { backends: {}, claudeCode: { ...signedIn, modelRoles: { sonnet: ["decision"] } } } }), "decision")).toEqual([{ kind: "typesafe" }]);
+    const kinds = buildModelPickerOptions(overview({ inference: { backends: {}, claudeCode: { ...signedIn, modelRoles: { sonnet: ["decision"] } } } }), "decision").map((o: { kind: string }) => o.kind);
+    expect(kinds).not.toContain("claude-code");
   });
 });
 
@@ -401,15 +402,32 @@ describe("buildModelPickerOptions — the Decision model", () => {
       backends: {
         openai: { type: "http", status: "ok", modelRoles: { "gpt-example": ["agent"] } },
         "custom-host": { type: "http", status: "ok", modelRoles: { "model-a": ["agent"] } },
+        "responses-host": { type: "http", status: "ok", protocol: "responses", modelRoles: { "model-r": ["agent"] } },
         anthropic: { type: "anthropic", status: "ok", hasApiKey: true },
       },
       codex: { configured: true, status: "ok", loggedIn: true, models: ["codex-a"], modelRoles: { "codex-a": ["agent", "decision"] } },
+      decisionChatModels: true,
     },
   });
 
-  it("offers TypeSafe alone — no chat backend, no custom backend", () => {
+  it("offers only TypeSafe when the gateway allows no chat model for it", () => {
+    const stable = { ...everything, inference: { ...everything.inference, decisionChatModels: false } };
+    expect(buildModelPickerOptions(stable, "decision")).toEqual([{ kind: "typesafe" }]);
+    // A gateway that predates the flag offers TypeSafe only, as it always did.
+    const older = { ...everything, inference: { ...everything.inference, decisionChatModels: undefined } };
+    expect(buildModelPickerOptions(older, "decision")).toEqual([{ kind: "typesafe" }]);
+  });
+
+  it("in experimental mode offers TypeSafe first, then chat-completions HTTP backends — no cloud chat runtime", () => {
     expect(isDecisionRole("decision")).toBe(true);
-    expect(buildModelPickerOptions(everything, "decision")).toEqual([{ kind: "typesafe" }]);
+    const options = buildModelPickerOptions(everything, "decision");
+    expect(options[0]).toEqual({ kind: "typesafe" });
+    const ids = options.map((o: { kind: string; id?: string }) => o.id ?? o.kind);
+    expect(ids).toContain("openai");
+    expect(ids).toContain("custom-host");
+    expect(ids).not.toContain("responses-host");
+    for (const kind of ["codex", "claude-code", "anthropic"]) expect(ids).not.toContain(kind);
+    expect(ids.at(-1)).toBe("add-custom");
   });
 
   it("offers TypeSafe to no other capability", () => {

@@ -295,10 +295,29 @@ the portal reads the gateway-computed result.
 - `transcriber`, `ocr`, and `embedder` are exclusive single-purpose roles matched
   by name families.
 - Generative models serve every text role: `agent`, `privacy-reviewer`,
-  `background-agent`, `watch-judge`, and `entailment-verifier`. The latter four
-  deliberately offer exactly the models the Agent capability does, so a model
-  that can hold a conversation can also be assigned to any of the bounded
-  passes.
+  `background-agent`, `watch-judge`, `entailment-verifier` and `decision`. The
+  latter five deliberately offer exactly the models the Agent capability does,
+  so a model that can hold a conversation can also be assigned to any of the
+  bounded passes.
+
+`decision` is narrower at runtime still. TypeSafe (`typesafe/<model>`) is its
+stable backend; a chat model serves it only in experimental mode
+(`OMNESIS_EXPERIMENTAL=1`), because every decision threshold was tuned on
+TypeSafe Jev's scores and a 4B chat model kept 69–85% of what Jev keeps at the
+email worth threshold (`scripts/eval-decision-cassette.mts` measures a
+candidate). A chat model's typed answer (yes/no, a score, a choice) is read
+from its next-token probabilities over single-token option labels
+(`packages/gateway/src/inference/decision/chat-decision.ts`), so it needs a
+backend that exposes them: a local GGUF (node-llama-cpp's top-128 next-token
+distribution) or an OpenAI-compatible HTTP backend that returns `logprobs`
+from Chat Completions. Models that reason first or are served without logprobs
+(o-series, GPT-5, gpt-oss, DeepSeek reasoner and R1, QwQ, `*-thinking`,
+Gemini) are not suggested for the role. Codex, Claude Code, Anthropic and
+Responses-only backends are rejected. A reply without log-probabilities, or
+whose labels hold less than half the next-token probability (a preamble, a
+thinking tag), throws, and callers fail open. A loopback
+`inference.typesafe.url` needs no remote inference and no key; any host outside
+`typesafe.ai` needs no key.
 
 `watch-judge` is narrower at runtime than the shared generative classification:
 it accepts Codex, Claude Code, a local GGUF, Anthropic, or an OpenAI-compatible

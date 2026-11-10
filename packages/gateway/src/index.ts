@@ -1376,15 +1376,17 @@ const subscriptionsPolicyStore = new PrivacyPolicyStore(configDir, { db, writeGa
 // same initialized authorization state on a fresh gateway.
 await subscriptionsPolicyStore.get();
 
-// Decision model — typed judgements (TypeSafe Jev, or recorded replay). The
-// Brain's worth gate asks it whether an email is worth a background-agent run,
-// and the mention worth gate whether an email's date mentions belong in time
-// queries; unset, both gates are absent. Re-resolved per use, so assigning Jev or pasting
+// Decision model — typed judgements (TypeSafe, a local or HTTP chat model read
+// through its token probabilities, or recorded replay). The Brain's worth gate
+// asks it whether an email is worth a background-agent run, and the mention
+// worth gate whether an email's date mentions belong in time queries; unset,
+// both gates are absent. Re-resolved per use, so assigning a model or pasting
 // a key from the portal takes effect without a restart.
 const decisionService = new DecisionService({
   health: inferenceRegistry.health,
   resolveAssignment: () => inferenceRegistry.resolve("decision"),
   readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
+  getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
   defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
 });
 

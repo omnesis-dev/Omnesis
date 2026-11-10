@@ -6,7 +6,7 @@
  * decision capability.
  *
  * One request per decision: `POST <url>` with `{model, state, questions}` and a
- * bearer key; the reply carries one typed answer per question and the billed
+ * bearer key (optional for a self-hosted deployment); the reply carries one typed answer per question and the billed
  * input tokens (output is free). Rate limiting (429) and overload (529, 5xx)
  * are retried with backoff, honouring `retry-after`; every other failure —
  * a rejected key, a validation error, a malformed reply — throws, because the
@@ -28,7 +28,8 @@ const log = createLogger("gateway:decision:typesafe");
 export interface TypeSafeDecisionOptions {
   url: string;
   model: string;
-  apiKey: string;
+  /** Bearer key; omitted for a self-hosted endpoint that runs without one. */
+  apiKey?: string;
   allowRemoteInference: boolean;
   /** Per-attempt timeout. */
   timeoutMs?: number;
@@ -45,7 +46,8 @@ const MAX_BACKOFF_MS = 10_000;
 
 export class TypeSafeDecision implements DecisionCapability {
   readonly modelId: string;
-  private readonly opts: Required<Omit<TypeSafeDecisionOptions, "fetchFn">> & {
+  private readonly opts: Required<Omit<TypeSafeDecisionOptions, "fetchFn" | "apiKey">> & {
+    apiKey?: string;
     fetchFn?: typeof fetch;
   };
 
@@ -81,7 +83,7 @@ export class TypeSafeDecision implements DecisionCapability {
             method: "POST",
             headers: {
               "content-type": "application/json",
-              authorization: `Bearer ${this.opts.apiKey}`,
+              ...(this.opts.apiKey ? { authorization: `Bearer ${this.opts.apiKey}` } : {}),
             },
             body,
             signal,
