@@ -234,6 +234,7 @@ jobs:
             :feature-activity-segments:verifyRoborazziDebug \
             :feature-photos:verifyRoborazziDebug \
             :wear:verifyRoborazziDebug \
+            :feature-recording:verifyRoborazziDebug \
             --no-daemon --max-workers=2
 
       # On a verify failure, surface the diff/actual images so a reviewer/agent
