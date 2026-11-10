@@ -231,9 +231,14 @@ beforeAll(async () => {
   ADMIN_ID = admin.id;
   ADMIN_TOKEN = createToken(db, ADMIN_ID, [SCOPE_ADMIN, SCOPE_READ]).token;
 
+  // The heartbeat is never started on this shared server. Each tick drops a
+  // socket that has not answered the previous tick's ping, and the clients
+  // here share the server's process: a worker starved of CPU for one interval
+  // after a ping drops sockets whose peers are alive. The heartbeat has its own
+  // tests below ("DeviceWsServer socket liveness" and "DeviceWsServer heartbeat
+  // on the device route"), where no pong can arrive after the next tick.
   wsServer = new DeviceWsServer({
     authTimeoutMs: 1000,
-    heartbeatIntervalMs: 200,
     db,
     writeGate: directWriteGate(db),
   });
@@ -251,7 +256,6 @@ beforeAll(async () => {
   server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
   injectWebSocket(server);
 
-  wsServer.start();
   const port = await listeningPort(server);
   httpUrl = `http://127.0.0.1:${port}`;
   wsUrl = `ws://127.0.0.1:${port}/device/ws`;
@@ -1211,6 +1215,70 @@ describe("DeviceWsServer socket liveness", () => {
     await vi.waitFor(() => expect(counts.pings).toBeGreaterThanOrEqual(3), { timeout: 5_000 });
     expect(srv.isConnected(device.id)).toBe(true);
     expect(counts.terminated).toBe(0);
+  });
+});
+
+/**
+ * The heartbeat against the real device route: `ws` sends the ping frame and
+ * the client's own WebSocket implementation answers it, so this proves the
+ * route wires both directions of the liveness channel. Only the heartbeat's
+ * interval is faked — each tick is fired explicitly and its pong awaited as an
+ * event — so a slow or CPU-starved worker cannot turn a live peer into a
+ * missed pong.
+ */
+describe("DeviceWsServer heartbeat on the device route", () => {
+  test("a connected client answers every tick's ping and keeps its socket", async () => {
+    const heartbeatIntervalMs = 1_000;
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const localDbPath = `/tmp/omnesis-ws-heartbeat-${randomUUID()}.db`;
+    const localDb = createDatabase(localDbPath);
+    const device = createDevice(localDb, { name: "fictional-phone", kind: "ios" });
+    const token = createToken(localDb, device.id, [SCOPE_READ]).token;
+    const wss = new DeviceWsServer({
+      db: localDb,
+      writeGate: directWriteGate(localDb),
+      authTimeoutMs: 60_000,
+      heartbeatIntervalMs,
+    });
+    const pongs = vi.spyOn(wss, "onPong");
+    const app = createServer(localDb, localDbPath, { wsServer: wss });
+    const { injectWebSocket: injectLocal, upgradeWebSocket: upgradeLocal } = createNodeWebSocket({
+      app,
+    });
+    mountDeviceWsRoute(app, wss, upgradeLocal);
+    const localServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
+    injectLocal(localServer);
+    wss.start();
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${await listeningPort(localServer)}/device/ws`,
+      websocketAuthProtocol(token),
+    );
+    try {
+      await waitForOpen(ws);
+      ws.send(JSON.stringify(makeCommand("hello", { protocolVersion: PROTOCOL_VERSION })));
+      expect((await waitForMessage<WsResponse>(ws)).ok).toBe(true);
+      await waitForCondition(() => wss.isConnected(device.id));
+
+      // From the second tick on, each one would drop the socket had the
+      // previous tick's ping gone unanswered.
+      for (let tick = 1; tick <= 3; tick++) {
+        vi.advanceTimersByTime(heartbeatIntervalMs);
+        await vi.waitFor(() => expect(pongs).toHaveBeenCalledTimes(tick), { timeout: 5_000 });
+        expect(wss.isConnected(device.id)).toBe(true);
+      }
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      ws.close();
+      await waitForClose(ws);
+      wss.stop();
+      vi.useRealTimers();
+      await new Promise<void>((resolve) => {
+        localServer.closeAllConnections?.();
+        localServer.close(() => resolve());
+      });
+      localDb.close();
+      cleanupDb(localDbPath);
+    }
   });
 });
 
