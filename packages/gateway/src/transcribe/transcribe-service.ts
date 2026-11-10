@@ -105,6 +105,8 @@ function signatureOf(resolved: ResolvedAssignment, apiKey: string | undefined): 
       return `claude-code:${resolved.model}:${resolved.available}`;
     case "typesafe":
       return `typesafe:${resolved.model}:${resolved.available}`;
+    case "decision":
+      return `decision:${resolved.backendKey}:${resolved.model}:${resolved.available}`;
     case "disabled":
       return "disabled";
     case "unresolved":
@@ -175,6 +177,7 @@ export function assignmentReadiness(resolved: ResolvedAssignment): TranscriberRe
     case "anthropic":
     case "codex":
     case "claude-code":
+    case "decision":
     case "typesafe":
       return {
         runnable: false,

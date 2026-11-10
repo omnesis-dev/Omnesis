@@ -26,6 +26,22 @@ describe("cloud inference permission", () => {
     for (const url of ["https://api.example.com", "not a URL", "http://127.example.com"]) expect(isLoopbackInferenceUrl(url)).toBe(false);
   });
 
+  it("decides by a not-yet-saved endpoint's URL and names its provider", () => {
+    expect(remoteAssignmentConsent(overview, "cloudflare", "clef", { url: "https://api.example.com/run", providerLabel: "Edgeworks AI" }))
+      .toEqual({ modelName: "clef", providerLabel: "Edgeworks AI" });
+    expect(remoteAssignmentConsent(overview, "lab", "kev", { url: "http://127.0.0.1:11435/v1/systemone", providerLabel: "Ollaya" })).toBeNull();
+    expect(remoteAssignmentConsent(overview, "lab", "kev", { url: "https://decide.example.org/v1" }).providerLabel).toBe("https://decide.example.org/v1");
+    expect(remoteAssignmentConsent({ inference: { ...overview.inference, allowRemoteInference: true } }, "lab", "kev", { url: "https://decide.example.org" })).toBeNull();
+  });
+
+  it("reads a saved decision backend's URL", () => {
+    const withDecision = { inference: { ...overview.inference, decisionBackends: {
+      ollaya: { url: "http://127.0.0.1:11435/v1/systemone" }, hosted: { url: "https://decide.example.org/v1" },
+    } } };
+    expect(remoteAssignmentConsent(withDecision, "ollaya", "kev")).toBeNull();
+    expect(remoteAssignmentConsent(withDecision, "hosted", "kev")).toEqual({ modelName: "kev", providerLabel: "https://decide.example.org/v1" });
+  });
+
   it("names the company behind each built-in cloud provider", () => {
     expect(cloudProviderLabel("codex", "Codex")).toBe("OpenAI");
     expect(cloudProviderLabel("claude-code", "Claude Code")).toBe("Anthropic");

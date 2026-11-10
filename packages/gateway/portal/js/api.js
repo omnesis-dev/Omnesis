@@ -1677,6 +1677,45 @@ export const verifyBackendModel = (key, model, role, force = false) =>
     body: { model, role, force },
   });
 
+// --- Decision model setup ---
+// Decision backends are saved and assigned with one PATCH /admin/config (see
+// `decisionBackendPatch` in lib/decision-backends.js); these routes check them.
+
+/** Models a local decision server lists: `{ok, models, listed, reason?}`. */
+export const probeDecisionBackend = (key) =>
+  request("POST", `/admin/inference/decision-backends/${encodeURIComponent(key)}/probe`);
+
+/**
+ * Models a server not saved yet lists, for the setup form:
+ * `{url, auth?, apiKey?, protocol?, preset?}` → the same shape as above. The
+ * gateway applies its cloud-inference policy, so an off-host URL is refused
+ * unless cloud inference is allowed.
+ */
+export const probeDecisionEndpoint = ({ url, auth, apiKey, protocol, preset }) =>
+  request("POST", "/admin/inference/decision-backends/probe", {
+    body: {
+      url,
+      ...(auth ? { auth } : {}),
+      ...(apiKey ? { apiKey } : {}),
+      ...(protocol ? { protocol } : {}),
+      ...(preset ? { preset } : {}),
+    },
+  });
+
+/** One test decision: `{ok, answeredBy?, latencyMs?, status?, reason?}`. */
+export const verifyDecisionBackend = (key, model) =>
+  request("POST", `/admin/inference/decision-backends/${encodeURIComponent(key)}/verify`, { body: { model } });
+
+/** The same test decision, on TypeSafe. */
+export const verifyTypeSafeDecision = (model) =>
+  request("POST", "/admin/inference/typesafe/verify", { body: { model } });
+
+/** The calibration job: `{state, assignment?, done, total, failed, result?, error?}`. */
+export const getDecisionCalibration = () => request("GET", "/admin/models/decision/calibration");
+/** Start calibrating the assigned decision model (409 while one runs, 400 when it cannot). */
+export const startDecisionCalibration = () => request("POST", "/admin/models/decision/calibration");
+export const cancelDecisionCalibration = () => request("DELETE", "/admin/models/decision/calibration");
+
 export const refreshCodexBackend = () =>
   request("POST", "/admin/inference/codex/refresh");
 

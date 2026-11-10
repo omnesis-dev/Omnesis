@@ -27,6 +27,7 @@
 import type { InferenceOverview } from "./backends.js";
 import type { CapabilityMetadata, CapabilityRole } from "./capabilities.js";
 import type { ProviderPreset } from "./provider-presets.js";
+import type { DecisionProviderPreset } from "./decision-presets.js";
 import type { ModelDisplay } from "./provider-brands.js";
 import type { ModelControls, ModelSettingsByRole } from "./model-behavior.js";
 
@@ -149,6 +150,21 @@ export interface Manifest {
   models: ManifestEntry[];
 }
 
+/** A decision model a provider offers, as the setup forms list it. */
+export interface DecisionModelOption {
+  id: string;
+  /** Context window in tokens, when models.dev knows it. */
+  contextTokens?: number;
+  /** USD per million input tokens, when models.dev knows it (output is free). */
+  inputCostPerMillion?: number;
+  source: "preset" | "models.dev";
+}
+
+/** A decision provider preset with the models to offer for it. */
+export interface DecisionPresetView extends DecisionProviderPreset {
+  models: DecisionModelOption[];
+}
+
 /**
  * Snapshot the gateway publishes via `GET /admin/models`. Combines the
  * full catalog, the local manifest, and the inference overview so the
@@ -165,6 +181,12 @@ export interface ModelsOverview {
    * suggestions from one source of truth rather than a hardcoded copy.
    */
   presets: ProviderPreset[];
+  /**
+   * Decision model providers, each with the model ids to offer: the preset's
+   * own list merged with the models.dev decision catalog's. Absent on gateways
+   * that predate decision backends.
+   */
+  decisionPresets?: DecisionPresetView[];
   /**
    * Per-role display projection of the resolved assignments — provider
    * brand id + label + friendly model name for each capability role.

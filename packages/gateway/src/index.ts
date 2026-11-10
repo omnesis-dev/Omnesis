@@ -37,6 +37,14 @@ import {
   resolveTypeSafeApiKey,
 } from "./model-credentials.js";
 import { DecisionService } from "./inference/decision/decision-service.js";
+import { DecisionClients } from "./inference/decision/decision-clients.js";
+import { ModelsDevDecisionCatalog } from "./models/models-dev-decisions.js";
+import {
+  DecisionCalibrationJob,
+  decisionBackendIdentity,
+  defaultReferencePath,
+  readReferenceSet,
+} from "./models/decision-tools.js";
 import {
   closeDrainingWal,
   createDatabase,
@@ -467,6 +475,7 @@ ensureModelsDir(MODELS_DIR);
 // config block, probes HTTP backends, and resolves assignments.
 const manifestPath = join(MODELS_DIR, "manifest.json");
 const modelsDevCatalog = new ModelsDevCatalog({ configDir });
+const decisionCatalog = new ModelsDevDecisionCatalog({ configDir });
 const anthropicCatalogService = new AnthropicCatalogService({
   readApiKey: () => resolveAnthropicApiKey(configDir),
   credentialSource: () => resolveAnthropicCredential(configDir)?.source,
@@ -1382,12 +1391,59 @@ await subscriptionsPolicyStore.get();
 // worth gate whether an email's date mentions belong in time queries; unset,
 // both gates are absent. Re-resolved per use, so assigning a model or pasting
 // a key from the portal takes effect without a restart.
+// Every client of a decision backend — the live model, verify, the assignment
+// check, calibration — comes from here, sharing each backend's concurrency limit.
+const decisionClients = new DecisionClients({
+  getDecisionBackend: (key) => inferenceRegistry.getDecisionBackend(key),
+  readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
+});
 const decisionService = new DecisionService({
   health: inferenceRegistry.health,
   resolveAssignment: () => inferenceRegistry.resolve("decision"),
   readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
   getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
+  getDecisionBackend: (key) => inferenceRegistry.getDecisionBackend(key),
+  clients: decisionClients,
   defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
+});
+
+// Calibrating the Decision model replays the bundled Jev reference set through
+// it and stores the fitted map with its decision backend.
+const decisionCalibration = new DecisionCalibrationJob({
+  resolve: () => inferenceRegistry.resolve("decision"),
+  getDecisionBackend: (key) => inferenceRegistry.getDecisionBackend(key),
+  createRawClient: (resolved) => decisionClients.backend(resolved, { calibrated: false }),
+  reference: () => readReferenceSet(defaultReferencePath()),
+  store: async (backendKey, model, calibration, fittedOn) => {
+    const result = await configStore.update((current) => {
+      const backend = current.inference?.decisionBackends?.[backendKey];
+      if (!backend) throw new Error(`Decision backend "${backendKey}" was removed`);
+      const now = decisionBackendIdentity(backend);
+      if (
+        now.url !== fittedOn.url ||
+        now.protocol !== fittedOn.protocol ||
+        now.scoreField !== fittedOn.scoreField
+      ) {
+        throw new Error(
+          `Decision backend "${backendKey}" changed during calibration; calibrate it again`,
+        );
+      }
+      return {
+        ...current,
+        inference: {
+          ...current.inference,
+          decisionBackends: {
+            ...current.inference?.decisionBackends,
+            [backendKey]: {
+              ...backend,
+              calibration: { ...backend.calibration, [model]: calibration },
+            },
+          },
+        },
+      };
+    });
+    if (!result.ok) throw new Error("Saving the calibration failed");
+  },
 });
 
 // The mention worth gate hides date mentions from email judged not worth
@@ -1605,6 +1661,11 @@ const watchJudgeReadiness = (): { loadable: boolean; reason: string | null } => 
       };
     case "typesafe":
       return { loadable: false, reason: "TypeSafe cannot serve single-shot Watch completions" };
+    case "decision":
+      return {
+        loadable: false,
+        reason: "A decision model cannot serve single-shot Watch completions",
+      };
     default:
       return assertNever(resolved);
   }
@@ -2642,6 +2703,14 @@ const app = createServer(db, DB_PATH, {
   },
   modelManager,
   modelsDevCatalog,
+  decisionCatalog,
+  decisionRoutes: {
+    allowRemoteInference: () => configStore.get().inference?.allowRemoteInference === true,
+    getDecisionBackend: (key) => inferenceRegistry.getDecisionBackend(key),
+    resolveDecision: (assignment) => inferenceRegistry.resolveValue("decision", assignment),
+    clients: decisionClients,
+    calibration: decisionCalibration,
+  },
   getSystemInfo: () => getSystemInfo(MODELS_DIR),
   getInferenceOverview: inferenceOverviewWithRuntimes,
   getRecentModels: (capability) =>
@@ -2716,7 +2785,15 @@ const app = createServer(db, DB_PATH, {
   },
   probeBackend: (key: string) => inferenceRegistry.probeBackend(key),
   verifyModel: (key, model, role, vopts) => inferenceRegistry.verifyModel(key, model, role, vopts),
-  vetAssignment: (role, value) => inferenceRegistry.vetAssignment(role, value),
+  vetAssignment: async (role, value, body) => {
+    const verdict = await inferenceRegistry.vetAssignment(role, value);
+    if (!verdict.ok || role !== "decision") return verdict;
+    return decisionClients.vetAssignment(value, {
+      current: inferenceRegistry.assignmentValue("decision"),
+      resolve: (v) => inferenceRegistry.resolveValue("decision", v),
+      body,
+    });
+  },
   transcribeService,
   transcriptionVocabularyService,
   ocrService,

@@ -7,8 +7,8 @@
 //   • ModelConfigModal   — "Choose a <capability> model": a grid of backend
 //                          options (Local, presets, custom HTTP backends,
 //                          Codex, Claude Code, Anthropic, + a custom backend;
-//                          for the Decision model, TypeSafe first and no
-//                          cloud chat runtime), each leading to the
+//                          for the Decision model, the decision providers of
+//                          `decision-models.js` instead), each leading to the
 //                          model selection (configuring the backend inline
 //                          first when it isn't set up yet).
 //   • AddBackendModal    — "Add a backend": the same grid in configure-only
@@ -25,7 +25,7 @@ import { CopyValue } from "../components/copy-button.js";
 import { isLoopbackInferenceUrl } from "../lib/cloud-inference.js";
 import { Modal } from "../components/modal.js";
 import { ProviderIcon } from "../components/provider-icon.js";
-import { CapabilityIcon } from "../components/capability-icon.js";
+import { BackendOptionCard, Monogram, ProviderLogo, LOCAL_GLYPH, TYPESAFE_GLYPH, ADD_GLYPH } from "../components/backend-option-card.js";
 import { filterBackendModels } from "../lib/backend-model-filter.js";
 import { fuzzyMatchFields } from "../lib/fuzzy-match.js";
 import {
@@ -37,7 +37,9 @@ import {
   TYPESAFE_DEFAULT_MODEL,
   isClaudeCodeReady,
   httpBackendModelSummary,
+  isDecisionRole,
 } from "../lib/backend-options.js";
+import { DecisionProviderGrid, DecisionBackendForm } from "./decision-models.js";
 import { formatBytes, fit } from "../lib/model-format.js";
 
 const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "claude-code", "replay", "typesafe"];
@@ -191,27 +193,6 @@ export function CodexRuntimePanel({ overview, update, loginPending = false, swit
 }
 
 // ── Backend option grid ─────────────────────────────────────────────────────
-
-function BackendOptionCard({ providerId, fallbackGlyph, title, subtitle, muted, onClick }) {
-  return html`
-    <button class="backend-opt ${muted ? "backend-opt--muted" : ""}" onClick=${onClick}>
-      <span class="backend-opt-icon">
-        ${providerId ? html`<${ProviderIcon} providerId=${providerId} size=${22} />` : null}
-        ${fallbackGlyph ?? null}
-      </span>
-      <span class="backend-opt-title">${title}</span>
-      <span class="backend-opt-sub">${subtitle}</span>
-    </button>
-  `;
-}
-
-// A neutral "stack" glyph for the Local-model card (no provider brand).
-const LOCAL_GLYPH = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1" /><rect x="3" y="14" width="18" height="6" rx="1" /></svg>`;
-// TypeSafe has no served provider logo; its card wears the Decision model's
-// own capability glyph.
-const TYPESAFE_GLYPH = html`<${CapabilityIcon} icon="scale" size=${22} />`;
-// A "plus" glyph for the add-custom card.
-const ADD_GLYPH = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>`;
 
 /** Render one option as a card. `mode` is "pick" (capability picker) or "configure". */
 function renderOption(opt, mode, onSelect) {
@@ -987,7 +968,7 @@ function RecentModels({ role, onPick }) {
           (entry) => html`<div class="picker-row" key=${entry.assignment}>
             <div class="picker-row-info">
               <div class="picker-row-name">
-                <${ProviderIcon} providerId=${entry.providerId} />
+                <${ProviderLogo} providerId=${entry.providerId} fallback=${html`<${Monogram} name=${entry.providerLabel} />`} />
                 <span>${entry.modelName}</span>
                 <span class="picker-row-meta"><span>${entry.providerLabel}</span></span>
               </div>
@@ -1002,11 +983,15 @@ function RecentModels({ role, onPick }) {
 
 // ── Choose-model flow ───────────────────────────────────────────────────────
 
-export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow, codexRefreshing, codexRuntimeUpdate, claudeCodeRefreshing, onClose, onAddHttp, onPickHttp, onPickLocal, onPickAnthropic, onPickCodex, onPickClaudeCode, onRefreshClaudeCode, onPickTypeSafe, onConfigureTypeSafeKey, onPickRecent, onStartCodexLogin, onCancelCodexLogin, onRefreshCodex, onCodexRuntimeUpdate, onCancelCodexRuntimeUpdate, onDismissCodexRuntimeResult, onInstall, onUninstall, onCancelDownload }) {
-  // step.name: "grid" | "http" | "select" | "local" | "anthropic" | "codex" | "claude-code" | "typesafe"
-  // A decision role has one backend, so its picker opens on it directly.
+export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow, codexRefreshing, codexRuntimeUpdate, claudeCodeRefreshing, decisionChecks, onClose, onAddHttp, onPickHttp, onPickLocal, onPickAnthropic, onPickCodex, onPickClaudeCode, onRefreshClaudeCode, onPickTypeSafe, onConfigureTypeSafeKey, onPickRecent, onSaveDecisionBackend, onVerifyDecision, onStartCodexLogin, onCancelCodexLogin, onRefreshCodex, onCodexRuntimeUpdate, onCancelCodexRuntimeUpdate, onDismissCodexRuntimeResult, onInstall, onUninstall, onCancelDownload }) {
+  // step.name: "grid" | "http" | "select" | "local" | "anthropic" | "codex" |
+  // "claude-code" | "typesafe" | "decision" (a decision provider's form)
   const [step, setStep] = useState({ name: "grid" });
   const toGrid = () => setStep({ name: "grid" });
+  // A gateway that advertises decision presets sets the Decision model up on
+  // decision backends; an older one offers TypeSafe (and, in experimental
+  // mode, chat models) through the generic grid.
+  const decisionPicker = isDecisionRole(role) && Array.isArray(overview.decisionPresets);
 
   const onSelect = (opt) => {
     if (opt.kind === "local") setStep({ name: "local" });
@@ -1020,12 +1005,36 @@ export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow
   };
 
   let body;
-  if (step.name === "grid") {
+  if (step.name === "grid" && decisionPicker) {
+    const chatOptions = overview.inference?.decisionChatModels === true
+      ? buildModelPickerOptions(overview, role).filter((opt) => opt.kind !== "typesafe")
+      : [];
+    body = html`
+      <${RecentModels} role=${role} onPick=${onPickRecent} />
+      <${DecisionProviderGrid}
+        overview=${overview}
+        chatGrid=${chatOptions.length ? html`<${BackendGrid} options=${chatOptions} mode="pick" onSelect=${onSelect} />` : null}
+        onSelectExisting=${(key) => setStep({ name: "decision", existingKey: key })}
+        onSelectProvider=${(provider) => setStep(provider.builtIn === "typesafe" ? { name: "typesafe" } : { name: "decision", provider })}
+      />
+    `;
+  } else if (step.name === "grid") {
     body = html`
       <${RecentModels} role=${role} onPick=${onPickRecent} />
       <${BackendGrid} options=${buildModelPickerOptions(overview, role)} mode="pick" onSelect=${onSelect} />
-
     `;
+  } else if (step.name === "decision") {
+    body = html`<${DecisionBackendForm}
+      key=${step.existingKey ?? step.provider?.id}
+      overview=${overview}
+      provider=${step.provider}
+      existingKey=${step.existingKey}
+      checks=${decisionChecks}
+      onVerify=${onVerifyDecision}
+      onSave=${onSaveDecisionBackend}
+      onBack=${toGrid}
+      onDone=${onClose}
+    />`;
   } else if (step.name === "http") {
     body = html`<${HttpBackendForm} preset=${step.preset} submit=${onAddHttp} onSuccess=${(key) => setStep({ name: "select", backendKey: key })} onBack=${toGrid} allowRemoteInference=${overview.inference?.allowRemoteInference === true} />`;
   } else if (step.name === "select") {

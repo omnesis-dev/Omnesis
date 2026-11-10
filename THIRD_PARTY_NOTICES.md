@@ -66,6 +66,9 @@ notice. The data license is available at
 Models.dev project. Models.dev is licensed under MIT. Its upstream license text
 is retained at `packages/gateway/models-dev/LICENSE`; the snapshot source and
 checksum are recorded in `packages/gateway/models-dev/snapshot.json`.
+`packages/gateway/models-dev/decision.json` is a snapshot of its decision-model
+catalog (`api.json?type=decision`) under the same license, recorded in
+`packages/gateway/models-dev/decision-snapshot.json`.
 
 Provider SVG logos are fetched by the gateway at runtime and cached locally.
 They are not bundled in the repository or published packages. The marks remain

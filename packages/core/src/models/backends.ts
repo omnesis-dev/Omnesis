@@ -24,6 +24,8 @@
 import type { GgufCatalogEntry, AnthropicCatalogEntry } from "./types.js";
 import type { CapabilityRole } from "./capabilities.js";
 import type { ModelSettingsByRole, ModelControls, ModelBehaviorValues } from "./model-behavior.js";
+import type { DecisionCalibration } from "./decision-calibration.js";
+import type { DecisionAuth, DecisionProtocol } from "./decision-presets.js";
 
 // ── Backend types ─────────────────────────────────────────────────────
 
@@ -336,6 +338,30 @@ export interface ResolvedTypeSafe extends ResolvedBase {
   reason?: string;
 }
 
+/**
+ * A decision backend (`inference.decisionBackends.<key>`) serving the
+ * Decision model: a local decision-model server or a hosted decision API.
+ */
+export interface ResolvedDecisionBackend extends ResolvedBase {
+  kind: "decision";
+  /** The decision backend's key, the part of the assignment before the slash. */
+  backendKey: string;
+  /** The preset the backend was made from, when it names one. */
+  preset?: string;
+  model: string;
+  url: string;
+  protocol: DecisionProtocol;
+  /** Whether the endpoint is on this host, the one case that needs no `inference.allowRemoteInference`. */
+  onHost: boolean;
+  allowRemoteInference: boolean;
+  /** Whether an API key is configured (the value is never exposed). */
+  hasApiKey: boolean;
+  /** Whether a calibration onto Jev's scale is stored for this model. */
+  calibrated: boolean;
+  available: boolean;
+  reason?: string;
+}
+
 export type ResolvedAssignment =
   | ResolvedLocal
   | ResolvedHttp
@@ -345,7 +371,8 @@ export type ResolvedAssignment =
   | ResolvedReplay
   | ResolvedCodex
   | ResolvedClaudeCode
-  | ResolvedTypeSafe;
+  | ResolvedTypeSafe
+  | ResolvedDecisionBackend;
 
 // ── Backend status (for portal/CLI) ──────────────────────────────────
 
@@ -644,6 +671,20 @@ export interface ModelHealth {
   warnings: ModelHealthWarning[];
 }
 
+/** A decision backend as `/admin/models` reports it. */
+export interface DecisionBackendStatus {
+  preset?: string;
+  url: string;
+  protocol: DecisionProtocol;
+  auth: DecisionAuth;
+  onHost: boolean;
+  hasApiKey: boolean;
+  /** Why the stored API key could not be read, when it could not. */
+  apiKeySecretError?: string;
+  /** Calibrations stored for this backend, by model id. */
+  calibrations: Record<string, DecisionCalibration>;
+}
+
 export interface InferenceOverview {
   /**
    * Global network policy for user-declared HTTP inference backends. When
@@ -670,6 +711,8 @@ export interface InferenceOverview {
    * TypeSafe Jev. Absent on gateways that predate chat-model decisions.
    */
   decisionChatModels?: boolean;
+  /** Decision backends, by key. Absent on gateways that predate them. */
+  decisionBackends?: Record<string, DecisionBackendStatus>;
   assignments: Record<CapabilityRole, ResolvedAssignment>;
 }
 

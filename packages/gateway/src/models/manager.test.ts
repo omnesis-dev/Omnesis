@@ -144,7 +144,7 @@ describe("ModelManager", () => {
       const decision = () =>
         mgr.getOverview(fakeInference).capabilities.find((c) => c.role === "decision")!;
       const stable = decision();
-      expect(stable.description).toContain("complication captures");
+      expect(stable.description).toContain("Watch capture");
       expect(stable.description).toContain("email dates");
       expect(stable.description).not.toContain("Brain");
       expect(stable.description).not.toContain("browser Find");

@@ -300,8 +300,17 @@ the portal reads the gateway-computed result.
   so a model that can hold a conversation can also be assigned to any of the
   bounded passes.
 
-`decision` is narrower at runtime still. TypeSafe (`typesafe/<model>`) is its
-stable backend; a chat model serves it only in experimental mode
+`decision` is narrower at runtime still. Its stable backends are decision
+models: TypeSafe (`typesafe/<model>`) and decision backends
+(`inference.decisionBackends.<key>`, assigned `<key>/<model>`), which speak a
+decision API — System One at any path, Cloudflare Workers AI, or OpenAI
+Decisions (`packages/gateway/src/inference/decision/`). Their providers are the
+presets in `packages/core/src/models/decision-presets.ts`, and the models.dev
+decision catalog (`api.json?type=decision`) adds model ids, context and price.
+A calibrated decision backend's scores are mapped onto Jev's by a per-model calibration
+fitted on the bundled Jev reference set
+(`packages/gateway/decision-reference/jev-worth.jsonl`), so the Jev-tuned
+thresholds keep their meaning. A chat model serves the role only in experimental mode
 (`OMNESIS_EXPERIMENTAL=1`), because every decision threshold was tuned on
 TypeSafe Jev's scores and a 4B chat model kept 69–85% of what Jev keeps at the
 email worth threshold (`scripts/eval-decision-cassette.mts` measures a

@@ -66,6 +66,7 @@ import { cognitionTranscriptsDir } from "./brain/transcripts.js";
 import { mountPushRoutes } from "./http/routes/push.js";
 import { type EventBus } from "./events.js";
 import { registerModelRoutes } from "./models/routes.js";
+import { registerDecisionRoutes } from "./models/decision-routes.js";
 import { CaptureRoutingService } from "./dictation/capture-routing.js";
 import { WatchRoutingService } from "./dictation/watch-routing.js";
 import { mountCaptureRoutes, mountWatchCaptureRoutes } from "./http/routes/watch-capture.js";
@@ -422,6 +423,9 @@ export function createServer(
     modelManager?: ModelManager;
     /** Bundled and gateway-refreshed Models.dev model metadata and provider logos. */
     modelsDevCatalog?: import("./models/models-dev-catalog.js").ModelsDevCatalog;
+    decisionCatalog?: import("./models/models-dev-decisions.js").ModelsDevDecisionCatalog;
+    /** Decision model setup routes (probe, verify, calibrate). */
+    decisionRoutes?: import("./models/decision-routes.js").DecisionRouteOptions;
     /** Snapshot getter for `/admin/system-info`. Required when modelManager is provided. */
     getSystemInfo?: () => SystemInfo;
     /** Inference overview getter — used by model routes. */
@@ -487,6 +491,8 @@ export function createServer(
     vetAssignment?: (
       role: import("@omnesis/core").CapabilityRole,
       value: import("@omnesis/core").AssignmentValue,
+      /** The whole config write, so a check can tell what else it changes. */
+      body: unknown,
     ) => Promise<{ ok: true } | { ok: false; reason: string }>;
     /** Built-in Codex backend status and device-login hooks, mounted with model routes. */
     getCodexStatus?: () => import("@omnesis/core").CodexBackendStatus;
@@ -1363,6 +1369,7 @@ export function createServer(
     registerModelRoutes(app, {
       modelManager: opts.modelManager,
       modelsDevCatalog: opts.modelsDevCatalog,
+      decisionCatalog: opts.decisionCatalog,
       configStore: opts.configStore,
       getSystemInfo: opts.getSystemInfo,
       getInferenceOverview: opts.getInferenceOverview,
@@ -1384,6 +1391,8 @@ export function createServer(
       getRecentModels: opts.getRecentModels,
     });
   }
+
+  if (opts?.decisionRoutes) registerDecisionRoutes(app, opts.decisionRoutes);
 
   // Speech-to-text route for source audio from the collector. Mounted only
   // when a transcribe service was wired.

@@ -10,28 +10,18 @@ private struct ModelsPollingLifetime: Hashable {
 }
 
 /// Model-management page — mirrors the portal's Settings → Models tab
-/// (`packages/gateway/portal/js/views/models.js`). One card per capability
-/// (Embedder, Agent, Privacy reviewer, Transcriber, OCR),
+/// (`packages/gateway/portal/js/views/models.js`). One card per capability,
 /// each showing the current assignment + a three-way state (enabled / needs
-/// attention / not configured) and a tap-through to assign or clear the model
-/// for that role.
-///
-/// The assign picker offers the models the gateway already knows about — its
-/// installed local GGUFs, Anthropic API entries, and any HTTP backend's
-/// role-matching models — and a local-model list that can install (start a
-/// gateway-side GGUF download), cancel an in-flight download, or uninstall a
-/// downloaded model. Adding new HTTP backends and entering provider credentials
-/// live on the Backends screen; this screen sets/clears assignments and manages
-/// the local-GGUF lifecycle over the catalog the gateway exposes.
+/// attention / not configured) and a tap-through to configure that role: the
+/// assign picker for ordinary roles (local GGUFs, Anthropic API entries, HTTP
+/// backends' models, the local-model install list), `DecisionModelSheet` for
+/// the Decision model. HTTP backends and provider credentials are added on the
+/// Backends screen.
 ///
 /// Source of truth is `GET /admin/models` (+ `GET /admin/system-info` for the
-/// fit badge); mutations ride `POST /admin/models/activate` (assignment),
-/// `PATCH /admin/config` (backend models + clear), and the local-model
-/// lifecycle routes (`/admin/models/install`, `/admin/models/cancel-download`,
-/// `DELETE /admin/models/:id`), exactly like the portal. While a download is in
-/// flight the overview is polled so the progress bar advances. Mutations follow
-/// the established refresh-after-mutation + last-action-wins notice-banner
-/// pattern, with a confirm affordance on uninstall.
+/// fit badge); mutations ride `POST /admin/models/activate`, `PATCH
+/// /admin/config` and the local-model lifecycle routes, like the portal, each
+/// followed by a refresh and the last-action-wins notice banner.
 @available(iOS 17.0, *)
 struct ModelsView: View {
     @Environment(AppStore.self) private var store
@@ -128,6 +118,7 @@ struct ModelsView: View {
                     try await addBackend(name: name, url: url, apiKey: apiKey, apiPathPrefix: prefix)
                 },
                 onLoadRecent: { role in await loadRecent(role: role) },
+                onReload: { await load() },
                 initialPickerRole: initialPickerRole
             )
         }
@@ -313,6 +304,8 @@ struct ModelsContent: View {
     /// "Recently used" entries for a capability. Never throws — a failure
     /// yields [], hiding the picker's section.
     var onLoadRecent: (String) async -> [RecentModelEntry] = { _ in [] }
+    /// Reload the overview after the Decision model sheet changed the config.
+    var onReload: () async -> Void = {}
     /// Optional deep link that opens one capability's picker on arrival.
     /// Unknown/withheld capabilities safely leave the list up.
     var initialPickerRole: String?
@@ -353,30 +346,36 @@ struct ModelsContent: View {
             .padding(.bottom, Theme.Spacing.lg)
         }
         .sheet(item: $pickerRole) { cap in
-            ModelPickerSheet(
-                cap: cap,
-                overview: overview,
-                system: system,
-                currentlyConfigured: ModelManagement.isConfigured(overview.inference.assignments[cap.role]),
-                busy: busy,
-                onPick: { option in runAssign(role: cap.role, option: option) },
-                onClear: { runClear(role: cap.role) },
-                onSaveBehavior: { assignment, values, expectedValues in
-                    try await onSaveBehavior(cap.role, assignment, values, expectedValues)
-                },
-                onInstall: { id in runLifecycle { try await onInstall(id) } },
-                onCancelDownload: { id in runLifecycle { try await onCancelDownload(id) } },
-                onUninstall: { id in runLifecycle { try await onUninstall(id) } },
-                onAddBackend: onAddBackend,
-                onLoadRecent: onLoadRecent
-            )
+            Group {
+                if cap.backendFamily == DecisionModelSetup.backendFamily {
+                    DecisionModelSheet(overview: overview, onChanged: onReload)
+                } else {
+                    ModelPickerSheet(
+                        cap: cap,
+                        overview: overview,
+                        system: system,
+                        currentlyConfigured: ModelManagement.isConfigured(overview.inference.assignments[cap.role]),
+                        busy: busy,
+                        onPick: { option in runAssign(role: cap.role, option: option) },
+                        onClear: { runClear(role: cap.role) },
+                        onSaveBehavior: { assignment, values, expectedValues in
+                            try await onSaveBehavior(cap.role, assignment, values, expectedValues)
+                        },
+                        onInstall: { id in runLifecycle { try await onInstall(id) } },
+                        onCancelDownload: { id in runLifecycle { try await onCancelDownload(id) } },
+                        onUninstall: { id in runLifecycle { try await onUninstall(id) } },
+                        onAddBackend: onAddBackend,
+                        onLoadRecent: onLoadRecent
+                    )
+                }
+            }
             .omnesisColorScheme()
         }
         .task {
             guard !appliedInitialPickerRole else { return }
             appliedInitialPickerRole = true
             guard let initialPickerRole else { return }
-            pickerRole = overview.capabilities.first { $0.role == initialPickerRole && $0.configurableOnDevice }
+            pickerRole = overview.capabilities.first { $0.role == initialPickerRole && DecisionModelSetup.isConfigurable($0, in: overview) }
         }
     }
 
@@ -431,8 +430,9 @@ struct ModelsContent: View {
             state: overview.inference.health?.warnings.contains { $0.role == cap.role } == true
                 ? .warn : ModelManagement.state(overview.inference.assignments[cap.role]),
             reason: overview.inference.assignments[cap.role]?.reason,
-            behaviorSummary: ModelManagement.behaviorSummary(role: cap.role, overview: overview),
-            onTap: cap.configurableOnDevice ? { pickerRole = cap } : nil,
+            behaviorSummary: ModelManagement.behaviorSummary(role: cap.role, overview: overview)
+                ?? DecisionModelSetup.cardSummary(overview, role: cap.role),
+            onTap: DecisionModelSetup.isConfigurable(cap, in: overview) ? { pickerRole = cap } : nil,
             disabled: busy
         )
     }

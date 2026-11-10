@@ -2906,7 +2906,12 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
         "decider-1b.Q4_K_M.gguf",
         "llama/decider-7b",
       ]) {
-        reg.loadConfig({ inference: { assignments: { decision } } } as OmnesisConfig);
+        reg.loadConfig({
+          inference: {
+            backends: { llama: { type: "http", url: "http://127.0.0.1:9" } },
+            assignments: { decision },
+          },
+        } as OmnesisConfig);
         expect(reg.resolve("decision"), decision).toMatchObject({
           kind: "unresolved",
           reason: expect.stringMatching(/experimental mode/),

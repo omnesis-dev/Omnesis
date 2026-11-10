@@ -6155,6 +6155,203 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "111b-models-loading")
     }
 
+    /// Every Decision model screen in one test, so one filtered run renders
+    /// the whole flow: the Models list's Decision card, the sheet in each
+    /// verify and calibration state, the provider list, and each kind of form.
+    func testDecisionModelScreens() {
+        let store = AppStore.preview()
+        decisionCardAndProviderSnapshots(store)
+        decisionSheetSnapshots(store)
+        decisionCalibrationSnapshots(store)
+        decisionFormSnapshots(store)
+        decisionFormErrorSnapshots(store)
+    }
+
+    private static let decisionTallCanvas = CGSize(width: 393, height: 1100)
+
+    private func decisionCardAndProviderSnapshots(_ store: AppStore) {
+        let tall = Self.decisionTallCanvas
+        snapshot(
+            NavigationStack {
+                ModelsContent(overview: DecisionPreviewData.uncalibratedOverview())
+                    .background(Theme.bgPrimary.ignoresSafeArea())
+                    .navigationTitle("Models")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .environment(store),
+            name: "111c-models-decision-card",
+            size: tall
+        )
+        snapshot(
+            NavigationStack { DecisionProviderList(overview: DecisionPreviewData.calibratedOverview()) }
+                .environment(store),
+            name: "111j-decision-providers",
+            size: tall
+        )
+    }
+
+    private func decisionSheetSnapshots(_ store: AppStore) {
+        snapshot(
+            DecisionModelSheet(
+                overview: DecisionPreviewData.typesafeOverview(),
+                previewVerify: DecisionVerifyResult(ok: true, answeredBy: "jev-1.14.0", latencyMs: 240)
+            )
+            .environment(store),
+            name: "111d-decision-typesafe-verified"
+        )
+        snapshot(
+            DecisionModelSheet(
+                overview: DecisionPreviewData.uncalibratedOverview(),
+                previewVerify: DecisionVerifyResult(
+                    ok: false,
+                    reason: "Nothing answered at http://127.0.0.1:11435/v1/systemone. Is the server running? (fetch failed)"
+                )
+            )
+            .environment(store),
+            name: "111e-decision-uncalibrated-verify-failed"
+        )
+        snapshot(
+            DecisionModelSheet(overview: DecisionPreviewData.unconfiguredOverview()).environment(store),
+            name: "111i-decision-not-set-up"
+        )
+    }
+
+    private func decisionCalibrationSnapshots(_ store: AppStore) {
+        snapshot(
+            DecisionModelSheet(
+                overview: DecisionPreviewData.uncalibratedOverview(),
+                previewCalibration: DecisionCalibrationStatus(
+                    state: "running", assignment: "ollaya/kev", done: 120, total: 300, failed: 2
+                )
+            )
+            .environment(store),
+            name: "111f-decision-calibrating"
+        )
+        snapshot(
+            DecisionModelSheet(
+                overview: DecisionPreviewData.calibratedOverview(),
+                previewVerify: DecisionVerifyResult(ok: true, latencyMs: 310)
+            )
+            .environment(store),
+            name: "111g-decision-calibrated"
+        )
+        snapshot(
+            DecisionModelSheet(
+                overview: DecisionPreviewData.uncalibratedOverview(),
+                previewCalibration: DecisionCalibrationStatus(
+                    state: "failed",
+                    assignment: "ollaya/kev",
+                    done: 300,
+                    total: 300,
+                    failed: 288,
+                    error: "Only 12 of 300 reference emails were answered: The server has no model \"kev\" (HTTP 404)."
+                )
+            )
+            .environment(store),
+            name: "111h-decision-calibration-failed"
+        )
+    }
+
+    private func decisionFormSnapshots(_ store: AppStore) {
+        let tall = Self.decisionTallCanvas
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(choice: .preset(DecisionPreviewData.ollama), overview: DecisionPreviewData.typesafeOverview())
+            }
+            .environment(store),
+            name: "111k-decision-form-local",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .preset(DecisionPreviewData.cloudflare),
+                    overview: DecisionPreviewData.uncalibratedOverview(),
+                    previewParams: ["account": "4f1c2a9e7b3d4c5e8a6f0b1c2d3e4f5a"],
+                    previewApiKey: "example-key"
+                )
+            }
+            .environment(store),
+            name: "111l-decision-form-cloud-url-params",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .existing(DecisionPreviewData.existingOllaya),
+                    overview: DecisionPreviewData.uncalibratedOverview(),
+                    previewProbed: ["kev", "winnow:e4b"]
+                )
+            }
+            .environment(store),
+            name: "111m-decision-form-existing-local",
+            size: tall
+        )
+    }
+
+    private func decisionFormErrorSnapshots(_ store: AppStore) {
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .preset(DecisionPreviewData.typesafe),
+                    overview: DecisionPreviewData.typesafeOverview(),
+                    previewTypeSafeListed: true
+                )
+            }
+            .environment(store),
+            name: "111n-decision-form-typesafe"
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .preset(DecisionPreviewData.openRouter),
+                    overview: DecisionPreviewData.unconfiguredOverview(),
+                    previewError: "Could not save: inference.decisionBackends.openrouter.url: Invalid url"
+                )
+            }
+            .environment(store),
+            name: "111o-decision-form-save-error",
+            size: Self.decisionTallCanvas
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .custom,
+                    overview: DecisionPreviewData.typesafeOverview(),
+                    previewURL: "http://127.0.0.1:8080/v1/systemone",
+                    previewModel: "",
+                    previewProbed: ["studio-decider-small", "studio-decider-large"]
+                )
+            }
+            .environment(store),
+            name: "111p-decision-form-other-server",
+            size: Self.decisionTallCanvas
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .existing(DecisionPreviewData.existingOpenRouterUnreadableKey),
+                    overview: DecisionPreviewData.calibratedOverview()
+                )
+            }
+            .environment(store),
+            name: "111q-decision-form-unreadable-key",
+            size: Self.decisionTallCanvas
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .existing(DecisionPreviewData.existingOllaya),
+                    overview: DecisionPreviewData.uncalibratedOverview(),
+                    previewProbeNote: "Could not reach http://127.0.0.1:11435/v1/systemone: fetch failed"
+                )
+            }
+            .environment(store),
+            name: "111r-decision-form-probe-failed",
+            size: Self.decisionTallCanvas
+        )
+    }
+
     func testModelBehaviorEditorSavedOverrides() {
         let view = ModelBehaviorEditor(
             assignment: "openai/gpt-example-frontier",

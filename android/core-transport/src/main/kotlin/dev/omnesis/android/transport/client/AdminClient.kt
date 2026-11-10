@@ -27,6 +27,12 @@ import dev.omnesis.android.transport.dto.CreatePairingBody
 import dev.omnesis.android.transport.dto.CreateSourceBody
 import dev.omnesis.android.transport.dto.CreateTokenBody
 import dev.omnesis.android.transport.dto.DeleteAllResponse
+import dev.omnesis.android.transport.dto.DecisionBackendConfig
+import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
+import dev.omnesis.android.transport.dto.DecisionConfigPatch
+import dev.omnesis.android.transport.dto.DecisionModelBody
+import dev.omnesis.android.transport.dto.DecisionProbeResult
+import dev.omnesis.android.transport.dto.DecisionVerifyResult
 import dev.omnesis.android.transport.dto.DeviceRecord
 import dev.omnesis.android.transport.dto.DictationConfigPatch
 import dev.omnesis.android.transport.dto.InstallModelBody
@@ -660,6 +666,76 @@ class AdminClient(private val http: GatewayHttp) {
             "admin/inference/backends/$key/verify",
             VerifyBackendBody(model = model, role = role, force = force),
         )
+
+    // --- Decision model (mirror the portal's decision setup) ---
+
+    /**
+     * `PATCH /admin/config` — save a decision backend and, with [model],
+     * assign the Decision model to it, in one merge patch. [enableRemote] adds
+     * the operator's cloud-inference consent to the same write. The API key in
+     * [config] is write-only; a null key keeps the stored one.
+     */
+    suspend fun saveDecisionBackend(
+        key: String,
+        config: DecisionBackendConfig,
+        model: String?,
+        enableRemote: Boolean = false,
+    ) {
+        http.patchJson<JsonObject, OkResponse>(
+            "admin/config",
+            DecisionConfigPatch.saveBackend(key, config, model, enableRemote),
+        )
+    }
+
+    /** `PATCH /admin/config` — assign the Decision model to TypeSafe's `typesafe/<model>`. */
+    suspend fun assignTypeSafeDecision(model: String, enableRemote: Boolean = false) {
+        http.patchJson<JsonObject, OkResponse>(
+            "admin/config",
+            DecisionConfigPatch.assignTypeSafe(model, enableRemote),
+        )
+    }
+
+    /**
+     * `PATCH /admin/config` — remove a decision backend, clearing the Decision
+     * model in the same write when [clearAssignment] (it was assigned there).
+     */
+    suspend fun removeDecisionBackend(key: String, clearAssignment: Boolean) {
+        http.patchJson<JsonObject, OkResponse>(
+            "admin/config",
+            DecisionConfigPatch.removeBackend(key, clearAssignment),
+        )
+    }
+
+    /** `POST /admin/inference/decision-backends/:key/probe` — the models a local server lists. */
+    suspend fun probeDecisionBackend(key: String): DecisionProbeResult =
+        http.postEmptySegments(listOf("admin", "inference", "decision-backends", key, "probe"))
+
+    /** `POST /admin/inference/decision-backends/:key/verify` — one invented test decision. */
+    suspend fun verifyDecisionBackend(key: String, model: String): DecisionVerifyResult =
+        http.postJsonSegments(
+            listOf("admin", "inference", "decision-backends", key, "verify"),
+            DecisionModelBody(model),
+        )
+
+    /** `POST /admin/inference/typesafe/verify` — the same test decision, on TypeSafe. */
+    suspend fun verifyTypeSafeDecision(model: String): DecisionVerifyResult =
+        http.postJson("admin/inference/typesafe/verify", DecisionModelBody(model))
+
+    /** `GET /admin/models/decision/calibration` — the calibration job's status. */
+    suspend fun decisionCalibration(): DecisionCalibrationStatus =
+        http.getJson("admin/models/decision/calibration")
+
+    /**
+     * `POST /admin/models/decision/calibration` — start calibrating the
+     * assigned decision model (202). The gateway answers 409 while one runs and
+     * 400 with its reason when the assignment cannot be calibrated.
+     */
+    suspend fun startDecisionCalibration(): DecisionCalibrationStatus =
+        http.postEmpty("admin/models/decision/calibration")
+
+    /** `DELETE /admin/models/decision/calibration` — cancel the running calibration. */
+    suspend fun cancelDecisionCalibration(): DecisionCalibrationStatus =
+        http.deleteJson("admin/models/decision/calibration")
 
     /** `POST /admin/inference/codex/refresh` — refresh Codex login/model status. */
     suspend fun refreshCodexBackend(): CodexBackendStatus =

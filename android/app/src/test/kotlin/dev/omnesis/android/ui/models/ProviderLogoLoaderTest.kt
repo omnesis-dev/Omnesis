@@ -4,6 +4,7 @@
 package dev.omnesis.android.ui.models
 
 import dev.omnesis.android.transport.client.AdminClient
+import dev.omnesis.android.transport.dto.DecisionPresetView
 import dev.omnesis.android.transport.dto.ModelBehaviorSettings
 import dev.omnesis.android.transport.dto.ModelBehaviorValues
 import dev.omnesis.android.transport.dto.ModelControlDescriptor
@@ -36,6 +37,39 @@ class ProviderLogoLoaderTest {
             val second = ProviderLogoLoader.load(admin, ProviderLogoLoader.providers(overview), first, overview)
             assertEquals(first, second)
             assertEquals(1, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test fun decision_logos_alias_their_models_dev_art_and_misses_are_not_refetched() = runTest {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"></svg>"""
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+                    if (request.path == "/model-logos/cloudflare-workers-ai.svg") MockResponse().setBody(svg)
+                    else MockResponse().setResponseCode(404)
+            }
+            val overview = ModelsOverview(
+                decisionPresets = listOf(
+                    DecisionPresetView(id = "cloudflare", name = "Cloudflare Workers AI", kind = "cloud", modelsDevId = "cloudflare-workers-ai"),
+                    DecisionPresetView(id = "studio-box", name = "Studio box", kind = "local"),
+                    DecisionPresetView(id = "typesafe", name = "TypeSafe", kind = "cloud", builtIn = "typesafe"),
+                ),
+            )
+            val admin = AdminClient(GatewayHttp(OkHttpClient(), server.url("/").toString(), "tok"))
+            val ids = ProviderLogoLoader.providers(overview)
+            assertEquals(setOf("cloudflare-workers-ai", "studio-box"), ids)
+            val first = ProviderLogoLoader.load(admin, ids, emptyMap(), overview)
+            assertEquals(svg, first["cloudflare"])
+            assertEquals(svg, first["cloudflare-workers-ai"])
+            // No logo: recorded empty, drawn as the neutral glyph.
+            assertEquals("", first["studio-box"])
+            assertEquals(2, server.requestCount)
+            ProviderLogoLoader.load(admin, ids, first, overview)
+            assertEquals(2, server.requestCount)
         } finally {
             server.shutdown()
         }

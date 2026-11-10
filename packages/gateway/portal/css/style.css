@@ -13839,6 +13839,24 @@ div.source-activity-popover-link:hover {
 .backend-opt-icon { display: flex; align-items: center; height: 24px; }
 .backend-opt-title { font-size: 13.5px; font-weight: 600; }
 .backend-opt-sub { font-size: 11.5px; color: var(--text-muted); }
+/* One-row card for grids with many providers. */
+.backend-opt--row { flex-direction: row; align-items: center; gap: 10px; padding: 10px 12px; }
+.backend-opt--row .backend-opt-icon { flex: 0 0 24px; justify-content: center; }
+.backend-opt-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.backend-opt--row .backend-opt-title { font-size: 13px; }
+.backend-opt--row .backend-opt-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.provider-monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
 
 /* Secondary button — matches .btn-primary's padding + radius, neutral colour. */
 .btn-secondary {
@@ -14024,6 +14042,110 @@ div.source-activity-popover-link:hover {
 .recent-models-title { margin: 0; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .recent-models-list { display: flex; flex-direction: column; }
 .recent-models-list .picker-row + .picker-row { border-top: 1px solid var(--border); }
+
+/* ───── Decision model setup ───────────────────────────────────────────── */
+
+/* Provider picker: your backends, this machine, cloud — each a titled grid. */
+.decision-provider-picker { display: flex; flex-direction: column; gap: 16px; }
+.decision-provider-group { display: flex; flex-direction: column; gap: 8px; }
+.decision-provider-picker .backend-opt-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.decision-provider-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Provider form. */
+.decision-form .picker-pane-head { margin-bottom: -4px; }
+.decision-form-sub { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.decision-form .field-note a,
+.decision-field-label a { color: var(--text-link); font-weight: 400; }
+.decision-field-label { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.field-input--mono { font-family: var(--font-mono); font-size: 12px; }
+.decision-note-warn { color: var(--warning); }
+.decision-note-danger { color: var(--danger); }
+.decision-model-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 188px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.decision-model-opt {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.decision-model-opt + .decision-model-opt { border-top: 1px solid var(--border); }
+.decision-model-opt:hover { background: var(--bg-hover); }
+.decision-model-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.decision-model-opt.is-selected { background: rgba(63, 185, 80, 0.1); box-shadow: inset 2px 0 0 var(--success); }
+.decision-model-id { font-family: var(--font-mono); font-size: 12px; }
+.decision-model-hint { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+
+/* A test decision's answer. */
+.decision-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.45; color: var(--text-secondary); }
+.decision-check-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+.decision-check--ok .decision-check-icon { background: var(--success); }
+.decision-check--fail { color: var(--warning); }
+.decision-check--fail .decision-check-icon { background: var(--warning); }
+.decision-check-spinner {
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  flex: 0 0 auto;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: codex-runtime-spin 700ms linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .decision-check-spinner { animation: none; } }
+
+/* Inside the Decision model's active card: verify, then calibration. */
+.decision-active-status {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.decision-verify-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.decision-verify-hint { font-size: 12px; color: var(--text-muted); }
+.decision-calibration { display: flex; flex-direction: column; gap: 6px; }
+.decision-calibration-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.decision-calibration-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.decision-calibration-title,
+.decision-calibration-text { font-size: 12.5px; color: var(--text-secondary); line-height: 1.45; }
+.decision-calibration-warn { font-size: 12.5px; color: var(--warning); line-height: 1.45; }
+.decision-calibration-meta { font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+.decision-calibration-bar { height: 4px; border-radius: 999px; background: var(--bg-tertiary); overflow: hidden; }
+.decision-calibration-bar span { display: block; height: 100%; background: var(--accent); transition: width 300ms ease; }
+@media (prefers-reduced-motion: reduce) { .decision-calibration-bar span { transition: none; } }
 
 /* ───── Agent harness ──────────────────────────────────────────────────── */
 

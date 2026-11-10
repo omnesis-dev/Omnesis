@@ -50,6 +50,12 @@ data class ModelsOverview(
      * app falls back to the dedicated recent-models endpoint.
      */
     val recentModels: Map<String, List<RecentModelEntry>> = emptyMap(),
+    /**
+     * Decision-model providers with the models to offer for each. Null on a
+     * gateway that predates decision backends: the app then shows the
+     * Decision model read-only, as before.
+     */
+    val decisionPresets: List<DecisionPresetView>? = null,
 )
 
 /** The catalog-backed options for one backend/model pair. */
@@ -155,11 +161,15 @@ data class CapabilityMeta(
     val backendFamily: String? = null,
 ) {
     /**
-     * Whether this app can assign the role. It configures ordinary models only, so a
-     * role served by a named backend family is shown read-only and configured from
-     * the portal. Mirrors the iOS `CapabilityMeta.configurableOnDevice`.
+     * Whether the ordinary model picker can assign the role. A role served by a
+     * named backend family has a setup of its own (the Decision model's, for
+     * `typed-decision`) or, for a family this app does not know, is shown
+     * read-only. Mirrors the iOS `CapabilityMeta.configurableOnDevice`.
      */
     val configurableOnDevice: Boolean get() = backendFamily == null
+
+    /** Whether the role is the Decision model, served by decision backends and TypeSafe. */
+    val isTypedDecision: Boolean get() = backendFamily == "typed-decision"
 }
 
 /** Resolved inference state. Backends keyed by backend key (or "anthropic"). */
@@ -170,6 +180,15 @@ data class InferenceOverview(
     val codex: CodexBackendStatus? = null,
     val assignments: Map<String, ResolvedAssignment> = emptyMap(),
     val health: ModelHealth = ModelHealth(),
+    /**
+     * Whether the gateway may send inference content off its host. Off, a
+     * backend whose URL is not on the host needs the operator's consent first.
+     */
+    val allowRemoteInference: Boolean = false,
+    /** The TypeSafe endpoint the Decision model would use; absent on older gateways. */
+    val typesafe: TypeSafeEndpointStatus? = null,
+    /** Configured decision backends by key; empty on gateways that predate them. */
+    val decisionBackends: Map<String, DecisionBackendStatus> = emptyMap(),
 )
 
 /**
@@ -257,14 +276,26 @@ data class CodexRemoveResult(
 
 /**
  * A resolved per-role assignment, flattened to the fields the phone needs: the
- * discriminant kind ("local"/"http"/"anthropic"/"replay"/"disabled"/
- * "unresolved"), availability, and the unavailable reason.
+ * discriminant kind ("local"/"http"/"anthropic"/"replay"/"typesafe"/
+ * "decision"/"disabled"/"unresolved", unknown kinds kept as sent),
+ * availability, and the unavailable reason. The remaining fields are sent
+ * only for the kinds that have them.
  */
 @Serializable
 data class ResolvedAssignment(
     val kind: String = "",
     val available: Boolean? = null,
     val reason: String? = null,
+    /** The model id after the slash (decision backends and TypeSafe). */
+    val model: String? = null,
+    /** A decision backend's key, the part of the assignment before the slash. */
+    val backendKey: String? = null,
+    /** The preset a decision backend was made from. */
+    val preset: String? = null,
+    /** Whether a calibration onto Jev's scale is stored for this decision model. */
+    val calibrated: Boolean? = null,
+    /** Whether an API key is configured (decision backends and TypeSafe). */
+    val hasApiKey: Boolean? = null,
 )
 
 /**

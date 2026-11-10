@@ -67,6 +67,7 @@ import type { ModelManager } from "./manager.js";
 import type { SystemInfo } from "../system-info.js";
 import type { RouteApp } from "../http/routes/types.js";
 import type { ModelsDevCatalog } from "./models-dev-catalog.js";
+import type { ModelsDevDecisionCatalog } from "./models-dev-decisions.js";
 /**
  * Catalog roles describe what a model can do; capability roles identify the
  * independent assignment being changed. `capability` is optional on the route
@@ -89,6 +90,8 @@ export const CAPABILITY_TO_CATALOG: Partial<Record<CapabilityRole, ModelRole>> =
 interface RegisterOptions {
   modelManager: ModelManager;
   modelsDevCatalog?: ModelsDevCatalog;
+  /** The decision presets with the models.dev decision catalog's models. */
+  decisionCatalog?: ModelsDevDecisionCatalog;
   configStore: ConfigStore;
   getSystemInfo: () => SystemInfo;
   getInferenceOverview: () => InferenceOverview;
@@ -215,9 +218,13 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
   app.get("/admin/system-info", scope.admin(), (c) => c.json(sysInfo()));
 
   app.get("/admin/models", scope.admin(), async (c) => {
-    await opts.modelsDevCatalog?.refreshIfStale();
+    await Promise.all([
+      opts.modelsDevCatalog?.refreshIfStale(),
+      opts.decisionCatalog?.refreshIfStale(),
+    ]);
     const inference = modelInferenceOverview();
     const overview = modelManager.getOverview(inference);
+    if (opts.decisionCatalog) overview.decisionPresets = opts.decisionCatalog.presets();
     const behavior = opts.modelsDevCatalog?.overview(inference, configStore.get());
     const getRecentModels = opts.getRecentModels;
     const recentModels = getRecentModels

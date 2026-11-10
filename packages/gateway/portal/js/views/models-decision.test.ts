@@ -110,7 +110,7 @@ describe("Models — the Decision model picker", () => {
   it("explains the decision uses beside the model picker", async () => {
     await openPicker();
     expect(host.querySelector(".cap-detail-desc")?.textContent).toBe(DECISION.description);
-    expect(host.textContent).toContain("complication captures");
+    expect(host.textContent).toContain("Watch capture asks for a response");
     expect(host.textContent).toContain("email dates");
     expect(host.textContent).toContain("TypeSafe");
   });

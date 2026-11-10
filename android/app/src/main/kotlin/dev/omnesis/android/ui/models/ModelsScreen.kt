@@ -84,6 +84,7 @@ import dev.omnesis.android.transport.dto.CapabilityMeta
 import dev.omnesis.android.transport.dto.CatalogEntry
 import dev.omnesis.android.transport.dto.CodexBackendStatus
 import dev.omnesis.android.transport.dto.CodexModelStatus
+import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
 import dev.omnesis.android.transport.dto.DownloadProgress
 import dev.omnesis.android.transport.dto.InferenceOverview
 import dev.omnesis.android.transport.dto.ManifestEntry
@@ -107,6 +108,7 @@ fun ModelsScreen(
     onOpenSettings: () -> Unit = {},
     onOpenBackends: () -> Unit = {},
     vm: ModelsViewModel = hiltViewModel(),
+    decisionVm: DecisionSetupViewModel = hiltViewModel(),
 ) {
     BackHandler(onBack = onBack)
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -128,6 +130,30 @@ fun ModelsScreen(
     val behaviorError by vm.behaviorError.collectAsStateWithLifecycle()
     val behaviorStatus by vm.behaviorStatus.collectAsStateWithLifecycle()
     val behaviorEpoch by vm.behaviorEpoch.collectAsStateWithLifecycle()
+    val decision by decisionVm.state.collectAsStateWithLifecycle()
+    // Follow a running calibration only while the screen is started.
+    val calibrating = decision.calibration?.running == true
+    LaunchedEffect(lifecycleOwner, decisionVm, calibrating) {
+        if (calibrating) {
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { decisionVm.followCalibration() }
+        }
+    }
+    LaunchedEffect(decisionVm) { decisionVm.changes.collect { vm.refresh() } }
+    // The Decision card's calibration line reads the job of the backend model assigned now.
+    val assignedDecision = (state as? Loadable.Content)?.value?.let(DecisionSetup::assignedBackend)?.value
+    LaunchedEffect(assignedDecision) { if (assignedDecision != null) decisionVm.refreshCalibration() }
+    val decisionActions = remember(decisionVm, vm) {
+        DecisionActions(
+            onOpened = decisionVm::opened,
+            onSave = decisionVm::save,
+            onVerify = decisionVm::verify,
+            onProbe = decisionVm::probe,
+            onCalibrate = decisionVm::startCalibration,
+            onCancelCalibration = decisionVm::cancelCalibration,
+            onRemove = decisionVm::remove,
+            onClear = { vm.clear(DecisionSetup.ROLE) },
+        )
+    }
     ProviderLogos(logos) { ModelsContent(
         state = state,
         connection = connection,
@@ -154,6 +180,8 @@ fun ModelsScreen(
         behaviorStatus = behaviorStatus?.takeIf { it.role == picker }?.text,
         behaviorEpoch = behaviorEpoch,
         onDismissNotice = vm::dismissNotice,
+        decision = decision,
+        decisionActions = decisionActions,
     ) }
 }
 
@@ -192,8 +220,11 @@ fun ModelsContent(
     behaviorStatus: String? = null,
     behaviorEpoch: Int = 0,
     onDismissNotice: () -> Unit = {},
+    decision: DecisionUiState = DecisionUiState(),
+    decisionActions: DecisionActions = DecisionActions(),
 ) {
     val c = OmTheme.colors
+    var decisionOpen by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -229,8 +260,13 @@ fun ModelsContent(
                     overview = state.value,
                     notice = notice,
                     busy = busy,
+                    decisionCalibration = decision.calibration,
                     onOpenBackends = onOpenBackends,
                     onOpenPicker = onOpenPicker,
+                    onOpenDecision = {
+                        decisionOpen = true
+                        decisionActions.onOpened()
+                    },
                     onDismissNotice = onDismissNotice,
                 )
             }
@@ -261,6 +297,22 @@ fun ModelsContent(
             onDismiss = onClosePicker,
         )
     }
+
+    val decisionCap = overview?.let { o -> o.capabilities.firstOrNull { DecisionSetup.isConfigurable(it, o) } }
+    if (decisionOpen && overview != null && decisionCap != null) {
+        DecisionSetupSheet(
+            cap = decisionCap,
+            overview = overview,
+            ui = decision,
+            actions = decisionActions.copy(
+                onClear = {
+                    decisionOpen = false
+                    decisionActions.onClear()
+                },
+            ),
+            onDismiss = { decisionOpen = false },
+        )
+    }
 }
 
 @Composable
@@ -268,8 +320,10 @@ private fun CapabilityList(
     overview: ModelsOverview,
     notice: ModelsViewModel.Notice?,
     busy: Boolean,
+    decisionCalibration: DecisionCalibrationStatus?,
     onOpenBackends: () -> Unit,
     onOpenPicker: (String) -> Unit,
+    onOpenDecision: () -> Unit,
     onDismissNotice: () -> Unit,
 ) {
     Column(
@@ -305,8 +359,17 @@ private fun CapabilityList(
                         .takeIf { canEditBehavior },
                     state = if (warning != null) ModelManagement.CapabilityState.WARN else ModelManagement.state(overview.inference.assignments[cap.role]),
                     reason = overview.inference.assignments[cap.role]?.reason,
-                    onTap = { onOpenPicker(cap.role) }.takeIf { cap.configurableOnDevice },
+                    onTap = when {
+                        cap.configurableOnDevice -> ({ onOpenPicker(cap.role) })
+                        DecisionSetup.isConfigurable(cap, overview) -> onOpenDecision
+                        else -> null
+                    },
                     disabled = busy,
+                    calibrationLine = if (DecisionSetup.isConfigurable(cap, overview)) {
+                        DecisionSetup.cardCalibrationLine(overview, decisionCalibration)
+                    } else {
+                        null
+                    },
                 )
             }
         }
@@ -347,6 +410,8 @@ private fun CapabilityCard(
     /** Null for a role this app cannot configure: the card is then read-only. */
     onTap: (() -> Unit)?,
     disabled: Boolean,
+    /** The Decision model's calibration against Jev, for a decision-backend model. */
+    calibrationLine: DecisionSetup.CardLine? = null,
 ) {
     val c = OmTheme.colors
     Row(
@@ -398,6 +463,13 @@ private fun CapabilityCard(
             }
             if (state == ModelManagement.CapabilityState.WARN && !reason.isNullOrBlank()) {
                 Text(reason, style = MaterialTheme.typography.labelSmall, color = c.warning, maxLines = 2)
+            }
+            if (calibrationLine != null) {
+                Text(
+                    calibrationLine.text,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (calibrationLine.warning) c.warning else c.textSecondary,
+                )
             }
             val behaviorText = ModelBehaviorPresentation.summary(behavior, controls)
             if (behaviorText != null) {

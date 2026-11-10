@@ -3381,6 +3381,58 @@ const httpBackendConfig = z
   })
   .strict();
 
+// A decision backend: a server or hosted API that answers typed decisions
+// for the `decision` role ("<key>/<model>"). Kept apart from the
+// OpenAI-compatible `backends`: it speaks a decision API, never chat.
+const decisionCalibrationPoint = z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)]);
+const decisionCalibration = z
+  .object({
+    points: z
+      .array(decisionCalibrationPoint)
+      .min(2)
+      .max(17)
+      .refine(
+        (pts) => pts.every((p, i) => i === 0 || (p[0] > pts[i - 1]![0] && p[1] >= pts[i - 1]![1])),
+        "calibration points must be sorted by x with non-decreasing y",
+      ),
+    reference: z.string().min(1).max(200),
+    fittedAt: z.string().datetime(),
+    samples: z.number().int().nonnegative().optional(),
+    agreement: z.number().min(0).max(1).optional(),
+    agreementBefore: z.number().min(0).max(1).optional(),
+  })
+  .strict();
+
+const decisionBackendConfig = z
+  .object({
+    // The preset the backend was made from (e.g. "ollaya", "openrouter"):
+    // its brand and model suggestions. Never changes how requests are sent.
+    preset: z.string().min(1).max(64).optional(),
+    // The full endpoint URL, e.g. "http://127.0.0.1:11435/v1/systemone".
+    url: z.string().url(),
+    protocol: z.enum(["systemone", "workers-ai", "openai-decisions"]).optional(),
+    auth: z.enum(["bearer", "api-key", "x-api-key"]).optional(),
+    apiKey: z.string().min(1).optional(),
+    apiKeySecret: z
+      .string()
+      .regex(
+        /^config-secret:[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/,
+        "apiKeySecret must be a valid config-secret reference",
+      )
+      .optional(),
+    // Fastino puts the most likely level in `score` and the weighted one in
+    // `expected_level`.
+    scoreField: z.enum(["score", "expected_level"]).optional(),
+    // Whether the provider refuses requests without a key, so a missing key
+    // shows as unavailable instead of as failed requests.
+    keyRequired: z.boolean().optional(),
+    maxConcurrency: z.number().int().min(1).max(16).optional(),
+    timeoutMs: z.number().int().min(1000).max(300_000).optional(),
+    // Maps each model's scores onto Jev's scale, keyed by model id.
+    calibration: z.record(z.string().min(1), decisionCalibration).optional(),
+  })
+  .strict();
+
 const assignmentValue = z.union([z.string(), z.null()]);
 
 const modelBehaviorValues = z
@@ -3560,6 +3612,20 @@ const backendKey = z
     message: "Backend name cannot be 'local', 'anthropic', 'codex', 'replay', or contain '/'",
   });
 
+// A decision backend's name is the first part of a decision assignment, so
+// it cannot be a built-in prefix (`typesafe` included: it always means the
+// built-in TypeSafe slot for this role). Checked in the inference block's
+// refinement, where the message reaches the operator.
+export const RESERVED_DECISION_BACKEND_NAMES: readonly string[] = [
+  "local",
+  "anthropic",
+  "codex",
+  "claude-code",
+  "replay",
+  "typesafe",
+];
+const decisionBackendKey = z.string().min(1).max(64);
+
 const transcriptionVocabularySettings = z
   .object({
     enabled: z
@@ -3669,6 +3735,7 @@ const transcriptionVocabularySettings = z
 const inference = z
   .object({
     backends: z.record(backendKey, httpBackendConfig).optional(),
+    decisionBackends: z.record(decisionBackendKey, decisionBackendConfig).optional(),
     assignments: inferenceAssignments.optional(),
     modelSettings: inferenceModelSettings.optional(),
     allowRemoteInference: z
@@ -3733,7 +3800,25 @@ const inference = z
     dictation: dictationSettings.optional(),
     transcriptionVocabulary: transcriptionVocabularySettings.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    // One name, one backend: an assignment's prefix must say which it is.
+    for (const key of Object.keys(value.decisionBackends ?? {})) {
+      if (RESERVED_DECISION_BACKEND_NAMES.includes(key) || key.includes("/")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["decisionBackends", key],
+          message: `Decision backend name cannot be ${RESERVED_DECISION_BACKEND_NAMES.map((n) => `'${n}'`).join(", ")}, or contain '/'`,
+        });
+      } else if (value.backends && key in value.backends) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["decisionBackends", key],
+          message: `"${key}" is already the name of an HTTP backend`,
+        });
+      }
+    }
+  });
 
 // Who the operator is — the single, install-level home for the human whose
 // corpus this is. The gateway reads it at boot to bootstrap (and enrich) the

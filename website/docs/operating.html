@@ -723,18 +723,162 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         </ul>
         <p>
           Assigning a decision model does not enable every use automatically; each flow keeps its
-          own controls. It is served by TypeSafe Jev, a cloud model, and requires
-          <strong>Allow cloud inference</strong>. Add its key under
-          <strong>Settings → Models → Decision model</strong> or with
-          <code>omnesis backend key set typesafe</code>, then assign
-          <code>omnesis model assign decision typesafe/jev-1.13.0</code>. To use a
-          TypeSafe-compatible deployment of your own, set <code>inference.typesafe.url</code> to its
-          endpoint. An endpoint on the gateway host (a loopback address or <code>localhost</code>)
-          needs neither a key nor <strong>Allow cloud inference</strong>; one elsewhere on your
-          network needs <strong>Allow cloud inference</strong> but no key. Any endpoint under
-          <code>typesafe.ai</code> is TypeSafe's own and needs its key. The iPhone and Android apps
-          show the assignment; change it from the portal or terminal.
+          own controls. Set it up under <strong>Settings → Models → Decision model</strong> in the
+          portal or the iPhone and Android apps: pick where the model runs, then a model. The model
+          is asked one test question when you save it, so a model the server does not have or a
+          refused key is reported then rather than by decisions that fail later.
         </p>
+        <h4 id="decision-model-providers">Where the decision model runs</h4>
+        <p>
+          A decision model is not a chat model: it answers typed questions from probabilities over
+          fixed answers, through a decision API. Each place one runs is a
+          <em>decision backend</em>, stored under <code>inference.decisionBackends</code>, and the
+          assignment names the backend and the model, <code>&lt;backend&gt;/&lt;model&gt;</code>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Endpoint</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Ollaya, on this machine</td>
+                <td><code>http://127.0.0.1:11435/v1/systemone</code></td>
+                <td>
+                  Open decision models (Kev, Laya, d1, Strands Decider and others) pulled with
+                  <code>ollaya pull &lt;model&gt;</code>. No key, no cloud inference.
+                </td>
+              </tr>
+              <tr>
+                <td>Ollama, on this machine</td>
+                <td><code>http://127.0.0.1:11434/v1/systemone</code></td>
+                <td>
+                  Pull a decision model such as <code>d3:4b</code> first. No key, no cloud
+                  inference.
+                </td>
+              </tr>
+              <tr>
+                <td>TypeSafe</td>
+                <td><code>https://api.typesafe.ai/v1/systemone</code></td>
+                <td>
+                  Jev, the model every threshold was tuned on. Built in: its key is set with
+                  <code>omnesis backend key set typesafe</code> and the assignment is
+                  <code>typesafe/&lt;model&gt;</code>. Setting <code>inference.typesafe.url</code>
+                  points it at a deployment of your own, which needs no key; any endpoint under
+                  <code>typesafe.ai</code> is TypeSafe's and needs its key.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  OpenRouter, Ollama Cloud, Perplexity, Fireworks AI, Baseten, DeepInfra, Vercel AI
+                  Gateway, AI/ML API
+                </td>
+                <td>Each provider's own decision endpoint</td>
+                <td>
+                  Hosted decision models with an API key. OpenRouter alone serves most of them,
+                  including Jev, Perplexity Decider, d1, Clef, Microsoft-Decision-1, Drex and GPT-6
+                  Luna.
+                </td>
+              </tr>
+              <tr>
+                <td>Cloudflare Workers AI</td>
+                <td>
+                  <code>https://api.cloudflare.com/client/v4/accounts/&lt;account&gt;/ai/run</code>
+                </td>
+                <td>
+                  Clef and Clef-Flash; asks for your account ID. Workers AI shortens long text to
+                  fit the model without saying so.
+                </td>
+              </tr>
+              <tr>
+                <td>OpenAI</td>
+                <td><code>https://api.openai.com/v1/decisions</code></td>
+                <td>GPT-6 Luna through OpenAI's own Decisions API.</td>
+              </tr>
+              <tr>
+                <td>Microsoft Foundry</td>
+                <td>
+                  <code
+                    >https://&lt;resource&gt;.services.ai.azure.com/providers/microsoft/v1/systemone</code
+                  >
+                </td>
+                <td>Microsoft-Decision-1; the model is your deployment's name.</td>
+              </tr>
+              <tr>
+                <td>Fastino</td>
+                <td><code>https://api.fastino.ai/v1/systemone</code></td>
+                <td>GLiDE.</td>
+              </tr>
+              <tr>
+                <td>Another decision server</td>
+                <td>Its System One URL</td>
+                <td>
+                  Any server that accepts TypeSafe's System One request, such as a model's own
+                  <code>serve</code> command on your network.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          A provider off the gateway host sends the content being judged to that provider, so it
+          needs <strong>Allow cloud inference</strong>; one on the gateway host does not, and needs
+          a key only if the server asks for one. Keys are kept in the gateway's secret store, never
+          in <code>omnesis.json</code>. The model lists come from each provider's preset and from
+          the <a href="https://models.dev">models.dev</a> decision catalog; for Ollaya, Ollama and
+          other servers on your network the gateway also lists the models installed there.
+        </p>
+        <h4 id="decision-model-calibration">Calibration</h4>
+        <p>
+          The decisions compare the model's scores with thresholds chosen on TypeSafe Jev's answers.
+          Other models rank email much as Jev does but spread their scores differently, so an
+          uncalibrated model can let much of the junk through, or leave out the dates in mail worth
+          recording. <strong>Calibrate</strong> on the Decision model card, or
+          <code>omnesis decision calibrate</code>, asks the assigned model about 300 invented emails
+          Jev has already scored, fits a map from its scores onto Jev's, and stores it with the
+          decision backend. The map never reverses which of two emails the model rates higher; it
+          moves where each threshold cuts. The card shows how often the model agrees with Jev before
+          and after. The emails are about 150,000 input tokens in all, so on a hosted provider
+          calibration costs what that many tokens cost there; on a local server running on the CPU
+          it takes several minutes. Each model has its own calibration: one assigned for the first
+          time needs its own.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis decision add ollama --model d3:4b</span>
+            </p>
+            <pre>
+✔ Decision backend ollama added (http://127.0.0.1:11434/v1/systemone)
+Assigned ollama/d3:4b to the Decision model.</pre>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis decision add openrouter --key sk-or-... --allow-remote</span
+              >
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >omnesis decision verify openrouter perplexity/pplx-decider-flash-v1.2</span
+              >
+            </p>
+            <pre>✔ openrouter/perplexity/pplx-decider-flash-v1.2 answered in 310 ms</pre>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis decision calibrate</span>
+            </p>
+            <pre>
+Calibrating ollama/d3:4b on 302 invented reference emails…
+✔ calibrated 2026-11-10: agrees with Jev on 93% of the reference emails (was 88%)</pre>
+          </div>
+        </div>
         <p>Backend support depends on the capability. Available backend families are:</p>
 
         <ul>
@@ -1579,6 +1723,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
                 <td>Assign models, add inference backends, rebuild the vector index</td>
                 <td><a href="#models">Models</a></td>
+              </tr>
+              <tr>
+                <td><code>decision</code></td>
+                <td>
+                  Add a decision backend from a preset, list its models, verify and calibrate the
+                  Decision model
+                </td>
+                <td><a href="#decision-model">Decision model</a></td>
               </tr>
               <tr>
                 <td><code>secure</code>, <code>keyring</code>, <code>tls</code></td>

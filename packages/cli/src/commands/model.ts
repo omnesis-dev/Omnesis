@@ -108,6 +108,8 @@ function resolvedActiveId(resolved: ResolvedAssignment): string | undefined {
       return undefined;
     case "typesafe":
       return undefined;
+    case "decision":
+      return undefined;
     default: {
       const _exhaustive: never = resolved;
       return undefined;
@@ -817,9 +819,11 @@ function printRoleLine(
               ? `Claude Code: ${resolved.model}`
               : resolved.kind === "typesafe"
                 ? `TypeSafe: ${resolved.model}`
-                : resolved.kind === "unresolved"
-                  ? "(none)"
-                  : unknownAssignmentLabel(resolved);
+                : resolved.kind === "decision"
+                  ? `${resolved.backendKey}: ${resolved.model}${resolved.calibrated ? "" : " (not calibrated)"}`
+                  : resolved.kind === "unresolved"
+                    ? "(none)"
+                    : unknownAssignmentLabel(resolved);
   const available =
     resolved.kind === "replay" ||
     (resolved.kind !== "disabled" && resolved.kind !== "unresolved" && resolved.available);

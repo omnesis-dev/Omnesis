@@ -49,6 +49,8 @@ import {
   getAdminConfig,
   patchAdminConfig,
   getStatus,
+  verifyDecisionBackend,
+  verifyTypeSafeDecision,
 } from "../api.js";
 import { CredentialsWizard } from "./credentials-wizard.js";
 import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
@@ -57,6 +59,7 @@ import { ConfirmModal } from "../components/confirm-modal.js";
 import { CapabilityIcon } from "../components/capability-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { ProviderIcon } from "../components/provider-icon.js";
+import { Monogram, ProviderLogo } from "../components/backend-option-card.js";
 import { navigate } from "../lib/router.js";
 import { isEnabled, isConfigured, capabilityCardState } from "../lib/capability-state.js";
 import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend, isDecisionRole } from "../lib/backend-options.js";
@@ -74,6 +77,20 @@ import {
 import { ModelBehaviorEditor, modelBehaviorSummary } from "./model-behavior.js";
 import { ModelHealthWarnings, WarningTriangle } from "../components/model-health.js";
 import { noteAgentSettingPatch } from "../lib/note-agent.js";
+import {
+  DecisionBackendModal,
+  DecisionBackendsSection,
+  DecisionCalibrationPanel,
+  DecisionCheckLine,
+} from "./decision-models.js";
+import {
+  assignedDecisionBackend,
+  currentDecisionAssignment,
+  decisionBackendPatch,
+  decisionBackends,
+  decisionBackendWhere,
+  removeDecisionBackendPatch,
+} from "../lib/decision-backends.js";
 
 // ── Capability grid (the tab's landing view) ──────────────────────────────
 
@@ -114,7 +131,10 @@ function CapabilityCard({ cap, assignment, display, behaviorSummary, warning, on
       <div class="cap-card-foot">
         ${enabled && display
           ? html`<span class="cap-card-model">
-              <${ProviderIcon} providerId=${display.providerId} /> ${display.modelName}
+              ${assignment.kind === "decision"
+                ? html`<${ProviderLogo} providerId=${display.providerId} fallback=${html`<${Monogram} name=${display.providerLabel} />`} />`
+                : html`<${ProviderIcon} providerId=${display.providerId} />`}
+              ${display.modelName}
               <span class="cap-card-provider">${display.providerLabel}</span>
             </span>`
           : warn
@@ -141,7 +161,10 @@ export function CapabilityGrid({ overview, onConfigureBackends }) {
     display=${displays[cap.role]}
     warning=${overview.inference.health?.warnings?.find((warning) => warning.role === cap.role)}
     behaviorSummary=${hasBehaviorControls(cap.role, assignments[cap.role])
-      ? modelBehaviorSummary(settings[cap.role], controls[settings[cap.role]?.assignment]) : null}
+      ? modelBehaviorSummary(settings[cap.role], controls[settings[cap.role]?.assignment])
+      : assignments[cap.role]?.kind === "decision" && assignments[cap.role].available && !assignments[cap.role].calibrated
+      ? "Not calibrated"
+      : null}
     onOpen=${() => open(cap.role)}
   />`;
 
@@ -204,7 +227,7 @@ export function claudeCodeBackendRow(overview) {
   return signedIn || cliBackendAssignments(overview, "claude-code").length > 0 ? claudeCode : null;
 }
 
-function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, claudeCodeRefreshBusy, onAddBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode, onRefreshAnthropic, onRefreshCodex, onRefreshClaudeCode, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onTestBackend, testStates }) {
+function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, claudeCodeRefreshBusy, onAddBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode, onRefreshAnthropic, onRefreshCodex, onRefreshClaudeCode, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onTestBackend, onEditDecisionBackend, onRemoveDecisionBackend, testStates }) {
   const inference = overview.inference;
   const httpBackends = Object.entries(inference.backends).filter(([, s]) => s.type === "http");
   const hasAnthropic = !!inference.backends.anthropic;
@@ -348,6 +371,7 @@ function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, code
             </div>`
           : null}
       </div>
+      <${DecisionBackendsSection} overview=${overview} onEdit=${onEditDecisionBackend} onRemove=${onRemoveDecisionBackend} />
     </div>
   `;
 }
@@ -359,7 +383,27 @@ function capabilityFor(overview, role) {
   return (overview.capabilities ?? []).find((c) => c.role === role);
 }
 
-export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisable, onSaveBehavior }) {
+/**
+ * The Decision model's checks inside its active card: a Verify button and
+ * its answer, and — on a decision backend — the calibration onto Jev's scale.
+ */
+function DecisionActiveStatus({ overview, assignment, checks, onVerify, onChanged }) {
+  const key = assignment.kind === "typesafe" ? "typesafe" : assignment.backendKey;
+  const check = checks?.[`${key}/${assignment.model}`];
+  return html`
+    <div class="decision-active-status">
+      <div class="decision-verify-row">
+        ${check
+          ? html`<${DecisionCheckLine} check=${check} model=${assignment.model} />`
+          : html`<span class="decision-verify-hint">Send one test decision to check that it answers.</span>`}
+        <button class="btn-tiny" disabled=${check?.state === "checking"} onClick=${() => onVerify(key, assignment.model)}>Verify</button>
+      </div>
+      ${assignment.kind === "decision" ? html`<${DecisionCalibrationPanel} overview=${overview} onChanged=${onChanged} />` : null}
+    </div>
+  `;
+}
+
+export function CapabilityDetail({ role, overview, decisionChecks, onOpenPicker, onAddBackend, onDisable, onSaveBehavior, onVerifyDecision, onDecisionChanged }) {
   const cap = capabilityFor(overview, role);
   const assignment = overview.inference.assignments[role];
   const display = overview.assignmentDisplays?.[role];
@@ -371,6 +415,10 @@ export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, o
   const behaviorEditor = hasBehaviorControls(role, assignment) && settings?.assignment
     ? html`<${ModelBehaviorEditor} key=${`${role}:${settings.assignment}`} settings=${settings} model=${model} onSave=${onSaveBehavior} />`
     : null;
+  const decisionStatus = isDecisionRole(role) && enabled && (assignment.kind === "decision" || assignment.kind === "typesafe") && onVerifyDecision
+    ? html`<${DecisionActiveStatus} overview=${overview} assignment=${assignment} checks=${decisionChecks} onVerify=${onVerifyDecision} onChanged=${onDecisionChanged} />`
+    : null;
+  const decisionWhere = assignment?.kind === "decision" ? decisionBackendWhere(decisionBackends(overview)[assignment.backendKey]) : null;
 
   return html`
     <div class="cap-detail">
@@ -388,11 +436,17 @@ export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, o
               <div class="cap-detail-active-head">
                 ${runtimeWarning ? html`<${WarningTriangle} label="Repeated model failures" />` : html`<span class="cap-detail-tick">✓</span>`}
                 <div>
-                  <div class="cap-detail-active-model"><${ProviderIcon} providerId=${display.providerId} /> ${display.modelName}</div>
-                  <div class="cap-detail-active-provider">${display.providerLabel}</div>
+                  <div class="cap-detail-active-model">
+                    ${assignment.kind === "decision"
+                      ? html`<${ProviderLogo} providerId=${display.providerId} fallback=${html`<${Monogram} name=${display.providerLabel} />`} />`
+                      : html`<${ProviderIcon} providerId=${display.providerId} />`}
+                    ${display.modelName}
+                  </div>
+                  <div class="cap-detail-active-provider">${[display.providerLabel, decisionWhere].filter(Boolean).join(" · ")}</div>
                 </div>
               </div>
               ${behaviorEditor}
+              ${decisionStatus}
             </div>`
           : configured
           ? html`<div class="cap-detail-warn">
@@ -635,6 +689,9 @@ export function ModelsView({ section, onModelsRefresh }) {
   const [codexRuntimeError, setCodexRuntimeError] = useState(null);
   const [dismissedCodexOperation, setDismissedCodexOperation] = useState(null);
   const [anthropicRefreshBusy, setAnthropicRefreshBusy] = useState(false);
+  // Test decisions by assignment ("<backend>/<model>"): {state, result?}.
+  const [decisionChecks, setDecisionChecks] = useState({});
+  const [editDecisionBackend, setEditDecisionBackend] = useState(null);
   const refreshSequence = useRef(0);
 
   const validRoles = (overview?.capabilities ?? []).map((c) => c.role);
@@ -907,6 +964,72 @@ export function ModelsView({ section, onModelsRefresh }) {
     setTimeout(() => setTestStates((s) => ({ ...s, [key]: "idle" })), 3000);
   };
 
+  // ── Decision model ──────────────────────────────────────────────────────
+
+  /** Send one test decision to `backendKey/model` and keep its answer. */
+  const verifyDecision = async (backendKey, model) => {
+    const assignment = `${backendKey}/${model}`;
+    setDecisionChecks((all) => ({ ...all, [assignment]: { state: "checking" } }));
+    let result;
+    try {
+      result = backendKey === "typesafe"
+        ? await verifyTypeSafeDecision(model)
+        : await verifyDecisionBackend(backendKey, model);
+    } catch (e) {
+      result = { ok: false, reason: e?.serverMessage ?? e?.message ?? String(e) };
+    }
+    setDecisionChecks((all) => ({ ...all, [assignment]: { state: result?.ok ? "ok" : "fail", result } }));
+    return result;
+  };
+
+  /**
+   * Save a decision backend (and, with a model, assign the Decision model to
+   * it) in one config write, then check that the model answers.
+   */
+  const saveDecisionBackend = async (fields) => {
+    try {
+      const patch = decisionBackendPatch({
+        ...fields,
+        existing: decisionBackends(overview)[fields.key],
+        currentAssignment: currentDecisionAssignment(overview),
+      });
+      // Nothing changed: the save only re-checks the model.
+      const res = patch ? await patchAdminConfig(patch) : { ok: true };
+      if (!res.ok) {
+        const msg = res.body?.errors?.[0]?.message ?? res.body?.error ?? "Could not save the decision backend.";
+        return { ok: false, error: msg };
+      }
+      await refresh();
+      if (fields.model) void verifyDecision(fields.key, fields.model);
+      else flashOk(`Saved decision backend "${fields.key}".`);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e?.message ?? String(e) };
+    }
+  };
+
+  const onRemoveDecisionBackend = (key) => {
+    const inUse = assignedDecisionBackend(overview)?.key === key;
+    setConfirmState({
+      title: `Remove decision backend "${key}"?`,
+      body: inUse
+        ? "The Decision model uses it and will be turned off. Its key and calibrations are removed too."
+        : "Its key and calibrations are removed too.",
+      confirmLabel: "Remove",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          const res = await patchAdminConfig(removeDecisionBackendPatch(key, overview));
+          if (!res.ok) flashErr(res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to remove the decision backend.");
+          else flashOk(`Removed decision backend "${key}".`);
+          await refresh();
+        } catch (e) {
+          flashErr(e?.message ?? String(e));
+        }
+      },
+    });
+  };
+
   const onRemoveBackend = (key) => {
     setConfirmState({
       title: `Remove backend "${key}"?`,
@@ -1063,6 +1186,7 @@ export function ModelsView({ section, onModelsRefresh }) {
           flashOk(`Switched ${role} to ${model} on "${backendKey}".`);
         }
         await refresh();
+        if (isDecisionRole(role) && decisionBackends(overview)[backendKey]) void verifyDecision(backendKey, model);
       } catch (e) {
         flashErr(e?.message ?? String(e));
       }
@@ -1204,6 +1328,7 @@ export function ModelsView({ section, onModelsRefresh }) {
       }
       flashOk(`${targetTitle} now uses ${model} on TypeSafe.`);
       await refresh();
+      void verifyDecision("typesafe", model);
     } catch (e) {
       flashErr(e?.message ?? String(e));
     }
@@ -1379,6 +1504,8 @@ export function ModelsView({ section, onModelsRefresh }) {
             onRemoveBackend=${onRemoveBackend}
             onRemoveCodex=${onRemoveCodex}
             onTestBackend=${onTestBackend}
+            onEditDecisionBackend=${setEditDecisionBackend}
+            onRemoveDecisionBackend=${onRemoveDecisionBackend}
           />`
         : null}
 
@@ -1390,6 +1517,18 @@ export function ModelsView({ section, onModelsRefresh }) {
             onAddBackend=${() => setShowAddBackend(true)}
             onDisable=${onDisable}
             onSaveBehavior=${onSaveBehavior}
+            decisionChecks=${decisionChecks}
+            onVerifyDecision=${verifyDecision}
+            onDecisionChanged=${refresh}
+          />`
+        : null}
+
+      ${editDecisionBackend
+        ? html`<${DecisionBackendModal}
+            overview=${overview}
+            backendKey=${editDecisionBackend}
+            onSave=${saveDecisionBackend}
+            onClose=${() => setEditDecisionBackend(null)}
           />`
         : null}
 
@@ -1453,6 +1592,9 @@ export function ModelsView({ section, onModelsRefresh }) {
             onPickTypeSafe=${pickTypeSafe}
             onConfigureTypeSafeKey=${onConfigureTypeSafeKey}
             onPickRecent=${pickRecent}
+            decisionChecks=${decisionChecks}
+            onSaveDecisionBackend=${saveDecisionBackend}
+            onVerifyDecision=${verifyDecision}
             onStartCodexLogin=${onStartCodexLogin}
             onCancelCodexLogin=${onCancelCodexLogin}
             onRefreshCodex=${onRefreshCodex}

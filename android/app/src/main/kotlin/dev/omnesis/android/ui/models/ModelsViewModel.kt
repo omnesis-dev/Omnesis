@@ -183,6 +183,24 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Reload the overview in place, without the loading state, so an open
+     * sheet (the Decision model's setup) keeps its step while its config
+     * change appears. A failed reload keeps the overview on screen.
+     */
+    fun refresh() {
+        overviewGeneration++
+        viewModelScope.launch {
+            runCatching { overviewReader.read() }.onSuccess { fresh ->
+                if (!behaviorSaves.hasWork) behaviorBaseline.replace(fresh.modelSettings)
+                _state.update { Loadable.Content(fresh) }
+                scheduleDownloadPoll(fresh)
+                loadLogos(fresh)
+            }
+            session.refreshStatus()
+        }
+    }
+
     /** Refresh only diagnostics so a background recovery never replaces unsaved picker controls. */
     suspend fun refreshHealth() {
         val owner = session.session ?: return
@@ -456,14 +474,15 @@ class ModelsViewModel @Inject constructor(
             _busy.update { false }
         }
     }
+}
 
-    private fun gatewayMessage(e: Throwable): String = when (e) {
-        is GatewayException.Unauthorized -> "not authorized"
-        is GatewayException.Forbidden -> "this device lacks admin scope"
-        is GatewayException.NotFound -> "no longer exists"
-        is GatewayException.ServerError -> e.body?.ifBlank { null } ?: "server error"
-        is GatewayException.Network -> "network error"
-        is GatewayException.Decoding -> "could not read the response"
-        else -> e.message ?: "unknown error"
-    }
+/** A short, human-readable reason for a failed model-management request. */
+internal fun gatewayMessage(e: Throwable): String = when (e) {
+    is GatewayException.Unauthorized -> "not authorized"
+    is GatewayException.Forbidden -> "this device lacks admin scope"
+    is GatewayException.NotFound -> "no longer exists"
+    is GatewayException.ServerError -> e.body?.ifBlank { null } ?: "server error"
+    is GatewayException.Network -> "network error"
+    is GatewayException.Decoding -> "could not read the response"
+    else -> e.message ?: "unknown error"
 }

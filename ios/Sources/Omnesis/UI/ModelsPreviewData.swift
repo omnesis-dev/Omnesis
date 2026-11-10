@@ -84,12 +84,14 @@ enum ModelsPreviewData {
                     assignment: "openai/gpt-example-frontier",
                     values: PreviewMocks.modelReasoningValues
                 ),
-            ]
+            ],
+            decisionPresets: DecisionPreviewData.presets
         )
     }
 
-    /// An ordinary role beside one only a special backend family serves, so
-    /// the read-only card sits in view next to a tappable one.
+    /// An ordinary role beside the Decision card of a gateway that predates
+    /// decision backends (no `decisionPresets`), so the read-only card sits in
+    /// view next to a tappable one.
     static func overviewWithReadOnlyRole() -> ModelsOverview {
         let base = overview()
         return ModelsOverview(
@@ -121,7 +123,8 @@ enum ModelsPreviewData {
                     assignment: "openai/gpt-example-frontier",
                     values: ModelBehaviorValues()
                 ),
-            ]
+            ],
+            decisionPresets: base.decisionPresets
         )
     }
 
@@ -234,6 +237,7 @@ enum ModelsPreviewData {
                 "ocr": ResolvedAssignment(kind: "http", available: false, reason: "Backend unreachable"),
                 "background-agent": ResolvedAssignment(kind: "codex", available: true),
                 "entailment-verifier": ResolvedAssignment(kind: "unresolved"),
+                "decision": ResolvedAssignment(kind: "typesafe", available: true, model: "jev-example", hasApiKey: true),
             ]
         )
     }

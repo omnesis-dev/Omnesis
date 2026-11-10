@@ -18,6 +18,7 @@ import {
   ensurePrivateDirSync,
   generateRecoveryCode,
   inferenceBackendApiKeySecretName,
+  decisionBackendApiKeySecretName,
   openRecoveryEnvelope,
   readInstallRootKey,
   writeInstallRootKey,
@@ -836,35 +837,38 @@ export function migrateInlineConfigApiKeys(
     return { configPresent: true, createdSecrets: 0, removedInlineKeys: 0 };
   }
   const inference = candidate.inference;
-  if (!isRecord(inference) || !isRecord(inference.backends)) {
+  if (!isRecord(inference)) {
     return { configPresent: true, createdSecrets: 0, removedInlineKeys: 0 };
   }
+  const collections = [
+    { backends: inference.backends, secretName: inferenceBackendApiKeySecretName },
+    { backends: inference.decisionBackends, secretName: decisionBackendApiKeySecretName },
+  ];
 
   const newRefs: string[] = [];
   let createdSecrets = 0;
   let removedInlineKeys = 0;
   try {
-    for (const [backendKey, value] of Object.entries(inference.backends)) {
-      if (!isRecord(value) || typeof value.apiKey !== "string") continue;
-      const existingRef =
-        typeof value.apiKeySecret === "string" && parseConfigSecretRef(value.apiKeySecret)
-          ? value.apiKeySecret
-          : null;
-      if (!existingRef) {
-        const ref = writeConfigSecretSync(
-          inferenceBackendApiKeySecretName(backendKey),
-          value.apiKey,
-          {
+    for (const { backends, secretName } of collections) {
+      if (!isRecord(backends)) continue;
+      for (const [backendKey, value] of Object.entries(backends)) {
+        if (!isRecord(value) || typeof value.apiKey !== "string") continue;
+        const existingRef =
+          typeof value.apiKeySecret === "string" && parseConfigSecretRef(value.apiKeySecret)
+            ? value.apiKeySecret
+            : null;
+        if (!existingRef) {
+          const ref = writeConfigSecretSync(secretName(backendKey), value.apiKey, {
             backend: opts.backend,
             configDir,
-          },
-        );
-        value.apiKeySecret = ref;
-        newRefs.push(ref);
-        createdSecrets += 1;
+          });
+          value.apiKeySecret = ref;
+          newRefs.push(ref);
+          createdSecrets += 1;
+        }
+        delete value.apiKey;
+        removedInlineKeys += 1;
       }
-      delete value.apiKey;
-      removedInlineKeys += 1;
     }
 
     if (removedInlineKeys === 0) {

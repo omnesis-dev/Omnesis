@@ -1,0 +1,5 @@
+---
+"omnesis": minor
+---
+
+The Decision model can now run on any decision model provider, set up from the portal, the iPhone and Android apps, or `omnesis decision`. Pick a provider from the presets — Ollaya or Ollama on this machine, or a hosted decision API (TypeSafe, OpenRouter, Ollama Cloud, Perplexity, Fireworks AI, Baseten, DeepInfra, Vercel AI Gateway, Cloudflare Workers AI, OpenAI, Microsoft Foundry, Fastino, AI/ML API) or any other System One server — and pick a model; the model lists come from each preset and the models.dev decision catalog. Each provider is a decision backend in `inference.decisionBackends`, assigned as `<backend>/<model>` on the stable path, with its key kept in the secret store. A model is asked one test question when it is saved, so a model the server lacks or a refused key is reported then instead of by every decision failing. Calibrate maps a model's scores onto TypeSafe Jev's, on about 300 invented emails Jev has scored, so the thresholds tuned on Jev keep their meaning. A chat model answering decisions now asks a few questions at a time instead of all at once.

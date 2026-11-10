@@ -4,8 +4,10 @@
 import Foundation
 
 // Wire types for the gateway's models surface — `/admin/models`, inference
-// backends, provider credentials and the local model lifecycle — decoded by
-// `AdminClient` and rendered by the Models screen.
+// backends and the local model lifecycle — decoded by `AdminClient` and
+// rendered by the Models screen. Provider credentials are in
+// `ModelCredentialWireTypes.swift`, the Decision model's setup in
+// `DecisionWireTypes.swift`.
 
 /// Display projection of a resolved model assignment — what the UI
 /// shows for "which model is configured for this role" / "which model
@@ -69,6 +71,9 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
     public let modelControls: [String: ModelControls]
     /// Saved inference behavior for each capability role.
     public let modelSettings: [String: ModelSettings]
+    /// Decision model providers with their models. Nil on a gateway that
+    /// predates decision backends: the Decision card is then read-only.
+    public let decisionPresets: [DecisionPresetView]?
 
     public init(
         assignmentDisplays: [String: ModelDisplay],
@@ -79,7 +84,8 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
         activeDownloads: [ActiveDownload] = [],
         presets: [ProviderPreset] = [],
         modelControls: [String: ModelControls] = [:],
-        modelSettings: [String: ModelSettings] = [:]
+        modelSettings: [String: ModelSettings] = [:],
+        decisionPresets: [DecisionPresetView]? = nil
     ) {
         self.assignmentDisplays = assignmentDisplays
         self.capabilities = capabilities
@@ -90,6 +96,7 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
         self.presets = presets
         self.modelControls = modelControls
         self.modelSettings = modelSettings
+        self.decisionPresets = decisionPresets
     }
 
     /// `activeDownloads` and `presets` are decoded leniently: an older gateway
@@ -97,7 +104,7 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
     /// overview decode.
     private enum CodingKeys: String, CodingKey {
         case assignmentDisplays, capabilities, inference, catalog, installed, activeDownloads, presets,
-             modelControls, modelSettings
+             modelControls, modelSettings, decisionPresets
     }
 
     public init(from decoder: Decoder) throws {
@@ -111,6 +118,7 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
         presets = try container.decodeIfPresent([ProviderPreset].self, forKey: .presets) ?? []
         modelControls = try container.decodeIfPresent([String: ModelControls].self, forKey: .modelControls) ?? [:]
         modelSettings = try container.decodeIfPresent([String: ModelSettings].self, forKey: .modelSettings) ?? [:]
+        decisionPresets = try container.decodeIfPresent([DecisionPresetView].self, forKey: .decisionPresets)
     }
 }
 
@@ -259,9 +267,9 @@ public struct CapabilityMeta: Decodable, Equatable, Sendable, Identifiable {
         role
     }
 
-    /// Whether this app can assign the role. It configures ordinary models
-    /// only, so a role served by a named backend family is shown read-only
-    /// and configured from the portal.
+    /// Whether the ordinary model picker can assign the role. A role served
+    /// by a named backend family has a setup of its own when the gateway
+    /// supports it (`DecisionModelSetup.isConfigurable`), else is read-only.
     public var configurableOnDevice: Bool {
         backendFamily == nil
     }
@@ -315,17 +323,29 @@ public struct InferenceOverview: Decodable, Equatable, Sendable {
     public let codex: CodexBackendStatus?
     public let assignments: [String: ResolvedAssignment]
     public let health: ModelHealth?
+    /// Whether models off the gateway's host may be sent data. Absent → unknown.
+    public let allowRemoteInference: Bool?
+    /// Where the built-in TypeSafe slot sends requests.
+    public let typesafe: TypeSafeEndpointStatus?
+    /// Decision backends by key. Absent on gateways that predate them.
+    public let decisionBackends: [String: DecisionBackendStatus]?
 
     public init(
         backends: [String: BackendStatus],
         codex: CodexBackendStatus? = nil,
         assignments: [String: ResolvedAssignment],
-        health: ModelHealth? = nil
+        health: ModelHealth? = nil,
+        allowRemoteInference: Bool? = nil,
+        typesafe: TypeSafeEndpointStatus? = nil,
+        decisionBackends: [String: DecisionBackendStatus]? = nil
     ) {
         self.backends = backends
         self.codex = codex
         self.assignments = assignments
         self.health = health
+        self.allowRemoteInference = allowRemoteInference
+        self.typesafe = typesafe
+        self.decisionBackends = decisionBackends
     }
 }
 
@@ -486,17 +506,41 @@ public struct CodexRemoveResult: Decodable, Equatable, Sendable {
 }
 
 /// A resolved per-role assignment, flattened to the fields the phone needs:
-/// the discriminant kind (`local`/`http`/`anthropic`/`replay`/`disabled`/
-/// `unresolved`), availability, and the unavailable reason.
+/// the discriminant kind (`local`/`http`/`anthropic`/`typesafe`/`decision`/
+/// `replay`/`disabled`/`unresolved`; an unknown kind decodes as is),
+/// availability, the unavailable reason, and the decision fields: the model,
+/// the decision backend's key and preset, and whether a calibration is stored.
 public struct ResolvedAssignment: Decodable, Equatable, Sendable {
     public let kind: String
     public let available: Bool?
     public let reason: String?
+    public let model: String?
+    public let backendKey: String?
+    public let preset: String?
+    public let onHost: Bool?
+    public let hasApiKey: Bool?
+    public let calibrated: Bool?
 
-    public init(kind: String, available: Bool? = nil, reason: String? = nil) {
+    public init(
+        kind: String,
+        available: Bool? = nil,
+        reason: String? = nil,
+        model: String? = nil,
+        backendKey: String? = nil,
+        preset: String? = nil,
+        onHost: Bool? = nil,
+        hasApiKey: Bool? = nil,
+        calibrated: Bool? = nil
+    ) {
         self.kind = kind
         self.available = available
         self.reason = reason
+        self.model = model
+        self.backendKey = backendKey
+        self.preset = preset
+        self.onHost = onHost
+        self.hasApiKey = hasApiKey
+        self.calibrated = calibrated
     }
 }
 
@@ -645,82 +689,6 @@ public struct CapabilityVerdict: Decodable, Equatable, Sendable {
         self.model = model
         self.supported = supported
         self.detail = detail
-    }
-}
-
-/// One row of `GET /admin/model-credentials` — a model-provider credential
-/// entry. Mirrors `ModelCredentialEntry` in
-/// `packages/gateway/src/model-credentials.ts`: the stable `fileKey`, the
-/// provider's type/name, the field spec the form renders, and whether
-/// credentials are currently configured. No secret value is ever included —
-/// only `configured`.
-public struct ModelCredentialEntry: Decodable, Equatable, Sendable, Identifiable {
-    public let fileKey: String
-    public let providerType: String
-    public let providerName: String
-    public let spec: CredentialSpec
-    public let configured: Bool
-
-    public var id: String {
-        fileKey
-    }
-
-    public init(
-        fileKey: String,
-        providerType: String,
-        providerName: String,
-        spec: CredentialSpec,
-        configured: Bool
-    ) {
-        self.fileKey = fileKey
-        self.providerType = providerType
-        self.providerName = providerName
-        self.spec = spec
-        self.configured = configured
-    }
-}
-
-/// The JSON-safe credential spec from a provider entry. Only the fields the
-/// credential form renders are decoded; the setup `wizard` blob is ignored
-/// (the phone shows a compact inline form, not the full CLI/portal wizard).
-/// Mirrors `SerializedProviderCredentialsSpec` in `@omnesis/core`.
-public struct CredentialSpec: Decodable, Equatable, Sendable {
-    public let fields: [CredentialField]
-
-    public init(fields: [CredentialField]) {
-        self.fields = fields
-    }
-}
-
-/// One field a provider's credentials require (e.g. `apiKey`). Mirrors
-/// `ProviderCredentialsField` in `@omnesis/core`. `secret` fields render as
-/// masked inputs and their values are never read back or logged.
-public struct CredentialField: Decodable, Equatable, Sendable, Identifiable {
-    public let name: String
-    public let label: String
-    public let placeholder: String?
-    public let secret: Bool?
-    public let pattern: String?
-    public let patternHint: String?
-
-    public var id: String {
-        name
-    }
-
-    public init(
-        name: String,
-        label: String,
-        placeholder: String? = nil,
-        secret: Bool? = nil,
-        pattern: String? = nil,
-        patternHint: String? = nil
-    ) {
-        self.name = name
-        self.label = label
-        self.placeholder = placeholder
-        self.secret = secret
-        self.pattern = pattern
-        self.patternHint = patternHint
     }
 }
 

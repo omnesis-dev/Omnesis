@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -50,6 +51,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -1538,7 +1540,7 @@ fun SetCredentialForm(
 }
 
 @Composable
-private fun Field(
+internal fun Field(
     label: String,
     placeholder: String,
     value: String,
@@ -1559,6 +1561,11 @@ private fun Field(
             enabled = enabled,
             isError = error != null,
             visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            keyboardOptions = if (password) {
+                KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false)
+            } else {
+                KeyboardOptions.Default
+            },
             modifier = Modifier.fillMaxWidth(),
         )
         if (error != null) {
@@ -1574,7 +1581,7 @@ private fun Field(
  * directly on the page background. Ports the iOS FlatSection.
  */
 @Composable
-private fun FlatSection(
+internal fun FlatSection(
     title: String,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,

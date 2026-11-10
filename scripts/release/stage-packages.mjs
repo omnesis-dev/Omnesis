@@ -47,6 +47,7 @@ const EXTRA_ASSETS = {
   "@omnesis/gateway": [
     { from: "portal", to: "portal" },
     { from: "models-dev", to: "models-dev" },
+    { from: "decision-reference", to: "decision-reference" },
     { from: "../../scripts/native-runtime-preflight.mjs", to: "native-runtime-preflight.mjs" },
     { from: "../../scripts/native-vector-compat.mjs", to: "native-vector-compat.mjs" },
     // Only the pins: the binaries are per platform, so an install fetches its

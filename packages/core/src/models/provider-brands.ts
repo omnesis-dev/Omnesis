@@ -9,6 +9,7 @@
 
 import { assertNever } from "../utils.js";
 import { getPreset } from "./provider-presets.js";
+import { findDecisionPreset } from "./decision-presets.js";
 import type { ResolvedAssignment } from "./backends.js";
 
 export interface ProviderBrand {
@@ -36,6 +37,17 @@ export const PROVIDER_BRANDS: Readonly<Record<string, ProviderBrand>> = {
   regolo: { id: "regolo", label: "Regolo AI" },
   openrouter: { id: "openrouter", label: "OpenRouter" },
   ollama: { id: "ollama", label: "Ollama" },
+  ollaya: { id: "ollaya", label: "Ollaya" },
+  "ollama-cloud": { id: "ollama-cloud", label: "Ollama Cloud" },
+  perplexity: { id: "perplexity", label: "Perplexity" },
+  baseten: { id: "baseten", label: "Baseten" },
+  deepinfra: { id: "deepinfra", label: "DeepInfra" },
+  vercel: { id: "vercel", label: "Vercel AI Gateway" },
+  cloudflare: { id: "cloudflare", label: "Cloudflare Workers AI" },
+  "cloudflare-workers-ai": { id: "cloudflare-workers-ai", label: "Cloudflare Workers AI" },
+  "azure-foundry": { id: "azure-foundry", label: "Microsoft Foundry" },
+  fastino: { id: "fastino", label: "Fastino" },
+  aimlapi: { id: "aimlapi", label: "AI/ML API" },
   local: { id: "local", label: "Local" },
   replay: { id: "replay", label: "Replay" },
   codex: { id: "codex", label: "Codex" },
@@ -77,6 +89,16 @@ export interface ModelDisplay {
  */
 function httpProviderId(backendKey: string): string {
   const preset = getPreset(backendKey);
+  if (preset && PROVIDER_BRANDS[preset.id]) return preset.id;
+  return "http";
+}
+
+/**
+ * Resolve the provider brand id for a decision backend: its preset's brand,
+ * or the generic `http` brand for a server added by hand.
+ */
+function decisionProviderId(presetId: string | undefined, url: string): string {
+  const preset = findDecisionPreset(presetId, url);
   if (preset && PROVIDER_BRANDS[preset.id]) return preset.id;
   return "http";
 }
@@ -157,6 +179,19 @@ export function resolveModelDisplay(assignment: ResolvedAssignment): ModelDispla
       return {
         providerId: brand.id,
         providerLabel: brand.label,
+        modelName: assignment.model,
+        available: assignment.available,
+        configured: true,
+      };
+    }
+    case "decision": {
+      const preset = findDecisionPreset(assignment.preset, assignment.url);
+      const brand = getProviderBrand(decisionProviderId(assignment.preset, assignment.url));
+      return {
+        // The models.dev provider id when the preset has one, so clients find
+        // its logo the way they do an HTTP backend's.
+        providerId: preset?.modelsDevId ?? brand.id,
+        providerLabel: brand.id === "http" ? assignment.backendKey : brand.label,
         modelName: assignment.model,
         available: assignment.available,
         configured: true,

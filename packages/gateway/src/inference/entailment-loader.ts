@@ -526,6 +526,7 @@ async function loadVerifier(
       });
     }
 
+    case "decision":
     case "typesafe":
       return null;
 
