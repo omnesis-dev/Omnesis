@@ -137,6 +137,7 @@
               <ul class="side-sub">
                 <li><a href="#realtime-voice">Realtime voice in Omnesis Demo</a></li>
                 <li><a href="#browser-extension">Browser extension</a></li>
+                <li><a href="#recordings">Recording conversations</a></li>
                 <li><a href="#brain">Omnesis Brain</a></li>
                 <li><a href="#watch">Omnesis Watch</a></li>
               </ul>
@@ -150,11 +151,11 @@
         <h1>Experimental</h1>
         <p class="docs-lead">
           <code>OMNESIS_EXPERIMENTAL=1</code> enables unstable features: browser-extension page
-          notes and Find, realtime voice conversations in the Omnesis Demo iOS app,
-          <strong>Omnesis Brain</strong>, which reads your data in the background and keeps cited
-          notes and loops and writes a morning brief, and <strong>Omnesis Watch</strong>, which
-          tells you or an agent when a condition becomes true. This page explains how to run,
-          observe and stop them.
+          notes and Find, realtime voice conversations in the Omnesis Demo iOS app, recording
+          in-person conversations on Android, <strong>Omnesis Brain</strong>, which reads your data
+          in the background and keeps cited notes and loops and writes a morning brief, and
+          <strong>Omnesis Watch</strong>, which tells you or an agent when a condition becomes true.
+          This page explains how to run, observe and stop them.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -363,6 +364,43 @@
           either panel; durably accepting a new note (including offline queuing), updating a saved
           note, or successfully opening a result closes it automatically. Failed saves retain your
           text. Agent searches reuse the portal's conversation and ephemeral tool components.
+        </p>
+
+        <h2 id="recordings">Recording conversations on Android</h2>
+        <p>
+          With <code>OMNESIS_EXPERIMENTAL=1</code> on the gateway, the Android app can record an
+          in-person conversation or meeting with the phone lying on the table, and the gateway turns
+          it into one searchable document. The app shows <strong>Recordings</strong> in its menu
+          only when the gateway advertises it, which also needs a runnable
+          <strong>Transcriber</strong>
+          assignment and gateway transcription switched on (the setting Tell Omnesis voice notes
+          use).
+        </p>
+        <p>
+          Recording runs in a foreground service with a persistent notification that shows the
+          elapsed time and offers pause and stop; it keeps recording with the screen off and stops
+          on its own after four hours. The app stores the audio in short chunks on the phone and
+          uploads each one in the background, on Wi-Fi only if you choose. A chunk the gateway has
+          not acknowledged is retried, so a dropped connection or a restarted app loses nothing.
+          Stretches of silence are not uploaded, and a phone call that takes the microphone is
+          marked in the transcript.
+        </p>
+        <p>
+          The gateway transcribes each chunk with the assigned transcriber as it arrives, behind
+          dictation and voice notes, so most of a long meeting is transcribed by the time it ends.
+          Hours of audio need a fast transcriber: a CPU-bound local Whisper model falls far behind,
+          so assign a GPU-backed or HTTP transcriber. The audio of each chunk is deleted from the
+          gateway once it is transcribed. When the recording is finished and every chunk is settled,
+          the gateway writes one document with a timestamp on each passage and lines for pauses,
+          silence, interruptions and parts that did not arrive. A recording the phone never finishes
+          is finished for it after twelve hours without an upload; parts the phone uploads after
+          that reopen it. The document lists you as a participant; speakers are not separated or
+          linked to people yet.
+        </p>
+        <p>
+          The document is read-only in the corpus. Deleting the recording from the app removes its
+          document and anything still stored for it on the gateway. Recording other people is your
+          responsibility: tell them, and follow the law where you record.
         </p>
 
         <h2 id="brain">Omnesis Brain</h2>

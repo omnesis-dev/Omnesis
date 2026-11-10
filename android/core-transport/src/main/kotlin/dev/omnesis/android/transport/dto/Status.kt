@@ -67,6 +67,14 @@ data class StatusSnapshot(
     val taskNoteCapture: Boolean
         get() = speaks("taskNoteCapture", 1)
 
+    /**
+     * The gateway takes a conversation recorded on the phone in chunks
+     * (`/recordings`, experimental): advertised only in experimental mode with
+     * a transcriber wired.
+     */
+    val recordings: Boolean
+        get() = speaks("recordings", 1)
+
     /** Whether the capability [name] advertises a version range that includes [version]. */
     private fun speaks(name: String, version: Int): Boolean {
         val range = ((capabilities as? JsonObject)?.get(name) as? JsonObject) ?: return false

@@ -195,6 +195,7 @@ describe("website docs", () => {
     expect([...subnav.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual([
       "#realtime-voice",
       "#browser-extension",
+      "#recordings",
       "#brain",
       "#watch",
     ]);
