@@ -50,6 +50,7 @@ import { createReleaseCheckTask } from "./release-check/task.js";
 import { GatewayHttpShutdown } from "./gateway-http-shutdown.js";
 import { seedWebSourceMeta } from "./sources/web/source-meta.js";
 import { dictationFeatureStatus } from "./dictation/index.js";
+import { createVoiceSeparatorSource } from "./recordings/voices/loader.js";
 import { documentsAwaitingTranscription } from "./voice-notes/index.js";
 import {
   bootBriefs,
@@ -1988,6 +1989,14 @@ const sweepService = new SweepService({
 let omnesisNotesRuntime: import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
 let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
 let recordingService: import("./recordings/index.js").RecordingTranscriptionService | undefined;
+// Recorded conversations tell speakers apart only in experimental mode, when
+// `inference.recordings.speakers` asks for it; read at boot.
+const voiceSeparatorSource = createVoiceSeparatorSource({
+  mode: experimentalEnabled()
+    ? (configStore.get().inference?.recordings?.speakers ?? "off")
+    : "off",
+  modelsDir: MODELS_DIR,
+});
 let agentConversationsRuntime:
   import("./sources/agent-conversations/index.js").AgentConversationsRuntime | undefined;
 // Held for the delivery loop below (policy review and operator-watch
@@ -2506,6 +2515,7 @@ const app = createServer(db, DB_PATH, {
   onVoiceNoteService: (service) => {
     voiceNoteService = service;
   },
+  voiceSeparator: () => voiceSeparatorSource.current(),
   onRecordingService: (service) => {
     recordingService = service;
   },
@@ -3758,6 +3768,7 @@ const doShutdown = async (): Promise<void> => {
   // is not awaited — it stays queued and is transcribed again after restart.
   voiceNoteService?.dispose();
   recordingService?.dispose();
+  await voiceSeparatorSource.dispose();
   // omnesis-notes: flush pending day-doc upserts (a capture that landed
   // within the debounce window must still project), then drop timers.
   if (omnesisNotesRuntime) {

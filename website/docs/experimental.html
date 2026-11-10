@@ -391,11 +391,27 @@
           Hours of audio need a fast transcriber: a CPU-bound local Whisper model falls far behind,
           so assign a GPU-backed or HTTP transcriber. The audio of each chunk is deleted from the
           gateway once it is transcribed. When the recording is finished and every chunk is settled,
-          the gateway writes one document with a timestamp on each passage and lines for pauses,
-          silence, interruptions and parts that did not arrive. A recording the phone never finishes
-          is finished for it after twelve hours without an upload; parts the phone uploads after
-          that reopen it. The document lists you as a participant; speakers are not separated or
-          linked to people yet.
+          the gateway writes one document with a timestamp on each sentence (on each passage with a
+          transcriber that reports no timings) and lines for pauses, silence, interruptions and
+          parts that did not arrive. A recording the phone never finishes is finished for it after
+          twelve hours without an upload; parts the phone uploads after that reopen it.
+        </p>
+        <p>
+          To tell the speakers apart, set <code>inference.recordings.speakers</code> to
+          <code>"local"</code> and restart the gateway. It then downloads two small voice models
+          (about 32&nbsp;MB) into its models directory and separates the voices of each chunk on the
+          gateway before the chunk's audio is deleted. When a recording's document is written, the
+          voices are grouped into Speaker&nbsp;1, Speaker&nbsp;2 and so on, and the voice data used
+          to compare them is deleted: nothing recognises a voice from one recording to the next.
+          Speakers are attributed per sentence, so this needs a transcriber that reports timings
+          (local Whisper, or an HTTP transcriber that answers <code>verbose_json</code>).
+        </p>
+        <p>
+          In the app, open a recording under <strong>Recent recordings</strong> to see each speaker
+          with the first things they said, and say who they are: you, a person in Omnesis, or just a
+          name. The document is rewritten with those names, and every person you choose is listed as
+          a participant, so the conversation appears with that person like their messages and emails
+          do. Two speakers can be the same person when one voice was split.
         </p>
         <p>
           The document is read-only in the corpus. Deleting the recording from the app removes its

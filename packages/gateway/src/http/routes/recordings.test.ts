@@ -20,6 +20,8 @@ import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { TranscribeService } from "../../transcribe/index.js";
 import { dictationFeatureStatus } from "../../dictation/index.js";
+import { ReplayVoiceSeparator } from "../../recordings/voices/replay-voice-separator.js";
+import { backfillOnePerson, findOrCreatePerson } from "../../people.js";
 import { MAX_RECORDING_CHUNK_BYTES } from "./recordings.js";
 import type { OmnesisConfig } from "@omnesis/config";
 import type { RecordingTranscriptionService } from "../../recordings/index.js";
@@ -34,6 +36,7 @@ let priorExperimental: string | undefined;
 let recordings: RecordingTranscriptionService | undefined;
 
 const START = "2026-03-02T09:00:00.000Z";
+const voices = new ReplayVoiceSeparator();
 
 function mintToken(scopes: readonly Scope[]): string {
   const dev = createDevice(db, { name: `test-${randomUUID()}`, kind: "android" });
@@ -117,6 +120,7 @@ beforeEach(() => {
     onRecordingService: (service) => {
       recordings = service;
     },
+    voiceSeparator: () => voices,
   });
 });
 
@@ -193,6 +197,81 @@ describe("recordings routes", () => {
     expect(documentContent(id)).toBeUndefined();
     expect((await request("GET", `/recordings/${id}`)).status).toBe(404);
     expect((await request("DELETE", `/recordings/${id}`)).status).toBe(404);
+  });
+
+  test("a session's speakers are listed, named, and their names written into the document", async () => {
+    const id = randomUUID();
+    await startRecording(id);
+    const script = JSON.stringify({
+      segments: [
+        { startMs: 0, endMs: 3_000, text: "Is the venue booked?", voice: "jamie" },
+        { startMs: 4_000, endMs: 6_000, text: "Booked for Friday.", voice: "owner" },
+      ],
+    });
+    await request("PUT", `/recordings/${id}/chunks/0`, chunkForm(0, script));
+    await request("POST", `/recordings/${id}/finish`, {
+      chunkCount: 1,
+      endedAt: "2026-03-02T09:01:00.000Z",
+    });
+    await vi.waitFor(async () => {
+      expect(await (await request("GET", `/recordings/${id}`)).json()).toMatchObject({
+        state: "done",
+      });
+    });
+    expect(documentContent(id)).toContain("[00:00:00] Speaker 1: Is the venue booked?");
+
+    const listed = await (await request("GET", "/recordings?limit=5")).json();
+    expect(listed).toEqual({
+      recordings: [expect.objectContaining({ id, speakers: 2, namedSpeakers: 0 })],
+    });
+    const speakers = await (await request("GET", `/recordings/${id}/speakers`)).json();
+    expect(speakers).toEqual({
+      speakers: [
+        expect.objectContaining({ speaker: 1, samples: ["Is the venue booked?"], personId: null }),
+        expect.objectContaining({ speaker: 2, samples: ["Booked for Friday."], isSelf: false }),
+      ],
+    });
+
+    const jamie = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Jamie", emails: ["jamie@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+    const named = await request("PUT", `/recordings/${id}/speakers/1`, { personId: jamie });
+    expect(named.status).toBe(200);
+    expect(await named.json()).toMatchObject({
+      speakers: [
+        expect.objectContaining({ speaker: 1, personId: jamie, name: "Jamie" }),
+        expect.objectContaining({ speaker: 2 }),
+      ],
+    });
+    expect((await request("PUT", `/recordings/${id}/speakers/2`, { self: true })).status).toBe(200);
+    await vi.waitFor(() => {
+      expect(documentContent(id)).toContain("[00:00:00] Jamie: Is the venue booked?");
+      expect(documentContent(id)).toContain("[00:00:04] You: Booked for Friday.");
+    });
+    // People are resolved by the background backfill; run it to the end.
+    while (backfillOnePerson(db) !== null) {
+      /* next document */
+    }
+    const linked = db
+      .prepare(
+        `SELECT dp.person_id FROM document_people dp JOIN documents d ON d.id = dp.document_id
+          WHERE d.external_id = ? AND dp.person_id = ?`,
+      )
+      .all(id, jamie);
+    expect(linked).toHaveLength(1);
+
+    expect((await request("PUT", `/recordings/${id}/speakers/9`, { self: true })).status).toBe(404);
+    expect((await request("PUT", `/recordings/${id}/speakers/0`, { self: true })).status).toBe(404);
+    expect(
+      (await request("PUT", `/recordings/${id}/speakers/1`, { personId: "nobody" })).status,
+    ).toBe(400);
+    expect(
+      (await request("PUT", `/recordings/${id}/speakers/1`, { self: true, name: "x" })).status,
+    ).toBe(400);
+    expect((await request("GET", `/recordings/${randomUUID()}/speakers`)).status).toBe(404);
   });
 
   test("retries are idempotent", async () => {

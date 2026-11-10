@@ -28,6 +28,7 @@ import {
   encodeFrame,
   type WhisperRequestHeader,
   type WhisperWorkerMessage,
+  timedSegments,
 } from "./whisper-worker-protocol.js";
 
 const log = createLogger("gateway:transcribe:whisper-worker");
@@ -36,6 +37,9 @@ const SMART_WHISPER_SPECIFIER = "smart-whisper";
 
 interface WhisperSegment {
   text: string;
+  /** Start and end, ms from the start of the clip. */
+  from?: number;
+  to?: number;
   lang?: string;
   confidence?: number;
 }
@@ -89,7 +93,14 @@ async function handleRequest(header: WhisperRequestHeader, pcm: Float32Array): P
       .join("")
       .trim();
     const language = segments[0]?.lang;
-    send({ type: "result", id: header.id, text, language, durationSec });
+    send({
+      type: "result",
+      id: header.id,
+      text,
+      language,
+      durationSec,
+      segments: timedSegments(segments),
+    });
   } catch (err) {
     send({ type: "error", id: header.id, error: err instanceof Error ? err.message : String(err) });
   }

@@ -466,6 +466,8 @@ export function createServer(
     onRecordingService?: (
       service: import("./recordings/index.js").RecordingTranscriptionService,
     ) => void;
+    /** Tells the voices of recorded conversations apart; null while that is off or not ready. */
+    voiceSeparator?: () => import("./recordings/voices/voices.js").VoiceSeparator | null;
     /** Replay-only settable briefs decision clock (backtest mirror). */
     briefsClock?: import("./brain/virtual-clock.js").MutableClock;
     /** The interest ledger, for the Debug → Cognition tab. Omitted ⇒ the tab's routes 404. */
@@ -1888,6 +1890,7 @@ export function createServer(
           externalId,
         ]),
       buildDocument: buildRecordingDocument,
+      ...(opts.voiceSeparator ? { voices: opts.voiceSeparator } : {}),
     });
     recordings.start();
     // The source is listed only in experimental mode; its display identity

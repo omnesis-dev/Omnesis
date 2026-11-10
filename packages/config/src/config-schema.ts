@@ -3548,6 +3548,21 @@ const dictationSettings = z
   })
   .strict();
 
+// Recorded conversations (experimental). `speakers` tells the voices of one
+// recording apart so the owner can say who each speaker is: `local` runs
+// sherpa-onnx on the gateway (its two models, about 32 MB, are downloaded
+// into the models directory on first use), `replay` is the test double.
+const recordingsSettings = z
+  .object({
+    speakers: z
+      .enum(["off", "local", "replay"])
+      .describe(
+        "Tell the speakers of a recorded conversation apart (experimental). `local` downloads two small voice models on first use and separates voices on this machine; voice vectors are deleted once each recording's transcript is written. Default `off`.",
+      )
+      .optional(),
+  })
+  .strict();
+
 // `typesafe` and `claude-code` are not reserved here: 0.6.0 accepted both, so
 // a configured backend of either name keeps serving the roles it did (see the
 // inference registry). Clients avoid them for new names.
@@ -3729,6 +3744,7 @@ const inference = z
       .strict()
       .optional(),
     dictation: dictationSettings.optional(),
+    recordings: recordingsSettings.optional(),
     transcriptionVocabulary: transcriptionVocabularySettings.optional(),
   })
   .strict();

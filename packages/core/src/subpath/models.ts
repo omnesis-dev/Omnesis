@@ -80,6 +80,7 @@ export type {
   CompleteCapability,
   TranscribeCapability,
   TranscriptionResult,
+  TranscriptSegment,
   OcrCapability,
   OcrResult,
   CapabilityRole,

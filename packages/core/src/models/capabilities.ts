@@ -70,6 +70,18 @@ export interface TranscriptionResult {
   language?: string;
   /** Duration of the source audio in seconds, when known. */
   durationSec?: number;
+  /**
+   * The transcript as timed segments, in order, when the backend reports
+   * them. Their texts joined make `text`.
+   */
+  segments?: TranscriptSegment[];
+}
+
+/** One timed stretch of a transcript; times are ms from the start of the audio. */
+export interface TranscriptSegment {
+  startMs: number;
+  endMs: number;
+  text: string;
 }
 
 /**
@@ -107,6 +119,11 @@ export interface TranscribeCapability {
       maxPromptTokens?: number;
       /** Aborted when nobody is waiting for the transcript any more. */
       signal?: AbortSignal;
+      /**
+       * Ask for timed `segments`. A backend that has them for free may return
+       * them regardless; one that needs a different request asks only when set.
+       */
+      segments?: boolean;
     },
   ): Promise<TranscriptionResult>;
   dispose(): Promise<void>;

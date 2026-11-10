@@ -81,7 +81,19 @@ describe("recording storage", () => {
     expect(settleRecordingChunk(db, "s1", 1, { status: "transcribed", text: "hi" })).toBe(true);
     expect(settleRecordingChunk(db, "s1", 1, { status: "failed" })).toBe(false);
     expect(readRecordingChunkAudio(db, "s1", 1)).toBeNull();
-    expect(listRecordingChunks(db, "s1")[1]).toMatchObject({ status: "transcribed", text: "hi" });
+    expect(listRecordingChunks(db, "s1")[1]).toMatchObject({
+      status: "transcribed",
+      text: "hi",
+      segments: null,
+    });
+  });
+
+  test("a transcript's timed segments are kept with it", () => {
+    session("s1");
+    chunk("s1", 0, new Uint8Array([7]));
+    const segments = [{ startMs: 250, endMs: 1_000, text: "hi" }];
+    settleRecordingChunk(db, "s1", 0, { status: "transcribed", text: "hi", segments });
+    expect(listRecordingChunks(db, "s1")[0]!.segments).toEqual(segments);
   });
 
   test("the device's count is checked against stored chunks inside the write", () => {

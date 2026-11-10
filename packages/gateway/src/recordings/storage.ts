@@ -15,7 +15,9 @@
  * (`recordings.*` writer ops); reads run on the gateway's read handle.
  */
 
+import { packVectors, unpackVectors, type VoiceWindow } from "./voices/voices.js";
 import type Database from "better-sqlite3";
+import type { TranscriptSegment } from "@omnesis/core";
 
 type Db = Database.Database;
 
@@ -77,6 +79,17 @@ export type InsertRecordingChunkOutcome =
 
 export type FinishRecordingOutcome = "finished" | "already" | "conflict" | "missing";
 
+/** How a pending chunk settles: its transcript, or that it could not be transcribed. */
+export type RecordingChunkSettlement =
+  | {
+      status: "transcribed";
+      text: string;
+      segments?: TranscriptSegment[];
+      /** Voice windows of the chunk and one vector each, kept until the session's voices are grouped. */
+      voices?: { windows: VoiceWindow[]; vectors: Float32Array[] };
+    }
+  | { status: "failed" };
+
 export interface RecordingChunk {
   sessionId: string;
   seq: number;
@@ -90,6 +103,10 @@ export interface RecordingChunk {
   mimeType: string | null;
   status: RecordingChunkStatus;
   text: string | null;
+  /** The transcript as timed segments, ms from the start of this chunk, when the transcriber gave them. */
+  segments: TranscriptSegment[] | null;
+  /** Where each voice speaks in the chunk, with its session speaker once grouped. */
+  voices: VoiceWindow[] | null;
   attempts: number;
   nextAttemptAt: string;
   receivedAt: string;
@@ -147,6 +164,11 @@ export function createRecordingTables(db: Db): void {
       mime_type TEXT,
       status TEXT NOT NULL,
       text TEXT,
+      segments TEXT,
+      voices TEXT,
+      -- Voice vectors of the windows in voices, deleted when the session's
+      -- voices are grouped into speakers; never kept past that.
+      voice_vectors BLOB,
       attempts INTEGER NOT NULL DEFAULT 0,
       next_attempt_at TEXT NOT NULL,
       received_at TEXT NOT NULL,
@@ -154,6 +176,14 @@ export function createRecordingTables(db: Db): void {
     );
     CREATE INDEX IF NOT EXISTS idx_recording_chunks_due
       ON recording_chunks(status, next_attempt_at);
+    CREATE TABLE IF NOT EXISTS recording_speakers (
+      session_id TEXT NOT NULL REFERENCES recording_sessions(id) ON DELETE CASCADE,
+      speaker INTEGER NOT NULL,
+      person_id TEXT,
+      is_self INTEGER NOT NULL DEFAULT 0,
+      name TEXT,
+      PRIMARY KEY (session_id, speaker)
+    );
   `);
 }
 
@@ -368,13 +398,15 @@ interface ChunkRow {
   mime_type: string | null;
   status: string;
   text: string | null;
+  segments: string | null;
+  voices: string | null;
   attempts: number;
   next_attempt_at: string;
   received_at: string;
 }
 
 const CHUNK_COLUMNS = `session_id, seq, started_at, duration_ms, silent, interrupted, mime_type,
-  status, text, attempts, next_attempt_at, received_at`;
+  status, text, segments, voices, attempts, next_attempt_at, received_at`;
 
 function toChunk(row: ChunkRow): RecordingChunk {
   return {
@@ -387,6 +419,8 @@ function toChunk(row: ChunkRow): RecordingChunk {
     mimeType: row.mime_type,
     status: row.status as RecordingChunkStatus,
     text: row.text,
+    segments: row.segments ? (JSON.parse(row.segments) as TranscriptSegment[]) : null,
+    voices: row.voices ? (JSON.parse(row.voices) as VoiceWindow[]) : null,
     attempts: row.attempts,
     nextAttemptAt: row.next_attempt_at,
     receivedAt: row.received_at,
@@ -503,14 +537,26 @@ export function settleRecordingChunk(
   db: Db,
   sessionId: string,
   seq: number,
-  outcome: { status: "transcribed"; text: string } | { status: "failed" },
+  outcome: RecordingChunkSettlement,
 ): boolean {
+  const transcribed = outcome.status === "transcribed" ? outcome : null;
+  const segments = transcribed?.segments?.length ? JSON.stringify(transcribed.segments) : null;
+  const voices = transcribed?.voices?.windows.length ? transcribed.voices : null;
   const result = db
     .prepare(
-      `UPDATE recording_chunks SET status = ?, text = ?, audio = NULL
+      `UPDATE recording_chunks
+          SET status = ?, text = ?, segments = ?, voices = ?, voice_vectors = ?, audio = NULL
         WHERE session_id = ? AND seq = ? AND status = 'pending'`,
     )
-    .run(outcome.status, outcome.status === "transcribed" ? outcome.text : null, sessionId, seq);
+    .run(
+      outcome.status,
+      transcribed?.text ?? null,
+      segments,
+      voices ? JSON.stringify(voices.windows) : null,
+      voices ? packVectors(voices.vectors) : null,
+      sessionId,
+      seq,
+    );
   if (result.changes === 0) return false;
   db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(sessionId);
   return true;
@@ -536,4 +582,126 @@ export function countRecordingChunks(
     if (row.status in counts) counts[row.status as RecordingChunkStatus] = row.n;
   }
   return counts;
+}
+
+// ── speakers ──────────────────────────────────────────────────────────
+
+/** Who one of a session's speakers is, as the owner said. */
+export interface RecordingSpeaker {
+  sessionId: string;
+  /** 1-based, in order of first appearance. */
+  speaker: number;
+  personId: string | null;
+  isSelf: boolean;
+  /** A name given without linking a person. */
+  name: string | null;
+}
+
+/** How the owner maps one speaker. */
+export type RecordingSpeakerMapping =
+  | { kind: "self" }
+  | { kind: "person"; personId: string }
+  | { kind: "name"; name: string }
+  | { kind: "clear" };
+
+/** The voice windows of a session's chunks whose vectors are not grouped yet. */
+export function listUngroupedRecordingVoices(
+  db: Db,
+  sessionId: string,
+): Array<{ seq: number; windows: VoiceWindow[]; vectors: Float32Array[] }> {
+  return db
+    .prepare<[string], { seq: number; voices: string; voice_vectors: Buffer }>(
+      `SELECT seq, voices, voice_vectors FROM recording_chunks
+        WHERE session_id = ? AND voice_vectors IS NOT NULL AND voices IS NOT NULL
+        ORDER BY seq`,
+    )
+    .all(sessionId)
+    .map((row) => {
+      const windows = JSON.parse(row.voices) as VoiceWindow[];
+      return { seq: row.seq, windows, vectors: unpackVectors(row.voice_vectors, windows.length) };
+    });
+}
+
+/**
+ * Record each chunk's windows with their session speakers, add the speakers
+ * not seen before, and delete every voice vector of the session. Does not
+ * mark the session changed: the caller writes its document next.
+ */
+export function assignRecordingVoices(
+  db: Db,
+  sessionId: string,
+  chunks: ReadonlyArray<{ seq: number; windows: VoiceWindow[] }>,
+): void {
+  const update = db.prepare(
+    `UPDATE recording_chunks SET voices = ? WHERE session_id = ? AND seq = ?`,
+  );
+  const speakers = new Set<number>();
+  for (const chunk of chunks) {
+    update.run(JSON.stringify(chunk.windows), sessionId, chunk.seq);
+    for (const w of chunk.windows) if (w.speaker !== undefined) speakers.add(w.speaker);
+  }
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO recording_speakers (session_id, speaker) VALUES (?, ?)`,
+  );
+  for (const speaker of speakers) insert.run(sessionId, speaker);
+  db.prepare(
+    `UPDATE recording_chunks SET voice_vectors = NULL
+      WHERE session_id = ? AND voice_vectors IS NOT NULL`,
+  ).run(sessionId);
+}
+
+interface SpeakerRow {
+  session_id: string;
+  speaker: number;
+  person_id: string | null;
+  is_self: number;
+  name: string | null;
+}
+
+export function listRecordingSpeakers(db: Db, sessionId: string): RecordingSpeaker[] {
+  return db
+    .prepare<[string], SpeakerRow>(
+      `SELECT * FROM recording_speakers WHERE session_id = ? ORDER BY speaker`,
+    )
+    .all(sessionId)
+    .map((row) => ({
+      sessionId: row.session_id,
+      speaker: row.speaker,
+      personId: row.person_id,
+      isSelf: row.is_self === 1,
+      name: row.name,
+    }));
+}
+
+/**
+ * Map one speaker of a session and mark the session changed so its document
+ * is written again. False when the session has no such speaker.
+ */
+export function setRecordingSpeaker(
+  db: Db,
+  sessionId: string,
+  speaker: number,
+  mapping: RecordingSpeakerMapping,
+): boolean {
+  const personId = mapping.kind === "person" ? mapping.personId : null;
+  const name = mapping.kind === "name" ? mapping.name : null;
+  const changed = db
+    .prepare(
+      `UPDATE recording_speakers SET person_id = ?, is_self = ?, name = ?
+        WHERE session_id = ? AND speaker = ?`,
+    )
+    .run(personId, mapping.kind === "self" ? 1 : 0, name, sessionId, speaker).changes;
+  if (changed === 0) return false;
+  db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(sessionId);
+  return true;
+}
+
+/** The most recently started sessions, newest first. */
+export function listRecentRecordingSessions(db: Db, limit: number): RecordingSession[] {
+  return db
+    .prepare<[number], SessionRow>(
+      `SELECT * FROM recording_sessions ORDER BY started_at DESC LIMIT ?`,
+    )
+    .all(limit)
+    .map(toSession);
 }

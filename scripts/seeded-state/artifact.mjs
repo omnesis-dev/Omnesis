@@ -66,6 +66,7 @@ const FORBIDDEN_TABLES = new Set([
   // unfinished work; a clone gets the finished transcripts as documents.
   "recording_chunks",
   "recording_sessions",
+  "recording_speakers",
   "access_audit_events",
   "access_grant_capabilities",
   "access_grants",

@@ -4,8 +4,12 @@
 /**
  * Renders one recorded conversation into the text of its document.
  *
- * Each chunk's transcript becomes one paragraph stamped with its offset from
- * the start of the recording (`[00:12:30]`). What is not speech is said in a
+ * Each transcript segment becomes one line stamped with its offset from the
+ * start of the recording (`[00:12:30]`); a chunk the transcriber returned no
+ * timings for is one paragraph at the chunk's offset. When the voices were
+ * told apart, a line starts with who spoke it ("Maya Reeves:", "You:",
+ * "Speaker 2:"), and consecutive segments of one speaker within a chunk are
+ * one line. What is not speech is said in a
  * line of its own, so a reader can tell a pause from a lost upload: a run of
  * silence, a stretch where recording was paused, the microphone taken by a
  * call, a chunk that could not be transcribed, and chunks that never arrived.
@@ -13,8 +17,10 @@
  * Pure: the same session and chunks always render the same text.
  */
 
-// See #858 — planned: one line per transcriber segment instead of per chunk.
+import type { TranscriptSegment } from "@omnesis/core";
+
 import type { RecordingChunk, RecordingSession } from "../../recordings/storage.js";
+import type { VoiceWindow } from "../../recordings/voices/voices.js";
 
 /** A pause between two chunks shorter than this is the recorder's own seam, not a gap. */
 const GAP_THRESHOLD_MS = 5_000;
@@ -69,7 +75,11 @@ export function recordingTitle(session: RecordingSession): string {
 export function renderRecording(
   session: RecordingSession,
   chunks: readonly RecordingChunk[],
+  /** What to call each speaker; an unnamed one is "Speaker N". */
+  speakerNames: ReadonlyMap<number, string> = new Map(),
 ): RenderedRecording {
+  const label = (speaker: number | undefined): string =>
+    speaker === undefined ? "" : `${speakerNames.get(speaker) ?? `Speaker ${speaker}`}: `;
   const start = Date.parse(session.startedAt);
   const sorted = [...chunks].sort((a, b) => a.seq - b.seq);
   const lines: string[] = [];
@@ -120,7 +130,13 @@ export function renderRecording(
       lines.push(`[${formatOffset(offset)}] — this part could not be transcribed —`);
     } else if (chunk.status === "transcribed") {
       hasSpeech = true;
-      lines.push(`[${formatOffset(offset)}] ${text}`);
+      if (chunk.segments && chunk.segments.length > 0) {
+        for (const turn of speakerTurns(chunk.segments, chunk.voices ?? [])) {
+          lines.push(`[${formatOffset(offset + turn.startMs)}] ${label(turn.speaker)}${turn.text}`);
+        }
+      } else {
+        lines.push(`[${formatOffset(offset)}] ${text}`);
+      }
     }
   }
   flushSilence();
@@ -145,4 +161,43 @@ export function renderRecording(
     durationSec: Math.round(durationMs / 1000),
     hasSpeech,
   };
+}
+
+/**
+ * The chunk's segments as lines: each segment goes to the speaker whose voice
+ * windows overlap it most (none when no window overlaps it), and consecutive
+ * segments of one speaker are joined.
+ */
+export function speakerTurns(
+  segments: readonly TranscriptSegment[],
+  windows: readonly VoiceWindow[],
+): Array<{ startMs: number; text: string; speaker?: number }> {
+  const turns: Array<{ startMs: number; text: string; speaker?: number }> = [];
+  for (const segment of segments) {
+    const overlap = new Map<number, number>();
+    for (const w of windows) {
+      if (w.speaker === undefined) continue;
+      const ms = Math.min(segment.endMs, w.endMs) - Math.max(segment.startMs, w.startMs);
+      if (ms > 0) overlap.set(w.speaker, (overlap.get(w.speaker) ?? 0) + ms);
+    }
+    let speaker: number | undefined;
+    let most = 0;
+    for (const [s, ms] of overlap) {
+      if (ms > most) {
+        most = ms;
+        speaker = s;
+      }
+    }
+    const last = turns[turns.length - 1];
+    if (last && speaker !== undefined && last.speaker === speaker) {
+      last.text = `${last.text} ${segment.text}`;
+    } else {
+      turns.push({
+        startMs: segment.startMs,
+        text: segment.text,
+        ...(speaker !== undefined ? { speaker } : {}),
+      });
+    }
+  }
+  return turns;
 }

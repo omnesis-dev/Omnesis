@@ -544,12 +544,17 @@ import {
   rescheduleRecordingChunk,
   settleRecordingChunk,
   markRecordingSessionProjected,
+  assignRecordingVoices,
+  setRecordingSpeaker,
+  type RecordingSpeakerMapping,
   deleteRecordingSession,
   type FinishRecordingOutcome,
   type InsertRecordingChunkOutcome,
+  type RecordingChunkSettlement,
   type NewRecordingSession,
   type NewRecordingChunk,
 } from "./recordings/storage.js";
+import type { VoiceWindow } from "./recordings/voices/voices.js";
 import { insertAgentMessage, type AgentMessageRow } from "./sources/agent-conversations/storage.js";
 import { resolveDerivationStages, type DerivationStageId } from "./domain/DocumentDerivation.js";
 import {
@@ -2276,10 +2281,21 @@ export interface WriteGate extends KnowledgeWriteGate {
   settleRecordingChunk(
     sessionId: string,
     seq: number,
-    outcome: { status: "transcribed"; text: string } | { status: "failed" },
+    outcome: RecordingChunkSettlement,
   ): Promise<boolean>;
   /** Stamp when a session's document was last written. */
   markRecordingSessionProjected(id: string, revision: number): Promise<void>;
+  /** Record a session's grouped speakers and delete its voice vectors. */
+  assignRecordingVoices(
+    sessionId: string,
+    chunks: Array<{ seq: number; windows: VoiceWindow[] }>,
+  ): Promise<void>;
+  /** Map one speaker of a session; false when it has no such speaker. */
+  setRecordingSpeaker(
+    sessionId: string,
+    speaker: number,
+    mapping: RecordingSpeakerMapping,
+  ): Promise<boolean>;
   /** Delete a session and its chunks. */
   deleteRecordingSession(id: string): Promise<boolean>;
 
@@ -2996,6 +3012,10 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("recordings.settleChunk", [sessionId, seq, outcome]),
     markRecordingSessionProjected: (id, revision) =>
       call("recordings.markProjected", [id, revision]),
+    assignRecordingVoices: (sessionId, chunks) =>
+      call("recordings.assignVoices", [sessionId, chunks]),
+    setRecordingSpeaker: (sessionId, speaker, mapping) =>
+      call("recordings.setSpeaker", [sessionId, speaker, mapping]),
     deleteRecordingSession: (id) => call("recordings.deleteSession", [id]),
 
     appendAgentMessage: (message) => call("agentMessages.appendMessage", [message]),
@@ -3724,6 +3744,10 @@ export function directWriteGate(db: Db): WriteGate {
       settleRecordingChunk(db, sessionId, seq, outcome),
     markRecordingSessionProjected: async (id, revision) =>
       markRecordingSessionProjected(db, id, revision),
+    assignRecordingVoices: async (sessionId, chunks) =>
+      assignRecordingVoices(db, sessionId, chunks),
+    setRecordingSpeaker: async (sessionId, speaker, mapping) =>
+      setRecordingSpeaker(db, sessionId, speaker, mapping),
     deleteRecordingSession: async (id) => deleteRecordingSession(db, id),
 
     appendAgentMessage: async (message) => insertAgentMessage(db, message),

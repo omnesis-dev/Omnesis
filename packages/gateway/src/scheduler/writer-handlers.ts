@@ -28,7 +28,6 @@ import {
   cancelNoteHandoff,
   type NoteHandoff,
 } from "../brain/note-agent/handoffs.js";
-import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
 import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
 
@@ -86,6 +85,7 @@ function sliceDeadline(token: PreemptToken, sliceMs: number): () => boolean {
 const NEAR_DUP_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
+import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
 import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "../realtime/live-voice-usage.js";
 import {
   applyBriefReaction,
@@ -522,10 +522,14 @@ import {
   rescheduleRecordingChunk,
   settleRecordingChunk,
   markRecordingSessionProjected,
+  assignRecordingVoices,
+  setRecordingSpeaker,
+  type RecordingSpeakerMapping,
   deleteRecordingSession,
   type NewRecordingSession,
   type NewRecordingChunk,
   type InsertRecordingChunkOutcome,
+  type RecordingChunkSettlement,
   type FinishRecordingOutcome,
 } from "../recordings/storage.js";
 import {
@@ -644,6 +648,7 @@ import {
 } from "../data/pairing-generation-fence.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
+import type { VoiceWindow } from "../recordings/voices/voices.js";
 import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
 import type {
@@ -2041,10 +2046,21 @@ export const writerHandlers = {
     db: Db,
     sessionId: string,
     seq: number,
-    outcome: { status: "transcribed"; text: string } | { status: "failed" },
+    outcome: RecordingChunkSettlement,
   ): boolean => settleRecordingChunk(db, sessionId, seq, outcome),
   "recordings.markProjected": (db: Db, id: string, revision: number) =>
     markRecordingSessionProjected(db, id, revision),
+  "recordings.assignVoices": (
+    db: Db,
+    sessionId: string,
+    chunks: Array<{ seq: number; windows: VoiceWindow[] }>,
+  ) => assignRecordingVoices(db, sessionId, chunks),
+  "recordings.setSpeaker": (
+    db: Db,
+    sessionId: string,
+    speaker: number,
+    mapping: RecordingSpeakerMapping,
+  ): boolean => setRecordingSpeaker(db, sessionId, speaker, mapping),
   "recordings.deleteSession": (db: Db, id: string): boolean => deleteRecordingSession(db, id),
   "notes.applyTranscript": (db: Db, id: string, expected: string, text: string, nowIso: string) =>
     applyNoteEntryTranscript(db, id, expected, text, nowIso),

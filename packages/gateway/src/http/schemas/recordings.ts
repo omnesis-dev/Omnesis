@@ -76,3 +76,32 @@ export const finishRecordingBody = z
     endedAt: isoDateTime,
   })
   .strict();
+
+/** A speaker of a session: 1-based, in order of first appearance. */
+export const recordingSpeakerNumber = z
+  .string()
+  .regex(/^\d{1,4}$/, "must be a speaker number")
+  .transform(Number)
+  .pipe(z.number().int().min(1));
+
+/**
+ * Who one speaker is: the owner, a person (by id), a name without a person,
+ * or nobody in particular again.
+ */
+export const setRecordingSpeakerBody = z.union([
+  z.object({ self: z.literal(true) }).strict(),
+  z.object({ personId: z.string().min(1).max(128) }).strict(),
+  z.object({ name: z.string().trim().min(1).max(120) }).strict(),
+  z.object({ clear: z.literal(true) }).strict(),
+]);
+
+export const listRecordingsQuery = z
+  .object({
+    limit: z
+      .string()
+      .regex(/^\d{1,3}$/)
+      .transform(Number)
+      .pipe(z.number().int().min(1).max(100))
+      .optional(),
+  })
+  .strict();
