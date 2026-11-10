@@ -2887,12 +2887,22 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
     "refuses a cloud chat runtime (%s) for the decision role",
     (value) => {
       const reg = registryWithTypeSafeKey(true);
-      reg.loadConfig({
+      const config = {
         inference: { allowRemoteInference: true, assignments: { decision: value } },
-      } as OmnesisConfig);
-      expect(reg.resolve("decision")).toMatchObject({
-        kind: "unresolved",
-        reason: expect.stringMatching(/needs token probabilities/),
+      } as OmnesisConfig;
+      // Each mode names only the decision backends it accepts.
+      withExperimentalEnv(undefined, () => {
+        reg.loadConfig(config);
+        const reason = (reg.resolve("decision") as { kind: string; reason: string }).reason;
+        expect(reason).toMatch(/cannot serve the Decision model/);
+        expect(reason).not.toMatch(/GGUF/);
+      });
+      withExperimentalEnv("1", () => {
+        reg.loadConfig(config);
+        expect(reg.resolve("decision")).toMatchObject({
+          kind: "unresolved",
+          reason: expect.stringMatching(/needs token probabilities.*local GGUF chat model/),
+        });
       });
     },
   );
