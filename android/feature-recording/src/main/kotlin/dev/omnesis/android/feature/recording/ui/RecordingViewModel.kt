@@ -18,6 +18,7 @@ import dev.omnesis.android.feature.recording.RecordingSettings
 import dev.omnesis.android.feature.recording.RecordingState
 import dev.omnesis.android.feature.recording.RecordingUploadScheduler
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.RecordingSummaryDto
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -62,6 +63,26 @@ data class RecentRecording(
     }
 }
 
+/** One of the gateway's recent recordings, as the list shows it. */
+data class GatewayRecording(
+    val id: String,
+    val title: String,
+    val when_: String,
+    /** `recording`, `transcribing`, `done`, or an unknown state as sent. */
+    val state: String,
+    val speakers: Int,
+    val namedSpeakers: Int,
+)
+
+/** The gateway's recent recordings; quiet about failure, the recorder stays first. */
+sealed interface GatewayRecent {
+    /** Not asked: the gateway takes no recordings. */
+    data object Hidden : GatewayRecent
+    data object Loading : GatewayRecent
+    data class Loaded(val recordings: List<GatewayRecording>) : GatewayRecent
+    data object Failed : GatewayRecent
+}
+
 data class RecordingUiState(
     val availability: RecordingAvailability.Availability = RecordingAvailability.Availability.UNAVAILABLE,
     val recording: RecordingState.Active? = null,
@@ -73,6 +94,7 @@ data class RecordingUiState(
     val starting: Boolean = false,
     val recent: List<RecentRecording> = emptyList(),
     val deleteError: String? = null,
+    val gatewayRecent: GatewayRecent = GatewayRecent.Hidden,
 )
 
 @HiltViewModel
@@ -88,10 +110,16 @@ class RecordingViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(RecordingUiState(wifiOnly = settings.wifiOnly))
     private var startTimeout: Job? = null
+    private var gatewayLoad: Job? = null
     val state: StateFlow<RecordingUiState> = _state.asStateFlow()
 
     init {
-        viewModelScope.launch { availability.state.collect { a -> _state.update { it.copy(availability = a) } } }
+        viewModelScope.launch {
+            availability.state.collect { a ->
+                _state.update { it.copy(availability = a) }
+                refreshGatewayRecent()
+            }
+        }
         viewModelScope.launch {
             controller.state.collect { s ->
                 val active = s as? RecordingState.Active
@@ -105,7 +133,13 @@ class RecordingViewModel @Inject constructor(
             while (isActive) {
                 val active = _state.value.recording
                 _state.update { it.copy(elapsedMs = active?.elapsedMs(System.currentTimeMillis()) ?: 0) }
-                if (tick++ % 5 == 0) refreshRecent()
+                if (tick % 5 == 0) refreshRecent()
+                // A recording the gateway is still transcribing changes state on its own.
+                val shown = _state.value.gatewayRecent
+                if (tick > 0 && tick % 30 == 0 && shown is GatewayRecent.Loaded && shown.recordings.any { it.state != "done" }) {
+                    refreshGatewayRecent()
+                }
+                tick++
                 delay(1_000)
             }
         }
@@ -177,6 +211,37 @@ class RecordingViewModel @Inject constructor(
             withContext(Dispatchers.IO) { files.sessionDir(id).deleteRecursively() }
             _state.update { it.copy(deleteError = null) }
             refreshRecent()
+            refreshGatewayRecent()
+        }
+    }
+
+    /**
+     * Re-read the gateway's recent recordings — on resume, after a delete, and while
+     * one is still transcribing. A list already showing stays during the refresh.
+     */
+    fun refreshGatewayRecent() {
+        if (_state.value.availability == RecordingAvailability.Availability.UNAVAILABLE) {
+            gatewayLoad?.cancel()
+            _state.update { it.copy(gatewayRecent = GatewayRecent.Hidden) }
+            return
+        }
+        if (gatewayLoad?.isActive == true) return
+        gatewayLoad = viewModelScope.launch {
+            _state.update {
+                if (it.gatewayRecent is GatewayRecent.Loaded) it else it.copy(gatewayRecent = GatewayRecent.Loading)
+            }
+            val gateway = sessions.gateway()
+            val next = try {
+                gateway?.recent(GATEWAY_RECENT_LIMIT)?.map { it.toGatewayRecording() }
+                    ?.let { GatewayRecent.Loaded(it) }
+                    ?: GatewayRecent.Failed
+            } catch (_: GatewayException) {
+                GatewayRecent.Failed
+            }
+            _state.update { s ->
+                // A refresh that failed keeps the list it already had.
+                if (next is GatewayRecent.Failed && s.gatewayRecent is GatewayRecent.Loaded) s else s.copy(gatewayRecent = next)
+            }
         }
     }
 
@@ -193,7 +258,13 @@ class RecordingViewModel @Inject constructor(
 
     companion object {
         private const val START_TIMEOUT_MS = 5_000L
+        private const val GATEWAY_RECENT_LIMIT = 20
         private val WHEN = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", Locale.getDefault())
+
+        fun RecordingSummaryDto.toGatewayRecording(zone: ZoneId = ZoneId.systemDefault()): GatewayRecording {
+            val time = runCatching { WHEN.withZone(zone).format(Instant.parse(startedAt)) }.getOrDefault(startedAt)
+            return GatewayRecording(id, title.ifBlank { "Conversation" }, time, state, speakers, namedSpeakers)
+        }
 
         fun OutboxSession.toRecent(partsLeft: Int, zone: ZoneId = ZoneId.systemDefault()): RecentRecording {
             val time = WHEN.withZone(zone).format(Instant.parse(startedAt))

@@ -15,15 +15,24 @@ import dev.omnesis.android.feature.recording.ui.RecordingAvailability
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.transport.client.GatewayClient
 import dev.omnesis.android.transport.client.RecordingsClient
+import dev.omnesis.android.transport.client.SearchClient
 import dev.omnesis.android.transport.dto.FinishRecordingBody
+import dev.omnesis.android.transport.dto.PersonSummary
 import dev.omnesis.android.transport.dto.RecordingChunkMetadata
+import dev.omnesis.android.transport.dto.RecordingSpeakerDto
+import dev.omnesis.android.transport.dto.RecordingSummaryDto
+import dev.omnesis.android.transport.dto.SpeakerMapping
 import dev.omnesis.android.transport.dto.StartRecordingBody
 import kotlinx.coroutines.flow.StateFlow
 
-/** [RecordingsGateway] over the session's [RecordingsClient], with [GatewayClient] for the capability check. */
+/**
+ * [RecordingsGateway] over the session's [RecordingsClient], with [GatewayClient] for the
+ * capability check and [SearchClient] for choosing who a speaker is.
+ */
 class ClientRecordingsGateway(
     private val client: RecordingsClient,
     private val gateway: GatewayClient,
+    private val search: SearchClient,
     private val deviceId: String?,
 ) : RecordingsGateway {
     override suspend fun accepting(): Boolean = gateway.status().let { it.experimental && it.recordings }
@@ -62,6 +71,16 @@ class ClientRecordingsGateway(
     }
 
     override suspend fun delete(sessionId: String) = client.delete(sessionId)
+
+    override suspend fun recent(limit: Int): List<RecordingSummaryDto> = client.list(limit)
+
+    override suspend fun speakers(sessionId: String): List<RecordingSpeakerDto> = client.speakers(sessionId)
+
+    override suspend fun setSpeaker(sessionId: String, speaker: Int, mapping: SpeakerMapping): List<RecordingSpeakerDto> =
+        client.setSpeaker(sessionId, speaker, mapping)
+
+    override suspend fun searchPeople(query: String, limit: Int): List<PersonSummary> =
+        search.people(query.ifBlank { null }, limit)
 }
 
 @Module
@@ -75,7 +94,7 @@ object RecordingSessionModule {
     @Provides
     fun provideRecordingSessionProvider(sessionManager: SessionManager): RecordingSessionProvider =
         RecordingSessionProvider {
-            sessionManager.session?.let { ClientRecordingsGateway(it.recordings, it.gateway, it.pairing.deviceId) }
+            sessionManager.session?.let { ClientRecordingsGateway(it.recordings, it.gateway, it.search, it.pairing.deviceId) }
         }
 
     @Provides

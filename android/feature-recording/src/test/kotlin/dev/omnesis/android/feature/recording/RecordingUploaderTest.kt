@@ -4,6 +4,7 @@
 package dev.omnesis.android.feature.recording
 
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.SpeakerMapping
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -42,6 +43,11 @@ class RecordingUploaderTest {
         }
         override suspend fun finish(sessionId: String, chunkCount: Int, endedAt: String) = call("finish:$sessionId:$chunkCount")
         override suspend fun delete(sessionId: String) = call("delete:$sessionId")
+        override suspend fun recent(limit: Int) = error("not used by the uploader")
+        override suspend fun speakers(sessionId: String) = error("not used by the uploader")
+        override suspend fun setSpeaker(sessionId: String, speaker: Int, mapping: SpeakerMapping) =
+            error("not used by the uploader")
+        override suspend fun searchPeople(query: String, limit: Int) = error("not used by the uploader")
     }
 
     private val gateway = FakeGateway()
