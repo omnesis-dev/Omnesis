@@ -63,7 +63,7 @@ on:
       lanes:
         description: Which lanes to run
         type: choice
-        options: [all, single-host, docker, tailnet, coverage, vector-compat]
+        options: [all, single-host, docker, tailnet, coverage, vector-compat, service-node]
         default: all
 
 permissions: {}
@@ -119,6 +119,29 @@ jobs:
       - name: Host resources over the lane
         if: always()
         run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/host-sampler.sh print
+
+  # A real launchd agent whose Node has no npm beside it takes a fleet update,
+  # and a collector started over an unfinished update restores itself. Two
+  # installs on one disposable Mac stand in for the gateway and the collector.
+  collector-service-node:
+    name: F1 collector whose service Node has no npm (macos-15)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.lanes == 'all' || inputs.lanes == 'service-node'))
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Turn off Spotlight indexing
+        run: sudo mdutil -a -i off
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Refuse without npm, update once it is linked, recover an unfinished update
+        run: E2E_WORK="$RUNNER_TEMP/install-e2e" scripts/install-e2e/collector-service-node.sh
 
   vector-compat:
     name: Intel vector compatibility diagnosis

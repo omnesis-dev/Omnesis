@@ -506,6 +506,16 @@
           the failed step.
         </p>
         <p>
+          If the rollback itself fails, or the update is killed part-way, the source install is left
+          unfinished and <code>omnesis update</code> on that machine repairs it. Until then every
+          other command is refused. A gateway or collector that its service manager starts does not
+          wait for that: when no update is running, it restores the last completed release itself
+          (its commit, its dependencies and its build) and then starts on the release it ran before
+          the update. The update is not applied again; run <code>omnesis update</code>, or a fleet
+          update, for that. If the restore fails, the service log says so and the service tries
+          again no sooner than 15 minutes later.
+        </p>
+        <p>
           On Intel macOS, dependency installation also verifies the native vector engine and builds
           it locally when the bundled binary is incompatible. This applies to fresh installations,
           updates and rollback reinstalls. Keep Xcode Command Line Tools installed; see
