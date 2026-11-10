@@ -48,6 +48,7 @@ import type {
   MergeCandidateVisibility,
 } from "../../merge-candidates.js";
 import type { LikeSearchArgs, LikeSearchRow } from "../../search/like-search.js";
+import type { SqliteQueryRead, SqliteQueryRequest } from "../../sqlite-catalog.js";
 import type {
   SnapshotAbsencePlan,
   SnapshotAbsencePolicy,
@@ -92,4 +93,6 @@ export interface IComputeScheduler {
   }): Promise<MergeCandidateVisibility[]>;
   /** Legacy LIKE document search off the main thread (GET /documents/search). */
   likeSearchDocuments(args: LikeSearchArgs): Promise<LikeSearchRow[]>;
+  /** The operator's SQL off the main thread (POST /sql). */
+  sqliteQuery(request: SqliteQueryRequest): Promise<SqliteQueryRead>;
 }

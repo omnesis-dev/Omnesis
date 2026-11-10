@@ -9,7 +9,7 @@ import {
   getSqliteCatalog,
   getSqliteTableInfo,
   getSqliteTableActivity,
-  runSqliteQuery,
+  readSqliteQuery,
 } from "../../sqlite-catalog.js";
 import { enforceBroadWriteScope, enforceWriteScopeForSource, scope } from "../scope.js";
 import { ANALYTICS_INGEST_BODY_LIMIT_BYTES, ingestBodyLimit } from "../body-limits.js";
@@ -20,6 +20,7 @@ import { BadRequestError, NotFoundError, ServiceUnavailableError } from "../erro
 import type { RouteApp } from "./types.js";
 import type { AnalyticsService } from "../services/AnalyticsService.js";
 import type { SourceService } from "../services/SourceService.js";
+import type { IComputeScheduler } from "../services/ports.js";
 
 type Db = Database.Database;
 
@@ -30,6 +31,11 @@ export interface AnalyticsRoutesDeps {
   analyticsService: AnalyticsService | null;
   /** Authoritative push gate — rejects ingest for a removed/paused source. */
   sourceService: SourceService;
+  /**
+   * The io read worker `/sql` runs on. Absent, the query runs on the main
+   * thread, on a read-only handle of the route's own.
+   */
+  ioGate?: Pick<IComputeScheduler, "sqliteQuery">;
 }
 
 /**
@@ -39,39 +45,38 @@ export interface AnalyticsRoutesDeps {
 export function mountAnalyticsRoutes(app: RouteApp, deps: AnalyticsRoutesDeps): void {
   const { db, analyticsService, sourceService } = deps;
 
-  // Dedicated read-only handle for the /sql endpoint. better-sqlite3
-  // enforces no writes at the engine level when `readonly: true`, so
-  // we no longer need a keyword block-list to filter the SQL — any
-  // INSERT / UPDATE / DELETE / DROP / ALTER / CREATE / TRUNCATE
-  // (including ones smuggled through CTEs, leading comments,
-  // multi-statement scripts, or PRAGMA writes) fails with
-  // "attempt to write a readonly database". Defence in depth: the
-  // production main-thread `db` is already read-only, but
-  // a separate handle here means the test harness's writable test DB
-  // can't accidentally accept a write through /sql either.
-  const readonlyDb: Db = db.readonly
-    ? db
-    : new Database(db.name, { readonly: true, fileMustExist: true });
-  if (readonlyDb !== db) {
-    readonlyDb.exec("PRAGMA busy_timeout = 5000");
-    readonlyDb.exec("PRAGMA mmap_size = 0");
-  }
+  // `/sql` runs the caller's query on an io worker, on a read-only connection
+  // kept for it (`scheduler/io-sql-handlers.ts`): a scan of a large store takes
+  // seconds, and on the main thread those seconds would stop every request,
+  // timer and task the gateway has. The engine is the read-only gate: an
+  // INSERT / UPDATE / DELETE / DROP / ALTER / CREATE, however smuggled, fails
+  // with "attempt to write a readonly database"; see `runSqliteQuery`. Without
+  // a worker the query runs here on a read-only handle of the route's own, so
+  // a test harness's writable database cannot accept a write through `/sql`
+  // either.
+  let fallbackDb: Db | null = null;
+  const readOnlyFallback = (): Db => {
+    if (db.readonly) return db;
+    if (!fallbackDb) {
+      fallbackDb = new Database(db.name, { readonly: true, fileMustExist: true });
+      fallbackDb.exec("PRAGMA busy_timeout = 5000");
+      fallbackDb.exec("PRAGMA mmap_size = 0");
+    }
+    return fallbackDb;
+  };
 
-  // SQLite raw query — `validateJson(sqlBody)` enforces shape (sql:
-  // required string, limit: optional number) and surfaces the
-  // uniform validation envelope. The read-only handle is the
-  // engine-level gate that makes the keyword block-list unnecessary.
-  // The actual prepare/columns/all reshape lives in
-  // `sqlite-catalog.ts:runSqliteQuery` next to its peer-pattern read
-  // helper `getSqliteCatalog`; this handler is a thin transport layer
-  // that maps engine errors → 400.
+  // `validateJson(sqlBody)` enforces shape (sql: required string, limit:
+  // optional number) and surfaces the uniform validation envelope. The read
+  // returns the body already serialized, or the engine's refusal, which
+  // answers 400 with its message.
   app.post("/sql", scope.admin(), validateJson(sqlBody), async (c) => {
     const body = c.req.valid("json");
-    try {
-      return c.json(runSqliteQuery(readonlyDb, body));
-    } catch (err) {
-      throw new BadRequestError(err instanceof Error ? err.message : String(err));
-    }
+    const request = { sql: body.sql, limit: body.limit };
+    const read = deps.ioGate
+      ? await deps.ioGate.sqliteQuery(request)
+      : readSqliteQuery(readOnlyFallback(), request);
+    if ("error" in read) throw new BadRequestError(read.error);
+    return c.body(read.json, 200, { "Content-Type": "application/json" });
   });
 
   app.post(
