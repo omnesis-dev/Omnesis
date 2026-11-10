@@ -1187,7 +1187,8 @@ request and answer on demand from the payload store, or the row's retained
 copy where no exact capture exists.
 
 The ledger's `requested_model_id` is the assignment's pinned model id: the
-TypeSafe model (`jev-1.13.0`), `local:<gguf>` or `http:<backend>/<model>`.
+TypeSafe model (`jev-1.13.0`), `local:<gguf>@<fingerprint>` or `http:<backend>/<model>` (chat models serve the
+role only in experimental mode).
 Judgements from different backends never mix silently: worth answers are keyed
 by it, so a new decision model is asked again rather than reusing another
 model's verdict. Settled date-mention verdicts are the exception — they are

@@ -59,7 +59,7 @@ import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { ProviderIcon } from "../components/provider-icon.js";
 import { navigate } from "../lib/router.js";
 import { isEnabled, isConfigured, capabilityCardState } from "../lib/capability-state.js";
-import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend } from "../lib/backend-options.js";
+import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend, isDecisionRole } from "../lib/backend-options.js";
 import {
   ModelConfigModal,
   AddBackendModal,
@@ -404,7 +404,9 @@ export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, o
 
       <div class="cap-detail-actions">
         <button class="btn-primary" onClick=${onOpenPicker}>Choose model</button>
-        <button class="btn-secondary" onClick=${onAddBackend}>Add backend</button>
+        ${isDecisionRole(role) && overview.inference.decisionChatModels !== true
+          ? null
+          : html`<button class="btn-secondary" onClick=${onAddBackend}>Add backend</button>`}
         ${configured ? html`<button class="btn-secondary" onClick=${onDisable}>Disable</button>` : null}
       </div>
 

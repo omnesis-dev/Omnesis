@@ -2897,57 +2897,89 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
     },
   );
 
-  it("resolves a local GGUF chat model for the decision role", () => {
+  it("refuses a local or HTTP chat model outside experimental mode", () => {
     writeFileSync(join(modelsDir, "decider-1b.Q4_K_M.gguf"), "");
     const reg = registryWithTypeSafeKey(false);
-    reg.loadConfig({
-      inference: { assignments: { decision: "local/decider-1b.Q4_K_M.gguf" } },
-    } as OmnesisConfig);
-    expect(reg.resolve("decision")).toMatchObject({
-      kind: "local",
-      modelPath: join(modelsDir, "decider-1b.Q4_K_M.gguf"),
-      available: true,
+    withExperimentalEnv(undefined, () => {
+      for (const decision of [
+        "local/decider-1b.Q4_K_M.gguf",
+        "decider-1b.Q4_K_M.gguf",
+        "llama/decider-7b",
+      ]) {
+        reg.loadConfig({ inference: { assignments: { decision } } } as OmnesisConfig);
+        expect(reg.resolve("decision"), decision).toMatchObject({
+          kind: "unresolved",
+          reason: expect.stringMatching(/experimental mode/),
+        });
+      }
     });
   });
 
-  it("refuses a catalog embedding model for the decision role", () => {
-    const reg = registryWithTypeSafeKey(false);
-    reg.loadConfig({
-      inference: { assignments: { decision: "local/nomic-embed-text-v1.5.Q8_0" } },
-    } as OmnesisConfig);
-    expect(reg.resolve("decision")).toMatchObject({
-      kind: "local",
-      available: false,
-      reason: expect.stringMatching(/not a chat model/),
+  describe("in experimental mode", () => {
+    let previous: string | undefined;
+    beforeEach(() => {
+      previous = process.env.OMNESIS_EXPERIMENTAL;
+      process.env.OMNESIS_EXPERIMENTAL = "1";
     });
-  });
-
-  it("resolves an HTTP chat backend for the decision role", () => {
-    const reg = registryWithTypeSafeKey(false);
-    reg.loadConfig({
-      inference: {
-        backends: { llama: { type: "http", url: "http://127.0.0.1:18997" } },
-        assignments: { decision: "llama/decider-7b" },
-      },
-    } as OmnesisConfig);
-    expect(reg.resolve("decision")).toMatchObject({
-      kind: "http",
-      backendKey: "llama",
-      model: "decider-7b",
+    afterEach(() => {
+      if (previous === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
+      else process.env.OMNESIS_EXPERIMENTAL = previous;
     });
-  });
 
-  it("refuses a Responses-only HTTP backend for the decision role", () => {
-    const reg = registryWithTypeSafeKey(false);
-    reg.loadConfig({
-      inference: {
-        backends: { cloud: { type: "http", url: "http://127.0.0.1:18997", protocol: "responses" } },
-        assignments: { decision: "cloud/decider-7b" },
-      },
-    } as OmnesisConfig);
-    expect(reg.resolve("decision")).toMatchObject({
-      kind: "unresolved",
-      reason: expect.stringMatching(/chat completions/i),
+    it("resolves a local GGUF chat model for the decision role", () => {
+      writeFileSync(join(modelsDir, "decider-1b.Q4_K_M.gguf"), "");
+      const reg = registryWithTypeSafeKey(false);
+      reg.loadConfig({
+        inference: { assignments: { decision: "local/decider-1b.Q4_K_M.gguf" } },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision")).toMatchObject({
+        kind: "local",
+        modelPath: join(modelsDir, "decider-1b.Q4_K_M.gguf"),
+        available: true,
+      });
+    });
+
+    it("refuses a catalog embedding model for the decision role", () => {
+      const reg = registryWithTypeSafeKey(false);
+      reg.loadConfig({
+        inference: { assignments: { decision: "local/nomic-embed-text-v1.5.Q8_0" } },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision")).toMatchObject({
+        kind: "local",
+        available: false,
+        reason: expect.stringMatching(/not a chat model/),
+      });
+    });
+
+    it("resolves an HTTP chat backend for the decision role", () => {
+      const reg = registryWithTypeSafeKey(false);
+      reg.loadConfig({
+        inference: {
+          backends: { llama: { type: "http", url: "http://127.0.0.1:18997" } },
+          assignments: { decision: "llama/decider-7b" },
+        },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision")).toMatchObject({
+        kind: "http",
+        backendKey: "llama",
+        model: "decider-7b",
+      });
+    });
+
+    it("refuses a Responses-only HTTP backend for the decision role", () => {
+      const reg = registryWithTypeSafeKey(false);
+      reg.loadConfig({
+        inference: {
+          backends: {
+            cloud: { type: "http", url: "http://127.0.0.1:18997", protocol: "responses" },
+          },
+          assignments: { decision: "cloud/decider-7b" },
+        },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision")).toMatchObject({
+        kind: "unresolved",
+        reason: expect.stringMatching(/chat completions/i),
+      });
     });
   });
 

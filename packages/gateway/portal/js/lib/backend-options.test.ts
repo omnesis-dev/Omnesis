@@ -406,10 +406,19 @@ describe("buildModelPickerOptions — the Decision model", () => {
         anthropic: { type: "anthropic", status: "ok", hasApiKey: true },
       },
       codex: { configured: true, status: "ok", loggedIn: true, models: ["codex-a"], modelRoles: { "codex-a": ["agent", "decision"] } },
+      decisionChatModels: true,
     },
   });
 
-  it("offers TypeSafe first, then chat-completions HTTP backends — no cloud chat runtime", () => {
+  it("offers only TypeSafe when the gateway allows no chat model for it", () => {
+    const stable = { ...everything, inference: { ...everything.inference, decisionChatModels: false } };
+    expect(buildModelPickerOptions(stable, "decision")).toEqual([{ kind: "typesafe" }]);
+    // A gateway that predates the flag offers TypeSafe only, as it always did.
+    const older = { ...everything, inference: { ...everything.inference, decisionChatModels: undefined } };
+    expect(buildModelPickerOptions(older, "decision")).toEqual([{ kind: "typesafe" }]);
+  });
+
+  it("in experimental mode offers TypeSafe first, then chat-completions HTTP backends — no cloud chat runtime", () => {
     expect(isDecisionRole("decision")).toBe(true);
     const options = buildModelPickerOptions(everything, "decision");
     expect(options[0]).toEqual({ kind: "typesafe" });

@@ -742,7 +742,8 @@
                 <td>
                   Routes urgency, discovery, dependency repair and review, checks whether new
                   records belong in durable memory, and scores observations for the morning brief.
-                  Served by TypeSafe Jev or a local or self-hosted model; see
+                  Served by TypeSafe Jev, or by a
+                  <a href="#decision-chat-models">local or HTTP chat model</a>; see
                   <a href="#brain-worth-gate">Routing maintenance</a> and
                   <a href="#brain-record-check">Checking what it writes</a>. The role itself is
                   stable; <a href="operating#models">Models</a> covers its setup.
@@ -803,6 +804,66 @@
             already know them, and when they matter, then rechecks them for the morning brief.
           </li>
         </ul>
+
+        <h4 id="decision-chat-models">Local and HTTP decision models</h4>
+        <p>
+          In experimental mode the <code>decision</code> role, for stable and experimental uses
+          alike, can also be served by a chat model instead of TypeSafe Jev:
+        </p>
+        <ul>
+          <li>
+            <strong>A local GGUF chat model</strong> in the <code>models/</code> folder, assigned as
+            <code>local/&lt;file&gt;.gguf</code> and run by the gateway. Decisions run one at a
+            time, and the content stays on this machine.
+          </li>
+          <li>
+            <strong>An OpenAI-compatible HTTP server</strong> that returns token log-probabilities
+            from Chat Completions, such as llama-server, vLLM or Ollama, assigned as
+            <code>&lt;backend&gt;/&lt;model&gt;</code>. The content goes to that server. A
+            Responses-only backend cannot serve the role.
+          </li>
+        </ul>
+        <p>
+          This is unstable. Every decision threshold was chosen on TypeSafe Jev's scores, and a chat
+          model scores on its own scale: on a set of invented emails, 4-billion-parameter models
+          kept 69–85% of the mail TypeSafe Jev keeps at the email worth gate's threshold. Outside
+          experimental mode such an assignment is refused, and the portal offers only TypeSafe.
+        </p>
+        <p>
+          A chat model answers each question from the probability it gives each option as its first
+          output token; it generates no text. A server that returns no log-probabilities, or a model
+          that starts its reply with reasoning, cannot answer. Unless you set the model's reasoning
+          controls, the gateway asks for reasoning off on every request, and drops a field or lowers
+          the number of alternatives it asks for when a server refuses them. A local model refuses
+          content longer than its context rather than answer a shortened prompt. Codex, Claude Code
+          and Anthropic return no token probabilities and cannot serve the role. A decision that
+          cannot be answered counts as no decision, and each use falls back as it does without a
+          decision model.
+        </p>
+        <p>What HTTP servers do with a decision request:</p>
+        <ul>
+          <li>
+            <strong>Work as sent:</strong> vLLM, SGLang, llama-server and llamafile, LocalAI,
+            TensorRT-LLM, Ollama 0.12.11 or later, and OpenAI's models that do not reason.
+          </li>
+          <li>
+            <strong>Work after a setting:</strong> TGI, Fireworks and mlx-lm's server cap the
+            alternatives, and the gateway falls back to 5; DeepSeek with thinking off, which the
+            gateway asks for; Azure OpenAI with a deployment of a model that does not reason.
+          </li>
+          <li>
+            <strong>Do not work:</strong> LM Studio, Gemini's OpenAI-compatible endpoint, Groq,
+            OpenAI's reasoning models (o-series, GPT-5) and gpt-oss. OpenRouter's default routing
+            can drop the log-probability fields, so its decisions fail.
+          </li>
+        </ul>
+        <p>
+          To measure a candidate before assigning it, replay recorded decisions against it with
+          <code>scripts/eval-decision-cassette.mts</code> in a source checkout. It reports how often
+          the candidate agrees with the recorded answers; for the email worth gate it also reports
+          how much of the mail the recorded model kept the candidate keeps too, and the threshold at
+          which it would keep 95% of it.
+        </p>
 
         <p>
           Codex can serve <code>background-agent</code> and <code>entailment-verifier</code>
@@ -1221,8 +1282,10 @@
           </div>
         </div>
         <p>
-          A local or self-hosted model keeps the context on your network; see
-          <a href="operating#decision-model">Decision model</a> for its setup.
+          A local chat model keeps the context on this machine, and your own TypeSafe-compatible
+          endpoint or HTTP server keeps it on your network; see
+          <a href="#decision-chat-models">Local and HTTP decision models</a> and
+          <a href="operating#decision-model">Decision model</a> for their setup.
         </p>
         <p>
           Discovery checks complete sources within a 128 KiB application input budget, including the

@@ -14,10 +14,13 @@ import {
 } from "./brain-bench/decision-server.js";
 
 /**
- * The decision role on self-hosted backends, end to end on a stable gateway
- * whose mention worth gate is on: every email with a date mention is judged
- * once, through the production registry, decision service and client, and
- * each judgement lands in the decision ledger.
+ * The decision role on self-hosted backends, end to end on a gateway whose
+ * mention worth gate is on: every email with a date mention is judged once,
+ * through the production registry, decision service and client, and each
+ * judgement lands in the decision ledger. A chat model serves the role only in
+ * experimental mode (its scores are not on TypeSafe Jev's scale), so that
+ * suite boots an experimental gateway; a TypeSafe endpoint on this host is
+ * stable.
  *
  * Scores are scripted from the email's subject so the corpus splits
  * deterministically; whether a score is a good judgement is the eval lane's
@@ -89,7 +92,7 @@ describe("decision role — an OpenAI-compatible server read through its logprob
       },
     });
     harness = new SyntheticE2EHarness({
-      gatewayMode: "stable",
+      gatewayMode: "experimental",
       universe: "default",
       extraInference: {
         backends: { decider: { type: "http", url: server.url } },

@@ -664,6 +664,12 @@ export interface InferenceOverview {
    * assigned. Absent on gateways that predate self-hosted endpoints.
    */
   typesafe?: { url: string; selfHosted: boolean; onHost: boolean };
+  /**
+   * True when a local or HTTP chat model may serve the Decision model: only in
+   * experimental mode, because the decisions' thresholds were tuned on
+   * TypeSafe Jev. Absent on gateways that predate chat-model decisions.
+   */
+  decisionChatModels?: boolean;
   assignments: Record<CapabilityRole, ResolvedAssignment>;
 }
 

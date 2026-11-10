@@ -50,6 +50,7 @@ function overviewWith(assignment, extra = {}) {
         "responses-host": { type: "http", status: "ok", protocol: "responses", modelRoles: { "r-model": ["agent"] } },
       },
       codex: { configured: true, loggedIn: true, status: "ok", models: ["codex-a"], modelRoles: { "codex-a": ["agent"] } },
+      decisionChatModels: true,
       ...extra,
     },
   };
@@ -114,7 +115,16 @@ describe("Models — the Decision model picker", () => {
     expect(host.textContent).toContain("TypeSafe");
   });
 
-  it("lets a chat backend be added for the Decision model", async () => {
+  it("outside experimental mode offers only TypeSafe and no Add backend", async () => {
+    api.getModelsOverview.mockResolvedValue(overviewWith({ kind: "disabled", role: "decision" }, { decisionChatModels: false }));
+    await act(async () => { render(h(ModelsView, { section: "decision" }), host); });
+    await flush();
+    expect(button("Add backend")).toBeFalsy();
+    await openPicker();
+    expect(cardTitles()).toEqual(["TypeSafe"]);
+  });
+
+  it("in experimental mode lets a chat backend be added for the Decision model", async () => {
     await act(async () => { render(h(ModelsView, { section: "decision" }), host); });
     await flush();
     expect(host.textContent).toContain("Decision model");
@@ -122,7 +132,7 @@ describe("Models — the Decision model picker", () => {
     expect(button("Add backend")).toBeTruthy();
   });
 
-  it("offers TypeSafe first, then chat-completions backends, and no cloud chat runtime", async () => {
+  it("in experimental mode offers TypeSafe first, then chat-completions backends, and no cloud chat runtime", async () => {
     await openPicker();
     const titles = cardTitles();
     expect(titles[0]).toBe("TypeSafe");

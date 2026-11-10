@@ -206,6 +206,9 @@ export function isSelfHostedTypeSafeUrl(url: string): boolean {
   return host !== "typesafe.ai" && !host.endsWith(".typesafe.ai");
 }
 
+const DECISION_CHAT_MODEL_EXPERIMENTAL_REASON =
+  'A local or HTTP chat model serves the Decision model only in experimental mode (OMNESIS_EXPERIMENTAL=1): its scores do not match the thresholds the decisions were tuned on. Assign "typesafe/<model>".';
+
 const DECISION_BACKENDS_REASON =
   'The Decision model needs token probabilities, which this backend does not return: assign "typesafe/<model>", a local GGUF chat model, an OpenAI-compatible HTTP backend ("<backend>/<model>"), or "replay".';
 
@@ -563,6 +566,18 @@ export class InferenceRegistry {
       !this.httpBackends.has(prefixOf)
     ) {
       return { role, kind: "unresolved", reason: DECISION_BACKENDS_REASON };
+    }
+    // Every decision threshold was chosen on TypeSafe Jev's scores, and a chat
+    // model read through its token probabilities scores on another scale
+    // (small local models keep 69–85% of the mail Jev keeps at the worth
+    // gate's threshold), so they stay experimental.
+    if (
+      role === "decision" &&
+      prefixOf !== "typesafe" &&
+      prefixOf !== "replay" &&
+      !experimentalEnabled()
+    ) {
+      return { role, kind: "unresolved", reason: DECISION_CHAT_MODEL_EXPERIMENTAL_REASON };
     }
     if (role !== "decision" && prefixOf === "typesafe" && !this.httpBackends.has("typesafe")) {
       return {
@@ -1244,6 +1259,7 @@ export class InferenceRegistry {
         selfHosted: isSelfHostedTypeSafeUrl(this.typesafeUrl),
         onHost: isLoopbackInferenceUrl(this.typesafeUrl),
       },
+      decisionChatModels: experimentalEnabled(),
       health: this.modelHealth(),
     };
   }

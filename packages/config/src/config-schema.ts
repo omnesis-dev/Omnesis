@@ -3457,11 +3457,12 @@ const inferenceAssignmentsObject = z
     // Never assigned by default: unset means the gate is absent and
     // annotation writes behave exactly as without it.
     "entailment-verifier": assignmentValue.optional(),
-    // Typed decisions: "typesafe/<model>" (TypeSafe Jev), a local GGUF chat
-    // model, an OpenAI-compatible "<httpKey>/<model>" that returns token
-    // log-probabilities, or "replay" — never a cloud chat runtime (Anthropic,
-    // Codex, Claude Code), which returns none. Never assigned by default: unset means the mention worth gate and the Brain's worth gate
-    // are both absent.
+    // Typed decisions: "typesafe/<model>" (TypeSafe Jev) or "replay"; in
+    // experimental mode also a local GGUF chat model or an OpenAI-compatible
+    // "<httpKey>/<model>" that returns token log-probabilities — never a cloud
+    // chat runtime (Anthropic, Codex, Claude Code), which returns none. Never
+    // assigned by default: unset means the mention worth gate and the Brain's
+    // worth gate are both absent.
     decision: assignmentValue.optional(),
     "speech-to-speech": assignmentValue.optional(),
   })
@@ -3819,7 +3820,7 @@ const enrichmentDates = z
     worthGate: z
       .boolean()
       .describe(
-        "Hide the date mentions of email the decision model judges not worth recording — marketing, newsletters, notifications — from time queries. Takes effect only while the decision model is assigned; every email with a date mention, including those already stored, then has its subject, sender and first 2,000 characters sent to the decision model (TypeSafe, or a local or self-hosted model), again only when its content changes.",
+        "Hide the date mentions of email the decision model judges not worth recording — marketing, newsletters, notifications — from time queries. Takes effect only while the decision model is assigned; every email with a date mention, including those already stored, then has its subject, sender and first 2,000 characters sent to the decision model (TypeSafe, or your own TypeSafe-compatible endpoint), again only when its content changes.",
       )
       .optional(),
   })

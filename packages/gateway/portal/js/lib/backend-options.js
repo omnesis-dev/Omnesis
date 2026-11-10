@@ -117,9 +117,11 @@ export function catalogProviderForBackend(overview, backendKey) {
  * Codex and Claude Code for roles they advertise, Anthropic, then "add a
  * custom HTTP backend".
  * Local/Anthropic cards appear only when the role has bundled catalog entries
- * for them. A decision role gets the TypeSafe card first, then Local and the
- * Chat Completions HTTP backends; Codex, Claude Code and Anthropic return no
- * token probabilities, so they are withheld, and TypeSafe serves nothing else.
+ * for them. A decision role gets the TypeSafe card first, then — only when the
+ * gateway allows chat models for it (`decisionChatModels`, experimental mode)
+ * — Local and the Chat Completions HTTP backends; Codex, Claude Code and
+ * Anthropic return no token probabilities, so they are withheld, and TypeSafe
+ * serves nothing else.
  *
  * Each option carries the data a card needs: `configured` (is the backend set
  * up), `fitCount` (role-matching models it serves, when configured), and the
@@ -157,6 +159,7 @@ export function buildModelPickerOptions(overview, role) {
 
 
   const options = decision ? [{ kind: "typesafe" }] : [];
+  if (decision && overview.inference?.decisionChatModels !== true) return options;
 
   const localCount = localCatalogCount(catalog, catalogRole);
   if (localCount > 0) options.push({ kind: "local", count: localCount });
