@@ -682,11 +682,14 @@ final class PreviewSnapshotTests: XCTestCase {
             "delta": Data(repeating: 0x40, count: 4800).base64EncodedString(),
         ])
         XCTAssertEqual(session.scheduledPlaybackFramesForTesting, 2400)
-        let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
-        // The source completes before this delayed signal reaches the mixer.
-        XCTAssertEqual(try engine.renderOffline(4096, to: output), .success)
+        let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: Self.offlineRenderQuantum))
         let channel = try XCTUnwrap(output.floatChannelData?[0])
-        let firstPeak = (0 ..< Int(output.frameLength)).reduce(Float.zero) { max($0, abs(channel[$1])) }
+        // The source completes before this delayed signal reaches the mixer.
+        var firstPeak: Float = 0
+        for _ in 0 ..< 4096 / Self.offlineRenderQuantum {
+            XCTAssertEqual(try engine.renderOffline(Self.offlineRenderQuantum, to: output), .success)
+            firstPeak = (0 ..< Int(output.frameLength)).reduce(firstPeak) { max($0, abs(channel[$1])) }
+        }
         XCTAssertEqual(firstPeak, 0, accuracy: 0.001)
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(10))
@@ -705,18 +708,26 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// An offline engine has no clock, so one render call moves the player by its whole
+    /// frame count at once. The player node takes a scheduled buffer in a few microseconds
+    /// after `scheduleBuffer` returns; a 4,096-frame render started inside that window stays
+    /// silent and leaves a 100 ms clip scheduled 240 frames ahead wholly behind the cursor,
+    /// where the node drops it and reports it rendered. Advance by less than that
+    /// scheduling lead, so a clip the node has yet to take in is still ahead of the cursor.
+    private static let offlineRenderQuantum: AVAudioFrameCount = 128
+
     /// Source completion excludes downstream latency; observe the required output too.
     private func renderVoicePlayback(
         _ session: RealtimeCallSession, engine: AVAudioEngine, format: AVAudioFormat, minimumPeak: Float
     ) async throws
         -> Float {
-        let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096))
+        let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: Self.offlineRenderQuantum))
         var peak: Float = 0
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(10))
         while !session.playbackIsEmptyForTesting || peak <= minimumPeak, clock.now < deadline {
             XCTAssertLessThanOrEqual(session.scheduledPlaybackFramesForTesting, 48000)
-            let result = try engine.renderOffline(4096, to: output)
+            let result = try engine.renderOffline(Self.offlineRenderQuantum, to: output)
             XCTAssertEqual(result, .success)
             if let channel = output.floatChannelData?[0] {
                 for index in 0 ..< Int(output.frameLength) {
