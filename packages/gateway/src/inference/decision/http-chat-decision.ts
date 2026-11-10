@@ -12,6 +12,15 @@
  * request run concurrently and share the content prefix, so a server with a
  * prompt cache evaluates it once.
  *
+ * The answer must be the first token, so a model that reasons first never
+ * gives one. Unless the operator set the model's reasoning controls, every
+ * request asks for thinking off in the two common spellings: the chat-template
+ * switch vLLM, SGLang and llama-server pass to Qwen-style templates, and
+ * DeepSeek's `thinking` field. Servers differ in what they accept, so a 400
+ * that names one of these fields, or a `top_logprobs` above the server's cap
+ * (TGI and Fireworks allow 5), is retried once without the field or with
+ * fewer alternatives, and the adjustment is kept for later requests.
+ *
  * A server that returns no log-probabilities cannot serve the role: the call
  * throws, as does a reply whose next token is not a label, and callers fail
  * open. Rate limits are retried by the shared `retryRateLimitedRequest`.
@@ -42,6 +51,14 @@ const log = createLogger("gateway:decision:http");
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** The OpenAI maximum; servers that allow more gain nothing from it here. */
 const TOP_LOGPROBS = 20;
+/** What servers that cap the alternatives (TGI, Fireworks, mlx-lm) all allow. */
+const FALLBACK_TOP_LOGPROBS = 5;
+
+/** Thinking-off fields sent when the operator set no reasoning controls. */
+const THINKING_OFF_FIELDS: Readonly<Record<string, unknown>> = {
+  chat_template_kwargs: { enable_thinking: false },
+  thinking: { type: "disabled" },
+};
 
 export interface HttpChatDecisionOptions {
   /** The backend key the assignment names (`<backendKey>/<model>`). */
@@ -76,10 +93,16 @@ interface ChatLogprobsResponse {
 export class HttpChatDecision implements DecisionCapability {
   readonly modelId: string;
   private readonly url: string;
+  /** Request fields this server accepts, narrowed by the 400s it returned. */
+  private topLogprobs = TOP_LOGPROBS;
+  private thinkingOff: Record<string, unknown>;
 
   constructor(private readonly opts: HttpChatDecisionOptions) {
     this.modelId = `http:${opts.backendKey}/${opts.model}`;
     this.url = `${opts.baseUrl.replace(/\/+$/, "")}${normalizeApiPathPrefix(opts.apiPathPrefix)}/chat/completions`;
+    // The operator's own reasoning controls, when set, are sent instead.
+    const explicit = Object.keys(opts.modelBehavior ?? {}).length > 0;
+    this.thinkingOff = explicit ? {} : { ...THINKING_OFF_FIELDS };
   }
 
   async decide(
@@ -107,27 +130,33 @@ export class HttpChatDecision implements DecisionCapability {
   ): Promise<{ answer: DecisionAnswer; inputTokens?: number }> {
     const options = decisionOptions(question);
     const prompt = renderDecisionPrompt(state, question, options);
-    const body = JSON.stringify({
-      model: this.opts.model,
-      messages: [
-        { role: "system", content: prompt.system },
-        { role: "user", content: prompt.user },
-      ],
-      max_tokens: 1,
-      temperature: 0,
-      logprobs: true,
-      top_logprobs: TOP_LOGPROBS,
-      ...modelReasoningRequestFields(
-        this.opts.modelControls,
-        this.opts.modelBehavior,
-        "chat-completions",
-      ),
-    });
-    const res = await this.post(body, signal);
-    if (!res.ok) {
+    const messages = [
+      { role: "system", content: prompt.system },
+      { role: "user", content: prompt.user },
+    ];
+    let res: Response;
+    for (let adjusted = false; ; adjusted = true) {
+      const body = JSON.stringify({
+        model: this.opts.model,
+        messages,
+        max_tokens: 1,
+        temperature: 0,
+        logprobs: true,
+        top_logprobs: this.topLogprobs,
+        ...modelReasoningRequestFields(
+          this.opts.modelControls,
+          this.opts.modelBehavior,
+          "chat-completions",
+        ),
+        ...this.thinkingOff,
+      });
+      res = await this.post(body, signal);
+      if (res.ok) break;
       // Never echo the body: a backend can reflect the prompt (the user's
-      // content) into its error, which would then land in logs.
+      // content) into its error, which would then land in logs. It is only
+      // searched for the names of the fields it refused.
       const text = await res.text().catch(() => "");
+      if (!adjusted && this.adjustToRefusal(res.status, text)) continue;
       throw new Error(
         `Decision backend ${this.opts.backendKey} HTTP ${res.status} (model=${this.opts.model}, ${text.length} bytes)`,
       );
@@ -152,6 +181,32 @@ export class HttpChatDecision implements DecisionCapability {
     }
     const promptTokens = json.usage?.prompt_tokens;
     return { answer, ...(typeof promptTokens === "number" ? { inputTokens: promptTokens } : {}) };
+  }
+
+  /**
+   * Narrow the request to what a 400/422 says the server refused. True when
+   * something changed and the request is worth sending again.
+   */
+  private adjustToRefusal(status: number, text: string): boolean {
+    if (status !== 400 && status !== 422) return false;
+    let changed = false;
+    for (const field of Object.keys(this.thinkingOff)) {
+      if (!text.includes(field)) continue;
+      delete this.thinkingOff[field];
+      changed = true;
+    }
+    if (this.topLogprobs > FALLBACK_TOP_LOGPROBS && /top_?logprobs|top_n_tokens/i.test(text)) {
+      this.topLogprobs = FALLBACK_TOP_LOGPROBS;
+      changed = true;
+    }
+    if (changed) {
+      log.warn(
+        `decision backend ${this.opts.backendKey} refused a request field (HTTP ${status}); ` +
+          `retrying with top_logprobs=${this.topLogprobs} and ` +
+          `${Object.keys(this.thinkingOff).join(", ") || "no thinking-off fields"}`,
+      );
+    }
+    return changed;
   }
 
   private post(body: string, signal: AbortSignal | undefined): Promise<Response> {

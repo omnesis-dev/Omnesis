@@ -408,7 +408,7 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     role: "decision",
     title: "Decision model",
     description:
-      "Makes small routing and scoring decisions. For Apple Watch complication captures, chooses Ask for a response or Tell to save a note; explicit Ask and Tell bypass this choice. Also filters low-value email dates from time queries when the mention worth gate is on. Served by TypeSafe Jev, which receives the transcript or email excerpt, or by a local or self-hosted chat model that keeps it on your network. The Agent answers Ask requests and processes saved Tell Omnesis notes.",
+      "Makes small routing and scoring decisions. For Apple Watch complication captures, chooses Ask for a response or Tell to save a note; explicit Ask and Tell bypass this choice. Also filters low-value email dates from time queries when the mention worth gate is on. Served by TypeSafe Jev or by a chat model you choose; the model receives the transcript or email excerpt. A local model keeps it on this machine; an HTTP backend sends it to that server. The Agent answers Ask requests and processes saved Tell Omnesis notes.",
     experimentalDescription:
       "In experimental mode, also routes browser Find between index search and agent research, and helps the Brain prioritize evidence and reviews, check memory and task changes, learn from your reactions, and select observations for briefs. These decisions send the relevant query, source, memory or task context to the decision model.",
     icon: "scale",

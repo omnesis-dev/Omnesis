@@ -10,6 +10,7 @@
  *
  * Usage:
  *   scripts/eval-decision-cassette.mts --cassette <file.jsonl | dir> <backend> [--limit N]
+ *                                      [--threshold <question id>=<value>]...
  *
  * Backends (the same adapters the gateway uses):
  *   --http <base url> --model <id> [--api-key-env VAR] [--allow-remote]
@@ -18,6 +19,12 @@
  *       a local GGUF chat model, run in this process
  *   --typesafe <url> --model <id> [--api-key-env VAR] [--allow-remote]
  *       a TypeSafe-compatible endpoint
+ *
+ * Besides rounded agreement, every thresholded question is read the way its
+ * gate reads it: pass/skip agreement, and recall on what the recorded model
+ * passed (for the email worth gate, the share of worthwhile mail kept). The
+ * email worth question is thresholded at the gate's own value by default; add
+ * `--threshold` for others, or to try another value.
  *
  * Cassettes hold the requests a gateway recorded (`record-decision-cassette.mjs`)
  * or a universe's committed `decision-cassettes/`. Requests carry the content
@@ -37,7 +44,18 @@ import {
 import { HttpChatDecision } from "../packages/gateway/src/inference/decision/http-chat-decision.js";
 import { LlamaCppDecision } from "../packages/gateway/src/inference/decision/llama-cpp-decision.js";
 import { TypeSafeDecision } from "../packages/gateway/src/inference/decision/typesafe-client.js";
-import { compareAnswer, formatAgreement, summarizeAgreement } from "./lib/decision-agreement.mjs";
+import {
+  EMAIL_WORTH_QUESTION_ID,
+  EMAIL_WORTH_THRESHOLD,
+} from "../packages/gateway/src/worth/rubric.js";
+import {
+  compareAnswer,
+  compareGate,
+  formatAgreement,
+  formatGates,
+  summarizeAgreement,
+  summarizeGates,
+} from "./lib/decision-agreement.mjs";
 
 interface Args {
   cassette?: string;
@@ -48,10 +66,14 @@ interface Args {
   apiKeyEnv?: string;
   allowRemote: boolean;
   limit?: number;
+  thresholds: Map<string, number>;
 }
 
 function parseArgs(argv: string[]): Args {
-  const out: Args = { allowRemote: false };
+  const out: Args = {
+    allowRemote: false,
+    thresholds: new Map([[EMAIL_WORTH_QUESTION_ID, EMAIL_WORTH_THRESHOLD]]),
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const next = () => {
@@ -67,7 +89,14 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--api-key-env") out.apiKeyEnv = next();
     else if (arg === "--allow-remote") out.allowRemote = true;
     else if (arg === "--limit") out.limit = Number(next());
-    else throw new Error(`Unknown argument ${arg}`);
+    else if (arg === "--threshold") {
+      const [id, value] = next().split("=");
+      const threshold = Number(value);
+      if (!id || !Number.isFinite(threshold)) {
+        throw new Error("--threshold takes <question id>=<number>");
+      }
+      out.thresholds.set(id, threshold);
+    } else throw new Error(`Unknown argument ${arg}`);
   }
   return out;
 }
@@ -111,6 +140,7 @@ async function main(): Promise<void> {
   const entries = loadCassette(args.cassette).slice(0, args.limit ?? Infinity);
   const candidate = buildCandidate(args);
   const rows: ReturnType<typeof compareAnswer>[] = [];
+  const gates: NonNullable<ReturnType<typeof compareGate>>[] = [];
   const failures = new Map<string, number>();
   const started = Date.now();
   try {
@@ -123,7 +153,12 @@ async function main(): Promise<void> {
         failures.set(message, (failures.get(message) ?? 0) + 1);
       }
       for (const [id, recorded] of Object.entries(entry.response.answers)) {
-        rows.push(compareAnswer(recorded, answers?.[id] ?? null));
+        const candidateAnswer = answers?.[id] ?? null;
+        rows.push(compareAnswer(recorded, candidateAnswer));
+        const threshold = args.thresholds.get(id);
+        const gate =
+          threshold === undefined ? null : compareGate(id, threshold, recorded, candidateAnswer);
+        if (gate) gates.push(gate);
       }
       process.stderr.write(`\r${i + 1}/${entries.length} decisions`);
     }
@@ -135,6 +170,7 @@ async function main(): Promise<void> {
   console.log(`candidate ${candidate.modelId} vs recorded ${recordedModels || "—"}`);
   console.log(`${entries.length} decisions in ${((Date.now() - started) / 1000).toFixed(1)}s`);
   console.log(formatAgreement(summarizeAgreement(rows)));
+  if (gates.length > 0) console.log(`\n${formatGates(summarizeGates(gates))}`);
   for (const [message, count] of failures) console.log(`unanswered ×${count}: ${message}`);
 }
 

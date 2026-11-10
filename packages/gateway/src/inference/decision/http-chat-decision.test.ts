@@ -56,7 +56,7 @@ function scriptedFetch() {
     if (user.includes("(0, 1, 2, 3)"))
       return jsonResponse(200, logprobsReply({ "2": 0.5, "3": 0.5 }));
     if (user.includes("(yes, no)")) return jsonResponse(200, logprobsReply({ yes: 0.8, no: 0.2 }));
-    return jsonResponse(200, logprobsReply({ B: 0.9, A: 0.1 }));
+    return jsonResponse(200, logprobsReply({ "2": 0.9, "1": 0.1 }));
   });
 }
 
@@ -101,7 +101,55 @@ describe("HttpChatDecision", () => {
       temperature: 0,
       logprobs: true,
       top_logprobs: 20,
+      // Thinking off, in the spellings the common servers read.
+      chat_template_kwargs: { enable_thinking: false },
+      thinking: { type: "disabled" },
     });
+  });
+
+  it("retries once without a field the server refuses, and keeps it off", async () => {
+    const answers = scriptedFetch();
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchFn = vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if ("chat_template_kwargs" in body) {
+        return jsonResponse(400, {
+          error: { message: "Unrecognized request argument supplied: chat_template_kwargs" },
+        });
+      }
+      return answers(url, init);
+    });
+    const decision = client(fetchFn);
+    await decision.decide({ state: "x", questions: { is_bill: request.questions.is_bill! } });
+    await decision.decide({ state: "x", questions: { is_bill: request.questions.is_bill! } });
+    expect(bodies).toHaveLength(3);
+    expect(bodies[1]).not.toHaveProperty("chat_template_kwargs");
+    expect(bodies[1]).toHaveProperty("thinking");
+    expect(bodies[2]).not.toHaveProperty("chat_template_kwargs");
+  });
+
+  it("asks for fewer alternatives when the server caps top_logprobs", async () => {
+    const answers = scriptedFetch();
+    const fetchFn = vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { top_logprobs: number };
+      if (body.top_logprobs > 5) {
+        return jsonResponse(422, "`top_n_tokens` must be <= 5");
+      }
+      return answers(url, init);
+    });
+    const result = await client(fetchFn).decide({
+      state: "x",
+      questions: { is_bill: request.questions.is_bill! },
+    });
+    expect(result.answers.is_bill).toMatchObject({ type: "noul" });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a 400 that names no field it can drop", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(400, "model not found"));
+    await expect(client(fetchFn).decide(request)).rejects.toThrow(/HTTP 400/);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
   it("sends no authorization header without a key", async () => {

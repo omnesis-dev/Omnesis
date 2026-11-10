@@ -189,6 +189,23 @@ const ROLE_TO_CATALOG_ROLE = {
 /** TypeSafe's public System One endpoint, used unless `inference.typesafe.url` overrides it. */
 export const TYPESAFE_DEFAULT_URL = "https://api.typesafe.ai/v1/systemone";
 
+/**
+ * True when a TypeSafe URL points at the operator's own deployment rather than
+ * TypeSafe's cloud: any host outside `typesafe.ai`. Compared by host, not by
+ * string, so the default URL with a trailing slash or another path, or a
+ * regional TypeSafe host, still counts as TypeSafe's and still needs its key.
+ * An unparseable URL is treated as TypeSafe's, the stricter reading.
+ */
+export function isSelfHostedTypeSafeUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return false;
+  }
+  return host !== "typesafe.ai" && !host.endsWith(".typesafe.ai");
+}
+
 const DECISION_BACKENDS_REASON =
   'The Decision model needs token probabilities, which this backend does not return: assign "typesafe/<model>", a local GGUF chat model, an OpenAI-compatible HTTP backend ("<backend>/<model>"), or "replay".';
 
@@ -1224,7 +1241,7 @@ export class InferenceRegistry {
       assignments,
       typesafe: {
         url: this.typesafeUrl,
-        selfHosted: this.typesafeUrl !== TYPESAFE_DEFAULT_URL,
+        selfHosted: isSelfHostedTypeSafeUrl(this.typesafeUrl),
         onHost: isLoopbackInferenceUrl(this.typesafeUrl),
       },
       health: this.modelHealth(),
@@ -1480,7 +1497,7 @@ export class InferenceRegistry {
   private resolveTypeSafe(role: CapabilityRole, model: string): ResolvedTypeSafe {
     const allowRemoteInference = this.allowRemoteInference;
     const hasApiKey = this.checkTypeSafeKey();
-    const selfHosted = this.typesafeUrl !== TYPESAFE_DEFAULT_URL;
+    const selfHosted = isSelfHostedTypeSafeUrl(this.typesafeUrl);
     const onHost = isLoopbackInferenceUrl(this.typesafeUrl);
     const base = {
       role,

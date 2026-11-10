@@ -752,11 +752,38 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <p>
           A local or HTTP model answers each question from the probability it gives each option as
           its first output token; it generates no text. A server that returns no log-probabilities,
-          or a model that starts its reply with reasoning, cannot answer: turn the model's reasoning
-          off. Codex, Claude Code and Anthropic return no token probabilities and cannot serve the
-          role. A decision that cannot be answered counts as no decision, and each use falls back as
-          described above. A small local model judges less reliably than TypeSafe Jev. The iPhone
-          and Android apps show the assignment; change it from the portal or terminal.
+          or a model that starts its reply with reasoning, cannot answer. Unless you set the model's
+          reasoning controls, the gateway asks for reasoning off on every request, and drops a field
+          or lowers the number of alternatives it asks for when a server refuses them. A local model
+          refuses content longer than its context rather than answer a shortened prompt. Codex,
+          Claude Code and Anthropic return no token probabilities and cannot serve the role. A
+          decision that cannot be answered counts as no decision, and each use falls back as
+          described above. A small local model judges less reliably than TypeSafe Jev, and every
+          threshold was chosen on TypeSafe Jev's scores. The iPhone and Android apps show the
+          assignment; change it from the portal or terminal.
+        </p>
+        <p>What HTTP servers do with a decision request:</p>
+        <ul>
+          <li>
+            <strong>Work as sent:</strong> vLLM, SGLang, llama-server and llamafile, LocalAI,
+            TensorRT-LLM, Ollama 0.12.11 or later, and OpenAI's models that do not reason.
+          </li>
+          <li>
+            <strong>Work after a setting:</strong> TGI, Fireworks and mlx-lm's server cap the
+            alternatives, and the gateway falls back to 5; DeepSeek with thinking off, which the
+            gateway asks for; Azure OpenAI with a deployment of a model that does not reason.
+          </li>
+          <li>
+            <strong>Do not work:</strong> LM Studio, Gemini's OpenAI-compatible endpoint, Groq,
+            OpenAI's reasoning models (o-series, GPT-5) and gpt-oss. OpenRouter's default routing
+            can drop the log-probability fields, so its decisions fail.
+          </li>
+        </ul>
+        <p>
+          To measure a candidate before assigning it, replay recorded decisions against it with
+          <code>scripts/eval-decision-cassette.mts</code> in a source checkout: it reports how often
+          the candidate agrees with the recorded answers, and for the email worth gate how much of
+          the mail the recorded model kept the candidate would keep too.
         </p>
         <p>Backend support depends on the capability. Available backend families are:</p>
 

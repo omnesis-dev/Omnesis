@@ -68,7 +68,12 @@ describe("classifyModelRoles", () => {
       "gpt-audio",
       "gemini-2.5-flash-native-audio-latest",
     ]) {
-      expect(classifyModelRoles(id), id).toEqual(GENERATIVE_ROLES);
+      expect(classifyModelRoles(id), id).toEqual(
+        // Gemini is served without logprobs, so it is not offered for decision.
+        id.startsWith("gemini")
+          ? GENERATIVE_ROLES.filter((r) => r !== "decision")
+          : GENERATIVE_ROLES,
+      );
     }
   });
 
@@ -136,15 +141,35 @@ describe("classifyModelRoles", () => {
     for (const id of [
       "gpt-4o",
       "gpt-4.1-mini",
-      "o3-mini",
       "Qwen/Qwen3-8B",
       "llama-3.3-70b-versatile",
-      "gemini-2.5-flash",
       "mistral-large-latest",
       "deepseek-chat",
     ]) {
       expect(classifyModelRoles(id), id).toEqual(GENERATIVE_ROLES);
     }
+  });
+
+  it("leaves decision off for models that reason first or return no logprobs", () => {
+    const withoutDecision = GENERATIVE_ROLES.filter((r) => r !== "decision");
+    for (const id of [
+      "o3-mini",
+      "o4-mini",
+      "openai/o1",
+      "gpt-5",
+      "gpt-5-mini",
+      "openai/gpt-oss-20b",
+      "deepseek-reasoner",
+      "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+      "Qwen/QwQ-32B",
+      "Qwen/Qwen3-4B-Thinking-2507",
+      "gemini-2.5-flash",
+    ]) {
+      expect(classifyModelRoles(id), id).toEqual(withoutDecision);
+    }
+    // Not caught by the o-series pattern.
+    expect(classifyModelRoles("gpt-4o")).toContain("decision");
+    expect(classifyModelRoles("Qwen/Qwen3-4B-Instruct-2507")).toContain("decision");
   });
 
   it("defaults unknown ids to generative (safe default)", () => {

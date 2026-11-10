@@ -2813,6 +2813,25 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
     expect(reg.resolve("decision")).toMatchObject({ selfHosted: true, available: true });
   });
 
+  it("still asks for a key on any TypeSafe-hosted spelling of the endpoint", () => {
+    const reg = registryWithTypeSafeKey(false);
+    for (const url of [
+      "https://api.typesafe.ai/v1/systemone/",
+      "https://API.typesafe.ai/v2/systemone",
+      "https://eu.api.typesafe.ai/v1/systemone",
+      "not a url",
+    ]) {
+      reg.loadConfig({
+        inference: {
+          allowRemoteInference: true,
+          assignments: { decision: "typesafe/jev-1.13.0" },
+          typesafe: { url },
+        },
+      } as OmnesisConfig);
+      expect(reg.resolve("decision"), url).toMatchObject({ selfHosted: false, available: false });
+    }
+  });
+
   it("honours an endpoint override", () => {
     const reg = registryWithTypeSafeKey(true);
     reg.loadConfig({

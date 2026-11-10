@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DecisionRequest } from "@omnesis/core";
 
@@ -19,8 +22,6 @@ const VOCAB: Record<string, number> = {
   "1": 11,
   "2": 12,
   "3": 13,
-  A: 20,
-  B: 21,
 };
 
 const fake = vi.hoisted(() => ({
@@ -34,6 +35,8 @@ const fake = vi.hoisted(() => ({
   modelDisposed: 0,
   contextDisposed: 0,
   wrapperSettings: undefined as unknown,
+  contextSize: 8192,
+  requestedContext: undefined as unknown,
 }));
 
 vi.mock("../../llama-instance.js", () => {
@@ -72,7 +75,10 @@ vi.mock("../../llama-instance.js", () => {
   const model = {
     tokenizer: {},
     tokenize: (text: string) => (text in VOCAB ? [VOCAB[text]] : [900, 901]),
-    createContext: async () => ({
+    trainContextSize: 32_768,
+    createContext: async (opts: unknown) => ({
+      ...((fake.requestedContext = opts), {}),
+      contextSize: fake.contextSize,
       getSequence: () => sequence,
       dispose: async () => {
         fake.contextDisposed++;
@@ -133,8 +139,8 @@ beforeEach(() => {
         [900, 0.1],
       ]);
     return new Map([
-      [20, 0.2],
-      [21, 0.8],
+      [11, 0.2],
+      [12, 0.8],
     ]);
   };
   fake.evaluated = [];
@@ -143,6 +149,7 @@ beforeEach(() => {
   fake.maxInFlight = 0;
   fake.modelDisposed = 0;
   fake.contextDisposed = 0;
+  fake.contextSize = 8192;
 });
 
 describe("LlamaCppDecision", () => {
@@ -161,7 +168,10 @@ describe("LlamaCppDecision", () => {
     expect((result.answers.bill as { noul: number }).noul).toBeCloseTo(0.7 / 0.9);
     expect(result.answers.route).toMatchObject({ type: "choice", choice: "skip" });
     // The full softmax, not a greedy one-hot.
-    expect(fake.evaluateOptions[0]).toEqual({ temperature: 1, topK: 0, topP: 1, minP: 0 });
+    // The softmax over the top 128, not a greedy one-hot or the whole vocabulary.
+    expect(fake.evaluateOptions[0]).toEqual({ temperature: 1, topK: 128, topP: 1, minP: 0 });
+    // As large a context as the model was trained for, up to 16k.
+    expect(fake.requestedContext).toEqual({ contextSize: { max: 16_384 } });
     expect(fake.wrapperSettings).toMatchObject({
       customWrapperSettings: { qwen: { thoughts: "discourage" } },
     });
@@ -211,6 +221,41 @@ describe("LlamaCppDecision", () => {
       answers: { route: { choice: "skip" } },
     });
     await decision.dispose();
+  });
+
+  it("throws rather than answer a prompt the context cannot hold", async () => {
+    // node-llama-cpp would erase the prompt's beginning to make room.
+    fake.contextSize = 64;
+    const decision = new LlamaCppDecision("/models/decider.gguf");
+    await expect(decision.decide(request)).rejects.toThrow(
+      /decision prompt is \d+ tokens, more than the 64-token context/,
+    );
+    await decision.dispose();
+    expect(fake.evaluated).toHaveLength(0);
+  });
+
+  it("names the weights on disk, so a file replaced in place gets a new id", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-decision-"));
+    const path = join(dir, "decider-4b.Q4_K_M.gguf");
+    try {
+      writeFileSync(path, "weights v1");
+      const decision = new LlamaCppDecision(path);
+      const before = decision.modelId;
+      expect(before).toMatch(/^local:decider-4b\.Q4_K_M@[0-9a-f]{8}$/);
+      writeFileSync(path, "other quantisation");
+      utimesSync(path, new Date(), new Date(Date.now() + 60_000));
+      // The id changes when the new weights are loaded, not while the old ones serve.
+      expect(decision.modelId).toBe(before);
+      const result = await decision.decide({
+        state: "x",
+        questions: { bill: request.questions.bill! },
+      });
+      await decision.dispose();
+      expect(decision.modelId).not.toBe(before);
+      expect(result.model).toBe(decision.modelId);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("frees the model on dispose, after in-flight work", async () => {
