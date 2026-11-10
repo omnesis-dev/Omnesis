@@ -20,7 +20,7 @@ import { omnesisBrandIcon } from "../omnesis-notes/index.js";
 import { renderRecording } from "./render.js";
 import type { RecordingChunk, RecordingSession } from "../../recordings/storage.js";
 import type { WriteGate } from "../../write-gate.js";
-import type { DocumentInput } from "@omnesis/types";
+import type { DocumentInput, PersonMention } from "@omnesis/types";
 
 export const OMNESIS_RECORDINGS_SOURCE_ID = "omnesis-recordings";
 export const OMNESIS_RECORDINGS_PROVIDER_ID = "system";
@@ -40,15 +40,42 @@ export async function seedOmnesisRecordingsSourceMeta(writeGate: WriteGate): Pro
   });
 }
 
+/** Who one speaker of a session is, with the name to show for them. */
+export interface SpeakerIdentity {
+  speaker: number;
+  isSelf: boolean;
+  /** The mapped person, when the owner chose one. */
+  personId: string | null;
+  /** The person's name, or the name the owner gave; null when unnamed. */
+  name: string | null;
+}
+
 /**
  * The session's document, or null when nothing in it was understood as
- * speech — a recording of silence is not worth a document.
+ * speech — a recording of silence is not worth a document. Speakers the
+ * owner mapped to people make those people participants.
  */
 export function buildRecordingDocument(
   session: RecordingSession,
   chunks: readonly RecordingChunk[],
+  speakers: readonly SpeakerIdentity[] = [],
 ): DocumentInput | null {
-  const rendered = renderRecording(session, chunks);
+  const names = new Map<number, string>();
+  const people: PersonMention[] = [{ name: "You", role: "participant", isSelf: true }];
+  const linked = new Set<string>();
+  for (const s of speakers) {
+    if (s.isSelf) names.set(s.speaker, "You");
+    else if (s.name) names.set(s.speaker, s.name);
+    if (s.personId && !linked.has(s.personId)) {
+      linked.add(s.personId);
+      people.push({
+        role: "participant",
+        personId: s.personId,
+        ...(s.name ? { name: s.name } : {}),
+      });
+    }
+  }
+  const rendered = renderRecording(session, chunks, names);
   if (!rendered.hasSpeech) return null;
   return {
     providerId: ProviderId(OMNESIS_RECORDINGS_PROVIDER_ID),
@@ -61,10 +88,10 @@ export function buildRecordingDocument(
     sourceUpdatedAt: session.lastActivityAt,
     metadata: {
       documentType: "conversation",
-      // The owner recorded it, so they were there. Everyone else stays
-      // unattributed until speakers can be mapped to people.
-      // See #859 — planned: diarization and speaker-to-people mapping (suggestions: #860, #861).
-      people: [{ name: "You", role: "participant", isSelf: true }],
+      // The owner recorded it, so they were there; everyone else is who the
+      // owner mapped a speaker to.
+      // See #860 — planned: suggest participants from the calendar and mentions.
+      people,
     },
   };
 }

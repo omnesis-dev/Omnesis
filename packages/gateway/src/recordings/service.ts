@@ -21,10 +21,21 @@
  * session still missing chunks is written with the gap named after
  * `MISSING_GRACE_MS`. The document is written once per change of the session,
  * never per chunk, so the Brain reads a finished conversation, not a stream.
+ *
+ * When a voice separator is configured, each chunk's voices are separated
+ * before its audio goes, and the session's voices are grouped into speakers
+ * just before its document is written — at which point every voice vector is
+ * deleted (see `voices/voices.ts`). The owner then says who each speaker is;
+ * each mapping rewrites the document through the same revision path.
  */
 
 import { assertNever, createLogger } from "@omnesis/core";
+import { getPersonNames } from "../data/repositories/PersonRepository.js";
+import { recordingTitle, speakerTurns } from "../sources/omnesis-recordings/render.js";
 import {
+  listRecentRecordingSessions,
+  listRecordingSpeakers,
+  listUngroupedRecordingVoices,
   getRecordingChunk,
   getRecordingSession,
   listAbandonedRecordingSessions,
@@ -37,7 +48,10 @@ import {
   type InsertRecordingChunkOutcome,
   type RecordingChunk,
   type RecordingSession,
+  type RecordingSpeakerMapping,
 } from "./storage.js";
+import type { SpeakerIdentity } from "../sources/omnesis-recordings/index.js";
+import type { SeparatedVoices, VoiceSeparator, VoiceWindow } from "./voices/voices.js";
 import type {
   TranscriberReadiness,
   TranscribeOptions,
@@ -79,6 +93,8 @@ export interface RecordingServiceDeps {
     | "rescheduleRecordingChunk"
     | "settleRecordingChunk"
     | "markRecordingSessionProjected"
+    | "assignRecordingVoices"
+    | "setRecordingSpeaker"
   >;
   readDb: Database.Database;
   transcribe: (
@@ -96,9 +112,37 @@ export interface RecordingServiceDeps {
   buildDocument: (
     session: RecordingSession,
     chunks: readonly RecordingChunk[],
+    speakers: readonly SpeakerIdentity[],
   ) => DocumentInput | null;
+  /** The voice separator, or null while speakers are not told apart. */
+  voices?: () => VoiceSeparator | null;
   now?: () => Date;
 }
+
+/** One speaker of a session, as the owner reviews it. */
+export interface RecordingSpeakerView extends SpeakerIdentity {
+  /** How long this speaker spoke, ms. */
+  talkMs: number;
+  /** The first few things they said. */
+  samples: string[];
+}
+
+/** A session in the list of recent recordings. */
+export interface RecordingSummary {
+  id: string;
+  title: string;
+  startedAt: string;
+  state: RecordingState;
+  speakers: number;
+  /** Speakers the owner has said who they are. */
+  namedSpeakers: number;
+}
+
+export type SetSpeakerOutcome = "set" | "missing" | "no-such-person";
+
+/** Lines of a speaker shown when the owner reviews who spoke. */
+const SPEAKER_SAMPLES = 3;
+const SAMPLE_CHARS = 160;
 
 /** A session as the device opens it. */
 export interface StartRecordingInput {
@@ -226,6 +270,71 @@ export class RecordingTranscriptionService {
     };
   }
 
+  /** The most recently started sessions, newest first. */
+  recent(limit: number): RecordingSummary[] {
+    return listRecentRecordingSessions(this.deps.readDb, limit).map((session) => {
+      const speakers = listRecordingSpeakers(this.deps.readDb, session.id);
+      return {
+        id: session.id,
+        title: recordingTitle(session),
+        startedAt: session.startedAt,
+        state: this.status(session.id)?.state ?? "recording",
+        speakers: speakers.length,
+        namedSpeakers: speakers.filter((s) => s.isSelf || s.personId || s.name).length,
+      };
+    });
+  }
+
+  /** A session's speakers with what each said, or null when the session does not exist. */
+  speakers(id: string): RecordingSpeakerView[] | null {
+    if (!getRecordingSession(this.deps.readDb, id)) return null;
+    const identities = this.speakerIdentities(id);
+    const talk = new Map<number, number>();
+    const samples = new Map<number, string[]>();
+    for (const chunk of listRecordingChunks(this.deps.readDb, id)) {
+      for (const w of chunk.voices ?? []) {
+        if (w.speaker !== undefined) {
+          talk.set(w.speaker, (talk.get(w.speaker) ?? 0) + (w.endMs - w.startMs));
+        }
+      }
+      for (const turn of speakerTurns(chunk.segments ?? [], chunk.voices ?? [])) {
+        if (turn.speaker === undefined) continue;
+        const list = samples.get(turn.speaker) ?? [];
+        if (list.length < SPEAKER_SAMPLES) {
+          list.push(
+            turn.text.length > SAMPLE_CHARS
+              ? `${turn.text.slice(0, SAMPLE_CHARS - 1)}…`
+              : turn.text,
+          );
+          samples.set(turn.speaker, list);
+        }
+      }
+    }
+    return identities.map((s) => ({
+      ...s,
+      talkMs: talk.get(s.speaker) ?? 0,
+      samples: samples.get(s.speaker) ?? [],
+    }));
+  }
+
+  /** Say who one speaker of a session is; its document is written again. */
+  async setSpeaker(
+    id: string,
+    speaker: number,
+    mapping: RecordingSpeakerMapping,
+  ): Promise<SetSpeakerOutcome> {
+    if (
+      mapping.kind === "person" &&
+      !getPersonNames(this.deps.readDb, [mapping.personId]).has(mapping.personId)
+    ) {
+      return "no-such-person";
+    }
+    const set = await this.deps.writeGate.setRecordingSpeaker(id, speaker, mapping);
+    if (!set) return "missing";
+    this.kick();
+    return "set";
+  }
+
   /** Delete a session, its chunks and its document. False when it did not exist. */
   async delete(id: string): Promise<boolean> {
     const deleted = await this.deps.writeGate.deleteRecordingSession(id);
@@ -349,8 +458,9 @@ export class RecordingTranscriptionService {
     // session comes round again.
     const session = getRecordingSession(this.deps.readDb, sessionId);
     if (!session) return;
+    await this.groupVoices(sessionId);
     const chunks = listRecordingChunks(this.deps.readDb, sessionId);
-    const doc = this.deps.buildDocument(session, chunks);
+    const doc = this.deps.buildDocument(session, chunks, this.speakerIdentities(sessionId));
     if (doc) await this.deps.ingest([doc]);
     else await this.deps.deleteDocument(sessionId);
     // A delete that landed while the document was written must not leave
@@ -365,6 +475,77 @@ export class RecordingTranscriptionService {
         ? `Wrote recording ${sessionId}: ${chunks.length} chunks, ${doc.content.length} chars`
         : `Recording ${sessionId} has no speech; no document`,
     );
+  }
+
+  /**
+   * Group the voices of chunks not grouped yet into the session's speakers
+   * and delete their vectors. Speakers found in chunks that arrive after an
+   * earlier grouping are numbered after the existing ones: their vectors
+   * cannot be compared with deleted ones. Without a separator, or when
+   * grouping fails, the vectors are deleted all the same and those windows
+   * stay without a speaker — vectors never wait for a later attempt.
+   */
+  private async groupVoices(sessionId: string): Promise<void> {
+    const ungrouped = listUngroupedRecordingVoices(this.deps.readDb, sessionId);
+    if (ungrouped.length === 0) return;
+    const separator = this.deps.voices?.() ?? null;
+    let labels: number[] | null = null;
+    if (separator) {
+      try {
+        labels = await separator.group(ungrouped.flatMap((c) => c.vectors));
+      } catch (err) {
+        log.warn(
+          `Recording ${sessionId}: voices not grouped: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    const base = Math.max(
+      0,
+      ...listRecordingSpeakers(this.deps.readDb, sessionId).map((s) => s.speaker),
+    );
+    let i = 0;
+    const chunks = ungrouped.map(({ seq, windows }) => ({
+      seq,
+      windows: windows.map((w): VoiceWindow => {
+        const label = labels?.[i++];
+        return label === undefined
+          ? { startMs: w.startMs, endMs: w.endMs }
+          : { ...w, speaker: base + label + 1 };
+      }),
+    }));
+    await this.deps.writeGate.assignRecordingVoices(sessionId, chunks);
+  }
+
+  /** The session's speakers, with the names of the people they are mapped to. */
+  private speakerIdentities(sessionId: string): SpeakerIdentity[] {
+    const speakers = listRecordingSpeakers(this.deps.readDb, sessionId);
+    const names = getPersonNames(
+      this.deps.readDb,
+      speakers.flatMap((s) => (s.personId ? [s.personId] : [])),
+    );
+    return speakers.map((s) => ({
+      speaker: s.speaker,
+      isSelf: s.isSelf,
+      personId: s.personId,
+      name: s.personId ? (names.get(s.personId) ?? s.name) : s.name,
+    }));
+  }
+
+  /** The chunk's voices, or none when there is no separator or it fails on this audio. */
+  private async separateVoices(
+    chunk: RecordingChunk,
+    audio: Uint8Array,
+  ): Promise<SeparatedVoices | null> {
+    const separator = this.deps.voices?.() ?? null;
+    if (!separator) return null;
+    try {
+      return await separator.separate(audio, chunk.mimeType ?? "application/octet-stream");
+    } catch (err) {
+      log.warn(
+        `Recording ${chunk.sessionId} chunk ${chunk.seq}: voices not separated: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
   }
 
   private async process(chunk: RecordingChunk): Promise<void> {
@@ -383,6 +564,7 @@ export class RecordingTranscriptionService {
     const audio = readRecordingChunkAudio(this.deps.readDb, chunk.sessionId, chunk.seq);
     const session = getRecordingSession(this.deps.readDb, chunk.sessionId);
     if (!audio || !session) return this.giveUp(chunk, "its audio is gone");
+    const voices = await this.separateVoices(chunk, audio);
     const outcome = await this.deps.transcribe(
       audio,
       chunk.mimeType ?? "application/octet-stream",
@@ -391,6 +573,7 @@ export class RecordingTranscriptionService {
         ...(session.language ? { language: session.language } : {}),
         minTimeoutMs: PATIENCE_MS[Math.min(chunk.attempts, PATIENCE_MS.length - 1)],
         allowVocabulary: session.allowVocabulary,
+        segments: true,
         context: {
           purpose: "source-audio",
           recordedAt: chunk.startedAt,
@@ -406,6 +589,8 @@ export class RecordingTranscriptionService {
         await this.deps.writeGate.settleRecordingChunk(chunk.sessionId, chunk.seq, {
           status: "transcribed",
           text: outcome.result.text.trim(),
+          ...(outcome.result.segments ? { segments: outcome.result.segments } : {}),
+          ...(voices && voices.windows.length > 0 ? { voices } : {}),
         });
         return;
       case "unreadable":

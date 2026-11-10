@@ -245,7 +245,11 @@ export class WhisperTranscriber implements TranscribeCapability {
     this.pending.delete(msg.id);
     clearTimeout(pending.timer);
     if (msg.type === "result")
-      pending.resolve({ text: msg.text, ...(msg.language ? { language: msg.language } : {}) });
+      pending.resolve({
+        text: msg.text,
+        ...(msg.language ? { language: msg.language } : {}),
+        ...(msg.segments ? { segments: msg.segments } : {}),
+      });
     else pending.reject(new Error(msg.error));
   }
 
@@ -343,7 +347,7 @@ export class WhisperTranscriber implements TranscribeCapability {
           maxPromptTokens: opts.maxPromptTokens,
         })
       : undefined;
-    const { text, language } = await transcribeInChunks(
+    const { text, language, segments } = await transcribeInChunks(
       pcm,
       { minTimeoutMs: opts?.minTimeoutMs },
       (chunk, ms) =>
@@ -355,7 +359,12 @@ export class WhisperTranscriber implements TranscribeCapability {
           signal,
         ),
     );
-    return { text, language, durationSec: pcm.length / PCM_SAMPLE_RATE };
+    return {
+      text,
+      language,
+      durationSec: pcm.length / PCM_SAMPLE_RATE,
+      ...(segments ? { segments } : {}),
+    };
   }
 
   /** A chunk's deadline covers cold model loading as well as inference. */

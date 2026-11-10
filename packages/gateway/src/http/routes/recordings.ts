@@ -20,6 +20,14 @@
  *     when a different count was declared first.
  *   - `GET /recordings/:id` reports progress.
  *   - `DELETE /recordings/:id` removes the session, its chunks and its document.
+ *   - `GET /recordings?limit=` lists the most recent sessions, with how many
+ *     speakers each has and how many the owner has named.
+ *   - `GET /recordings/:id/speakers` lists a session's speakers with how long
+ *     each spoke and the first things they said.
+ *   - `PUT /recordings/:id/speakers/:n` says who speaker `n` is — `{self:
+ *     true}`, `{personId}`, `{name}` or `{clear: true}` — and the document is
+ *     written again. 404 for a speaker the session does not have, 400 for a
+ *     person id that names nobody.
  *
  * Scope: `write:omnesis-recordings` (satisfied by admin).
  */
@@ -38,17 +46,21 @@ import {
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import {
   finishRecordingBody,
+  listRecordingsQuery,
   recordingChunkMetadata,
+  recordingSpeakerNumber,
+  setRecordingSpeakerBody,
   recordingChunkSeq,
   recordingId,
   startRecordingBody,
 } from "../schemas/index.js";
 import { transcriptionVocabularyAllowed } from "../transcription-access.js";
-import { validateJson } from "../validate.js";
+import { validateJson, validateQuery } from "../validate.js";
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
 import { languageHint } from "./voice-notes.js";
 import type { DictationFeatureStatus } from "../../dictation/index.js";
 import type { RecordingTranscriptionService } from "../../recordings/index.js";
+import type { RecordingSpeakerMapping } from "../../recordings/storage.js";
 import type { Context, Next } from "hono";
 import type { RouteApp } from "./types.js";
 
@@ -209,6 +221,45 @@ export function mountRecordingRoutes(app: RouteApp, deps: RecordingRoutesDeps): 
     c.header("Cache-Control", "no-store");
     return c.json(status);
   });
+
+  app.get("/recordings", scope.writeAny(), validateQuery(listRecordingsQuery), (c) => {
+    enforceScope(c);
+    c.header("Cache-Control", "no-store");
+    return c.json({ recordings: deps.service.recent(c.req.valid("query").limit ?? 20) });
+  });
+
+  app.get("/recordings/:id/speakers", scope.writeAny(), (c) => {
+    enforceScope(c);
+    const speakers = deps.service.speakers(parseId(c.req.param("id")));
+    if (!speakers) throw new NotFoundError("recording not found");
+    c.header("Cache-Control", "no-store");
+    return c.json({ speakers });
+  });
+
+  app.put(
+    "/recordings/:id/speakers/:speaker",
+    scope.writeAny(),
+    validateJson(setRecordingSpeakerBody),
+    async (c) => {
+      enforceScope(c);
+      const id = parseId(c.req.param("id"));
+      const speaker = recordingSpeakerNumber.safeParse(c.req.param("speaker"));
+      if (!speaker.success) throw new NotFoundError("speaker not found");
+      const body = c.req.valid("json");
+      const mapping: RecordingSpeakerMapping =
+        "self" in body
+          ? { kind: "self" }
+          : "personId" in body
+            ? { kind: "person", personId: body.personId }
+            : "name" in body
+              ? { kind: "name", name: body.name }
+              : { kind: "clear" };
+      const outcome = await deps.service.setSpeaker(id, speaker.data, mapping);
+      if (outcome === "missing") throw new NotFoundError("speaker not found");
+      if (outcome === "no-such-person") throw new BadRequestError("no such person");
+      return c.json({ speakers: deps.service.speakers(id) ?? [] });
+    },
+  );
 
   app.delete("/recordings/:id", scope.writeAny(), async (c) => {
     enforceScope(c);

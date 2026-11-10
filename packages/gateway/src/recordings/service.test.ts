@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
 import { directWriteGate } from "../write-gate.js";
 import { buildRecordingDocument } from "../sources/omnesis-recordings/index.js";
+import { findOrCreatePerson } from "../people.js";
 import {
   ABANDONED_AFTER_MS,
   MAX_ATTEMPTS,
@@ -23,6 +24,8 @@ import {
   type RecordingChunkInput,
 } from "./service.js";
 import { getRecordingChunk, readRecordingChunkAudio } from "./storage.js";
+import { ReplayVoiceSeparator } from "./voices/replay-voice-separator.js";
+import type { VoiceSeparator } from "./voices/voices.js";
 import type {
   TranscriberReadiness,
   TranscribeOptions,
@@ -48,6 +51,7 @@ let failingIngest: Set<string>;
 let calls: { mimeType: string; opts?: TranscribeOptions }[];
 let docs: Map<string, DocumentInput>;
 let held: Promise<void> | null;
+let separator: VoiceSeparator | null;
 let release: () => void;
 
 const START = "2026-03-02T09:00:00.000Z";
@@ -107,6 +111,7 @@ beforeEach(() => {
   docs = new Map();
   failingIngest = new Set();
   held = null;
+  separator = null;
   service = new RecordingTranscriptionService({
     writeGate: directWriteGate(db),
     readDb: db,
@@ -130,6 +135,7 @@ beforeEach(() => {
       docs.delete(externalId);
     },
     buildDocument: buildRecordingDocument,
+    voices: () => separator,
     now: () => now,
   });
 });
@@ -156,6 +162,7 @@ describe("RecordingTranscriptionService", () => {
       priority: "background",
       language: "en",
       allowVocabulary: true,
+      segments: true,
       context: { purpose: "source-audio" },
     });
     // The audio is gone once the chunk is settled; the transcript stays.
@@ -181,6 +188,21 @@ describe("RecordingTranscriptionService", () => {
       chunkCount: 2,
       chunks: { received: 2, transcribed: 2, pending: 0 },
     });
+  });
+
+  test("keeps the transcriber's segment timings in the document", async () => {
+    const id = await start();
+    transcripts.push({
+      text: "Morning. Coffee first?",
+      segments: [
+        { startMs: 1_000, endMs: 2_000, text: "Morning." },
+        { startMs: 31_000, endMs: 32_500, text: "Coffee first?" },
+      ],
+    });
+    await service.addChunk(chunk(id, 0));
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+    expect(docs.get(id)!.content).toContain("[00:00:01] Morning.\n[00:00:31] Coffee first?");
   });
 
   test("a retried start, chunk or finish changes nothing", async () => {
@@ -434,5 +456,136 @@ describe("RecordingTranscriptionService", () => {
     expect(docs.size).toBe(0);
     expect(service.status(id)).toBeNull();
     expect(await service.delete(id)).toBe(false);
+  });
+});
+
+describe("RecordingTranscriptionService speakers", () => {
+  /** A chunk whose "audio" scripts who says what, for the replay transcriber and separator. */
+  type Line = { startMs: number; endMs: number; text: string; voice: string };
+  function spoken(sessionId: string, seq: number, lines: Line[]) {
+    const script = { segments: lines };
+    transcripts.push({
+      text: lines.map((l) => l.text).join(" "),
+      segments: lines.map(({ startMs, endMs, text }) => ({ startMs, endMs, text })),
+    });
+    return chunk(sessionId, seq, { audio: new TextEncoder().encode(JSON.stringify(script)) });
+  }
+
+  async function twoSpeakerSession(): Promise<string> {
+    const id = await start();
+    await service.addChunk(
+      spoken(id, 0, [
+        { startMs: 0, endMs: 3_000, text: "Shall we look at the budget?", voice: "maya" },
+        { startMs: 4_000, endMs: 7_000, text: "Yes, travel first.", voice: "owner" },
+      ]),
+    );
+    await service.addChunk(
+      spoken(id, 1, [
+        { startMs: 0, endMs: 2_000, text: "Travel is up ten percent.", voice: "maya" },
+        { startMs: 2_000, endMs: 5_000, text: "Then we cut it.", voice: "maya" },
+      ]),
+    );
+    await service.finish(id, 2, at(120_000));
+    await service.idle();
+    return id;
+  }
+
+  test("tells voices apart across chunks and deletes the vectors once grouped", async () => {
+    separator = new ReplayVoiceSeparator();
+    const id = await twoSpeakerSession();
+
+    const lines = docs.get(id)!.content.split("\n").slice(4);
+    expect(lines).toEqual([
+      "[00:00:00] Speaker 1: Shall we look at the budget?",
+      "[00:00:04] Speaker 2: Yes, travel first.",
+      "[00:01:00] Speaker 1: Travel is up ten percent. Then we cut it.",
+    ]);
+    const vectors = db
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM recording_chunks WHERE session_id = ? AND voice_vectors IS NOT NULL",
+      )
+      .get(id)!.n;
+    expect(vectors).toBe(0);
+    expect(service.speakers(id)).toEqual([
+      expect.objectContaining({
+        speaker: 1,
+        talkMs: 8_000,
+        samples: ["Shall we look at the budget?", "Travel is up ten percent. Then we cut it."],
+      }),
+      expect.objectContaining({ speaker: 2, talkMs: 3_000, samples: ["Yes, travel first."] }),
+    ]);
+  });
+
+  test("the owner's mapping names the lines and makes the person a participant", async () => {
+    separator = new ReplayVoiceSeparator();
+    const maya = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Maya", emails: ["maya@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+    const id = await twoSpeakerSession();
+
+    expect(await service.setSpeaker(id, 1, { kind: "person", personId: maya })).toBe("set");
+    expect(await service.setSpeaker(id, 2, { kind: "self" })).toBe("set");
+    await service.idle();
+
+    const doc = docs.get(id)!;
+    expect(doc.content).toContain("[00:00:00] Maya: Shall we look at the budget?");
+    expect(doc.content).toContain("[00:00:04] You: Yes, travel first.");
+    expect(doc.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+      { role: "participant", personId: maya, name: "Maya" },
+    ]);
+
+    expect(await service.setSpeaker(id, 1, { kind: "name", name: "Guest" })).toBe("set");
+    await service.idle();
+    expect(docs.get(id)!.content).toContain("Guest: Shall we look at the budget?");
+    expect(docs.get(id)!.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+    ]);
+  });
+
+  test("refuses a speaker the session does not have and a person nobody is", async () => {
+    separator = new ReplayVoiceSeparator();
+    const id = await twoSpeakerSession();
+    expect(await service.setSpeaker(id, 3, { kind: "self" })).toBe("missing");
+    expect(await service.setSpeaker(id, 1, { kind: "person", personId: "nobody" })).toBe(
+      "no-such-person",
+    );
+    expect(service.speakers(randomUUID())).toBeNull();
+  });
+
+  test("without a separator, or when it fails, the transcript is written unattributed", async () => {
+    const id = await twoSpeakerSession();
+    expect(docs.get(id)!.content).toContain("[00:00:00] Shall we look at the budget?");
+    expect(service.speakers(id)).toEqual([]);
+
+    separator = {
+      name: "broken",
+      separate: () => Promise.reject(new Error("model crashed")),
+      group: () => Promise.reject(new Error("model crashed")),
+      dispose: async () => {},
+    };
+    const other = await twoSpeakerSession();
+    expect(docs.get(other)!.content).toContain("[00:00:04] Yes, travel first.");
+  });
+
+  test("voices are deleted even when grouping fails", async () => {
+    const replay = new ReplayVoiceSeparator();
+    separator = {
+      name: "flaky",
+      separate: (audio) => replay.separate(audio),
+      group: () => Promise.reject(new Error("worker died")),
+      dispose: async () => {},
+    };
+    const id = await twoSpeakerSession();
+    expect(docs.get(id)!.content).toContain("[00:00:00] Shall we look at the budget?");
+    const vectors = db
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM recording_chunks WHERE session_id = ? AND voice_vectors IS NOT NULL",
+      )
+      .get(id)!.n;
+    expect(vectors).toBe(0);
   });
 });
