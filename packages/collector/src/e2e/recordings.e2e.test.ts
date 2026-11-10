@@ -9,7 +9,8 @@
  * order, retried, some silent), and finishes it; the gateway transcribes the
  * chunks as they arrive and writes one searchable document per session. The
  * synthetic transcriber decodes each chunk's bytes as UTF-8, so no Whisper
- * model is needed. The routes exist only in experimental mode.
+ * model is needed; the replay voice separator reads the same scripted chunks
+ * to tell speakers apart. The routes exist only in experimental mode.
  */
 
 import "./synth-env.js";
@@ -67,6 +68,7 @@ describe("recorded conversations in experimental mode (E2E)", () => {
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
       transcriberBackend: "replay",
+      extraGatewayConfig: { inference: { recordings: { speakers: "replay" } } },
     });
     await harness.start();
   }, 60_000);
@@ -144,6 +146,103 @@ describe("recorded conversations in experimental mode (E2E)", () => {
       { timeout: 10_000, interval: 250 },
     );
   });
+});
+
+describe("recorded conversation speakers in experimental mode (E2E)", () => {
+  let harness: SyntheticE2EHarness;
+
+  beforeAll(async () => {
+    harness = new SyntheticE2EHarness({
+      gatewayMode: "experimental",
+      transcriberBackend: "replay",
+      extraGatewayConfig: { inference: { recordings: { speakers: "replay" } } },
+    });
+    await harness.start();
+    // The universe's people, one of whom stands in for the guest.
+    await harness.syncAllSources();
+    await harness.waitForPeopleResolution();
+  }, 180_000);
+
+  afterAll(async () => {
+    await harness.destroy();
+  });
+
+  test("speakers mapped to people name the transcript and link the conversation to them", async () => {
+    const id = randomUUID();
+    await harness.gatewayFetch("/recordings", {
+      method: "POST",
+      body: JSON.stringify({ id, title: "Design sync", startedAt: START, language: "en-GB" }),
+    });
+    const script = (lines: Array<[number, number, string, string]>) =>
+      JSON.stringify({
+        segments: lines.map(([startMs, endMs, voice, text]) => ({ startMs, endMs, voice, text })),
+      });
+    await putChunk(
+      harness,
+      id,
+      0,
+      script([
+        [0, 3_000, "guest", "The mockups are ready for review."],
+        [4_000, 6_000, "owner", "Send them over today."],
+      ]),
+    );
+    await putChunk(harness, id, 1, script([[0, 4_000, "guest", "Done, check your inbox."]]));
+    await harness.gatewayFetch(`/recordings/${id}/finish`, {
+      method: "POST",
+      body: JSON.stringify({ chunkCount: 2, endedAt: "2026-03-02T09:02:00.000Z" }),
+    });
+    await vi.waitFor(
+      async () => {
+        expect(await harness.gatewayJson<RecordingStatus>(`/recordings/${id}`)).toMatchObject({
+          state: "done",
+        });
+      },
+      { timeout: 20_000, interval: 250 },
+    );
+
+    const { speakers } = await harness.gatewayJson<{
+      speakers: Array<{ speaker: number; samples: string[] }>;
+    }>(`/recordings/${id}/speakers`);
+    expect(speakers.map((s) => s.samples[0])).toEqual([
+      "The mockups are ready for review.",
+      "Send them over today.",
+    ]);
+
+    // Any person of the universe stands in for the guest.
+    const { items } = await harness.gatewayJson<{
+      items: Array<{ id: string; canonicalName: string; isSelf: boolean }>;
+    }>("/people/search?q=&limit=10");
+    const guest = items.find((p) => !p.isSelf)!;
+    for (const [speaker, body] of [
+      [1, { personId: guest.id }],
+      [2, { self: true }],
+    ] as const) {
+      const res = await harness.gatewayFetch(`/recordings/${id}/speakers/${speaker}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    await vi.waitFor(
+      async () => {
+        const search = await harness.gatewayJson<{
+          results?: Array<{ id: string; source_id: string }>;
+        }>(`/documents/search?q=${encodeURIComponent("mockups")}&limit=10`);
+        const hit = (search.results ?? []).find((r) => r.source_id === "omnesis-recordings")!;
+        const { content } = await harness.gatewayJson<{ content: string }>(`/documents/${hit.id}`);
+        expect(content).toContain(`${guest.canonicalName}: The mockups are ready for review.`);
+        expect(content).toContain("You: Send them over today.");
+        const { people } = await harness.gatewayJson<{
+          people: Array<{ personId: string; role: string }>;
+        }>(`/documents/${hit.id}/people`);
+        expect(people).toContainEqual(
+          expect.objectContaining({ personId: guest.id, role: "participant" }),
+        );
+      },
+      { timeout: 40_000, interval: 500 },
+    );
+  }, 90_000);
 });
 
 describe("recorded conversations in stable mode (E2E)", () => {

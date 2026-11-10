@@ -47,6 +47,8 @@ function chunk(
     mimeType: text === null ? null : "audio/aac",
     status: text === null ? "silent" : "transcribed",
     text,
+    segments: null,
+    voices: null,
     attempts: 0,
     nextAttemptAt: START,
     receivedAt: START,
@@ -139,6 +141,23 @@ describe("renderRecording", () => {
       "[00:01:10] ★ Marked moment, saved as a note",
       "[00:02:00] The deadline moves.",
       "[00:02:30] ★ Marked moment, saved as a note",
+    ]);
+  });
+
+  test("stamps each transcriber segment with its own offset", () => {
+    const r = renderRecording(session(), [
+      chunk(0, 0, "Good morning. Shall we start?", {
+        segments: [
+          { startMs: 400, endMs: 1_900, text: "Good morning." },
+          { startMs: 12_300, endMs: 14_000, text: "Shall we start?" },
+        ],
+      }),
+      chunk(1, 60, "No timings here."),
+    ]);
+    expect(r.body.split("\n").slice(4)).toEqual([
+      "[00:00:00] Good morning.",
+      "[00:00:12] Shall we start?",
+      "[00:01:00] No timings here.",
     ]);
   });
 
