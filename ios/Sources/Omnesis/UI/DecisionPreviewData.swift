@@ -107,7 +107,11 @@ enum DecisionPreviewData {
         fittedAt: "2026-11-08T14:30:00Z",
         samples: 298,
         agreement: 0.92,
-        agreementBefore: 0.71
+        agreementBefore: 0.71,
+        keeps: 0.95,
+        keepsBefore: 0.78,
+        skips: 0.88,
+        skipsBefore: 0.93
     )
 
     /// An OpenRouter backend with a key and a calibration for one model.

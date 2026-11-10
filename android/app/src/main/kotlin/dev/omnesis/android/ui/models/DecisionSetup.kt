@@ -541,7 +541,11 @@ object DecisionSetup {
         "Calibrating sends about 300 invented emails (no personal data) to the model. On a hosted provider " +
             "that costs a few cents; on a local CPU server it can take several minutes."
 
-    /** "Calibrated against Jev on Nov 10, 2026: agrees with Jev on 91% of the reference emails (was 78%)." */
+    /**
+     * "Calibrated against Jev on Nov 10, 2026: keeps 95% of the reference emails Jev keeps and skips
+     * 88% of those it skips (before: 81% and 90%).", or, for a calibration stored without those
+     * shares, the agreement with Jev.
+     */
     fun calibrationSummary(
         calibration: DecisionCalibration?,
         locale: Locale = Locale.getDefault(),
@@ -550,6 +554,19 @@ object DecisionSetup {
         if (calibration == null) return "Calibrated against Jev."
         val date = shortDate(calibration.fittedAt, locale, zone)
         val head = "Calibrated against Jev" + (date?.let { " on $it" } ?: "")
+        val keeps = calibration.keeps
+        val skips = calibration.skips
+        if (keeps != null && skips != null) {
+            val keepsBefore = calibration.keepsBefore
+            val skipsBefore = calibration.skipsBefore
+            val before = if (keepsBefore != null && skipsBefore != null) {
+                " (before: ${percent(keepsBefore)} and ${percent(skipsBefore)})"
+            } else {
+                ""
+            }
+            return "$head: keeps ${percent(keeps)} of the reference emails Jev keeps and skips " +
+                "${percent(skips)} of those it skips$before."
+        }
         val agreement = calibration.agreement ?: return "$head."
         val before = calibration.agreementBefore?.let { " (was ${percent(it)})" }.orEmpty()
         return "$head: agrees with Jev on ${percent(agreement)} of the reference emails$before."
@@ -574,7 +591,8 @@ object DecisionSetup {
         return when (val panel = calibrationPanel(assigned, status)) {
             is CalibrationPanel.Running -> CardLine("Calibrating · ${calibrationProgressText(panel.status)}", warning = false)
             is CalibrationPanel.Calibrated -> CardLine(
-                panel.calibration?.agreement?.let { "Calibrated against Jev · agrees on ${percent(it)}" }
+                panel.calibration?.keeps?.let { "Calibrated against Jev · keeps ${percent(it)} of what Jev keeps" }
+                    ?: panel.calibration?.agreement?.let { "Calibrated against Jev · agrees on ${percent(it)}" }
                     ?: "Calibrated against Jev",
                 warning = false,
             )

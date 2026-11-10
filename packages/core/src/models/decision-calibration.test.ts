@@ -3,24 +3,16 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  CALIBRATION_RECALL,
   MIN_CALIBRATION_SAMPLES,
   calibrateDecisionScore,
   calibrateNormalized,
-  decisionPassAgreement,
+  decisionGateRates,
   fitDecisionCalibration,
 } from "./decision-calibration.js";
 
-/** Knots sorted by x with non-decreasing y, inside 0–1. */
-function isMonotone(points: ReadonlyArray<readonly [number, number]>): boolean {
-  return points.every(
-    ([x, y], i) =>
-      x >= 0 &&
-      x <= 1 &&
-      y >= 0 &&
-      y <= 1 &&
-      (i === 0 || (x > points[i - 1]![0] && y >= points[i - 1]![1])),
-  );
-}
+/** The worth gate's threshold on the 0–1 scale of a four-level question. */
+const CUT = 1.08 / 3;
 
 /** A seeded generator, so the synthetic score sets are the same on every run. */
 function rng(seed: number): () => number {
@@ -33,65 +25,66 @@ function rng(seed: number): () => number {
 
 /**
  * Paired scores for one set of items: Jev's, and a candidate that ranks them
- * the same way but runs high (its scores are Jev's square root — every item
- * looks more worth recording).
+ * like Jev with some noise but rates every item higher (square root of Jev's
+ * 0–1 score, plus noise) — a model that lets junk through at Jev's threshold.
  */
-function pairedScores(n: number): { jev: number[]; candidate: number[] } {
+function optimistic(n: number): { jev: number[]; candidate: number[] } {
   const r = rng(7);
-  const jev = Array.from({ length: n }, () => r());
-  return { jev, candidate: jev.map((v) => Math.sqrt(v)) };
+  const jev = Array.from({ length: n }, () => r() ** 0.7);
+  const candidate = jev.map((v) => Math.min(1, Math.max(0, Math.sqrt(v) + (r() - 0.5) * 0.2)));
+  return { jev, candidate };
 }
 
 describe("fitDecisionCalibration", () => {
-  it("maps a candidate's distribution onto the reference's", () => {
-    const { jev, candidate } = pairedScores(300);
-    const points = fitDecisionCalibration(candidate, jev);
-    expect(isMonotone(points)).toBe(true);
-    for (const v of [0.1, 0.3, 0.5, 0.8]) {
-      expect(calibrateNormalized(points, Math.sqrt(v))).toBeCloseTo(v, 1);
-    }
+  it("anchors the score that keeps 95% of what Jev keeps on Jev's threshold", () => {
+    const { jev, candidate } = optimistic(300);
+    const points = fitDecisionCalibration(candidate, jev, CUT);
+    expect(points).toHaveLength(1);
+    const [[x, y]] = points as [[number, number]];
+    expect(y).toBeCloseTo(CUT, 4);
+    expect(x).toBeGreaterThan(CUT);
+    const calibrated = candidate.map((v) => calibrateNormalized(points, v));
+    const rates = decisionGateRates(calibrated, jev, CUT);
+    expect(rates.keeps).toBeGreaterThanOrEqual(CALIBRATION_RECALL - 0.01);
   });
 
-  it("makes a fixed threshold pass the same share of items as the reference", () => {
-    const { jev, candidate } = pairedScores(300);
-    const cut = 1.08 / 3;
-    const before = decisionPassAgreement(candidate, jev, cut);
-    const points = fitDecisionCalibration(candidate, jev);
-    const calibrated = candidate.map((x) => calibrateNormalized(points, x));
-    const after = decisionPassAgreement(calibrated, jev, cut);
-    expect(before).toBeLessThan(0.9);
-    expect(after).toBeGreaterThan(0.97);
+  it("skips far more of what Jev skips than the raw scores, while keeping what Jev keeps", () => {
+    const { jev, candidate } = optimistic(300);
+    const before = decisionGateRates(candidate, jev, CUT);
+    const points = fitDecisionCalibration(candidate, jev, CUT);
+    const after = decisionGateRates(
+      candidate.map((v) => calibrateNormalized(points, v)),
+      jev,
+      CUT,
+    );
+    expect(before.keeps).toBeGreaterThan(0.99);
+    expect(before.skips).toBeLessThan(0.5);
+    expect(after.keeps).toBeGreaterThan(0.93);
+    expect(after.skips).toBeGreaterThan(before.skips + 0.3);
+    expect(after.agreement).toBeGreaterThan(before.agreement);
   });
 
-  it("collapses a pile of equal scores into one knot and stays monotone", () => {
-    const jev = Array.from({ length: 100 }, (_, i) => i / 100);
-    const candidate = jev.map((v) => (v < 0.6 ? 0.2 : v));
-    const points = fitDecisionCalibration(candidate, jev);
-    expect(isMonotone(points)).toBe(true);
-    expect(points.filter(([x]) => x === 0.2)).toHaveLength(1);
+  it("barely moves a model already on Jev's scale", () => {
+    const r = rng(3);
+    const jev = Array.from({ length: 200 }, () => r());
+    const points = fitDecisionCalibration(jev, jev, CUT);
+    const kept = jev.filter((v) => v >= CUT).sort((a, b) => a - b);
+    expect(points[0]![0]).toBeCloseTo(kept[Math.floor(0.05 * (kept.length - 1))]!, 1);
   });
 
-  it("puts a pile's knot at the midpoint of the reference values it spans", () => {
-    // 100 items: the candidate scores the lowest 50 all at 0.2; Jev spreads
-    // them evenly over 0–0.49. The knots at q = 0 … 0.4 all land on x = 0.2
-    // (at q = 0.5 the candidate's quantile is already between 0.2 and 0.5),
-    // spanning Jev's 0 … 0.396, so the pile's knot is their midpoint.
-    const jev = Array.from({ length: 100 }, (_, i) => i / 100);
-    const candidate = jev.map((v) => (v < 0.5 ? 0.2 : v));
-    const points = fitDecisionCalibration(candidate, jev);
-    const pile = points.find(([x]) => x === 0.2)!;
-    expect(pile[1]).toBeCloseTo((0 + 0.396) / 2, 3);
-  });
-
-  it("refuses too few samples or a model that scores everything alike", () => {
-    expect(() => fitDecisionCalibration([0.1, 0.2], [0.1, 0.2])).toThrow(
+  it("refuses too few samples, too few items Jev keeps, or a model that scores everything alike", () => {
+    expect(() => fitDecisionCalibration([0.1, 0.2], [0.1, 0.2], CUT)).toThrow(
       `at least ${MIN_CALIBRATION_SAMPLES}`,
     );
     const flat = Array.from({ length: 100 }, () => 0.5);
-    expect(() => fitDecisionCalibration(flat, pairedScores(100).jev)).toThrow(
+    expect(() => fitDecisionCalibration(flat, optimistic(100).jev, CUT)).toThrow(
       /nothing to calibrate/,
     );
-    expect(() => fitDecisionCalibration([0.1], [0.1, 0.2])).toThrow(/one candidate score/);
+    const r = rng(5);
+    const lowJev = Array.from({ length: 100 }, () => r() * 0.3);
+    const spread = Array.from({ length: 100 }, () => r());
+    expect(() => fitDecisionCalibration(spread, lowJev, CUT)).toThrow(/reference items Jev passes/);
+    expect(() => fitDecisionCalibration([0.1], [0.1, 0.2], CUT)).toThrow(/one candidate score/);
   });
 });
 
@@ -121,5 +114,17 @@ describe("calibrateDecisionScore", () => {
     expect(calibrateDecisionScore(cal, 1.5, 4)).toBeCloseTo(0.75);
     expect(calibrateDecisionScore(cal, 1, 3)).toBeCloseTo(0.5);
     expect(calibrateDecisionScore(cal, 3, 4)).toBe(3);
+  });
+});
+
+describe("decisionGateRates", () => {
+  it("reports agreement, the share of passes kept and of skips skipped", () => {
+    const reference = [0.9, 0.8, 0.7, 0.1, 0.2];
+    const model = [0.9, 0.1, 0.7, 0.9, 0.2];
+    expect(decisionGateRates(model, reference, 0.5)).toEqual({
+      agreement: 3 / 5,
+      keeps: 2 / 3,
+      skips: 1 / 2,
+    });
   });
 });

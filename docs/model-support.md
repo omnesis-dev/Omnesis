@@ -307,8 +307,8 @@ decision API — System One at any path, Cloudflare Workers AI, or OpenAI
 Decisions (`packages/gateway/src/inference/decision/`). Their providers are the
 presets in `packages/core/src/models/decision-presets.ts`, and the models.dev
 decision catalog (`api.json?type=decision`) adds model ids, context and price.
-A calibrated decision backend's scores are mapped onto Jev's by a per-model calibration
-fitted on the bundled Jev reference set
+A calibrated decision backend's scores are moved onto Jev's scale by a per-model calibration
+that anchors the score keeping 95% of what Jev keeps on Jev's threshold, fitted on the bundled Jev reference set
 (`packages/gateway/decision-reference/jev-worth.jsonl`), so the Jev-tuned
 thresholds keep their meaning. A chat model serves the role only in experimental mode
 (`OMNESIS_EXPERIMENTAL=1`), because every decision threshold was tuned on

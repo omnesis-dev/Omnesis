@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  assignedCalibration,
   assignedDecisionBackend,
   calibrationFraction,
   calibrationPanelState,
@@ -252,6 +253,30 @@ describe("status sentences", () => {
     expect(decisionVerifyText(null)).toBe("");
   });
 
+  it("summarises what a calibration keeps and skips, with the shares before it", () => {
+    const text = calibrationSummary({
+      points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z",
+      keeps: 0.95, skips: 0.873, keepsBefore: 0.61, skipsBefore: 0.98, agreement: 0.9, agreementBefore: 0.8,
+    });
+    expect(text).toMatch(/^Calibrated against Jev on .+: keeps 95% of the reference emails Jev keeps and skips 87% of those it skips \(before: 61% and 98%\)\.$/);
+    expect(calibrationSummary({ points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.5 }))
+      .toMatch(/: keeps 95% of the reference emails Jev keeps and skips 50% of those it skips\.$/);
+    // Only one of the two shares: the older agreement sentence.
+    expect(calibrationSummary({ points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, agreement: 0.9 }))
+      .toMatch(/: agrees with Jev on 90% of the reference emails\.$/);
+  });
+
+  it("summarises a finished run's result until the overview stores it", () => {
+    const result = { points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.8 };
+    const assigned = { key: "ollaya", model: "kev", backend: { calibrations: {} }, assignment: { calibrated: false } };
+    const done = { state: "done", assignment: "ollaya/kev", done: 300, total: 300, failed: 0, result };
+    expect(calibrationPanelState(done, assigned)).toBe("calibrated");
+    expect(assignedCalibration(assigned, done)).toBe(result);
+    expect(assignedCalibration(assigned, { ...done, assignment: "other/kev" })).toBeUndefined();
+    const stored = { ...result, keeps: 0.9 };
+    expect(assignedCalibration({ ...assigned, backend: { calibrations: { kev: stored } } }, done)).toBe(stored);
+  });
+
   it("summarises a calibration with its agreement before and after", () => {
     const text = calibrationSummary({ points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z", agreement: 0.914, agreementBefore: 0.78 });
     expect(text).toMatch(/^Calibrated against Jev on .+: agrees with Jev on 91% of the reference emails \(was 78%\)\.$/);
@@ -275,5 +300,7 @@ describe("status sentences", () => {
     expect(calibrationPanelState({ state: "cancelled", assignment: "ollaya/kev" }, assigned)).toBe("cancelled");
     expect(calibrationPanelState({ state: "done", assignment: "ollaya/kev" }, { ...assigned, assignment: { calibrated: true } })).toBe("calibrated");
     expect(calibrationPanelState(null, assigned)).toBe("uncalibrated");
+    // A failed recalibration of a calibrated model keeps the calibration in force.
+    expect(calibrationPanelState({ state: "failed", assignment: "ollaya/kev" }, { ...assigned, assignment: { calibrated: true } })).toBe("calibrated");
   });
 });

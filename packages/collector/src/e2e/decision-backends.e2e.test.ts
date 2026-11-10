@@ -374,10 +374,14 @@ describe("decision backends — stable gateway, every wire format", () => {
       status = await harness.gatewayJson("/admin/models/decision/calibration");
     }
     expect(status).toMatchObject({ state: "done", failed: 0 });
-    const result = status.result as { agreement: number; agreementBefore: number; samples: number };
+    const result = status.result as Record<string, number>;
     expect(result.samples).toBe(REFERENCE.size);
-    expect(result.agreement).toBeGreaterThan(result.agreementBefore);
-    expect(result.agreement).toBeGreaterThan(0.95);
+    // The scripted model rates every reference email higher than Jev did:
+    // calibrated, it keeps about 95% of what Jev keeps and skips far more of the rest.
+    expect(result.keepsBefore).toBe(1);
+    expect(result.keeps).toBeGreaterThanOrEqual(0.94);
+    expect(result.skips).toBeGreaterThan(result.skipsBefore!);
+    expect(result.skips).toBeGreaterThanOrEqual(0.99);
 
     const o = await overview();
     expect(o.inference.assignments.decision).toMatchObject({ calibrated: true });

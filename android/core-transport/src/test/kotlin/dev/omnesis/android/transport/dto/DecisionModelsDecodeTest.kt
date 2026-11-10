@@ -34,7 +34,8 @@ class DecisionModelsDecodeTest {
         "decisionBackends":{"ollaya":{"preset":"ollaya","url":"http://127.0.0.1:11435/v1/systemone","protocol":"systemone",
           "auth":"bearer","onHost":true,"hasApiKey":false,
           "calibrations":{"kev":{"points":[[0,0],[0.5,0.4],[1,1]],"reference":"jev-worth/email-worth-v1/jev-1.13.0",
-            "fittedAt":"2026-11-08T10:00:00.000Z","samples":296,"agreement":0.91,"agreementBefore":0.78}}}},
+            "fittedAt":"2026-11-08T10:00:00.000Z","samples":296,"agreement":0.91,"agreementBefore":0.78,
+            "keeps":0.95,"keepsBefore":0.81,"skips":0.88,"skipsBefore":0.9}}}},
         "assignments":{"decision":{"role":"decision","kind":"decision","backendKey":"ollaya","preset":"ollaya","model":"kev",
           "url":"http://127.0.0.1:11435/v1/systemone","protocol":"systemone","onHost":true,"allowRemoteInference":true,
           "hasApiKey":false,"calibrated":true,"available":true}}
@@ -68,6 +69,10 @@ class DecisionModelsDecodeTest {
         assertEquals(0.91, calibration.agreement!!, 1e-9)
         assertEquals(0.78, calibration.agreementBefore!!, 1e-9)
         assertEquals(296, calibration.samples)
+        assertEquals(0.95, calibration.keeps!!, 1e-9)
+        assertEquals(0.81, calibration.keepsBefore!!, 1e-9)
+        assertEquals(0.88, calibration.skips!!, 1e-9)
+        assertEquals(0.9, calibration.skipsBefore!!, 1e-9)
 
         val assignment = overview.inference.assignments.getValue("decision")
         assertEquals("decision", assignment.kind)
@@ -147,6 +152,8 @@ class DecisionModelsDecodeTest {
               "result":{"points":[[0,0],[1,1]],"reference":"r","fittedAt":"2026-11-10T09:05:00.000Z","agreement":0.9}}""",
         )
         assertEquals(0.9, done.result!!.agreement!!, 1e-9)
+        assertNull(done.result!!.keeps)
+        assertNull(done.result!!.skipsBefore)
         val failed = OmnesisJson.decodeFromString<DecisionCalibrationStatus>(
             """{"state":"failed","done":10,"total":296,"failed":10,"error":"Only 0 of 296 reference emails were answered"}""",
         )

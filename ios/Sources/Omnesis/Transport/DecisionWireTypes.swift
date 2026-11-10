@@ -152,19 +152,35 @@ public struct DecisionCalibration: Decodable, Equatable, Hashable, Sendable {
     public let agreement: Double?
     /// The same share before calibration.
     public let agreementBefore: Double?
+    /// Share (0–1) of the reference items Jev keeps that the calibrated model keeps.
+    public let keeps: Double?
+    /// The same share before calibration.
+    public let keepsBefore: Double?
+    /// Share (0–1) of the reference items Jev skips that the calibrated model skips.
+    public let skips: Double?
+    /// The same share before calibration.
+    public let skipsBefore: Double?
 
     public init(
         reference: String? = nil,
         fittedAt: String? = nil,
         samples: Int? = nil,
         agreement: Double? = nil,
-        agreementBefore: Double? = nil
+        agreementBefore: Double? = nil,
+        keeps: Double? = nil,
+        keepsBefore: Double? = nil,
+        skips: Double? = nil,
+        skipsBefore: Double? = nil
     ) {
         self.reference = reference
         self.fittedAt = fittedAt
         self.samples = samples
         self.agreement = agreement
         self.agreementBefore = agreementBefore
+        self.keeps = keeps
+        self.keepsBefore = keepsBefore
+        self.skips = skips
+        self.skipsBefore = skipsBefore
     }
 }
 

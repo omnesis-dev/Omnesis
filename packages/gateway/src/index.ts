@@ -1442,7 +1442,11 @@ const decisionCalibration = new DecisionCalibrationJob({
         },
       };
     });
-    if (!result.ok) throw new Error("Saving the calibration failed");
+    if (!result.ok) {
+      throw new Error(
+        `Saving the calibration failed: ${result.errors.map((e) => `${e.path}: ${e.message}`).join("; ")}`,
+      );
+    }
   },
 });
 

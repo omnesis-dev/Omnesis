@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import {
   MIN_CALIBRATION_SAMPLES,
   createLogger,
-  decisionPassAgreement,
+  decisionGateRates,
   fetchWithInferenceUrlPolicy,
   findDecisionPreset,
   fitDecisionCalibration,
@@ -354,19 +354,25 @@ export class DecisionCalibrationJob {
       return;
     }
     try {
-      const points = fitDecisionCalibration(candidate, jev);
+      const points = fitDecisionCalibration(candidate, jev, cut);
       const calibrated = candidate.map((x) => calibrateNormalized(points, x));
+      const before = decisionGateRates(candidate, jev, cut);
+      const after = decisionGateRates(calibrated, jev, cut);
       const calibration: DecisionCalibration = {
         points,
         reference: `jev-worth/${WORTH_GATE_RUBRIC_VERSION}/${reference[0]?.response.model ?? "jev"}`,
         fittedAt: finishedAt,
         samples: answered,
-        agreement: round3(decisionPassAgreement(calibrated, jev, cut)),
-        agreementBefore: round3(decisionPassAgreement(candidate, jev, cut)),
+        agreement: round3(after.agreement),
+        agreementBefore: round3(before.agreement),
+        keeps: round3(after.keeps),
+        keepsBefore: round3(before.keeps),
+        skips: round3(after.skips),
+        skipsBefore: round3(before.skips),
       };
       await this.deps.store(resolved.backendKey, resolved.model, calibration, identity);
       log.info(
-        `Calibrated ${resolved.backendKey}/${resolved.model} on ${answered} reference emails: agreement with Jev ${calibration.agreementBefore} → ${calibration.agreement}`,
+        `Calibrated ${resolved.backendKey}/${resolved.model} on ${answered} reference emails: keeps ${calibration.keepsBefore} → ${calibration.keeps} of what Jev keeps, skips ${calibration.skipsBefore} → ${calibration.skips} of what it skips`,
       );
       this.current = { ...this.current, state: "done", finishedAt, result: calibration };
     } catch (err) {

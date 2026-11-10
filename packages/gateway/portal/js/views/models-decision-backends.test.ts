@@ -381,7 +381,10 @@ describe("Models — decision backends", () => {
       expect(host.querySelector(".decision-calibration-meta").textContent).toBe("120 of 300 reference emails · 2 failed");
       expect(host.querySelector("[role='progressbar']").getAttribute("aria-valuenow")).toBe("120");
       const loads = api.getModelsOverview.mock.calls.length;
-      const calibration = { points: [[0, 0], [1, 1]], reference: "jev-worth/v1/jev", fittedAt: "2026-03-04T10:00:00Z", samples: 300, agreement: 0.91, agreementBefore: 0.78 };
+      const calibration = {
+        points: [[0, 0], [1, 1]], reference: "jev-worth/v1/jev", fittedAt: "2026-03-04T10:00:00Z", samples: 300,
+        agreement: 0.91, agreementBefore: 0.78, keeps: 0.95, skips: 0.87, keepsBefore: 0.61, skipsBefore: 0.98,
+      };
       api.getDecisionCalibration.mockResolvedValue({ state: "done", assignment: "ollaya/kev", done: 300, total: 300, failed: 0, result: calibration });
       current = overviewWith({ ...onOllaya({ calibrated: true }), decisionBackends: { ollaya: { ...OLLAYA_BACKEND, calibrations: { kev: calibration } } } });
       // The status poll runs every 2 s while a calibration runs.
@@ -389,7 +392,7 @@ describe("Models — decision backends", () => {
       await flush();
       await flush();
       expect(api.getModelsOverview.mock.calls.length).toBeGreaterThan(loads);
-      expect(host.querySelector(".decision-calibration--calibrated .decision-calibration-text").textContent).toMatch(/agrees with Jev on 91% of the reference emails \(was 78%\)\.$/);
+      expect(host.querySelector(".decision-calibration--calibrated .decision-calibration-text").textContent).toMatch(/keeps 95% of the reference emails Jev keeps and skips 87% of those it skips \(before: 61% and 98%\)\.$/);
       expect(button("Recalibrate")).toBeTruthy();
     });
 
@@ -424,6 +427,26 @@ describe("Models — decision backends", () => {
         vi.useRealTimers();
       }
       expect(host.querySelector(".decision-calibration--running .decision-calibration-meta").textContent).toBe("5 of 300 reference emails");
+    });
+
+    it("shows a finished run's result even before the overview reloads", async () => {
+      current = overviewWith(onOllaya());
+      const result = { points: [[0, 0], [1, 1]], reference: "jev-worth/v1/jev", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.9, keepsBefore: 0.5, skipsBefore: 0.99 };
+      api.getDecisionCalibration.mockResolvedValue({ state: "done", assignment: "ollaya/kev", done: 300, total: 300, failed: 0, result });
+      await mount();
+      expect(host.querySelector(".decision-calibration--calibrated .decision-calibration-text").textContent)
+        .toMatch(/keeps 95% of the reference emails Jev keeps and skips 90% of those it skips \(before: 50% and 99%\)\.$/);
+    });
+
+    it("keeps showing a stored calibration when a recalibration fails", async () => {
+      const calibration = { points: [[0, 0], [1, 1]], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.8, keepsBefore: 0.6, skipsBefore: 0.9 };
+      current = overviewWith({ ...onOllaya({ calibrated: true }), decisionBackends: { ollaya: { ...OLLAYA_BACKEND, calibrations: { kev: calibration } } } });
+      api.getDecisionCalibration.mockResolvedValue({ state: "failed", assignment: "ollaya/kev", done: 300, total: 300, failed: 0, error: "the server stopped answering" });
+      await mount();
+      const panel = host.querySelector(".decision-calibration--calibrated");
+      expect(panel.textContent).toContain("Recalibration failed; the earlier calibration still applies. the server stopped answering");
+      expect(panel.textContent).toContain("keeps 95% of the reference emails Jev keeps");
+      expect(button("Recalibrate")).toBeTruthy();
     });
 
     it("cancels a running calibration", async () => {

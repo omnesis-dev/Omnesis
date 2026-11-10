@@ -497,7 +497,8 @@ export function DecisionCalibrationPanel({ overview, onChanged }) {
 
   if (!assigned) return null;
   const state = calibrationPanelState(status, assigned);
-  const stored = assignedCalibration(assigned);
+  const stored = assignedCalibration(assigned, status);
+  const lastRunFailed = status?.state === "failed" && status.assignment === `${assigned.key}/${assigned.model}`;
 
   const start = async () => {
     setBusy(true);
@@ -560,6 +561,7 @@ export function DecisionCalibrationPanel({ overview, onChanged }) {
         : state === "calibrated"
         ? html`<div class="decision-calibration-row">
             <div class="decision-calibration-main">
+              ${lastRunFailed ? html`<div class="decision-calibration-warn">Recalibration failed; the earlier calibration still applies. ${status.error ?? ""}</div>` : null}
               <div class="decision-calibration-text">${calibrationSummary(stored)}</div>
             </div>
             <button type="button" class="btn-tiny" disabled=${busy} onClick=${start}>Recalibrate</button>

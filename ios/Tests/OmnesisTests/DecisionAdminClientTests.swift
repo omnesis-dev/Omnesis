@@ -134,6 +134,9 @@ final class DecisionAdminClientTests: XCTestCase {
         XCTAssertFalse(backend.hasApiKey)
         XCTAssertEqual(backend.calibrations["kev"]?.agreement, 0.92)
         XCTAssertEqual(backend.calibrations["kev"]?.samples, 298)
+        // A calibration stored before keeps and skips were recorded.
+        XCTAssertNil(backend.calibrations["kev"]?.keeps)
+        XCTAssertNil(backend.calibrations["kev"]?.skips)
 
         let decision = try XCTUnwrap(overview.inference.assignments["decision"])
         XCTAssertEqual(decision.kind, "decision")
@@ -170,9 +173,13 @@ final class DecisionAdminClientTests: XCTestCase {
         {"state":"done","assignment":"ollaya/kev","done":300,"total":300,"failed":1,
          "startedAt":"2026-11-08T14:25:00.000Z","finishedAt":"2026-11-08T14:30:00.000Z",
          "result":{"points":[[0,0],[1,1]],"reference":"jev-worth/v1/jev","fittedAt":"2026-11-08T14:30:00.000Z",
-           "samples":299,"agreement":0.9}}
+           "samples":299,"agreement":0.9,"keeps":0.95,"keepsBefore":0.8,"skips":0.88,"skipsBefore":0.91}}
         """#.utf8))
         XCTAssertEqual(done.result?.samples, 299)
+        XCTAssertEqual(done.result?.keeps, 0.95)
+        XCTAssertEqual(done.result?.keepsBefore, 0.8)
+        XCTAssertEqual(done.result?.skips, 0.88)
+        XCTAssertEqual(done.result?.skipsBefore, 0.91)
         XCTAssertEqual(done.failed, 1)
         let sparse = try decoder.decode(DecisionCalibrationStatus.self, from: Data(#"{"state":"running"}"#.utf8))
         XCTAssertTrue(sparse.isRunning)

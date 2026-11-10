@@ -914,6 +914,10 @@ internal fun sampleDecisionCalibration() = DecisionCalibration(
     samples = 296,
     agreement = 0.91,
     agreementBefore = 0.78,
+    keeps = 0.95,
+    keepsBefore = 0.81,
+    skips = 0.88,
+    skipsBefore = 0.9,
 )
 
 /**

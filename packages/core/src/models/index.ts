@@ -185,12 +185,13 @@ export {
   getDecisionPreset,
   isWorkersAiModelId,
 } from "./decision-presets.js";
-export type { DecisionCalibration } from "./decision-calibration.js";
+export type { DecisionCalibration, DecisionGateRates } from "./decision-calibration.js";
 export {
   MIN_CALIBRATION_SAMPLES,
   calibrateDecisionScore,
   calibrateNormalized,
-  decisionPassAgreement,
+  decisionGateRates,
+  CALIBRATION_RECALL,
   fitDecisionCalibration,
 } from "./decision-calibration.js";
 export type { ProviderPreset } from "./provider-presets.js";

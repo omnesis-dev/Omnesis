@@ -445,7 +445,7 @@ class DecisionSetupTest {
         // The card's warning follows whether a calibration is stored, not the last run.
         val overview = sampleDecisionOverview(calibrated = true)
         assertEquals(
-            DecisionSetup.CardLine("Calibrated against Jev · agrees on 91%", warning = false),
+            DecisionSetup.CardLine("Calibrated against Jev · keeps 95% of what Jev keeps", warning = false),
             DecisionSetup.cardCalibrationLine(overview, run.copy(state = "failed", error = "x")),
         )
         assertEquals(
@@ -455,17 +455,41 @@ class DecisionSetupTest {
     }
 
     @Test fun calibration_sentences() {
+        val calibration = sampleDecisionCalibration()
+        assertEquals(
+            "Calibrated against Jev on Nov 8, 2026: keeps 95% of the reference emails Jev keeps and skips 88% " +
+                "of those it skips (before: 81% and 90%).",
+            DecisionSetup.calibrationSummary(calibration, Locale.US, ZoneOffset.UTC),
+        )
+        assertEquals(
+            "Calibrated against Jev on Nov 8, 2026: keeps 95% of the reference emails Jev keeps and skips 88% " +
+                "of those it skips.",
+            DecisionSetup.calibrationSummary(calibration.copy(skipsBefore = null), Locale.US, ZoneOffset.UTC),
+        )
+        // A calibration stored before the keep and skip shares existed reads as agreement.
+        val older = calibration.copy(keeps = null, keepsBefore = null, skips = null, skipsBefore = null)
         assertEquals(
             "Calibrated against Jev on Nov 8, 2026: agrees with Jev on 91% of the reference emails (was 78%).",
-            DecisionSetup.calibrationSummary(sampleDecisionCalibration(), Locale.US, ZoneOffset.UTC),
+            DecisionSetup.calibrationSummary(older, Locale.US, ZoneOffset.UTC),
+        )
+        assertEquals(
+            "Calibrated against Jev on Nov 8, 2026: agrees with Jev on 91% of the reference emails (was 78%).",
+            DecisionSetup.calibrationSummary(older.copy(skips = 0.88), Locale.US, ZoneOffset.UTC),
         )
         assertEquals(
             "Calibrated against Jev on Nov 8, 2026.",
-            DecisionSetup.calibrationSummary(sampleDecisionCalibration().copy(agreement = null), Locale.US, ZoneOffset.UTC),
+            DecisionSetup.calibrationSummary(older.copy(agreement = null), Locale.US, ZoneOffset.UTC),
         )
         assertEquals(
             "Calibrated against Jev: agrees with Jev on 91% of the reference emails.",
-            DecisionSetup.calibrationSummary(sampleDecisionCalibration().copy(fittedAt = "not a date", agreementBefore = null), Locale.US, ZoneOffset.UTC),
+            DecisionSetup.calibrationSummary(older.copy(fittedAt = "not a date", agreementBefore = null), Locale.US, ZoneOffset.UTC),
+        )
+        assertEquals(
+            DecisionSetup.CardLine("Calibrated against Jev · agrees on 91%", warning = false),
+            DecisionSetup.cardCalibrationLine(
+                sampleDecisionOverview(calibrated = true),
+                sampleRunningCalibration().copy(state = "done", result = older),
+            ),
         )
         assertEquals("120 of 296 reference emails · 2 failed", DecisionSetup.calibrationProgressText(sampleRunningCalibration()))
         assertEquals("Starting…", DecisionSetup.calibrationProgressText(DecisionCalibrationStatus(state = "running")))
@@ -479,7 +503,7 @@ class DecisionSetupTest {
             DecisionSetup.cardCalibrationLine(sampleDecisionOverview(), null),
         )
         assertEquals(
-            DecisionSetup.CardLine("Calibrated against Jev · agrees on 91%", warning = false),
+            DecisionSetup.CardLine("Calibrated against Jev · keeps 95% of what Jev keeps", warning = false),
             DecisionSetup.cardCalibrationLine(sampleDecisionOverview(calibrated = true), null),
         )
         assertEquals(

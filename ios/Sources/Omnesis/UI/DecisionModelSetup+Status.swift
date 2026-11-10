@@ -99,10 +99,28 @@ extension DecisionModelSetup {
             formatter.timeStyle = .none
             text += " on \(formatter.string(from: date))"
         }
+        if let keeps = calibration?.keeps, let skips = calibration?.skips {
+            text += ": keeps \(percent(keeps)) of the reference emails Jev keeps and skips \(percent(skips)) of those it skips"
+            if let keepsBefore = calibration?.keepsBefore, let skipsBefore = calibration?.skipsBefore {
+                text += " (before: \(percent(keepsBefore)) and \(percent(skipsBefore)))"
+            }
+            return text + "."
+        }
         guard let agreement = calibration?.agreement else { return text + "." }
         text += ": agrees with Jev on \(percent(agreement)) of the reference emails"
         if let before = calibration?.agreementBefore { text += " (was \(percent(before)))" }
         return text + "."
+    }
+
+    /// The calibration to describe: a run of the current model that just
+    /// finished carries the fresh fit, which the overview may not hold yet.
+    static func shownCalibration(
+        stored: DecisionCalibration?,
+        job: DecisionCalibrationStatus?
+    )
+        -> DecisionCalibration? {
+        if job?.state == "done", let result = job?.result { return result }
+        return stored
     }
 
     /// The one line the Decision card in the Models list shows under the
@@ -113,7 +131,13 @@ extension DecisionModelSetup {
         case .none: nil
         case .uncalibrated: "Not calibrated to Jev's scale"
         case .calibrated(let calibration):
-            calibration?.agreement.map { "Calibrated · agrees with Jev on \(percent($0))" } ?? "Calibrated to Jev's scale"
+            if let keeps = calibration?.keeps {
+                "Calibrated · keeps \(percent(keeps)) of what Jev keeps"
+            } else if let agreement = calibration?.agreement {
+                "Calibrated · agrees with Jev on \(percent(agreement))"
+            } else {
+                "Calibrated to Jev's scale"
+            }
         }
     }
 

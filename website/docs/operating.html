@@ -839,24 +839,26 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           uncalibrated model can let much of the junk through, or leave out the dates in mail worth
           recording. <strong>Calibrate</strong> on the Decision model card, or
           <code>omnesis decision calibrate</code>, asks the assigned model about 300 invented emails
-          Jev has already scored, fits a map from its scores onto Jev's, and stores it with the
-          decision backend. The map never reverses which of two emails the model rates higher; it
-          moves where each threshold cuts. The card shows how often the model agrees with Jev before
-          and after. The emails are about 150,000 input tokens in all, so on a hosted provider
-          calibration costs what that many tokens cost there; on a local server running on the CPU
-          it takes several minutes. Each model has its own calibration: one assigned for the first
-          time needs its own.
+          Jev has already scored, finds the score above which the model keeps 95% of the emails Jev
+          keeps, and moves that score onto Jev's threshold; the map is stored with the decision
+          backend. A model that rates everything higher than Jev is moved down, so it skips more of
+          what Jev skips; one that rates it lower is moved up. The map never reverses which of two
+          emails the model rates higher. The card shows how much of what Jev keeps the model keeps,
+          and how much of what Jev skips it skips, before and after. The emails are about 150,000
+          input tokens in all, so on a hosted provider calibration costs what that many tokens cost
+          there; on a local server running on the CPU it takes several minutes. Each model has its
+          own calibration: one assigned for the first time needs its own.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd">omnesis decision add ollama --model d3:4b</span>
+              <span class="t-cmd">omnesis decision add ollaya --model winnow:e4b</span>
             </p>
             <pre>
-✔ Decision backend ollama added (http://127.0.0.1:11434/v1/systemone)
-Assigned ollama/d3:4b to the Decision model.</pre>
+✔ Decision backend ollaya added (http://127.0.0.1:11435/v1/systemone)
+Assigned ollaya/winnow:e4b to the Decision model.</pre>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd"
@@ -875,8 +877,8 @@ Assigned ollama/d3:4b to the Decision model.</pre>
               <span class="t-cmd">omnesis decision calibrate</span>
             </p>
             <pre>
-Calibrating ollama/d3:4b on 302 invented reference emails…
-✔ calibrated 2026-11-10: agrees with Jev on 93% of the reference emails (was 88%)</pre>
+Calibrating ollaya/winnow:e4b on 302 invented reference emails…
+✔ calibrated 2026-11-10: keeps 95% of the reference emails Jev keeps and skips 64% of those it skips (was 93% and 66%)</pre>
           </div>
         </div>
         <p>Backend support depends on the capability. Available backend families are:</p>

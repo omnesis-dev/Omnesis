@@ -267,13 +267,25 @@ function shortDate(iso) {
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-/** "Calibrated against Jev on <date>: agrees with Jev on 91% of the reference emails (was 78%)." */
+/**
+ * The calibrated summary. A calibration that records what it keeps and
+ * skips — the share of the reference emails Jev keeps that the calibrated
+ * model keeps too, and likewise for those Jev skips — says so, with the
+ * uncalibrated shares for comparison; an older one reports its agreement.
+ */
 export function calibrationSummary(calibration) {
   if (!calibration) return "";
   const date = calibration.fittedAt ? shortDate(calibration.fittedAt) : null;
   const head = `Calibrated against Jev${date ? ` on ${date}` : ""}`;
-  if (typeof calibration.agreement !== "number") return `${head}.`;
-  const before = typeof calibration.agreementBefore === "number" ? ` (was ${percent(calibration.agreementBefore)})` : "";
+  const isShare = (v) => typeof v === "number";
+  if (isShare(calibration.keeps) && isShare(calibration.skips)) {
+    const before = isShare(calibration.keepsBefore) && isShare(calibration.skipsBefore)
+      ? ` (before: ${percent(calibration.keepsBefore)} and ${percent(calibration.skipsBefore)})`
+      : "";
+    return `${head}: keeps ${percent(calibration.keeps)} of the reference emails Jev keeps and skips ${percent(calibration.skips)} of those it skips${before}.`;
+  }
+  if (!isShare(calibration.agreement)) return `${head}.`;
+  const before = isShare(calibration.agreementBefore) ? ` (was ${percent(calibration.agreementBefore)})` : "";
   return `${head}: agrees with Jev on ${percent(calibration.agreement)} of the reference emails${before}.`;
 }
 
@@ -294,20 +306,31 @@ export function calibrationFraction(status) {
 
 /**
  * Which calibration panel state to show for the assigned model:
- * "running", "failed", "cancelled" (for this assignment's last run),
+ * "running", "failed", "cancelled" (this assignment's last run, when no
+ * calibration is stored),
  * "other-running" (a run for another assignment, started before the model
  * changed or from the CLI), "calibrated" or "uncalibrated".
  */
 export function calibrationPanelState(status, assigned) {
   const mine = status?.assignment && assigned && status.assignment === `${assigned.key}/${assigned.model}`;
   if (status?.state === "running") return mine ? "running" : "other-running";
+  // A finished run counts before the reloaded overview says so; a failed or
+  // cancelled recalibration leaves the stored calibration in force.
+  if (assigned?.assignment?.calibrated || (mine && status.state === "done" && status.result)) return "calibrated";
   if (mine && (status.state === "failed" || status.state === "cancelled")) return status.state;
-  return assigned?.assignment?.calibrated ? "calibrated" : "uncalibrated";
+  return "uncalibrated";
 }
 
-/** The stored calibration for the assigned model, if any. */
-export function assignedCalibration(assigned) {
-  return assigned?.backend?.calibrations?.[assigned.model];
+/**
+ * The calibration to summarise for the assigned model: the stored one, else
+ * the result of this assignment's finished run (shown until the reloaded
+ * overview carries it).
+ */
+export function assignedCalibration(assigned, status) {
+  const stored = assigned?.backend?.calibrations?.[assigned.model];
+  if (stored) return stored;
+  const mine = assigned && status?.assignment === `${assigned.key}/${assigned.model}`;
+  return mine && status.state === "done" ? status.result : undefined;
 }
 
 /** A short location label for a backend: "On this host" or the URL's host. */

@@ -106,6 +106,14 @@ data class DecisionCalibration(
     val agreement: Double? = null,
     /** The same agreement before calibration. */
     val agreementBefore: Double? = null,
+    /** Share of the reference emails Jev keeps that the calibrated model keeps too, 0–1. */
+    val keeps: Double? = null,
+    /** The same share before calibration. */
+    val keepsBefore: Double? = null,
+    /** Share of the reference emails Jev skips that the calibrated model skips too, 0–1. */
+    val skips: Double? = null,
+    /** The same share before calibration. */
+    val skipsBefore: Double? = null,
 )
 
 /** The TypeSafe endpoint the Decision model would use (`inference.typesafe`). */

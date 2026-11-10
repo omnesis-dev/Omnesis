@@ -93,5 +93,8 @@ export function describeCalibration(calibration: DecisionCalibration | undefined
   }
   const date = calibration.fittedAt.slice(0, 10);
   const pct = (v: number | undefined) => (v === undefined ? "?" : `${Math.round(v * 100)}%`);
+  if (calibration.keeps !== undefined && calibration.skips !== undefined) {
+    return `calibrated ${date}: keeps ${pct(calibration.keeps)} of the reference emails Jev keeps and skips ${pct(calibration.skips)} of those it skips (was ${pct(calibration.keepsBefore)} and ${pct(calibration.skipsBefore)})`;
+  }
   return `calibrated ${date}: agrees with Jev on ${pct(calibration.agreement)} of the reference emails (was ${pct(calibration.agreementBefore)})`;
 }

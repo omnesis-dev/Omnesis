@@ -251,10 +251,12 @@ struct DecisionModelSheet: View {
                             .foregroundStyle(Theme.warning)
                     }
                 case .calibrated(let stored):
-                    Text(DecisionModelSetup.calibratedText(stored))
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(DecisionModelSetup.calibratedText(
+                        DecisionModelSetup.shownCalibration(stored: stored, job: currentCalibration)
+                    ))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 if let outcome = currentCalibration.flatMap(DecisionModelSetup.calibrationOutcomeText) {
                     DecisionResultLine(ok: false, text: outcome)

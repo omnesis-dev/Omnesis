@@ -197,8 +197,13 @@ describe("DecisionCalibrationJob", () => {
       fittedAt: "2026-11-10T12:00:00.000Z",
       samples: 300,
     });
-    expect(status.result!.agreementBefore!).toBeLessThan(0.9);
-    expect(status.result!.agreement!).toBeGreaterThan(0.97);
+    // The optimistic model keeps everything Jev keeps and lets junk through;
+    // calibrated, it keeps ~95% of what Jev keeps and skips most of the rest.
+    const r = status.result!;
+    expect(r.keepsBefore).toBe(1);
+    expect(r.keeps!).toBeGreaterThanOrEqual(0.94);
+    expect(r.skips!).toBeGreaterThan(r.skipsBefore! + 0.3);
+    expect(r.agreement!).toBeGreaterThan(r.agreementBefore!);
     expect(model.dispose).toHaveBeenCalled();
   });
 

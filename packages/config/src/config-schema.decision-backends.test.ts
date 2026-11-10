@@ -90,7 +90,7 @@ describe("validateConfig — decision backends", () => {
   });
 
   test.each([
-    [{ ...CALIBRATION, points: [[0.5, 0.5]] }, "one point"],
+    [{ ...CALIBRATION, points: [] }, "no points"],
     [
       {
         ...CALIBRATION,
@@ -127,6 +127,21 @@ describe("validateConfig — decision backends", () => {
     expect(
       errors({ decisionBackends: { ollaya: { ...OLLAYA, calibration: { kev: calibration } } } }),
     ).not.toEqual([]);
+  });
+
+  test("accepts a single-anchor calibration, as the fit produces", () => {
+    expect(
+      errors({
+        decisionBackends: {
+          ollaya: {
+            ...OLLAYA,
+            calibration: {
+              kev: { ...CALIBRATION, points: [[0.42, 0.36]], keeps: 0.95, skips: 0.6 },
+            },
+          },
+        },
+      }),
+    ).toEqual([]);
   });
 
   test("lets a merge patch remove a backend with null", () => {

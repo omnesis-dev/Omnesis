@@ -3389,7 +3389,7 @@ const decisionCalibration = z
   .object({
     points: z
       .array(decisionCalibrationPoint)
-      .min(2)
+      .min(1)
       .max(17)
       .refine(
         (pts) => pts.every((p, i) => i === 0 || (p[0] > pts[i - 1]![0] && p[1] >= pts[i - 1]![1])),
@@ -3400,6 +3400,10 @@ const decisionCalibration = z
     samples: z.number().int().nonnegative().optional(),
     agreement: z.number().min(0).max(1).optional(),
     agreementBefore: z.number().min(0).max(1).optional(),
+    keeps: z.number().min(0).max(1).optional(),
+    keepsBefore: z.number().min(0).max(1).optional(),
+    skips: z.number().min(0).max(1).optional(),
+    skipsBefore: z.number().min(0).max(1).optional(),
   })
   .strict();
 
