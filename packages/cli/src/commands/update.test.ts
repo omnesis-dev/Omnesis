@@ -3351,6 +3351,19 @@ describe("rolling back a failed update", () => {
       expect(executed(runner)).toEqual([]);
     });
 
+    test("the refusal records no apply state and takes no backup", async () => {
+      // No state says an update is under way, so the launcher still starts
+      // every daemon: the difference from a rollback that could not run.
+      const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
+      const applyState = fakeApplyState();
+      const backup = vi.fn(() => Promise.resolve());
+      await source(
+        makeDeps(runner, { npmRefusal: noNpm, applyState: applyState.store, backup }),
+      ).then(unexpectedSuccess, () => undefined);
+      expect(applyState.writes).toEqual([]);
+      expect(backup).not.toHaveBeenCalled();
+    });
+
     test("npm is named ahead of missing build tools, whose install command would not fix it", async () => {
       const runner = fakeRunner([managed, clean, tags, clean, manifest, clean]);
       const failure = await source(

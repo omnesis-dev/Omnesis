@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { summarizeCommandFailure } from "@omnesis/core";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildToolsInstallCommand,
   buildToolsRefusal,
   missingBuildTools,
+  nodeBuildToolProbe,
   npmRefusal,
   REQUIRED_BUILD_TOOLS,
   type BuildToolProbe,
@@ -105,5 +110,86 @@ describe("npmRefusal", () => {
     expect(message).toMatch(
       /Nothing has been changed, so the installation is still on its current release\.$/,
     );
+  });
+});
+
+describe("npmRefusal on a named host", () => {
+  const host = { nodeDir: "/opt/omnesis/bin", path: "/opt/omnesis/bin:/usr/bin:/bin" };
+  const noNpm = probe({ platform: "darwin", present: [] });
+
+  it("names the directory of the Node running the update and the PATH searched", () => {
+    // Read on the gateway, about another machine: "beside the node it runs"
+    // is a directory the operator cannot see from there.
+    const message = npmRefusal(noNpm, host);
+    expect(message).toContain("That node is in /opt/omnesis/bin");
+    expect(message).toContain("the PATH is /opt/omnesis/bin:/usr/bin:/bin.");
+  });
+
+  it("says so when the process has no PATH at all", () => {
+    expect(npmRefusal(noNpm, { ...host, path: undefined })).toContain("the PATH is empty.");
+  });
+
+  it("keeps the cause, the fix and that nothing moved in what a fleet update relays", () => {
+    // A collector sends the gateway a capped summary of its updater's output,
+    // cut at the end. The PATH is the one part of any length, so it is last.
+    const relayed = summarizeCommandFailure(
+      npmRefusal(noNpm, { ...host, path: Array(80).fill("/some/long/directory").join(":") })!,
+    );
+    expect(relayed).toContain("`npm` does not run on this PATH");
+    expect(relayed).toContain("beside the `node` it runs");
+    expect(relayed).toContain("Nothing has been changed");
+    expect(relayed).toContain("That node is in /opt/omnesis/bin");
+    expect(relayed.endsWith("…")).toBe(true);
+  });
+});
+
+// The probe itself, against real processes: the fakes above cannot show that
+// "npm is not on this PATH" is something the real question detects.
+describe.skipIf(process.platform === "win32")("nodeBuildToolProbe on a real PATH", () => {
+  const originalPath = process.env.PATH;
+  let dir: string | undefined;
+
+  /** A PATH holding this Node and whatever else the test puts beside it. */
+  function isolatedPath(): string {
+    dir = mkdtempSync(join(tmpdir(), "omnesis-npm-probe-"));
+    symlinkSync(process.execPath, join(dir, "node"));
+    process.env.PATH = dir;
+    return dir;
+  }
+
+  function script(path: string, body: string): void {
+    writeFileSync(path, `#!/bin/sh\n${body}\n`);
+    chmodSync(path, 0o755);
+  }
+
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  it("finds no npm on a service PATH whose Node stands alone", () => {
+    const nodeDir = isolatedPath();
+    expect(nodeBuildToolProbe.runs("node")).toBe(true);
+    expect(nodeBuildToolProbe.runs("npm")).toBe(false);
+    expect(npmRefusal(nodeBuildToolProbe, { nodeDir, path: process.env.PATH })).toContain(
+      `That node is in ${nodeDir}, and the PATH is ${nodeDir}.`,
+    );
+  });
+
+  it("finds the npm placed beside that Node, which is the fix the refusal names", () => {
+    script(join(isolatedPath(), "npm"), "echo 11.0.0");
+    expect(nodeBuildToolProbe.runs("npm")).toBe(true);
+    expect(npmRefusal(nodeBuildToolProbe)).toBeNull();
+  });
+
+  it("does not take an npm that exits the way a missing command does for one that runs", () => {
+    script(join(isolatedPath(), "npm"), "exit 127");
+    expect(nodeBuildToolProbe.runs("npm")).toBe(false);
+  });
+
+  it("does not take a dangling npm symlink for one that runs", () => {
+    symlinkSync("/nonexistent/npm", join(isolatedPath(), "npm"));
+    expect(nodeBuildToolProbe.runs("npm")).toBe(false);
   });
 });

@@ -40,7 +40,7 @@ cleanup() {
   E2E_FAULT_STATUS="$status" E2E_FAULT_PHASE="$PHASE" node - "$E2E_WORK" <<'JS'
 const fs=require("fs"),path=require("path"),dir=process.argv[2];
 if(!fs.existsSync(path.join(dir,"result.json")) || Number(process.env.E2E_FAULT_STATUS)!==0) {
-  const cases=["interruption","network","disk"].flatMap(name=>{
+  const cases=["interruption","missing-npm","network","disk"].flatMap(name=>{
     const file=path.join(dir,`${name}.result.json`);return fs.existsSync(file)?[JSON.parse(fs.readFileSync(file))]:[];
   });
   fs.writeFileSync(path.join(dir,"result.json"),JSON.stringify({passed:false,exitCode:Number(process.env.E2E_FAULT_STATUS),failedPhase:process.env.E2E_FAULT_PHASE,cases},null,2)+"\n");
@@ -141,11 +141,45 @@ preserved interrupted "$CURRENT"
 retry interruption
 endgroup
 
+# A daemon runs an update with its service's PATH, where a Node installed on
+# its own has no npm beside it. The first npm on this PATH exits the way the
+# shell does for a command it cannot find, so the real updater has a release to
+# move to and an npm that does not run. It must refuse before anything moves:
+# found later, that is an `npm ci` and then a rollback that cannot start, and an
+# installation left mid-rollback that no daemon starts from.
+PHASE=missing-npm
+group 'Refuse an update whose npm does not run'
+new_release
+NO_NPM_BIN="$E2E_WORK/no-npm-bin"
+mkdir "$NO_NPM_BIN"
+printf '#!/bin/sh\nprintf "npm: not found\\n" >&2\nexit 127\n' >"$NO_NPM_BIN/npm"
+chmod +x "$NO_NPM_BIN/npm"
+cp "$CONFIG_DIR/update-state.json" "$E2E_WORK/missing-npm.state-before.json"
+snapshot missing-npm-before "$GATEWAY_URL"
+set +e
+PATH="$NO_NPM_BIN:$PATH" timeout --signal=TERM --kill-after=60s 600 "$OMNESIS" update --yes --backup >"$E2E_WORK/missing-npm.log" 2>&1
+status=$?
+set -e
+redact <"$E2E_WORK/missing-npm.log"
+[ "$status" -ne 0 ] || die 'an update with no working npm reported success'
+grep -q 'npm. does not run on this PATH' "$E2E_WORK/missing-npm.log" || die 'the refusal did not name npm'
+grep -q 'Nothing has been changed' "$E2E_WORK/missing-npm.log" || die 'the refusal did not say nothing changed'
+# The plan it prints names the commands; a line starting `$ ` is one it ran.
+if grep -Eq 'Rolling back|\$ git (fetch|checkout)' "$E2E_WORK/missing-npm.log"; then die 'the update ran a command before refusing'; fi
+cmp "$E2E_WORK/missing-npm.state-before.json" "$CONFIG_DIR/update-state.json" || die 'a refused update rewrote the apply state'
+preserved missing-npm "$CURRENT"
+probe compare --before "$E2E_WORK/missing-npm-before.json" --after "$E2E_WORK/missing-npm.json" \
+  --expect-version "$CURRENT" --expect-title "$SEARCH_TITLE"
+# The same command from the same shell without that npm is the network case
+# below, which has to land this release: the refusal left nothing to repair.
+node -e 'require("fs").writeFileSync(process.argv[1],JSON.stringify({case:"missing-npm",refused:true,version:process.argv[2],checkoutUnmoved:true,updateStateUnchanged:true,daemonsStillRunning:true,encryptedIdentityPreserved:true,threeDocumentIdentitiesAndContentPreserved:true})+"\n")' "$E2E_WORK/missing-npm.result.json" "$CURRENT"
+endgroup
+
 # Resolve tags successfully against a real loopback Git server, disconnect
 # precisely as the actual fetch starts, then let real Git report the failure.
+# The release is the one the refused update above left unapplied.
 PHASE=network
 group 'Disconnect the release server at git fetch'
-new_release
 PORT="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{process.stdout.write(String(s.address().port));s.close()})')"
 NETWORK_REMOTE="git://127.0.0.1:$PORT/omnesis.git"
 start_daemon() {
@@ -209,10 +243,11 @@ retry disk
 endgroup
 node - "$E2E_WORK" <<'JS'
 const fs = require("fs"), path = require("path"), dir = process.argv[2];
-const cases = ["interruption", "network", "disk"].map(name => JSON.parse(fs.readFileSync(path.join(dir, `${name}.result.json`))));
+const cases = ["interruption", "missing-npm", "network", "disk"].map(name => JSON.parse(fs.readFileSync(path.join(dir, `${name}.result.json`))));
 cases[0].fault = {phase:"external partial dependency-tree damage at npm-ci boundary",signal:"SIGTERM",exitCode:143,rollbackObserved:true,childRetired:true,compilerEntryRestored:true,damage:JSON.parse(fs.readFileSync(path.join(dir,"interruption/damage.json")))};
-cases[1].fault = {phase:"git fetch",transport:"loopback git daemon",disconnectObserved:true,sameServerReconnected:true};
-cases[2].fault = {phase:"pre-update backup",...JSON.parse(fs.readFileSync(path.join(dir,"disk-fault.json")))};
+cases[1].fault = {phase:"prerequisite check before fetch",npm:"first on PATH, exits 127",refusedBeforeCheckout:true};
+cases[2].fault = {phase:"git fetch",transport:"loopback git daemon",disconnectObserved:true,sameServerReconnected:true};
+cases[3].fault = {phase:"pre-update backup",...JSON.parse(fs.readFileSync(path.join(dir,"disk-fault.json")))};
 fs.writeFileSync(path.join(dir,"result.json"),JSON.stringify({passed:true,cases},null,2)+"\n");
 JS
-log 'interruption, disconnected fetch, and exhausted isolated backup filesystem all repaired'
+log 'interruption, missing npm, disconnected fetch, and exhausted isolated backup filesystem all repaired'
