@@ -49,7 +49,44 @@ class RecordingScreenshotTest {
             onWifiOnlyChange = {},
             onDelete = {},
             onDismissError = {},
+            onOpenRecording = {},
+            onRetryGatewayRecent = {},
         )
+    }
+
+    private val gatewayRecent = GatewayRecent.Loaded(
+        listOf(
+            GatewayRecording("g1", "Site walkthrough", "Tue 3 Mar, 10:15", "transcribing", speakers = 0, namedSpeakers = 0),
+            GatewayRecording("g2", "Quarterly planning", "Fri 27 Feb, 15:30", "done", speakers = 3, namedSpeakers = 2),
+            GatewayRecording("g3", "Design sync", "Wed 25 Feb, 14:00", "done", speakers = 2, namedSpeakers = 2),
+            GatewayRecording("g4", "Conversation", "Mon 23 Feb, 08:45", "done", speakers = 0, namedSpeakers = 0),
+        ),
+    )
+
+    private val withGateway by lazy {
+        RecordingUiState(
+            availability = RecordingAvailability.Availability.AVAILABLE,
+            recent = recent.take(1),
+            gatewayRecent = gatewayRecent,
+        )
+    }
+
+    @Test fun gateway_recent_light() = capture("recording_gateway_recent_light", false, withGateway)
+    @Test fun gateway_recent_dark() = capture("recording_gateway_recent_dark", true, withGateway)
+
+    @Test fun gateway_recent_failed_light() = capture(
+        "recording_gateway_recent_failed_light",
+        false,
+        withGateway.copy(gatewayRecent = GatewayRecent.Failed),
+    )
+
+    @Test fun speakersLineCountsNamedSpeakers() {
+        val base = GatewayRecording("g", "Design sync", "Wed 25 Feb, 14:00", "done", 3, 2)
+        assertEquals("2 of 3 speakers named", speakersLine(base))
+        assertEquals("All 3 speakers named", speakersLine(base.copy(namedSpeakers = 3)))
+        assertEquals(null, speakersLine(base.copy(speakers = 0, namedSpeakers = 0)))
+        assertEquals("Transcribing", gatewayStateLine("transcribing"))
+        assertEquals("Transcribed", gatewayStateLine("done"))
     }
 
     private val recent = listOf(

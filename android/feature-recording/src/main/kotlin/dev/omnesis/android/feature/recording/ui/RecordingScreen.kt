@@ -8,6 +8,14 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.ui.draw.clip
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import dev.omnesis.android.designsystem.theme.OmRadius
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -67,9 +75,12 @@ import dev.omnesis.android.feature.recording.RecordingState
 @Composable
 fun RecordingScreen(
     onOpenMenu: () -> Unit,
+    onOpenSpeakers: (id: String, title: String) -> Unit,
     vm: RecordingViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    // Back from naming speakers, the counts on the list are fresh.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshGatewayRecent() }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         // The notification is how recording is shown and stopped; recording
         // still starts without it, and the system lists the running service.
@@ -103,6 +114,8 @@ fun RecordingScreen(
             onWifiOnlyChange = vm::onWifiOnlyChange,
             onDelete = vm::delete,
             onDismissError = vm::dismissDeleteError,
+            onOpenRecording = { onOpenSpeakers(it.id, it.title) },
+            onRetryGatewayRecent = vm::refreshGatewayRecent,
             modifier = Modifier.padding(padding),
         )
     }
@@ -124,6 +137,8 @@ fun RecordingContent(
     onWifiOnlyChange: (Boolean) -> Unit,
     onDelete: (String) -> Unit,
     onDismissError: () -> Unit,
+    onOpenRecording: (GatewayRecording) -> Unit,
+    onRetryGatewayRecent: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = OmTheme.colors
@@ -160,7 +175,91 @@ fun RecordingContent(
             }
             items(state.recent, key = { it.id }) { recent -> RecentRow(recent, onDelete) }
         }
+        val gateway = state.gatewayRecent
+        if (gateway !is GatewayRecent.Hidden) {
+            item {
+                Text(
+                    "Recent recordings",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = c.textSecondary,
+                    modifier = Modifier.padding(top = OmSpacing.sm),
+                )
+            }
+            when (gateway) {
+                GatewayRecent.Loading -> item { QuietLine("Loading recent recordings…") }
+                GatewayRecent.Failed -> item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        QuietLine("Recent recordings could not be loaded.", Modifier.weight(1f))
+                        TextButton(onClick = onRetryGatewayRecent) { Text("Retry") }
+                    }
+                }
+                is GatewayRecent.Loaded -> if (gateway.recordings.isEmpty()) {
+                    item { QuietLine("No recordings on the gateway yet.") }
+                } else {
+                    items(gateway.recordings, key = { "gateway-${it.id}" }) { recording ->
+                        GatewayRecordingRow(recording, onOpenRecording)
+                    }
+                }
+                GatewayRecent.Hidden -> Unit
+            }
+        }
     }
+}
+
+@Composable
+private fun QuietLine(text: String, modifier: Modifier = Modifier) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = OmTheme.colors.textMuted, modifier = modifier)
+}
+
+@Composable
+private fun GatewayRecordingRow(recording: GatewayRecording, onOpen: (GatewayRecording) -> Unit) {
+    val c = OmTheme.colors
+    OmnesisCard(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(OmRadius.large)).clickable { onOpen(recording) }) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.RecordVoiceOver, contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(OmSpacing.md))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    recording.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${recording.when_} · ${gatewayStateLine(recording.state)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                speakersLine(recording)?.let { line ->
+                    Text(
+                        line,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (recording.namedSpeakers < recording.speakers) c.accent else c.textSecondary,
+                        maxLines = 1,
+                    )
+                }
+            }
+            Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = c.textMuted, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+internal fun gatewayStateLine(state: String): String = when (state) {
+    "recording" -> "Recording"
+    "transcribing" -> "Transcribing"
+    "done" -> "Transcribed"
+    else -> state.replaceFirstChar { it.uppercase() }
+}
+
+/** "2 of 3 speakers named", or null when the gateway did not tell speakers apart. */
+internal fun speakersLine(recording: GatewayRecording): String? = when {
+    recording.speakers <= 0 -> null
+    recording.namedSpeakers >= recording.speakers ->
+        if (recording.speakers == 1) "1 speaker named" else "All ${recording.speakers} speakers named"
+    else -> "${recording.namedSpeakers} of ${recording.speakers} ${if (recording.speakers == 1) "speaker" else "speakers"} named"
 }
 
 @Composable
