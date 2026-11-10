@@ -47,6 +47,7 @@
         "src/workers/*.ts",
         "src/icon-rasterize-worker.ts",
         "src/transcribe/whisper-worker.ts",
+        "src/recordings/voices/voice-worker.ts",
         "src/indexer/usearch-validate-subprocess.ts",
         "src/**/*.test.ts",
         "src/search/bench-*.ts",
