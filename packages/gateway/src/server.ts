@@ -1941,6 +1941,8 @@ export function createServer(
     db,
     analyticsService,
     sourceService,
+    // Read-worker gate — runs `/sql` off the main event loop.
+    ioGate: opts?.ioGate,
   });
 
   // Push status / test, used by `omnesis push status|test`. Shares the

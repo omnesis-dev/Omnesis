@@ -605,13 +605,19 @@ export function getSqliteTableActivity(
 /**
  * Hard ceiling on rows returned by the user-SQL endpoint. Keeps an
  * unbounded `SELECT * FROM documents` from streaming hundreds of MB
- * of JSON to a portal/CLI client (and from blocking the writer
- * worker for the duration of the encode). The portal's "Run" button
+ * of JSON to a portal/CLI client (and from holding the io worker
+ * that encodes it). The portal's "Run" button
  * defaults to `limit=1000` and the user can override up to this
  * ceiling — anything above it returns `truncated: true` plus the
  * first SQL_ROW_CAP rows so the user knows their query had more.
  */
 export const SQL_ROW_CAP = 10_000;
+
+/** What `/sql` asks for: the caller's SQL and its optional row limit. */
+export interface SqliteQueryRequest {
+  sql: string;
+  limit?: number;
+}
 
 export interface SqliteQueryResult {
   columns: string[];
@@ -631,24 +637,17 @@ export interface SqliteQueryResult {
  * Execute one read-only user SQL against the gateway's main SQLite
  * store and shape the result for a portal / CLI table view.
  *
- * Pre-fix this lived inline in `http/routes/analytics.ts:/sql`. The
- * route handler is a thin transport layer; the prepare / columns /
- * all / row-array reshape is the read-side equivalent of
- * `getSqliteCatalog` and belongs in the same place. The route now does only HTTP-shaped concerns
- * (authentication, the validation envelope, the BadRequest mapping
- * on a SQL parse / runtime error).
- *
  * `db` MUST be a read-only handle. better-sqlite3 enforces no
  * writes at the engine level when `readonly: true`, so any
  * INSERT / UPDATE / DELETE / DROP / ALTER / CREATE / TRUNCATE
- * (including ones smuggled through CTEs, leading comments,
- * multi-statement scripts, or PRAGMA writes) fails with
- * "attempt to write a readonly database". The mount point in
- * `routes/analytics.ts` opens the handle with `readonly: true` so
- * a test harness's writable test DB can't accidentally accept a
- * write through `/sql`.
+ * (including ones smuggled through CTEs or leading comments) fails
+ * with "attempt to write a readonly database"; `prepare` refuses a
+ * multi-statement script, and `all` refuses a statement that returns
+ * no rows (`ATTACH`, `VACUUM`, `PRAGMA user_version = 7`) before
+ * running it. `/sql` reaches it through `readSqliteQuery`, on the
+ * io worker's user-SQL handle (`workers/io-worker.ts`).
  */
-export function runSqliteQuery(db: Db, opts: { sql: string; limit?: number }): SqliteQueryResult {
+export function runSqliteQuery(db: Db, opts: SqliteQueryRequest): SqliteQueryResult {
   // Cap the per-query limit so a runaway SELECT can't exhaust the
   // gateway's heap. 100k is far above any interactive use; CLI
   // pipelines that need everything iterate in pages.
@@ -698,6 +697,29 @@ export function runSqliteQuery(db: Db, opts: { sql: string; limit?: number }): S
     result.rowCap = SQL_ROW_CAP;
   }
   return result;
+}
+
+/**
+ * What `/sql` answers: the response body, already serialized, or the engine's
+ * refusal. The refusal travels as data because a read on the io worker reports
+ * a thrown error only as a failure, with its stack, and `/sql` answers the
+ * refusal's message alone as a 400.
+ */
+export type SqliteQueryRead = { json: string } | { error: string };
+
+/**
+ * `runSqliteQuery`, serialized where it runs. On the io worker that keeps the
+ * encoding of up to `SQL_ROW_CAP` rows off the main event loop, and the reply
+ * crosses the thread boundary as one string rather than a graph of rows. The
+ * string is what `c.json` would have produced from the result, BLOB cells
+ * included (`Buffer#toJSON`).
+ */
+export function readSqliteQuery(db: Db, request: SqliteQueryRequest): SqliteQueryRead {
+  try {
+    return { json: JSON.stringify(runSqliteQuery(db, request)) };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 // --- internals -------------------------------------------------------------

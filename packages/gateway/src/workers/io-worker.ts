@@ -21,9 +21,10 @@
  * across writer + compute.
  *
  * Dispatch tables live in `scheduler/io-handlers.ts` (ops on
- * `omnesis.db`) and `scheduler/io-journal-handlers.ts` (ops on a second
- * read-only handle, on the watch journal). This file just owns init,
- * message loop, and shutdown.
+ * `omnesis.db`), `scheduler/io-journal-handlers.ts` (ops on a second
+ * read-only handle, on the watch journal) and `scheduler/io-sql-handlers.ts`
+ * (the operator's SQL, on a third read-only handle to `omnesis.db`). This
+ * file just owns init, message loop, and shutdown.
  */
 
 import Database from "better-sqlite3";
@@ -33,6 +34,7 @@ import { parentPort } from "node:worker_threads";
 import { assertNever } from "@omnesis/core";
 import { ioHandlers } from "../scheduler/io-handlers.js";
 import { ioJournalHandlers } from "../scheduler/io-journal-handlers.js";
+import { ioSqlHandlers } from "../scheduler/io-sql-handlers.js";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { deprioritizeBackgroundWorker } from "./worker-priority.js";
 
@@ -50,17 +52,17 @@ function log(level: LogLevel, component: string, message: string): void {
   post({ type: "log", level, component, message });
 }
 
-function openReadConn(
-  path: string,
-  gatewayDbKeyHex?: string,
-  cacheSizeBytes?: number,
-  options: { cipherBuild?: boolean } = {},
-): Db {
+/**
+ * A read-only connection to `path`, through the cipher build when the file is
+ * keyed or `cipherBuild` asks for it, with the pragmas every io connection
+ * shares: `query_only`, and no memory-mapped reads.
+ */
+function openReadOnly(path: string, gatewayDbKeyHex?: string, cipherBuild = false): Db {
   // Read-only on a WAL DB opens a snapshot — never touches -shm writes.
   // fileMustExist:true catches mis-configured paths early instead of
   // silently creating an empty DB the rest of the gateway doesn't see.
   const db =
-    gatewayDbKeyHex || options.cipherBuild
+    gatewayDbKeyHex || cipherBuild
       ? (openEncryptedSqlite(path, {
           ...(gatewayDbKeyHex ? { key: Buffer.from(gatewayDbKeyHex, "hex") } : {}),
           readonly: true,
@@ -71,16 +73,30 @@ function openReadConn(
   // query_only is belt-and-suspenders on top of the readonly flag —
   // SQLite refuses any statement that would mutate state. Cheap.
   db.exec("PRAGMA query_only = ON");
+  // Disable mmap for the same belt-and-suspenders reason as elsewhere
+  // in the codebase (see writer-worker openWriteConn header).
+  db.exec("PRAGMA mmap_size = 0");
+  return db;
+}
+
+/** A page-cache budget in KiB, defaulting to 64 MiB. */
+function cacheKib(cacheSizeBytes?: number): number {
+  return Math.max(2, Math.floor((cacheSizeBytes ?? 64 * 1024 * 1024) / 1024));
+}
+
+function openReadConn(
+  path: string,
+  gatewayDbKeyHex?: string,
+  cacheSizeBytes?: number,
+  options: { cipherBuild?: boolean } = {},
+): Db {
+  const db = openReadOnly(path, gatewayDbKeyHex, options.cipherBuild);
   // Page cache. Compute ops re-scan large tables (people counts, link
   // reconcile) and benefit from a generous cache — doubly so under storage
   // encryption, where a resident page saves a re-decrypt. Configurable via
   // `gateway.readHandle.ioCacheSizeBytes`; defaults to 64 MiB.
-  const cacheKib = Math.max(2, Math.floor((cacheSizeBytes ?? 64 * 1024 * 1024) / 1024));
-  db.exec(`PRAGMA cache_size = -${cacheKib}`);
+  db.exec(`PRAGMA cache_size = -${cacheKib(cacheSizeBytes)}`);
   db.exec("PRAGMA temp_store = MEMORY");
-  // Disable mmap for the same belt-and-suspenders reason as elsewhere
-  // in the codebase (see writer-worker openWriteConn header).
-  db.exec("PRAGMA mmap_size = 0");
   return db;
 }
 
@@ -89,16 +105,21 @@ const journalDispatch = ioJournalHandlers as Record<
   string,
   (journal: Db, ...args: unknown[]) => unknown
 >;
+const sqlDispatch = ioSqlHandlers as Record<string, (sql: Db, ...args: unknown[]) => unknown>;
 
 /** Page cache for the watch journal handle: its reads are single index seeks. */
 const JOURNAL_CACHE_SIZE_BYTES = 8 * 1024 * 1024;
 
 let state: {
   db: Db;
+  gatewayDbPath: string;
+  gatewayDbKeyHex: string | undefined;
+  cacheSizeBytes: number | undefined;
   heartbeatInterval: ReturnType<typeof setInterval>;
   shuttingDown: boolean;
   watchJournal: IoInit["watchJournal"];
   journalDb: Db | null;
+  sqlDb: Db | null;
 } | null = null;
 
 /**
@@ -123,6 +144,23 @@ function journalConn(): Db {
   return state.journalDb;
 }
 
+/**
+ * The read-only connection the operator's SQL runs on (`ioSqlHandlers`),
+ * opened on first use and shared with no other op, so what that SQL sets on
+ * its connection stays there. Its temporary storage is a file, as on the
+ * gateway's main read handle, and its page cache has the same budget as the
+ * worker's own handle.
+ */
+function sqlConn(): Db {
+  if (!state) throw new Error("io-worker not initialized");
+  if (!state.sqlDb) {
+    const db = openReadOnly(state.gatewayDbPath, state.gatewayDbKeyHex);
+    db.exec(`PRAGMA cache_size = -${cacheKib(state.cacheSizeBytes)}`);
+    state.sqlDb = db;
+  }
+  return state.sqlDb;
+}
+
 async function handleInit(init: IoInit): Promise<void> {
   if (state) {
     log("warn", "io-worker", "init received twice — ignoring");
@@ -137,10 +175,14 @@ async function handleInit(init: IoInit): Promise<void> {
 
     state = {
       db,
+      gatewayDbPath: init.gatewayDbPath,
+      gatewayDbKeyHex: init.gatewayDbKeyHex,
+      cacheSizeBytes: init.cacheSizeBytes,
       heartbeatInterval,
       shuttingDown: false,
       watchJournal: init.watchJournal,
       journalDb: null,
+      sqlDb: null,
     };
 
     // Yield CPU to real-time work under contention — this worker mostly runs
@@ -198,11 +240,14 @@ function handleCall(id: number, op: string, args: unknown[], enqueueMs: number):
     return;
   }
   const journalHandler = journalDispatch[op];
+  const sqlHandler = sqlDispatch[op];
   const handler: ((...args: unknown[]) => unknown) | undefined = journalHandler
     ? (...rest) => journalHandler(journalConn(), ...rest)
-    : dispatch[op]
-      ? (...rest) => dispatch[op]!(state!.db, ...rest)
-      : undefined;
+    : sqlHandler
+      ? (...rest) => sqlHandler(sqlConn(), ...rest)
+      : dispatch[op]
+        ? (...rest) => dispatch[op]!(state!.db, ...rest)
+        : undefined;
   if (!handler) {
     post({
       type: "result",
@@ -264,6 +309,11 @@ async function handleShutdown(): Promise<void> {
   }
   try {
     state.journalDb?.close();
+  } catch {
+    /* best-effort */
+  }
+  try {
+    state.sqlDb?.close();
   } catch {
     /* best-effort */
   }

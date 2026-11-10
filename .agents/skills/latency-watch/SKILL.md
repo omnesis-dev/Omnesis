@@ -110,8 +110,9 @@ None of these sources carries corpus content, and the loop must keep it that way
 The `/admin/*` routes need the admin scope. When no CLI command covers one, read
 it through the CLI's own authenticated client: a throwaway `tsx` script outside
 the repository that imports `gatewayFetch` from `packages/cli/src/utils.ts`.
-Never use `omnesis sql` against a live gateway: it runs on the gateway's main
-thread and is itself a stall.
+Never use `omnesis sql` against a live gateway: it reads the corpus, a long query
+holds an io worker and the write-ahead log open, and a gateway that predates
+`io.sqliteQuery` runs it on the main thread, where it is itself a stall.
 
 When you record evidence, normalize paths to route patterns
 (`/agent/conversations/:id/seen`), and never keep ids, query strings, search

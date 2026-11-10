@@ -9138,6 +9138,70 @@ describe("POST /sql", () => {
     expect(data.truncated).toBeUndefined();
     expect(data.rowCap).toBeUndefined();
   });
+
+  test("runs on the read worker when the gateway has one, and answers its body as JSON", async () => {
+    // The worker hands back the body already serialized; the route sends it
+    // as it is, and a refusal as the 400 envelope.
+    const body = JSON.stringify({
+      columns: ["n"],
+      columnTypes: [null],
+      rows: [[1]],
+      rowCount: 1,
+      timing: 0,
+    });
+    const sqliteQuery = vi.fn(async (request: { sql: string }) =>
+      request.sql === "SELECT 1 AS n" ? { json: body } : { error: "no such table: missing" },
+    );
+    const gateApp = createServer(db, undefined, {
+      ioGate: { sqliteQuery } as unknown as IComputeScheduler,
+    });
+    const prepare = vi.spyOn(db, "prepare");
+    const post = (sql: string) =>
+      gateApp.request("/sql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${TEST_TOKEN}` },
+        body: JSON.stringify({ sql, limit: 5 }),
+      });
+    try {
+      const ok = await post("SELECT 1 AS n");
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get("content-type")).toBe("application/json");
+      expect(await ok.text()).toBe(body);
+      const refused = await post("SELECT * FROM missing");
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toEqual({
+        error: "no such table: missing",
+        code: "BAD_REQUEST",
+      });
+      expect(sqliteQuery).toHaveBeenCalledTimes(2);
+      expect(sqliteQuery).toHaveBeenNthCalledWith(1, { sql: "SELECT 1 AS n", limit: 5 });
+      // The user's SQL never reached the main thread's handle.
+      expect(prepare.mock.calls.map(([sql]) => sql)).not.toContain("SELECT 1 AS n");
+      expect(prepare.mock.calls.some(([sql]) => String(sql).includes("__q LIMIT"))).toBe(false);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
+  test("answers a sanitized 500 when the read worker fails, not a 400", async () => {
+    // A worker that died or shut down is the gateway's failure, not the query's.
+    const gateApp = createServer(db, undefined, {
+      ioGate: {
+        sqliteQuery: vi.fn(async () => {
+          throw new Error("io worker exited code=1");
+        }),
+      } as unknown as IComputeScheduler,
+    });
+    const res = await gateApp.request("/sql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${TEST_TOKEN}` },
+      body: JSON.stringify({ sql: "SELECT 1" }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.code).toBe("INTERNAL_ERROR");
+    expect(JSON.stringify(data)).not.toContain("io worker exited");
+  });
 });
 
 describe("GET /status", () => {

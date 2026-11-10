@@ -47,7 +47,11 @@ import type {
 } from "../data/repositories/AbsenceRepository.js";
 import type { LinkReconcileBatch, LinkStatsAggregation } from "../links.js";
 import type { LinkStats } from "../data/repositories/LinkStatsRepository.js";
-import type { SqliteTableStatsRow } from "../sqlite-catalog.js";
+import type {
+  SqliteQueryRead,
+  SqliteQueryRequest,
+  SqliteTableStatsRow,
+} from "../sqlite-catalog.js";
 import type { Scheduler } from "./scheduler.js";
 import type { PeopleDirectoryReader } from "../watch/people-directory.js";
 import type { JournalHistoryReader } from "../watch/journal-document.js";
@@ -123,6 +127,8 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
   watchDocumentHistories: JournalHistoryReader;
   /** One catalog table's statistics, or null when it does not exist; see `computeSqliteTableStats`. */
   sqliteTableStats(tableName: string): Promise<SqliteTableStatsRow | null>;
+  /** The operator's SQL (`POST /sql`), on the worker's user-SQL handle; see `readSqliteQuery`. */
+  sqliteQuery(request: SqliteQueryRequest): Promise<SqliteQueryRead>;
   bootstrapCorpusByMonth(
     recencyFloor: string,
     todayIso: string,
@@ -533,6 +539,9 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.watchDocumentHistories", priority: "background" },
   // A catalog table's row count and MIN/MAX: one table walk per call.
   { name: "io.sqliteTableStats", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
+  // The operator's own SQL: someone is waiting on it, and it can be any
+  // query, so the alarm fires past the operator-tooling target of 5 s.
+  { name: "io.sqliteQuery", priority: "user", latencyBudgetMs: 5_000 },
   { name: "io.bootstrapBacklog", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "io.bootstrapCorpusByMonth",
@@ -687,6 +696,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     watchPeopleDirectory: (knownHash) => call("io.watchPeopleDirectory", [knownHash]),
     watchDocumentHistories: (requests) => call("io.watchDocumentHistories", [[...requests]]),
     sqliteTableStats: (tableName) => call("io.sqliteTableStats", [tableName]),
+    sqliteQuery: (request) => call("io.sqliteQuery", [request]),
     bootstrapCorpusByMonth: (recencyFloor, todayIso) =>
       call("io.bootstrapCorpusByMonth", [recencyFloor, todayIso]),
     conversationRetentionCandidates: (files, cutoffMs) =>
