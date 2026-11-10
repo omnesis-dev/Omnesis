@@ -169,7 +169,14 @@ describe("LlamaCppDecision", () => {
     expect(result.answers.route).toMatchObject({ type: "choice", choice: "skip" });
     // The full softmax, not a greedy one-hot.
     // The softmax over the top 128, not a greedy one-hot or the whole vocabulary.
-    expect(fake.evaluateOptions[0]).toEqual({ temperature: 1, topK: 128, topP: 1, minP: 0 });
+    expect(fake.evaluateOptions[0]).toEqual({
+      temperature: 1,
+      topK: 128,
+      topP: 1,
+      minP: 0,
+      // Without it a sampled end-of-generation token ends the evaluation with no distribution.
+      yieldEogToken: true,
+    });
     // As large a context as the model was trained for, up to 16k.
     expect(fake.requestedContext).toEqual({ contextSize: { max: 16_384 } });
     expect(fake.wrapperSettings).toMatchObject({

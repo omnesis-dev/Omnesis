@@ -95,6 +95,7 @@ describe("compareGate", () => {
       question: "worth_score",
       threshold: 1.08,
       recordedPass: true,
+      candidateValue: 0.98,
       candidatePass: false,
     });
     // Different levels, both pass.
@@ -123,6 +124,26 @@ describe("compareGate", () => {
 });
 
 describe("summarizeGates", () => {
+  it("finds the candidate threshold that keeps 95% of the recorded passes", () => {
+    // Twenty recorded passes scored 1.0, 0.95, …, 0.05 by a candidate on a lower scale.
+    const rows = Array.from({ length: 20 }, (_, i) =>
+      compareGate(
+        "worth_score",
+        1.08,
+        { type: "score", score: 2 },
+        { type: "score", score: (20 - i) / 20 },
+      ),
+    );
+    rows.push(
+      compareGate("worth_score", 1.08, { type: "score", score: 0 }, { type: "score", score: 0 }),
+    );
+    const [summary] = summarizeGates(rows);
+    expect(summary.recall).toBe(0);
+    // The 19th highest of 20 keeps 95% of them.
+    expect(summary.matchedThreshold).toBeCloseTo(0.1);
+    expect(summary.matchedPassRate).toBeCloseTo(19 / 21);
+  });
+
   it("reports pass/skip agreement and recall on the recorded passes", () => {
     const gate = (recorded, candidate) =>
       compareGate(
@@ -148,6 +169,9 @@ describe("summarizeGates", () => {
         recall: 0.5,
         recordedPassRate: 0.5,
         candidatePassRate: 0.5,
+        // Keeping 95% of the two recorded passes means keeping both: down to 0.98.
+        matchedThreshold: 0.98,
+        matchedPassRate: 0.75,
       },
     ]);
     expect(formatGates(summary)).toMatch(/worth_score\s+1\.08\s+4\/5\s+50\.0%\s+50\.0%/);

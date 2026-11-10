@@ -130,7 +130,30 @@ export function compareGate(question, threshold, recorded, candidate) {
     question,
     threshold,
     recordedPass: recordedValue >= threshold,
+    candidateValue,
     candidatePass: candidateValue === null ? null : candidateValue >= threshold,
+  };
+}
+
+/** The recall a candidate threshold is matched to: the worth gate's design point. */
+export const TARGET_RECALL = 0.95;
+
+/**
+ * The highest candidate threshold that still passes {@link TARGET_RECALL} of
+ * what the recorded model passed, and the share of all answered items it
+ * passes there. A candidate whose scores sit on another scale needs its own
+ * threshold; this is the one that keeps the recorded gate's recall.
+ */
+function matchedThreshold(answered) {
+  const passes = answered
+    .filter((r) => r.recordedPass)
+    .map((r) => r.candidateValue)
+    .sort((a, b) => b - a);
+  if (passes.length === 0) return { threshold: null, passRate: null };
+  const threshold = passes[Math.ceil(TARGET_RECALL * passes.length) - 1];
+  return {
+    threshold,
+    passRate: answered.filter((r) => r.candidateValue >= threshold).length / answered.length,
   };
 }
 
@@ -155,6 +178,7 @@ export function summarizeGates(rows) {
     .map(([question, list]) => {
       const answered = list.filter((r) => r.candidatePass !== null);
       const recordedPasses = answered.filter((r) => r.recordedPass);
+      const matched = matchedThreshold(answered);
       return {
         question,
         threshold: list[0].threshold,
@@ -167,6 +191,8 @@ export function summarizeGates(rows) {
         recall: share(recordedPasses.filter((r) => r.candidatePass).length, recordedPasses.length),
         recordedPassRate: share(recordedPasses.length, answered.length),
         candidatePassRate: share(answered.filter((r) => r.candidatePass).length, answered.length),
+        matchedThreshold: matched.threshold,
+        matchedPassRate: matched.passRate,
       };
     });
 }
@@ -175,7 +201,7 @@ export function summarizeGates(rows) {
 export function formatGates(summary) {
   const pct = (v) => (v === null ? "—" : `${(v * 100).toFixed(1)}%`);
   const lines = [
-    "question          threshold  answered  pass/skip agree  recall  recorded pass  candidate pass",
+    `question          threshold  answered  pass/skip agree  recall  recorded pass  candidate pass  threshold for ${TARGET_RECALL * 100}% recall  candidate pass there`,
   ];
   for (const s of summary) {
     lines.push(
@@ -187,6 +213,8 @@ export function formatGates(summary) {
         pct(s.recall).padStart(7),
         pct(s.recordedPassRate).padStart(14),
         pct(s.candidatePassRate).padStart(15),
+        (s.matchedThreshold === null ? "—" : s.matchedThreshold.toFixed(2)).padStart(25),
+        pct(s.matchedPassRate).padStart(21),
       ].join(" "),
     );
   }

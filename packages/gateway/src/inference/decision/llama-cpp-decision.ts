@@ -176,11 +176,13 @@ export class LlamaCppDecision implements DecisionCapability {
       start = sequence.nextTokenIndex;
     }
     // Temperature 1 with nucleus and min-p off, so the reported distribution is
-    // the model's softmax over its top K rather than a greedy one-hot.
+    // the model's softmax over its top K rather than a greedy one-hot. The
+    // sampled token is irrelevant, but when it is end-of-generation the
+    // evaluation would stop without yielding the distribution unless asked to.
     const evaluation = sequence.evaluateWithMetadata(
       tokens.slice(start),
       { probabilities: true },
-      { temperature: 1, topK: TOP_K, topP: 1, minP: 0 },
+      { temperature: 1, topK: TOP_K, topP: 1, minP: 0, yieldEogToken: true },
     );
     const first = await evaluation.next();
     await evaluation.return();
