@@ -104,7 +104,29 @@ describe("HttpChatDecision", () => {
       // Thinking off, in the spellings the common servers read.
       chat_template_kwargs: { enable_thinking: false },
       thinking: { type: "disabled" },
+      reasoning_effort: "none",
     });
+  });
+
+  it("drops each refused field in turn until the server accepts the request", async () => {
+    const answers = scriptedFetch();
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchFn = vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(body);
+      // A strict server that names one unknown argument per error.
+      for (const field of ["chat_template_kwargs", "thinking", "reasoning_effort"]) {
+        if (field in body)
+          return jsonResponse(400, { error: { message: `Unsupported: ${field}` } });
+      }
+      return answers(url, init);
+    });
+    const result = await client(fetchFn).decide({
+      state: "x",
+      questions: { is_bill: request.questions.is_bill! },
+    });
+    expect(result.answers.is_bill).toMatchObject({ type: "noul" });
+    expect(bodies).toHaveLength(4);
   });
 
   it("retries once without a field the server refuses, and keeps it off", async () => {
@@ -126,6 +148,7 @@ describe("HttpChatDecision", () => {
     expect(bodies).toHaveLength(3);
     expect(bodies[1]).not.toHaveProperty("chat_template_kwargs");
     expect(bodies[1]).toHaveProperty("thinking");
+    expect(bodies[1]).toHaveProperty("reasoning_effort");
     expect(bodies[2]).not.toHaveProperty("chat_template_kwargs");
   });
 

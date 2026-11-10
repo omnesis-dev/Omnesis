@@ -14,12 +14,13 @@
  *
  * The answer must be the first token, so a model that reasons first never
  * gives one. Unless the operator set the model's reasoning controls, every
- * request asks for thinking off in the two common spellings: the chat-template
- * switch vLLM, SGLang and llama-server pass to Qwen-style templates, and
- * DeepSeek's `thinking` field. Servers differ in what they accept, so a 400
+ * request asks for thinking off in the three common spellings: the
+ * chat-template switch vLLM, SGLang and llama-server pass to Qwen-style
+ * templates, DeepSeek's `thinking` field, and `reasoning_effort: "none"`, the
+ * only one Ollama reads. Servers differ in what they accept, so a 400 or 422
  * that names one of these fields, or a `top_logprobs` above the server's cap
- * (TGI and Fireworks allow 5), is retried once without the field or with
- * fewer alternatives, and the adjustment is kept for later requests.
+ * (TGI and Fireworks allow 5), is retried without the field or with fewer
+ * alternatives, and the adjustment is kept for later requests.
  *
  * A server that returns no log-probabilities cannot serve the role: the call
  * throws, as does a reply whose next token is not a label, and callers fail
@@ -58,7 +59,10 @@ const FALLBACK_TOP_LOGPROBS = 5;
 const THINKING_OFF_FIELDS: Readonly<Record<string, unknown>> = {
   chat_template_kwargs: { enable_thinking: false },
   thinking: { type: "disabled" },
+  reasoning_effort: "none",
 };
+/** One retry per field the server may refuse, plus one for `top_logprobs`. */
+const MAX_ADJUSTMENTS = Object.keys(THINKING_OFF_FIELDS).length + 1;
 
 export interface HttpChatDecisionOptions {
   /** The backend key the assignment names (`<backendKey>/<model>`). */
@@ -135,7 +139,7 @@ export class HttpChatDecision implements DecisionCapability {
       { role: "user", content: prompt.user },
     ];
     let res: Response;
-    for (let adjusted = false; ; adjusted = true) {
+    for (let adjustments = 0; ; adjustments += 1) {
       const body = JSON.stringify({
         model: this.opts.model,
         messages,
@@ -156,7 +160,7 @@ export class HttpChatDecision implements DecisionCapability {
       // content) into its error, which would then land in logs. It is only
       // searched for the names of the fields it refused.
       const text = await res.text().catch(() => "");
-      if (!adjusted && this.adjustToRefusal(res.status, text)) continue;
+      if (adjustments < MAX_ADJUSTMENTS && this.adjustToRefusal(res.status, text)) continue;
       throw new Error(
         `Decision backend ${this.opts.backendKey} HTTP ${res.status} (model=${this.opts.model}, ${text.length} bytes)`,
       );
