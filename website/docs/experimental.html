@@ -1357,25 +1357,29 @@
           <code>brain.annotations.recordCheck</code> sets what happens: <code>shadow</code> (the
           default) saves every record at once and scores it afterwards, <code>enforce</code> scores
           it first, drops a low-scored record and tells the agent not to retry it, and
-          <code>off</code> asks nothing. If the decision model does not answer within 15 seconds,
-          the record is saved. Missing or unsafe source context also leaves a document annotation
-          unjudged rather than guessing its added value. Person-profile replacements and revisions
-          are checked against the useful context they would replace. Scheduled person-note reviews
-          also reassess whether to retain each fact in the current compact profile; an enforced
-          refusal requires correction, consolidation or retraction before the review completes.
-          Autonomous person-note withdrawal uses the same profile-utility standard in a separate
-          preservation check: truth alone does not make routine or incidental details useful profile
-          context. A retention refusal never authorizes deletion by itself; useful supported meaning
-          must remain in the profile or be replaced atomically. In <code>enforce</code>, an
-          unavailable withdrawal assessment leaves the old fact pending instead of deleting it.
-          Irrelevant, unsupported and redundant facts may still be removed. Ordinary evidence
-          refreshes do not repeat this editorial check. Tracked outcome creation and substantive
-          changes are checked for supported responsibility, event identity and current status;
-          autonomous outcome assertions require original evidence. Pure scheduling and dismissal,
-          anything you hand to the assistant, and memory you ask for directly are not checked. Each
-          verdict is shown on the run it was made for, with the record and the document it came
-          from, and its tokens appear as <strong>Decision model · record check</strong>. Verdicts
-          are deleted after the activity-retention window.
+          <code>off</code> asks nothing. For annotations, wiki drafts and dated entries, if the
+          decision model does not answer within 15 seconds, the record is saved. Missing or unsafe
+          source context also leaves a document annotation unjudged rather than guessing its added
+          value. Person-profile replacements and revisions are checked against the useful context
+          they would replace. Scheduled person-note reviews also reassess whether to retain each
+          fact in the current compact profile; an enforced refusal requires correction,
+          consolidation or retraction before the review completes. Autonomous person-note withdrawal
+          uses the same profile-utility standard in a separate preservation check: truth alone does
+          not make routine or incidental details useful profile context. A retention refusal never
+          authorizes deletion by itself; useful supported meaning must remain in the profile or be
+          replaced atomically. In <code>enforce</code>, an unavailable withdrawal assessment leaves
+          the old fact pending instead of deleting it. Irrelevant, unsupported and redundant facts
+          may still be removed. Ordinary evidence refreshes do not repeat this editorial check.
+          Tracked outcome creation and substantive changes are checked for supported responsibility,
+          event identity and current status; autonomous outcome assertions require original
+          evidence. In <code>enforce</code>, outcome creation and substantive changes wait for an
+          accepted assessment. A missing decision model, unavailable or unsafe evidence context,
+          timeout or malformed result leaves the outcome unchanged for later retry. Pure scheduling
+          and dismissal, anything you hand to the assistant, and memory you ask for directly are not
+          checked. Each verdict is shown on the run it was made for, with the record and the
+          document it came from, and its tokens appear as
+          <strong>Decision model · record check</strong>. Verdicts are deleted after the
+          activity-retention window.
         </p>
 
         <p>

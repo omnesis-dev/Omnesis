@@ -806,6 +806,17 @@ async function recordCheckRefusal(
   if (!deps.checkRecord) return null;
   const outcome = await deps.checkRecord(input, signal);
   if (outcome.save) {
+    if (
+      input.record.type === "outcome" &&
+      deps.checkRecord.enforcesOutcomePolicy?.() === true &&
+      !outcome.assessment
+    )
+      return {
+        kind: "error",
+        code: "outcome_assessment_unavailable",
+        message:
+          "Outcome assessment is unavailable; the outcome was not changed. Leave this work pending until the decision model and safe source context are available. Do not retry the unchanged proposal in this run.",
+      };
     if (outcome.assessment) onAssessment?.(outcome.assessment);
     return null;
   }
@@ -1187,7 +1198,11 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         message:
           "An autonomous outcome assertion requires original source documents. Read and cite supporting evidence before creating, reviving, or materially changing this outcome.",
       };
-    if (!(deps.checkRecord.needsDocumentContext?.() ?? true)) return null;
+    if (
+      deps.checkRecord.enforcesOutcomePolicy?.() !== true &&
+      !(deps.checkRecord.needsDocumentContext?.() ?? true)
+    )
+      return null;
     const prepared = prepareOutcomeRecordContext(db, {
       outcomeId: id,
       documentIds,

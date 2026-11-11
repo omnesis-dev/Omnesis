@@ -12,6 +12,7 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { z } from "zod";
 import { createLogger } from "@omnesis/core";
 import { ProviderId, SourceId, type DocumentInput } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
@@ -1925,8 +1926,11 @@ describe("record check", () => {
           CTX,
         );
         await instance.idle();
-        expect(count("open_loops")).toBe(scenario === "reject" ? 0 : 1);
+        const unavailable = scenario === "missing" || scenario === "malformed";
+        expect(count("open_loops")).toBe(scenario === "reject" || unavailable ? 0 : 1);
         expect(calls).toHaveLength(scenario === "off" ? 0 : 1);
+        if (unavailable)
+          expect(result).toMatchObject({ kind: "error", code: "outcome_assessment_unavailable" });
         if (scenario === "reject") {
           expect(resultType(result)).toBe("record.not_saved");
           expect(JSON.stringify(result)).toContain("deadline_support");
@@ -2118,6 +2122,118 @@ describe("record check", () => {
       expect(decision.calls).toHaveLength(1);
     });
 
+    test.each([
+      "unassigned",
+      "outage",
+      "malformed",
+      "generated-context",
+      "ledger-failure",
+    ] as const)(
+      "enforced outcome writes wait for an accepted assessment (%s)",
+      async (scenario) => {
+        const doc = insertDoc("exhibit-approval", "The exhibit installation is approved.");
+        const initial = await tool(tools(), "open_loop_create").invoke(
+          {
+            title: "Install the exhibit",
+            confidence: 0.8,
+            importance: 0.7,
+            docs: [doc],
+            annotationDependencies: [],
+          },
+          CTX,
+        );
+        if (initial.kind !== "structured") throw new Error("Expected created outcome");
+        const {
+          loop: { id },
+        } = z.object({ loop: z.object({ id: z.string() }) }).parse(initial.data);
+        const mirror = db
+          .prepare<[string], { id: string }>("SELECT id FROM documents WHERE external_id=?")
+          .get(id)!;
+        const decision =
+          scenario === "unassigned"
+            ? null
+            : new ScriptedDecision(
+                {},
+                scenario === "outage" ? new Error("offline") : undefined,
+                scenario === "malformed" ? 4 : 2.5,
+              );
+        const list = tools({
+          checkRecord: check(decision, "enforce", {
+            failLedger: scenario === "ledger-failure",
+          }).check.forRun(bootstrapRun(doc))!,
+        });
+        const docs = scenario === "generated-context" ? [doc, mirror.id] : [doc];
+        const before = db.prepare("SELECT * FROM open_loops WHERE id=?").get(id);
+        const update = await tool(list, "open_loop_update").invoke(
+          { id, state: "done", docs, annotationDependencies: [] },
+          CTX,
+        );
+        expect(update).toMatchObject({ kind: "error", code: "outcome_assessment_unavailable" });
+        expect(db.prepare("SELECT * FROM open_loops WHERE id=?").get(id)).toEqual(before);
+        const create = await tool(list, "open_loop_create").invoke(
+          {
+            title: "Arrange the exhibit briefing",
+            confidence: 0.8,
+            importance: 0.7,
+            docs,
+            annotationDependencies: [],
+          },
+          CTX,
+        );
+        expect(create).toMatchObject({ kind: "error", code: "outcome_assessment_unavailable" });
+        expect(count("open_loops")).toBe(1);
+        if (scenario === "generated-context") expect(decision?.calls).toHaveLength(0);
+      },
+    );
+
+    test.each(["off", "shadow"] as const)(
+      "unavailable outcome assessments preserve %s behavior",
+      async (mode) => {
+        const doc = insertDoc("exhibit-source", "The exhibit installation is approved.");
+        const instance = check(new ScriptedDecision({}, new Error("offline")), mode).check;
+        const result = await tool(
+          tools({ checkRecord: instance.forRun(bootstrapRun(doc))! }),
+          "open_loop_create",
+        ).invoke(
+          {
+            title: "Install the exhibit",
+            confidence: 0.8,
+            importance: 0.7,
+            docs: [doc],
+            annotationDependencies: [],
+          },
+          CTX,
+        );
+        await instance.idle();
+        expect(resultType(result)).toBe("open_loop.created");
+        expect(count("open_loops")).toBe(1);
+      },
+    );
+
+    test("enforced outcome writes wait after the assessment deadline", async () => {
+      const doc = insertDoc("exhibit-timeout", "The exhibit installation is approved.");
+      const decision = new HeldDecision();
+      const list = tools({
+        checkRecord: check(decision, "enforce").check.forRun(bootstrapRun(doc))!,
+      });
+      const result = await tool(list, "open_loop_create").invoke(
+        {
+          title: "Install the exhibit",
+          confidence: 0.8,
+          importance: 0.7,
+          docs: [doc],
+          annotationDependencies: [],
+        },
+        CTX,
+      );
+      expect(result).toMatchObject({ kind: "error", code: "outcome_assessment_unavailable" });
+      expect(count("open_loops")).toBe(0);
+      expect(listDecisionsForRun(db, "run_1")[0]).toMatchObject({
+        verdict: "unavailable",
+        enforced: true,
+      });
+    });
+
     test("an outcome judgment is never shown a linked document of an excluded source", async () => {
       const mail = insertDoc("outcome-mail", "The archive access transfer was requested.");
       const log = insertDoc(
@@ -2152,8 +2268,14 @@ describe("record check", () => {
       expect(decision.calls[0]!.state).toMatchObject({
         outcome_context: { sources: [{ id: mail }] },
       });
-      // With no readable evidence left, nothing is judged: recorded as unavailable.
-      expect(resultType(await done(unreadable))).toBe("open_loop.updated");
+      // Without readable evidence an enforced outcome stays pending, not approved.
+      expect(await done(unreadable)).toMatchObject({
+        kind: "error",
+        code: "outcome_assessment_unavailable",
+      });
+      expect(db.prepare("SELECT state FROM open_loops WHERE id=?").get(unreadable)).toEqual({
+        state: "open",
+      });
       expect(decision.calls).toHaveLength(1);
       expect(JSON.stringify(decision.calls)).not.toContain("Session notes");
       expect(listDecisionsForRun(db, "run_1").map((row) => row.verdict)).toEqual([
