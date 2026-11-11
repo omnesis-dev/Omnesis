@@ -3,7 +3,6 @@
 
 package dev.omnesis.android.transport.client
 
-import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.DecisionEndpointConfig
 import dev.omnesis.android.transport.dto.DecisionProbeBody
@@ -16,7 +15,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 
@@ -182,43 +180,6 @@ class AdminClientDecisionTest {
         server.takeRequest().also {
             assertEquals("/admin/inference/typesafe/verify", it.path)
             assertEquals("""{"model":"jev-1.14.0"}""", it.body.readUtf8())
-        }
-    }
-
-    @Test fun calibration_reads_starts_and_cancels() = runTest {
-        server.enqueue(MockResponse().setBody("""{"state":"idle","done":0,"total":0,"failed":0}"""))
-        server.enqueue(MockResponse().setResponseCode(202).setBody("""{"state":"running","assignment":"ollaya/kev","done":0,"total":296,"failed":0}"""))
-        server.enqueue(MockResponse().setBody("""{"state":"running","assignment":"ollaya/kev","done":4,"total":296,"failed":0}"""))
-        assertEquals("idle", client().decisionCalibration().state)
-        assertEquals(296, client().startDecisionCalibration().total)
-        assertEquals(4, client().cancelDecisionCalibration().done)
-        listOf("GET", "POST", "DELETE").forEach { method ->
-            server.takeRequest().also {
-                assertEquals(method, it.method)
-                assertEquals("/admin/models/decision/calibration", it.path)
-            }
-        }
-    }
-
-    @Test fun a_refused_calibration_surfaces_the_gateways_reason() = runTest {
-        server.enqueue(
-            MockResponse().setResponseCode(400)
-                .setBody("""{"error":"TypeSafe's Jev is the reference itself; a decision backend's model is what gets calibrated."}"""),
-        )
-        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"A calibration is already running"}"""))
-        try {
-            client().startDecisionCalibration()
-            fail("expected a refusal")
-        } catch (e: GatewayException.ServerError) {
-            assertEquals(400, e.status)
-            assertEquals("TypeSafe's Jev is the reference itself; a decision backend's model is what gets calibrated.", e.body)
-        }
-        try {
-            client().startDecisionCalibration()
-            fail("expected a conflict")
-        } catch (e: GatewayException.ServerError) {
-            assertEquals(409, e.status)
-            assertEquals("A calibration is already running", e.body)
         }
     }
 }

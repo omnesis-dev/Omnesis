@@ -7,14 +7,12 @@ import dev.omnesis.android.transport.dto.BackendConfigPatch
 import dev.omnesis.android.transport.dto.BackendDecisionStatus
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
-import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
 import dev.omnesis.android.transport.dto.DecisionModelOption
 import dev.omnesis.android.transport.dto.ProviderDecisionPreset
 import dev.omnesis.android.transport.dto.ProviderPreset
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
 import dev.omnesis.android.transport.dto.ResolvedAssignment
 import dev.omnesis.android.transport.dto.TypeSafeEndpointStatus
-import dev.omnesis.android.ui.models.DecisionSetup.CalibrationPanel
 import dev.omnesis.android.ui.models.DecisionSetup.FilledUrl
 import dev.omnesis.android.ui.models.DecisionSetup.KeyState
 import dev.omnesis.android.ui.models.DecisionSetup.Provider
@@ -24,8 +22,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.time.ZoneOffset
-import java.util.Locale
 
 /**
  * The Decision model setup's rules, kept to the portal's decision setup so
@@ -532,119 +528,6 @@ class DecisionSetupTest {
         val reason = "Nothing answered at http://127.0.0.1:11435/v1/systemone. Is the server running? (fetch failed)"
         assertEquals(reason, DecisionSetup.verifyText(DecisionVerifyResult(ok = false, reason = reason)))
         assertEquals("The model did not answer.", DecisionSetup.verifyText(DecisionVerifyResult(ok = false)))
-    }
-
-    // --- Calibration ---
-
-    @Test fun calibration_panel_follows_the_assigned_models_run() {
-        val assigned = DecisionSetup.assignedBackend(sampleDecisionOverview())!!
-        assertEquals("ollaya/kev", assigned.value)
-        assertEquals(CalibrationPanel.Uncalibrated, DecisionSetup.calibrationPanel(assigned, null))
-        val running = sampleRunningCalibration()
-        assertEquals(CalibrationPanel.Running(running), DecisionSetup.calibrationPanel(assigned, running))
-        // A run on another model is not this model's.
-        assertEquals(CalibrationPanel.Uncalibrated, DecisionSetup.calibrationPanel(assigned, running.copy(assignment = "ollaya/laya")))
-        assertEquals(
-            CalibrationPanel.Failed("Only 12 of 296 reference emails were answered"),
-            DecisionSetup.calibrationPanel(assigned, running.copy(state = "failed", error = "Only 12 of 296 reference emails were answered")),
-        )
-        assertEquals(CalibrationPanel.Cancelled, DecisionSetup.calibrationPanel(assigned, running.copy(state = "cancelled")))
-        // A finished run shows its result before the overview that stores it reloads.
-        val fitted = sampleDecisionCalibration().copy(agreement = 0.88)
-        assertEquals(
-            CalibrationPanel.Calibrated(fitted),
-            DecisionSetup.calibrationPanel(assigned, running.copy(state = "done", result = fitted)),
-        )
-
-        val calibrated = DecisionSetup.assignedBackend(sampleDecisionOverview(calibrated = true))!!
-        assertEquals(CalibrationPanel.Calibrated(sampleDecisionCalibration()), DecisionSetup.calibrationPanel(calibrated, null))
-        assertEquals(
-            CalibrationPanel.Calibrated(sampleDecisionCalibration()),
-            DecisionSetup.calibrationPanel(calibrated, running.copy(state = "done")),
-        )
-    }
-
-    @Test fun a_failed_recalibration_leaves_the_stored_calibration_in_force() {
-        val calibrated = DecisionSetup.assignedBackend(sampleDecisionOverview(calibrated = true))!!
-        val run = sampleRunningCalibration()
-        assertEquals(
-            CalibrationPanel.Calibrated(sampleDecisionCalibration(), note = "Last recalibration failed: Only 12 of 296 reference emails were answered"),
-            DecisionSetup.calibrationPanel(calibrated, run.copy(state = "failed", error = "Only 12 of 296 reference emails were answered")),
-        )
-        assertEquals(
-            CalibrationPanel.Calibrated(sampleDecisionCalibration(), note = "The last recalibration was cancelled."),
-            DecisionSetup.calibrationPanel(calibrated, run.copy(state = "cancelled")),
-        )
-        // The card's warning follows whether a calibration is stored, not the last run.
-        val overview = sampleDecisionOverview(calibrated = true)
-        assertEquals(
-            DecisionSetup.CardLine("Calibrated against Jev · keeps 95% of what Jev keeps", warning = false),
-            DecisionSetup.cardCalibrationLine(overview, run.copy(state = "failed", error = "x")),
-        )
-        assertEquals(
-            DecisionSetup.CardLine("Not calibrated against Jev", warning = true),
-            DecisionSetup.cardCalibrationLine(sampleDecisionOverview(), run.copy(state = "failed", error = "x")),
-        )
-    }
-
-    @Test fun calibration_sentences() {
-        val calibration = sampleDecisionCalibration()
-        assertEquals(
-            "Calibrated against Jev on Nov 8, 2026: keeps 95% of the reference emails Jev keeps and skips 88% " +
-                "of those it skips (before: 81% and 90%).",
-            DecisionSetup.calibrationSummary(calibration, Locale.US, ZoneOffset.UTC),
-        )
-        assertEquals(
-            "Calibrated against Jev on Nov 8, 2026: keeps 95% of the reference emails Jev keeps and skips 88% " +
-                "of those it skips.",
-            DecisionSetup.calibrationSummary(calibration.copy(skipsBefore = null), Locale.US, ZoneOffset.UTC),
-        )
-        // A calibration stored before the keep and skip shares existed reads as agreement.
-        val older = calibration.copy(keeps = null, keepsBefore = null, skips = null, skipsBefore = null)
-        assertEquals(
-            "Calibrated against Jev on Nov 8, 2026: agrees with Jev on 91% of the reference emails (was 78%).",
-            DecisionSetup.calibrationSummary(older, Locale.US, ZoneOffset.UTC),
-        )
-        assertEquals(
-            "Calibrated against Jev on Nov 8, 2026: agrees with Jev on 91% of the reference emails (was 78%).",
-            DecisionSetup.calibrationSummary(older.copy(skips = 0.88), Locale.US, ZoneOffset.UTC),
-        )
-        assertEquals(
-            "Calibrated against Jev on Nov 8, 2026.",
-            DecisionSetup.calibrationSummary(older.copy(agreement = null), Locale.US, ZoneOffset.UTC),
-        )
-        assertEquals(
-            "Calibrated against Jev: agrees with Jev on 91% of the reference emails.",
-            DecisionSetup.calibrationSummary(older.copy(fittedAt = "not a date", agreementBefore = null), Locale.US, ZoneOffset.UTC),
-        )
-        assertEquals(
-            DecisionSetup.CardLine("Calibrated against Jev · agrees on 91%", warning = false),
-            DecisionSetup.cardCalibrationLine(
-                sampleDecisionOverview(calibrated = true),
-                sampleRunningCalibration().copy(state = "done", result = older),
-            ),
-        )
-        assertEquals("120 of 296 reference emails · 2 failed", DecisionSetup.calibrationProgressText(sampleRunningCalibration()))
-        assertEquals("Starting…", DecisionSetup.calibrationProgressText(DecisionCalibrationStatus(state = "running")))
-        assertEquals(120f / 296f, DecisionSetup.calibrationFraction(sampleRunningCalibration()), 1e-6f)
-        assertEquals(0f, DecisionSetup.calibrationFraction(DecisionCalibrationStatus()), 0f)
-    }
-
-    @Test fun card_line_shows_only_for_a_decision_backend_model() {
-        assertEquals(
-            DecisionSetup.CardLine("Not calibrated against Jev", warning = true),
-            DecisionSetup.cardCalibrationLine(sampleDecisionOverview(), null),
-        )
-        assertEquals(
-            DecisionSetup.CardLine("Calibrated against Jev · keeps 95% of what Jev keeps", warning = false),
-            DecisionSetup.cardCalibrationLine(sampleDecisionOverview(calibrated = true), null),
-        )
-        assertEquals(
-            DecisionSetup.CardLine("Calibrating · 120 of 296 reference emails · 2 failed", warning = false),
-            DecisionSetup.cardCalibrationLine(sampleDecisionOverview(), sampleRunningCalibration()),
-        )
-        // TypeSafe is the reference itself: no line.
-        assertNull(DecisionSetup.cardCalibrationLine(sampleModelsOverview(), null))
     }
 
     @Test fun preset_logos_are_named_by_their_models_dev_id() {

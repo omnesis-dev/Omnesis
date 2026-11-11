@@ -75,33 +75,6 @@ data class BackendDecisionStatus(
     val hasApiKey: Boolean = false,
     /** Why the stored API key could not be read, when it could not. */
     val apiKeySecretError: String? = null,
-    /** Stored calibrations onto Jev's scale, by model id. */
-    val calibrations: Map<String, DecisionCalibration> = emptyMap(),
-)
-
-/**
- * A stored calibration's summary. The map's knots (`points`) are the
- * gateway's business and are not decoded.
- */
-@Serializable
-data class DecisionCalibration(
-    /** What the map was fitted against, e.g. `jev-worth/email-worth-v1/jev-1.13.0`. */
-    val reference: String = "",
-    /** ISO time of the fit. */
-    val fittedAt: String = "",
-    val samples: Int? = null,
-    /** Share of reference emails where the calibrated model and Jev agree, 0–1. */
-    val agreement: Double? = null,
-    /** The same agreement before calibration. */
-    val agreementBefore: Double? = null,
-    /** Share of the reference emails Jev keeps that the calibrated model keeps too, 0–1. */
-    val keeps: Double? = null,
-    /** The same share before calibration. */
-    val keepsBefore: Double? = null,
-    /** Share of the reference emails Jev skips that the calibrated model skips too, 0–1. */
-    val skips: Double? = null,
-    /** The same share before calibration. */
-    val skipsBefore: Double? = null,
 )
 
 /** The TypeSafe endpoint the Decision model would use (`inference.typesafe`). */
@@ -163,27 +136,6 @@ data class DecisionProbeBody(
     override fun toString(): String =
         "DecisionProbeBody(url=$url, preset=$preset, protocol=$protocol, auth=$auth, " +
             "apiKey=${if (apiKey.isNullOrBlank()) "none" else "<redacted>"}, backendKey=$backendKey)"
-}
-
-/**
- * The gateway's calibration job for the assigned Decision model. `state` is
- * "idle", "running", "done", "failed" or "cancelled"; an unknown state is
- * kept as sent. Mirrors `DecisionCalibrationStatus`.
- */
-@Serializable
-data class DecisionCalibrationStatus(
-    val state: String = "idle",
-    /** The assignment being (or last) calibrated, `<backend>/<model>`. */
-    val assignment: String? = null,
-    val done: Int = 0,
-    val total: Int = 0,
-    val failed: Int = 0,
-    val startedAt: String? = null,
-    val finishedAt: String? = null,
-    val result: DecisionCalibration? = null,
-    val error: String? = null,
-) {
-    val running: Boolean get() = state == "running"
 }
 
 /**

@@ -28,7 +28,6 @@ import dev.omnesis.android.ui.models.ProbeState
 import dev.omnesis.android.ui.models.ProbeTarget
 import dev.omnesis.android.ui.models.sampleDecisionOverview
 import dev.omnesis.android.ui.models.sampleDecisionPresets
-import dev.omnesis.android.ui.models.sampleRunningCalibration
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -36,9 +35,8 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * The Decision model's setup: the capability card with its calibration line,
- * the assigned model with its test decision and calibration states, the
- * provider picker (a backend serving decisions, a chat backend that can add
+ * The Decision model's setup: the capability card, the assigned model with
+ * its test decision answered and refused, the provider picker (a backend serving decisions, a chat backend that can add
  * them with its key, TypeSafe, providers to add), the forms — a local
  * backend, decisions added to a chat backend, a provider with both APIs, a
  * decision-only provider with URL values, TypeSafe, another server — and the
@@ -88,20 +86,12 @@ class DecisionModelScreenshotTest {
 
     // --- The capability list ---
 
-    @Test fun decision_card_uncalibrated_dark() = capture("decision_card_uncalibrated_dark", dark = true) {
+    @Test fun decision_card_dark() = capture("decision_card_dark", dark = true) {
         ModelsContent(Loadable.Content(sampleDecisionOverview()), connected, onBack = {}, onRetry = {})
     }
 
-    @Test fun decision_card_uncalibrated_light() = capture("decision_card_uncalibrated_light", dark = false) {
+    @Test fun decision_card_light() = capture("decision_card_light", dark = false) {
         ModelsContent(Loadable.Content(sampleDecisionOverview()), connected, onBack = {}, onRetry = {})
-    }
-
-    @Test fun decision_card_calibrated_dark() = capture("decision_card_calibrated_dark", dark = true) {
-        ModelsContent(Loadable.Content(sampleDecisionOverview(calibrated = true)), connected, onBack = {}, onRetry = {})
-    }
-
-    @Test fun decision_card_calibrated_light() = capture("decision_card_calibrated_light", dark = false) {
-        ModelsContent(Loadable.Content(sampleDecisionOverview(calibrated = true)), connected, onBack = {}, onRetry = {})
     }
 
     // --- The assigned model ---
@@ -110,23 +100,9 @@ class DecisionModelScreenshotTest {
         verify = DecisionSetup.VerifyState.Done("ollaya/kev", DecisionVerifyResult(ok = true, answeredBy = "kev", latencyMs = 240)),
     )
 
-    @Test fun decision_home_uncalibrated_dark() = setup("decision_home_uncalibrated_dark", dark = true, ui = verified, step = DecisionStep.Home)
+    @Test fun decision_home_verified_dark() = setup("decision_home_verified_dark", dark = true, ui = verified, step = DecisionStep.Home)
 
-    @Test fun decision_home_uncalibrated_light() = setup("decision_home_uncalibrated_light", dark = false, ui = verified, step = DecisionStep.Home)
-
-    @Test fun decision_home_calibrating_dark() = setup(
-        "decision_home_calibrating_dark",
-        dark = true,
-        ui = DecisionUiState(calibration = sampleRunningCalibration()),
-        step = DecisionStep.Home,
-    )
-
-    @Test fun decision_home_calibrating_light() = setup(
-        "decision_home_calibrating_light",
-        dark = false,
-        ui = DecisionUiState(calibration = sampleRunningCalibration()),
-        step = DecisionStep.Home,
-    )
+    @Test fun decision_home_verified_light() = setup("decision_home_verified_light", dark = false, ui = verified, step = DecisionStep.Home)
 
     private val refused = DecisionUiState(
         verify = DecisionSetup.VerifyState.Done(
@@ -138,44 +114,9 @@ class DecisionModelScreenshotTest {
         ),
     )
 
-    @Test fun decision_home_calibrated_dark() = setup(
-        "decision_home_calibrated_dark",
-        dark = true,
-        overview = sampleDecisionOverview(calibrated = true),
-        ui = refused,
-        step = DecisionStep.Home,
-    )
+    @Test fun decision_home_refused_dark() = setup("decision_home_refused_dark", dark = true, ui = refused, step = DecisionStep.Home)
 
-    @Test fun decision_home_calibrated_light() = setup(
-        "decision_home_calibrated_light",
-        dark = false,
-        overview = sampleDecisionOverview(calibrated = true),
-        ui = refused,
-        step = DecisionStep.Home,
-    )
-
-    private val recalibrationFailed = DecisionUiState(
-        calibration = sampleRunningCalibration().copy(
-            state = "failed",
-            error = "Only 12 of 296 reference emails were answered: The API key was refused (HTTP 401).",
-        ),
-    )
-
-    @Test fun decision_home_recalibration_failed_dark() = setup(
-        "decision_home_recalibration_failed_dark",
-        dark = true,
-        overview = sampleDecisionOverview(calibrated = true),
-        ui = recalibrationFailed,
-        step = DecisionStep.Home,
-    )
-
-    @Test fun decision_home_recalibration_failed_light() = setup(
-        "decision_home_recalibration_failed_light",
-        dark = false,
-        overview = sampleDecisionOverview(calibrated = true),
-        ui = recalibrationFailed,
-        step = DecisionStep.Home,
-    )
+    @Test fun decision_home_refused_light() = setup("decision_home_refused_light", dark = false, ui = refused, step = DecisionStep.Home)
 
     // --- The provider picker ---
 
