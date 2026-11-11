@@ -191,8 +191,28 @@ final class DecisionModelSetupTests: XCTestCase {
         XCTAssertTrue(groups.existing[2].listsModels)
         XCTAssertEqual(groups.enable.map(\.key), ["fireworks"])
         XCTAssertEqual(groups.typesafe?.id, "typesafe")
-        // Fireworks is offered as the backend that has it, not as a second account.
-        XCTAssertEqual(groups.add.map(\.id), ["ollaya", "ollama", "openrouter", "cloudflare"])
+        // A provider a backend was made from is offered as that backend only.
+        XCTAssertEqual(groups.add.map(\.id), ["ollama", "cloudflare"])
+    }
+
+    func testAddAProviderOmitsEveryPresetABackendWasMadeFrom() {
+        let overview = DecisionFixtures.overview(backends: [
+            // Answering decisions already.
+            "ollaya": DecisionFixtures.decisionBackend("http://127.0.0.1:11435/v1/systemone", preset: "ollaya"),
+            // Offered under "Use a backend you have".
+            "fireworks": DecisionFixtures.chatBackend("https://api.fireworks.ai/inference", preset: "fireworks"),
+            // Named anything: its preset still counts.
+            "team-router": DecisionFixtures.chatBackend(
+                "https://openrouter.ai/api",
+                preset: "openrouter",
+                decision: BackendDecisionStatus(url: "https://openrouter.ai/api/v1/systemone")
+            ),
+        ])
+        let groups = Setup.providerGroups(overview)
+        XCTAssertEqual(groups.existing.map(\.key), ["ollaya", "team-router"])
+        XCTAssertEqual(groups.enable.map(\.key), ["fireworks"])
+        XCTAssertEqual(groups.typesafe?.id, "typesafe")
+        XCTAssertEqual(groups.add.map(\.id), ["ollama", "cloudflare"])
     }
 
     func testProviderListWithoutBackendsOffersEveryDecisionProvider() {

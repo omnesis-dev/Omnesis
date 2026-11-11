@@ -94,8 +94,9 @@ enum DecisionModelSetup {
         var enable: [ExistingBackend]
         /// The built-in TypeSafe, when the gateway offers it.
         var typesafe: ProviderPreset?
-        /// Providers to add as a new backend: servers on the operator's
-        /// machine first, then hosted APIs.
+        /// Providers to add as a new backend, leaving out every provider a
+        /// backend was already made from: servers on the operator's machine
+        /// first, then hosted APIs.
         var add: [ProviderPreset]
     }
 
@@ -110,8 +111,8 @@ enum DecisionModelSetup {
             guard backend.decision == nil, backend.key != typesafeKey, let preset = backend.preset else { return false }
             return preset.decision != nil && preset.builtIn == nil
         }
-        let reused = Set(enable.compactMap(\.preset?.id))
-        let addable = overview.allProviders.filter { $0.decision != nil && $0.builtIn == nil && !reused.contains($0.id) }
+        let taken = Set(backends.compactMap(\.status.preset))
+        let addable = overview.allProviders.filter { $0.decision != nil && $0.builtIn == nil && !taken.contains($0.id) }
         return ProviderGroups(
             existing: backends.filter { $0.decision != nil },
             enable: enable,

@@ -221,7 +221,7 @@ final class DecisionAdminClientTests: XCTestCase {
         XCTAssertEqual(groups.existing.map(\.key), ["fastino", "fireworks", "ollaya"])
         XCTAssertEqual(groups.enable, [], "groq's provider has no decision API")
         XCTAssertEqual(groups.typesafe?.id, "typesafe")
-        XCTAssertEqual(groups.add.map(\.id), ["ollaya", "fireworks", "cloudflare", "fastino", "sparse"])
+        XCTAssertEqual(groups.add.map(\.id), ["cloudflare", "sparse"], "no provider a backend was made from")
     }
 
     func testAPresetWithoutAnOpenAICompatibleURLStillDecodesInPresets() throws {
