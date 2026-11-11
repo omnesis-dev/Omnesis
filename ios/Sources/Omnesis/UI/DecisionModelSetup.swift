@@ -26,7 +26,7 @@ enum DecisionModelSetup {
     /// older gateway's do not, and its Decision card stays read-only).
     static func isConfigurable(_ cap: CapabilityMeta, in overview: ModelsOverview) -> Bool {
         if cap.configurableOnDevice { return true }
-        return cap.backendFamily == backendFamily && overview.presets.contains { $0.decision != nil }
+        return cap.backendFamily == backendFamily && overview.allProviders.contains { $0.decision != nil }
     }
 
     // MARK: - Providers
@@ -111,18 +111,18 @@ enum DecisionModelSetup {
             return preset.decision != nil && preset.builtIn == nil
         }
         let reused = Set(enable.compactMap(\.preset?.id))
-        let addable = overview.presets.filter { $0.decision != nil && $0.builtIn == nil && !reused.contains($0.id) }
+        let addable = overview.allProviders.filter { $0.decision != nil && $0.builtIn == nil && !reused.contains($0.id) }
         return ProviderGroups(
             existing: backends.filter { $0.decision != nil },
             enable: enable,
-            typesafe: overview.presets.first { $0.isTypeSafe && $0.decision != nil },
+            typesafe: overview.allProviders.first { $0.isTypeSafe && $0.decision != nil },
             add: addable.filter(\.isLocal) + addable.filter { !$0.isLocal }
         )
     }
 
     static func preset(id: String?, in overview: ModelsOverview) -> ProviderPreset? {
         guard let id else { return nil }
-        return overview.presets.first { $0.id == id }
+        return overview.allProviders.first { $0.id == id }
     }
 
     // MARK: - Names

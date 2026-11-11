@@ -7466,10 +7466,9 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     func testAddBackendSheet() {
-        // The add-backend preset grid (first step): one card per provider with
-        // an OpenAI-compatible API — those with decision models say so — plus
-        // the "Custom" card. Decision-only providers and TypeSafe are not offered.
-        let view = AddBackendSheet(presets: DecisionPreviewData.allPresets)
+        // The add-backend preset grid (first step): one card per provider in
+        // `presets` — those with decision models say so — plus the "Custom" card.
+        let view = AddBackendSheet(presets: DecisionPreviewData.presets)
         snapshot(view.environment(AppStore.preview()), name: "112c-add-backend-preset-grid")
     }
 
@@ -7477,7 +7476,7 @@ final class PreviewSnapshotTests: XCTestCase {
         // One list: each row says whether it serves chat models, decision
         // models or both; a decision-only row has no Test button.
         let view = NavigationStack {
-            BackendsContent(backends: DecisionPreviewData.backendRows(), presets: DecisionPreviewData.allPresets)
+            BackendsContent(backends: DecisionPreviewData.backendRows(), presets: DecisionPreviewData.presets)
                 .background(Theme.bgPrimary.ignoresSafeArea())
                 .navigationTitle("Backends")
                 .navigationBarTitleDisplayMode(.inline)

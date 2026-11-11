@@ -272,7 +272,8 @@ extension ModelsOverview {
             ),
             catalog: catalog,
             installed: installed,
-            presets: presets
+            presets: presets,
+            decisionProviders: decisionProviders
         )
     }
 }

@@ -127,13 +127,15 @@ enum DecisionPreviewData {
         )
     )
 
-    /// The providers with a decision API.
-    static let presets = [openRouter, fireworks, ollaya, ollama, typesafe, cloudflare, fastino]
-
-    /// Every preset the gateway sends: chat-only providers and the decision ones.
-    static var allPresets: [ProviderPreset] {
-        BackendsPreviewData.presets() + presets
+    /// `presets` as the gateway sends it: providers with an OpenAI-compatible
+    /// API, two of them with a decision API too.
+    static var presets: [ProviderPreset] {
+        BackendsPreviewData.presets() + [openRouter, fireworks]
     }
+
+    /// `decisionProviders` as the gateway sends it: providers that serve only
+    /// decision models, TypeSafe among them.
+    static let decisionProviders = [ollaya, ollama, typesafe, cloudflare, fastino]
 
     /// The local Ollaya backend: decision models only, not yet calibrated.
     static let ollayaBackend = BackendStatus(
@@ -302,6 +304,7 @@ enum DecisionPreviewData {
             installed: base.installed,
             activeDownloads: base.activeDownloads,
             presets: base.presets,
+            decisionProviders: base.decisionProviders,
             modelControls: base.modelControls,
             modelSettings: base.modelSettings
         )

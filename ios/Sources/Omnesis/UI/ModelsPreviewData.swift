@@ -77,7 +77,8 @@ enum ModelsPreviewData {
             catalog: catalog(),
             installed: [ManifestEntry(id: "nomic-embed-text-v1.5.Q8_0")],
             activeDownloads: activeDownloads(),
-            presets: DecisionPreviewData.allPresets,
+            presets: DecisionPreviewData.presets,
+            decisionProviders: DecisionPreviewData.decisionProviders,
             modelControls: ["openai/gpt-example-frontier": PreviewMocks.modelReasoningControls],
             modelSettings: [
                 "agent": ModelSettings(
@@ -116,6 +117,7 @@ enum ModelsPreviewData {
             installed: base.installed,
             activeDownloads: base.activeDownloads,
             presets: base.presets,
+            decisionProviders: base.decisionProviders,
             modelControls: [:],
             modelSettings: [
                 "agent": ModelSettings(

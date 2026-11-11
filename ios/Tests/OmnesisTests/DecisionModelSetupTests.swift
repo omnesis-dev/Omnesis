@@ -75,7 +75,11 @@ enum DecisionFixtures {
         url: "http://127.0.0.1:11434/v1/systemone"
     ))
 
-    static let presets = [openRouter, fireworks, groq, ollaya, typesafe, cloudflare, ollama]
+    /// `presets` as the gateway sends it: providers with an OpenAI-compatible API.
+    static let openAIPresets = [openRouter, fireworks, groq]
+    /// `decisionProviders`: providers that serve only decision models.
+    static let decisionProviders = [ollaya, typesafe, cloudflare, ollama]
+    static let presets = openAIPresets + decisionProviders
 
     static let decisionCap = CapabilityMeta(
         role: "decision", title: "Decision model", description: "d", icon: "scale", backendFamily: "typed-decision"
@@ -114,7 +118,8 @@ enum DecisionFixtures {
         backends: [String: BackendStatus] = [:],
         allowRemoteInference: Bool? = false,
         typesafeOnHost: Bool = false,
-        presets: [ProviderPreset] = presets
+        presets: [ProviderPreset] = openAIPresets,
+        decisionProviders: [ProviderPreset] = decisionProviders
     )
         -> ModelsOverview {
         ModelsOverview(
@@ -128,7 +133,8 @@ enum DecisionFixtures {
             ),
             catalog: [],
             installed: [],
-            presets: presets
+            presets: presets,
+            decisionProviders: decisionProviders
         )
     }
 
@@ -147,9 +153,11 @@ final class DecisionModelSetupTests: XCTestCase {
     func testDecisionCardIsConfigurableOnlyWhenAPresetDescribesADecisionAPI() {
         let cap = DecisionFixtures.decisionCap
         XCTAssertTrue(Setup.isConfigurable(cap, in: DecisionFixtures.overview()))
-        let older = DecisionFixtures.overview(presets: [DecisionFixtures.groq])
+        let older = DecisionFixtures.overview(presets: [DecisionFixtures.groq], decisionProviders: [])
         XCTAssertFalse(Setup.isConfigurable(cap, in: older))
-        XCTAssertFalse(Setup.isConfigurable(cap, in: DecisionFixtures.overview(presets: [])))
+        XCTAssertFalse(Setup.isConfigurable(cap, in: DecisionFixtures.overview(presets: [], decisionProviders: [])))
+        // A provider with both APIs in `presets` is enough on its own.
+        XCTAssertTrue(Setup.isConfigurable(cap, in: DecisionFixtures.overview(decisionProviders: [])))
         let agent = CapabilityMeta(role: "agent", title: "Agent", description: "d", icon: "bot")
         XCTAssertTrue(Setup.isConfigurable(agent, in: older))
         let unknownFamily = CapabilityMeta(role: "x", title: "X", description: "d", icon: "bot", backendFamily: "other")
@@ -192,7 +200,7 @@ final class DecisionModelSetupTests: XCTestCase {
         XCTAssertEqual(groups.existing, [])
         XCTAssertEqual(groups.enable, [])
         XCTAssertEqual(groups.add.map(\.id), ["ollaya", "ollama", "openrouter", "fireworks", "cloudflare"])
-        XCTAssertNil(Setup.providerGroups(DecisionFixtures.overview(presets: [DecisionFixtures.groq])).typesafe)
+        XCTAssertNil(Setup.providerGroups(DecisionFixtures.overview(decisionProviders: [])).typesafe)
     }
 
     // MARK: - Names

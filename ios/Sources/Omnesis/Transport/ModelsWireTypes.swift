@@ -62,11 +62,14 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
     /// Empty when nothing is downloading; the local-model list renders a progress
     /// bar for the matching catalog id and polls the overview while non-empty.
     public let activeDownloads: [ActiveDownload]
-    /// Well-known providers the add-backend forms offer (OpenAI, Groq,
-    /// Ollaya, …): each with its OpenAI-compatible URL, its decision API, or
-    /// both. A gateway that predates decision models sends no `decision`
-    /// block on any of them, and the Decision card stays read-only.
+    /// Well-known providers with an OpenAI-compatible API (OpenAI, Groq, …),
+    /// each with its decision API too when it has one.
     public let presets: [ProviderPreset]
+    /// Providers that serve only decision models (Ollaya, Fastino, …,
+    /// TypeSafe among them), with no OpenAI-compatible URL. Empty on a
+    /// gateway that predates decision models, whose Decision card then stays
+    /// read-only.
+    public let decisionProviders: [ProviderPreset]
     /// Models.dev controls keyed by the full active assignment (`backend/model`).
     /// Unknown models have no controls but remain available in the picker.
     public let modelControls: [String: ModelControls]
@@ -81,6 +84,7 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
         installed: [ManifestEntry],
         activeDownloads: [ActiveDownload] = [],
         presets: [ProviderPreset] = [],
+        decisionProviders: [ProviderPreset] = [],
         modelControls: [String: ModelControls] = [:],
         modelSettings: [String: ModelSettings] = [:]
     ) {
@@ -91,6 +95,7 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
         self.installed = installed
         self.activeDownloads = activeDownloads
         self.presets = presets
+        self.decisionProviders = decisionProviders
         self.modelControls = modelControls
         self.modelSettings = modelSettings
     }
@@ -100,7 +105,7 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
     /// overview decode.
     private enum CodingKeys: String, CodingKey {
         case assignmentDisplays, capabilities, inference, catalog, installed, activeDownloads, presets,
-             modelControls, modelSettings
+             decisionProviders, modelControls, modelSettings
     }
 
     public init(from decoder: Decoder) throws {
@@ -112,6 +117,7 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
         installed = try container.decode([ManifestEntry].self, forKey: .installed)
         activeDownloads = try container.decodeIfPresent([ActiveDownload].self, forKey: .activeDownloads) ?? []
         presets = try container.decodeIfPresent([ProviderPreset].self, forKey: .presets) ?? []
+        decisionProviders = try container.decodeIfPresent([ProviderPreset].self, forKey: .decisionProviders) ?? []
         modelControls = try container.decodeIfPresent([String: ModelControls].self, forKey: .modelControls) ?? [:]
         modelSettings = try container.decodeIfPresent([String: ModelSettings].self, forKey: .modelSettings) ?? [:]
     }

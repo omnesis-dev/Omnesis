@@ -47,6 +47,14 @@ public struct DecisionPresetURLParam: Decodable, Equatable, Hashable, Sendable, 
     }
 }
 
+extension ModelsOverview {
+    /// Every provider the gateway describes: those with an OpenAI-compatible
+    /// API, then those serving only decision models.
+    public var allProviders: [ProviderPreset] {
+        presets + decisionProviders
+    }
+}
+
 /// A provider preset's decision API with the models to offer for it. Mirrors
 /// `ProviderPresetView.decision`.
 public struct ProviderDecisionPreset: Decodable, Equatable, Hashable, Sendable {

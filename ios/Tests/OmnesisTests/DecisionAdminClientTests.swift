@@ -84,7 +84,8 @@ final class DecisionAdminClientTests: XCTestCase {
           "docsUrl":"https://docs.fireworks.ai/api-reference/post-systemone",
           "models":[{"id":"accounts/fireworks/models/rune","source":"preset"}]}},
        {"id":"google","name":"Google AI (Gemini)","kind":"cloud","defaultUrl":"https://generativelanguage.googleapis.com",
-        "apiPathPrefix":"/v1beta/openai","capabilities":["agent","embed"]},
+        "apiPathPrefix":"/v1beta/openai","capabilities":["agent","embed"]}],
+     "decisionProviders":[
        {"id":"cloudflare","name":"Cloudflare Workers AI","kind":"cloud","capabilities":["decision"],
         "decision":{"url":"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run","protocol":"workers-ai",
           "auth":"bearer","keyRequired":true,"modelsDevId":"cloudflare-workers-ai",
@@ -115,6 +116,7 @@ final class DecisionAdminClientTests: XCTestCase {
         session.body = Self.olderOverview
         let overview = try await client(session).modelOverview()
         XCTAssertEqual(overview.presets.map(\.id), ["groq"])
+        XCTAssertEqual(overview.decisionProviders, [])
         XCTAssertNil(overview.presets[0].decision)
         XCTAssertEqual(overview.presets[0].kind, "cloud")
         XCTAssertNil(overview.inference.backends["vllm"]?.decision)
@@ -130,7 +132,7 @@ final class DecisionAdminClientTests: XCTestCase {
         XCTAssertNil(DecisionModelSetup.calibrationState(overview))
     }
 
-    func testCurrentGatewayDecodesPresetsWithTheirDecisionAPI() async throws {
+    func testCurrentGatewayDecodesPresetsAndDecisionProvidersWithTheirDecisionAPI() async throws {
         let session = MockSession()
         session.body = Self.currentOverview
         let overview = try await client(session).modelOverview()
@@ -139,8 +141,10 @@ final class DecisionAdminClientTests: XCTestCase {
         XCTAssertEqual(overview.inference.allowRemoteInference, false)
         XCTAssertEqual(overview.inference.typesafe?.onHost, false)
 
-        let presets = overview.presets
-        XCTAssertEqual(presets.map(\.id), ["fireworks", "google", "cloudflare", "typesafe", "fastino", "ollaya", "sparse"])
+        // Every preset has an OpenAI-compatible URL; decision-only providers come apart.
+        XCTAssertEqual(overview.presets.map(\.id), ["fireworks", "google"])
+        XCTAssertEqual(overview.decisionProviders.map(\.id), ["cloudflare", "typesafe", "fastino", "ollaya", "sparse"])
+        let presets = overview.allProviders
         // Fireworks serves both APIs; Google only the OpenAI-compatible one.
         XCTAssertEqual(presets[0].defaultUrl, "https://api.fireworks.ai/inference")
         XCTAssertEqual(presets[0].decision?.url, "https://api.fireworks.ai/inference/v1/systemone")
@@ -218,6 +222,18 @@ final class DecisionAdminClientTests: XCTestCase {
         XCTAssertEqual(groups.enable, [], "groq's provider has no decision API")
         XCTAssertEqual(groups.typesafe?.id, "typesafe")
         XCTAssertEqual(groups.add.map(\.id), ["ollaya", "fireworks", "cloudflare", "fastino", "sparse"])
+    }
+
+    func testAPresetWithoutAnOpenAICompatibleURLStillDecodesInPresets() throws {
+        let overview = try JSONDecoder().decode(ModelsOverview.self, from: Data(#"""
+        {"assignmentDisplays":{},"capabilities":[],"inference":{"backends":{},"assignments":{}},
+         "catalog":[],"installed":[],
+         "presets":[{"id":"fastino","name":"Fastino","capabilities":["decision"],
+           "decision":{"url":"https://api.fastino.ai/v1/systemone","keyRequired":true,"models":[]}}]}
+        """#.utf8))
+        XCTAssertNil(overview.presets.first?.defaultUrl)
+        XCTAssertEqual(DecisionModelSetup.providerGroups(overview).add.map(\.id), ["fastino"])
+        XCTAssertEqual(ModelManagement.addBackendPresets(overview.presets), [], "the Add backend grid needs a URL")
     }
 
     func testResultTypesDecodeWithAndWithoutOptionalFields() throws {
