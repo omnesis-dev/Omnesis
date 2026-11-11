@@ -16,9 +16,6 @@ struct DecisionModelActions: Sendable {
     var probe: @Sendable (String) async throws -> DecisionProbeResult
     /// The models a server lists before it is saved.
     var probeURL: @Sendable (DecisionProbeRequest) async throws -> DecisionProbeResult
-    var calibrationStatus: @Sendable () async throws -> DecisionCalibrationStatus
-    var startCalibration: @Sendable () async throws -> DecisionCalibrationStatus
-    var cancelCalibration: @Sendable () async throws -> DecisionCalibrationStatus
     /// Whether the credential listing names a TypeSafe key (file or
     /// environment); nil when the listing cannot be read.
     var typesafeKeyListed: @Sendable () async -> Bool?
@@ -53,9 +50,6 @@ struct DecisionModelActions: Sendable {
                     backendKey: request.backendKey
                 )
             },
-            calibrationStatus: { try await client.decisionCalibrationStatus() },
-            startCalibration: { try await client.startDecisionCalibration() },
-            cancelCalibration: { try await client.cancelDecisionCalibration() },
             typesafeKeyListed: {
                 guard let entries = try? await client.listModelCredentials() else { return nil }
                 return DecisionModelSetup.typesafeKeyListed(entries)
@@ -69,9 +63,6 @@ struct DecisionModelActions: Sendable {
         verify: { _ in throw URLError(.cannotConnectToHost) },
         probe: { _ in throw URLError(.cannotConnectToHost) },
         probeURL: { _ in throw URLError(.cannotConnectToHost) },
-        calibrationStatus: { throw URLError(.cannotConnectToHost) },
-        startCalibration: { throw URLError(.cannotConnectToHost) },
-        cancelCalibration: { throw URLError(.cannotConnectToHost) },
         typesafeKeyListed: { nil }
     )
 }

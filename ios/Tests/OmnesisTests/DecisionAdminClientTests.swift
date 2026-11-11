@@ -57,23 +57,21 @@ final class DecisionAdminClientTests: XCTestCase {
        "backends":{
          "ollaya":{"type":"http","status":"ok","preset":"ollaya",
            "decision":{"url":"http://127.0.0.1:11435/v1/systemone","protocol":"systemone","auth":"bearer",
-             "onHost":true,"hasApiKey":false,
-             "calibrations":{"kev":{"points":[[0,0],[0.5,0.4],[1,1]],"reference":"jev-worth/email-worth-v1/jev-1.13.0",
-               "fittedAt":"2026-11-08T14:30:00.000Z","samples":298,"agreement":0.92,"agreementBefore":0.71}}}},
+             "onHost":true,"hasApiKey":false}},
          "fireworks":{"type":"http","status":"ok","url":"https://api.fireworks.ai/inference","protocol":"chat-completions",
            "models":["accounts/fireworks/models/example-chat"],
            "modelRoles":{"accounts/fireworks/models/example-chat":["agent"]},
            "hasApiKey":true,"credentialSource":"file","preset":"fireworks",
            "decision":{"url":"https://api.fireworks.ai/inference/v1/systemone","protocol":"systemone","auth":"bearer",
-             "onHost":false,"hasApiKey":true,"calibrations":{}}},
+             "onHost":false,"hasApiKey":true}},
          "groq":{"type":"http","status":"ok","url":"https://api.groq.com/openai","models":[],"hasApiKey":true,"preset":"groq"},
          "fastino":{"type":"http","status":"unreachable","reason":"API key unreadable","preset":"fastino",
            "decision":{"url":"https://api.fastino.ai/v1/systemone","protocol":"systemone","auth":"x-api-key",
-             "onHost":false,"hasApiKey":false,"calibrations":{},
+             "onHost":false,"hasApiKey":false,
              "apiKeySecretError":"Backend \\"fastino\\" API key secret is missing or unreadable"}}},
        "assignments":{"decision":{"role":"decision","kind":"decision","backendKey":"ollaya","preset":"ollaya",
          "model":"kev","url":"http://127.0.0.1:11435/v1/systemone","protocol":"systemone","onHost":true,
-         "allowRemoteInference":false,"hasApiKey":false,"calibrated":true,"available":true},
+         "allowRemoteInference":false,"hasApiKey":false,"available":true},
          "agent":{"role":"agent","kind":"some-future-kind","available":false,"reason":"later"}}},
      "catalog":[],"installed":[],
      "presets":[
@@ -126,10 +124,8 @@ final class DecisionAdminClientTests: XCTestCase {
         let decision = try XCTUnwrap(overview.inference.assignments["decision"])
         XCTAssertEqual(decision.kind, "typesafe")
         XCTAssertEqual(decision.model, "jev-1.13.0")
-        XCTAssertNil(decision.calibrated)
         let cap = try XCTUnwrap(overview.capabilities.first)
         XCTAssertFalse(DecisionModelSetup.isConfigurable(cap, in: overview))
-        XCTAssertNil(DecisionModelSetup.calibrationState(overview))
     }
 
     func testCurrentGatewayDecodesPresetsAndDecisionProvidersWithTheirDecisionAPI() async throws {
@@ -188,11 +184,6 @@ final class DecisionAdminClientTests: XCTestCase {
         let decision = try XCTUnwrap(ollaya.decision)
         XCTAssertTrue(decision.onHost)
         XCTAssertFalse(decision.hasApiKey)
-        XCTAssertEqual(decision.calibrations["kev"]?.agreement, 0.92)
-        XCTAssertEqual(decision.calibrations["kev"]?.samples, 298)
-        // A calibration stored before keeps and skips were recorded.
-        XCTAssertNil(decision.calibrations["kev"]?.keeps)
-        XCTAssertNil(decision.calibrations["kev"]?.skips)
         // One backend, one key, both APIs.
         XCTAssertEqual(backends["fireworks"]?.servesOpenAI, true)
         XCTAssertEqual(backends["fireworks"]?.decision?.url, "https://api.fireworks.ai/inference/v1/systemone")
@@ -208,14 +199,9 @@ final class DecisionAdminClientTests: XCTestCase {
         XCTAssertEqual(assignment.kind, "decision")
         XCTAssertEqual(assignment.backendKey, "ollaya")
         XCTAssertEqual(assignment.model, "kev")
-        XCTAssertEqual(assignment.calibrated, true)
         XCTAssertEqual(assignment.onHost, true)
         XCTAssertEqual(overview.inference.assignments["agent"]?.kind, "some-future-kind")
         XCTAssertEqual(DecisionModelSetup.currentVerifyTarget(overview), .backend(key: "ollaya", model: "kev"))
-        guard case .calibrated(let stored) = DecisionModelSetup.calibrationState(overview) else {
-            return XCTFail("expected a calibrated state")
-        }
-        XCTAssertEqual(stored?.agreementBefore, 0.71)
 
         let groups = DecisionModelSetup.providerGroups(overview)
         XCTAssertEqual(groups.existing.map(\.key), ["fastino", "fireworks", "ollaya"])
@@ -251,23 +237,6 @@ final class DecisionAdminClientTests: XCTestCase {
         XCTAssertEqual(refused.reason, "The API key was refused (HTTP 401).")
         let probe = try decoder.decode(DecisionProbeResult.self, from: Data(#"{"ok":true}"#.utf8))
         XCTAssertEqual(probe, DecisionProbeResult(ok: true, models: [], listed: false))
-        let idle = try decoder.decode(DecisionCalibrationStatus.self, from: Data(#"{"state":"idle","done":0,"total":0,"failed":0}"#.utf8))
-        XCTAssertFalse(idle.isRunning)
-        let done = try decoder.decode(DecisionCalibrationStatus.self, from: Data(#"""
-        {"state":"done","assignment":"ollaya/kev","done":300,"total":300,"failed":1,
-         "startedAt":"2026-11-08T14:25:00.000Z","finishedAt":"2026-11-08T14:30:00.000Z",
-         "result":{"points":[[0,0],[1,1]],"reference":"jev-worth/v1/jev","fittedAt":"2026-11-08T14:30:00.000Z",
-           "samples":299,"agreement":0.9,"keeps":0.95,"keepsBefore":0.8,"skips":0.88,"skipsBefore":0.91}}
-        """#.utf8))
-        XCTAssertEqual(done.result?.samples, 299)
-        XCTAssertEqual(done.result?.keeps, 0.95)
-        XCTAssertEqual(done.result?.keepsBefore, 0.8)
-        XCTAssertEqual(done.result?.skips, 0.88)
-        XCTAssertEqual(done.result?.skipsBefore, 0.91)
-        XCTAssertEqual(done.failed, 1)
-        let sparse = try decoder.decode(DecisionCalibrationStatus.self, from: Data(#"{"state":"running"}"#.utf8))
-        XCTAssertTrue(sparse.isRunning)
-        XCTAssertEqual(sparse.total, 0)
     }
 
     // MARK: - Requests
@@ -389,38 +358,6 @@ final class DecisionAdminClientTests: XCTestCase {
         let request = try XCTUnwrap(session.requests.first)
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.url?.absoluteString, "http://mac.local:7600/admin/inference/backends/ollaya/decision/probe")
-    }
-
-    func testCalibrationRoutesUseOneResource() async throws {
-        let session = MockSession()
-        session.body = #"{"state":"running","assignment":"ollaya/kev","done":0,"total":300,"failed":0}"#
-        let admin = client(session)
-        _ = try await admin.startDecisionCalibration()
-        _ = try await admin.decisionCalibrationStatus()
-        _ = try await admin.cancelDecisionCalibration()
-        XCTAssertEqual(session.requests.map(\.httpMethod), ["POST", "GET", "DELETE"])
-        XCTAssertEqual(
-            Set(session.requests.compactMap { $0.url?.absoluteString }),
-            ["http://mac.local:7600/admin/models/decision/calibration"]
-        )
-    }
-
-    func testStartingWhileRunningIsAConflictAndUnsupportedCarriesTheReason() async throws {
-        let session = MockSession()
-        session.status = 409
-        session.body = #"{"error":"A calibration is already running"}"#
-        do {
-            _ = try await client(session).startDecisionCalibration()
-            XCTFail("expected a conflict")
-        } catch GatewayClient.Error.serverError(status: 409, _) {}
-        session.status = 400
-        session.body = #"{"error":"TypeSafe's Jev is the reference itself."}"#
-        do {
-            _ = try await client(session).startDecisionCalibration()
-            XCTFail("expected a refusal")
-        } catch {
-            XCTAssertEqual((error as? GatewayClient.Error)?.gatewayMessage, "TypeSafe's Jev is the reference itself.")
-        }
     }
 }
 

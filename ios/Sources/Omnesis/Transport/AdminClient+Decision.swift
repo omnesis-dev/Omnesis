@@ -242,23 +242,6 @@ extension AdminClient {
         return try decodeOrThrow(DecisionProbeResult.self, from: data)
     }
 
-    /// `GET /admin/models/decision/calibration` — the calibration job's status.
-    public func decisionCalibrationStatus() async throws -> DecisionCalibrationStatus {
-        try await calibrationRequest(method: "GET", body: nil)
-    }
-
-    /// `POST /admin/models/decision/calibration` — calibrate the assigned
-    /// model. The gateway answers 409 while a run is going and 400 with the
-    /// reason when the assignment cannot be calibrated.
-    public func startDecisionCalibration() async throws -> DecisionCalibrationStatus {
-        try await calibrationRequest(method: "POST", body: Data("{}".utf8))
-    }
-
-    /// `DELETE /admin/models/decision/calibration` — cancel the running calibration.
-    public func cancelDecisionCalibration() async throws -> DecisionCalibrationStatus {
-        try await calibrationRequest(method: "DELETE", body: nil)
-    }
-
     /// A backend name as one path segment, encoded as `encodeURIComponent`
     /// does: `/`, `?`, `#` and `%` cannot end the segment or the path early.
     static func pathSegment(_ raw: String) -> String {
@@ -269,10 +252,5 @@ extension AdminClient {
         struct Body: Encodable { let model: String }
         let (data, _) = try await dispatch(method: "POST", path: path, body: JSONEncoder().encode(Body(model: model)))
         return try decodeOrThrow(DecisionVerifyResult.self, from: data)
-    }
-
-    private func calibrationRequest(method: String, body: Data?) async throws -> DecisionCalibrationStatus {
-        let (data, _) = try await dispatch(method: method, path: "/admin/models/decision/calibration", body: body)
-        return try decodeOrThrow(DecisionCalibrationStatus.self, from: data)
     }
 }

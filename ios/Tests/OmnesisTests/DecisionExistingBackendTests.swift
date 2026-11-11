@@ -5,8 +5,8 @@
 import XCTest
 
 /// Saving a backend whose decision API is already set up sends only what
-/// changed, and the key field, calibration status and model listing follow
-/// the gateway's own state.
+/// changed, and the key field and model listing follow the gateway's own
+/// state.
 final class DecisionExistingBackendTests: XCTestCase {
     private typealias Setup = DecisionModelSetup
 
@@ -233,18 +233,7 @@ final class DecisionExistingBackendTests: XCTestCase {
         XCTAssertFalse(Setup.keyField(.custom, in: none, typesafeStored: nil).required)
     }
 
-    // MARK: - Calibration and listing
-
-    func testCalibrationOfAnotherAssignmentIsIgnored() {
-        let current = overview(using: "decider-1")
-        let mine = DecisionCalibrationStatus(state: "running", assignment: "studio/decider-1", done: 3, total: 300)
-        let other = DecisionCalibrationStatus(state: "failed", assignment: "ollaya/kev", error: "boom")
-        let idle = DecisionCalibrationStatus(state: "idle")
-        XCTAssertEqual(Setup.relevantCalibration(mine, in: current), mine)
-        XCTAssertNil(Setup.relevantCalibration(other, in: current))
-        XCTAssertEqual(Setup.relevantCalibration(idle, in: current), idle)
-        XCTAssertNil(Setup.relevantCalibration(nil, in: current))
-    }
+    // MARK: - Listing
 
     func testProbeNoteNamesAFailureOrAnEmptyListing() {
         XCTAssertNil(Setup.probeNote(DecisionProbeResult(ok: true, models: ["kev"], listed: true)))

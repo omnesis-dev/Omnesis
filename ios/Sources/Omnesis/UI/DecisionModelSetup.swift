@@ -6,7 +6,7 @@ import Foundation
 /// Pure derivations behind the Decision model setup: which backends and
 /// providers to offer, what a valid backend name is, how a preset's decision
 /// URL is completed, when cloud consent is needed, the `PATCH /admin/config`
-/// body a choice saves, and the verify and calibration wording. Kept out of
+/// body a choice saves, and the verify wording. Kept out of
 /// the views so each rule is unit-tested and stays in step with the gateway
 /// (`provider-presets.ts`, `config-schema.ts`) and the portal.
 enum DecisionModelSetup {

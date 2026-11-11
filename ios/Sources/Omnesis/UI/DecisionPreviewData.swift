@@ -137,7 +137,7 @@ enum DecisionPreviewData {
     /// decision models, TypeSafe among them.
     static let decisionProviders = [ollaya, ollama, typesafe, cloudflare, fastino]
 
-    /// The local Ollaya backend: decision models only, not yet calibrated.
+    /// The local Ollaya backend: decision models only.
     static let ollayaBackend = BackendStatus(
         type: "http",
         status: "ok",
@@ -167,20 +167,7 @@ enum DecisionPreviewData {
         preset: "openrouter"
     )
 
-    static let calibration = DecisionCalibration(
-        reference: "jev-worth/email-worth-v1/jev-1.13.0",
-        fittedAt: "2026-11-08T14:30:00Z",
-        samples: 298,
-        agreement: 0.92,
-        agreementBefore: 0.71,
-        keeps: 0.95,
-        keepsBefore: 0.78,
-        skips: 0.88,
-        skipsBefore: 0.93
-    )
-
-    /// An OpenRouter backend serving chat and decision models with one key,
-    /// and a calibration for one decision model.
+    /// An OpenRouter backend serving chat and decision models with one key.
     static let openRouterBackend = BackendStatus(
         type: "http",
         status: "ok",
@@ -191,8 +178,7 @@ enum DecisionPreviewData {
         preset: "openrouter",
         decision: BackendDecisionStatus(
             url: "https://openrouter.ai/api/v1/systemone",
-            hasApiKey: true,
-            calibrations: ["liquid/d1.1": calibration]
+            hasApiKey: true
         )
     )
 
@@ -222,8 +208,8 @@ enum DecisionPreviewData {
         )
     }
 
-    /// The local Ollaya backend assigned and not calibrated.
-    static func uncalibratedOverview() -> ModelsOverview {
+    /// The local Ollaya backend assigned.
+    static func localOverview() -> ModelsOverview {
         overview(
             assignment: ResolvedAssignment(
                 kind: "decision",
@@ -232,8 +218,7 @@ enum DecisionPreviewData {
                 backendKey: "ollaya",
                 preset: "ollaya",
                 onHost: true,
-                hasApiKey: false,
-                calibrated: false
+                hasApiKey: false
             ),
             display: ModelDisplay(providerId: "ollaya", providerLabel: "Ollaya", modelName: "kev", available: true, configured: true),
             backends: ["ollaya": ollayaBackend],
@@ -241,8 +226,8 @@ enum DecisionPreviewData {
         )
     }
 
-    /// OpenRouter assigned with a stored calibration.
-    static func calibratedOverview() -> ModelsOverview {
+    /// OpenRouter assigned, with other hosted and local backends beside it.
+    static func hostedOverview() -> ModelsOverview {
         overview(
             assignment: ResolvedAssignment(
                 kind: "decision",
@@ -251,8 +236,7 @@ enum DecisionPreviewData {
                 backendKey: "openrouter",
                 preset: "openrouter",
                 onHost: false,
-                hasApiKey: true,
-                calibrated: true
+                hasApiKey: true
             ),
             display: ModelDisplay(
                 providerId: "openrouter", providerLabel: "OpenRouter", modelName: "liquid/d1.1", available: true, configured: true
@@ -323,7 +307,7 @@ enum DecisionPreviewData {
                 apiKeySecretError: "Backend \"studio-decider\" API key secret is missing or unreadable"
             )
         )
-        return (ModelManagement.httpBackends(calibratedOverview()) + [ModelManagement.BackendRow(
+        return (ModelManagement.httpBackends(hostedOverview()) + [ModelManagement.BackendRow(
             key: "studio-decider",
             status: unreadable
         )])
@@ -382,9 +366,9 @@ enum DecisionPreviewData {
 }
 
 @available(iOS 17.0, *)
-#Preview("Decision — local, uncalibrated, verify failed") {
+#Preview("Decision — local, verify failed") {
     DecisionModelSheet(
-        overview: DecisionPreviewData.uncalibratedOverview(),
+        overview: DecisionPreviewData.localOverview(),
         previewVerify: DecisionVerifyResult(
             ok: false,
             reason: "Nothing answered at http://127.0.0.1:11435/v1/systemone. Is the server running? (fetch failed)"
@@ -394,23 +378,14 @@ enum DecisionPreviewData {
 }
 
 @available(iOS 17.0, *)
-#Preview("Decision — calibrating") {
-    DecisionModelSheet(
-        overview: DecisionPreviewData.uncalibratedOverview(),
-        previewCalibration: DecisionCalibrationStatus(state: "running", assignment: "ollaya/kev", done: 120, total: 300, failed: 2)
-    )
-    .environment(AppStore.preview())
-}
-
-@available(iOS 17.0, *)
-#Preview("Decision — calibrated") {
-    DecisionModelSheet(overview: DecisionPreviewData.calibratedOverview())
+#Preview("Decision — hosted") {
+    DecisionModelSheet(overview: DecisionPreviewData.hostedOverview(), previewVerify: nil)
         .environment(AppStore.preview())
 }
 
 @available(iOS 17.0, *)
 #Preview("Decision — not set up") {
-    DecisionModelSheet(overview: DecisionPreviewData.unconfiguredOverview())
+    DecisionModelSheet(overview: DecisionPreviewData.unconfiguredOverview(), previewVerify: nil)
         .environment(AppStore.preview())
 }
 
@@ -435,7 +410,7 @@ enum DecisionPreviewData {
     NavigationStack {
         DecisionBackendForm(
             choice: .preset(DecisionPreviewData.cloudflare),
-            overview: DecisionPreviewData.uncalibratedOverview(),
+            overview: DecisionPreviewData.localOverview(),
             previewParams: ["account": "4f1c2a9e7b3d4c5e8a6f0b1c2d3e4f5a"],
             previewApiKey: "example-key"
         )
@@ -448,7 +423,7 @@ enum DecisionPreviewData {
     NavigationStack {
         DecisionBackendForm(
             choice: .existing(DecisionPreviewData.existingOllaya),
-            overview: DecisionPreviewData.uncalibratedOverview(),
+            overview: DecisionPreviewData.localOverview(),
             previewProbed: ["kev", "winnow:e4b"]
         )
     }
@@ -497,7 +472,7 @@ enum DecisionPreviewData {
 @available(iOS 17.0, *)
 #Preview("Decision — chat backend answering decisions") {
     NavigationStack {
-        DecisionBackendForm(choice: .existing(DecisionPreviewData.existingOpenRouter), overview: DecisionPreviewData.calibratedOverview())
+        DecisionBackendForm(choice: .existing(DecisionPreviewData.existingOpenRouter), overview: DecisionPreviewData.hostedOverview())
     }
     .environment(AppStore.preview())
 }

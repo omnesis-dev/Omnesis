@@ -11,9 +11,8 @@ enum DecisionRoute: Hashable {
 }
 
 /// Sets up the Decision model, mirroring the portal's Decision card: the
-/// current model with a Verify check, its calibration onto Jev's scale, and
-/// "Change provider", which walks one decision per screen through the
-/// provider list and that provider's form. Saving is one `PATCH
+/// current model with a Verify check and "Change provider", which walks one
+/// decision per screen through the provider list and that provider's form. Saving is one `PATCH
 /// /admin/config` (TypeSafe's key goes to its credential route first), after
 /// which the new model is verified and its result shown as the gateway wrote it.
 @available(iOS 17.0, *)
@@ -31,10 +30,6 @@ struct DecisionModelSheet: View {
     /// The model the shown verify result was asked about.
     @State private var verifiedModel: String?
     @State private var verifyError: String?
-    @State private var calibration: DecisionCalibrationStatus?
-    @State private var calibrationError: String?
-    @State private var calibrationBusy = false
-    @State private var confirmCalibration = false
 
     /// Fixed calls for previews; nil uses the paired gateway.
     private let previewActions: DecisionModelActions?
@@ -46,17 +41,12 @@ struct DecisionModelSheet: View {
     }
 
     #if DEBUG
-    /// Preview/snapshot seam: a verify outcome and calibration job already on
-    /// screen, and no gateway calls.
-    init(
-        overview: ModelsOverview,
-        previewVerify: DecisionVerifyResult? = nil,
-        previewCalibration: DecisionCalibrationStatus? = nil
-    ) {
+    /// Preview/snapshot seam: a verify outcome (or none) already on screen,
+    /// and no gateway calls.
+    init(overview: ModelsOverview, previewVerify: DecisionVerifyResult?) {
         self.overview = overview
         _verifyResult = State(initialValue: previewVerify)
         _verifiedModel = State(initialValue: DecisionModelSetup.currentVerifyTarget(overview)?.model)
-        _calibration = State(initialValue: previewCalibration)
         previewActions = .unavailable
     }
     #endif
@@ -67,11 +57,6 @@ struct DecisionModelSheet: View {
 
     private var current: ResolvedAssignment? {
         overview.inference.assignments[DecisionModelSetup.role]
-    }
-
-    /// The calibration job's status when it concerns the current model.
-    private var currentCalibration: DecisionCalibrationStatus? {
-        DecisionModelSetup.relevantCalibration(calibration, in: overview)
     }
 
     private var display: ModelDisplay? {
@@ -88,9 +73,6 @@ struct DecisionModelSheet: View {
                             .foregroundStyle(Theme.textSecondary)
                     }
                     currentModelCard
-                    if let state = DecisionModelSetup.calibrationState(overview) {
-                        calibrationCard(state)
-                    }
                 }
                 .padding(Theme.Spacing.lg)
             }
@@ -105,17 +87,6 @@ struct DecisionModelSheet: View {
             .navigationDestination(for: DecisionRoute.self) { route in
                 destination(route)
             }
-        }
-        .task { await loadCalibration() }
-        .task(id: currentCalibration?.isRunning == true) { await pollCalibration() }
-        .confirmationDialog(
-            "Calibrate \(current?.model ?? "this model")?",
-            isPresented: $confirmCalibration,
-            titleVisibility: .visible
-        ) {
-            Button("Calibrate") { startCalibration() }
-        } message: {
-            Text(DecisionModelSetup.calibrationExplanation(onHost: current?.onHost == true))
         }
     }
 
@@ -220,62 +191,6 @@ struct DecisionModelSheet: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Calibration
-
-    private func calibrationCard(_ state: DecisionModelSetup.CalibrationState) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            Text("Calibration")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            if let status = currentCalibration, status.isRunning {
-                ProgressView(value: Double(status.done), total: Double(max(status.total, 1)))
-                    .tint(Theme.accent)
-                Text(DecisionModelSetup.calibrationProgressText(status))
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
-                DecisionOutlineButton(title: "Cancel", color: Theme.danger, busy: calibrationBusy) {
-                    cancelCalibration()
-                }
-                .disabled(calibrationBusy)
-            } else {
-                switch state {
-                case .uncalibrated:
-                    Label {
-                        Text(DecisionModelSetup.uncalibratedText)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.textPrimary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.warning)
-                    }
-                case .calibrated(let stored):
-                    Text(DecisionModelSetup.calibratedText(
-                        DecisionModelSetup.shownCalibration(stored: stored, job: currentCalibration)
-                    ))
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                if let outcome = currentCalibration.flatMap(DecisionModelSetup.calibrationOutcomeText) {
-                    DecisionResultLine(ok: false, text: outcome)
-                }
-                if let calibrationError {
-                    DecisionResultLine(ok: false, text: calibrationError)
-                }
-                DecisionOutlineButton(
-                    title: state == .uncalibrated ? "Calibrate" : "Recalibrate",
-                    busy: calibrationBusy
-                ) {
-                    confirmCalibration = true
-                }
-                .disabled(calibrationBusy)
-            }
-        }
-        .decisionCard()
-    }
-
     // MARK: - Gateway calls
 
     private func save(_ draft: DecisionModelSetup.Draft) async throws {
@@ -283,8 +198,6 @@ struct DecisionModelSheet: View {
         try await actions.save(plan)
         verifyResult = nil
         verifyError = nil
-        calibration = nil
-        calibrationError = nil
         await onChanged()
         path.removeAll()
         await runVerify(plan.verifyTarget)
@@ -308,57 +221,6 @@ struct DecisionModelSheet: View {
         } catch {
             verifyResult = nil
             verifyError = deviceGatewayMessage(error)
-        }
-    }
-
-    private func loadCalibration() async {
-        guard previewActions == nil, DecisionModelSetup.calibrationState(overview) != nil else { return }
-        calibration = try? await actions.calibrationStatus()
-    }
-
-    /// Poll every two seconds while a run is going. A finished run reloads
-    /// the overview first, so the card reads "Calibrated" as the progress goes.
-    private func pollCalibration() async {
-        guard previewActions == nil, currentCalibration?.isRunning == true else { return }
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled, let fresh = try? await actions.calibrationStatus() else { continue }
-            if !fresh.isRunning {
-                if fresh.state == "done", DecisionModelSetup.relevantCalibration(fresh, in: overview) != nil {
-                    await onChanged()
-                }
-                calibration = fresh
-                return
-            }
-            calibration = fresh
-        }
-    }
-
-    private func startCalibration() {
-        calibrationBusy = true
-        calibrationError = nil
-        Task {
-            defer { calibrationBusy = false }
-            do {
-                calibration = try await actions.startCalibration()
-            } catch GatewayClient.Error.serverError(status: 409, _) {
-                // Already running (from another client): follow that run.
-                calibration = try? await actions.calibrationStatus()
-            } catch {
-                calibrationError = deviceGatewayMessage(error)
-            }
-        }
-    }
-
-    private func cancelCalibration() {
-        calibrationBusy = true
-        Task {
-            defer { calibrationBusy = false }
-            do {
-                calibration = try await actions.cancelCalibration()
-            } catch {
-                calibrationError = deviceGatewayMessage(error)
-            }
         }
     }
 }

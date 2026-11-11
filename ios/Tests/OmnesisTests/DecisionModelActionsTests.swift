@@ -112,7 +112,7 @@ final class DecisionModelActionsTests: XCTestCase {
     func testWithoutAGatewayEveryCallFails() async {
         let unpaired = DecisionModelActions.live(nil)
         do {
-            _ = try await unpaired.calibrationStatus()
+            _ = try await unpaired.probe("studio")
             XCTFail("expected a failure without a paired gateway")
         } catch {}
         let listed = await unpaired.typesafeKeyListed()

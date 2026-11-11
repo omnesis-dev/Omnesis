@@ -6157,12 +6157,11 @@ final class PreviewSnapshotTests: XCTestCase {
 
     /// Every Decision model screen in one test, so one filtered run renders
     /// the whole flow: the Models list's Decision card, the sheet in each
-    /// verify and calibration state, the provider list, and each kind of form.
+    /// verify state, the provider list, and each kind of form.
     func testDecisionModelScreens() {
         let store = AppStore.preview()
         decisionCardAndProviderSnapshots(store)
         decisionSheetSnapshots(store)
-        decisionCalibrationSnapshots(store)
         decisionFormSnapshots(store)
         decisionFormErrorSnapshots(store)
         decisionUnifiedBackendSnapshots(store)
@@ -6174,7 +6173,7 @@ final class PreviewSnapshotTests: XCTestCase {
         let tall = Self.decisionTallCanvas
         snapshot(
             NavigationStack {
-                ModelsContent(overview: DecisionPreviewData.uncalibratedOverview())
+                ModelsContent(overview: DecisionPreviewData.localOverview())
                     .background(Theme.bgPrimary.ignoresSafeArea())
                     .navigationTitle("Models")
                     .navigationBarTitleDisplayMode(.inline)
@@ -6184,7 +6183,7 @@ final class PreviewSnapshotTests: XCTestCase {
             size: tall
         )
         snapshot(
-            NavigationStack { DecisionProviderList(overview: DecisionPreviewData.calibratedOverview()) }
+            NavigationStack { DecisionProviderList(overview: DecisionPreviewData.hostedOverview()) }
                 .environment(store),
             name: "111j-decision-providers",
             size: tall
@@ -6202,54 +6201,26 @@ final class PreviewSnapshotTests: XCTestCase {
         )
         snapshot(
             DecisionModelSheet(
-                overview: DecisionPreviewData.uncalibratedOverview(),
+                overview: DecisionPreviewData.localOverview(),
                 previewVerify: DecisionVerifyResult(
                     ok: false,
                     reason: "Nothing answered at http://127.0.0.1:11435/v1/systemone. Is the server running? (fetch failed)"
                 )
             )
             .environment(store),
-            name: "111e-decision-uncalibrated-verify-failed"
-        )
-        snapshot(
-            DecisionModelSheet(overview: DecisionPreviewData.unconfiguredOverview()).environment(store),
-            name: "111i-decision-not-set-up"
-        )
-    }
-
-    private func decisionCalibrationSnapshots(_ store: AppStore) {
-        snapshot(
-            DecisionModelSheet(
-                overview: DecisionPreviewData.uncalibratedOverview(),
-                previewCalibration: DecisionCalibrationStatus(
-                    state: "running", assignment: "ollaya/kev", done: 120, total: 300, failed: 2
-                )
-            )
-            .environment(store),
-            name: "111f-decision-calibrating"
+            name: "111e-decision-local-verify-failed"
         )
         snapshot(
             DecisionModelSheet(
-                overview: DecisionPreviewData.calibratedOverview(),
+                overview: DecisionPreviewData.hostedOverview(),
                 previewVerify: DecisionVerifyResult(ok: true, latencyMs: 310)
             )
             .environment(store),
-            name: "111g-decision-calibrated"
+            name: "111g-decision-hosted-verified"
         )
         snapshot(
-            DecisionModelSheet(
-                overview: DecisionPreviewData.uncalibratedOverview(),
-                previewCalibration: DecisionCalibrationStatus(
-                    state: "failed",
-                    assignment: "ollaya/kev",
-                    done: 300,
-                    total: 300,
-                    failed: 288,
-                    error: "Only 12 of 300 reference emails were answered: The server has no model \"kev\" (HTTP 404)."
-                )
-            )
-            .environment(store),
-            name: "111h-decision-calibration-failed"
+            DecisionModelSheet(overview: DecisionPreviewData.unconfiguredOverview(), previewVerify: nil).environment(store),
+            name: "111i-decision-not-set-up"
         )
     }
 
@@ -6267,7 +6238,7 @@ final class PreviewSnapshotTests: XCTestCase {
             NavigationStack {
                 DecisionBackendForm(
                     choice: .preset(DecisionPreviewData.cloudflare),
-                    overview: DecisionPreviewData.uncalibratedOverview(),
+                    overview: DecisionPreviewData.localOverview(),
                     previewParams: ["account": "4f1c2a9e7b3d4c5e8a6f0b1c2d3e4f5a"],
                     previewApiKey: "example-key"
                 )
@@ -6280,7 +6251,7 @@ final class PreviewSnapshotTests: XCTestCase {
             NavigationStack {
                 DecisionBackendForm(
                     choice: .existing(DecisionPreviewData.existingOllaya),
-                    overview: DecisionPreviewData.uncalibratedOverview(),
+                    overview: DecisionPreviewData.localOverview(),
                     previewProbed: ["kev", "winnow:e4b"]
                 )
             }
@@ -6332,7 +6303,7 @@ final class PreviewSnapshotTests: XCTestCase {
             NavigationStack {
                 DecisionBackendForm(
                     choice: .existing(DecisionPreviewData.existingOpenRouterUnreadableKey),
-                    overview: DecisionPreviewData.calibratedOverview()
+                    overview: DecisionPreviewData.hostedOverview()
                 )
             }
             .environment(store),
@@ -6343,7 +6314,7 @@ final class PreviewSnapshotTests: XCTestCase {
             NavigationStack {
                 DecisionBackendForm(
                     choice: .existing(DecisionPreviewData.existingOllaya),
-                    overview: DecisionPreviewData.uncalibratedOverview(),
+                    overview: DecisionPreviewData.localOverview(),
                     previewProbeNote: "Could not reach http://127.0.0.1:11435/v1/systemone: fetch failed"
                 )
             }
@@ -6412,7 +6383,7 @@ final class PreviewSnapshotTests: XCTestCase {
             NavigationStack {
                 DecisionBackendForm(
                     choice: .existing(DecisionPreviewData.existingOpenRouter),
-                    overview: DecisionPreviewData.calibratedOverview()
+                    overview: DecisionPreviewData.hostedOverview()
                 )
             }
             .environment(store),
