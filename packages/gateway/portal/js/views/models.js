@@ -76,7 +76,7 @@ import {
 import { ModelBehaviorEditor, modelBehaviorSummary } from "./model-behavior.js";
 import { ModelHealthWarnings, WarningTriangle } from "../components/model-health.js";
 import { noteAgentSettingPatch } from "../lib/note-agent.js";
-import { DecisionCalibrationPanel, DecisionCheckLine } from "./decision-models.js";
+import { DecisionCheckLine } from "./decision-models.js";
 import { assignedDecisionBackend, decisionWhere } from "../lib/decision-models.js";
 import {
   backendDisplayName,
@@ -156,10 +156,7 @@ export function CapabilityGrid({ overview, onConfigureBackends }) {
     display=${displays[cap.role]}
     warning=${overview.inference.health?.warnings?.find((warning) => warning.role === cap.role)}
     behaviorSummary=${hasBehaviorControls(cap.role, assignments[cap.role])
-      ? modelBehaviorSummary(settings[cap.role], controls[settings[cap.role]?.assignment])
-      : assignments[cap.role]?.kind === "decision" && assignments[cap.role].available && !assignments[cap.role].calibrated
-      ? "Not calibrated"
-      : null}
+      ? modelBehaviorSummary(settings[cap.role], controls[settings[cap.role]?.assignment]) : null}
     onOpen=${() => open(cap.role)}
   />`;
 
@@ -227,7 +224,7 @@ const plural = (n, noun) => `${n} ${noun}${n !== 1 ? "s" : ""}`;
 /**
  * One HTTP backend on the Backends page: what it serves (chat models,
  * decision models or both), where, its key and models, and for its decision
- * API the Decision model it serves and its calibrations. A backend serving
+ * API the Decision model it serves. A backend serving
  * both can drop its decision API alone; one serving only decisions is removed
  * whole. "Change key" replaces the one key both APIs use, in place.
  */
@@ -239,7 +236,6 @@ function HttpBackendRow({ backendKey: key, status, overview, testButton, onChang
   const logo = catalogProviderForBackend(overview, key) ?? (preset ? presetLogoId(preset) : null);
   const assigned = assignedDecisionBackend(overview);
   const decisionModel = assigned?.key === key ? assigned.model : null;
-  const calibrated = Object.keys(decision?.calibrations ?? {}).length;
   const keyError = decision?.apiKeySecretError;
   return html`<div class="backend-item">
     <div class="backend-item-main">
@@ -255,11 +251,7 @@ function HttpBackendRow({ backendKey: key, status, overview, testButton, onChang
         ${!status.url && status.status === "unreachable" && status.reason && !keyError ? html`<span class="decision-note-danger">${status.reason}</span>` : null}
         ${status.hasApiKey || decision?.hasApiKey ? html`<span class="backend-pill">Key set</span>` : null}
         ${status.models && status.models.length > 0 ? html`<span>${plural(status.models.length, "model")}</span>` : null}
-        ${decisionModel
-          ? html`<span>Decision model: ${decisionModel} · ${decision?.calibrations?.[decisionModel] ? "calibrated" : "not calibrated"}</span>`
-          : calibrated
-          ? html`<span>${plural(calibrated, "calibrated decision model")}</span>`
-          : null}
+        ${decisionModel ? html`<span>Decision model: ${decisionModel}</span>` : null}
         ${keyError ? html`<span class="decision-note-danger">${keyError}</span>` : null}
       </div>
       ${editingKey
@@ -281,8 +273,7 @@ function HttpBackendRow({ backendKey: key, status, overview, testButton, onChang
 
 /**
  * Replace one backend's API key in place. `onSave(key, apiKey)` resolves to
- * `{ok, error?}`; the backend's URLs, decision API and calibrations are left
- * as they are.
+ * `{ok, error?}`; the backend's URLs and decision API are left as they are.
  */
 function BackendKeyForm({ backendKey, onSave, onDone }) {
   const [apiKey, setApiKey] = useState("");
@@ -463,26 +454,23 @@ function capabilityFor(overview, role) {
 }
 
 /**
- * The Decision model's checks inside its active card: a Verify button and
- * its answer, and — on a decision backend — the calibration onto Jev's scale.
+ * The Decision model's check inside its active card: a Verify button and
+ * its answer.
  */
-function DecisionActiveStatus({ overview, assignment, checks, onVerify, onChanged }) {
+function DecisionActiveStatus({ assignment, checks, onVerify }) {
   const key = assignment.kind === "typesafe" ? "typesafe" : assignment.backendKey;
   const check = checks?.[`${key}/${assignment.model}`];
   return html`
     <div class="decision-active-status">
-      <div class="decision-verify-row">
-        ${check
-          ? html`<${DecisionCheckLine} check=${check} model=${assignment.model} />`
-          : html`<span class="decision-verify-hint">Send one test decision to check that it answers.</span>`}
-        <button class="btn-tiny" disabled=${check?.state === "checking"} onClick=${() => onVerify(key, assignment.model)}>Verify</button>
-      </div>
-      ${assignment.kind === "decision" ? html`<${DecisionCalibrationPanel} overview=${overview} onChanged=${onChanged} />` : null}
+      ${check
+        ? html`<${DecisionCheckLine} check=${check} model=${assignment.model} />`
+        : html`<span class="decision-verify-hint">Send one test decision to check that it answers.</span>`}
+      <button class="btn-tiny" disabled=${check?.state === "checking"} onClick=${() => onVerify(key, assignment.model)}>Verify</button>
     </div>
   `;
 }
 
-export function CapabilityDetail({ role, overview, decisionChecks, onOpenPicker, onAddBackend, onDisable, onSaveBehavior, onVerifyDecision, onDecisionChanged }) {
+export function CapabilityDetail({ role, overview, decisionChecks, onOpenPicker, onAddBackend, onDisable, onSaveBehavior, onVerifyDecision }) {
   const cap = capabilityFor(overview, role);
   const assignment = overview.inference.assignments[role];
   const display = overview.assignmentDisplays?.[role];
@@ -495,7 +483,7 @@ export function CapabilityDetail({ role, overview, decisionChecks, onOpenPicker,
     ? html`<${ModelBehaviorEditor} key=${`${role}:${settings.assignment}`} settings=${settings} model=${model} onSave=${onSaveBehavior} />`
     : null;
   const decisionStatus = isDecisionRole(role) && enabled && (assignment.kind === "decision" || assignment.kind === "typesafe") && onVerifyDecision
-    ? html`<${DecisionActiveStatus} overview=${overview} assignment=${assignment} checks=${decisionChecks} onVerify=${onVerifyDecision} onChanged=${onDecisionChanged} />`
+    ? html`<${DecisionActiveStatus} assignment=${assignment} checks=${decisionChecks} onVerify=${onVerifyDecision} />`
     : null;
   const decisionLocation = assignment?.kind === "decision" ? decisionWhere(overview.inference.backends?.[assignment.backendKey]?.decision) : null;
 
@@ -1062,7 +1050,7 @@ export function ModelsView({ section, onModelsRefresh }) {
     return result;
   };
 
-  /** Replace a backend's API key; its URLs, decision API and calibrations stay. */
+  /** Replace a backend's API key; its URLs and decision API stay. */
   const changeBackendKey = async (key, apiKey) => {
     try {
       const res = await patchAdminConfig({ inference: { backends: { [key]: { apiKey } } } });
@@ -1080,8 +1068,8 @@ export function ModelsView({ section, onModelsRefresh }) {
     setConfirmState({
       title: `Disable decisions on "${key}"?`,
       body: inUse
-        ? "The Decision model uses it and will be turned off. Its chat models stay; its decision calibrations are removed."
-        : "Its chat models stay; its decision calibrations are removed.",
+        ? "The Decision model uses it and will be turned off. Its chat models stay."
+        : "Its chat models stay; only its decision API is removed.",
       confirmLabel: "Disable decisions",
       destructive: true,
       onConfirm: async () => {
@@ -1100,9 +1088,7 @@ export function ModelsView({ section, onModelsRefresh }) {
   const onRemoveBackend = (key) => {
     setConfirmState({
       title: `Remove backend "${key}"?`,
-      body: overview.inference.backends?.[key]?.decision
-        ? "Any capability using this backend will become unavailable. Its decision calibrations are removed too."
-        : "Any capability using this backend will become unavailable.",
+      body: "Any capability using this backend will become unavailable.",
       confirmLabel: "Remove",
       destructive: true,
       onConfirm: async () => {
@@ -1588,7 +1574,6 @@ export function ModelsView({ section, onModelsRefresh }) {
             onSaveBehavior=${onSaveBehavior}
             decisionChecks=${decisionChecks}
             onVerifyDecision=${verifyDecision}
-            onDecisionChanged=${refresh}
           />`
         : null}
 

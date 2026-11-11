@@ -3,7 +3,7 @@
 
 /**
  * Pure helpers for the Decision model's setup: the backends its picker
- * offers, the model suggestions, and the verify and calibration sentences.
+ * offers, the model suggestions, and the verify sentence.
  * A backend serves decisions through its `decision` block (see
  * `backend-setup.js`); TypeSafe is built in and never a backend.
  */
@@ -132,80 +132,6 @@ export function decisionVerifyText(result, model) {
       : `Answered${via}.`;
   }
   return result.reason ?? "The model did not answer.";
-}
-
-const percent = (share) => `${Math.round(share * 100)}%`;
-
-function shortDate(iso) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
-
-/**
- * The calibrated summary. A calibration that records what it keeps and
- * skips — the share of the reference emails Jev keeps that the calibrated
- * model keeps too, and likewise for those Jev skips — says so, with the
- * uncalibrated shares for comparison; an older one reports its agreement.
- */
-export function calibrationSummary(calibration) {
-  if (!calibration) return "";
-  const date = calibration.fittedAt ? shortDate(calibration.fittedAt) : null;
-  const head = `Calibrated against Jev${date ? ` on ${date}` : ""}`;
-  const isShare = (v) => typeof v === "number";
-  if (isShare(calibration.keeps) && isShare(calibration.skips)) {
-    const before = isShare(calibration.keepsBefore) && isShare(calibration.skipsBefore)
-      ? ` (before: ${percent(calibration.keepsBefore)} and ${percent(calibration.skipsBefore)})`
-      : "";
-    return `${head}: keeps ${percent(calibration.keeps)} of the reference emails Jev keeps and skips ${percent(calibration.skips)} of those it skips${before}.`;
-  }
-  if (!isShare(calibration.agreement)) return `${head}.`;
-  const before = isShare(calibration.agreementBefore) ? ` (was ${percent(calibration.agreementBefore)})` : "";
-  return `${head}: agrees with Jev on ${percent(calibration.agreement)} of the reference emails${before}.`;
-}
-
-/** Progress of a running calibration: "120 of 300 reference emails" (+ failures). */
-export function calibrationProgressText(status) {
-  const total = status?.total ?? 0;
-  const done = status?.done ?? 0;
-  const failed = status?.failed ?? 0;
-  const base = total > 0 ? `${done} of ${total} reference emails` : "Starting…";
-  return failed > 0 ? `${base} · ${failed} failed` : base;
-}
-
-/** Share of a running calibration finished, 0–1. */
-export function calibrationFraction(status) {
-  const total = status?.total ?? 0;
-  return total > 0 ? Math.min(1, Math.max(0, (status.done ?? 0) / total)) : 0;
-}
-
-/**
- * Which calibration panel state to show for the assigned model:
- * "running", "failed", "cancelled" (this assignment's last run, when no
- * calibration is stored),
- * "other-running" (a run for another assignment, started before the model
- * changed or from the CLI), "calibrated" or "uncalibrated".
- */
-export function calibrationPanelState(status, assigned) {
-  const mine = status?.assignment && assigned && status.assignment === `${assigned.key}/${assigned.model}`;
-  if (status?.state === "running") return mine ? "running" : "other-running";
-  // A finished run counts before the reloaded overview says so; a failed or
-  // cancelled recalibration leaves the stored calibration in force.
-  if (assigned?.assignment?.calibrated || (mine && status.state === "done" && status.result)) return "calibrated";
-  if (mine && (status.state === "failed" || status.state === "cancelled")) return status.state;
-  return "uncalibrated";
-}
-
-/**
- * The calibration to summarise for the assigned model: the stored one, else
- * the result of this assignment's finished run (shown until the reloaded
- * overview carries it).
- */
-export function assignedCalibration(assigned, status) {
-  const stored = assigned?.backend?.decision?.calibrations?.[assigned.model];
-  if (stored) return stored;
-  const mine = assigned && status?.assignment === `${assigned.key}/${assigned.model}`;
-  return mine && status.state === "done" ? status.result : undefined;
 }
 
 /** Where a backend's decision API runs: "On this host" or the URL's host. */
