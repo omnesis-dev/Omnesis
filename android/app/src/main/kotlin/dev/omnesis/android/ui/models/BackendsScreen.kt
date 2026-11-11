@@ -958,7 +958,7 @@ private fun BackendDetailEmptyVerify(decisionOnly: Boolean) {
     ) {
         if (decisionOnly) {
             Text(
-                "This backend serves decision models. Verify and calibrate them on the Decision model, under Models.",
+                "This backend serves decision models. Verify them on the Decision model, under Models.",
                 style = MaterialTheme.typography.bodySmall,
                 color = c.textSecondary,
             )

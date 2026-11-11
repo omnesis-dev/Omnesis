@@ -28,7 +28,6 @@ import dev.omnesis.android.transport.dto.CreatePairingBody
 import dev.omnesis.android.transport.dto.CreateSourceBody
 import dev.omnesis.android.transport.dto.CreateTokenBody
 import dev.omnesis.android.transport.dto.DeleteAllResponse
-import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
 import dev.omnesis.android.transport.dto.DecisionModelBody
 import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionProbeResult
@@ -698,22 +697,6 @@ class AdminClient(private val http: GatewayHttp) {
     /** `POST /admin/inference/typesafe/verify` — the same test decision, on TypeSafe. */
     suspend fun verifyTypeSafeDecision(model: String): DecisionVerifyResult =
         http.postJson("admin/inference/typesafe/verify", DecisionModelBody(model))
-
-    /** `GET /admin/models/decision/calibration` — the calibration job's status. */
-    suspend fun decisionCalibration(): DecisionCalibrationStatus =
-        http.getJson("admin/models/decision/calibration")
-
-    /**
-     * `POST /admin/models/decision/calibration` — start calibrating the
-     * assigned decision model (202). The gateway answers 409 while one runs and
-     * 400 with its reason when the assignment cannot be calibrated.
-     */
-    suspend fun startDecisionCalibration(): DecisionCalibrationStatus =
-        http.postEmpty("admin/models/decision/calibration")
-
-    /** `DELETE /admin/models/decision/calibration` — cancel the running calibration. */
-    suspend fun cancelDecisionCalibration(): DecisionCalibrationStatus =
-        http.deleteJson("admin/models/decision/calibration")
 
     /** `POST /admin/inference/codex/refresh` — refresh Codex login/model status. */
     suspend fun refreshCodexBackend(): CodexBackendStatus =

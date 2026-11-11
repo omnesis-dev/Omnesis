@@ -7,7 +7,6 @@ import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.dto.CredentialSpec
 import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.BackendConfigPatch
-import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
 import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionProbeResult
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
@@ -44,11 +43,7 @@ class DecisionSetupViewModelTest {
         var credentialsFailure: Throwable? = null
         var saveFailure: Throwable? = null
         var removeFailure: Throwable? = null
-        var startFailure: Throwable? = null
         var verifyResult = DecisionVerifyResult(ok = true, answeredBy = "kev", latencyMs = 240)
-        /** Each read takes the next scripted outcome; the last one repeats. */
-        val calibrationReads = ArrayDeque<Result<DecisionCalibrationStatus>>()
-        var calibrationReadCount = 0
 
         override suspend fun modelCredentials(): List<ModelCredentialEntry> {
             credentialsFailure?.let { throw it }
@@ -85,21 +80,6 @@ class DecisionSetupViewModelTest {
             calls += "verify:typesafe/$model"
             return verifyResult
         }
-        override suspend fun calibration(): DecisionCalibrationStatus {
-            calibrationReadCount += 1
-            val next = if (calibrationReads.size > 1) calibrationReads.removeFirst() else calibrationReads.firstOrNull()
-            return (next ?: Result.success(DecisionCalibrationStatus())).getOrThrow()
-        }
-        override suspend fun startCalibration(): DecisionCalibrationStatus {
-            startFailure?.let { throw it }
-            calls += "calibrate"
-            return running(0)
-        }
-        override suspend fun cancelCalibration() = running(4).copy(state = "cancelled")
-    }
-
-    companion object {
-        fun running(done: Int) = DecisionCalibrationStatus(state = "running", assignment = "ollaya/kev", done = done, total = 296)
     }
 
     private val gateway = FakeGateway()
@@ -108,7 +88,7 @@ class DecisionSetupViewModelTest {
 
     @After fun tearDown() { Dispatchers.resetMain() }
 
-    private fun viewModel() = DecisionSetupViewModel(gateway, pollIntervalMs = 2_000)
+    private fun viewModel() = DecisionSetupViewModel(gateway)
 
     private fun TestScope.changesOf(vm: DecisionSetupViewModel): MutableList<Unit> {
         val events = mutableListOf<Unit>()
@@ -275,71 +255,5 @@ class DecisionSetupViewModelTest {
         gateway.credentials = listOf(ModelCredentialEntry("typesafe", "typesafe", "TypeSafe", CredentialSpec(), configured = true))
         vm.opened()
         assertEquals(KeyState.Stored, vm.state.value.typesafeKey)
-    }
-
-    // --- Calibration ---
-
-    @Test fun a_conflicting_start_shows_the_running_job_and_drops_the_error() = runTest {
-        gateway.startFailure = GatewayException.ServerError(409, "A calibration is already running")
-        gateway.calibrationReads += Result.success(running(40))
-        val vm = viewModel()
-        vm.startCalibration()
-        assertEquals(running(40), vm.state.value.calibration)
-        assertNull(vm.state.value.calibrationError)
-        assertEquals(1, gateway.calibrationReadCount)
-    }
-
-    @Test fun a_refused_start_keeps_the_gateways_reason() = runTest {
-        gateway.startFailure = GatewayException.ServerError(400, "Calibration needs the Decision model to be assigned to a decision backend.")
-        val vm = viewModel()
-        vm.startCalibration()
-        assertEquals("Calibration needs the Decision model to be assigned to a decision backend.", vm.state.value.calibrationError)
-    }
-
-    @Test fun following_ends_when_the_run_is_done_and_announces_the_stored_calibration() = runTest {
-        val vm = viewModel()
-        val changes = changesOf(vm)
-        vm.startCalibration()
-        gateway.calibrationReads += Result.success(running(150))
-        gateway.calibrationReads += Result.success(running(296).copy(state = "done"))
-        vm.followCalibration()
-        assertEquals("done", vm.state.value.calibration?.state)
-        assertEquals(2, gateway.calibrationReadCount)
-        assertEquals(1, changes.size)
-    }
-
-    @Test fun following_ends_on_a_failed_or_cancelled_run_without_announcing_a_change() = runTest {
-        for (end in listOf("failed", "cancelled")) {
-            val gateway = FakeGateway()
-            val vm = DecisionSetupViewModel(gateway, pollIntervalMs = 2_000)
-            val changes = changesOf(vm)
-            vm.startCalibration()
-            gateway.calibrationReads += Result.success(running(10).copy(state = end))
-            vm.followCalibration()
-            assertEquals(end, vm.state.value.calibration?.state)
-            assertEquals(1, gateway.calibrationReadCount)
-            assertTrue(changes.isEmpty())
-        }
-    }
-
-    @Test fun following_gives_up_after_repeated_read_failures_and_shows_the_last_one() = runTest {
-        val vm = viewModel()
-        vm.startCalibration()
-        gateway.calibrationReads += Result.success(running(20))
-        // One failure between successes is ridden out…
-        gateway.calibrationReads += Result.failure(GatewayException.Network(java.io.IOException("reset")))
-        gateway.calibrationReads += Result.success(running(30))
-        // …three in a row end the watch.
-        gateway.calibrationReads += Result.failure(GatewayException.ServerError(502, "bad gateway"))
-        vm.followCalibration()
-        assertEquals(6, gateway.calibrationReadCount)
-        assertEquals(running(30), vm.state.value.calibration)
-        assertEquals("Could not read the calibration's progress: bad gateway", vm.state.value.calibrationError)
-    }
-
-    @Test fun nothing_is_followed_when_no_run_is_going() = runTest {
-        val vm = viewModel()
-        vm.followCalibration()
-        assertEquals(0, gateway.calibrationReadCount)
     }
 }

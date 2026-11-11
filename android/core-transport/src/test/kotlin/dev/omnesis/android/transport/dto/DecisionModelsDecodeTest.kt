@@ -47,17 +47,14 @@ class DecisionModelsDecodeTest {
           "fireworks":{"type":"http","url":"https://api.example.com/inference","status":"ok","models":["accounts/example/models/chat"],
             "hasApiKey":true,"preset":"fireworks"},
           "ollaya":{"type":"http","status":"ok","hasApiKey":false,"preset":"ollaya",
-            "decision":{"url":"http://127.0.0.1:11435/v1/systemone","protocol":"systemone","auth":"bearer","onHost":true,"hasApiKey":false,
-              "calibrations":{"kev":{"points":[[0,0],[0.5,0.4],[1,1]],"reference":"jev-worth/email-worth-v1/jev-1.13.0",
-                "fittedAt":"2026-11-08T10:00:00.000Z","samples":296,"agreement":0.91,"agreementBefore":0.78,
-                "keeps":0.95,"keepsBefore":0.81,"skips":0.88,"skipsBefore":0.9}}}},
+            "decision":{"url":"http://127.0.0.1:11435/v1/systemone","protocol":"systemone","auth":"bearer","onHost":true,"hasApiKey":false}},
           "studio":{"type":"http","status":"unreachable","reason":"The API key could not be read","hasApiKey":false,
             "decision":{"url":"https://decide.example.com/v1/decisions","protocol":"openai-decisions","auth":"bearer","onHost":false,
-              "hasApiKey":false,"apiKeySecretError":"The API key could not be read","calibrations":{}}}
+              "hasApiKey":false,"apiKeySecretError":"The API key could not be read"}}
         },
         "assignments":{"decision":{"role":"decision","kind":"decision","backendKey":"ollaya","preset":"ollaya","model":"kev",
           "url":"http://127.0.0.1:11435/v1/systemone","protocol":"systemone","onHost":true,"allowRemoteInference":true,
-          "hasApiKey":false,"calibrated":true,"available":true}}
+          "hasApiKey":false,"available":true}}
       }
     }"""
 
@@ -108,14 +105,7 @@ class DecisionModelsDecodeTest {
         val decision = decisionOnly.decision!!
         assertTrue(decision.onHost)
         assertFalse(decision.hasApiKey)
-        val calibration = decision.calibrations.getValue("kev")
-        assertEquals(0.91, calibration.agreement!!, 1e-9)
-        assertEquals(0.78, calibration.agreementBefore!!, 1e-9)
-        assertEquals(296, calibration.samples)
-        assertEquals(0.95, calibration.keeps!!, 1e-9)
-        assertEquals(0.81, calibration.keepsBefore!!, 1e-9)
-        assertEquals(0.88, calibration.skips!!, 1e-9)
-        assertEquals(0.9, calibration.skipsBefore!!, 1e-9)
+        assertNull(decision.apiKeySecretError)
 
         val unreadable = overview.inference.backends.getValue("studio")
         assertEquals("unreachable", unreadable.status)
@@ -127,7 +117,7 @@ class DecisionModelsDecodeTest {
         assertEquals("decision", assignment.kind)
         assertEquals("ollaya", assignment.backendKey)
         assertEquals("kev", assignment.model)
-        assertEquals(true, assignment.calibrated)
+        assertEquals(false, assignment.hasApiKey)
         assertTrue(overview.capabilities.single().isTypedDecision)
     }
 
@@ -151,11 +141,11 @@ class DecisionModelsDecodeTest {
         assertNull(overview.inference.typesafe)
         val assignment = overview.inference.assignments.getValue("decision")
         assertEquals("typesafe", assignment.kind)
-        assertNull(assignment.calibrated)
+        assertNull(assignment.hasApiKey)
         assertNull(assignment.backendKey)
     }
 
-    @Test fun unknown_kinds_protocols_and_states_are_kept() {
+    @Test fun unknown_kinds_and_protocols_are_kept() {
         val overview = OmnesisJson.decodeFromString<ModelsOverview>(
             """{"decisionProviders":[{"id":"edge-box","name":"Edge box","kind":"appliance","futureField":{"x":1},
               "decision":{"url":"https://decide.example.com","protocol":"future-proto","auth":"signature","futureField":1}}],
@@ -169,7 +159,7 @@ class DecisionModelsDecodeTest {
         assertEquals("future-kind", overview.inference.assignments.getValue("decision").kind)
         val backend = overview.inference.backends.getValue("edge").decision!!
         assertEquals("signature", backend.auth)
-        assertTrue(backend.calibrations.isEmpty())
+        assertFalse(backend.onHost)
     }
 
     @Test fun an_unsaved_probe_leaves_absent_fields_out_and_never_prints_its_key() {
@@ -208,30 +198,5 @@ class DecisionModelsDecodeTest {
             """{"ok":false,"models":[],"listed":false,"reason":"Could not reach http://127.0.0.1:11435/v1/systemone"}""",
         )
         assertEquals("Could not reach http://127.0.0.1:11435/v1/systemone", down.reason)
-    }
-
-    @Test fun calibration_status_decodes_every_state() {
-        val idle = OmnesisJson.decodeFromString<DecisionCalibrationStatus>("""{"state":"idle","done":0,"total":0,"failed":0}""")
-        assertFalse(idle.running)
-        val running = OmnesisJson.decodeFromString<DecisionCalibrationStatus>(
-            """{"state":"running","assignment":"ollaya/kev","done":120,"total":296,"failed":2,"startedAt":"2026-11-10T09:00:00.000Z"}""",
-        )
-        assertTrue(running.running)
-        assertEquals("ollaya/kev", running.assignment)
-        assertEquals(120, running.done)
-        val done = OmnesisJson.decodeFromString<DecisionCalibrationStatus>(
-            """{"state":"done","assignment":"ollaya/kev","done":296,"total":296,"failed":0,
-              "result":{"points":[[0,0],[1,1]],"reference":"r","fittedAt":"2026-11-10T09:05:00.000Z","agreement":0.9}}""",
-        )
-        assertEquals(0.9, done.result!!.agreement!!, 1e-9)
-        assertNull(done.result!!.keeps)
-        assertNull(done.result!!.skipsBefore)
-        val failed = OmnesisJson.decodeFromString<DecisionCalibrationStatus>(
-            """{"state":"failed","done":10,"total":296,"failed":10,"error":"Only 0 of 296 reference emails were answered"}""",
-        )
-        assertEquals("Only 0 of 296 reference emails were answered", failed.error)
-        val future = OmnesisJson.decodeFromString<DecisionCalibrationStatus>("""{"state":"paused"}""")
-        assertEquals("paused", future.state)
-        assertFalse(future.running)
     }
 }

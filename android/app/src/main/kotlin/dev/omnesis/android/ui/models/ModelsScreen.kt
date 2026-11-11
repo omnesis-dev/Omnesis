@@ -85,7 +85,6 @@ import dev.omnesis.android.transport.dto.CapabilityMeta
 import dev.omnesis.android.transport.dto.CatalogEntry
 import dev.omnesis.android.transport.dto.CodexBackendStatus
 import dev.omnesis.android.transport.dto.CodexModelStatus
-import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
 import dev.omnesis.android.transport.dto.DownloadProgress
 import dev.omnesis.android.transport.dto.InferenceOverview
 import dev.omnesis.android.transport.dto.ManifestEntry
@@ -132,25 +131,13 @@ fun ModelsScreen(
     val behaviorStatus by vm.behaviorStatus.collectAsStateWithLifecycle()
     val behaviorEpoch by vm.behaviorEpoch.collectAsStateWithLifecycle()
     val decision by decisionVm.state.collectAsStateWithLifecycle()
-    // Follow a running calibration only while the screen is started.
-    val calibrating = decision.calibration?.running == true
-    LaunchedEffect(lifecycleOwner, decisionVm, calibrating) {
-        if (calibrating) {
-            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { decisionVm.followCalibration() }
-        }
-    }
     LaunchedEffect(decisionVm) { decisionVm.changes.collect { vm.refresh() } }
-    // The Decision card's calibration line reads the job of the backend model assigned now.
-    val assignedDecision = (state as? Loadable.Content)?.value?.let(DecisionSetup::assignedBackend)?.value
-    LaunchedEffect(assignedDecision) { if (assignedDecision != null) decisionVm.refreshCalibration() }
     val decisionActions = remember(decisionVm, vm) {
         DecisionActions(
             onOpened = decisionVm::opened,
             onSave = decisionVm::save,
             onVerify = decisionVm::verify,
             onProbe = decisionVm::probe,
-            onCalibrate = decisionVm::startCalibration,
-            onCancelCalibration = decisionVm::cancelCalibration,
             onRemove = decisionVm::remove,
             onClear = { vm.clear(DecisionSetup.ROLE) },
         )
@@ -261,7 +248,6 @@ fun ModelsContent(
                     overview = state.value,
                     notice = notice,
                     busy = busy,
-                    decisionCalibration = decision.calibration,
                     onOpenBackends = onOpenBackends,
                     onOpenPicker = onOpenPicker,
                     onOpenDecision = {
@@ -321,7 +307,6 @@ private fun CapabilityList(
     overview: ModelsOverview,
     notice: ModelsViewModel.Notice?,
     busy: Boolean,
-    decisionCalibration: DecisionCalibrationStatus?,
     onOpenBackends: () -> Unit,
     onOpenPicker: (String) -> Unit,
     onOpenDecision: () -> Unit,
@@ -366,11 +351,6 @@ private fun CapabilityList(
                         else -> null
                     },
                     disabled = busy,
-                    calibrationLine = if (DecisionSetup.isConfigurable(cap, overview)) {
-                        DecisionSetup.cardCalibrationLine(overview, decisionCalibration)
-                    } else {
-                        null
-                    },
                 )
             }
         }
@@ -411,8 +391,6 @@ private fun CapabilityCard(
     /** Null for a role this app cannot configure: the card is then read-only. */
     onTap: (() -> Unit)?,
     disabled: Boolean,
-    /** The Decision model's calibration against Jev, for a decision-backend model. */
-    calibrationLine: DecisionSetup.CardLine? = null,
 ) {
     val c = OmTheme.colors
     Row(
@@ -464,13 +442,6 @@ private fun CapabilityCard(
             }
             if (state == ModelManagement.CapabilityState.WARN && !reason.isNullOrBlank()) {
                 Text(reason, style = MaterialTheme.typography.labelSmall, color = c.warning, maxLines = 2)
-            }
-            if (calibrationLine != null) {
-                Text(
-                    calibrationLine.text,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (calibrationLine.warning) c.warning else c.textSecondary,
-                )
             }
             val behaviorText = ModelBehaviorPresentation.summary(behavior, controls)
             if (behaviorText != null) {

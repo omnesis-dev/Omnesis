@@ -29,7 +29,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -58,8 +57,6 @@ import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.transport.dto.BackendDecisionStatus
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
-import dev.omnesis.android.transport.dto.DecisionCalibration
-import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
 import dev.omnesis.android.transport.dto.DecisionModelOption
 import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionUrlParam
@@ -68,7 +65,6 @@ import dev.omnesis.android.transport.dto.ModelsOverview
 import dev.omnesis.android.transport.dto.ProviderDecisionPreset
 import dev.omnesis.android.transport.dto.ProviderPreset
 import dev.omnesis.android.transport.dto.ResolvedAssignment
-import dev.omnesis.android.ui.models.DecisionSetup.CalibrationPanel
 import dev.omnesis.android.ui.models.DecisionSetup.Provider
 import dev.omnesis.android.ui.models.DecisionSetup.SaveRequest
 import dev.omnesis.android.ui.models.DecisionSetup.VerifyState
@@ -91,8 +87,6 @@ data class DecisionActions(
     val onSave: (SaveRequest, onSaved: () -> Unit) -> Unit = { _, _ -> },
     val onVerify: (String) -> Unit = {},
     val onProbe: (ProbeTarget) -> Unit = {},
-    val onCalibrate: () -> Unit = {},
-    val onCancelCalibration: () -> Unit = {},
     val onRemove: (DecisionSetup.Removal, onRemoved: () -> Unit) -> Unit = { _, _ -> },
     val onClear: () -> Unit = {},
 )
@@ -118,7 +112,7 @@ internal fun DecisionSetupSheet(
 
 /**
  * The Decision model's setup, one step at a time: the assigned model with
- * its test decision and calibration; the provider picker (the operator's
+ * its test decision; the provider picker (the operator's
  * backends, TypeSafe built in, providers to add); the provider's form; and,
  * for an endpoint off the gateway host, the cloud-inference question. Save is
  * one config patch, followed by a test decision whose reason is shown as the
@@ -290,16 +284,6 @@ private fun DecisionHomePane(
         }
     }
 
-    if (assigned != null) {
-        CalibrationSection(
-            panel = DecisionSetup.calibrationPanel(assigned, ui.calibration),
-            available = assignment?.available == true,
-            error = ui.calibrationError,
-            onCalibrate = actions.onCalibrate,
-            onCancel = actions.onCancelCalibration,
-        )
-    }
-
     OutlinedButton(onClick = onChange, modifier = Modifier.fillMaxWidth()) {
         Text("Change provider or model")
     }
@@ -352,104 +336,6 @@ private fun VerifyLine(target: String, state: VerifyState, onVerify: () -> Unit)
         TextButton(onClick = onVerify, enabled = !(state is VerifyState.Running && state.assignment == target)) {
             Text("Verify", color = c.accent, fontWeight = FontWeight.SemiBold)
         }
-    }
-}
-
-@Composable
-private fun CalibrationSection(
-    panel: CalibrationPanel,
-    available: Boolean,
-    error: String?,
-    onCalibrate: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    val c = OmTheme.colors
-    val shape = RoundedCornerShape(12.dp)
-    val warn = panel is CalibrationPanel.Uncalibrated || panel is CalibrationPanel.Failed ||
-        panel is CalibrationPanel.Cancelled
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(if (warn) c.warning.copy(alpha = 0.08f) else c.bgSecondary, shape)
-            .then(if (warn) Modifier.border(1.dp, c.warning.copy(alpha = 0.4f), shape) else Modifier)
-            .padding(OmSpacing.md),
-        verticalArrangement = Arrangement.spacedBy(OmSpacing.sm),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
-            if (warn) {
-                Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = c.warning, modifier = Modifier.size(18.dp))
-            }
-            Text("Calibration", style = MaterialTheme.typography.titleSmall, color = c.textPrimary)
-        }
-        when (panel) {
-            CalibrationPanel.Uncalibrated -> {
-                Text(DecisionSetup.UNCALIBRATED_WARNING, style = MaterialTheme.typography.bodySmall, color = c.textPrimary)
-                CalibrationExplainer()
-                CalibrateButton("Calibrate", available, onCalibrate)
-            }
-            is CalibrationPanel.Running -> {
-                Text("Calibrating against Jev", style = MaterialTheme.typography.bodySmall, color = c.textPrimary)
-                LinearProgressIndicator(
-                    progress = { DecisionSetup.calibrationFraction(panel.status) },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = c.accent,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        DecisionSetup.calibrationProgressText(panel.status),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = c.textSecondary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = onCancel) { Text("Cancel", color = c.danger) }
-                }
-            }
-            is CalibrationPanel.Calibrated -> {
-                Text(
-                    DecisionSetup.calibrationSummary(panel.calibration),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.textPrimary,
-                )
-                panel.note?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = c.warning) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onCalibrate, enabled = available) {
-                        Text("Recalibrate", color = if (available) c.accent else c.textMuted)
-                    }
-                }
-            }
-            is CalibrationPanel.Failed -> {
-                Text(panel.error, style = MaterialTheme.typography.bodySmall, color = c.danger)
-                Text(DecisionSetup.UNCALIBRATED_WARNING, style = MaterialTheme.typography.bodySmall, color = c.textPrimary)
-                CalibrateButton("Try again", available, onCalibrate)
-            }
-            CalibrationPanel.Cancelled -> {
-                Text("Calibration cancelled.", style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
-                Text(DecisionSetup.UNCALIBRATED_WARNING, style = MaterialTheme.typography.bodySmall, color = c.textPrimary)
-                CalibrateButton("Calibrate", available, onCalibrate)
-            }
-        }
-        error?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = c.danger) }
-    }
-}
-
-@Composable
-private fun CalibrationExplainer() {
-    Text(
-        DecisionSetup.CALIBRATION_EXPLAINER,
-        style = MaterialTheme.typography.labelSmall,
-        color = OmTheme.colors.textSecondary,
-    )
-}
-
-@Composable
-private fun CalibrateButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-    val c = OmTheme.colors
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
-    ) {
-        Text(label, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -758,9 +644,9 @@ private fun DecisionFormPane(
                 text = {
                     Text(
                         if (removal.wholeBackend) {
-                            "${turnedOff}Its stored key and calibrations are deleted."
+                            "${turnedOff}Its stored key is deleted."
                         } else {
-                            "${turnedOff}Its decision calibrations are deleted. Its OpenAI-compatible models and key stay."
+                            "${turnedOff}Its OpenAI-compatible models and key stay."
                         },
                     )
                 },
@@ -998,26 +884,12 @@ internal fun sampleDecisionPresets() = listOf(
     ),
 )
 
-/** A stored calibration of the sample `kev` model, fitted on an invented date. */
-internal fun sampleDecisionCalibration() = DecisionCalibration(
-    reference = "jev-worth/email-worth-v1/jev-1.13.0",
-    fittedAt = "2026-11-08T10:00:00Z",
-    samples = 296,
-    agreement = 0.91,
-    agreementBefore = 0.78,
-    keeps = 0.95,
-    keepsBefore = 0.81,
-    skips = 0.88,
-    skipsBefore = 0.9,
-)
-
 /**
  * The sample overview with decision presets, the Decision model on a local
- * Ollaya server's `kev` (a backend with only a decision API), calibrated or
- * not, and a Fireworks backend set up for chat whose preset also offers
+ * Ollaya server's `kev` (a backend with only a decision API), and a Fireworks backend set up for chat whose preset also offers
  * decision models.
  */
-internal fun sampleDecisionOverview(calibrated: Boolean = false): ModelsOverview {
+internal fun sampleDecisionOverview(): ModelsOverview {
     val base = sampleModelsOverview()
     val ollaya = BackendStatus(
         type = "http",
@@ -1027,7 +899,6 @@ internal fun sampleDecisionOverview(calibrated: Boolean = false): ModelsOverview
         decision = BackendDecisionStatus(
             url = "http://127.0.0.1:11435/v1/systemone",
             onHost = true,
-            calibrations = if (calibrated) mapOf("kev" to sampleDecisionCalibration()) else emptyMap(),
         ),
     )
     val fireworks = BackendStatus(
@@ -1049,15 +920,9 @@ internal fun sampleDecisionOverview(calibrated: Boolean = false): ModelsOverview
             assignments = base.inference.assignments + (
                 DecisionSetup.ROLE to ResolvedAssignment(
                     "decision", available = true, model = "kev", backendKey = "ollaya",
-                    preset = "ollaya", calibrated = calibrated, hasApiKey = false,
+                    preset = "ollaya", hasApiKey = false,
                 )
             ),
         ),
     )
 }
-
-/** A calibration two fifths of the way through the sample reference set. */
-internal fun sampleRunningCalibration() = DecisionCalibrationStatus(
-    state = "running", assignment = "ollaya/kev", done = 120, total = 296, failed = 2,
-    startedAt = "2026-11-10T09:00:00Z",
-)

@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.transport.dto.BackendConfig
-import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
 import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionProbeResult
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
@@ -16,8 +15,6 @@ import dev.omnesis.android.transport.dto.ModelCredentialEntry
 import dev.omnesis.android.ui.models.DecisionSetup.KeyState
 import dev.omnesis.android.ui.models.DecisionSetup.SaveRequest
 import dev.omnesis.android.ui.models.DecisionSetup.VerifyState
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -33,10 +30,6 @@ data class DecisionUiState(
     val verify: VerifyState = VerifyState.Idle,
     /** Model listings by [ProbeTarget.id]. */
     val probes: Map<String, ProbeState> = emptyMap(),
-    /** The gateway's calibration job, once read. */
-    val calibration: DecisionCalibrationStatus? = null,
-    /** Why starting, cancelling or following a calibration failed. */
-    val calibrationError: String? = null,
     val saving: Boolean = false,
     /** Why the last save or removal failed. */
     val error: String? = null,
@@ -76,9 +69,6 @@ internal interface DecisionGateway {
     suspend fun probe(target: ProbeTarget): DecisionProbeResult
     suspend fun verifyBackend(key: String, model: String): DecisionVerifyResult
     suspend fun verifyTypeSafe(model: String): DecisionVerifyResult
-    suspend fun calibration(): DecisionCalibrationStatus
-    suspend fun startCalibration(): DecisionCalibrationStatus
-    suspend fun cancelCalibration(): DecisionCalibrationStatus
 }
 
 private class SessionDecisionGateway(private val session: SessionManager) : DecisionGateway {
@@ -100,26 +90,20 @@ private class SessionDecisionGateway(private val session: SessionManager) : Deci
     }
     override suspend fun verifyBackend(key: String, model: String) = admin().verifyBackendDecision(key, model)
     override suspend fun verifyTypeSafe(model: String) = admin().verifyTypeSafeDecision(model)
-    override suspend fun calibration() = admin().decisionCalibration()
-    override suspend fun startCalibration() = admin().startDecisionCalibration()
-    override suspend fun cancelCalibration() = admin().cancelDecisionCalibration()
 }
 
 /**
  * Drives the Decision model's setup: one config patch per save, then a test
- * decision; listing a local or custom server's models; taking decision models
- * away from a backend; and the calibration job. The
- * screen follows a running calibration through [followCalibration] while it
- * is visible. A config change is announced on [changes] so the Models screen
- * reloads its overview in place.
+ * decision; listing a local or custom server's models; and taking decision
+ * models away from a backend. A config change is announced on [changes] so
+ * the Models screen reloads its overview in place.
  */
 @HiltViewModel
 class DecisionSetupViewModel internal constructor(
     private val gateway: DecisionGateway,
-    private val pollIntervalMs: Long,
 ) : ViewModel() {
 
-    @Inject constructor(session: SessionManager) : this(SessionDecisionGateway(session), CALIBRATION_POLL_MS)
+    @Inject constructor(session: SessionManager) : this(SessionDecisionGateway(session))
 
     private val _state = MutableStateFlow(DecisionUiState())
     val state: StateFlow<DecisionUiState> = _state.asStateFlow()
@@ -127,9 +111,9 @@ class DecisionSetupViewModel internal constructor(
     private val _changes = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val changes: SharedFlow<Unit> = _changes.asSharedFlow()
 
-    /** The setup sheet opened: read the TypeSafe key state and the calibration job. */
+    /** The setup sheet opened: read the TypeSafe key state. */
     fun opened() {
-        _state.update { it.copy(error = null, calibrationError = null, verify = VerifyState.Idle) }
+        _state.update { it.copy(error = null, verify = VerifyState.Idle) }
         viewModelScope.launch {
             val key = runCatching { gateway.modelCredentials() }.fold(
                 onSuccess = { entries ->
@@ -140,7 +124,6 @@ class DecisionSetupViewModel internal constructor(
             )
             _state.update { it.copy(typesafeKey = key) }
         }
-        refreshCalibration()
     }
 
     /**
@@ -169,7 +152,6 @@ class DecisionSetupViewModel internal constructor(
                 _changes.tryEmit(Unit)
                 onSaved()
                 verify(request.assignment)
-                refreshCalibration()
             }
         }
     }
@@ -230,84 +212,5 @@ class DecisionSetupViewModel internal constructor(
                 onRemoved()
             }
         }
-    }
-
-    /** Start calibrating the assigned model; the gateway's refusal is shown as it words it. */
-    fun startCalibration() {
-        _state.update { it.copy(calibrationError = null) }
-        viewModelScope.launch {
-            runCatching { gateway.startCalibration() }.fold(
-                onSuccess = { status -> _state.update { it.copy(calibration = status) } },
-                onFailure = { e ->
-                    _state.update { it.copy(calibrationError = gatewayMessage(e)) }
-                    // A 409 means a run is already going: show it.
-                    refreshCalibration()
-                },
-            )
-        }
-    }
-
-    fun cancelCalibration() {
-        _state.update { it.copy(calibrationError = null) }
-        viewModelScope.launch {
-            runCatching { gateway.cancelCalibration() }.fold(
-                onSuccess = { status -> _state.update { it.copy(calibration = status) } },
-                onFailure = { e -> _state.update { it.copy(calibrationError = gatewayMessage(e)) } },
-            )
-        }
-    }
-
-    /** Read the calibration job once. Older gateways have no job, which leaves the state as it was. */
-    fun refreshCalibration() {
-        viewModelScope.launch {
-            runCatching { gateway.calibration() }.onSuccess(::applyCalibration)
-        }
-    }
-
-    /**
-     * Follow a running calibration: read its status every poll interval until
-     * it stops running, or until [MAX_POLL_FAILURES] reads in a row fail — then
-     * the last failure is shown. The screen calls this while it is started, so
-     * nothing polls in the background.
-     */
-    suspend fun followCalibration() {
-        var failures = 0
-        while (_state.value.calibration?.running == true) {
-            delay(pollIntervalMs)
-            val read = try {
-                Result.success(gateway.calibration())
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-            read.fold(
-                onSuccess = { status ->
-                    failures = 0
-                    applyCalibration(status)
-                    // A finished run stored its calibration in the config.
-                    if (status.state == "done") _changes.tryEmit(Unit)
-                },
-                onFailure = { e ->
-                    failures += 1
-                    if (failures >= MAX_POLL_FAILURES) {
-                        _state.update {
-                            it.copy(calibrationError = "Could not read the calibration's progress: ${gatewayMessage(e)}")
-                        }
-                        return
-                    }
-                },
-            )
-        }
-    }
-
-    private fun applyCalibration(status: DecisionCalibrationStatus) {
-        // While a run is going, an earlier start or read failure no longer applies.
-        _state.update { it.copy(calibration = status, calibrationError = if (status.running) null else it.calibrationError) }
-    }
-
-    internal companion object {
-        const val CALIBRATION_POLL_MS = 2_000L
-        const val MAX_POLL_FAILURES = 3
     }
 }

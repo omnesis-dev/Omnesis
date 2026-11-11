@@ -7,8 +7,6 @@ import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.BackendDecisionStatus
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
-import dev.omnesis.android.transport.dto.DecisionCalibration
-import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
 import dev.omnesis.android.transport.dto.DecisionEndpointConfig
 import dev.omnesis.android.transport.dto.DecisionModelOption
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
@@ -17,10 +15,6 @@ import dev.omnesis.android.transport.dto.ProviderDecisionPreset
 import dev.omnesis.android.transport.dto.ProviderPreset
 import dev.omnesis.android.transport.dto.ResolvedAssignment
 import java.net.URI
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
 import java.util.Locale
 
 /**
@@ -535,11 +529,9 @@ object DecisionSetup {
         val model: String,
         val backend: BackendStatus?,
         val preset: ProviderPreset?,
-        val assignment: ResolvedAssignment,
     ) {
         val value: String get() = "$key/$model"
         val decision: BackendDecisionStatus? get() = backend?.decision
-        val calibration: DecisionCalibration? get() = decision?.calibrations?.get(model)
     }
 
     fun assignment(overview: ModelsOverview): ResolvedAssignment? = overview.inference.assignments[ROLE]
@@ -554,7 +546,6 @@ object DecisionSetup {
             model = assignment.model.orEmpty(),
             backend = backend,
             preset = presetFor(overview, backend?.preset ?: assignment.preset),
-            assignment = assignment,
         )
     }
 
@@ -597,118 +588,4 @@ object DecisionSetup {
     } else {
         result.reason?.takeIf { it.isNotBlank() } ?: "The model did not answer."
     }
-
-    // --- Calibration ---
-
-    /** Which calibration panel the Decision card shows for the assigned model. */
-    sealed interface CalibrationPanel {
-        data object Uncalibrated : CalibrationPanel
-
-        /**
-         * A stored calibration. [note] tells of a later recalibration that
-         * failed or was cancelled, which leaves this one in force.
-         */
-        data class Calibrated(val calibration: DecisionCalibration?, val note: String? = null) : CalibrationPanel
-        data class Running(val status: DecisionCalibrationStatus) : CalibrationPanel
-        data class Failed(val error: String) : CalibrationPanel
-        data object Cancelled : CalibrationPanel
-    }
-
-    /**
-     * The panel for [assigned], given the job [status]. A run counts only when
-     * it is this assignment's, so a past run on another model never shows. A
-     * finished run shows its result while the overview that stores it reloads.
-     */
-    fun calibrationPanel(assigned: AssignedBackend, status: DecisionCalibrationStatus?): CalibrationPanel {
-        val mine = status?.takeIf { it.assignment != null && it.assignment == assigned.value }
-        val calibrated = assigned.assignment.calibrated == true
-        val failure = mine?.takeIf { it.state == "failed" }
-            ?.let { it.error?.takeIf { e -> e.isNotBlank() } ?: "The calibration failed." }
-        return when {
-            mine?.running == true -> CalibrationPanel.Running(mine)
-            mine?.state == "done" -> CalibrationPanel.Calibrated(mine.result ?: assigned.calibration)
-            failure != null && calibrated ->
-                CalibrationPanel.Calibrated(assigned.calibration, note = "Last recalibration failed: $failure")
-            failure != null -> CalibrationPanel.Failed(failure)
-            mine?.state == "cancelled" && calibrated ->
-                CalibrationPanel.Calibrated(assigned.calibration, note = "The last recalibration was cancelled.")
-            mine?.state == "cancelled" -> CalibrationPanel.Cancelled
-            calibrated -> CalibrationPanel.Calibrated(assigned.calibration)
-            else -> CalibrationPanel.Uncalibrated
-        }
-    }
-
-    const val UNCALIBRATED_WARNING =
-        "Thresholds were tuned on TypeSafe's Jev. Calibrate this model so they mean the same thing."
-
-    const val CALIBRATION_EXPLAINER =
-        "Calibrating sends about 300 invented emails (no personal data) to the model. On a hosted provider " +
-            "that costs a few cents; on a local CPU server it can take several minutes."
-
-    /**
-     * "Calibrated against Jev on Nov 10, 2026: keeps 95% of the reference emails Jev keeps and skips
-     * 88% of those it skips (before: 81% and 90%).", or, for a calibration stored without those
-     * shares, the agreement with Jev.
-     */
-    fun calibrationSummary(
-        calibration: DecisionCalibration?,
-        locale: Locale = Locale.getDefault(),
-        zone: ZoneId = ZoneId.systemDefault(),
-    ): String {
-        if (calibration == null) return "Calibrated against Jev."
-        val date = shortDate(calibration.fittedAt, locale, zone)
-        val head = "Calibrated against Jev" + (date?.let { " on $it" } ?: "")
-        val keeps = calibration.keeps
-        val skips = calibration.skips
-        if (keeps != null && skips != null) {
-            val keepsBefore = calibration.keepsBefore
-            val skipsBefore = calibration.skipsBefore
-            val before = if (keepsBefore != null && skipsBefore != null) {
-                " (before: ${percent(keepsBefore)} and ${percent(skipsBefore)})"
-            } else {
-                ""
-            }
-            return "$head: keeps ${percent(keeps)} of the reference emails Jev keeps and skips " +
-                "${percent(skips)} of those it skips$before."
-        }
-        val agreement = calibration.agreement ?: return "$head."
-        val before = calibration.agreementBefore?.let { " (was ${percent(it)})" }.orEmpty()
-        return "$head: agrees with Jev on ${percent(agreement)} of the reference emails$before."
-    }
-
-    /** "120 of 300 reference emails" (+ " · 3 failed"). */
-    fun calibrationProgressText(status: DecisionCalibrationStatus): String {
-        val base = if (status.total > 0) "${status.done} of ${status.total} reference emails" else "Starting…"
-        return if (status.failed > 0) "$base · ${status.failed} failed" else base
-    }
-
-    /** Share of a running calibration finished, 0–1. */
-    fun calibrationFraction(status: DecisionCalibrationStatus): Float =
-        if (status.total > 0) (status.done.toFloat() / status.total).coerceIn(0f, 1f) else 0f
-
-    /** The calibration line under the Decision card; [warning] when the model is not calibrated. */
-    data class CardLine(val text: String, val warning: Boolean)
-
-    /** The one-line calibration hint the capability list shows, for a model on a backend's decision API. */
-    fun cardCalibrationLine(overview: ModelsOverview, status: DecisionCalibrationStatus?): CardLine? {
-        val assigned = assignedBackend(overview) ?: return null
-        return when (val panel = calibrationPanel(assigned, status)) {
-            is CalibrationPanel.Running -> CardLine("Calibrating · ${calibrationProgressText(panel.status)}", warning = false)
-            is CalibrationPanel.Calibrated -> CardLine(
-                panel.calibration?.keeps?.let { "Calibrated against Jev · keeps ${percent(it)} of what Jev keeps" }
-                    ?: panel.calibration?.agreement?.let { "Calibrated against Jev · agrees on ${percent(it)}" }
-                    ?: "Calibrated against Jev",
-                warning = false,
-            )
-            CalibrationPanel.Uncalibrated, CalibrationPanel.Cancelled, is CalibrationPanel.Failed ->
-                CardLine("Not calibrated against Jev", warning = true)
-        }
-    }
-
-    private fun percent(share: Double): String = "${Math.round(share * 100)}%"
-
-    private fun shortDate(iso: String, locale: Locale, zone: ZoneId): String? = runCatching {
-        DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale).withZone(zone)
-            .format(Instant.parse(iso))
-    }.getOrNull()
 }
