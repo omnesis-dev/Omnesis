@@ -567,8 +567,8 @@ public struct CodexRemoveResult: Decodable, Equatable, Sendable {
 /// A resolved per-role assignment, flattened to the fields the phone needs:
 /// the discriminant kind (`local`/`http`/`anthropic`/`typesafe`/`decision`/
 /// `replay`/`disabled`/`unresolved`; an unknown kind decodes as is),
-/// availability, the unavailable reason, and the decision fields: the model,
-/// the backend's key and preset, and whether a calibration is stored.
+/// availability, the unavailable reason, and the decision fields: the model
+/// and the backend's key and preset.
 public struct ResolvedAssignment: Decodable, Equatable, Sendable {
     public let kind: String
     public let available: Bool?
@@ -578,7 +578,6 @@ public struct ResolvedAssignment: Decodable, Equatable, Sendable {
     public let preset: String?
     public let onHost: Bool?
     public let hasApiKey: Bool?
-    public let calibrated: Bool?
 
     public init(
         kind: String,
@@ -588,8 +587,7 @@ public struct ResolvedAssignment: Decodable, Equatable, Sendable {
         backendKey: String? = nil,
         preset: String? = nil,
         onHost: Bool? = nil,
-        hasApiKey: Bool? = nil,
-        calibrated: Bool? = nil
+        hasApiKey: Bool? = nil
     ) {
         self.kind = kind
         self.available = available
@@ -599,7 +597,6 @@ public struct ResolvedAssignment: Decodable, Equatable, Sendable {
         self.preset = preset
         self.onHost = onHost
         self.hasApiKey = hasApiKey
-        self.calibrated = calibrated
     }
 }
 

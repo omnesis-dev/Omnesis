@@ -430,8 +430,7 @@ struct ModelsContent: View {
             state: overview.inference.health?.warnings.contains { $0.role == cap.role } == true
                 ? .warn : ModelManagement.state(overview.inference.assignments[cap.role]),
             reason: overview.inference.assignments[cap.role]?.reason,
-            behaviorSummary: ModelManagement.behaviorSummary(role: cap.role, overview: overview)
-                ?? DecisionModelSetup.cardSummary(overview, role: cap.role),
+            behaviorSummary: ModelManagement.behaviorSummary(role: cap.role, overview: overview),
             onTap: DecisionModelSetup.isConfigurable(cap, in: overview) ? { pickerRole = cap } : nil,
             disabled: busy
         )

@@ -6,8 +6,8 @@ import Foundation
 // Wire types for setting up the Decision model: the decision API a provider
 // preset offers (`presets[].decision` of `GET /admin/models`), the decision
 // API a backend has (`inference.backends[key].decision`), and the results of
-// the verify, probe and calibration routes. Mirrors `provider-presets.ts`,
-// `decision-api.ts`, `decision-calibration.ts` and `backends.ts` in
+// the verify and probe routes. Mirrors `provider-presets.ts`,
+// `decision-api.ts` and `backends.ts` in
 // `@omnesis/core`, and `decision-tools.ts` in the gateway. Every field the
 // setup flow can live without decodes as optional, so a newer gateway's
 // additions and an older gateway's omissions both decode.
@@ -121,49 +121,6 @@ public struct ProviderDecisionPreset: Decodable, Equatable, Hashable, Sendable {
     }
 }
 
-/// A calibration onto Jev's score scale stored for one model. Mirrors
-/// `DecisionCalibration`; the fitted knots themselves are not needed here.
-public struct DecisionCalibration: Decodable, Equatable, Hashable, Sendable {
-    public let reference: String?
-    /// ISO time of the fit.
-    public let fittedAt: String?
-    public let samples: Int?
-    /// Share (0–1) of reference items where the calibrated model agrees with Jev.
-    public let agreement: Double?
-    /// The same share before calibration.
-    public let agreementBefore: Double?
-    /// Share (0–1) of the reference items Jev keeps that the calibrated model keeps.
-    public let keeps: Double?
-    /// The same share before calibration.
-    public let keepsBefore: Double?
-    /// Share (0–1) of the reference items Jev skips that the calibrated model skips.
-    public let skips: Double?
-    /// The same share before calibration.
-    public let skipsBefore: Double?
-
-    public init(
-        reference: String? = nil,
-        fittedAt: String? = nil,
-        samples: Int? = nil,
-        agreement: Double? = nil,
-        agreementBefore: Double? = nil,
-        keeps: Double? = nil,
-        keepsBefore: Double? = nil,
-        skips: Double? = nil,
-        skipsBefore: Double? = nil
-    ) {
-        self.reference = reference
-        self.fittedAt = fittedAt
-        self.samples = samples
-        self.agreement = agreement
-        self.agreementBefore = agreementBefore
-        self.keeps = keeps
-        self.keepsBefore = keepsBefore
-        self.skips = skips
-        self.skipsBefore = skipsBefore
-    }
-}
-
 /// A backend's decision API (`inference.backends.<key>.decision`) as
 /// `/admin/models` reports it. Mirrors `BackendDecisionStatus`; the API key is
 /// the backend's own.
@@ -177,8 +134,6 @@ public struct BackendDecisionStatus: Decodable, Equatable, Hashable, Sendable {
     public let hasApiKey: Bool
     /// Why the backend's key could not be read, when it could not.
     public let apiKeySecretError: String?
-    /// Calibrations stored for this backend, by model id.
-    public let calibrations: [String: DecisionCalibration]
 
     public init(
         url: String,
@@ -186,8 +141,7 @@ public struct BackendDecisionStatus: Decodable, Equatable, Hashable, Sendable {
         auth: String? = "bearer",
         onHost: Bool = false,
         hasApiKey: Bool = false,
-        apiKeySecretError: String? = nil,
-        calibrations: [String: DecisionCalibration] = [:]
+        apiKeySecretError: String? = nil
     ) {
         self.url = url
         self.protocol = `protocol`
@@ -195,11 +149,10 @@ public struct BackendDecisionStatus: Decodable, Equatable, Hashable, Sendable {
         self.onHost = onHost
         self.hasApiKey = hasApiKey
         self.apiKeySecretError = apiKeySecretError
-        self.calibrations = calibrations
     }
 
     private enum CodingKeys: String, CodingKey {
-        case url, `protocol`, auth, onHost, hasApiKey, apiKeySecretError, calibrations
+        case url, `protocol`, auth, onHost, hasApiKey, apiKeySecretError
     }
 
     public init(from decoder: Decoder) throws {
@@ -210,7 +163,6 @@ public struct BackendDecisionStatus: Decodable, Equatable, Hashable, Sendable {
         onHost = try values.decodeIfPresent(Bool.self, forKey: .onHost) ?? false
         hasApiKey = try values.decodeIfPresent(Bool.self, forKey: .hasApiKey) ?? false
         apiKeySecretError = try values.decodeIfPresent(String.self, forKey: .apiKeySecretError)
-        calibrations = try values.decodeIfPresent([String: DecisionCalibration].self, forKey: .calibrations) ?? [:]
     }
 }
 
@@ -276,64 +228,5 @@ public struct DecisionProbeResult: Decodable, Equatable, Sendable {
         models = try values.decodeIfPresent([String].self, forKey: .models) ?? []
         listed = try values.decodeIfPresent(Bool.self, forKey: .listed) ?? false
         reason = try values.decodeIfPresent(String.self, forKey: .reason)
-    }
-}
-
-/// `GET|POST|DELETE /admin/models/decision/calibration`: the gateway's one
-/// calibration job. `state` is `idle`, `running`, `done`, `failed` or
-/// `cancelled`; an unknown state decodes as is.
-public struct DecisionCalibrationStatus: Decodable, Equatable, Sendable {
-    public let state: String
-    /// The assignment being (or last) calibrated, `<backend>/<model>`.
-    public let assignment: String?
-    public let done: Int
-    public let total: Int
-    public let failed: Int
-    public let startedAt: String?
-    public let finishedAt: String?
-    public let result: DecisionCalibration?
-    public let error: String?
-
-    public var isRunning: Bool {
-        state == "running"
-    }
-
-    public init(
-        state: String,
-        assignment: String? = nil,
-        done: Int = 0,
-        total: Int = 0,
-        failed: Int = 0,
-        startedAt: String? = nil,
-        finishedAt: String? = nil,
-        result: DecisionCalibration? = nil,
-        error: String? = nil
-    ) {
-        self.state = state
-        self.assignment = assignment
-        self.done = done
-        self.total = total
-        self.failed = failed
-        self.startedAt = startedAt
-        self.finishedAt = finishedAt
-        self.result = result
-        self.error = error
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case state, assignment, done, total, failed, startedAt, finishedAt, result, error
-    }
-
-    public init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        state = try values.decodeIfPresent(String.self, forKey: .state) ?? "idle"
-        assignment = try values.decodeIfPresent(String.self, forKey: .assignment)
-        done = try values.decodeIfPresent(Int.self, forKey: .done) ?? 0
-        total = try values.decodeIfPresent(Int.self, forKey: .total) ?? 0
-        failed = try values.decodeIfPresent(Int.self, forKey: .failed) ?? 0
-        startedAt = try values.decodeIfPresent(String.self, forKey: .startedAt)
-        finishedAt = try values.decodeIfPresent(String.self, forKey: .finishedAt)
-        result = try values.decodeIfPresent(DecisionCalibration.self, forKey: .result)
-        error = try values.decodeIfPresent(String.self, forKey: .error)
     }
 }

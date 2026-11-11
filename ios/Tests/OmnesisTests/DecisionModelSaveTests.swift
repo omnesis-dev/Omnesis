@@ -5,7 +5,7 @@
 import XCTest
 
 /// The `PATCH /admin/config` bodies a Decision model choice saves, and the
-/// verify and calibration wording the sheet shows.
+/// verify wording the sheet shows.
 final class DecisionModelSaveTests: XCTestCase {
     private typealias Setup = DecisionModelSetup
 
@@ -256,121 +256,6 @@ final class DecisionModelSaveTests: XCTestCase {
         let reason = "The API key was refused (HTTP 401). invalid key"
         XCTAssertEqual(Setup.verifyText(DecisionVerifyResult(ok: false, status: 401, reason: reason), model: "kev"), reason)
         XCTAssertEqual(Setup.verifyText(DecisionVerifyResult(ok: false, reason: "  "), model: "kev"), "The model did not answer.")
-    }
-
-    // MARK: - Calibration
-
-    private let utc = TimeZone(identifier: "UTC")!
-    private let english = Locale(identifier: "en_US")
-
-    func testCalibrationStateIsOnlyForABackendsDecisionAPI() {
-        XCTAssertNil(Setup.calibrationState(DecisionFixtures.overview(decision: ResolvedAssignment(kind: "typesafe", model: "jev"))))
-        XCTAssertNil(Setup.calibrationState(DecisionFixtures.overview()))
-        let uncalibrated = DecisionFixtures.overview(
-            decision: ResolvedAssignment(kind: "decision", model: "kev", backendKey: "ollaya", calibrated: false)
-        )
-        XCTAssertEqual(Setup.calibrationState(uncalibrated), .uncalibrated)
-        XCTAssertEqual(Setup.cardSummary(uncalibrated, role: "decision"), "Not calibrated to Jev's scale")
-        XCTAssertNil(Setup.cardSummary(uncalibrated, role: "agent"))
-        let stored = DecisionCalibration(fittedAt: "2026-11-08T14:30:00.000Z", agreement: 0.918, agreementBefore: 0.71)
-        let calibrated = DecisionFixtures.overview(
-            decision: ResolvedAssignment(kind: "decision", model: "kev", backendKey: "ollaya", calibrated: true),
-            backends: ["ollaya": DecisionFixtures.decisionBackend(
-                "http://127.0.0.1:11435/v1/systemone",
-                BackendDecisionStatus(url: "http://127.0.0.1:11435/v1/systemone", calibrations: ["kev": stored])
-            )]
-        )
-        XCTAssertEqual(Setup.calibrationState(calibrated), .calibrated(stored))
-        XCTAssertEqual(Setup.cardSummary(calibrated, role: "decision"), "Calibrated · agrees with Jev on 92%")
-        // An older gateway that reports `calibrated` without the stored record.
-        let flagOnly = DecisionFixtures.overview(
-            decision: ResolvedAssignment(kind: "decision", model: "kev", backendKey: "ollaya", calibrated: true)
-        )
-        XCTAssertEqual(Setup.calibrationState(flagOnly), .calibrated(nil))
-        XCTAssertEqual(Setup.cardSummary(flagOnly, role: "decision"), "Calibrated to Jev's scale")
-    }
-
-    func testCalibratedTextLeadsWithKeepsAndSkipsWhenTheGatewaySendsThem() {
-        let fit = DecisionCalibration(
-            fittedAt: "2026-11-08T14:30:00Z",
-            agreement: 0.92,
-            agreementBefore: 0.71,
-            keeps: 0.951,
-            keepsBefore: 0.78,
-            skips: 0.884,
-            skipsBefore: 0.93
-        )
-        XCTAssertEqual(
-            Setup.calibratedText(fit, locale: english, timeZone: utc),
-            "Calibrated against Jev on Nov 8, 2026: keeps 95% of the reference emails Jev keeps and skips 88% "
-                + "of those it skips (before: 78% and 93%)."
-        )
-        let noBefore = DecisionCalibration(fittedAt: "2026-11-08T14:30:00Z", keeps: 0.95, skips: 0.9)
-        XCTAssertEqual(
-            Setup.calibratedText(noBefore, locale: english, timeZone: utc),
-            "Calibrated against Jev on Nov 8, 2026: keeps 95% of the reference emails Jev keeps and skips 90% "
-                + "of those it skips."
-        )
-        // Keeps without skips is not the new method's record: the agreement sentence stands.
-        let partial = DecisionCalibration(fittedAt: "2026-11-08T14:30:00Z", agreement: 0.9, keeps: 0.95)
-        XCTAssertEqual(
-            Setup.calibratedText(partial, locale: english, timeZone: utc),
-            "Calibrated against Jev on Nov 8, 2026: agrees with Jev on 90% of the reference emails."
-        )
-        let overview = DecisionFixtures.overview(
-            decision: ResolvedAssignment(kind: "decision", model: "kev", backendKey: "ollaya", calibrated: true),
-            backends: ["ollaya": DecisionFixtures.decisionBackend(
-                "http://127.0.0.1:11435/v1/systemone",
-                BackendDecisionStatus(url: "http://127.0.0.1:11435/v1/systemone", calibrations: ["kev": fit])
-            )]
-        )
-        XCTAssertEqual(Setup.cardSummary(overview, role: "decision"), "Calibrated · keeps 95% of what Jev keeps")
-    }
-
-    func testAFinishedRunDescribesItsOwnFit() {
-        let stored = DecisionCalibration(agreement: 0.8)
-        let fresh = DecisionCalibration(keeps: 0.95, skips: 0.9)
-        let done = DecisionCalibrationStatus(state: "done", assignment: "ollaya/kev", result: fresh)
-        XCTAssertEqual(Setup.shownCalibration(stored: stored, job: done), fresh)
-        let running = DecisionCalibrationStatus(state: "running", assignment: "ollaya/kev")
-        XCTAssertEqual(Setup.shownCalibration(stored: stored, job: running), stored)
-        XCTAssertEqual(Setup.shownCalibration(stored: stored, job: nil), stored)
-        XCTAssertNil(Setup.shownCalibration(stored: nil, job: DecisionCalibrationStatus(state: "done")))
-    }
-
-    func testCalibratedTextNamesTheDateAndAgreement() {
-        let full = DecisionCalibration(fittedAt: "2026-11-08T14:30:00Z", agreement: 0.92, agreementBefore: 0.714)
-        XCTAssertEqual(
-            Setup.calibratedText(full, locale: english, timeZone: utc),
-            "Calibrated against Jev on Nov 8, 2026: agrees with Jev on 92% of the reference emails (was 71%)."
-        )
-        let noBefore = DecisionCalibration(fittedAt: "2026-11-08T14:30:00Z", agreement: 0.9)
-        XCTAssertEqual(
-            Setup.calibratedText(noBefore, locale: english, timeZone: utc),
-            "Calibrated against Jev on Nov 8, 2026: agrees with Jev on 90% of the reference emails."
-        )
-        XCTAssertEqual(Setup.calibratedText(nil, locale: english, timeZone: utc), "Calibrated against Jev.")
-        XCTAssertEqual(
-            Setup.uncalibratedText,
-            "Thresholds were tuned on TypeSafe's Jev. Calibrate this model so they mean the same thing."
-        )
-    }
-
-    func testCalibrationProgressAndOutcomeText() {
-        let running = DecisionCalibrationStatus(state: "running", done: 120, total: 300)
-        XCTAssertEqual(Setup.calibrationProgressText(running), "120 of 300 reference emails")
-        let failing = DecisionCalibrationStatus(state: "running", done: 120, total: 300, failed: 2)
-        XCTAssertEqual(Setup.calibrationProgressText(failing), "120 of 300 reference emails · 2 failed")
-        XCTAssertEqual(Setup.calibrationProgressText(DecisionCalibrationStatus(state: "running")), "Starting…")
-        let error = "Only 12 of 300 reference emails were answered: Nothing answered at http://127.0.0.1:11435/v1/systemone."
-        XCTAssertEqual(Setup.calibrationOutcomeText(DecisionCalibrationStatus(state: "failed", error: error)), error)
-        XCTAssertEqual(Setup.calibrationOutcomeText(DecisionCalibrationStatus(state: "failed")), "Calibration failed.")
-        XCTAssertEqual(Setup.calibrationOutcomeText(DecisionCalibrationStatus(state: "cancelled")), "Calibration cancelled.")
-        XCTAssertNil(Setup.calibrationOutcomeText(DecisionCalibrationStatus(state: "done")))
-        XCTAssertNil(Setup.calibrationOutcomeText(DecisionCalibrationStatus(state: "idle")))
-        XCTAssertTrue(Setup.calibrationExplanation(onHost: true).contains("several minutes"))
-        XCTAssertTrue(Setup.calibrationExplanation(onHost: false).contains("a few cents"))
-        XCTAssertTrue(Setup.calibrationExplanation(onHost: false).contains("no personal data"))
     }
 }
 
