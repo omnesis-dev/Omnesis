@@ -5,12 +5,14 @@
 import SwiftUI
 
 /// Step two of changing the Decision model: what the chosen provider needs.
-/// A new backend asks for its name, its URL (or the values that complete a
-/// preset's URL), an API key when the provider takes one, and the model; a
-/// backend already set up asks for the model and lets its URL and key be
-/// changed; TypeSafe asks for the model and its key. A local or hand-added
-/// server is asked for its models. A URL off the gateway's host asks for
-/// cloud-inference consent before saving, when that is still off.
+/// A new backend asks for its name, its decision URL (or the values that
+/// complete a preset's URL), an API key when the provider takes one — the one
+/// key serves its chat models too when the provider has them — and the model.
+/// A backend gaining decisions asks only for the model: it keeps its key. A
+/// backend already answering decisions asks for the model and lets its URL
+/// and key be changed; TypeSafe asks for the model and its key. A local or
+/// hand-added server is asked for its models. A URL off the gateway's host
+/// asks for cloud-inference consent before saving, when that is still off.
 @available(iOS 17.0, *)
 struct DecisionBackendForm: View {
     let choice: DecisionModelSetup.Choice
@@ -85,37 +87,56 @@ struct DecisionBackendForm: View {
 
     // MARK: - What the choice is
 
-    private var preset: DecisionPresetView? {
+    private var preset: ProviderPreset? {
         switch choice {
         case .preset(let preset): preset
-        case .existing(let backend): backend.preset
+        case .existing(let backend), .enable(let backend): backend.preset
         case .custom: nil
         }
     }
 
+    /// A backend whose decision API is set up.
     private var existing: DecisionModelSetup.ExistingBackend? {
         if case .existing(let backend) = choice { return backend }
         return nil
     }
 
+    /// A backend gaining its provider's decision API.
+    private var enabling: DecisionModelSetup.ExistingBackend? {
+        if case .enable(let backend) = choice { return backend }
+        return nil
+    }
+
     private var isTypeSafe: Bool {
-        preset?.isTypeSafe == true && existing == nil
+        if case .preset(let preset) = choice { return preset.isTypeSafe }
+        return false
     }
 
     private var isNewBackend: Bool {
-        existing == nil && !isTypeSafe
+        switch choice {
+        case .preset(let preset): !preset.isTypeSafe
+        case .custom: true
+        case .existing, .enable: false
+        }
+    }
+
+    /// Whether the decision URL comes from the preset, completed by the
+    /// operator's values when it has `{key}` placeholders.
+    private var urlFromPreset: Bool {
+        (isNewBackend || enabling != nil) && preset?.decision != nil && !urlEditable
     }
 
     /// The backend's name once it exists; the header names the provider.
     private var title: String {
-        existing?.key ?? "Set up"
+        existing?.key ?? enabling?.key ?? "Set up"
     }
 
     /// Whether the URL is typed in full: a backend already set up, a custom
-    /// server, or a local preset whose port the operator may have changed.
+    /// server, or a new local preset whose port the operator may have changed.
     private var urlEditable: Bool {
         if existing != nil { return true }
-        return isNewBackend && preset?.urlParams.isEmpty != false && (preset == nil || preset?.isLocal == true)
+        guard isNewBackend else { return false }
+        return preset == nil || (preset?.isLocal == true && preset?.decision?.urlParams.isEmpty != false)
     }
 
     private var keyField: DecisionModelSetup.KeyField {
@@ -133,11 +154,11 @@ struct DecisionBackendForm: View {
         return DecisionModelSetup.validateName(name, in: overview)
     }
 
-    /// The endpoint this form saves, or nil while it is incomplete.
+    /// The decision endpoint this form saves, or nil while it is incomplete.
     private var resolvedURL: String? {
-        if isTypeSafe { return overview.inference.typesafe?.url ?? preset?.url }
-        if isNewBackend, let preset, !preset.urlParams.isEmpty {
-            guard case .ready(let filled) = DecisionModelSetup.fillURL(preset, values: paramValues) else { return nil }
+        if isTypeSafe { return overview.inference.typesafe?.url ?? preset?.decision?.url }
+        if urlFromPreset, let decision = preset?.decision {
+            guard case .ready(let filled) = DecisionModelSetup.fillURL(decision, values: paramValues) else { return nil }
             return filled
         }
         let typed = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -160,20 +181,26 @@ struct DecisionBackendForm: View {
     private var needsConsent: Bool {
         if isTypeSafe { return DecisionModelSetup.typesafeNeedsRemoteConsent(in: overview) }
         if let existing { return DecisionModelSetup.needsRemoteConsent(existing, url: url, in: overview) }
-        return resolvedURL.map { DecisionModelSetup.needsRemoteConsent(url: $0, in: overview) } ?? false
+        guard let endpoint = resolvedURL else { return false }
+        let openAIURL = isNewBackend ? preset?.defaultUrl : nil
+        return DecisionModelSetup.needsRemoteConsent(urls: [endpoint] + [openAIURL].compactMap(\.self), in: overview)
     }
 
-    /// What to ask a new local or hand-added server for its models; nil for
-    /// anything else, or while the URL is incomplete.
+    /// What to ask a local or hand-added server for its models before it is
+    /// saved; nil for anything else, or while the URL is incomplete. A
+    /// backend gaining decisions lends its saved key.
     private var probeRequest: DecisionProbeRequest? {
-        guard isNewBackend, preset == nil || preset?.isLocal == true, let endpoint = resolvedURL else { return nil }
+        guard isNewBackend || enabling != nil, preset == nil || preset?.isLocal == true, let endpoint = resolvedURL else {
+            return nil
+        }
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         return DecisionProbeRequest(
             url: endpoint,
-            auth: preset?.auth,
+            auth: preset?.decision?.auth,
             apiKey: key.isEmpty ? nil : key,
-            protocol: preset?.protocol,
-            preset: preset?.id
+            protocol: preset?.decision?.protocol,
+            preset: preset?.id,
+            backendKey: enabling?.key
         )
     }
 
@@ -198,7 +225,7 @@ struct DecisionBackendForm: View {
                     probeNote: probeNote
                 )
                 if let existing {
-                    DecisionOutlineButton(title: "Remove \(existing.key)", color: Theme.danger) { confirmRemove = true }
+                    DecisionOutlineButton(title: removeTitle(existing), color: Theme.danger) { confirmRemove = true }
                         .disabled(saving)
                 }
             }
@@ -226,15 +253,29 @@ struct DecisionBackendForm: View {
         } message: {
             Text(DecisionModelSetup.consentMessage(model: model, provider: consentProvider))
         }
-        .confirmationDialog("Remove \(existing?.key ?? "")?", isPresented: $confirmRemove, titleVisibility: .visible) {
-            Button("Remove", role: .destructive) { remove() }
+        .confirmationDialog(
+            existing.map { "\(removeTitle($0))?" } ?? "",
+            isPresented: $confirmRemove,
+            titleVisibility: .visible
+        ) {
+            Button(existing?.status.servesOpenAI == true ? "Stop using" : "Remove", role: .destructive) { remove() }
         } message: {
-            Text("The backend and its API key are deleted. A Decision model that uses it is turned off.")
+            Text(removeMessage)
         }
     }
 
     private var consentProvider: String {
         preset?.name ?? resolvedURL.map(DecisionProviderList.hostLabel) ?? title
+    }
+
+    private func removeTitle(_ backend: DecisionModelSetup.ExistingBackend) -> String {
+        backend.status.servesOpenAI ? "Stop using \(backend.key) for decisions" : "Remove \(backend.key)"
+    }
+
+    private var removeMessage: String {
+        existing?.status.servesOpenAI == true
+            ? "Its decision API is removed; its chat models and API key stay. A Decision model that uses it is turned off."
+            : "The backend and its API key are deleted. A Decision model that uses it is turned off."
     }
 
     private var header: some View {
@@ -246,24 +287,32 @@ struct DecisionBackendForm: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
             }
-            Text(headerNote)
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if !headerNote.isEmpty {
+                Text(headerNote)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             links
         }
     }
 
     private var headerNote: String {
         if existing != nil { return "Already set up. Pick the model it should answer with." }
-        if let note = preset?.note { return DecisionProviderList.plainNote(note) }
-        return preset == nil ? "A server that answers System One decisions, on this machine or elsewhere." : ""
+        if let enabling {
+            return "Adds \(preset?.name ?? "its provider")'s decision models to \(enabling.key), "
+                + "with the API key it already has."
+        }
+        guard let preset else { return "A server that answers System One decisions, on this machine or elsewhere." }
+        let note = preset.decision?.note.map(DecisionProviderList.plainNote)
+        let both = isNewBackend && preset.defaultUrl != nil ? "Its chat models are set up too, with the same API key." : nil
+        return [note, both].compactMap(\.self).joined(separator: " ")
     }
 
     @ViewBuilder
     private var links: some View {
-        let keyLink = keyField.shown ? preset?.keyUrl.flatMap(URL.init(string:)) : nil
-        let docsLink = preset?.docsUrl.flatMap(URL.init(string:))
+        let keyLink = keyField.shown ? preset?.decision?.keyUrl.flatMap(URL.init(string:)) : nil
+        let docsLink = preset?.decision?.docsUrl.flatMap(URL.init(string:))
         if keyLink != nil || docsLink != nil {
             HStack(spacing: Theme.Spacing.lg) {
                 if let keyLink {
@@ -280,16 +329,7 @@ struct DecisionBackendForm: View {
 
     @ViewBuilder
     private var endpointFields: some View {
-        if isNewBackend, let preset, !preset.urlParams.isEmpty {
-            ForEach(preset.urlParams) { param in
-                DecisionTextField(
-                    label: param.label,
-                    placeholder: param.placeholder ?? "",
-                    text: paramBinding(param.key)
-                )
-            }
-            endpointCaption(resolvedURL ?? preset.url)
-        } else if urlEditable {
+        if urlEditable {
             DecisionTextField(
                 label: "URL",
                 placeholder: "http://127.0.0.1:8080/v1/systemone",
@@ -297,14 +337,24 @@ struct DecisionBackendForm: View {
                 keyboard: .URL,
                 error: urlError
             )
-        } else if isNewBackend, let preset {
-            endpointCaption(preset.url)
+        } else if urlFromPreset, let decision = preset?.decision {
+            ForEach(decision.urlParams) { param in
+                DecisionTextField(
+                    label: param.label,
+                    placeholder: param.placeholder ?? "",
+                    text: paramBinding(param.key)
+                )
+            }
+            endpointCaption("Decision endpoint", resolvedURL ?? decision.url)
+            if isNewBackend, let openAIURL = preset?.defaultUrl {
+                endpointCaption("Chat models (OpenAI-compatible)", openAIURL)
+            }
         }
     }
 
-    private func endpointCaption(_ value: String) -> some View {
+    private func endpointCaption(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Endpoint")
+            Text(label)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
             Text(value)
@@ -324,7 +374,7 @@ struct DecisionBackendForm: View {
                 placeholder: keyPlaceholder(field),
                 text: $apiKey,
                 secure: true,
-                error: existing?.status.apiKeySecretError
+                error: existing?.decision?.apiKeySecretError
             )
         }
     }
@@ -347,7 +397,7 @@ struct DecisionBackendForm: View {
     // MARK: - Actions
 
     /// Ask whether a TypeSafe key is stored, and a saved local or hand-added
-    /// backend for its models.
+    /// decision server for its models.
     private func prepare() async {
         guard !isPreview else { return }
         if isTypeSafe, typesafeListed == nil {
@@ -365,9 +415,9 @@ struct DecisionBackendForm: View {
         }
     }
 
-    /// Ask a new server for its models once the URL and key stop changing.
-    /// A gateway without the route, or any other failed request, leaves the
-    /// preset's suggestions as they are.
+    /// Ask a server not saved yet for its models once the URL and key stop
+    /// changing. A gateway without the route, or any other failed request,
+    /// leaves the preset's suggestions as they are.
     private func probeUnsaved() async {
         guard !isPreview, let request = probeRequest else { return }
         do {
@@ -395,7 +445,7 @@ struct DecisionBackendForm: View {
         guard let endpoint = resolvedURL else { return }
         let draft = DecisionModelSetup.Draft(
             choice: choice,
-            name: existing?.key ?? name,
+            name: existing?.key ?? enabling?.key ?? name,
             url: endpoint,
             apiKey: apiKey,
             model: model,

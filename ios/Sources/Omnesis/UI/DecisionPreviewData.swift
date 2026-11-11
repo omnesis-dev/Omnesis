@@ -6,100 +6,152 @@ import SwiftUI
 
 /// Decision model fixtures for previews and snapshots: a slice of the
 /// gateway's provider presets (names and URLs as the gateway ships them, with
-/// illustrative context sizes and prices) and the Models overview in each
-/// state the Decision sheet renders.
+/// illustrative context sizes and prices), backends serving chat models,
+/// decision models or both, and the Models overview in each state the
+/// Decision sheet renders.
 @available(iOS 17.0, *)
 enum DecisionPreviewData {
-    static let ollaya = DecisionPresetView(
+    static let ollaya = ProviderPreset(
         id: "ollaya",
         name: "Ollaya",
         kind: "local",
-        url: "http://127.0.0.1:11435/v1/systemone",
-        docsUrl: "https://ollaya.dev/docs/api",
-        note: "Runs open decision models on this machine. Pull a model with `ollaya pull <model>` first.",
-        models: ["kev", "laya", "d1"].map { DecisionModelOption(id: $0, source: "preset") }
+        capabilities: ["decision"],
+        decision: ProviderDecisionPreset(
+            url: "http://127.0.0.1:11435/v1/systemone",
+            docsUrl: "https://ollaya.dev/docs/api",
+            note: "Runs open decision models on this machine. Pull a model with `ollaya pull <model>` first.",
+            models: ["kev", "laya", "d1"].map { DecisionModelOption(id: $0, source: "preset") }
+        )
     )
 
-    static let ollama = DecisionPresetView(
+    static let ollama = ProviderPreset(
         id: "ollama",
         name: "Ollama",
         kind: "local",
-        url: "http://127.0.0.1:11434/v1/systemone",
-        docsUrl: "https://docs.ollama.com/api/systemone",
-        note: "Ollama 0.40 or later serves decision models. Pull a model with `ollama pull <model>` first.",
-        models: ["d3:4b", "kev:4b-q8_0"].map { DecisionModelOption(id: $0, source: "preset") }
+        capabilities: ["decision"],
+        decision: ProviderDecisionPreset(
+            url: "http://127.0.0.1:11434/v1/systemone",
+            docsUrl: "https://docs.ollama.com/api/systemone",
+            note: "Ollama serves decision models too. Pull a model with `ollama pull <model>` first.",
+            models: ["d3:4b", "kev:4b-q8_0"].map { DecisionModelOption(id: $0, source: "preset") }
+        )
     )
 
-    static let typesafe = DecisionPresetView(
+    static let typesafe = ProviderPreset(
         id: "typesafe",
         name: "TypeSafe",
-        kind: "cloud",
-        url: "https://api.typesafe.ai/v1/systemone",
-        keyRequired: true,
-        builtIn: "typesafe",
-        docsUrl: "https://docs.typesafe.ai/systemone",
-        keyUrl: "https://console.typesafe.ai/keys",
-        note: "Jev, the model every decision threshold was tuned on.",
-        models: [
-            DecisionModelOption(id: "jev-1.14.0", contextTokens: 32768, inputCostPerMillion: 0.2, source: "preset"),
-            DecisionModelOption(id: "jev-1.13.0", source: "preset"),
-        ]
+        capabilities: ["decision"],
+        decision: ProviderDecisionPreset(
+            url: "https://api.typesafe.ai/v1/systemone",
+            keyRequired: true,
+            docsUrl: "https://docs.typesafe.ai/api",
+            keyUrl: "https://console.typesafe.ai/keys",
+            note: "Jev, the model every decision threshold was tuned on.",
+            models: [
+                DecisionModelOption(id: "jev-1.14.0", contextTokens: 32768, inputCostPerMillion: 0.2, source: "preset"),
+                DecisionModelOption(id: "jev-1.13.0", source: "preset"),
+            ]
+        ),
+        builtIn: "typesafe"
     )
 
-    static let openRouter = DecisionPresetView(
+    /// A provider with both APIs: chat models and decision models, one key.
+    static let openRouter = ProviderPreset(
         id: "openrouter",
         name: "OpenRouter",
-        kind: "cloud",
-        url: "https://openrouter.ai/api/v1/systemone",
-        keyRequired: true,
         modelsDevId: "openrouter",
-        docsUrl: "https://openrouter.ai/docs/guides/community/jev",
-        keyUrl: "https://openrouter.ai/keys",
-        note: "One key for most hosted decision models.",
-        models: [
-            DecisionModelOption(id: "typesafe/jev-1.14", contextTokens: 32768, inputCostPerMillion: 0.25, source: "preset"),
-            DecisionModelOption(id: "liquid/d1.1", contextTokens: 131_072, inputCostPerMillion: 0.05, source: "preset"),
-            DecisionModelOption(id: "cloudflare/clef-flash", contextTokens: 8192, inputCostPerMillion: 0, source: "models.dev"),
-        ]
+        defaultUrl: "https://openrouter.ai/api",
+        capabilities: ["agent", "decision"],
+        decision: ProviderDecisionPreset(
+            url: "https://openrouter.ai/api/v1/systemone",
+            keyRequired: true,
+            modelsDevId: "openrouter",
+            docsUrl: "https://openrouter.ai/docs/guides/community/jev",
+            keyUrl: "https://openrouter.ai/keys",
+            note: "One key for most hosted decision models.",
+            models: [
+                DecisionModelOption(id: "typesafe/jev-1.14", contextTokens: 32768, inputCostPerMillion: 0.25, source: "preset"),
+                DecisionModelOption(id: "liquid/d1.1", contextTokens: 131_072, inputCostPerMillion: 0.05, source: "preset"),
+                DecisionModelOption(id: "cloudflare/clef-flash", contextTokens: 8192, inputCostPerMillion: 0, source: "models.dev"),
+            ]
+        )
     )
 
-    static let cloudflare = DecisionPresetView(
+    /// Another provider with both APIs, set up below for chat only.
+    static let fireworks = ProviderPreset(
+        id: "fireworks",
+        name: "Fireworks AI",
+        modelsDevId: "fireworks-ai",
+        defaultUrl: "https://api.fireworks.ai/inference",
+        capabilities: ["agent", "embed", "decision"],
+        decision: ProviderDecisionPreset(
+            url: "https://api.fireworks.ai/inference/v1/systemone",
+            keyRequired: true,
+            docsUrl: "https://docs.fireworks.ai/api-reference/post-systemone",
+            keyUrl: "https://app.fireworks.ai/settings/users/api-keys",
+            models: [DecisionModelOption(id: "accounts/fireworks/models/rune", source: "preset")]
+        )
+    )
+
+    static let cloudflare = ProviderPreset(
         id: "cloudflare",
         name: "Cloudflare Workers AI",
-        kind: "cloud",
-        url: "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run",
-        protocol: "workers-ai",
-        keyRequired: true,
-        modelsDevId: "cloudflare-workers-ai",
-        docsUrl: "https://developers.cloudflare.com/workers-ai/models/clef/",
-        keyUrl: "https://dash.cloudflare.com/profile/api-tokens",
-        note: "Workers AI shortens long text to fit Clef's context without saying so.",
-        urlParams: [
-            DecisionPresetURLParam(key: "account", label: "Account ID", placeholder: "0123456789abcdef0123456789abcdef"),
-        ],
-        models: ["@cf/cloudflare/clef-flash", "@cf/cloudflare/clef"].map { DecisionModelOption(id: $0, source: "preset") }
+        capabilities: ["decision"],
+        decision: ProviderDecisionPreset(
+            url: "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run",
+            protocol: "workers-ai",
+            keyRequired: true,
+            modelsDevId: "cloudflare-workers-ai",
+            docsUrl: "https://developers.cloudflare.com/workers-ai/models/clef/",
+            keyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+            note: "Workers AI shortens long text to fit Clef's context without saying so.",
+            urlParams: [
+                DecisionPresetURLParam(key: "account", label: "Account ID", placeholder: "0123456789abcdef0123456789abcdef"),
+            ],
+            models: ["@cf/cloudflare/clef-flash", "@cf/cloudflare/clef"].map { DecisionModelOption(id: $0, source: "preset") }
+        )
     )
 
-    static let fastino = DecisionPresetView(
+    /// A hosted provider that serves only decision models.
+    static let fastino = ProviderPreset(
         id: "fastino",
         name: "Fastino",
-        kind: "cloud",
-        url: "https://api.fastino.ai/v1/systemone",
-        auth: "x-api-key",
-        scoreField: "expected_level",
-        keyRequired: true,
-        docsUrl: "https://docs.fastino.ai/glide",
-        keyUrl: "https://app.fastino.ai/api-keys",
-        models: [DecisionModelOption(id: "fastino/GLiDE", source: "preset")]
+        capabilities: ["decision"],
+        decision: ProviderDecisionPreset(
+            url: "https://api.fastino.ai/v1/systemone",
+            auth: "x-api-key",
+            scoreField: "expected_level",
+            keyRequired: true,
+            docsUrl: "https://docs.fastino.ai/inference/systemone",
+            models: [DecisionModelOption(id: "fastino/GLiDE", source: "preset")]
+        )
     )
 
-    static let presets = [ollaya, ollama, openRouter, typesafe, cloudflare, fastino]
+    /// The providers with a decision API.
+    static let presets = [openRouter, fireworks, ollaya, ollama, typesafe, cloudflare, fastino]
 
-    /// The local Ollaya backend, set up and not yet calibrated.
-    static let ollayaBackend = DecisionBackendStatus(
+    /// Every preset the gateway sends: chat-only providers and the decision ones.
+    static var allPresets: [ProviderPreset] {
+        BackendsPreviewData.presets() + presets
+    }
+
+    /// The local Ollaya backend: decision models only, not yet calibrated.
+    static let ollayaBackend = BackendStatus(
+        type: "http",
+        status: "ok",
         preset: "ollaya",
-        url: "http://127.0.0.1:11435/v1/systemone",
-        onHost: true
+        decision: BackendDecisionStatus(url: "http://127.0.0.1:11435/v1/systemone", onHost: true)
+    )
+
+    /// A Fireworks AI backend set up for chat, whose decision API is not on yet.
+    static let fireworksBackend = BackendStatus(
+        type: "http",
+        status: "ok",
+        url: "https://api.fireworks.ai/inference",
+        models: ["accounts/fireworks/models/example-chat"],
+        modelRoles: ["accounts/fireworks/models/example-chat": ["agent"]],
+        hasApiKey: true,
+        preset: "fireworks"
     )
 
     static let calibration = DecisionCalibration(
@@ -114,22 +166,45 @@ enum DecisionPreviewData {
         skipsBefore: 0.93
     )
 
-    /// An OpenRouter backend with a key and a calibration for one model.
-    static let openRouterBackend = DecisionBackendStatus(
-        preset: "openrouter",
-        url: "https://openrouter.ai/api/v1/systemone",
+    /// An OpenRouter backend serving chat and decision models with one key,
+    /// and a calibration for one decision model.
+    static let openRouterBackend = BackendStatus(
+        type: "http",
+        status: "ok",
+        url: "https://openrouter.ai/api",
+        models: ["example/chat-large"],
+        modelRoles: ["example/chat-large": ["agent"]],
         hasApiKey: true,
-        calibrations: ["liquid/d1.1": calibration]
+        preset: "openrouter",
+        decision: BackendDecisionStatus(
+            url: "https://openrouter.ai/api/v1/systemone",
+            hasApiKey: true,
+            calibrations: ["liquid/d1.1": calibration]
+        )
     )
 
-    /// TypeSafe assigned, an Ollaya backend set up beside it.
+    /// A Fastino backend: decision models only, hosted.
+    static let fastinoBackend = BackendStatus(
+        type: "http",
+        status: "ok",
+        hasApiKey: true,
+        preset: "fastino",
+        decision: BackendDecisionStatus(
+            url: "https://api.fastino.ai/v1/systemone",
+            auth: "x-api-key",
+            hasApiKey: true
+        )
+    )
+
+    /// TypeSafe assigned, a local Ollaya backend set up beside it, and a
+    /// Fireworks AI backend whose decision models can be turned on.
     static func typesafeOverview() -> ModelsOverview {
         overview(
             assignment: ResolvedAssignment(kind: "typesafe", available: true, model: "jev-1.14.0", hasApiKey: true),
             display: ModelDisplay(
                 providerId: "typesafe", providerLabel: "TypeSafe", modelName: "jev-1.14.0", available: true, configured: true
             ),
-            backends: ["ollaya": ollayaBackend]
+            backends: ["ollaya": ollayaBackend, "fireworks": fireworksBackend]
         )
     }
 
@@ -168,7 +243,12 @@ enum DecisionPreviewData {
             display: ModelDisplay(
                 providerId: "openrouter", providerLabel: "OpenRouter", modelName: "liquid/d1.1", available: true, configured: true
             ),
-            backends: ["ollaya": ollayaBackend, "openrouter": openRouterBackend]
+            backends: [
+                "ollaya": ollayaBackend,
+                "openrouter": openRouterBackend,
+                "fireworks": fireworksBackend,
+                "fastino": fastinoBackend,
+            ]
         )
     }
 
@@ -182,10 +262,11 @@ enum DecisionPreviewData {
         )
     }
 
+    /// The Models overview's own backends with `backends` added.
     static func overview(
         assignment: ResolvedAssignment,
         display: ModelDisplay,
-        backends: [String: DecisionBackendStatus],
+        backends: [String: BackendStatus],
         allowRemoteInference: Bool = true
     )
         -> ModelsOverview {
@@ -198,33 +279,56 @@ enum DecisionPreviewData {
             assignmentDisplays: displays,
             capabilities: base.capabilities,
             inference: InferenceOverview(
-                backends: base.inference.backends,
+                backends: base.inference.backends.merging(backends) { _, added in added },
                 codex: base.inference.codex,
                 assignments: assignments,
                 health: base.inference.health,
                 allowRemoteInference: allowRemoteInference,
-                typesafe: TypeSafeEndpointStatus(url: typesafe.url, selfHosted: false, onHost: false),
-                decisionBackends: backends
+                typesafe: TypeSafeEndpointStatus(url: typesafe.decision?.url, selfHosted: false, onHost: false)
             ),
             catalog: base.catalog,
             installed: base.installed,
             activeDownloads: base.activeDownloads,
             presets: base.presets,
             modelControls: base.modelControls,
-            modelSettings: base.modelSettings,
-            decisionPresets: presets
+            modelSettings: base.modelSettings
         )
+    }
+
+    /// The Backends list with backends serving chat models, decision models,
+    /// or both, and a decision-only backend whose key cannot be read.
+    static func backendRows() -> [ModelManagement.BackendRow] {
+        let unreadable = BackendStatus(
+            type: "http",
+            status: "unreachable",
+            hasApiKey: true,
+            decision: BackendDecisionStatus(
+                url: "https://decide.example.com/v1/systemone",
+                hasApiKey: true,
+                apiKeySecretError: "Backend \"studio-decider\" API key secret is missing or unreadable"
+            )
+        )
+        return (ModelManagement.httpBackends(calibratedOverview()) + [ModelManagement.BackendRow(
+            key: "studio-decider",
+            status: unreadable
+        )])
+        .sorted { $0.key < $1.key }
     }
 
     /// An OpenRouter backend whose stored key cannot be read.
     static var existingOpenRouterUnreadableKey: DecisionModelSetup.ExistingBackend {
         DecisionModelSetup.ExistingBackend(
             key: "openrouter",
-            status: DecisionBackendStatus(
-                preset: "openrouter",
-                url: "https://openrouter.ai/api/v1/systemone",
+            status: BackendStatus(
+                type: "http",
+                status: "ok",
+                url: "https://openrouter.ai/api",
                 hasApiKey: false,
-                apiKeySecretError: "Decision backend \"openrouter\" API key secret is missing or unreadable"
+                preset: "openrouter",
+                decision: BackendDecisionStatus(
+                    url: "https://openrouter.ai/api/v1/systemone",
+                    apiKeySecretError: "Backend \"openrouter\" API key secret is missing or unreadable"
+                )
             ),
             preset: openRouter
         )
@@ -233,6 +337,16 @@ enum DecisionPreviewData {
     /// The local Ollaya backend as the provider list offers it for reuse.
     static var existingOllaya: DecisionModelSetup.ExistingBackend {
         DecisionModelSetup.ExistingBackend(key: "ollaya", status: ollayaBackend, preset: ollaya)
+    }
+
+    /// The OpenRouter backend, serving chat and decision models.
+    static var existingOpenRouter: DecisionModelSetup.ExistingBackend {
+        DecisionModelSetup.ExistingBackend(key: "openrouter", status: openRouterBackend, preset: openRouter)
+    }
+
+    /// The Fireworks AI chat backend, offered to add decision models with its key.
+    static var fireworksForDecisions: DecisionModelSetup.ExistingBackend {
+        DecisionModelSetup.ExistingBackend(key: "fireworks", status: fireworksBackend, preset: fireworks)
     }
 }
 
@@ -317,6 +431,42 @@ enum DecisionPreviewData {
             overview: DecisionPreviewData.uncalibratedOverview(),
             previewProbed: ["kev", "winnow:e4b"]
         )
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Decision — backend you have, existing key") {
+    NavigationStack {
+        DecisionBackendForm(choice: .enable(DecisionPreviewData.fireworksForDecisions), overview: DecisionPreviewData.typesafeOverview())
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Decision — new provider with both APIs") {
+    NavigationStack {
+        DecisionBackendForm(
+            choice: .preset(DecisionPreviewData.openRouter),
+            overview: DecisionPreviewData.typesafeOverview(),
+            previewApiKey: "example-key"
+        )
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Decision — new decision-only provider") {
+    NavigationStack {
+        DecisionBackendForm(choice: .preset(DecisionPreviewData.fastino), overview: DecisionPreviewData.typesafeOverview())
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Decision — chat backend answering decisions") {
+    NavigationStack {
+        DecisionBackendForm(choice: .existing(DecisionPreviewData.existingOpenRouter), overview: DecisionPreviewData.calibratedOverview())
     }
     .environment(AppStore.preview())
 }

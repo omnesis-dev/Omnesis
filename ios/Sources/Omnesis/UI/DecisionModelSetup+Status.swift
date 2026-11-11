@@ -19,8 +19,8 @@ extension DecisionModelSetup {
         }
     }
 
-    /// The verify target for the current assignment, when it is a decision
-    /// backend or TypeSafe with a model.
+    /// The verify target for the current assignment, when it is a model on a
+    /// backend's decision API or TypeSafe's.
     static func currentVerifyTarget(_ overview: ModelsOverview) -> VerifyTarget? {
         guard let current = overview.inference.assignments[role], let model = current.model, !model.isEmpty else {
             return nil
@@ -63,8 +63,8 @@ extension DecisionModelSetup {
 
     // MARK: - Calibration
 
-    /// The calibration state of the current assignment: only a decision
-    /// backend's model is calibrated (TypeSafe's Jev is the reference).
+    /// The calibration state of the current assignment: only a model on a
+    /// backend's decision API is calibrated (TypeSafe's Jev is the reference).
     enum CalibrationState: Equatable {
         case uncalibrated
         case calibrated(DecisionCalibration?)
@@ -73,7 +73,7 @@ extension DecisionModelSetup {
     static func calibrationState(_ overview: ModelsOverview) -> CalibrationState? {
         guard let current = overview.inference.assignments[role], current.kind == "decision" else { return nil }
         let stored = current.backendKey.flatMap { key in
-            current.model.flatMap { overview.inference.decisionBackends?[key]?.calibrations[$0] }
+            current.model.flatMap { overview.inference.backends[key]?.decision?.calibrations[$0] }
         }
         if current.calibrated == true || stored != nil { return .calibrated(stored) }
         return .uncalibrated

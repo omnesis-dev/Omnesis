@@ -4,9 +4,9 @@
 @testable import Omnesis
 import XCTest
 
-/// Saving a decision backend that is already set up sends only what changed,
-/// and the key field, calibration status and model listing follow the
-/// gateway's own state.
+/// Saving a backend whose decision API is already set up sends only what
+/// changed, and the key field, calibration status and model listing follow
+/// the gateway's own state.
 final class DecisionExistingBackendTests: XCTestCase {
     private typealias Setup = DecisionModelSetup
 
@@ -14,14 +14,22 @@ final class DecisionExistingBackendTests: XCTestCase {
     /// Fastino-style key header. A preset's defaults must never replace these.
     private let handWritten = Setup.ExistingBackend(
         key: "studio",
-        status: DecisionBackendStatus(
-            url: "https://decide.example.com/v1/decisions",
-            protocol: "openai-decisions",
-            auth: "x-api-key",
-            hasApiKey: true
+        status: DecisionFixtures.decisionBackend(
+            "https://decide.example.com/v1/decisions",
+            hasApiKey: true,
+            BackendDecisionStatus(
+                url: "https://decide.example.com/v1/decisions",
+                protocol: "openai-decisions",
+                auth: "x-api-key",
+                hasApiKey: true
+            )
         ),
         preset: nil
     )
+
+    private var handWrittenURL: String {
+        handWritten.decision?.url ?? ""
+    }
 
     private func draft(_ backend: Setup.ExistingBackend, url: String, apiKey: String = "", model: String) -> Setup.Draft {
         Setup.Draft(
@@ -37,7 +45,7 @@ final class DecisionExistingBackendTests: XCTestCase {
     private func overview(using model: String?) -> ModelsOverview {
         DecisionFixtures.overview(
             decision: model.map { ResolvedAssignment(kind: "decision", model: $0, backendKey: "studio") },
-            decisionBackends: ["studio": handWritten.status]
+            backends: ["studio": handWritten.status]
         )
     }
 
@@ -45,7 +53,7 @@ final class DecisionExistingBackendTests: XCTestCase {
 
     func testANewModelSendsOnlyTheAssignment() throws {
         let plan = Setup.savePlan(
-            draft(handWritten, url: handWritten.status.url, model: "decider-2"),
+            draft(handWritten, url: handWrittenURL, model: "decider-2"),
             in: overview(using: "decider-1")
         )
         XCTAssertEqual(
@@ -56,12 +64,12 @@ final class DecisionExistingBackendTests: XCTestCase {
 
     func testANewKeyOrURLSendsOnlyThatFieldNeverProtocolAuthOrScoreField() throws {
         let rotate = Setup.savePlan(
-            draft(handWritten, url: handWritten.status.url, apiKey: " xk-new ", model: "decider-1"),
+            draft(handWritten, url: handWrittenURL, apiKey: " xk-new ", model: "decider-1"),
             in: overview(using: "decider-1")
         )
         XCTAssertEqual(
             try DecisionFixtures.json(rotate.patch),
-            ["inference": ["decisionBackends": ["studio": ["apiKey": "xk-new"]]]] as NSDictionary
+            ["inference": ["backends": ["studio": ["apiKey": "xk-new"]]]] as NSDictionary
         )
         let moved = Setup.savePlan(
             draft(handWritten, url: "https://decide2.example.com/v1/decisions", model: "decider-1"),
@@ -69,22 +77,23 @@ final class DecisionExistingBackendTests: XCTestCase {
         )
         XCTAssertEqual(
             try DecisionFixtures.json(moved.patch),
-            ["inference": ["decisionBackends": ["studio": ["url": "https://decide2.example.com/v1/decisions"]]]] as NSDictionary
+            ["inference": ["backends": ["studio": ["decision": ["url": "https://decide2.example.com/v1/decisions"]]]]]
+                as NSDictionary
         )
         // An existing preset backend gets no preset defaults either.
         let presetBackend = Setup.ExistingBackend(
             key: "fastino",
-            status: DecisionBackendStatus(preset: "fastino", url: "https://api.fastino.ai/v1/systemone", hasApiKey: true),
+            status: DecisionFixtures.decisionBackend("https://api.fastino.ai/v1/systemone", preset: "fastino", hasApiKey: true),
             preset: DecisionFixtures.fastino
         )
         let presetPlan = Setup.savePlan(
-            draft(presetBackend, url: presetBackend.status.url, apiKey: "fk-new", model: "fastino/GLiDE"),
+            draft(presetBackend, url: "https://api.fastino.ai/v1/systemone", apiKey: "fk-new", model: "fastino/GLiDE"),
             in: DecisionFixtures.overview()
         )
         XCTAssertEqual(
             try DecisionFixtures.json(presetPlan.patch),
             ["inference": [
-                "decisionBackends": ["fastino": ["apiKey": "fk-new"]],
+                "backends": ["fastino": ["apiKey": "fk-new"]],
                 "assignments": ["decision": "fastino/fastino/GLiDE"],
             ] as [String: Any]] as NSDictionary
         )
@@ -92,7 +101,7 @@ final class DecisionExistingBackendTests: XCTestCase {
 
     func testAnUnchangedBackendAndModelMakeAnEmptyPatch() throws {
         let plan = Setup.savePlan(
-            draft(handWritten, url: " \(handWritten.status.url) ", model: "decider-1"),
+            draft(handWritten, url: " \(handWrittenURL) ", model: "decider-1"),
             in: overview(using: "decider-1")
         )
         XCTAssertTrue(plan.patch.isEmpty)
@@ -118,16 +127,17 @@ final class DecisionExistingBackendTests: XCTestCase {
     }
 
     func testConsentForAnExistingBackendUsesTheGatewaysOnHostVerdict() {
+        let tunnelledURL = "http://decider.example.com:8080/v1/systemone"
         let tunnelled = Setup.ExistingBackend(
             key: "lan",
-            status: DecisionBackendStatus(url: "http://decider.example.com:8080/v1/systemone", onHost: true),
+            status: DecisionFixtures.decisionBackend(tunnelledURL, BackendDecisionStatus(url: tunnelledURL, onHost: true)),
             preset: nil
         )
         let off = DecisionFixtures.overview(allowRemoteInference: false)
-        XCTAssertFalse(Setup.needsRemoteConsent(tunnelled, url: tunnelled.status.url, in: off))
+        XCTAssertFalse(Setup.needsRemoteConsent(tunnelled, url: tunnelledURL, in: off))
         XCTAssertTrue(Setup.needsRemoteConsent(tunnelled, url: "https://decide.example.org/v1/systemone", in: off))
-        XCTAssertFalse(Setup.needsRemoteConsent(handWritten, url: handWritten.status.url, in: overview(using: nil).allowing))
-        XCTAssertTrue(Setup.needsRemoteConsent(handWritten, url: handWritten.status.url, in: off))
+        XCTAssertFalse(Setup.needsRemoteConsent(handWritten, url: handWrittenURL, in: overview(using: nil).allowing))
+        XCTAssertTrue(Setup.needsRemoteConsent(handWritten, url: handWrittenURL, in: off))
     }
 
     // MARK: - API key field
@@ -161,7 +171,7 @@ final class DecisionExistingBackendTests: XCTestCase {
             ),
             catalog: [],
             installed: [],
-            decisionPresets: []
+            presets: DecisionFixtures.presets
         )
         XCTAssertFalse(Setup.keyField(typesafe, in: selfHosted, typesafeStored: false).required)
     }
@@ -192,11 +202,14 @@ final class DecisionExistingBackendTests: XCTestCase {
         )
         let unreadable = Setup.ExistingBackend(
             key: "openrouter",
-            status: DecisionBackendStatus(
+            status: DecisionFixtures.chatBackend(
+                "https://openrouter.ai/api",
                 preset: "openrouter",
-                url: "https://openrouter.ai/api/v1/systemone",
                 hasApiKey: false,
-                apiKeySecretError: "Decision backend \"openrouter\" API key secret is missing or unreadable"
+                decision: BackendDecisionStatus(
+                    url: "https://openrouter.ai/api/v1/systemone",
+                    apiKeySecretError: "Backend \"openrouter\" API key secret is missing or unreadable"
+                )
             ),
             preset: DecisionFixtures.openRouter
         )
@@ -206,7 +219,7 @@ final class DecisionExistingBackendTests: XCTestCase {
         )
         let localWithoutKey = Setup.ExistingBackend(
             key: "ollaya",
-            status: DecisionBackendStatus(preset: "ollaya", url: "http://127.0.0.1:11435/v1/systemone", onHost: true),
+            status: DecisionFixtures.decisionBackend("http://127.0.0.1:11435/v1/systemone", preset: "ollaya"),
             preset: DecisionFixtures.ollaya
         )
         XCTAssertEqual(
@@ -255,12 +268,11 @@ extension ModelsOverview {
                 backends: inference.backends,
                 assignments: inference.assignments,
                 allowRemoteInference: true,
-                typesafe: inference.typesafe,
-                decisionBackends: inference.decisionBackends
+                typesafe: inference.typesafe
             ),
             catalog: catalog,
             installed: installed,
-            decisionPresets: decisionPresets
+            presets: presets
         )
     }
 }

@@ -33,21 +33,25 @@ extension DecisionModelSetup {
     }
 
     /// The key field for a choice. `typesafeStored` is
-    /// `typesafeKeyStored(listed:in:)`; nil (unknown) never makes a key required.
+    /// `typesafeKeyStored(listed:in:)`; nil (unknown) never makes a key
+    /// required. A backend has one key for both of its APIs, so adding
+    /// decisions to a backend never asks for one.
     static func keyField(_ choice: Choice, in overview: ModelsOverview, typesafeStored: Bool?) -> KeyField {
         switch choice {
         case .preset(let preset) where preset.isTypeSafe:
             let selfHosted = overview.inference.typesafe?.selfHosted == true
             return KeyField(shown: true, required: typesafeStored == false && !selfHosted, stored: typesafeStored == true)
         case .preset(let preset):
-            return KeyField(shown: true, required: preset.keyRequired, stored: false)
+            return KeyField(shown: true, required: preset.decision?.keyRequired == true, stored: false)
         case .custom:
             return KeyField(shown: true, required: false, stored: false)
+        case .enable(let backend):
+            return KeyField(shown: false, required: false, stored: backend.hasReadableKey)
         case .existing(let backend):
-            let keyRequired = backend.preset?.keyRequired == true
-            let readable = backend.status.hasApiKey && backend.status.apiKeySecretError == nil
+            let keyRequired = backend.preset?.decision?.keyRequired == true
+            let readable = backend.hasReadableKey
             return KeyField(
-                shown: keyRequired || backend.listsModels || backend.status.hasApiKey,
+                shown: keyRequired || backend.listsModels || backend.status.hasApiKey == true,
                 required: keyRequired && !readable,
                 stored: readable
             )
@@ -61,7 +65,7 @@ extension DecisionModelSetup {
         let choice: Choice
         /// The backend's name: the existing key, or the new one typed.
         let name: String
-        /// The endpoint URL (unused for TypeSafe).
+        /// The decision endpoint URL, complete (unused for TypeSafe).
         let url: String
         /// The API key typed; blank keeps the stored one.
         let apiKey: String
@@ -78,14 +82,17 @@ extension DecisionModelSetup {
         let verifyTarget: VerifyTarget
     }
 
-    /// The save for a form. A new backend gets every field its preset sets;
-    /// an existing one only what changed (its URL, a new key), so the
-    /// protocol, auth and score field written for it are never replaced by
-    /// a preset's. The assignment is sent only when it changes.
+    /// The save for a form. A new backend gets every field its preset sets,
+    /// its OpenAI-compatible URL too when the provider has one; a backend
+    /// gaining decisions gets the preset's decision API and nothing else (its
+    /// key serves both); an existing decision API only what changed (its URL,
+    /// a new key), so the protocol, auth and score field written for it are
+    /// never replaced by a preset's. The assignment is sent only when it changes.
     static func savePlan(_ draft: Draft, in overview: ModelsOverview) -> SavePlan {
         let model = draft.model.trimmingCharacters(in: .whitespacesAndNewlines)
         let apiKey = draft.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let typedKey = apiKey.isEmpty ? nil : apiKey
+        let url = draft.url.trimmingCharacters(in: .whitespacesAndNewlines)
         switch draft.choice {
         case .preset(let preset) where preset.isTypeSafe:
             let assignment = "\(typesafeKey)/\(model)"
@@ -98,17 +105,27 @@ extension DecisionModelSetup {
                 verifyTarget: .typesafe(model: model)
             )
         case .existing(let backend):
-            let url = draft.url.trimmingCharacters(in: .whitespacesAndNewlines)
-            let changedURL = url.isEmpty || url == backend.status.url ? nil : url
-            let changes = DecisionConfigPatch.Backend(url: changedURL, apiKey: typedKey)
-            return SavePlan(
-                patch: DecisionConfigPatch(
-                    backend: changes == DecisionConfigPatch.Backend() ? nil : .upsert(key: backend.key, changes),
-                    assignment: assignmentChange(to: "\(backend.key)/\(model)", in: overview),
-                    enableRemoteInference: draft.enableRemoteInference
-                ),
-                typesafeApiKey: nil,
-                verifyTarget: .backend(key: backend.key, model: model)
+            let changedURL = url.isEmpty || url == backend.decision?.url ? nil : url
+            let changes = DecisionConfigPatch.Backend(
+                apiKey: typedKey,
+                decision: changedURL.map { .set(DecisionConfigPatch.DecisionAPI(url: $0)) }
+            )
+            return backendPlan(
+                key: backend.key,
+                change: changes == DecisionConfigPatch.Backend() ? nil : changes,
+                model: model,
+                draft: draft,
+                in: overview
+            )
+        case .enable(let backend):
+            let api = backend.preset?.decision.map { DecisionConfigPatch.DecisionAPI(preset: $0, url: url) }
+                ?? DecisionConfigPatch.DecisionAPI(url: url, protocol: "systemone", auth: "bearer")
+            return backendPlan(
+                key: backend.key,
+                change: DecisionConfigPatch.Backend(decision: .set(api)),
+                model: model,
+                draft: draft,
+                in: overview
             )
         case .preset(let preset):
             return newBackendPlan(draft, preset: preset, model: model, apiKey: typedKey)
@@ -117,21 +134,45 @@ extension DecisionModelSetup {
         }
     }
 
+    private static func backendPlan(
+        key: String,
+        change: DecisionConfigPatch.Backend?,
+        model: String,
+        draft: Draft,
+        in overview: ModelsOverview
+    )
+        -> SavePlan {
+        SavePlan(
+            patch: DecisionConfigPatch(
+                backend: change.map { .upsert(key: key, $0) },
+                assignment: assignmentChange(to: "\(key)/\(model)", in: overview),
+                enableRemoteInference: draft.enableRemoteInference
+            ),
+            typesafeApiKey: nil,
+            verifyTarget: .backend(key: key, model: model)
+        )
+    }
+
     private static func newBackendPlan(
         _ draft: Draft,
-        preset: DecisionPresetView?,
+        preset: ProviderPreset?,
         model: String,
         apiKey: String?
     )
         -> SavePlan {
         let key = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = draft.url.trimmingCharacters(in: .whitespacesAndNewlines)
+        let openAIURL = preset?.defaultUrl.flatMap { $0.isEmpty ? nil : $0 }
         let backend = DecisionConfigPatch.Backend(
+            type: "http",
             preset: preset?.id,
-            url: draft.url.trimmingCharacters(in: .whitespacesAndNewlines),
-            protocol: preset?.protocol ?? "systemone",
-            auth: preset?.auth ?? "bearer",
-            scoreField: preset?.scoreField,
-            apiKey: apiKey
+            url: openAIURL,
+            apiPathPrefix: openAIURL == nil ? nil : preset?.apiPathPrefix,
+            apiKey: apiKey,
+            decision: .set(
+                preset?.decision.map { DecisionConfigPatch.DecisionAPI(preset: $0, url: url) }
+                    ?? DecisionConfigPatch.DecisionAPI(url: url, protocol: "systemone", auth: "bearer")
+            )
         )
         return SavePlan(
             patch: DecisionConfigPatch(
@@ -154,7 +195,7 @@ extension DecisionModelSetup {
     }
 
     /// The current Decision assignment as its wire value, when it is a
-    /// decision backend's or TypeSafe's model.
+    /// model on a backend's decision API or TypeSafe's.
     static func currentAssignment(_ overview: ModelsOverview) -> String? {
         switch currentVerifyTarget(overview) {
         case .backend(let key, let model): "\(key)/\(model)"
@@ -163,18 +204,24 @@ extension DecisionModelSetup {
         }
     }
 
-    /// Removing a backend also clears the Decision assignment when it points there.
+    /// Turning a backend's decisions off: a backend that also serves
+    /// OpenAI-compatible models keeps them and loses only its decision API; a
+    /// decision-only backend is removed whole. Either clears the Decision
+    /// assignment when it points there.
     static func removalPatch(key: String, in overview: ModelsOverview) -> DecisionConfigPatch {
         let current = overview.inference.assignments[role]
         let pointsHere = current?.kind == "decision" && current?.backendKey == key
-        return DecisionConfigPatch(backend: .remove(key: key), assignment: pointsHere ? .clear : .keep)
+        let change: DecisionConfigPatch.BackendChange = overview.inference.backends[key]?.servesOpenAI == true
+            ? .upsert(key: key, DecisionConfigPatch.Backend(decision: .remove))
+            : .remove(key: key)
+        return DecisionConfigPatch(backend: change, assignment: pointsHere ? .clear : .keep)
     }
 
-    /// Whether saving an existing backend needs cloud consent: the gateway's
-    /// own verdict on its host, unless the URL is being changed.
+    /// Whether saving an existing decision API needs cloud consent: the
+    /// gateway's own verdict on its host, unless the URL is being changed.
     static func needsRemoteConsent(_ backend: ExistingBackend, url: String, in overview: ModelsOverview) -> Bool {
         let typed = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        let onHost = typed.isEmpty || typed == backend.status.url ? backend.status.onHost : isLoopback(typed)
+        let onHost = typed.isEmpty || typed == backend.decision?.url ? backend.decision?.onHost == true : isLoopback(typed)
         return overview.inference.allowRemoteInference != true && !onHost
     }
 }

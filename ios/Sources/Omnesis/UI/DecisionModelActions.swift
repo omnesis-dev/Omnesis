@@ -9,10 +9,10 @@ struct DecisionModelActions: Sendable {
     /// Save a choice: TypeSafe's key to its credential route first, then the
     /// config patch unless it changes nothing.
     var save: @Sendable (DecisionModelSetup.SavePlan) async throws -> Void
-    /// Apply a patch that removes a decision backend.
+    /// Apply a patch that turns a backend's decisions off.
     var remove: @Sendable (DecisionConfigPatch) async throws -> Void
     var verify: @Sendable (DecisionModelSetup.VerifyTarget) async throws -> DecisionVerifyResult
-    /// The models a saved backend lists.
+    /// The models a saved backend's decision server lists.
     var probe: @Sendable (String) async throws -> DecisionProbeResult
     /// The models a server lists before it is saved.
     var probeURL: @Sendable (DecisionProbeRequest) async throws -> DecisionProbeResult
@@ -38,18 +38,19 @@ struct DecisionModelActions: Sendable {
             remove: { patch in try await client.patchDecisionConfig(patch) },
             verify: { target in
                 switch target {
-                case .backend(let key, let model): try await client.verifyDecisionBackend(key: key, model: model)
+                case .backend(let key, let model): try await client.verifyBackendDecision(key: key, model: model)
                 case .typesafe(let model): try await client.verifyTypeSafeDecision(model: model)
                 }
             },
-            probe: { key in try await client.probeDecisionBackend(key: key) },
+            probe: { key in try await client.probeBackendDecision(key: key) },
             probeURL: { request in
                 try await client.probeDecisionURL(
                     url: request.url,
                     auth: request.auth,
                     apiKey: request.apiKey,
                     protocol: request.protocol,
-                    preset: request.preset
+                    preset: request.preset,
+                    backendKey: request.backendKey
                 )
             },
             calibrationStatus: { try await client.decisionCalibrationStatus() },
@@ -75,12 +76,13 @@ struct DecisionModelActions: Sendable {
     )
 }
 
-/// What a form asks a server before it is saved: its URL, and how to send a
-/// typed key.
+/// What a form asks a decision server before it is saved: its URL, and how
+/// to send a typed key or the saved key of the backend it is being added to.
 struct DecisionProbeRequest: Equatable, Hashable, Sendable {
     let url: String
     var auth: String?
     var apiKey: String?
     var `protocol`: String?
     var preset: String?
+    var backendKey: String?
 }

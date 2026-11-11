@@ -339,22 +339,19 @@ public final class AdminClient: Sendable {
 
     /// `PATCH /admin/config` — add (or replace) a named HTTP inference backend,
     /// exactly like the portal's `addHttpBackend`. The body is
-    /// `{inference:{backends:{<key>:{type:"http",url,apiKey?,apiPathPrefix?}}}}`.
+    /// `{inference:{backends:{<key>:{type:"http",url,apiKey?,apiPathPrefix?,preset?,decision?}}}}`.
     /// `apiKey` is write-only: it's sent here but never read back (the gateway
     /// only ever surfaces a `hasApiKey` bool), so it's never rendered or logged.
     /// The caller validates the key against `ModelManagement.validateBackendName`
     /// first (reserved names / no slash); the gateway re-validates.
-    public func addHttpBackend(
-        key: String,
-        url: String,
-        apiKey: String? = nil,
-        apiPathPrefix: String? = nil
-    ) async throws {
+    public func addHttpBackend(_ backend: NewHttpBackend) async throws {
         struct Config: Encodable {
             let type = "http"
             let url: String
             let apiKey: String?
             let apiPathPrefix: String?
+            let preset: String?
+            let decision: DecisionConfigPatch.DecisionAPI?
         }
         // The backends map has a dynamic key (the backend name), so the
         // `inference.backends` object is encoded by hand the same way the
@@ -369,12 +366,15 @@ public final class AdminClient: Sendable {
                 try backends.encode(config, forKey: AnyKey(key))
             }
         }
+        let apiKey = backend.apiKey?.isEmpty == false ? backend.apiKey : nil
         let cfg = Config(
-            url: url,
-            apiKey: (apiKey?.isEmpty == false) ? apiKey : nil,
-            apiPathPrefix: (apiPathPrefix?.isEmpty == false) ? apiPathPrefix : nil
+            url: backend.url,
+            apiKey: apiKey,
+            apiPathPrefix: (backend.apiPathPrefix?.isEmpty == false) ? backend.apiPathPrefix : nil,
+            preset: backend.preset,
+            decision: backend.decision
         )
-        let body = try encoder.encode(Body(key: key, config: cfg))
+        let body = try encoder.encode(Body(key: backend.key, config: cfg))
         _ = try await dispatch(method: "PATCH", path: "/admin/config", body: body)
     }
 

@@ -34,7 +34,7 @@ final class DecisionModelSaveTests: XCTestCase {
 
     // MARK: - Save plans
 
-    func testNewHostedBackendSavesItsPresetKeyAndAssignmentWithConsent() throws {
+    func testNewProviderWithBothAPIsSavesOneKeyForItsChatAndDecisionEndpoints() throws {
         let plan = savePlan(draft(
             .preset(DecisionFixtures.openRouter),
             name: "openrouter",
@@ -45,13 +45,17 @@ final class DecisionModelSaveTests: XCTestCase {
         ))
         let expected: NSDictionary = ["inference": [
             "allowRemoteInference": true,
-            "decisionBackends": ["openrouter": [
+            "backends": ["openrouter": [
+                "type": "http",
                 "preset": "openrouter",
-                "url": "https://openrouter.ai/api/v1/systemone",
-                "protocol": "systemone",
-                "auth": "bearer",
+                "url": "https://openrouter.ai/api",
                 "apiKey": "sk-example",
-            ]],
+                "decision": [
+                    "url": "https://openrouter.ai/api/v1/systemone",
+                    "protocol": "systemone",
+                    "auth": "bearer",
+                ],
+            ] as [String: Any]],
             "assignments": ["decision": "openrouter/liquid/d1.1"],
         ] as [String: Any]]
         XCTAssertEqual(try DecisionFixtures.json(plan.patch), expected)
@@ -59,7 +63,7 @@ final class DecisionModelSaveTests: XCTestCase {
         XCTAssertEqual(plan.verifyTarget, .backend(key: "openrouter", model: "liquid/d1.1"))
     }
 
-    func testBlankKeyAndNoConsentAreLeftOutOfTheLocalBackendPatch() throws {
+    func testDecisionOnlyProviderSavesNoChatURLAndLeavesABlankKeyOut() throws {
         let plan = savePlan(draft(
             .preset(DecisionFixtures.ollaya),
             name: "ollaya",
@@ -67,12 +71,11 @@ final class DecisionModelSaveTests: XCTestCase {
             apiKey: "   "
         ))
         let expected: NSDictionary = ["inference": [
-            "decisionBackends": ["ollaya": [
+            "backends": ["ollaya": [
+                "type": "http",
                 "preset": "ollaya",
-                "url": "http://127.0.0.1:11435/v1/systemone",
-                "protocol": "systemone",
-                "auth": "bearer",
-            ]],
+                "decision": ["url": "http://127.0.0.1:11435/v1/systemone", "protocol": "systemone", "auth": "bearer"],
+            ] as [String: Any]],
             "assignments": ["decision": "ollaya/kev"],
         ] as [String: Any]]
         XCTAssertEqual(try DecisionFixtures.json(plan.patch), expected)
@@ -86,9 +89,12 @@ final class DecisionModelSaveTests: XCTestCase {
             apiKey: "fk-example",
             model: "fastino/GLiDE"
         )).patch)
-        let backend = try XCTUnwrap(value(fastino, "inference.decisionBackends.fastino") as? NSDictionary)
-        XCTAssertEqual(backend["auth"] as? String, "x-api-key")
-        XCTAssertEqual(backend["scoreField"] as? String, "expected_level")
+        let backend = try XCTUnwrap(value(fastino, "inference.backends.fastino") as? NSDictionary)
+        XCTAssertEqual(backend["apiKey"] as? String, "fk-example", "the key sits on the backend, not its decision API")
+        XCTAssertNil(backend["url"])
+        XCTAssertEqual(value(fastino, "inference.backends.fastino.decision.auth") as? String, "x-api-key")
+        XCTAssertEqual(value(fastino, "inference.backends.fastino.decision.scoreField") as? String, "expected_level")
+        XCTAssertNil(value(fastino, "inference.backends.fastino.decision.apiKey"))
         let cloudflare = try DecisionFixtures.json(savePlan(draft(
             .preset(DecisionFixtures.cloudflare),
             name: "cloudflare",
@@ -96,31 +102,78 @@ final class DecisionModelSaveTests: XCTestCase {
             apiKey: "cf-example",
             model: "@cf/cloudflare/clef"
         )).patch)
-        XCTAssertEqual(value(cloudflare, "inference.decisionBackends.cloudflare.protocol") as? String, "workers-ai")
-        XCTAssertNil(value(cloudflare, "inference.decisionBackends.cloudflare.scoreField"))
+        XCTAssertEqual(value(cloudflare, "inference.backends.cloudflare.decision.protocol") as? String, "workers-ai")
+        XCTAssertEqual(
+            value(cloudflare, "inference.backends.cloudflare.decision.url") as? String,
+            "https://api.cloudflare.com/client/v4/accounts/0123abcd/ai/run"
+        )
+        XCTAssertNil(value(cloudflare, "inference.backends.cloudflare.decision.scoreField"))
     }
 
     func testOtherServerSavesSystemOneWithBearerAndNoPreset() throws {
         let plan = savePlan(draft(.custom, name: " studio ", url: "http://127.0.0.1:8080/v1/systemone", model: "d1"))
         let expected: NSDictionary = ["inference": [
-            "decisionBackends": ["studio": [
-                "url": "http://127.0.0.1:8080/v1/systemone",
-                "protocol": "systemone",
-                "auth": "bearer",
-            ]],
+            "backends": ["studio": [
+                "type": "http",
+                "decision": ["url": "http://127.0.0.1:8080/v1/systemone", "protocol": "systemone", "auth": "bearer"],
+            ] as [String: Any]],
             "assignments": ["decision": "studio/d1"],
         ] as [String: Any]]
         XCTAssertEqual(try DecisionFixtures.json(plan.patch), expected)
         XCTAssertEqual(plan.verifyTarget, .backend(key: "studio", model: "d1"))
     }
 
+    func testAddingDecisionsToABackendSendsItsDecisionAPIAndNoKey() throws {
+        let fireworks = Setup.ExistingBackend(
+            key: "fireworks",
+            status: DecisionFixtures.chatBackend("https://api.fireworks.ai/inference", preset: "fireworks"),
+            preset: DecisionFixtures.fireworks
+        )
+        // A key typed anyway (the form shows no field) is still never sent.
+        let plan = savePlan(draft(
+            .enable(fireworks),
+            name: "fireworks",
+            url: "https://api.fireworks.ai/inference/v1/systemone",
+            apiKey: "fw-typed",
+            model: "accounts/fireworks/models/rune"
+        ))
+        let expected: NSDictionary = ["inference": [
+            "backends": ["fireworks": ["decision": [
+                "url": "https://api.fireworks.ai/inference/v1/systemone",
+                "protocol": "systemone",
+                "auth": "bearer",
+            ]]],
+            "assignments": ["decision": "fireworks/accounts/fireworks/models/rune"],
+        ] as [String: Any]]
+        XCTAssertEqual(try DecisionFixtures.json(plan.patch), expected)
+        XCTAssertEqual(
+            try String(data: JSONEncoder().encode(plan.patch), encoding: .utf8)?.contains("apiKey"),
+            false
+        )
+        XCTAssertNil(plan.typesafeApiKey)
+        XCTAssertEqual(plan.verifyTarget, .backend(key: "fireworks", model: "accounts/fireworks/models/rune"))
+        XCTAssertEqual(
+            Setup.keyField(.enable(fireworks), in: DecisionFixtures.overview(), typesafeStored: nil),
+            Setup.KeyField(shown: false, required: false, stored: true)
+        )
+    }
+
     func testReusingABackendSendsOnlyTheAssignmentOrANewKey() throws {
         let backend = Setup.ExistingBackend(
             key: "openrouter",
-            status: DecisionBackendStatus(preset: "openrouter", url: "https://openrouter.ai/api/v1/systemone", hasApiKey: true),
+            status: DecisionFixtures.chatBackend(
+                "https://openrouter.ai/api",
+                preset: "openrouter",
+                decision: BackendDecisionStatus(url: "https://openrouter.ai/api/v1/systemone", hasApiKey: true)
+            ),
             preset: DecisionFixtures.openRouter
         )
-        let keep = savePlan(draft(.existing(backend), name: "openrouter", model: "liquid/d1.1"))
+        let keep = savePlan(draft(
+            .existing(backend),
+            name: "openrouter",
+            url: "https://openrouter.ai/api/v1/systemone",
+            model: "liquid/d1.1"
+        ))
         XCTAssertEqual(
             try DecisionFixtures.json(keep.patch),
             ["inference": ["assignments": ["decision": "openrouter/liquid/d1.1"]]] as NSDictionary
@@ -129,7 +182,7 @@ final class DecisionModelSaveTests: XCTestCase {
         XCTAssertEqual(
             try DecisionFixtures.json(rotate.patch),
             ["inference": [
-                "decisionBackends": ["openrouter": ["apiKey": "sk-new"]],
+                "backends": ["openrouter": ["apiKey": "sk-new"]],
                 "assignments": ["decision": "openrouter/liquid/d1.1"],
             ] as [String: Any]] as NSDictionary
         )
@@ -148,16 +201,37 @@ final class DecisionModelSaveTests: XCTestCase {
         XCTAssertNil(keep.typesafeApiKey)
     }
 
-    func testRemovingABackendClearsTheAssignmentOnlyWhenItPointsThere() throws {
-        let pointing = DecisionFixtures.overview(decision: ResolvedAssignment(kind: "decision", model: "kev", backendKey: "ollaya"))
+    func testTurningDecisionsOffRemovesADecisionOnlyBackendButKeepsAChatBackend() throws {
+        let backends = [
+            "ollaya": DecisionFixtures.decisionBackend("http://127.0.0.1:11435/v1/systemone", preset: "ollaya"),
+            "openrouter": DecisionFixtures.chatBackend(
+                "https://openrouter.ai/api",
+                preset: "openrouter",
+                decision: BackendDecisionStatus(url: "https://openrouter.ai/api/v1/systemone", hasApiKey: true)
+            ),
+        ]
+        let pointing = DecisionFixtures.overview(
+            decision: ResolvedAssignment(kind: "decision", model: "kev", backendKey: "ollaya"),
+            backends: backends
+        )
         XCTAssertEqual(
             try DecisionFixtures.json(Setup.removalPatch(key: "ollaya", in: pointing)),
-            ["inference": ["decisionBackends": ["ollaya": NSNull()], "assignments": ["decision": NSNull()]]] as NSDictionary
+            ["inference": ["backends": ["ollaya": NSNull()], "assignments": ["decision": NSNull()]]] as NSDictionary
         )
-        let elsewhere = DecisionFixtures.overview(decision: ResolvedAssignment(kind: "typesafe", model: "jev-1.14.0"))
         XCTAssertEqual(
-            try DecisionFixtures.json(Setup.removalPatch(key: "ollaya", in: elsewhere)),
-            ["inference": ["decisionBackends": ["ollaya": NSNull()]]] as NSDictionary
+            try DecisionFixtures.json(Setup.removalPatch(key: "openrouter", in: pointing)),
+            ["inference": ["backends": ["openrouter": ["decision": NSNull()]]]] as NSDictionary
+        )
+        let onOpenRouter = DecisionFixtures.overview(
+            decision: ResolvedAssignment(kind: "decision", model: "liquid/d1.1", backendKey: "openrouter"),
+            backends: backends
+        )
+        XCTAssertEqual(
+            try DecisionFixtures.json(Setup.removalPatch(key: "openrouter", in: onOpenRouter)),
+            ["inference": [
+                "backends": ["openrouter": ["decision": NSNull()]],
+                "assignments": ["decision": NSNull()],
+            ] as [String: Any]] as NSDictionary
         )
     }
 
@@ -189,7 +263,7 @@ final class DecisionModelSaveTests: XCTestCase {
     private let utc = TimeZone(identifier: "UTC")!
     private let english = Locale(identifier: "en_US")
 
-    func testCalibrationStateIsOnlyForDecisionBackends() {
+    func testCalibrationStateIsOnlyForABackendsDecisionAPI() {
         XCTAssertNil(Setup.calibrationState(DecisionFixtures.overview(decision: ResolvedAssignment(kind: "typesafe", model: "jev"))))
         XCTAssertNil(Setup.calibrationState(DecisionFixtures.overview()))
         let uncalibrated = DecisionFixtures.overview(
@@ -201,7 +275,10 @@ final class DecisionModelSaveTests: XCTestCase {
         let stored = DecisionCalibration(fittedAt: "2026-11-08T14:30:00.000Z", agreement: 0.918, agreementBefore: 0.71)
         let calibrated = DecisionFixtures.overview(
             decision: ResolvedAssignment(kind: "decision", model: "kev", backendKey: "ollaya", calibrated: true),
-            decisionBackends: ["ollaya": DecisionBackendStatus(url: "http://127.0.0.1:11435/v1/systemone", calibrations: ["kev": stored])]
+            backends: ["ollaya": DecisionFixtures.decisionBackend(
+                "http://127.0.0.1:11435/v1/systemone",
+                BackendDecisionStatus(url: "http://127.0.0.1:11435/v1/systemone", calibrations: ["kev": stored])
+            )]
         )
         XCTAssertEqual(Setup.calibrationState(calibrated), .calibrated(stored))
         XCTAssertEqual(Setup.cardSummary(calibrated, role: "decision"), "Calibrated · agrees with Jev on 92%")
@@ -242,7 +319,10 @@ final class DecisionModelSaveTests: XCTestCase {
         )
         let overview = DecisionFixtures.overview(
             decision: ResolvedAssignment(kind: "decision", model: "kev", backendKey: "ollaya", calibrated: true),
-            decisionBackends: ["ollaya": DecisionBackendStatus(url: "http://127.0.0.1:11435/v1/systemone", calibrations: ["kev": fit])]
+            backends: ["ollaya": DecisionFixtures.decisionBackend(
+                "http://127.0.0.1:11435/v1/systemone",
+                BackendDecisionStatus(url: "http://127.0.0.1:11435/v1/systemone", calibrations: ["kev": fit])
+            )]
         )
         XCTAssertEqual(Setup.cardSummary(overview, role: "decision"), "Calibrated · keeps 95% of what Jev keeps")
     }

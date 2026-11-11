@@ -5,85 +5,135 @@
 import XCTest
 
 /// Fixtures shared by the Decision model logic tests: providers as the
-/// gateway's presets describe them, and overviews built around them.
+/// gateway's presets describe them, backends as `/admin/models` reports them,
+/// and overviews built around them.
 enum DecisionFixtures {
-    static let ollaya = DecisionPresetView(
-        id: "ollaya",
-        name: "Ollaya",
-        kind: "local",
+    static func decisionOnly(
+        _ id: String,
+        name: String,
+        kind: String = "cloud",
+        _ decision: ProviderDecisionPreset
+    )
+        -> ProviderPreset {
+        ProviderPreset(id: id, name: name, kind: kind, capabilities: ["decision"], decision: decision)
+    }
+
+    static let ollaya = decisionOnly("ollaya", name: "Ollaya", kind: "local", ProviderDecisionPreset(
         url: "http://127.0.0.1:11435/v1/systemone",
         models: [DecisionModelOption(id: "kev", source: "preset"), DecisionModelOption(id: "laya", source: "preset")]
-    )
-    static let typesafe = DecisionPresetView(
+    ))
+    static let typesafe = ProviderPreset(
         id: "typesafe",
         name: "TypeSafe",
-        kind: "cloud",
-        url: "https://api.typesafe.ai/v1/systemone",
-        keyRequired: true,
-        builtIn: "typesafe",
-        models: [DecisionModelOption(id: "jev-1.14.0", source: "preset")]
+        capabilities: ["decision"],
+        decision: ProviderDecisionPreset(
+            url: "https://api.typesafe.ai/v1/systemone",
+            keyRequired: true,
+            models: [DecisionModelOption(id: "jev-1.14.0", source: "preset")]
+        ),
+        builtIn: "typesafe"
     )
-    static let openRouter = DecisionPresetView(
+    /// Chat and decision models behind one key.
+    static let openRouter = ProviderPreset(
         id: "openrouter",
         name: "OpenRouter",
-        kind: "cloud",
-        url: "https://openrouter.ai/api/v1/systemone",
-        keyRequired: true,
-        models: [
-            DecisionModelOption(id: "liquid/d1.1", contextTokens: 131_072, inputCostPerMillion: 0.05, source: "preset"),
-        ]
+        defaultUrl: "https://openrouter.ai/api",
+        capabilities: ["agent", "decision"],
+        decision: ProviderDecisionPreset(
+            url: "https://openrouter.ai/api/v1/systemone",
+            keyRequired: true,
+            models: [
+                DecisionModelOption(id: "liquid/d1.1", contextTokens: 131_072, inputCostPerMillion: 0.05, source: "preset"),
+            ]
+        )
     )
-    static let cloudflare = DecisionPresetView(
-        id: "cloudflare",
-        name: "Cloudflare Workers AI",
-        kind: "cloud",
+    static let fireworks = ProviderPreset(
+        id: "fireworks",
+        name: "Fireworks AI",
+        defaultUrl: "https://api.fireworks.ai/inference",
+        capabilities: ["agent", "embed", "decision"],
+        decision: ProviderDecisionPreset(
+            url: "https://api.fireworks.ai/inference/v1/systemone",
+            keyRequired: true,
+            models: [DecisionModelOption(id: "accounts/fireworks/models/rune", source: "preset")]
+        )
+    )
+    static let groq = ProviderPreset(id: "groq", name: "Groq", defaultUrl: "https://api.groq.com/openai", capabilities: ["agent"])
+    static let cloudflare = decisionOnly("cloudflare", name: "Cloudflare Workers AI", ProviderDecisionPreset(
         url: "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run",
         protocol: "workers-ai",
         keyRequired: true,
         urlParams: [DecisionPresetURLParam(key: "account", label: "Account ID")]
-    )
-    static let fastino = DecisionPresetView(
-        id: "fastino",
-        name: "Fastino",
-        kind: "cloud",
+    ))
+    static let fastino = decisionOnly("fastino", name: "Fastino", ProviderDecisionPreset(
         url: "https://api.fastino.ai/v1/systemone",
         auth: "x-api-key",
         scoreField: "expected_level",
         keyRequired: true
-    )
-    static let ollama = DecisionPresetView(id: "ollama", name: "Ollama", kind: "local", url: "http://127.0.0.1:11434/v1/systemone")
+    ))
+    static let ollama = decisionOnly("ollama", name: "Ollama", kind: "local", ProviderDecisionPreset(
+        url: "http://127.0.0.1:11434/v1/systemone"
+    ))
+
+    static let presets = [openRouter, fireworks, groq, ollaya, typesafe, cloudflare, ollama]
 
     static let decisionCap = CapabilityMeta(
         role: "decision", title: "Decision model", description: "d", icon: "scale", backendFamily: "typed-decision"
     )
 
+    /// A backend that serves only decision models.
+    static func decisionBackend(
+        _ url: String,
+        preset: String? = nil,
+        hasApiKey: Bool = false,
+        _ decision: BackendDecisionStatus? = nil
+    )
+        -> BackendStatus {
+        BackendStatus(
+            type: "http",
+            status: "ok",
+            hasApiKey: hasApiKey,
+            preset: preset,
+            decision: decision ?? BackendDecisionStatus(url: url, hasApiKey: hasApiKey)
+        )
+    }
+
+    /// A backend that serves OpenAI-compatible models, with a decision API when given.
+    static func chatBackend(
+        _ url: String,
+        preset: String? = nil,
+        hasApiKey: Bool = true,
+        decision: BackendDecisionStatus? = nil
+    )
+        -> BackendStatus {
+        BackendStatus(type: "http", status: "ok", url: url, hasApiKey: hasApiKey, preset: preset, decision: decision)
+    }
+
     static func overview(
         decision: ResolvedAssignment? = nil,
-        decisionBackends: [String: DecisionBackendStatus]? = [:],
-        httpBackends: [String: BackendStatus] = [:],
+        backends: [String: BackendStatus] = [:],
         allowRemoteInference: Bool? = false,
         typesafeOnHost: Bool = false,
-        presets: [DecisionPresetView]? = [openRouter, ollaya, typesafe, cloudflare, ollama]
+        presets: [ProviderPreset] = presets
     )
         -> ModelsOverview {
         ModelsOverview(
             assignmentDisplays: [:],
             capabilities: [decisionCap],
             inference: InferenceOverview(
-                backends: httpBackends,
+                backends: backends,
                 assignments: decision.map { ["decision": $0] } ?? [:],
                 allowRemoteInference: allowRemoteInference,
-                typesafe: TypeSafeEndpointStatus(url: typesafe.url, selfHosted: false, onHost: typesafeOnHost),
-                decisionBackends: decisionBackends
+                typesafe: TypeSafeEndpointStatus(url: typesafe.decision?.url, selfHosted: false, onHost: typesafeOnHost)
             ),
             catalog: [],
             installed: [],
-            decisionPresets: presets
+            presets: presets
         )
     }
 
     /// The patch as the JSON object the gateway receives.
-    static func json(_ patch: DecisionConfigPatch) throws -> NSDictionary {
+    static func json(_ patch: some Encodable) throws -> NSDictionary {
         let data = try JSONEncoder().encode(patch)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? NSDictionary)
     }
@@ -94,45 +144,64 @@ final class DecisionModelSetupTests: XCTestCase {
 
     // MARK: - Configurability and providers
 
-    func testDecisionCardIsConfigurableOnlyWhenTheGatewaySendsPresets() {
+    func testDecisionCardIsConfigurableOnlyWhenAPresetDescribesADecisionAPI() {
         let cap = DecisionFixtures.decisionCap
         XCTAssertTrue(Setup.isConfigurable(cap, in: DecisionFixtures.overview()))
-        XCTAssertFalse(Setup.isConfigurable(cap, in: DecisionFixtures.overview(presets: nil)))
+        let older = DecisionFixtures.overview(presets: [DecisionFixtures.groq])
+        XCTAssertFalse(Setup.isConfigurable(cap, in: older))
+        XCTAssertFalse(Setup.isConfigurable(cap, in: DecisionFixtures.overview(presets: [])))
         let agent = CapabilityMeta(role: "agent", title: "Agent", description: "d", icon: "bot")
-        XCTAssertTrue(Setup.isConfigurable(agent, in: DecisionFixtures.overview(presets: nil)))
+        XCTAssertTrue(Setup.isConfigurable(agent, in: older))
         let unknownFamily = CapabilityMeta(role: "x", title: "X", description: "d", icon: "bot", backendFamily: "other")
         XCTAssertFalse(Setup.isConfigurable(unknownFamily, in: DecisionFixtures.overview()))
     }
 
-    func testProviderGroupsListBackendsFirstThenLocalThenTypeSafeFirst() {
-        let overview = DecisionFixtures.overview(decisionBackends: [
-            "zeta": DecisionBackendStatus(url: "https://decide.example.com/v1/systemone"),
-            "ollaya": DecisionBackendStatus(preset: "ollaya", url: "http://127.0.0.1:11435/v1/systemone", onHost: true),
+    func testProviderListOrdersDecisionBackendsThenExistingKeysThenTypeSafeThenProviders() {
+        let overview = DecisionFixtures.overview(backends: [
+            "zeta": DecisionFixtures.decisionBackend("https://decide.example.com/v1/systemone"),
+            "ollaya": DecisionFixtures.decisionBackend("http://127.0.0.1:11435/v1/systemone", preset: "ollaya"),
+            "fireworks": DecisionFixtures.chatBackend("https://api.fireworks.ai/inference", preset: "fireworks"),
+            "openrouter": DecisionFixtures.chatBackend(
+                "https://openrouter.ai/api",
+                preset: "openrouter",
+                decision: BackendDecisionStatus(url: "https://openrouter.ai/api/v1/systemone", hasApiKey: true)
+            ),
+            // Chat backends whose provider has no decision API, or none known.
+            "groq": DecisionFixtures.chatBackend("https://api.groq.com/openai", preset: "groq"),
+            "vllm": DecisionFixtures.chatBackend("http://127.0.0.1:8000"),
+            // The gateway refuses a decision API on a backend called typesafe.
+            "typesafe": DecisionFixtures.chatBackend("https://openrouter.ai/api", preset: "openrouter"),
+            "anthropic": BackendStatus(type: "anthropic", status: "ok"),
         ])
         let groups = Setup.providerGroups(overview)
-        XCTAssertEqual(groups.existing.map(\.key), ["ollaya", "zeta"])
+        XCTAssertEqual(groups.existing.map(\.key), ["ollaya", "openrouter", "zeta"])
         XCTAssertEqual(groups.existing.first?.preset?.id, "ollaya")
         XCTAssertTrue(groups.existing[0].listsModels)
+        XCTAssertFalse(groups.existing[1].listsModels, "a hosted provider is never asked for its models")
         // A hand-added server may list its models wherever it runs.
-        XCTAssertNil(groups.existing[1].preset)
-        XCTAssertTrue(groups.existing[1].listsModels)
-        let hosted = Setup.ExistingBackend(
-            key: "openrouter",
-            status: DecisionBackendStatus(preset: "openrouter", url: "https://openrouter.ai/api/v1/systemone"),
-            preset: DecisionFixtures.openRouter
-        )
-        XCTAssertFalse(hosted.listsModels)
-        XCTAssertEqual(groups.local.map(\.id), ["ollaya", "ollama"])
-        XCTAssertEqual(groups.cloud.map(\.id), ["typesafe", "openrouter", "cloudflare"])
+        XCTAssertNil(groups.existing[2].preset)
+        XCTAssertTrue(groups.existing[2].listsModels)
+        XCTAssertEqual(groups.enable.map(\.key), ["fireworks"])
+        XCTAssertEqual(groups.typesafe?.id, "typesafe")
+        // Fireworks is offered as the backend that has it, not as a second account.
+        XCTAssertEqual(groups.add.map(\.id), ["ollaya", "ollama", "openrouter", "cloudflare"])
+    }
+
+    func testProviderListWithoutBackendsOffersEveryDecisionProvider() {
+        let groups = Setup.providerGroups(DecisionFixtures.overview())
+        XCTAssertEqual(groups.existing, [])
+        XCTAssertEqual(groups.enable, [])
+        XCTAssertEqual(groups.add.map(\.id), ["ollaya", "ollama", "openrouter", "fireworks", "cloudflare"])
+        XCTAssertNil(Setup.providerGroups(DecisionFixtures.overview(presets: [DecisionFixtures.groq])).typesafe)
     }
 
     // MARK: - Names
 
     func testNameValidationMirrorsTheGatewayRules() {
-        let overview = DecisionFixtures.overview(
-            decisionBackends: ["ollaya": DecisionBackendStatus(url: "http://127.0.0.1:11435/v1/systemone")],
-            httpBackends: ["vllm": BackendStatus(type: "http", status: "ok")]
-        )
+        let overview = DecisionFixtures.overview(backends: [
+            "ollaya": DecisionFixtures.decisionBackend("http://127.0.0.1:11435/v1/systemone"),
+            "vllm": BackendStatus(type: "http", status: "ok"),
+        ])
         XCTAssertNil(Setup.validateName("my-decider", in: overview))
         XCTAssertNil(Setup.validateName("  ollama  ", in: overview))
         XCTAssertEqual(Setup.validateName("  ", in: overview), "Enter a name.")
@@ -149,26 +218,24 @@ final class DecisionModelSetupTests: XCTestCase {
         XCTAssertEqual(Setup.validateName(" .. ", in: overview), "“..” cannot name a backend.")
         XCTAssertNil(Setup.validateName("v1.2", in: overview))
         XCTAssertEqual(Setup.validateName("\n\t", in: overview), "Enter a name.")
-        XCTAssertEqual(Setup.validateName("vllm", in: overview), "An HTTP backend is already called “vllm”.")
-        XCTAssertEqual(
-            Setup.validateName("ollaya", in: overview),
-            "A decision backend is already called “ollaya”. Pick it from the list instead."
-        )
+        XCTAssertEqual(Setup.validateName("vllm", in: overview), "A backend is already called “vllm”.")
+        XCTAssertEqual(Setup.validateName("ollaya", in: overview), "A backend is already called “ollaya”.")
     }
 
     func testDefaultNameIsThePresetIdOrTheNextFreeSuffix() {
         XCTAssertEqual(Setup.defaultName(for: DecisionFixtures.ollaya, in: DecisionFixtures.overview()), "ollaya")
-        let taken = DecisionFixtures.overview(
-            decisionBackends: ["ollaya": DecisionBackendStatus(url: "http://127.0.0.1:11435/v1/systemone")],
-            httpBackends: ["ollaya-2": BackendStatus(type: "http", status: "ok")]
-        )
+        let taken = DecisionFixtures.overview(backends: [
+            "ollaya": DecisionFixtures.decisionBackend("http://127.0.0.1:11435/v1/systemone"),
+            "ollaya-2": BackendStatus(type: "http", status: "ok"),
+        ])
         XCTAssertEqual(Setup.defaultName(for: DecisionFixtures.ollaya, in: taken), "ollaya-3")
     }
 
     // MARK: - URLs and consent
 
-    func testFillURLEncodesEachParameterLikeEncodeURIComponent() {
-        let preset = DecisionFixtures.cloudflare
+    func testFillURLEncodesEachParameterLikeEncodeURIComponent() throws {
+        let preset = try XCTUnwrap(DecisionFixtures.cloudflare.decision)
+        let ollaya = try XCTUnwrap(DecisionFixtures.ollaya.decision)
         XCTAssertEqual(
             Setup.fillURL(preset, values: ["account": " 0123abcd "]),
             .ready("https://api.cloudflare.com/client/v4/accounts/0123abcd/ai/run")
@@ -179,8 +246,8 @@ final class DecisionModelSetupTests: XCTestCase {
         )
         XCTAssertEqual(Setup.fillURL(preset, values: [:]), .missing("Account ID"))
         XCTAssertEqual(Setup.fillURL(preset, values: ["account": "   "]), .missing("Account ID"))
-        XCTAssertEqual(Setup.fillURL(DecisionFixtures.ollaya, values: [:]), .ready("http://127.0.0.1:11435/v1/systemone"))
-        let undeclared = DecisionPresetView(id: "x", name: "X", kind: "cloud", url: "https://{region}.example.com/v1")
+        XCTAssertEqual(Setup.fillURL(ollaya, values: [:]), .ready("http://127.0.0.1:11435/v1/systemone"))
+        let undeclared = ProviderDecisionPreset(url: "https://{region}.example.com/v1")
         XCTAssertEqual(Setup.fillURL(undeclared, values: [:]), .missing("region"))
     }
 
@@ -217,10 +284,13 @@ final class DecisionModelSetupTests: XCTestCase {
     func testConsentIsNeededOnlyOffHostWhileCloudInferenceIsOff() {
         let remote = "https://openrouter.ai/api/v1/systemone"
         let local = "http://127.0.0.1:11435/v1/systemone"
-        XCTAssertTrue(Setup.needsRemoteConsent(url: remote, in: DecisionFixtures.overview(allowRemoteInference: false)))
-        XCTAssertTrue(Setup.needsRemoteConsent(url: remote, in: DecisionFixtures.overview(allowRemoteInference: nil)))
-        XCTAssertFalse(Setup.needsRemoteConsent(url: remote, in: DecisionFixtures.overview(allowRemoteInference: true)))
-        XCTAssertFalse(Setup.needsRemoteConsent(url: local, in: DecisionFixtures.overview(allowRemoteInference: false)))
+        let off = DecisionFixtures.overview(allowRemoteInference: false)
+        XCTAssertTrue(Setup.needsRemoteConsent(urls: [remote], in: off))
+        XCTAssertTrue(Setup.needsRemoteConsent(urls: [remote], in: DecisionFixtures.overview(allowRemoteInference: nil)))
+        XCTAssertFalse(Setup.needsRemoteConsent(urls: [remote], in: DecisionFixtures.overview(allowRemoteInference: true)))
+        XCTAssertFalse(Setup.needsRemoteConsent(urls: [local], in: off))
+        // A provider with both APIs asks when either leaves the host.
+        XCTAssertTrue(Setup.needsRemoteConsent(urls: [local, "https://openrouter.ai/api"], in: off))
         XCTAssertTrue(Setup.typesafeNeedsRemoteConsent(in: DecisionFixtures.overview(allowRemoteInference: false)))
         XCTAssertFalse(Setup.typesafeNeedsRemoteConsent(in: DecisionFixtures.overview(allowRemoteInference: true)))
         XCTAssertFalse(Setup.typesafeNeedsRemoteConsent(
@@ -255,14 +325,11 @@ final class DecisionModelSetupTests: XCTestCase {
     }
 
     func testFormDefaultsPrefillNameURLAndTheModelInUse() {
-        let backend = Setup.ExistingBackend(
-            key: "ollaya",
-            status: DecisionBackendStatus(preset: "ollaya", url: "http://127.0.0.1:11435/v1/systemone", onHost: true),
-            preset: DecisionFixtures.ollaya
-        )
+        let status = DecisionFixtures.decisionBackend("http://127.0.0.1:11435/v1/systemone", preset: "ollaya")
+        let backend = Setup.ExistingBackend(key: "ollaya", status: status, preset: DecisionFixtures.ollaya)
         let inUse = DecisionFixtures.overview(
             decision: ResolvedAssignment(kind: "decision", model: "laya", backendKey: "ollaya"),
-            decisionBackends: ["ollaya": backend.status]
+            backends: ["ollaya": status]
         )
         XCTAssertEqual(
             Setup.formDefaults(.existing(backend), in: inUse),
@@ -272,6 +339,19 @@ final class DecisionModelSetupTests: XCTestCase {
         XCTAssertEqual(
             Setup.formDefaults(.preset(DecisionFixtures.ollaya), in: inUse),
             Setup.FormDefaults(name: "ollaya-2", url: "http://127.0.0.1:11435/v1/systemone", model: "kev")
+        )
+        let fireworks = Setup.ExistingBackend(
+            key: "fw",
+            status: DecisionFixtures.chatBackend("https://api.fireworks.ai/inference", preset: "fireworks"),
+            preset: DecisionFixtures.fireworks
+        )
+        XCTAssertEqual(
+            Setup.formDefaults(.enable(fireworks), in: inUse),
+            Setup.FormDefaults(
+                name: "fw",
+                url: "https://api.fireworks.ai/inference/v1/systemone",
+                model: "accounts/fireworks/models/rune"
+            )
         )
         let typesafeInUse = DecisionFixtures.overview(decision: ResolvedAssignment(kind: "typesafe", model: "jev-1.13.0"))
         XCTAssertEqual(

@@ -6165,6 +6165,7 @@ final class PreviewSnapshotTests: XCTestCase {
         decisionCalibrationSnapshots(store)
         decisionFormSnapshots(store)
         decisionFormErrorSnapshots(store)
+        decisionUnifiedBackendSnapshots(store)
     }
 
     private static let decisionTallCanvas = CGSize(width: 393, height: 1100)
@@ -6306,7 +6307,7 @@ final class PreviewSnapshotTests: XCTestCase {
                 DecisionBackendForm(
                     choice: .preset(DecisionPreviewData.openRouter),
                     overview: DecisionPreviewData.unconfiguredOverview(),
-                    previewError: "Could not save: inference.decisionBackends.openrouter.url: Invalid url"
+                    previewError: "Could not save: inference.backends.openrouter.decision.url: Invalid url"
                 )
             }
             .environment(store),
@@ -6349,6 +6350,63 @@ final class PreviewSnapshotTests: XCTestCase {
             .environment(store),
             name: "111r-decision-form-probe-failed",
             size: Self.decisionTallCanvas
+        )
+    }
+
+    /// One backend per provider: adding decisions to a backend with the key
+    /// it has, a new provider with both APIs, a decision-only provider, and a
+    /// chat backend whose decisions can be turned off.
+    private func decisionUnifiedBackendSnapshots(_ store: AppStore) {
+        let tall = Self.decisionTallCanvas
+        snapshot(
+            NavigationStack {
+                DecisionProviderList(overview: DecisionPreviewData.typesafeOverview())
+            }
+            .environment(store),
+            name: "111da-decision-providers-existing-key",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .enable(DecisionPreviewData.fireworksForDecisions),
+                    overview: DecisionPreviewData.typesafeOverview()
+                )
+            }
+            .environment(store),
+            name: "111db-decision-form-existing-key",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .preset(DecisionPreviewData.openRouter),
+                    overview: DecisionPreviewData.typesafeOverview(),
+                    previewApiKey: "example-key"
+                )
+            }
+            .environment(store),
+            name: "111dc-decision-form-both-apis",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(choice: .preset(DecisionPreviewData.fastino), overview: DecisionPreviewData.typesafeOverview())
+            }
+            .environment(store),
+            name: "111dd-decision-form-decision-only",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .existing(DecisionPreviewData.existingOpenRouter),
+                    overview: DecisionPreviewData.calibratedOverview()
+                )
+            }
+            .environment(store),
+            name: "111de-decision-form-chat-backend",
+            size: tall
         )
     }
 
@@ -7397,10 +7455,23 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     func testAddBackendSheet() {
-        // The add-backend preset grid (first step): one card per provider preset
-        // plus the "Custom" card.
-        let view = AddBackendSheet(presets: BackendsPreviewData.presets())
+        // The add-backend preset grid (first step): one card per provider with
+        // an OpenAI-compatible API — those with decision models say so — plus
+        // the "Custom" card. Decision-only providers and TypeSafe are not offered.
+        let view = AddBackendSheet(presets: DecisionPreviewData.allPresets)
         snapshot(view.environment(AppStore.preview()), name: "112c-add-backend-preset-grid")
+    }
+
+    func testBackendsServingChatAndDecisionModels() {
+        // One list: each row says whether it serves chat models, decision
+        // models or both; a decision-only row has no Test button.
+        let view = NavigationStack {
+            BackendsContent(backends: DecisionPreviewData.backendRows(), presets: DecisionPreviewData.allPresets)
+                .background(Theme.bgPrimary.ignoresSafeArea())
+                .navigationTitle("Backends")
+                .navigationBarTitleDisplayMode(.inline)
+        }
+        snapshot(view.environment(AppStore.preview()), name: "112z-backends-chat-and-decision", size: CGSize(width: 393, height: 1400))
     }
 
     func testBackendsWithProviderCredentials() {
