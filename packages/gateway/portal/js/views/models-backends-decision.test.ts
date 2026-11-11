@@ -222,6 +222,28 @@ describe("Models — backends that serve decisions", () => {
       expect(button("Done")).toBeTruthy();
     });
 
+    it("asks for a key when the backend has none and the provider needs one, and writes it beside the decision API", async () => {
+      current = overviewWith({ backends: { fireworks: { ...FIREWORKS, hasApiKey: false } }, allowRemoteInference: true });
+      await openPicker();
+      expect(card("Fireworks AI").textContent).toContain("Needs a key");
+      await click(card("Fireworks AI"));
+      expect(host.querySelector(".decision-form .decision-form-sub").textContent).toBe("Needs a key");
+      expect(host.textContent).toContain("It becomes this backend's key for its OpenAI-compatible and decision APIs.");
+      await pickOption("rune");
+      expect(button("Save and use").disabled).toBe(true);
+      await type("API key", "example-key");
+      expect(button("Save and use").disabled).toBe(false);
+      await submit();
+      expect(api.patchAdminConfig).toHaveBeenCalledExactlyOnceWith({
+        inference: {
+          backends: {
+            fireworks: { apiKey: "example-key", decision: { url: "https://api.example.org/inference/v1/systemone", protocol: "systemone", auth: "bearer" } },
+          },
+          assignments: { decision: "fireworks/accounts/example/models/rune" },
+        },
+      });
+    });
+
     it("asks cloud consent naming the provider before enabling its decisions", async () => {
       current = overviewWith({ backends: { fireworks: FIREWORKS } });
       await openPicker();
@@ -292,12 +314,19 @@ describe("Models — backends that serve decisions", () => {
       expect(card("Fastino").textContent).toContain("1 model");
     });
 
+    it("leaves out providers that already have a backend, which the picker offers above", async () => {
+      current = overviewWith({ backends: { fireworks: FIREWORKS, ollaya: ollayaWith(), vllm: VLLM } });
+      await openPicker();
+      await click(card("Add a provider"));
+      expect(cardTitles(host)).toEqual(["Other server", "OpenAI", "Edgeworks AI", "Fastino"]);
+    });
+
     it("sets up both APIs of a provider that has both, with one key", async () => {
       current = overviewWith({ allowRemoteInference: true });
       await addProvider("OpenAI");
       expect(host.querySelector("input[aria-label='Base URL']")).toBeNull();
       expect(host.querySelector(".decision-field-label a")?.getAttribute("href")).toBe("https://platform.example.com/keys");
-      expect(host.textContent).toContain("Sets up its chat and decision models with one key.");
+      expect(host.textContent).toContain("Sets up its OpenAI-compatible and decision APIs with one key.");
       await type("API key", "example-key");
       await pickOption("luna-decide");
       await submit();
@@ -600,9 +629,9 @@ describe("Models — backends that serve decisions", () => {
       current = overviewWith({ ...onOllaya(), backends: { ollaya: ollayaWith(), fireworks: { ...FIREWORKS, decision: FIREWORKS_DECISION }, vllm: VLLM } });
       await mount("backends");
       expect([...host.querySelectorAll("h2")].map((n) => n.textContent)).not.toContain("Decision backends");
-      expect(row("Fireworks AI").querySelector(".backend-serves").textContent).toBe("Chat & decision models");
+      expect(row("Fireworks AI").querySelector(".backend-serves").textContent).toBe("OpenAI-compatible and decision models");
       expect(row("Ollaya").querySelector(".backend-serves").textContent).toBe("Decision models");
-      expect(row("vllm").querySelector(".backend-serves").textContent).toBe("Chat models");
+      expect(row("vllm").querySelector(".backend-serves").textContent).toBe("OpenAI-compatible models");
       // A decision-only backend has no model list to test, and shows its decision endpoint.
       expect([...row("Ollaya").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Change key", "Remove"]);
       expect(row("Ollaya").querySelector("code").textContent).toBe("http://127.0.0.1:11435/v1/systemone");
@@ -682,8 +711,8 @@ describe("Models — backends that serve decisions", () => {
       await clickText("+ Add backend");
       expect(cards().map((n) => n.querySelector(".backend-opt-title").textContent)).not.toContain("TypeSafe");
       expect(card("Fastino").textContent).toContain("Decision models");
-      expect(card("OpenAI").textContent).toContain("Chat & decision models");
-      expect(card("Groq").textContent).toContain("Chat models");
+      expect(card("OpenAI").textContent).toContain("OpenAI-compatible and decision models");
+      expect(card("Groq").textContent).toContain("OpenAI-compatible models");
       expect(card("Fireworks AI").textContent).toContain("Configured");
       await click(card("Fastino"));
       expect(modelInput()).toBeNull();

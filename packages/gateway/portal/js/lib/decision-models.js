@@ -33,9 +33,14 @@ export function decisionPickerGroups(overview) {
   return { ready, enable };
 }
 
-/** The presets "Add a provider" offers for the Decision model. */
-export function presetsWithDecisions(overview) {
-  return (overview?.presets ?? []).filter((preset) => preset.decision && !preset.builtIn);
+/**
+ * The presets the Decision model's "Add a provider" offers: those with
+ * decisions that no backend was made from yet. A backend made from one is
+ * offered above it, with its own key.
+ */
+export function newDecisionPresets(overview) {
+  const used = new Set(Object.values(overview?.inference?.backends ?? {}).map((backend) => backend?.preset).filter(Boolean));
+  return (overview?.presets ?? []).filter((preset) => preset.decision && !preset.builtIn && !used.has(preset.id));
 }
 
 /** The Decision model's current assignment as `<backend>/<model>`, when it is on a backend's decision API. */

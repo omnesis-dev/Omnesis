@@ -39,7 +39,7 @@ import {
   presetServes,
   SERVES_LABEL,
 } from "../lib/backend-setup.js";
-import { canProbeDecisionModels, presetsWithDecisions } from "../lib/decision-models.js";
+import { canProbeDecisionModels, newDecisionPresets } from "../lib/decision-models.js";
 import { filterBackendModels } from "../lib/backend-model-filter.js";
 import { fuzzyMatchFields } from "../lib/fuzzy-match.js";
 import {
@@ -341,10 +341,10 @@ function ProviderGrid({ options, mode, onSelect }) {
   return html`<div class="decision-provider-picker">${group("On this machine", local)}${group("Cloud", cloud)}</div>`;
 }
 
-/** The Decision model's "Add a provider" options: presets with decisions, then Other server. */
+/** The Decision model's "Add a provider" options: presets with decisions no backend uses yet, then Other server. */
 function decisionProviderOptions(overview) {
   return [
-    ...presetsWithDecisions(overview).map((preset) => ({ kind: "preset", id: preset.id, preset })),
+    ...newDecisionPresets(overview).map((preset) => ({ kind: "preset", id: preset.id, preset })),
     { kind: "add-custom" },
   ];
 }
@@ -500,7 +500,7 @@ function BackendForm({ overview, preset = null, mode = "configure", checks = {},
         </div>
       </div>
       ${preset
-        ? html`${preset.defaultUrl && decision ? html`<p class="field-note">Sets up its chat and decision models with one key.</p>` : null}
+        ? html`${preset.defaultUrl && decision ? html`<p class="field-note">Sets up its OpenAI-compatible and decision APIs with one key.</p>` : null}
             <${PresetNote} decision=${decision} />`
         : html`<p class="field-note">${OTHER_SERVER_NOTE[mode]}</p>`}
 
@@ -1257,7 +1257,7 @@ export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow
       onDone=${onClose}
     />`;
   } else if (step.name === "decision-add") {
-    body = html`
+    body = html`<div class="picker-pane">
       <div class="picker-pane-head">
         <button type="button" class="btn-back" onClick=${toGrid}>← Back</button>
         <div class="picker-pane-title">Add a provider</div>
@@ -1267,7 +1267,7 @@ export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow
         mode="decision"
         onSelect=${(opt) => setStep({ name: "decision-new", preset: opt.preset ?? null })}
       />
-    `;
+    </div>`;
   } else if (step.name === "decision-new") {
     body = html`<${BackendForm}
       key=${step.preset?.id ?? "other"}

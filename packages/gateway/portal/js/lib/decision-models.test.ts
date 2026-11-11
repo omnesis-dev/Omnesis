@@ -16,7 +16,7 @@ import {
   decisionPickerGroups,
   decisionVerifyText,
   decisionWhere,
-  presetsWithDecisions,
+  newDecisionPresets,
   // @ts-expect-error — portal modules are plain JS.
 } from "./decision-models.js";
 
@@ -68,9 +68,12 @@ describe("decision picker", () => {
     expect(enable).toEqual([]);
   });
 
-  it("adds providers that serve decisions, never the built-in TypeSafe", () => {
-    expect(presetsWithDecisions(overview()).map((p: { id: string }) => p.id)).toEqual(["fireworks", "ollaya"]);
-    expect(presetsWithDecisions({})).toEqual([]);
+  it("adds only providers with decisions that no backend was made from, never the built-in TypeSafe", () => {
+    // Fireworks and Ollaya already have backends; they are offered above, with their own key.
+    expect(newDecisionPresets(overview()).map((p: { id: string }) => p.id)).toEqual([]);
+    expect(newDecisionPresets({ presets: overview().presets, inference: { backends: { vllm: { type: "http", url: "http://127.0.0.1:8000" } } } }).map((p: { id: string }) => p.id))
+      .toEqual(["fireworks", "ollaya"]);
+    expect(newDecisionPresets({})).toEqual([]);
   });
 });
 

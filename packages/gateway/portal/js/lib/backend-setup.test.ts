@@ -46,9 +46,9 @@ const overview = {
 
 describe("what a backend serves", () => {
   it("names chat models, decision models, or both", () => {
-    expect(SERVES_LABEL[backendServes({ url: "https://a.example.com" })]).toBe("Chat models");
+    expect(SERVES_LABEL[backendServes({ url: "https://a.example.com" })]).toBe("OpenAI-compatible models");
     expect(SERVES_LABEL[backendServes({ decision: { url: "https://a.example.com" } })]).toBe("Decision models");
-    expect(SERVES_LABEL[backendServes({ url: "https://a.example.com", decision: { url: "https://a.example.com/d" } })]).toBe("Chat & decision models");
+    expect(SERVES_LABEL[backendServes({ url: "https://a.example.com", decision: { url: "https://a.example.com/d" } })]).toBe("OpenAI-compatible and decision models");
     expect(presetServes(BOTH)).toBe("both");
     expect(presetServes(SCORED)).toBe("decision");
     expect(presetServes(CHAT)).toBe("chat");
@@ -146,6 +146,15 @@ describe("config patches", () => {
       },
     });
     expect(enableDecisionPatch({ key: "fireworks", preset: BOTH, decisionUrl: BOTH.decision.url, model: "rune", enableRemote: true }).inference.allowRemoteInference).toBe(true);
+  });
+
+  it("writes a typed key onto a backend that has none, beside its decision API", () => {
+    expect(enableDecisionPatch({ key: "fireworks", preset: BOTH, decisionUrl: BOTH.decision.url, model: "rune", apiKey: " example-key " })).toEqual({
+      inference: {
+        backends: { fireworks: { apiKey: "example-key", decision: { url: BOTH.decision.url, protocol: "systemone", auth: "bearer" } } },
+        assignments: { decision: "fireworks/rune" },
+      },
+    });
   });
 
   it("disables a backend's decisions, turning the Decision model off only when it is assigned there", () => {

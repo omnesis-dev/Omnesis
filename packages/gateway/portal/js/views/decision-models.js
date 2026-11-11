@@ -95,7 +95,7 @@ export function DecisionProviderPicker({ overview, chatGrid, onPickBackend, onPi
             <h3 class="decision-provider-heading">Your backends</h3>
             <div class="backend-opt-grid">
               ${ready.map((entry) => card(entry))}
-              ${enable.map((entry) => card(entry, "Uses your existing key"))}
+              ${enable.map((entry) => card(entry, entry.backend.hasApiKey ? "Uses your existing key" : "Needs a key"))}
             </div>
           </section>`
         : null}
@@ -214,8 +214,10 @@ export function DecisionModelField({ preset, value, probe, quiet = false, onChan
  * Pick the Decision model on an existing backend. A backend that serves
  * decisions is used as it is; one whose provider offers decisions it does not
  * use yet gets its provider's decision API in the same write, with the key it
- * already has. `onSave(patch, {key, decisionModel})` resolves to
- * `{ok, error?}`; a null patch only checks the model again.
+ * already has — or, when it has none and the provider needs one, the key
+ * typed here, which becomes its key for both APIs.
+ * `onSave(patch, {key, decisionModel})` resolves to `{ok, error?}`; a null
+ * patch only checks the model again.
  */
 export function DecisionModelPane({ overview, backendKey, checks = {}, onVerify, onSave, onBack, onDone }) {
   const backend = overview.inference.backends?.[backendKey];
@@ -224,12 +226,14 @@ export function DecisionModelPane({ overview, backendKey, checks = {}, onVerify,
   const assigned = assignedDecisionBackend(overview);
   const [model, setModel] = useState(() => (assigned?.key === backendKey ? assigned.model : ""));
   const [params, setParams] = useState({});
+  const [apiKey, setApiKey] = useState("");
   const [phase, setPhase] = useState("edit"); // edit | saving | saved
   const [error, setError] = useState(null);
   const [consent, setConsent] = useState(null);
   const { probe, run } = useDecisionModelProbe();
 
   const urlParams = enabling ? preset?.decision?.urlParams ?? [] : [];
+  const [asksKey] = useState(() => enabling && preset?.decision?.keyRequired === true && !backend?.hasApiKey);
   const target = enabling ? fillDecisionUrl(preset?.decision, params) : { url: backend?.decision?.url };
   const trimmed = model.trim();
   const assignment = trimmed ? `${backendKey}/${trimmed}` : null;
@@ -251,7 +255,7 @@ export function DecisionModelPane({ overview, backendKey, checks = {}, onVerify,
     setPhase("saving");
     setError(null);
     const patch = enabling
-      ? enableDecisionPatch({ key: backendKey, preset, decisionUrl: target.url, model: trimmed, enableRemote })
+      ? enableDecisionPatch({ key: backendKey, preset, decisionUrl: target.url, model: trimmed, apiKey: asksKey ? apiKey : undefined, enableRemote })
       : assignment === currentDecisionAssignment(overview) && !enableRemote
       ? null
       : inferenceAssignmentPatch("decision", assignment, enableRemote);
@@ -260,7 +264,7 @@ export function DecisionModelPane({ overview, backendKey, checks = {}, onVerify,
     setPhase("saved");
   };
 
-  const canSave = phase !== "saving" && !!trimmed && !!target.url;
+  const canSave = phase !== "saving" && !!trimmed && !!target.url && (!asksKey || phase === "saved" || !!apiKey.trim());
   const onSubmit = (e) => {
     e?.preventDefault?.();
     if (phase === "saved") { onDone?.(); return; }
@@ -287,7 +291,7 @@ export function DecisionModelPane({ overview, backendKey, checks = {}, onVerify,
         <div class="picker-pane-title">
           <${PresetMark} preset=${preset} name=${backendKey} />
           ${backendDisplayName(backendKey, preset)}
-          <span class="decision-form-sub">${enabling ? "Uses your existing key" : decisionWhere(backend?.decision)}</span>
+          <span class="decision-form-sub">${asksKey ? "Needs a key" : enabling ? "Uses your existing key" : decisionWhere(backend?.decision)}</span>
         </div>
       </div>
       ${enabling ? html`<${PresetNote} decision=${preset?.decision} />` : null}
@@ -302,6 +306,25 @@ export function DecisionModelPane({ overview, backendKey, checks = {}, onVerify,
           onInput=${(e) => edit((v) => setParams((p) => ({ ...p, [param.key]: v })))(e.target.value)}
         />
       </label>`)}
+      ${asksKey
+        ? html`<label class="field">
+            <span class="field-label decision-field-label">
+              <span>API key</span>
+              ${preset.decision.keyUrl ? html`<a href=${preset.decision.keyUrl} target="_blank" rel="noreferrer">Get a key</a>` : null}
+            </span>
+            <input
+              class="field-input"
+              type="password"
+              autocomplete="off"
+              aria-label="API key"
+              placeholder="Paste your key"
+              value=${apiKey}
+              disabled=${phase === "saved"}
+              onInput=${(e) => edit(setApiKey)(e.target.value)}
+            />
+            <span class="field-note">It becomes this backend's key for its OpenAI-compatible and decision APIs.</span>
+          </label>`
+        : null}
       <${DecisionModelField} preset=${preset} value=${model} probe=${probe} quiet=${check?.state === "fail"} onChange=${edit(setModel)} />
       <${DecisionCheckLine} check=${check} model=${trimmed} />
       ${error ? html`<div class="modal-error" role="alert">${error}</div>` : null}

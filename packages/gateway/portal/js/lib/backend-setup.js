@@ -15,7 +15,10 @@
 /** Names a backend cannot take: the built-in prefixes of an assignment. */
 const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "claude-code", "replay", "typesafe"];
 
-/** What a backend or preset serves: "chat", "decision" or "both". */
+/**
+ * What a backend or preset serves: "chat" (its OpenAI-compatible API: chat,
+ * embedding, transcription and other models), "decision" or "both".
+ */
 function servesOf({ url, decision }) {
   if (url && decision) return "both";
   return decision ? "decision" : "chat";
@@ -32,9 +35,9 @@ export function presetServes(preset) {
 }
 
 export const SERVES_LABEL = {
-  chat: "Chat models",
+  chat: "OpenAI-compatible models",
   decision: "Decision models",
-  both: "Chat & decision models",
+  both: "OpenAI-compatible and decision models",
 };
 
 /** The presets a backend can be made from: all but the built-in TypeSafe. */
@@ -142,12 +145,16 @@ export function newBackendPatch({ key, preset, url, apiPathPrefix, decisionUrl, 
 
 /**
  * The body that adds the preset's decision API to an existing backend and
- * assigns the Decision model to it. It carries no key: the backend's own key
- * serves both of its APIs.
+ * assigns the Decision model to it. The backend's own key serves both of its
+ * APIs, so the body carries none — unless the backend has no key and the
+ * operator typed one, which then becomes its key for both.
  */
-export function enableDecisionPatch({ key, preset, decisionUrl, model, enableRemote = false }) {
+export function enableDecisionPatch({ key, preset, decisionUrl, model, apiKey, enableRemote = false }) {
+  const backend = { decision: decisionBlock(preset?.decision, decisionUrl) };
+  const typedKey = String(apiKey ?? "").trim();
+  if (typedKey) backend.apiKey = typedKey;
   const inference = {
-    backends: { [key]: { decision: decisionBlock(preset?.decision, decisionUrl) } },
+    backends: { [key]: backend },
     assignments: { decision: `${key}/${model}` },
   };
   if (enableRemote) inference.allowRemoteInference = true;
