@@ -114,8 +114,8 @@ struct ModelsView: View {
                 onInstall: { id in try await install(id: id) },
                 onCancelDownload: { id in try await cancelDownload(id: id) },
                 onUninstall: { id in try await uninstall(id: id) },
-                onAddBackend: { name, url, apiKey, prefix in
-                    try await addBackend(name: name, url: url, apiKey: apiKey, apiPathPrefix: prefix)
+                onAddBackend: { backend in
+                    try await addBackend(backend)
                 },
                 onLoadRecent: { role in await loadRecent(role: role) },
                 onReload: { await load() },
@@ -226,10 +226,10 @@ struct ModelsView: View {
     /// Add (or replace) an HTTP backend from the model picker's add affordance,
     /// probe it so its model list populates, then reload the overview so the new
     /// backend appears in the picker grid. Mirrors `BackendsView.add`.
-    private func addBackend(name: String, url: String, apiKey: String?, apiPathPrefix: String?) async throws {
+    private func addBackend(_ backend: NewHttpBackend) async throws {
         guard let client = store.admin else { throw URLError(.cannotConnectToHost) }
-        try await client.addHttpBackend(key: name, url: url, apiKey: apiKey, apiPathPrefix: apiPathPrefix)
-        _ = try? await client.probeBackend(key: name)
+        try await client.addHttpBackend(backend)
+        _ = try? await client.probeBackend(key: backend.key)
         await load()
     }
 
@@ -300,7 +300,7 @@ struct ModelsContent: View {
     /// Uninstall a downloaded local model; returns banner text.
     var onUninstall: (String) async throws -> String = { _ in "" }
     /// Add an HTTP backend from the picker's add affordance; throws on failure.
-    var onAddBackend: (String, String, String?, String?) async throws -> Void = { _, _, _, _ in }
+    var onAddBackend: (NewHttpBackend) async throws -> Void = { _ in }
     /// "Recently used" entries for a capability. Never throws — a failure
     /// yields [], hiding the picker's section.
     var onLoadRecent: (String) async -> [RecentModelEntry] = { _ in [] }
@@ -641,7 +641,7 @@ struct ModelPickerSheet: View {
     var onCancelDownload: (String) -> Void = { _ in }
     var onUninstall: (String) -> Void = { _ in }
     /// Add an HTTP backend from the picker's add affordance; throws on failure.
-    var onAddBackend: (String, String, String?, String?) async throws -> Void = { _, _, _, _ in }
+    var onAddBackend: (NewHttpBackend) async throws -> Void = { _ in }
     /// "Recently used" entries for this capability. Never throws — a failure
     /// (including an older gateway without the route) yields [], hiding the
     /// section while the backend grid below still works.
@@ -672,7 +672,7 @@ struct ModelPickerSheet: View {
         onInstall: @escaping (String) -> Void = { _ in },
         onCancelDownload: @escaping (String) -> Void = { _ in },
         onUninstall: @escaping (String) -> Void = { _ in },
-        onAddBackend: @escaping (String, String, String?, String?) async throws -> Void = { _, _, _, _ in },
+        onAddBackend: @escaping (NewHttpBackend) async throws -> Void = { _ in },
         onLoadRecent: @escaping (String) async -> [RecentModelEntry] = { _ in [] }
     ) {
         self.cap = cap
@@ -756,9 +756,9 @@ struct ModelPickerSheet: View {
                 Text("The model file is deleted from the gateway host. You can re-install it any time.")
             }
             .sheet(isPresented: $showAddSheet) {
-                AddBackendSheet(presets: overview.presets, onAdd: { name, url, apiKey, prefix in
+                AddBackendSheet(presets: overview.presets, onAdd: { backend in
                     showAddSheet = false
-                    Task { try? await onAddBackend(name, url, apiKey, prefix) }
+                    Task { try? await onAddBackend(backend) }
                 })
                 .omnesisColorScheme()
             }

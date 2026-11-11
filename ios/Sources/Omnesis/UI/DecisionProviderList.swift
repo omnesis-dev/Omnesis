@@ -4,10 +4,12 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
-/// Step one of changing the Decision model: where it runs. The backends
-/// already set up come first so one can be reused with another model, then
-/// the servers that run on the operator's machine, then hosted APIs with
-/// TypeSafe first, and any other System One server by URL.
+/// Step one of changing the Decision model: where it runs. Backends already
+/// answering decisions come first so one can be reused with another model,
+/// then backends whose provider offers decision models too (they reuse the
+/// key they have), the built-in TypeSafe, and the providers to add — servers
+/// on the operator's machine, hosted APIs, and any other System One server
+/// by URL.
 @available(iOS 17.0, *)
 struct DecisionProviderList: View {
     let overview: ModelsOverview
@@ -27,8 +29,20 @@ struct DecisionProviderList: View {
                         }
                     }
                 }
-                section("On your machine") {
-                    ForEach(groups.local) { preset in
+                if !groups.enable.isEmpty {
+                    section("Use a backend you have") {
+                        ForEach(groups.enable) { backend in
+                            enableRow(backend)
+                        }
+                    }
+                }
+                if let typesafe = groups.typesafe {
+                    section("Built in") {
+                        presetRow(typesafe)
+                    }
+                }
+                section("Add a provider") {
+                    ForEach(groups.add) { preset in
                         presetRow(preset)
                     }
                     row(
@@ -37,13 +51,6 @@ struct DecisionProviderList: View {
                         subtitle: "Any System One server, by URL",
                         action: { onPick(.custom) }
                     )
-                }
-                if !groups.cloud.isEmpty {
-                    section("Hosted") {
-                        ForEach(groups.cloud) { preset in
-                            presetRow(preset)
-                        }
-                    }
                 }
             }
             .padding(Theme.Spacing.lg)
@@ -67,17 +74,26 @@ struct DecisionProviderList: View {
         return row(
             providerId: backend.preset?.brandId ?? "http",
             title: backend.key,
-            subtitle: "\(provider) · \(Self.hostLabel(backend.status.url))",
+            subtitle: "\(provider) · \(Self.hostLabel(backend.decision?.url ?? ""))",
             badge: inUse ? "In use" : nil,
             action: { onPick(.existing(backend)) }
         )
     }
 
-    private func presetRow(_ preset: DecisionPresetView) -> some View {
+    private func enableRow(_ backend: DecisionModelSetup.ExistingBackend) -> some View {
+        row(
+            providerId: backend.preset?.brandId ?? "http",
+            title: backend.key,
+            subtitle: DecisionModelSetup.enableSummary(backend),
+            action: { onPick(.enable(backend)) }
+        )
+    }
+
+    private func presetRow(_ preset: ProviderPreset) -> some View {
         row(
             providerId: preset.brandId,
             title: preset.name,
-            subtitle: preset.note.map(Self.plainNote) ?? Self.hostLabel(preset.url),
+            subtitle: preset.decision?.note.map(Self.plainNote) ?? Self.hostLabel(preset.decision?.url ?? ""),
             action: { onPick(.preset(preset)) }
         )
     }

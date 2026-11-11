@@ -3,12 +3,12 @@
 
 import Foundation
 
-/// Pure derivations behind the Decision model setup: which providers to offer,
-/// what a valid backend name is, how a preset's URL is completed, when cloud
-/// consent is needed, the `PATCH /admin/config` body a choice saves, and the
-/// verify and calibration wording. Kept out of the views so each rule is
-/// unit-tested and stays in step with the gateway (`decision-presets.ts`,
-/// `config-schema.ts`) and the portal.
+/// Pure derivations behind the Decision model setup: which backends and
+/// providers to offer, what a valid backend name is, how a preset's decision
+/// URL is completed, when cloud consent is needed, the `PATCH /admin/config`
+/// body a choice saves, and the verify and calibration wording. Kept out of
+/// the views so each rule is unit-tested and stays in step with the gateway
+/// (`provider-presets.ts`, `config-schema.ts`) and the portal.
 enum DecisionModelSetup {
     /// The capability role the Decision model fills.
     static let role = "decision"
@@ -16,29 +16,34 @@ enum DecisionModelSetup {
     static let backendFamily = "typed-decision"
     /// The built-in TypeSafe slot's assignment prefix and credential file key.
     static let typesafeKey = "typesafe"
-    /// Prefixes a decision backend's name cannot take: each already means a
-    /// built-in slot in an assignment. Mirrors `decisionBackendKey`.
+    /// Names a backend with a decision API cannot take: each already means a
+    /// built-in slot in an assignment, and `typesafe` is TypeSafe's.
     static let reservedNames: Set<String> = ["local", "anthropic", "codex", "claude-code", "replay", "typesafe"]
     static let maxNameLength = 64
 
     /// Whether this app can configure `cap`: every ordinary role, and the
-    /// Decision card when the gateway sends the decision providers (an older
-    /// gateway does not, and its Decision card stays read-only).
+    /// Decision card when the gateway's presets describe decision APIs (an
+    /// older gateway's do not, and its Decision card stays read-only).
     static func isConfigurable(_ cap: CapabilityMeta, in overview: ModelsOverview) -> Bool {
         if cap.configurableOnDevice { return true }
-        return cap.backendFamily == backendFamily && overview.decisionPresets != nil
+        return cap.backendFamily == backendFamily && overview.allProviders.contains { $0.decision != nil }
     }
 
     // MARK: - Providers
 
-    /// A configured decision backend, offered first so it can be reused.
+    /// A configured backend: one with a decision API, offered first so it can
+    /// be reused, or one whose provider offers a decision API it does not use yet.
     struct ExistingBackend: Identifiable, Equatable, Hashable, Sendable {
         let key: String
-        let status: DecisionBackendStatus
+        let status: BackendStatus
         /// The preset it was made from, for its name, brand and models.
-        let preset: DecisionPresetView?
+        let preset: ProviderPreset?
         var id: String {
             key
+        }
+
+        var decision: BackendDecisionStatus? {
+            status.decision
         }
 
         /// Whether the server may list its models: a local preset's server or
@@ -46,46 +51,85 @@ enum DecisionModelSetup {
         var listsModels: Bool {
             preset.map(\.isLocal) ?? true
         }
+
+        /// Whether a readable API key is stored for the backend.
+        var hasReadableKey: Bool {
+            status.hasApiKey == true && decision?.apiKeySecretError == nil
+        }
+
+        /// Whether adding its provider's decision API needs a key typed: the
+        /// provider refuses decision requests without one and the backend has
+        /// none it can read.
+        var needsKeyForDecisions: Bool {
+            preset?.decision?.keyRequired == true && !hasReadableKey
+        }
+    }
+
+    /// What a key typed while adding decisions to a backend becomes.
+    static let sharedKeyNote = "It becomes this backend's key for its OpenAI-compatible and decision APIs."
+
+    /// The provider list's line under a backend that can add decision models.
+    static func enableSummary(_ backend: ExistingBackend) -> String {
+        let provider = backend.preset?.name ?? backend.key
+        return backend.needsKeyForDecisions ? "\(provider) — Needs a key" : "\(provider) — uses your existing key"
     }
 
     /// What the operator picked in the provider list.
     enum Choice: Hashable, Sendable {
+        /// A backend whose decision API is set up.
         case existing(ExistingBackend)
-        case preset(DecisionPresetView)
+        /// A backend whose provider offers a decision API it does not use
+        /// yet: adding it reuses the backend's key.
+        case enable(ExistingBackend)
+        /// A new backend from a provider preset, or the built-in TypeSafe.
+        case preset(ProviderPreset)
         /// Any other System One server, by URL.
         case custom
     }
 
     struct ProviderGroups: Equatable {
+        /// Backends with a decision API.
         var existing: [ExistingBackend]
-        var local: [DecisionPresetView]
-        var cloud: [DecisionPresetView]
+        /// Backends whose provider offers a decision API they do not use yet.
+        var enable: [ExistingBackend]
+        /// The built-in TypeSafe, when the gateway offers it.
+        var typesafe: ProviderPreset?
+        /// Providers to add as a new backend, leaving out every provider a
+        /// backend was already made from: servers on the operator's machine
+        /// first, then hosted APIs.
+        var add: [ProviderPreset]
     }
 
-    /// The provider list: configured backends first, then the servers that run
-    /// on the operator's machine, then hosted APIs with TypeSafe first.
+    /// The provider list: backends with decisions, backends that can add
+    /// them with the key they have, TypeSafe, then the providers to add.
     static func providerGroups(_ overview: ModelsOverview) -> ProviderGroups {
-        let presets = overview.decisionPresets ?? []
-        let existing = (overview.inference.decisionBackends ?? [:])
+        let backends = overview.inference.backends
+            .filter { $0.value.type == "http" }
             .map { key, status in ExistingBackend(key: key, status: status, preset: preset(id: status.preset, in: overview)) }
             .sorted { $0.key < $1.key }
-        let cloud = presets.filter { !$0.isLocal }
+        let enable = backends.filter { backend in
+            guard backend.decision == nil, backend.key != typesafeKey, let preset = backend.preset else { return false }
+            return preset.decision != nil && preset.builtIn == nil
+        }
+        let taken = Set(backends.compactMap(\.status.preset))
+        let addable = overview.allProviders.filter { $0.decision != nil && $0.builtIn == nil && !taken.contains($0.id) }
         return ProviderGroups(
-            existing: existing,
-            local: presets.filter(\.isLocal),
-            cloud: cloud.filter(\.isTypeSafe) + cloud.filter { !$0.isTypeSafe }
+            existing: backends.filter { $0.decision != nil },
+            enable: enable,
+            typesafe: overview.allProviders.first { $0.isTypeSafe && $0.decision != nil },
+            add: addable.filter(\.isLocal) + addable.filter { !$0.isLocal }
         )
     }
 
-    static func preset(id: String?, in overview: ModelsOverview) -> DecisionPresetView? {
+    static func preset(id: String?, in overview: ModelsOverview) -> ProviderPreset? {
         guard let id else { return nil }
-        return overview.decisionPresets?.first { $0.id == id }
+        return overview.allProviders.first { $0.id == id }
     }
 
     // MARK: - Names
 
     /// The preset's id, or the first `<id>-N` no backend has taken yet.
-    static func defaultName(for preset: DecisionPresetView, in overview: ModelsOverview) -> String {
+    static func defaultName(for preset: ProviderPreset, in overview: ModelsOverview) -> String {
         if validateName(preset.id, in: overview) == nil { return preset.id }
         for suffix in 2 ... 99 where validateName("\(preset.id)-\(suffix)", in: overview) == nil {
             return "\(preset.id)-\(suffix)"
@@ -93,8 +137,8 @@ enum DecisionModelSetup {
         return ""
     }
 
-    /// Nil when `raw` can name a new decision backend, else the reason. The
-    /// gateway enforces the same rules on save.
+    /// Nil when `raw` can name a new backend with a decision API, else the
+    /// reason. The gateway enforces the same rules on save.
     static func validateName(_ raw: String, in overview: ModelsOverview) -> String? {
         let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty { return "Enter a name." }
@@ -103,10 +147,7 @@ enum DecisionModelSetup {
         if reservedNames.contains(name) { return "“\(name)” is reserved. Pick another name." }
         // The gateway counts UTF-16 code units, as JavaScript strings do.
         if name.utf16.count > maxNameLength { return "Use \(maxNameLength) characters or fewer." }
-        if overview.inference.backends[name] != nil { return "An HTTP backend is already called “\(name)”." }
-        if overview.inference.decisionBackends?[name] != nil {
-            return "A decision backend is already called “\(name)”. Pick it from the list instead."
-        }
+        if overview.inference.backends[name] != nil { return "A backend is already called “\(name)”." }
         return nil
     }
 
@@ -118,12 +159,12 @@ enum DecisionModelSetup {
         case missing(String)
     }
 
-    /// Complete a preset's URL: each `{key}` is replaced by its value,
-    /// trimmed and percent-encoded the way `encodeURIComponent` does. Mirrors
-    /// `fillDecisionPresetUrl`.
-    static func fillURL(_ preset: DecisionPresetView, values: [String: String]) -> URLFill {
-        var url = preset.url
-        for param in preset.urlParams {
+    /// Complete a preset's decision URL: each `{key}` is replaced by its
+    /// value, trimmed and percent-encoded the way `encodeURIComponent` does.
+    /// Mirrors `fillDecisionPresetUrl`.
+    static func fillURL(_ decision: ProviderDecisionPreset, values: [String: String]) -> URLFill {
+        var url = decision.url
+        for param in decision.urlParams {
             let value = values[param.key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if value.isEmpty { return .missing(param.label) }
             let encoded = value.addingPercentEncoding(withAllowedCharacters: uriComponentAllowed) ?? value
@@ -167,10 +208,10 @@ enum DecisionModelSetup {
 
     // MARK: - Cloud consent
 
-    /// Whether saving a backend at `url` must first turn on cloud inference:
-    /// it is off (or unknown) and the URL leaves the gateway's host.
-    static func needsRemoteConsent(url: String, in overview: ModelsOverview) -> Bool {
-        overview.inference.allowRemoteInference != true && !isLoopback(url)
+    /// Whether saving endpoints at `urls` must first turn on cloud inference:
+    /// it is off (or unknown) and one of the URLs leaves the gateway's host.
+    static func needsRemoteConsent(urls: [String], in overview: ModelsOverview) -> Bool {
+        overview.inference.allowRemoteInference != true && urls.contains { !isLoopback($0) }
     }
 
     /// The same for the built-in TypeSafe slot, whose endpoint the gateway reports.
@@ -192,9 +233,9 @@ enum DecisionModelSetup {
     // MARK: - Models
 
     /// Model suggestions: what a local server listed first, then the preset's
-    /// own models it did not list.
-    static func modelOptions(preset: DecisionPresetView?, probed: [String]) -> [DecisionModelOption] {
-        let presetModels = preset?.models ?? []
+    /// own decision models it did not list.
+    static func modelOptions(preset: ProviderPreset?, probed: [String]) -> [DecisionModelOption] {
+        let presetModels = preset?.decision?.models ?? []
         let byId = Dictionary(presetModels.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var seen = Set<String>()
         var options: [DecisionModelOption] = []
@@ -240,22 +281,32 @@ enum DecisionModelSetup {
     }
 
     /// A form's starting values: the preset's id as the name (or the next free
-    /// one), its URL, and the model in use or else the first suggestion.
+    /// one), the decision URL, and the model in use or else the first suggestion.
     static func formDefaults(_ choice: Choice, in overview: ModelsOverview) -> FormDefaults {
         let current = overview.inference.assignments[role]
         switch choice {
         case .existing(let backend):
             let inUse = current?.kind == "decision" && current?.backendKey == backend.key ? current?.model : nil
-            return FormDefaults(name: backend.key, url: backend.status.url, model: inUse ?? backend.preset?.models.first?.id ?? "")
+            return FormDefaults(
+                name: backend.key,
+                url: backend.decision?.url ?? "",
+                model: inUse ?? firstModel(backend.preset)
+            )
+        case .enable(let backend):
+            return FormDefaults(name: backend.key, url: backend.preset?.decision?.url ?? "", model: firstModel(backend.preset))
         case .preset(let preset):
             let inUse = preset.isTypeSafe && current?.kind == "typesafe" ? current?.model : nil
             return FormDefaults(
                 name: preset.isTypeSafe ? "" : defaultName(for: preset, in: overview),
-                url: preset.url,
-                model: inUse ?? preset.models.first?.id ?? ""
+                url: preset.decision?.url ?? "",
+                model: inUse ?? firstModel(preset)
             )
         case .custom:
             return FormDefaults(name: "", url: "", model: "")
         }
+    }
+
+    private static func firstModel(_ preset: ProviderPreset?) -> String {
+        preset?.decision?.models.first?.id ?? ""
     }
 }

@@ -86,16 +86,26 @@ final class DecisionModelActionsTests: XCTestCase {
         let request = DecisionProbeRequest(url: "http://127.0.0.1:8080/v1/systemone", apiKey: "sk-example")
         let probe = try await actions(session).probeURL(request)
         XCTAssertEqual(probe.models, ["kev"])
+        // A backend gaining decisions lends its saved key instead of a typed one.
+        let lent = DecisionProbeRequest(url: "http://127.0.0.1:11435/v1/systemone", preset: "ollaya", backendKey: "lan")
+        _ = try await actions(session).probeURL(lent)
+        _ = try await actions(session).probe("studio")
         session.body = #"{"ok":true,"latencyMs":90}"#
         _ = try await actions(session).verify(.typesafe(model: "jev-1.14.0"))
         _ = try await actions(session).verify(.backend(key: "studio", model: "decider-1"))
         XCTAssertEqual(
             session.requests.map { $0.url?.path },
             [
-                "/admin/inference/decision-backends/probe",
+                "/admin/inference/decision/probe",
+                "/admin/inference/decision/probe",
+                "/admin/inference/backends/studio/decision/probe",
                 "/admin/inference/typesafe/verify",
-                "/admin/inference/decision-backends/studio/verify",
+                "/admin/inference/backends/studio/decision/verify",
             ]
+        )
+        XCTAssertEqual(
+            try bodyObject(session.requests[1]),
+            ["url": "http://127.0.0.1:11435/v1/systemone", "preset": "ollaya", "backendKey": "lan"] as NSDictionary
         )
     }
 

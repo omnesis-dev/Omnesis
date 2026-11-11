@@ -77,21 +77,21 @@ enum ModelsPreviewData {
             catalog: catalog(),
             installed: [ManifestEntry(id: "nomic-embed-text-v1.5.Q8_0")],
             activeDownloads: activeDownloads(),
-            presets: BackendsPreviewData.presets(),
+            presets: DecisionPreviewData.presets,
+            decisionProviders: DecisionPreviewData.decisionProviders,
             modelControls: ["openai/gpt-example-frontier": PreviewMocks.modelReasoningControls],
             modelSettings: [
                 "agent": ModelSettings(
                     assignment: "openai/gpt-example-frontier",
                     values: PreviewMocks.modelReasoningValues
                 ),
-            ],
-            decisionPresets: DecisionPreviewData.presets
+            ]
         )
     }
 
     /// An ordinary role beside the Decision card of a gateway that predates
-    /// decision backends (no `decisionPresets`), so the read-only card sits in
-    /// view next to a tappable one.
+    /// decision models (no preset describes a decision API), so the read-only
+    /// card sits in view next to a tappable one.
     static func overviewWithReadOnlyRole() -> ModelsOverview {
         let base = overview()
         return ModelsOverview(
@@ -101,7 +101,7 @@ enum ModelsPreviewData {
             catalog: base.catalog,
             installed: base.installed,
             activeDownloads: base.activeDownloads,
-            presets: base.presets,
+            presets: BackendsPreviewData.presets(),
             modelControls: base.modelControls,
             modelSettings: base.modelSettings
         )
@@ -117,14 +117,14 @@ enum ModelsPreviewData {
             installed: base.installed,
             activeDownloads: base.activeDownloads,
             presets: base.presets,
+            decisionProviders: base.decisionProviders,
             modelControls: [:],
             modelSettings: [
                 "agent": ModelSettings(
                     assignment: "openai/gpt-example-frontier",
                     values: ModelBehaviorValues()
                 ),
-            ],
-            decisionPresets: base.decisionPresets
+            ]
         )
     }
 

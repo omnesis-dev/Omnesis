@@ -3,13 +3,14 @@
 
 import Foundation
 
-// Wire types for setting up the Decision model: the providers `GET
-// /admin/models` offers (`decisionPresets`), the decision backends it reports
-// (`inference.decisionBackends`), and the results of the verify, probe and
-// calibration routes. Mirrors `decision-presets.ts`, `decision-calibration.ts`
-// and `backends.ts` in `@omnesis/core`, and `decision-tools.ts` in the gateway.
-// Every field the setup flow can live without decodes as optional, so a newer
-// gateway's additions and an older gateway's omissions both decode.
+// Wire types for setting up the Decision model: the decision API a provider
+// preset offers (`presets[].decision` of `GET /admin/models`), the decision
+// API a backend has (`inference.backends[key].decision`), and the results of
+// the verify, probe and calibration routes. Mirrors `provider-presets.ts`,
+// `decision-api.ts`, `decision-calibration.ts` and `backends.ts` in
+// `@omnesis/core`, and `decision-tools.ts` in the gateway. Every field the
+// setup flow can live without decodes as optional, so a newer gateway's
+// additions and an older gateway's omissions both decode.
 
 /// A model a decision provider offers. Mirrors `DecisionModelOption`.
 public struct DecisionModelOption: Decodable, Equatable, Hashable, Sendable, Identifiable {
@@ -29,8 +30,8 @@ public struct DecisionModelOption: Decodable, Equatable, Hashable, Sendable, Ide
     }
 }
 
-/// A value the operator supplies to complete a preset's URL, written `{key}`
-/// in it (a Cloudflare account id, a Microsoft Foundry resource name).
+/// A value the operator supplies to complete a preset's decision URL, written
+/// `{key}` in it (a Cloudflare account id, a Microsoft Foundry resource name).
 public struct DecisionPresetURLParam: Decodable, Equatable, Hashable, Sendable, Identifiable {
     public let key: String
     public let label: String
@@ -46,52 +47,40 @@ public struct DecisionPresetURLParam: Decodable, Equatable, Hashable, Sendable, 
     }
 }
 
-/// One decision provider with the models to offer for it. Mirrors
-/// `DecisionPresetView`: a local server (`kind == "local"`) or a hosted API.
-/// `builtIn == "typesafe"` marks TypeSafe, which is served by the built-in
-/// `typesafe/<model>` assignment and its credential, never a decision backend.
-public struct DecisionPresetView: Decodable, Equatable, Hashable, Sendable, Identifiable {
-    public let id: String
-    public let name: String
-    public let kind: String
+extension ModelsOverview {
+    /// Every provider the gateway describes: those with an OpenAI-compatible
+    /// API, then those serving only decision models.
+    public var allProviders: [ProviderPreset] {
+        presets + decisionProviders
+    }
+}
+
+/// A provider preset's decision API with the models to offer for it. Mirrors
+/// `ProviderPresetView.decision`.
+public struct ProviderDecisionPreset: Decodable, Equatable, Hashable, Sendable {
     /// The endpoint, complete except for the `{key}` placeholders in `urlParams`.
     public let url: String
     public let `protocol`: String?
+    /// The header that carries the backend's API key.
     public let auth: String?
     public let scoreField: String?
+    /// Whether the provider refuses decision requests without a key.
     public let keyRequired: Bool
-    public let builtIn: String?
-    /// The provider's id in the models.dev catalog, which is also its logo id.
+    /// The provider's id in the models.dev decision catalog.
     public let modelsDevId: String?
     public let docsUrl: String?
     public let keyUrl: String?
     public let note: String?
     public let urlParams: [DecisionPresetURLParam]
+    /// The preset's own models first, then those models.dev adds.
     public let models: [DecisionModelOption]
 
-    public var isLocal: Bool {
-        kind == "local"
-    }
-
-    public var isTypeSafe: Bool {
-        builtIn == "typesafe"
-    }
-
-    /// The brand id its logo is served under (`/model-logos/:id.svg`).
-    public var brandId: String {
-        modelsDevId ?? id
-    }
-
     public init(
-        id: String,
-        name: String,
-        kind: String,
         url: String,
         protocol: String? = "systemone",
         auth: String? = "bearer",
         scoreField: String? = nil,
         keyRequired: Bool = false,
-        builtIn: String? = nil,
         modelsDevId: String? = nil,
         docsUrl: String? = nil,
         keyUrl: String? = nil,
@@ -99,15 +88,11 @@ public struct DecisionPresetView: Decodable, Equatable, Hashable, Sendable, Iden
         urlParams: [DecisionPresetURLParam] = [],
         models: [DecisionModelOption] = []
     ) {
-        self.id = id
-        self.name = name
-        self.kind = kind
         self.url = url
         self.protocol = `protocol`
         self.auth = auth
         self.scoreField = scoreField
         self.keyRequired = keyRequired
-        self.builtIn = builtIn
         self.modelsDevId = modelsDevId
         self.docsUrl = docsUrl
         self.keyUrl = keyUrl
@@ -117,21 +102,16 @@ public struct DecisionPresetView: Decodable, Equatable, Hashable, Sendable, Iden
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, url, `protocol`, auth, scoreField, keyRequired, builtIn, modelsDevId, docsUrl, keyUrl,
-             note, urlParams, models
+        case url, `protocol`, auth, scoreField, keyRequired, modelsDevId, docsUrl, keyUrl, note, urlParams, models
     }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decode(String.self, forKey: .id)
-        name = try values.decodeIfPresent(String.self, forKey: .name) ?? id
-        kind = try values.decodeIfPresent(String.self, forKey: .kind) ?? "cloud"
         url = try values.decodeIfPresent(String.self, forKey: .url) ?? ""
         self.protocol = try values.decodeIfPresent(String.self, forKey: .protocol)
         auth = try values.decodeIfPresent(String.self, forKey: .auth)
         scoreField = try values.decodeIfPresent(String.self, forKey: .scoreField)
         keyRequired = try values.decodeIfPresent(Bool.self, forKey: .keyRequired) ?? false
-        builtIn = try values.decodeIfPresent(String.self, forKey: .builtIn)
         modelsDevId = try values.decodeIfPresent(String.self, forKey: .modelsDevId)
         docsUrl = try values.decodeIfPresent(String.self, forKey: .docsUrl)
         keyUrl = try values.decodeIfPresent(String.self, forKey: .keyUrl)
@@ -184,25 +164,23 @@ public struct DecisionCalibration: Decodable, Equatable, Hashable, Sendable {
     }
 }
 
-/// A configured decision backend (`inference.decisionBackends.<key>`) as
-/// `/admin/models` reports it. Mirrors `DecisionBackendStatus`.
-public struct DecisionBackendStatus: Decodable, Equatable, Hashable, Sendable {
-    /// The preset it was made from, when it names one.
-    public let preset: String?
+/// A backend's decision API (`inference.backends.<key>.decision`) as
+/// `/admin/models` reports it. Mirrors `BackendDecisionStatus`; the API key is
+/// the backend's own.
+public struct BackendDecisionStatus: Decodable, Equatable, Hashable, Sendable {
     public let url: String
     public let `protocol`: String?
     public let auth: String?
     /// Whether the endpoint is on the gateway's host (needs no cloud consent).
     public let onHost: Bool
-    /// Whether an API key is stored; the key itself is never sent.
+    /// Whether the backend has an API key; the key itself is never sent.
     public let hasApiKey: Bool
-    /// Why the stored key could not be read, when it could not.
+    /// Why the backend's key could not be read, when it could not.
     public let apiKeySecretError: String?
     /// Calibrations stored for this backend, by model id.
     public let calibrations: [String: DecisionCalibration]
 
     public init(
-        preset: String? = nil,
         url: String,
         protocol: String? = "systemone",
         auth: String? = "bearer",
@@ -211,7 +189,6 @@ public struct DecisionBackendStatus: Decodable, Equatable, Hashable, Sendable {
         apiKeySecretError: String? = nil,
         calibrations: [String: DecisionCalibration] = [:]
     ) {
-        self.preset = preset
         self.url = url
         self.protocol = `protocol`
         self.auth = auth
@@ -222,12 +199,11 @@ public struct DecisionBackendStatus: Decodable, Equatable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case preset, url, `protocol`, auth, onHost, hasApiKey, apiKeySecretError, calibrations
+        case url, `protocol`, auth, onHost, hasApiKey, apiKeySecretError, calibrations
     }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        preset = try values.decodeIfPresent(String.self, forKey: .preset)
         url = try values.decodeIfPresent(String.self, forKey: .url) ?? ""
         self.protocol = try values.decodeIfPresent(String.self, forKey: .protocol)
         auth = try values.decodeIfPresent(String.self, forKey: .auth)
@@ -252,7 +228,7 @@ public struct TypeSafeEndpointStatus: Decodable, Equatable, Hashable, Sendable {
     }
 }
 
-/// `POST /admin/inference/decision-backends/:key/verify` and
+/// `POST /admin/inference/backends/:key/decision/verify` and
 /// `POST /admin/inference/typesafe/verify`: one small invented decision.
 /// `reason` is written for the operator and is shown as is.
 public struct DecisionVerifyResult: Decodable, Equatable, Sendable {
@@ -273,8 +249,9 @@ public struct DecisionVerifyResult: Decodable, Equatable, Sendable {
     }
 }
 
-/// `POST /admin/inference/decision-backends/:key/probe`: the models a local
-/// server lists. `listed == false` with `ok` means the server was not asked
+/// `POST /admin/inference/backends/:key/decision/probe` and
+/// `POST /admin/inference/decision/probe`: the models a local decision server
+/// lists. `listed == false` with `ok` means the server was not asked
 /// (a hosted provider), so the preset's models are the suggestions.
 public struct DecisionProbeResult: Decodable, Equatable, Sendable {
     public let ok: Bool

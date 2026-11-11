@@ -6,8 +6,8 @@ import Foundation
 // Wire types for the gateway's models surface — `/admin/models`, inference
 // backends and the local model lifecycle — decoded by `AdminClient` and
 // rendered by the Models screen. Provider credentials are in
-// `ModelCredentialWireTypes.swift`, the Decision model's setup in
-// `DecisionWireTypes.swift`.
+// `ModelCredentialWireTypes.swift`, the decision API of presets and backends
+// in `DecisionWireTypes.swift`.
 
 /// Display projection of a resolved model assignment — what the UI
 /// shows for "which model is configured for this role" / "which model
@@ -62,18 +62,19 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
     /// Empty when nothing is downloading; the local-model list renders a progress
     /// bar for the matching catalog id and polls the overview while non-empty.
     public let activeDownloads: [ActiveDownload]
-    /// Well-known cloud-provider presets the add-backend grid offers (OpenAI,
-    /// Groq, …). Each carries the default backend name, URL, optional api-path
-    /// prefix, and the catalog roles it's typically used for.
+    /// Well-known providers with an OpenAI-compatible API (OpenAI, Groq, …),
+    /// each with its decision API too when it has one.
     public let presets: [ProviderPreset]
+    /// Providers that serve only decision models (Ollaya, Fastino, …,
+    /// TypeSafe among them), with no OpenAI-compatible URL. Empty on a
+    /// gateway that predates decision models, whose Decision card then stays
+    /// read-only.
+    public let decisionProviders: [ProviderPreset]
     /// Models.dev controls keyed by the full active assignment (`backend/model`).
     /// Unknown models have no controls but remain available in the picker.
     public let modelControls: [String: ModelControls]
     /// Saved inference behavior for each capability role.
     public let modelSettings: [String: ModelSettings]
-    /// Decision model providers with their models. Nil on a gateway that
-    /// predates decision backends: the Decision card is then read-only.
-    public let decisionPresets: [DecisionPresetView]?
 
     public init(
         assignmentDisplays: [String: ModelDisplay],
@@ -83,9 +84,9 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
         installed: [ManifestEntry],
         activeDownloads: [ActiveDownload] = [],
         presets: [ProviderPreset] = [],
+        decisionProviders: [ProviderPreset] = [],
         modelControls: [String: ModelControls] = [:],
-        modelSettings: [String: ModelSettings] = [:],
-        decisionPresets: [DecisionPresetView]? = nil
+        modelSettings: [String: ModelSettings] = [:]
     ) {
         self.assignmentDisplays = assignmentDisplays
         self.capabilities = capabilities
@@ -94,9 +95,9 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
         self.installed = installed
         self.activeDownloads = activeDownloads
         self.presets = presets
+        self.decisionProviders = decisionProviders
         self.modelControls = modelControls
         self.modelSettings = modelSettings
-        self.decisionPresets = decisionPresets
     }
 
     /// `activeDownloads` and `presets` are decoded leniently: an older gateway
@@ -104,7 +105,7 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
     /// overview decode.
     private enum CodingKeys: String, CodingKey {
         case assignmentDisplays, capabilities, inference, catalog, installed, activeDownloads, presets,
-             modelControls, modelSettings, decisionPresets
+             decisionProviders, modelControls, modelSettings
     }
 
     public init(from decoder: Decoder) throws {
@@ -116,9 +117,9 @@ public struct ModelsOverview: Decodable, Equatable, Sendable {
         installed = try container.decode([ManifestEntry].self, forKey: .installed)
         activeDownloads = try container.decodeIfPresent([ActiveDownload].self, forKey: .activeDownloads) ?? []
         presets = try container.decodeIfPresent([ProviderPreset].self, forKey: .presets) ?? []
+        decisionProviders = try container.decodeIfPresent([ProviderPreset].self, forKey: .decisionProviders) ?? []
         modelControls = try container.decodeIfPresent([String: ModelControls].self, forKey: .modelControls) ?? [:]
         modelSettings = try container.decodeIfPresent([String: ModelSettings].self, forKey: .modelSettings) ?? [:]
-        decisionPresets = try container.decodeIfPresent([DecisionPresetView].self, forKey: .decisionPresets)
     }
 }
 
@@ -205,20 +206,25 @@ public struct ModelSettings: Decodable, Equatable, Sendable {
     }
 }
 
-/// One well-known cloud-provider preset from `GET /admin/models` (`presets`).
-/// Mirrors `ProviderPreset` in `@omnesis/core/models/provider-presets.ts`: the
-/// short id (also the default backend name), the human-readable name, the
-/// default base URL, an optional non-`/v1` api-path prefix, optional pre-probe
-/// model hints, and the catalog roles (`embed`/`agent`/…) this
-/// provider is typically used for. The add-backend grid offers one card per
-/// preset to prefill the HTTP-backend form.
-public struct ProviderPreset: Decodable, Equatable, Sendable, Identifiable {
+/// One well-known provider preset from `GET /admin/models` (`presets`).
+/// Mirrors `ProviderPresetView` in `@omnesis/core/models`: the short id (also
+/// the default backend name), the human-readable name, the OpenAI-compatible
+/// base URL with an optional non-`/v1` api-path prefix, and the provider's
+/// decision API — whichever of the two it has. `builtIn == "typesafe"` marks
+/// TypeSafe, served by the built-in `typesafe/<model>` assignment and its
+/// credential, never added as a backend.
+public struct ProviderPreset: Decodable, Equatable, Hashable, Sendable, Identifiable {
     /// Short identifier — also the default backend name (e.g. `"openai"`).
     public let id: String
     /// Human-readable provider name (e.g. `"OpenAI"`).
     public let name: String
-    /// Default base URL (host, without a version path).
-    public let defaultUrl: String
+    /// `local` for a server on the operator's own machine, else `cloud`.
+    public let kind: String
+    /// The provider's id in the models.dev catalog, which is also its logo id.
+    public let modelsDevId: String?
+    /// Default OpenAI-compatible base URL (host, without a version path).
+    /// Nil for a provider that serves only decision models.
+    public let defaultUrl: String?
     /// Path segment between the base URL and the OpenAI-compatible endpoints
     /// (e.g. `"/v1beta/openai"` for Google); nil → the gateway default `"/v1"`.
     public let apiPathPrefix: String?
@@ -226,21 +232,63 @@ public struct ProviderPreset: Decodable, Equatable, Sendable, Identifiable {
     public let knownModels: [String]?
     /// Catalog roles this provider is typically used for.
     public let capabilities: [String]
+    /// The provider's decision API, when it has one.
+    public let decision: ProviderDecisionPreset?
+    public let builtIn: String?
+
+    public var isLocal: Bool {
+        kind == "local"
+    }
+
+    public var isTypeSafe: Bool {
+        builtIn == "typesafe"
+    }
+
+    /// The brand id its logo is served under (`/model-logos/:id.svg`).
+    public var brandId: String {
+        modelsDevId ?? id
+    }
 
     public init(
         id: String,
         name: String,
-        defaultUrl: String,
+        kind: String = "cloud",
+        modelsDevId: String? = nil,
+        defaultUrl: String? = nil,
         apiPathPrefix: String? = nil,
         knownModels: [String]? = nil,
-        capabilities: [String] = []
+        capabilities: [String] = [],
+        decision: ProviderDecisionPreset? = nil,
+        builtIn: String? = nil
     ) {
         self.id = id
         self.name = name
+        self.kind = kind
+        self.modelsDevId = modelsDevId
         self.defaultUrl = defaultUrl
         self.apiPathPrefix = apiPathPrefix
         self.knownModels = knownModels
         self.capabilities = capabilities
+        self.decision = decision
+        self.builtIn = builtIn
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, modelsDevId, defaultUrl, apiPathPrefix, knownModels, capabilities, decision, builtIn
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? id
+        kind = try values.decodeIfPresent(String.self, forKey: .kind) ?? "cloud"
+        modelsDevId = try values.decodeIfPresent(String.self, forKey: .modelsDevId)
+        defaultUrl = try values.decodeIfPresent(String.self, forKey: .defaultUrl)
+        apiPathPrefix = try values.decodeIfPresent(String.self, forKey: .apiPathPrefix)
+        knownModels = try values.decodeIfPresent([String].self, forKey: .knownModels)
+        capabilities = try values.decodeIfPresent([String].self, forKey: .capabilities) ?? []
+        decision = try values.decodeIfPresent(ProviderDecisionPreset.self, forKey: .decision)
+        builtIn = try values.decodeIfPresent(String.self, forKey: .builtIn)
     }
 }
 
@@ -327,8 +375,6 @@ public struct InferenceOverview: Decodable, Equatable, Sendable {
     public let allowRemoteInference: Bool?
     /// Where the built-in TypeSafe slot sends requests.
     public let typesafe: TypeSafeEndpointStatus?
-    /// Decision backends by key. Absent on gateways that predate them.
-    public let decisionBackends: [String: DecisionBackendStatus]?
 
     public init(
         backends: [String: BackendStatus],
@@ -336,8 +382,7 @@ public struct InferenceOverview: Decodable, Equatable, Sendable {
         assignments: [String: ResolvedAssignment],
         health: ModelHealth? = nil,
         allowRemoteInference: Bool? = nil,
-        typesafe: TypeSafeEndpointStatus? = nil,
-        decisionBackends: [String: DecisionBackendStatus]? = nil
+        typesafe: TypeSafeEndpointStatus? = nil
     ) {
         self.backends = backends
         self.codex = codex
@@ -345,7 +390,6 @@ public struct InferenceOverview: Decodable, Equatable, Sendable {
         self.health = health
         self.allowRemoteInference = allowRemoteInference
         self.typesafe = typesafe
-        self.decisionBackends = decisionBackends
     }
 }
 
@@ -354,12 +398,23 @@ public struct InferenceOverview: Decodable, Equatable, Sendable {
 public struct BackendStatus: Decodable, Equatable, Hashable, Sendable {
     public let type: String
     public let status: String
+    /// OpenAI-compatible base URL; nil on a backend that serves only decision models.
     public let url: String?
     public let `protocol`: String?
     public let models: [String]?
     /// Model id → the capability roles that model can serve (from the probe).
     public let modelRoles: [String: [String]]?
     public let hasApiKey: Bool?
+    /// The provider preset the backend was made from, or whose URL it uses.
+    public let preset: String?
+    /// The backend's decision API, when it has one.
+    public let decision: BackendDecisionStatus?
+
+    /// Whether the backend has an OpenAI-compatible API, so it can serve the
+    /// ordinary roles (a decision-only backend has none).
+    public var servesOpenAI: Bool {
+        url?.isEmpty == false
+    }
 
     public init(
         type: String,
@@ -368,7 +423,9 @@ public struct BackendStatus: Decodable, Equatable, Hashable, Sendable {
         protocol: String? = nil,
         models: [String]? = nil,
         modelRoles: [String: [String]]? = nil,
-        hasApiKey: Bool? = nil
+        hasApiKey: Bool? = nil,
+        preset: String? = nil,
+        decision: BackendDecisionStatus? = nil
     ) {
         self.type = type
         self.status = status
@@ -377,6 +434,8 @@ public struct BackendStatus: Decodable, Equatable, Hashable, Sendable {
         self.models = models
         self.modelRoles = modelRoles
         self.hasApiKey = hasApiKey
+        self.preset = preset
+        self.decision = decision
     }
 }
 
@@ -509,7 +568,7 @@ public struct CodexRemoveResult: Decodable, Equatable, Sendable {
 /// the discriminant kind (`local`/`http`/`anthropic`/`typesafe`/`decision`/
 /// `replay`/`disabled`/`unresolved`; an unknown kind decodes as is),
 /// availability, the unavailable reason, and the decision fields: the model,
-/// the decision backend's key and preset, and whether a calibration is stored.
+/// the backend's key and preset, and whether a calibration is stored.
 public struct ResolvedAssignment: Decodable, Equatable, Sendable {
     public let kind: String
     public let available: Bool?
