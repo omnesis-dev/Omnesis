@@ -320,6 +320,7 @@ describe("InferenceRegistry — overview", () => {
     expect(overview).not.toHaveProperty("decisionBackends");
     expect(overview.backends.ollaya).toEqual({
       type: "http",
+      status: "ok",
       hasApiKey: false,
       preset: "ollaya",
       decision: {
@@ -333,6 +334,7 @@ describe("InferenceRegistry — overview", () => {
     });
     expect(overview.backends.foundry).toEqual({
       type: "http",
+      status: "ok",
       hasApiKey: true,
       preset: "azure-foundry",
       decision: {
@@ -360,6 +362,27 @@ describe("InferenceRegistry — overview", () => {
     expect(overview.backends.vllm).not.toHaveProperty("preset");
     expect(JSON.stringify(overview)).not.toContain("sk-foundry");
     expect(JSON.stringify(overview)).not.toContain("fw-key");
+  });
+});
+
+describe("InferenceRegistry — overview of a decision-only backend whose key cannot be read", () => {
+  it("reports it unreachable, naming why", () => {
+    load({
+      allowRemoteInference: true,
+      backends: {
+        fastino: decisionOnly(
+          { url: "https://api.fastino.ai/v1/systemone", auth: "x-api-key" },
+          { preset: "fastino", apiKeySecret: "config-secret:inference.missing.apiKey" },
+        ),
+      },
+    });
+    const reason = 'HTTP backend "fastino" API key secret is missing or unreadable';
+    expect(registry.getOverview().backends.fastino).toMatchObject({
+      status: "unreachable",
+      reason,
+      hasApiKey: false,
+      decision: { hasApiKey: false, apiKeySecretError: reason },
+    });
   });
 });
 

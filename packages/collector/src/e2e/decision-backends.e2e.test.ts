@@ -240,6 +240,7 @@ describe("backends with a decision API — stable gateway, every wire format", (
     });
     expect(o.inference.backends.box).toEqual({
       type: "http",
+      status: "ok",
       hasApiKey: false,
       preset: "ollaya",
       decision: {

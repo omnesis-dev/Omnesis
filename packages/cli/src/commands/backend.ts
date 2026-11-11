@@ -62,8 +62,8 @@ const backendListCommand = defineCommand({
       const url = b.url ?? b.decision?.url ?? "—";
       const statusColor =
         b.status === "ok" ? c.green : b.status === "unreachable" ? c.red : c.yellow;
-      const status = b.status ? `${statusColor}${b.status}${c.reset}` : "—";
-      const statusWidth = b.status ? 14 + statusColor.length + c.reset.length : 14;
+      const status = `${statusColor}${b.status}${c.reset}`;
+      const statusWidth = 14 + statusColor.length + c.reset.length;
       const keyStatus = b.hasApiKey ? "yes" : "—";
       const models = b.models?.join(", ") ?? "—";
       const serves = b.type === "http" ? backendServes(b) : "—";

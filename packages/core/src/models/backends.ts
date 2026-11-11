@@ -426,10 +426,10 @@ export interface BackendStatus {
    * - `unreachable` — the host couldn't be reached, or rejected the credentials.
    * - `probing` — a probe is in flight.
    *
-   * Absent on a backend that serves only decision models: it has no
-   * OpenAI-compatible API to probe.
+   * A backend that serves only decision models has no OpenAI-compatible API to
+   * probe: it is `ok`, or `unreachable` when its API key cannot be read.
    */
-  status?: "ok" | "reachable" | "unreachable" | "probing";
+  status: "ok" | "reachable" | "unreachable" | "probing";
   /** Raw served-model ids reported by the backend's `/v1/models` probe. */
   models?: string[];
   /** Why the last probe wasn't fully `ok` (e.g. `"HTTP 500"`); set for `reachable`/`unreachable`. */

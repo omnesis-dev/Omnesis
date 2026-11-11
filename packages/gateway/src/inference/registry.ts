@@ -859,7 +859,7 @@ export class InferenceRegistry {
         // still keeps the backoff flat, so it is re-asked shortly rather than
         // written off.
         this.consecutiveHolds.set(key, holds + 1);
-        const prior = entry.status.status ?? "probing";
+        const prior = entry.status.status;
         const held = prior === "probing" ? "unreachable" : prior;
         entry.status = {
           ...entry.status,
@@ -1314,7 +1314,14 @@ export class InferenceRegistry {
       };
       const entry = this.httpBackends.get(key);
       if (!entry) {
-        backends[key] = { type: "http", hasApiKey: !!config.apiKey, ...shared };
+        // Nothing to probe: the row reports only whether the key can be read.
+        backends[key] = {
+          type: "http",
+          status: config.apiKeySecretError ? "unreachable" : "ok",
+          hasApiKey: !!config.apiKey,
+          ...(config.apiKeySecretError ? { reason: config.apiKeySecretError } : {}),
+          ...shared,
+        };
         continue;
       }
       const verdicts = [...this.verifyCache.entries()]
