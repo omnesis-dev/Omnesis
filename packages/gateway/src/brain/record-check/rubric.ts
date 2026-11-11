@@ -15,9 +15,9 @@
  * the threshold changes.
  */
 
+import { BRAIN_DEFAULTS, type BrainThresholds } from "../config.js";
 import { PERSON_PROFILE_UTILITY_GUIDANCE } from "./person-profile-utility.js";
 import type { WikiRecordContext } from "./wiki-context.js";
-import type { BrainThresholds } from "../config.js";
 import type { DecisionQuestion } from "@omnesis/core";
 import type { DocumentRecordContext } from "./document-context.js";
 import type { PersonRecordContext } from "./person-context.js";
@@ -39,20 +39,35 @@ export type RecordCheckThresholds = Pick<
 >;
 
 /**
+ * The policy key's parts: version, mode and model, then the thresholds named,
+ * only when any differs from its default. Keys reached at the defaults are
+ * the ones stored before thresholds were settings, so they stay valid.
+ */
+function policyKey(
+  version: string,
+  mode: string,
+  modelId: string | null,
+  thresholds: RecordCheckThresholds,
+  names: ReadonlyArray<keyof RecordCheckThresholds>,
+): string {
+  const values = names.map((name) => thresholds[name]);
+  const moved = names.some((name) => thresholds[name] !== BRAIN_DEFAULTS.thresholds[name]);
+  return JSON.stringify([version, mode, modelId, ...(moved ? [values] : [])]);
+}
+
+/**
  * The policy a record-check verdict was reached under. A question change bumps
- * the rubric; a threshold change shows here through the thresholds, and model
- * identity is exposed by the backend.
+ * the rubric; a moved threshold shows here, and model identity is exposed by
+ * the backend.
  */
 export function recordCheckPolicyKey(
   mode: string,
   modelId: string | null,
   thresholds: RecordCheckThresholds,
 ): string {
-  return JSON.stringify([
-    RECORD_CHECK_RUBRIC_VERSION,
-    mode,
-    modelId,
-    [thresholds.recordBelongs, thresholds.wikiRepair],
+  return policyKey(RECORD_CHECK_RUBRIC_VERSION, mode, modelId, thresholds, [
+    "recordBelongs",
+    "wikiRepair",
   ]);
 }
 
@@ -80,11 +95,10 @@ export function outcomeRecordPolicyKey(
   modelId: string | null,
   thresholds: RecordCheckThresholds,
 ): string {
-  return JSON.stringify([
-    OUTCOME_RECORD_POLICY_VERSION,
-    mode,
-    modelId,
-    [thresholds.recordBelongs, thresholds.outcomeIntegrity, thresholds.outcomeDeadline],
+  return policyKey(OUTCOME_RECORD_POLICY_VERSION, mode, modelId, thresholds, [
+    "recordBelongs",
+    "outcomeIntegrity",
+    "outcomeDeadline",
   ]);
 }
 

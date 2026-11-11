@@ -25,8 +25,8 @@ const SCALES: Record<keyof typeof CONFIG_DEFAULTS.brain.thresholds, number> = {
   wikiRepair: 3,
   outcomeIntegrity: 3,
   outcomeDeadline: 3,
-  sameTask: 2,
-  taskNoteNew: 2,
+  sameTask: 3,
+  taskNoteNew: 1,
   taskAdopt: 2,
   taskWithhold: 2,
 };

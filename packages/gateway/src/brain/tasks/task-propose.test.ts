@@ -217,7 +217,7 @@ describe("TaskProposeGate", () => {
       [1.6, 1.5, "pass"],
       [1.6, 1.8, "pass"],
       [0.6, 1.8, "pass"],
-      [0.6, 1.8, "skip"],
+      [0.6, 0.8, "skip"],
     ]);
   });
 

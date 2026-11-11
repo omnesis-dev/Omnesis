@@ -26,7 +26,7 @@ import { askScore } from "../decision-call.js";
 import { taskSubjectText } from "../storage/interest.js";
 import type { DecisionPayloadCapture } from "../decision-payload.js";
 import type { DecisionCapability, DecisionQuestion, Logger } from "@omnesis/core";
-import type { TaskProposeGateMode, BrainThresholds  } from "../config.js";
+import type { TaskProposeGateMode, BrainThresholds } from "../config.js";
 import type { InterestLookup } from "../interest/engine.js";
 import type { OwnerInterest } from "../interest/lookup.js";
 import type { CognitionDecisionRecord, DecisionVerdict } from "../storage/decisions.js";
@@ -40,7 +40,7 @@ const TIER_QUESTION_ID = "tier";
 const TIMEOUT_MS = 15_000;
 const MAX_TEXT = 2_000;
 
-const TIER_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
+export const TIER_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   [TIER_QUESTION_ID]: {
     type: "score",
     instructions:
@@ -170,9 +170,10 @@ export class TaskProposeGate {
             }
           : {}),
         score: judgement.score,
-        // The adoption cut: a pass scored at or above it was adopted, one
-        // below it suggested; a skip was withheld.
-        threshold: thresholds.taskAdopt,
+        // A withheld suggestion records the withhold cut it fell below. Any
+        // other records the adoption cut: a pass at or above it was adopted,
+        // one below it suggested.
+        threshold: verdict === "skip" ? thresholds.taskWithhold : thresholds.taskAdopt,
         verdict,
         error: judgement.error,
         reusedFrom: null,

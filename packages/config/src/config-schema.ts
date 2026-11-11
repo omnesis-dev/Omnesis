@@ -3235,12 +3235,12 @@ const brainThresholds = z
       "Score (levels 0–3) an outcome's deadline must reach to count as supported by its sources.",
     ),
     sameTask: levelThreshold(
-      2,
-      "Score (levels 0–2) at or above which a new title for one of your tasks still names the same task and applies directly.",
+      3,
+      "Score (levels 0–3) at or above which a new title for one of your tasks still names the same task and applies directly.",
     ),
     taskNoteNew: levelThreshold(
-      2,
-      "Score (levels 0–2) at or above which a note on one of your tasks adds something new and is recorded.",
+      1,
+      "Score (0–1) at or above which a note on one of your tasks adds something new and is recorded.",
     ),
     taskAdopt: levelThreshold(
       2,

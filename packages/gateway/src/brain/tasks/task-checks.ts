@@ -42,7 +42,7 @@ export const TASK_NOTE_HISTORY = 8;
 const TIMEOUT_MS = 15_000;
 const MAX_TEXT = 2_000;
 
-const SAME_TASK_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
+export const SAME_TASK_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   [SAME_TASK_QUESTION_ID]: {
     type: "score",
     instructions:
@@ -56,7 +56,7 @@ const SAME_TASK_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   },
 };
 
-const NEW_NOTE_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
+export const NEW_NOTE_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   [NEW_NOTE_QUESTION_ID]: {
     type: "score",
     instructions:

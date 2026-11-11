@@ -55,8 +55,8 @@ const KNOWLEDGE_PURPOSES = new Set(["discovery", "impact", "review", "urgency"])
  * What a run-ledger verdict meant for the work it judged, by purpose (and,
  * for the task gates, by question). `label` is the verdict as a word,
  * `sentence` what happened because of it. A table with an `adopted` entry
- * reads a pass scored at or above the row's threshold, the suggestion gate's
- * adoption cut, as that stronger outcome. Rows of the gate's first rubric
+ * reads a pass scored at or above the row's threshold, which on a suggestion
+ * gate pass is its adoption cut, as that stronger outcome. Rows of the gate's first rubric
  * recorded another threshold; their adoption cut was 1.5.
  */
 const adoptionCut = (d) => (d.rubricVersion === "task-propose-v1" ? 1.5 : d.threshold);

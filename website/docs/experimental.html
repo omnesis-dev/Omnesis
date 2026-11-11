@@ -874,8 +874,9 @@
           <code>brain.thresholds</code>, on that question's own scale. The defaults were chosen on
           TypeSafe Jev's scores; a model that scores higher or lower than Jev can be brought in line
           by moving them, for example the email worth threshold to the one the replay above reports.
-          A change applies to judgements made after it: decisions already taken stand, and the
-          decision ledger records the threshold each judgement used. With the record check on
+          A change applies to judgements made after it: decisions already taken stand. Each gate's
+          row in the decision ledger records the threshold its verdict was reached at; review timing
+          schedules rather than admits, so its rows record none. With the record check on
           <code>enforce</code>, moving a threshold that tracked outcomes use queues those outcomes
           for review once, as a new rubric would. The proposal gate's two thresholds must not cross,
           nor the two review thresholds.
@@ -976,13 +977,13 @@
               </tr>
               <tr>
                 <td><code>sameTask</code></td>
-                <td>0–2</td>
+                <td>0–3</td>
                 <td>2</td>
                 <td>A new title for one of your tasks applies directly.</td>
               </tr>
               <tr>
                 <td><code>taskNoteNew</code></td>
-                <td>0–2</td>
+                <td>0–1</td>
                 <td>1</td>
                 <td>A note on one of your tasks is recorded.</td>
               </tr>

@@ -236,10 +236,10 @@ describe("record check", () => {
       run("synthesis", { focus: "knowledge-maintenance", batchId: "batch" }),
     )!;
     expect(bound.policyKey!()).toBe(
-      JSON.stringify([RECORD_CHECK_RUBRIC_VERSION, "enforce", "jev-test", [0.81, 1.5]]),
+      JSON.stringify([RECORD_CHECK_RUBRIC_VERSION, "enforce", "jev-test"]),
     );
     expect(bound.outcomePolicyKey!()).toBe(
-      JSON.stringify(["record-value-v13", "enforce", "jev-test", [0.81, 1.5, 1.5]]),
+      JSON.stringify(["record-value-v13", "enforce", "jev-test"]),
     );
     expect(bound.outcomePolicyKey!()).not.toBe(bound.policyKey!());
   });
@@ -866,6 +866,11 @@ describe("record check", () => {
       const outcomeNow = bound.outcomePolicyKey!();
       thresholds = { ...thresholds, personRecordValue: 2.9 };
       expect(bound.outcomePolicyKey!()).toBe(outcomeNow);
+      // Back at the defaults, the keys are those stored before thresholds were settings.
+      thresholds = BRAIN_DEFAULTS.thresholds;
+      expect(bound.policyKey!()).toBe(
+        JSON.stringify([RECORD_CHECK_RUBRIC_VERSION, "enforce", "jev-test"]),
+      );
     });
 
     test.each(["timeline", "doc-fact", "person-fact"] as const)(

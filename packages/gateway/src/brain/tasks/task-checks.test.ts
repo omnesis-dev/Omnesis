@@ -96,7 +96,7 @@ describe("TaskChecks ledger", () => {
     expect(await rename(checks())).toBe("different");
     thresholds = { sameTask: 1.5, taskNoteNew: 1 };
     expect(await rename(checks())).toBe("same");
-    // Scored 1: a new note at the default of 1, a repeat once the cut is 1.2.
+    // Scored 0.6: a repeat at the default of 1, a new note once the cut is 0.5.
     const note = (target: TaskChecks) =>
       target.noteIsNew({
         runId: "run_checks",
