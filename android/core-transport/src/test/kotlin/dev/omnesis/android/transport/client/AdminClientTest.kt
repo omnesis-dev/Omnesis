@@ -11,6 +11,7 @@ import dev.omnesis.android.transport.PermissionRepairAction
 import dev.omnesis.android.transport.PermissionRequirement
 import dev.omnesis.android.transport.SourceMultiDeviceMode
 import dev.omnesis.android.transport.activationFailureMessage
+import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.AccessAuthorizationDecision
 import dev.omnesis.android.transport.dto.AccessAuthorizationSelection
 import dev.omnesis.android.transport.dto.AccessGrantRule
@@ -1378,7 +1379,10 @@ class AdminClientTest {
     @Test
     fun add_http_backend_patches_typed_config() = runTest {
         server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        client().addHttpBackend("my-vllm", "https://backend.example/v1", "sk-example-secret", "/v1beta/openai")
+        client().saveBackend(
+            "my-vllm",
+            BackendConfig(type = "http", url = "https://backend.example/v1", apiKey = "sk-example-secret", apiPathPrefix = "/v1beta/openai"),
+        )
         val req = server.takeRequest()
         assertEquals("PATCH", req.method)
         assertEquals("/admin/config", req.path)
@@ -1393,7 +1397,7 @@ class AdminClientTest {
         // explicitNulls=false drops the null apiKey / apiPathPrefix; a keyless
         // local server sends just url + type.
         server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        client().addHttpBackend("local-srv", "http://192.0.2.5:8000/v1")
+        client().saveBackend("local-srv", BackendConfig(type = "http", url = "http://192.0.2.5:8000/v1", apiKey = " ", apiPathPrefix = ""))
         assertEquals(
             """{"inference":{"backends":{"local-srv":{"type":"http","url":"http://192.0.2.5:8000/v1"}}}}""",
             server.takeRequest().body.readUtf8(),
@@ -1405,7 +1409,7 @@ class AdminClientTest {
         // Like the capability clear, the backend key must be an explicit null
         // (a missing key is a no-op patch, not a removal).
         server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        client().removeHttpBackend("my-vllm")
+        client().removeBackend("my-vllm")
         val req = server.takeRequest()
         assertEquals("PATCH", req.method)
         assertEquals("/admin/config", req.path)

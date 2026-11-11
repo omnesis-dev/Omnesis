@@ -3,11 +3,14 @@
 
 package dev.omnesis.android.ui.models
 
+import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CatalogEntry
 import dev.omnesis.android.transport.dto.CredentialSpec
+import dev.omnesis.android.transport.dto.DecisionEndpointConfig
 import dev.omnesis.android.transport.dto.DownloadProgress
 import dev.omnesis.android.transport.dto.ModelsOverview
+import dev.omnesis.android.transport.dto.ProviderPreset
 import dev.omnesis.android.transport.dto.RecentModelEntry
 import dev.omnesis.android.transport.dto.ResolvedAssignment
 import dev.omnesis.android.transport.dto.SystemInfo
@@ -160,7 +163,8 @@ object ModelManagement {
 
         overview.inference.backends.toSortedMap()
             .filterValues {
-                it.type == "http" && !(capabilityRole == "watch-judge" && it.protocol == "responses")
+                it.type == "http" && it.hasOpenAiApi &&
+                    !(capabilityRole == "watch-judge" && it.protocol == "responses")
             }
             .forEach { (key, backend) ->
                 val roles = backend.modelRoles ?: emptyMap()
@@ -206,9 +210,10 @@ object ModelManagement {
     /**
      * The first-level grid for the model picker: the `local` tile (if any local
      * option serves this role), the `anthropic` tile (if any), then one tile per
-     * configured HTTP backend — including HTTP backends with zero role-matching
-     * models, so the user can still open one and type a custom model id. Counts
-     * come from [pickerOptions], grouped by `providerId`.
+     * configured HTTP backend with an OpenAI-compatible API — including ones
+     * with zero role-matching models, so the user can still open one and type a
+     * custom model id. A backend that serves only decision models has nothing
+     * to offer here. Counts come from [pickerOptions], grouped by `providerId`.
      */
     fun pickerBackends(capabilityRole: String, overview: ModelsOverview): List<PickerBackend> {
         val options = pickerOptions(capabilityRole, overview)
@@ -245,6 +250,7 @@ object ModelManagement {
         }
         // Each configured HTTP backend, even with zero role-matching models.
         httpBackends(overview)
+            .filter { it.status.hasOpenAiApi }
             .filterNot { capabilityRole == "watch-judge" && it.status.protocol == "responses" }
             .forEach { backend ->
             out += PickerBackend(
@@ -383,10 +389,56 @@ object ModelManagement {
     }
 
     /** One row of the backends list: the backend key plus its probed status. */
-    data class BackendRow(val key: String, val status: BackendStatus)
+    data class BackendRow(val key: String, val status: BackendStatus) {
+        /** Whether the backend has only a decision API: no OpenAI-compatible URL to probe or list models from. */
+        val decisionOnly: Boolean get() = !status.hasOpenAiApi && status.decision != null
+
+        /** The URL the row shows: the OpenAI-compatible base, else the decision endpoint. */
+        val displayUrl: String? get() = status.url?.takeIf { it.isNotBlank() } ?: status.decision?.url
+    }
+
+    /** What a backend serves, as its row says it. */
+    fun servesLabel(status: BackendStatus): String = when {
+        status.decision != null && status.hasOpenAiApi -> "OpenAI-compatible and decision models"
+        status.decision != null -> "Decision models"
+        else -> "OpenAI-compatible models"
+    }
 
     /**
-     * The user-managed HTTP backends, sorted by key. The built-in `anthropic`
+     * The config for a new backend made from [preset] (or from no preset):
+     * the OpenAI-compatible API at [url], and the decision API at
+     * [decisionUrl] with the preset's protocol, auth header and score field —
+     * System One with a bearer key when no preset says otherwise. One key
+     * serves both. Blank values are left out.
+     */
+    fun newBackendConfig(
+        preset: ProviderPreset?,
+        url: String?,
+        apiPathPrefix: String?,
+        decisionUrl: String?,
+        apiKey: String?,
+    ): BackendConfig {
+        val wire = preset?.decision
+        return BackendConfig(
+            type = "http",
+            preset = preset?.id,
+            url = url?.trim()?.ifEmpty { null },
+            apiPathPrefix = apiPathPrefix?.trim()?.ifEmpty { null },
+            apiKey = apiKey?.trim()?.ifEmpty { null },
+            decision = decisionUrl?.trim()?.ifEmpty { null }?.let {
+                DecisionEndpointConfig(
+                    url = it,
+                    protocol = wire?.protocol ?: "systemone",
+                    auth = wire?.auth ?: "bearer",
+                    scoreField = wire?.scoreField,
+                )
+            },
+        )
+    }
+
+    /**
+     * The user-managed HTTP backends, sorted by key — those with an
+     * OpenAI-compatible API, a decision API, or both. The built-in `anthropic`
      * backend is configured via API-key credentials (the provider-credentials
      * surface), not added/removed here, so it's excluded — matching the portal's
      * Backends list, which only lists `type == "http"` backends as removable rows.

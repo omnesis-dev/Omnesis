@@ -4,12 +4,13 @@
 package dev.omnesis.android.ui.models
 
 import dev.omnesis.android.transport.client.AdminClient
-import dev.omnesis.android.transport.dto.DecisionPresetView
 import dev.omnesis.android.transport.dto.ModelBehaviorSettings
 import dev.omnesis.android.transport.dto.ModelBehaviorValues
 import dev.omnesis.android.transport.dto.ModelControlDescriptor
 import dev.omnesis.android.transport.dto.ModelControlInfo
 import dev.omnesis.android.transport.dto.ModelsOverview
+import dev.omnesis.android.transport.dto.ProviderDecisionPreset
+import dev.omnesis.android.transport.dto.ProviderPreset
 import dev.omnesis.android.transport.http.GatewayHttp
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
@@ -42,7 +43,7 @@ class ProviderLogoLoaderTest {
         }
     }
 
-    @Test fun decision_logos_alias_their_models_dev_art_and_misses_are_not_refetched() = runTest {
+    @Test fun preset_logos_alias_their_models_dev_art_and_misses_are_not_refetched() = runTest {
         val server = MockWebServer()
         server.start()
         try {
@@ -53,10 +54,13 @@ class ProviderLogoLoaderTest {
                     else MockResponse().setResponseCode(404)
             }
             val overview = ModelsOverview(
-                decisionPresets = listOf(
-                    DecisionPresetView(id = "cloudflare", name = "Cloudflare Workers AI", kind = "cloud", modelsDevId = "cloudflare-workers-ai"),
-                    DecisionPresetView(id = "studio-box", name = "Studio box", kind = "local"),
-                    DecisionPresetView(id = "typesafe", name = "TypeSafe", kind = "cloud", builtIn = "typesafe"),
+                presets = listOf(
+                    ProviderPreset(
+                        id = "cloudflare", name = "Cloudflare Workers AI", kind = "cloud",
+                        decision = ProviderDecisionPreset(modelsDevId = "cloudflare-workers-ai"),
+                    ),
+                    ProviderPreset(id = "studio-box", name = "Studio box", kind = "local", decision = ProviderDecisionPreset()),
+                    ProviderPreset(id = "typesafe", name = "TypeSafe", kind = "cloud", builtIn = "typesafe", decision = ProviderDecisionPreset()),
                 ),
             )
             val admin = AdminClient(GatewayHttp(OkHttpClient(), server.url("/").toString(), "tok"))

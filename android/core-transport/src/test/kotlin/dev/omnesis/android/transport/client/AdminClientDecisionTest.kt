@@ -4,7 +4,9 @@
 package dev.omnesis.android.transport.client
 
 import dev.omnesis.android.transport.GatewayException
-import dev.omnesis.android.transport.dto.DecisionBackendConfig
+import dev.omnesis.android.transport.dto.BackendConfig
+import dev.omnesis.android.transport.dto.DecisionEndpointConfig
+import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.http.GatewayHttp
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
@@ -29,59 +31,75 @@ class AdminClientDecisionTest {
 
     private fun client() = AdminClient(GatewayHttp(OkHttpClient(), server.url("/").toString(), "tok"))
 
-    private val cloudflare = DecisionBackendConfig(
+    private val cloudflare = BackendConfig(
+        type = "http",
         preset = "cloudflare",
-        url = "https://api.example.com/accounts/0123abcd/ai/run",
-        protocol = "workers-ai",
-        auth = "bearer",
         apiKey = "  example-key-0001  ",
+        decision = DecisionEndpointConfig(url = "https://api.example.com/accounts/0123abcd/ai/run", protocol = "workers-ai", auth = "bearer"),
     )
 
-    @Test fun saving_a_backend_with_consent_is_one_patch_with_the_assignment() = runTest {
+    @Test fun saving_a_decision_only_backend_with_consent_is_one_patch_with_the_assignment() = runTest {
         server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        client().saveDecisionBackend("cloudflare", cloudflare, "@cf/example/clef", enableRemote = true)
+        client().saveBackend("cloudflare", cloudflare, "@cf/example/clef", enableRemote = true)
         val req = server.takeRequest()
         assertEquals("PATCH", req.method)
         assertEquals("/admin/config", req.path)
         assertEquals(
-            """{"inference":{"allowRemoteInference":true,"decisionBackends":{"cloudflare":{"preset":"cloudflare",""" +
-                """"url":"https://api.example.com/accounts/0123abcd/ai/run","protocol":"workers-ai","auth":"bearer",""" +
-                """"apiKey":"example-key-0001"}},"assignments":{"decision":"cloudflare/@cf/example/clef"}}}""",
+            """{"inference":{"allowRemoteInference":true,"backends":{"cloudflare":{"type":"http","preset":"cloudflare",""" +
+                """"apiKey":"example-key-0001","decision":{"url":"https://api.example.com/accounts/0123abcd/ai/run",""" +
+                """"protocol":"workers-ai","auth":"bearer"}}},"assignments":{"decision":"cloudflare/@cf/example/clef"}}}""",
             req.body.readUtf8(),
+        )
+    }
+
+    @Test fun enabling_decisions_on_an_existing_backend_sends_only_its_decision_block() = runTest {
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        client().saveBackend(
+            "fireworks",
+            BackendConfig(decision = DecisionEndpointConfig("https://api.example.com/inference/v1/systemone", "systemone", "bearer")),
+            "accounts/example/models/rune",
+        )
+        assertEquals(
+            """{"inference":{"backends":{"fireworks":{"decision":{"url":"https://api.example.com/inference/v1/systemone",""" +
+                """"protocol":"systemone","auth":"bearer"}}},"assignments":{"decision":"fireworks/accounts/example/models/rune"}}}""",
+            server.takeRequest().body.readUtf8(),
         )
     }
 
     @Test fun a_blank_key_is_left_out_so_the_stored_one_is_kept() = runTest {
         server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        client().saveDecisionBackend(
+        client().saveBackend(
             "studio",
-            DecisionBackendConfig(preset = null, url = "http://127.0.0.1:8080/v1/systemone", protocol = "systemone", auth = "bearer", apiKey = " "),
+            BackendConfig(apiKey = " ", decision = DecisionEndpointConfig(url = "http://127.0.0.1:8080/v1/systemone")),
             "kev",
         )
         assertEquals(
-            """{"inference":{"decisionBackends":{"studio":{"url":"http://127.0.0.1:8080/v1/systemone",""" +
-                """"protocol":"systemone","auth":"bearer"}},"assignments":{"decision":"studio/kev"}}}""",
+            """{"inference":{"backends":{"studio":{"decision":{"url":"http://127.0.0.1:8080/v1/systemone"}}},""" +
+                """"assignments":{"decision":"studio/kev"}}}""",
             server.takeRequest().body.readUtf8(),
         )
     }
 
     @Test fun the_score_field_travels_with_its_preset() = runTest {
         server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        client().saveDecisionBackend(
+        client().saveBackend(
             "fastino",
-            DecisionBackendConfig("fastino", "https://api.example.org/v1/systemone", "systemone", "x-api-key", scoreField = "expected_level"),
-            model = null,
+            BackendConfig(
+                type = "http",
+                preset = "fastino",
+                decision = DecisionEndpointConfig("https://api.example.org/v1/systemone", "systemone", "x-api-key", "expected_level"),
+            ),
         )
         assertEquals(
-            """{"inference":{"decisionBackends":{"fastino":{"preset":"fastino","url":"https://api.example.org/v1/systemone",""" +
-                """"protocol":"systemone","auth":"x-api-key","scoreField":"expected_level"}}}}""",
+            """{"inference":{"backends":{"fastino":{"type":"http","preset":"fastino","decision":{"url":"https://api.example.org/v1/systemone",""" +
+                """"protocol":"systemone","auth":"x-api-key","scoreField":"expected_level"}}}}}""",
             server.takeRequest().body.readUtf8(),
         )
     }
 
     @Test fun an_unchanged_backend_is_left_out_of_the_patch() = runTest {
         server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        client().saveDecisionBackend("studio", DecisionBackendConfig(apiKey = "  "), "decider-v2")
+        client().saveBackend("studio", BackendConfig(apiKey = "  ", decision = DecisionEndpointConfig()), "decider-v2")
         assertEquals(
             """{"inference":{"assignments":{"decision":"studio/decider-v2"}}}""",
             server.takeRequest().body.readUtf8(),
@@ -106,34 +124,54 @@ class AdminClientDecisionTest {
         )
     }
 
-    @Test fun removing_a_backend_sends_explicit_nulls() = runTest {
-        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
-        client().removeDecisionBackend("ollaya", clearAssignment = true)
-        client().removeDecisionBackend("spare", clearAssignment = false)
+    @Test fun disabling_keeps_the_backend_and_removing_drops_it_with_explicit_nulls() = runTest {
+        repeat(3) { server.enqueue(MockResponse().setBody("""{"ok":true}""")) }
+        client().disableBackendDecision("fireworks", clearAssignment = true)
+        client().removeBackend("ollaya", clearDecision = true)
+        client().removeBackend("spare")
         assertEquals(
-            """{"inference":{"decisionBackends":{"ollaya":null},"assignments":{"decision":null}}}""",
+            """{"inference":{"backends":{"fireworks":{"decision":null}},"assignments":{"decision":null}}}""",
             server.takeRequest().body.readUtf8(),
         )
-        assertEquals("""{"inference":{"decisionBackends":{"spare":null}}}""", server.takeRequest().body.readUtf8())
+        assertEquals(
+            """{"inference":{"backends":{"ollaya":null},"assignments":{"decision":null}}}""",
+            server.takeRequest().body.readUtf8(),
+        )
+        assertEquals("""{"inference":{"backends":{"spare":null}}}""", server.takeRequest().body.readUtf8())
     }
 
-    @Test fun probe_and_verify_address_the_backend_by_its_encoded_key() = runTest {
+    @Test fun probe_and_verify_address_the_backends_decision_api_by_its_encoded_key() = runTest {
         server.enqueue(MockResponse().setBody("""{"ok":true,"models":["kev"],"listed":true}"""))
         server.enqueue(MockResponse().setBody("""{"ok":false,"status":404,"reason":"The server has no model \"kev\""}"""))
-        val probe = client().probeDecisionBackend("my server")
+        val probe = client().probeBackendDecision("my server")
         assertEquals(listOf("kev"), probe.models)
         server.takeRequest().also {
             assertEquals("POST", it.method)
-            assertEquals("/admin/inference/decision-backends/my%20server/probe", it.path)
+            assertEquals("/admin/inference/backends/my%20server/decision/probe", it.path)
         }
-        val verify = client().verifyDecisionBackend("ollaya", "kev")
+        val verify = client().verifyBackendDecision("ollaya", "kev")
         assertFalse(verify.ok)
         assertEquals("The server has no model \"kev\"", verify.reason)
         server.takeRequest().also {
             assertEquals("POST", it.method)
-            assertEquals("/admin/inference/decision-backends/ollaya/verify", it.path)
+            assertEquals("/admin/inference/backends/ollaya/decision/verify", it.path)
             assertEquals("""{"model":"kev"}""", it.body.readUtf8())
+        }
+    }
+
+    @Test fun an_unsaved_server_is_probed_by_its_url() = runTest {
+        server.enqueue(MockResponse().setBody("""{"ok":true,"models":["kev","laya"],"listed":true}"""))
+        val result = client().probeDecisionServer(
+            DecisionProbeBody(url = "http://127.0.0.1:11435/v1/systemone", preset = "ollaya", protocol = "systemone", auth = "bearer"),
+        )
+        assertEquals(listOf("kev", "laya"), result.models)
+        server.takeRequest().also {
+            assertEquals("POST", it.method)
+            assertEquals("/admin/inference/decision/probe", it.path)
+            assertEquals(
+                """{"url":"http://127.0.0.1:11435/v1/systemone","preset":"ollaya","protocol":"systemone","auth":"bearer"}""",
+                it.body.readUtf8(),
+            )
         }
     }
 

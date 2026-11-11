@@ -11,44 +11,34 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * One decision-model provider from `GET /admin/models` (`decisionPresets`).
- * Mirrors `DecisionPresetView` in `@omnesis/core/models`: a server the
- * operator runs (`kind` "local") or a hosted decision API ("cloud"), with
- * everything a decision backend needs to reach it and the models to offer.
- * Every field is defaulted so a newer gateway's additions and an unknown
- * `kind`, `protocol` or `auth` still decode.
+ * A provider preset's decision API (`presets[].decision` in `GET /admin/models`).
+ * Mirrors `ProviderPresetView.decision` in `@omnesis/core/models`: everything a
+ * backend's `decision` block needs to reach the provider, and the models to
+ * offer. Every field is defaulted so a newer gateway's additions and an
+ * unknown `protocol` or `auth` still decode.
  */
 @Serializable
-data class DecisionPresetView(
-    /** Stable id, also the default backend name and the brand id. */
-    val id: String = "",
-    val name: String = "",
-    /** "local" or "cloud"; any other value is shown with the cloud providers. */
-    val kind: String = "",
+data class ProviderDecisionPreset(
     /** The endpoint, complete except for the `{param}` placeholders [urlParams] names. */
     val url: String = "",
     val protocol: String = "systemone",
+    /** The header that carries the backend's one API key. */
     val auth: String = "bearer",
     /** Which answer field holds the weighted score, when it is not `score`. */
     val scoreField: String? = null,
-    /** Whether the provider refuses requests without a key. */
+    /** Whether the provider refuses decision requests without a key. */
     val keyRequired: Boolean = false,
-    /** "typesafe" on the preset served by the built-in TypeSafe assignment. */
-    val builtIn: String? = null,
-    /** The provider's id in the models.dev catalog, which names its logo. */
+    /** The provider's id in the models.dev decision catalog, which names its logo. */
     val modelsDevId: String? = null,
+    val urlParams: List<DecisionUrlParam> = emptyList(),
+    /** One sentence the setup form shows under the provider's name. */
+    val note: String? = null,
     val docsUrl: String? = null,
     /** Where the operator creates an API key. */
     val keyUrl: String? = null,
-    /** One sentence the setup form shows under the provider's name. */
-    val note: String? = null,
-    val urlParams: List<DecisionUrlParam> = emptyList(),
-    /** Model ids to offer, most useful first. */
+    /** Model ids to offer, most useful first: the preset's own and the models.dev catalog's. */
     val models: List<DecisionModelOption> = emptyList(),
-) {
-    val isTypeSafe: Boolean get() = builtIn == "typesafe"
-    val isLocal: Boolean get() = kind == "local"
-}
+)
 
 /** A value the operator supplies to complete a preset's URL, written `{key}` in it. */
 @Serializable
@@ -71,14 +61,12 @@ data class DecisionModelOption(
 )
 
 /**
- * A configured decision backend (`inference.decisionBackends.<key>`) as
- * `/admin/models` reports it. Mirrors `DecisionBackendStatus`. The API key is
- * never sent back; [hasApiKey] says whether one is stored.
+ * A backend's decision API (`inference.backends.<key>.decision`) as
+ * `/admin/models` reports it. Mirrors `BackendDecisionStatus`. The backend's
+ * API key is never sent back; [hasApiKey] says whether one is stored.
  */
 @Serializable
-data class DecisionBackendStatus(
-    /** The preset the backend was made from, when the gateway can tell. */
-    val preset: String? = null,
+data class BackendDecisionStatus(
     val url: String = "",
     val protocol: String = "systemone",
     val auth: String = "bearer",
@@ -125,7 +113,7 @@ data class TypeSafeEndpointStatus(
     val onHost: Boolean = false,
 )
 
-/** `POST …/decision-backends/:key/verify` and `…/typesafe/verify` body. */
+/** `POST …/backends/:key/decision/verify` and `…/typesafe/verify` body. */
 @Serializable
 data class DecisionModelBody(val model: String)
 
@@ -159,6 +147,25 @@ data class DecisionProbeResult(
 )
 
 /**
+ * `POST /admin/inference/decision/probe` body: a decision API not saved yet.
+ * [backendKey] names a saved backend whose API key the gateway sends when
+ * [apiKey] is absent. Null fields are left out of the request.
+ */
+@Serializable
+data class DecisionProbeBody(
+    val url: String,
+    val preset: String? = null,
+    val protocol: String? = null,
+    val auth: String? = null,
+    val apiKey: String? = null,
+    val backendKey: String? = null,
+) {
+    override fun toString(): String =
+        "DecisionProbeBody(url=$url, preset=$preset, protocol=$protocol, auth=$auth, " +
+            "apiKey=${if (apiKey.isNullOrBlank()) "none" else "<redacted>"}, backendKey=$backendKey)"
+}
+
+/**
  * The gateway's calibration job for the assigned Decision model. `state` is
  * "idle", "running", "done", "failed" or "cancelled"; an unknown state is
  * kept as sent. Mirrors `DecisionCalibrationStatus`.
@@ -180,71 +187,87 @@ data class DecisionCalibrationStatus(
 }
 
 /**
- * The fields a save writes into `inference.decisionBackends.<key>`. The
- * config patch is a JSON merge patch, so a null field is left out and keeps
- * its stored value: a new backend sends everything its preset defines, an
- * existing one only what the operator changed. `apiKey` is write-only: sent
- * once, moved into the gateway's secret store, never read back or printed.
+ * A backend's decision API as a save writes it (`inference.backends.<key>.decision`).
+ * Null fields are left out: the patch merges into the stored block.
  */
-data class DecisionBackendConfig(
-    /** The preset id; null for a server no preset names, or to keep the stored one. */
-    val preset: String? = null,
+data class DecisionEndpointConfig(
     val url: String? = null,
     val protocol: String? = null,
     val auth: String? = null,
     val scoreField: String? = null,
+) {
+    val isEmpty: Boolean get() = url == null && protocol == null && auth == null && scoreField == null
+
+    internal fun toJson(): JsonObject = buildJsonObject {
+        url?.let { put("url", it) }
+        protocol?.let { put("protocol", it) }
+        auth?.let { put("auth", it) }
+        scoreField?.let { put("scoreField", it) }
+    }
+}
+
+/**
+ * The fields a save writes into `inference.backends.<key>`. The config patch
+ * is a JSON merge patch, so a null field is left out and keeps its stored
+ * value: a new backend sends `type` and everything its preset defines, an
+ * existing one only what changes. One backend has one key, used by its
+ * OpenAI-compatible API ([url]) and its decision API ([decision]) alike.
+ * `apiKey` is write-only: sent once, moved into the gateway's secret store,
+ * never read back or printed.
+ */
+data class BackendConfig(
+    /** "http" for a new backend; null when patching one that exists. */
+    val type: String? = null,
+    /** The preset the backend is made from; null for a server no preset names, or to keep the stored one. */
+    val preset: String? = null,
+    /** The OpenAI-compatible base URL. */
+    val url: String? = null,
+    val apiPathPrefix: String? = null,
     val apiKey: String? = null,
+    val decision: DecisionEndpointConfig? = null,
 ) {
     /** Whether the patch would change nothing about the backend itself. */
     val isEmpty: Boolean
-        get() = preset == null && url == null && protocol == null && auth == null &&
-            scoreField == null && apiKey.isNullOrBlank()
+        get() = type == null && preset == null && url == null && apiPathPrefix == null &&
+            apiKey.isNullOrBlank() && (decision == null || decision.isEmpty)
+
+    internal fun toJson(): JsonObject = buildJsonObject {
+        type?.let { put("type", it) }
+        preset?.let { put("preset", it) }
+        url?.let { put("url", it) }
+        apiKey?.trim()?.takeIf { it.isNotEmpty() }?.let { put("apiKey", it) }
+        apiPathPrefix?.trim()?.takeIf { it.isNotEmpty() }?.let { put("apiPathPrefix", it) }
+        decision?.takeIf { !it.isEmpty }?.let { put("decision", it.toJson()) }
+    }
 
     override fun toString(): String =
-        "DecisionBackendConfig(preset=$preset, url=$url, protocol=$protocol, auth=$auth, " +
-            "scoreField=$scoreField, apiKey=${if (apiKey.isNullOrBlank()) "none" else "<redacted>"})"
+        "BackendConfig(type=$type, preset=$preset, url=$url, apiPathPrefix=$apiPathPrefix, " +
+            "apiKey=${if (apiKey.isNullOrBlank()) "none" else "<redacted>"}, decision=$decision)"
 }
 
-/** The `PATCH /admin/config` bodies that set up the Decision model. */
-object DecisionConfigPatch {
+/** The `PATCH /admin/config` bodies that add backends and set up the Decision model. */
+object BackendConfigPatch {
 
     /**
-     * Save one decision backend and, when [model] is given, assign the
-     * Decision model to it — one merge patch, so the backend and its
-     * assignment land together. Only [config]'s non-null fields are written;
-     * a config with none leaves the backend untouched. [enableRemote] folds
-     * the cloud-inference consent into the same write.
+     * Save one backend and, when [decisionModel] is given, assign the
+     * Decision model to its decision API — one merge patch, so the backend and
+     * its assignment land together. Only [config]'s non-null fields are
+     * written; a config with none leaves the backend untouched.
+     * [enableRemote] folds the cloud-inference consent into the same write.
      */
     fun saveBackend(
         key: String,
-        config: DecisionBackendConfig,
-        model: String?,
-        enableRemote: Boolean,
+        config: BackendConfig,
+        decisionModel: String? = null,
+        enableRemote: Boolean = false,
     ): JsonObject = buildJsonObject {
         put(
             "inference",
             buildJsonObject {
                 if (enableRemote) put("allowRemoteInference", true)
-                if (!config.isEmpty) {
-                    put(
-                        "decisionBackends",
-                        buildJsonObject {
-                            put(
-                                key,
-                                buildJsonObject {
-                                    config.preset?.let { put("preset", it) }
-                                    config.url?.let { put("url", it) }
-                                    config.protocol?.let { put("protocol", it) }
-                                    config.auth?.let { put("auth", it) }
-                                    config.scoreField?.let { put("scoreField", it) }
-                                    config.apiKey?.trim()?.takeIf { it.isNotEmpty() }?.let { put("apiKey", it) }
-                                },
-                            )
-                        },
-                    )
-                }
-                if (!model.isNullOrBlank()) {
-                    put("assignments", buildJsonObject { put("decision", "$key/$model") })
+                if (!config.isEmpty) put("backends", buildJsonObject { put(key, config.toJson()) })
+                if (!decisionModel.isNullOrBlank()) {
+                    put("assignments", buildJsonObject { put("decision", "$key/$decisionModel") })
                 }
             },
         )
@@ -262,16 +285,28 @@ object DecisionConfigPatch {
     }
 
     /**
-     * Remove a decision backend (an explicit `null`, since a missing key is a
-     * no-op merge), clearing the Decision model in the same write when
+     * Stop a backend serving decision models (`decision: null`), keeping its
+     * OpenAI-compatible API and key, and clear the Decision model in the same
+     * write when [clearAssignment] says it is assigned there. A backend with
+     * only a decision API is removed with [removeBackend] instead.
+     */
+    fun disableDecision(key: String, clearAssignment: Boolean): JsonObject =
+        nulls(JsonObject(mapOf(key to JsonObject(mapOf("decision" to JsonNull)))), clearAssignment)
+
+    /**
+     * Remove a backend (an explicit `null`, since a missing key is a no-op
+     * merge), clearing the Decision model in the same write when
      * [clearAssignment] says it is assigned there.
      */
-    fun removeBackend(key: String, clearAssignment: Boolean): JsonObject = buildJsonObject {
+    fun removeBackend(key: String, clearAssignment: Boolean): JsonObject =
+        nulls(JsonObject(mapOf(key to JsonNull)), clearAssignment)
+
+    private fun nulls(backends: JsonObject, clearAssignment: Boolean): JsonObject = buildJsonObject {
         put(
             "inference",
             JsonObject(
                 buildMap<String, JsonElement> {
-                    put("decisionBackends", JsonObject(mapOf(key to JsonNull)))
+                    put("backends", backends)
                     if (clearAssignment) put("assignments", JsonObject(mapOf("decision" to JsonNull)))
                 },
             ),

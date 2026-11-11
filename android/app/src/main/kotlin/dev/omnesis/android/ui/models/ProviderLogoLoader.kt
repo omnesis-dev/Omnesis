@@ -17,8 +17,7 @@ internal object ProviderLogoLoader {
     private val NON_PROVIDER_IDS = setOf("local", "http", "none", "replay", "unresolved")
 
     fun providers(overview: ModelsOverview): Set<String> = buildSet {
-        overview.presets.mapTo(this) { it.id }
-        addAll(decisionLogoSources(overview).values)
+        addAll(presetLogoSources(overview).values)
         overview.assignmentDisplays.values.mapTo(this) { it.providerId }
         overview.modelControls.forEach { (_, info) ->
             if (info.providerId.isNotBlank()) {
@@ -30,14 +29,14 @@ internal object ProviderLogoLoader {
     }
 
     /**
-     * Decision presets by id, mapped to the id their logo is served under:
-     * the models.dev provider id when the preset names one. TypeSafe's
-     * built-in slot is left out; "Other server" is no preset at all.
+     * Presets by id, mapped to the id their logo is served under: the
+     * models.dev provider id when the preset (or its decision API) names one.
+     * TypeSafe's built-in slot is left out; "Other server" is no preset at all.
      */
-    fun decisionLogoSources(overview: ModelsOverview): Map<String, String> =
-        overview.decisionPresets.orEmpty()
+    fun presetLogoSources(overview: ModelsOverview): Map<String, String> =
+        overview.presets
             .filter { it.builtIn == null && it.id.isNotBlank() }
-            .associate { it.id to (it.modelsDevId?.takeIf { id -> id.isNotBlank() } ?: it.id) }
+            .associate { it.id to it.logoId }
 
     /**
      * Fetch the logos not yet in [cached]. A provider the gateway has no logo
@@ -64,10 +63,10 @@ internal object ProviderLogoLoader {
             val backend = assignment.substringBefore('/', missingDelimiterValue = "")
             merged[info.providerId]?.let { logo -> backend.takeIf { it.isNotBlank() }?.let { it to logo } }
         }?.toMap().orEmpty()
-        val decisionAliases = overview?.let(::decisionLogoSources).orEmpty()
+        val presetAliases = overview?.let(::presetLogoSources).orEmpty()
             .mapNotNull { (presetId, source) -> merged[source]?.let { presetId to it } }
             .toMap()
-        merged + aliases + decisionAliases
+        merged + aliases + presetAliases
     }
 
     private const val MISSING = ""

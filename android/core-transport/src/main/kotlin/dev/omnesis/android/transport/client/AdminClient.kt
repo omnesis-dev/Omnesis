@@ -12,8 +12,9 @@ import dev.omnesis.android.transport.dto.AccessAuthorizationDecision
 import dev.omnesis.android.transport.dto.AccessAuthorizationLookupBody
 import dev.omnesis.android.transport.dto.AccessAuthorizationLookupEnvelope
 import dev.omnesis.android.transport.dto.AccessOverview
-import dev.omnesis.android.transport.dto.AddBackendBody
 import dev.omnesis.android.transport.dto.AssignCapabilityBody
+import dev.omnesis.android.transport.dto.BackendConfig
+import dev.omnesis.android.transport.dto.BackendConfigPatch
 import dev.omnesis.android.transport.dto.BackendProbeResult
 import dev.omnesis.android.transport.dto.CapabilityVerdict
 import dev.omnesis.android.transport.dto.CancelDownloadBody
@@ -27,10 +28,9 @@ import dev.omnesis.android.transport.dto.CreatePairingBody
 import dev.omnesis.android.transport.dto.CreateSourceBody
 import dev.omnesis.android.transport.dto.CreateTokenBody
 import dev.omnesis.android.transport.dto.DeleteAllResponse
-import dev.omnesis.android.transport.dto.DecisionBackendConfig
 import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
-import dev.omnesis.android.transport.dto.DecisionConfigPatch
 import dev.omnesis.android.transport.dto.DecisionModelBody
+import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionProbeResult
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
 import dev.omnesis.android.transport.dto.DeviceRecord
@@ -74,7 +74,6 @@ import dev.omnesis.android.transport.dto.PrivacySubscriptionDetail
 import dev.omnesis.android.transport.dto.PrivacySubscriptionEnvelope
 import dev.omnesis.android.transport.dto.PrivacySubscriptionFiringPage
 import dev.omnesis.android.transport.dto.RecentModelsResponse
-import dev.omnesis.android.transport.dto.RemoveBackendBody
 import dev.omnesis.android.transport.dto.SerializedDescriptor
 import dev.omnesis.android.transport.dto.SetModelCredentialsBody
 import dev.omnesis.android.transport.dto.DirectFcmPushRegistrationBody
@@ -585,32 +584,23 @@ class AdminClient(private val http: GatewayHttp) {
     // --- Inference backends (mirror iOS AdminClient) ---
 
     /**
-     * `PATCH /admin/config` — add (or replace) a named HTTP inference backend,
-     * exactly like the portal's `addHttpBackend`. `apiKey` is write-only: it's
-     * sent here but never read back or rendered (the gateway only ever surfaces
-     * a `hasApiKey` bool). The caller validates `key` against
-     * `ModelManagement.validateBackendName` first; the gateway re-validates.
+     * `PATCH /admin/config` — add, replace or change a backend (`inference.backends.<key>`),
+     * exactly like the portal's backend form: its OpenAI-compatible API, its
+     * decision API, or both, with one key. With [decisionModel] the Decision
+     * model is assigned to the backend's decision API in the same merge patch;
+     * [enableRemote] adds the operator's cloud-inference consent to it. The API
+     * key in [config] is write-only; a null key keeps the stored one. The
+     * caller validates `key` first; the gateway re-validates.
      */
-    suspend fun addHttpBackend(
+    suspend fun saveBackend(
         key: String,
-        url: String,
-        apiKey: String? = null,
-        apiPathPrefix: String? = null,
+        config: BackendConfig,
+        decisionModel: String? = null,
+        enableRemote: Boolean = false,
     ) {
-        http.patchJson<AddBackendBody, OkResponse>(
+        http.patchJson<JsonObject, OkResponse>(
             "admin/config",
-            AddBackendBody(
-                AddBackendBody.AddBackendInference(
-                    mapOf(
-                        key to AddBackendBody.HttpBackendConfig(
-                            type = "http",
-                            url = url,
-                            apiKey = apiKey?.ifBlank { null },
-                            apiPathPrefix = apiPathPrefix?.ifBlank { null },
-                        ),
-                    ),
-                ),
-            ),
+            BackendConfigPatch.saveBackend(key, config, decisionModel, enableRemote),
         )
     }
 
@@ -627,15 +617,15 @@ class AdminClient(private val http: GatewayHttp) {
     }
 
     /**
-     * `PATCH /admin/config` — remove an HTTP backend by setting its key to an
-     * explicit `null` (mirrors the portal's `removeHttpBackend`). Like the
-     * capability clear, the null must be serialized explicitly (a missing key
-     * is a no-op patch).
+     * `PATCH /admin/config` — remove a backend by setting its key to an
+     * explicit `null` (mirrors the portal's `removeHttpBackend`; a missing key
+     * is a no-op patch), clearing the Decision model in the same write when
+     * [clearDecision] says it is assigned there.
      */
-    suspend fun removeHttpBackend(key: String) {
-        http.patchJson<RemoveBackendBody, OkResponse>(
+    suspend fun removeBackend(key: String, clearDecision: Boolean = false) {
+        http.patchJson<JsonObject, OkResponse>(
             "admin/config",
-            RemoveBackendBody(RemoveBackendBody.RemoveBackendInference(mapOf(key to JsonNull))),
+            BackendConfigPatch.removeBackend(key, clearDecision),
         )
     }
 
@@ -669,51 +659,39 @@ class AdminClient(private val http: GatewayHttp) {
 
     // --- Decision model (mirror the portal's decision setup) ---
 
-    /**
-     * `PATCH /admin/config` — save a decision backend and, with [model],
-     * assign the Decision model to it, in one merge patch. [enableRemote] adds
-     * the operator's cloud-inference consent to the same write. The API key in
-     * [config] is write-only; a null key keeps the stored one.
-     */
-    suspend fun saveDecisionBackend(
-        key: String,
-        config: DecisionBackendConfig,
-        model: String?,
-        enableRemote: Boolean = false,
-    ) {
-        http.patchJson<JsonObject, OkResponse>(
-            "admin/config",
-            DecisionConfigPatch.saveBackend(key, config, model, enableRemote),
-        )
-    }
-
     /** `PATCH /admin/config` — assign the Decision model to TypeSafe's `typesafe/<model>`. */
     suspend fun assignTypeSafeDecision(model: String, enableRemote: Boolean = false) {
         http.patchJson<JsonObject, OkResponse>(
             "admin/config",
-            DecisionConfigPatch.assignTypeSafe(model, enableRemote),
+            BackendConfigPatch.assignTypeSafe(model, enableRemote),
         )
     }
 
     /**
-     * `PATCH /admin/config` — remove a decision backend, clearing the Decision
-     * model in the same write when [clearAssignment] (it was assigned there).
+     * `PATCH /admin/config` — stop a backend serving decision models
+     * (`decision: null`), keeping its OpenAI-compatible API, and clear the
+     * Decision model in the same write when [clearAssignment] (it was assigned
+     * there).
      */
-    suspend fun removeDecisionBackend(key: String, clearAssignment: Boolean) {
+    suspend fun disableBackendDecision(key: String, clearAssignment: Boolean) {
         http.patchJson<JsonObject, OkResponse>(
             "admin/config",
-            DecisionConfigPatch.removeBackend(key, clearAssignment),
+            BackendConfigPatch.disableDecision(key, clearAssignment),
         )
     }
 
-    /** `POST /admin/inference/decision-backends/:key/probe` — the models a local server lists. */
-    suspend fun probeDecisionBackend(key: String): DecisionProbeResult =
-        http.postEmptySegments(listOf("admin", "inference", "decision-backends", key, "probe"))
+    /** `POST /admin/inference/backends/:key/decision/probe` — the models a saved backend's decision server lists. */
+    suspend fun probeBackendDecision(key: String): DecisionProbeResult =
+        http.postEmptySegments(listOf("admin", "inference", "backends", key, "decision", "probe"))
 
-    /** `POST /admin/inference/decision-backends/:key/verify` — one invented test decision. */
-    suspend fun verifyDecisionBackend(key: String, model: String): DecisionVerifyResult =
+    /** `POST /admin/inference/decision/probe` — the models an unsaved decision server lists. */
+    suspend fun probeDecisionServer(body: DecisionProbeBody): DecisionProbeResult =
+        http.postJson("admin/inference/decision/probe", body)
+
+    /** `POST /admin/inference/backends/:key/decision/verify` — one invented test decision. */
+    suspend fun verifyBackendDecision(key: String, model: String): DecisionVerifyResult =
         http.postJsonSegments(
-            listOf("admin", "inference", "decision-backends", key, "verify"),
+            listOf("admin", "inference", "backends", key, "decision", "verify"),
             DecisionModelBody(model),
         )
 

@@ -3,15 +3,18 @@
 
 package dev.omnesis.android.ui.models
 
+import dev.omnesis.android.transport.dto.BackendConfig
+import dev.omnesis.android.transport.dto.BackendDecisionStatus
+import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
-import dev.omnesis.android.transport.dto.DecisionBackendConfig
-import dev.omnesis.android.transport.dto.DecisionBackendStatus
 import dev.omnesis.android.transport.dto.DecisionCalibration
 import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
+import dev.omnesis.android.transport.dto.DecisionEndpointConfig
 import dev.omnesis.android.transport.dto.DecisionModelOption
-import dev.omnesis.android.transport.dto.DecisionPresetView
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
 import dev.omnesis.android.transport.dto.ModelsOverview
+import dev.omnesis.android.transport.dto.ProviderDecisionPreset
+import dev.omnesis.android.transport.dto.ProviderPreset
 import dev.omnesis.android.transport.dto.ResolvedAssignment
 import java.net.URI
 import java.time.Instant
@@ -25,7 +28,11 @@ import java.util.Locale
  * the form's URL and name rules, the one config patch a save sends, when the
  * cloud-inference question is needed, and the sentences the card shows. Kept
  * free of Compose so each rule is unit-tested, and kept to the same rules as
- * the portal's `lib/decision-backends.js` so the clients agree.
+ * the portal's decision setup so the clients agree.
+ *
+ * A decision API belongs to a backend (`inference.backends.<key>.decision`):
+ * one provider account with one key, which may also serve an OpenAI-compatible
+ * API. TypeSafe is the built-in `typesafe/<model>` assignment instead.
  */
 object DecisionSetup {
 
@@ -33,8 +40,8 @@ object DecisionSetup {
     const val ROLE = "decision"
 
     /**
-     * Names a decision backend cannot take: the first part of a decision
-     * assignment, so never a built-in prefix (`typesafe` included).
+     * Names a new decision backend cannot take: the built-in assignment
+     * prefixes, and `typesafe`, which the gateway keeps for TypeSafe.
      */
     val RESERVED_NAMES = setOf("local", "anthropic", "codex", "claude-code", "replay", "typesafe")
 
@@ -42,11 +49,11 @@ object DecisionSetup {
 
     /**
      * Whether this app sets the Decision model up. A gateway that predates
-     * decision backends sends no `decisionPresets`; its Decision card stays
-     * read-only.
+     * decision backends sends no preset with a decision API; its Decision
+     * card stays read-only.
      */
     fun isConfigurable(cap: CapabilityMeta, overview: ModelsOverview): Boolean =
-        cap.isTypedDecision && overview.decisionPresets != null
+        cap.isTypedDecision && overview.presets.any { it.decision != null }
 
     // --- Providers ---
 
@@ -54,17 +61,28 @@ object DecisionSetup {
     sealed interface Provider {
         val title: String
 
-        /** A configured decision backend, reused by picking a model. */
+        /** A backend that already serves decision models, reused by picking a model. */
         data class Existing(
             val key: String,
-            val backend: DecisionBackendStatus,
-            val preset: DecisionPresetView?,
+            val backend: BackendStatus,
+            val decision: BackendDecisionStatus,
+            val preset: ProviderPreset?,
         ) : Provider {
             override val title: String get() = key
         }
 
-        /** A preset from the gateway (TypeSafe among them). */
-        data class Preset(val preset: DecisionPresetView) : Provider {
+        /**
+         * A backend whose preset offers decision models it does not serve yet.
+         * Choosing it adds the preset's decision API to the backend, which
+         * then uses the key it already has.
+         */
+        data class Enable(val key: String, val backend: BackendStatus, val preset: ProviderPreset) : Provider {
+            override val title: String get() = key
+            val decision: ProviderDecisionPreset get() = preset.decision ?: ProviderDecisionPreset()
+        }
+
+        /** A preset: a new backend made from it, or TypeSafe's built-in slot. */
+        data class Preset(val preset: ProviderPreset) : Provider {
             override val title: String get() = preset.name
         }
 
@@ -74,37 +92,55 @@ object DecisionSetup {
         }
     }
 
-    /** The picker's groups: configured backends, servers on this machine, hosted APIs. */
+    /**
+     * The picker's groups, in the order it shows them: the operator's backends
+     * (those serving decisions, then those whose preset offers them), TypeSafe
+     * built in, then the providers a new backend can be added from.
+     */
     data class ProviderGroups(
-        val existing: List<Provider.Existing>,
-        val local: List<Provider>,
-        val cloud: List<Provider.Preset>,
+        val yours: List<Provider>,
+        val builtIn: List<Provider.Preset>,
+        val add: List<Provider>,
     )
 
-    fun presets(overview: ModelsOverview): List<DecisionPresetView> = overview.decisionPresets.orEmpty()
+    /** Presets with a decision API, TypeSafe among them. */
+    fun presets(overview: ModelsOverview): List<ProviderPreset> = overview.presets.filter { it.decision != null }
 
-    fun presetFor(overview: ModelsOverview, id: String?): DecisionPresetView? =
-        id?.let { wanted -> presets(overview).firstOrNull { it.id == wanted } }
+    fun presetFor(overview: ModelsOverview, id: String?): ProviderPreset? =
+        id?.let { wanted -> overview.presets.firstOrNull { it.id == wanted } }
 
     /**
-     * Configured decision backends first (sorted by name), then servers on this
-     * machine with "Other server" last, then hosted APIs with TypeSafe first —
-     * TypeSafe is the reference every threshold was tuned on.
+     * Backends serving decisions first, then backends whose preset offers
+     * decisions (each sorted by name); TypeSafe; then the presets a new backend
+     * can be made from — servers on this machine, hosted APIs, and "Other
+     * server" last.
      */
     fun providerGroups(overview: ModelsOverview): ProviderGroups {
-        val presets = presets(overview)
-        val existing = overview.inference.decisionBackends.toSortedMap()
-            .map { (key, backend) -> Provider.Existing(key, backend, presetFor(overview, backend.preset)) }
-        val local = presets.filter { it.isLocal }.map { Provider.Preset(it) } + Provider.Custom
-        val cloud = presets.filter { !it.isLocal }
-            .sortedBy { if (it.isTypeSafe) 0 else 1 }
-            .map { Provider.Preset(it) }
-        return ProviderGroups(existing, local, cloud)
+        val backends = ModelManagement.httpBackends(overview)
+        val existing = backends.mapNotNull { row ->
+            row.status.decision?.let { Provider.Existing(row.key, row.status, it, presetFor(overview, row.status.preset)) }
+        }
+        val enable = backends.mapNotNull { row ->
+            if (row.status.decision != null || row.key == TYPESAFE_KEY) return@mapNotNull null
+            presetFor(overview, row.status.preset)
+                ?.takeIf { it.decision != null && it.builtIn == null }
+                ?.let { Provider.Enable(row.key, row.status, it) }
+        }
+        val all = presets(overview)
+        val addable = all.filter { it.builtIn == null }
+        return ProviderGroups(
+            yours = existing + enable,
+            builtIn = all.filter { it.isTypeSafe }.map { Provider.Preset(it) },
+            add = addable.filter { it.isLocal }.map { Provider.Preset(it) } +
+                addable.filter { !it.isLocal }.map { Provider.Preset(it) } +
+                Provider.Custom,
+        )
     }
 
     /** The preset behind a provider, if any. */
-    fun presetOf(provider: Provider): DecisionPresetView? = when (provider) {
+    fun presetOf(provider: Provider): ProviderPreset? = when (provider) {
         is Provider.Existing -> provider.preset
+        is Provider.Enable -> provider.preset
         is Provider.Preset -> provider.preset
         Provider.Custom -> null
     }
@@ -119,7 +155,7 @@ object DecisionSetup {
      */
     fun canProbe(provider: Provider): Boolean {
         val preset = presetOf(provider)
-        return preset == null || preset.isLocal
+        return provider !is Provider.Enable && (preset == null || preset.isLocal)
     }
 
     /** Where a local preset's server listens: "On this host · port 11435", or its URL's host. */
@@ -129,15 +165,35 @@ object DecisionSetup {
         return if (port != -1) "On this host · port $port" else "On this host"
     }
 
-    /** A short location label: "On this host" or the URL's host. */
-    fun where(backend: DecisionBackendStatus): String =
-        if (backend.onHost) "On this host" else hostOf(backend.url) ?: backend.url
+    /** A short location label for a decision API: "On this host" or the URL's host. */
+    fun where(decision: BackendDecisionStatus): String =
+        if (decision.onHost) "On this host" else hostOf(decision.url) ?: decision.url
+
+    /** The picker's second line for a provider. */
+    fun subtitle(provider: Provider): String = when (provider) {
+        is Provider.Existing -> listOfNotNull(provider.preset?.name, where(provider.decision)).joinToString(" · ")
+        is Provider.Enable -> if (provider.backend.hasApiKey == true) {
+            "${provider.preset.name} · uses your existing key"
+        } else {
+            "${provider.preset.name} · add decision models"
+        }
+        is Provider.Preset -> {
+            val decision = provider.preset.decision
+            if (provider.preset.isLocal && decision != null) {
+                localPlace(decision.url)
+            } else {
+                val count = decision?.models?.size ?: 0
+                "$count model${if (count == 1) "" else "s"}"
+            }
+        }
+        Provider.Custom -> "Any System One server, by URL"
+    }
 
     // --- The form ---
 
     /**
-     * Why [raw] cannot name a decision backend, or null. [existingKey] is the
-     * backend being edited, whose own name is allowed.
+     * Why [raw] cannot name a new decision backend, or null. [existingKey] is
+     * the backend being edited, whose own name is allowed.
      */
     fun nameError(raw: String, overview: ModelsOverview, existingKey: String? = null): String? {
         val key = raw.trim()
@@ -147,14 +203,13 @@ object DecisionSetup {
             key.contains("/") -> "A name cannot contain \"/\"."
             key in RESERVED_NAMES -> "\"$key\" is reserved."
             key == existingKey -> null
-            key in overview.inference.backends -> "\"$key\" is already an HTTP backend."
-            key in overview.inference.decisionBackends -> "\"$key\" is already a decision backend."
+            key in overview.inference.backends -> "\"$key\" is already a backend."
             else -> null
         }
     }
 
     /** A free name for a new backend: the preset's id, then id-2, id-3… */
-    fun defaultName(preset: DecisionPresetView?, overview: ModelsOverview): String {
+    fun defaultName(preset: ProviderPreset?, overview: ModelsOverview): String {
         val base = preset?.id?.takeIf { it.isNotBlank() } ?: "decision-server"
         var candidate = base
         var n = 2
@@ -172,13 +227,13 @@ object DecisionSetup {
     }
 
     /**
-     * Fill a preset's `{param}` placeholders with the operator's values, each
-     * URL-encoded as JavaScript's `encodeURIComponent` does — the gateway's
-     * `fillDecisionPresetUrl` rule.
+     * Fill a decision API's `{param}` placeholders with the operator's values,
+     * each URL-encoded as JavaScript's `encodeURIComponent` does — the
+     * gateway's `fillDecisionPresetUrl` rule.
      */
-    fun fillUrl(preset: DecisionPresetView, params: Map<String, String>): FilledUrl {
-        var url = preset.url
-        for (param in preset.urlParams) {
+    fun fillUrl(decision: ProviderDecisionPreset, params: Map<String, String>): FilledUrl {
+        var url = decision.url
+        for (param in decision.urlParams) {
             val value = params[param.key]?.trim().orEmpty()
             if (value.isEmpty()) return FilledUrl.Missing("Enter your ${param.label.lowercase(Locale.ROOT)}.")
             url = url.replace("{${param.key}}", encodeUriComponent(value))
@@ -217,21 +272,24 @@ object DecisionSetup {
 
     /** Whether the API key field must be filled before saving. */
     fun keyRequired(provider: Provider, overview: ModelsOverview, typesafeKey: KeyState): Boolean = when (provider) {
-        is Provider.Existing -> provider.preset?.keyRequired == true && !provider.backend.hasApiKey
+        is Provider.Existing -> provider.preset?.decision?.keyRequired == true && !provider.decision.hasApiKey
+        // The backend's own key serves its decision API too; only a backend without one asks.
+        is Provider.Enable -> provider.decision.keyRequired && provider.backend.hasApiKey != true
         is Provider.Preset -> if (provider.preset.isTypeSafe) {
             // A deployment of the operator's own may run without a key, and a key
             // whose state could not be read may well be there.
             overview.inference.typesafe?.selfHosted != true &&
                 typesafeKeyFor(overview, typesafeKey) == KeyState.Missing
         } else {
-            provider.preset.keyRequired
+            provider.preset.decision?.keyRequired == true
         }
         Provider.Custom -> false
     }
 
     /** Whether a key is already stored for this provider, so a blank field keeps it. */
     fun keyStored(provider: Provider, overview: ModelsOverview, typesafeKey: KeyState): Boolean = when (provider) {
-        is Provider.Existing -> provider.backend.hasApiKey
+        is Provider.Existing -> provider.decision.hasApiKey
+        is Provider.Enable -> provider.backend.hasApiKey == true
         is Provider.Preset -> provider.preset.isTypeSafe && typesafeKeyFor(overview, typesafeKey) == KeyState.Stored
         Provider.Custom -> false
     }
@@ -259,8 +317,8 @@ object DecisionSetup {
     data class ModelSuggestion(val option: DecisionModelOption, val installed: Boolean)
 
     /** The ids the server reported first (they are installed), then the preset's own. */
-    fun modelSuggestions(preset: DecisionPresetView?, probed: List<String>): List<ModelSuggestion> {
-        val known = preset?.models.orEmpty()
+    fun modelSuggestions(decision: ProviderDecisionPreset?, probed: List<String>): List<ModelSuggestion> {
+        val known = decision?.models.orEmpty()
         val seen = mutableSetOf<String>()
         val out = mutableListOf<ModelSuggestion>()
         for (id in probed) {
@@ -306,13 +364,13 @@ object DecisionSetup {
         val model: String
 
         /**
-         * Save (or update) a decision backend and assign the model to it.
-         * [endpoint] is the URL the backend will call, whether or not the
-         * patch rewrites it; the consent question reads it.
+         * Save (or update) a backend and assign the model to its decision API.
+         * [endpoint] is the decision URL the backend will call, whether or not
+         * the patch rewrites it; the consent question reads it.
          */
         data class Backend(
             val key: String,
-            val config: DecisionBackendConfig,
+            val config: BackendConfig,
             override val model: String,
             val endpoint: String,
             val enableRemote: Boolean = false,
@@ -333,7 +391,7 @@ object DecisionSetup {
         val assignment: String
             get() = when (this) {
                 is Backend -> "$key/$model"
-                is TypeSafe -> "typesafe/$model"
+                is TypeSafe -> "$TYPESAFE_KEY/$model"
             }
 
         /** The same save, with the operator's cloud-inference consent folded in. */
@@ -344,34 +402,55 @@ object DecisionSetup {
     }
 
     /**
-     * The save for a new decision backend: its preset's protocol, auth and
-     * score field (System One with a bearer key for "Other server"), the URL
-     * as filled, and a key only when one was typed.
+     * The save for a new backend: the preset's OpenAI-compatible API too when
+     * it has one (one key for both), its decision API at [decisionUrl] with the
+     * preset's protocol, auth and score field (System One with a bearer key for
+     * "Other server"), and a key only when one was typed.
      */
     fun newBackendSave(
         key: String,
-        preset: DecisionPresetView?,
-        url: String,
+        preset: ProviderPreset?,
+        decisionUrl: String,
         apiKey: String,
         model: String,
     ): SaveRequest.Backend = SaveRequest.Backend(
         key = key.trim(),
-        config = DecisionBackendConfig(
-            preset = preset?.id,
-            url = url.trim(),
-            protocol = preset?.protocol ?: "systemone",
-            auth = preset?.auth ?: "bearer",
-            scoreField = preset?.scoreField,
-            apiKey = apiKey.trim().ifEmpty { null },
+        config = ModelManagement.newBackendConfig(
+            preset = preset,
+            url = preset?.defaultUrl?.takeIf { preset.hasOpenAiApi },
+            apiPathPrefix = preset?.apiPathPrefix?.takeIf { preset.hasOpenAiApi },
+            decisionUrl = decisionUrl,
+            apiKey = apiKey,
         ),
         model = model.trim(),
-        endpoint = url.trim(),
+        endpoint = decisionUrl.trim(),
     )
 
     /**
-     * The save for a configured backend: only what the operator changed — a
-     * new URL, a newly typed key — and the model assignment. Its protocol,
-     * auth, score field and preset stay as stored, whoever wrote them.
+     * The save that adds a preset's decision API to a backend that exists:
+     * only the `decision` block, so the backend keeps its URL, preset and key —
+     * the key is not asked again. A key is written only for a backend that has
+     * none and was given one here.
+     */
+    fun enableSave(enable: Provider.Enable, decisionUrl: String, apiKey: String, model: String): SaveRequest.Backend {
+        val url = decisionUrl.trim()
+        val wire = enable.decision
+        return SaveRequest.Backend(
+            key = enable.key,
+            config = BackendConfig(
+                apiKey = apiKey.trim().ifEmpty { null }?.takeIf { enable.backend.hasApiKey != true },
+                decision = DecisionEndpointConfig(url = url, protocol = wire.protocol, auth = wire.auth, scoreField = wire.scoreField),
+            ),
+            model = model.trim(),
+            endpoint = url,
+        )
+    }
+
+    /**
+     * The save for a backend that serves decisions already: only what the
+     * operator changed — a new decision URL, a newly typed key — and the model
+     * assignment. Its protocol, auth, score field and preset stay as stored,
+     * whoever wrote them.
      */
     fun existingBackendSave(
         existing: Provider.Existing,
@@ -380,14 +459,31 @@ object DecisionSetup {
         model: String,
     ): SaveRequest.Backend {
         val typedUrl = url.trim()
-        val changedUrl = typedUrl.takeIf { it.isNotEmpty() && it != existing.backend.url }
+        val changedUrl = typedUrl.takeIf { it.isNotEmpty() && it != existing.decision.url }
         return SaveRequest.Backend(
             key = existing.key,
-            config = DecisionBackendConfig(url = changedUrl, apiKey = apiKey.trim().ifEmpty { null }),
+            config = BackendConfig(
+                apiKey = apiKey.trim().ifEmpty { null },
+                decision = changedUrl?.let { DecisionEndpointConfig(url = it) },
+            ),
             model = model.trim(),
-            endpoint = changedUrl ?: existing.backend.url,
+            endpoint = changedUrl ?: existing.decision.url,
         )
     }
+
+    /**
+     * Taking decision models away from a backend: a backend that also serves
+     * an OpenAI-compatible API loses only its decision API ([wholeBackend]
+     * false); one that serves nothing else is removed. [clearAssignment] when
+     * the Decision model is assigned there.
+     */
+    data class Removal(val key: String, val wholeBackend: Boolean, val clearAssignment: Boolean)
+
+    fun removalFor(existing: Provider.Existing, overview: ModelsOverview): Removal = Removal(
+        key = existing.key,
+        wholeBackend = !existing.backend.hasOpenAiApi,
+        clearAssignment = assignedBackend(overview)?.key == existing.key,
+    )
 
     /** Who the cloud-inference question names, and for which model. */
     data class Consent(val modelName: String, val providerLabel: String)
@@ -398,7 +494,7 @@ object DecisionSetup {
      * not on the gateway host asks first. TypeSafe on a deployment of the
      * operator's own on the host asks nothing; elsewhere it names that URL.
      */
-    fun consentFor(request: SaveRequest, overview: ModelsOverview, preset: DecisionPresetView?): Consent? {
+    fun consentFor(request: SaveRequest, overview: ModelsOverview, preset: ProviderPreset?): Consent? {
         if (overview.inference.allowRemoteInference) return null
         return when (request) {
             is SaveRequest.TypeSafe -> {
@@ -431,16 +527,17 @@ object DecisionSetup {
 
     // --- The assigned model ---
 
-    /** The Decision model's assignment when it is on a decision backend. */
+    /** The Decision model's assignment when it is on a backend's decision API. */
     data class AssignedBackend(
         val key: String,
         val model: String,
-        val backend: DecisionBackendStatus?,
-        val preset: DecisionPresetView?,
+        val backend: BackendStatus?,
+        val preset: ProviderPreset?,
         val assignment: ResolvedAssignment,
     ) {
         val value: String get() = "$key/$model"
-        val calibration: DecisionCalibration? get() = backend?.calibrations?.get(model)
+        val decision: BackendDecisionStatus? get() = backend?.decision
+        val calibration: DecisionCalibration? get() = decision?.calibrations?.get(model)
     }
 
     fun assignment(overview: ModelsOverview): ResolvedAssignment? = overview.inference.assignments[ROLE]
@@ -449,7 +546,7 @@ object DecisionSetup {
         val assignment = assignment(overview) ?: return null
         if (assignment.kind != "decision") return null
         val key = assignment.backendKey ?: return null
-        val backend = overview.inference.decisionBackends[key]
+        val backend = overview.inference.backends[key]
         return AssignedBackend(
             key = key,
             model = assignment.model.orEmpty(),
@@ -466,6 +563,7 @@ object DecisionSetup {
     /** The provider the current assignment uses, so the picker can mark it. */
     fun isCurrent(provider: Provider, overview: ModelsOverview): Boolean = when (provider) {
         is Provider.Existing -> assignedBackend(overview)?.key == provider.key
+        is Provider.Enable -> false
         is Provider.Preset -> provider.preset.isTypeSafe && assignedTypeSafeModel(overview) != null
         Provider.Custom -> false
     }
@@ -473,9 +571,13 @@ object DecisionSetup {
     /** The model to prefill when a provider's form opens: the one already assigned there. */
     fun initialModel(provider: Provider, overview: ModelsOverview): String = when (provider) {
         is Provider.Existing -> assignedBackend(overview)?.takeIf { it.key == provider.key }?.model.orEmpty()
+        is Provider.Enable -> ""
         is Provider.Preset -> if (provider.preset.isTypeSafe) assignedTypeSafeModel(overview).orEmpty() else ""
         Provider.Custom -> ""
     }
+
+    /** The assignment prefix, and credential file key, of TypeSafe's built-in slot. */
+    const val TYPESAFE_KEY = "typesafe"
 
     // --- Verify ---
 
@@ -585,7 +687,7 @@ object DecisionSetup {
     /** The calibration line under the Decision card; [warning] when the model is not calibrated. */
     data class CardLine(val text: String, val warning: Boolean)
 
-    /** The one-line calibration hint the capability list shows, for a decision-backend model. */
+    /** The one-line calibration hint the capability list shows, for a model on a backend's decision API. */
     fun cardCalibrationLine(overview: ModelsOverview, status: DecisionCalibrationStatus?): CardLine? {
         val assigned = assignedBackend(overview) ?: return null
         return when (val panel = calibrationPanel(assigned, status)) {

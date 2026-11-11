@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.CodexLoginFlow
 import dev.omnesis.android.transport.dto.ModelCredentialEntry
 import dev.omnesis.android.transport.dto.ModelsOverview
@@ -23,7 +24,8 @@ import javax.inject.Inject
  * HTTP-backend + model-provider-credential management view-model. Loads the
  * `/admin/models` overview for its `inference.backends` map and the
  * `/admin/model-credentials` registry, and drives both surfaces:
- * - backends: add (PATCH /admin/config), remove (PATCH with an explicit null),
+ * - backends: add (PATCH /admin/config, an OpenAI-compatible API and/or a
+ *   decision API with one key), remove (PATCH with an explicit null),
  *   Test/re-probe (POST /admin/inference/backends/:key/probe).
  * - credentials: set (POST /admin/model-credentials/:fileKey), clear (DELETE).
  *
@@ -123,16 +125,20 @@ class BackendsViewModel @Inject constructor(
 
     fun dismissNotice() = _notice.update { null }
 
-    /** Add (or replace) an HTTP backend, then reload + probe so it populates. */
-    fun add(name: String, url: String, apiKey: String?, apiPathPrefix: String?) {
+    /**
+     * Add (or replace) a backend — its OpenAI-compatible API, its decision
+     * API, or both — then reload, probing an OpenAI-compatible API first so
+     * its model list populates.
+     */
+    fun add(name: String, config: BackendConfig) {
         _busy.update { true }
         _notice.update { null }
         viewModelScope.launch {
             runCatching {
                 val admin = session.requireSession().admin
-                admin.addHttpBackend(name, url, apiKey, apiPathPrefix)
+                admin.saveBackend(name, config)
                 // Probe immediately so reachability + the model list show.
-                runCatching { admin.probeBackend(name) }
+                if (config.url != null) runCatching { admin.probeBackend(name) }
             }.fold(
                 onSuccess = {
                     load()
@@ -144,12 +150,12 @@ class BackendsViewModel @Inject constructor(
         }
     }
 
-    /** Remove an HTTP backend, then reload. */
+    /** Remove a backend (both of its APIs), then reload. */
     fun remove(key: String) {
         _busy.update { true }
         _notice.update { null }
         viewModelScope.launch {
-            runCatching { session.requireSession().admin.removeHttpBackend(key) }.fold(
+            runCatching { session.requireSession().admin.removeBackend(key) }.fold(
                 onSuccess = {
                     _probes.update { it - key }
                     // Drop any verdicts for the removed backend's (model, role) pairs.
