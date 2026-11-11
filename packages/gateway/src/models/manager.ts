@@ -35,6 +35,7 @@ import {
   removeManifestEntry,
   findManifestEntry,
   PROVIDER_PRESETS,
+  providerPresetView,
   CAPABILITY_METADATA,
   experimentalVisible,
   resolveModelDisplay,
@@ -248,7 +249,7 @@ export class ModelManager {
       installed: [...manifest.models],
       inference,
       modelsDir: this.modelsDir,
-      presets: [...PROVIDER_PRESETS],
+      presets: PROVIDER_PRESETS.map((preset) => providerPresetView(preset)),
       assignmentDisplays,
       // Only surface capabilities that have a card; hidden roles are plumbed
       // through but get no portal card. Experimental-only roles are withheld

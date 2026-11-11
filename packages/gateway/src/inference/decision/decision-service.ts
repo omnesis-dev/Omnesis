@@ -9,9 +9,9 @@
  * endpoint from the portal takes effect on the next decision without a
  * restart. The backend it replaces is disposed, which frees a local model.
  *
- * Backends: TypeSafe (`typesafe/<model>`), a decision backend
- * (`<decisionBackend>/<model>`: a System One server, Workers AI or OpenAI
- * Decisions, its scores calibrated onto Jev's when a calibration is stored),
+ * Backends: TypeSafe (`typesafe/<model>`), a backend's decision API
+ * (`<backend>/<model>`: a System One server, Workers AI or OpenAI Decisions,
+ * its scores calibrated onto Jev's when a calibration is stored),
  * a local GGUF chat model, an OpenAI-compatible HTTP backend that returns
  * token log-probabilities, and recorded replay. `get()` returns null when the role is unset or cannot run —
  * no key, remote inference off, a missing model file, an unreadable replay
@@ -30,7 +30,7 @@ import { DecisionClients } from "./decision-clients.js";
 import { HttpChatDecision } from "./http-chat-decision.js";
 import { LlamaCppDecision } from "./llama-cpp-decision.js";
 import { ReplayDecision } from "./replay-decision.js";
-import type { ResolvedDecisionBackendConfig } from "../registry.js";
+import type { DecisionEndpointConfig } from "../registry.js";
 
 import type { InferenceHealth } from "../model-health.js";
 
@@ -42,8 +42,8 @@ export interface DecisionServiceDeps {
   readTypeSafeApiKey: () => string | null;
   /** The API key of a named HTTP backend, if it has one. */
   getBackendApiKey?: (backendKey: string) => string | undefined;
-  /** A decision backend's config, its API key read from the secret store. */
-  getDecisionBackend?: (backendKey: string) => ResolvedDecisionBackendConfig | undefined;
+  /** A backend's decision API, with the backend's API key read from the secret store. */
+  getDecisionEndpoint?: (backendKey: string) => DecisionEndpointConfig | undefined;
   /** Fixture used by a bare `replay` assignment (e.g. `OMNESIS_DECISION_FIXTURE`). */
   defaultReplayFixture?: () => string | undefined;
   /** Test seam passed to the HTTP clients. */
@@ -51,7 +51,7 @@ export interface DecisionServiceDeps {
   /** Test seam: builds the local backend. */
   createLocal?: (modelPath: string) => DecisionCapability;
   /**
-   * Builds the decision-backend and TypeSafe clients; shared with verify and
+   * Builds the decision API and TypeSafe clients; shared with verify and
    * calibration so they share each backend's concurrency limit. Built from
    * the deps above when omitted.
    */
@@ -67,7 +67,7 @@ export class DecisionService {
     this.clients =
       deps.clients ??
       new DecisionClients({
-        getDecisionBackend: (key) => deps.getDecisionBackend?.(key),
+        getDecisionEndpoint: (key) => deps.getDecisionEndpoint?.(key),
         readTypeSafeApiKey: deps.readTypeSafeApiKey,
         ...(deps.fetchFn ? { fetchFn: deps.fetchFn } : {}),
       });
@@ -78,7 +78,7 @@ export class DecisionService {
     const resolved = this.deps.resolveAssignment();
     const decisionBackend =
       resolved.kind === "decision"
-        ? this.deps.getDecisionBackend?.(resolved.backendKey)
+        ? this.deps.getDecisionEndpoint?.(resolved.backendKey)
         : undefined;
     const apiKey =
       resolved.kind === "typesafe"
@@ -119,7 +119,7 @@ export class DecisionService {
     resolved: ResolvedAssignment,
     apiKey: string | null,
     fixture: string | undefined,
-    decisionBackend: ResolvedDecisionBackendConfig | undefined,
+    decisionBackend: DecisionEndpointConfig | undefined,
   ): DecisionCapability | null {
     if (resolved.kind === "decision") {
       if (!resolved.available || !decisionBackend) {
@@ -196,7 +196,7 @@ function signatureOf(
   resolved: ResolvedAssignment,
   apiKey: string | null,
   fixture: string | undefined,
-  decisionBackend?: ResolvedDecisionBackendConfig,
+  decisionBackend?: DecisionEndpointConfig,
 ): string {
   switch (resolved.kind) {
     case "decision":

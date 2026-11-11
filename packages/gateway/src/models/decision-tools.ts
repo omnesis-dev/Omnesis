@@ -12,7 +12,7 @@
  *   models.dev decision catalog name theirs instead.
  * - Calibration replays the Jev reference set — invented emails with the
  *   answers Jev gave them — through the assigned model, fits the map from its
- *   scores to Jev's, and stores it with the decision backend.
+ *   scores to Jev's, and stores it with the backend's decision API.
  */
 
 import { readFileSync } from "node:fs";
@@ -22,7 +22,7 @@ import {
   createLogger,
   decisionGateRates,
   fetchWithInferenceUrlPolicy,
-  findDecisionPreset,
+  findPreset,
   fitDecisionCalibration,
   calibrateNormalized,
   parseDecisionCassette,
@@ -42,7 +42,8 @@ import {
   EMAIL_WORTH_THRESHOLD,
   WORTH_GATE_RUBRIC_VERSION,
 } from "../worth/rubric.js";
-import type { ResolvedDecisionBackendConfig } from "../inference/registry.js";
+import type { DecisionEndpointConfig } from "../inference/registry.js";
+import type { OmnesisConfig } from "@omnesis/config";
 
 const log = createLogger("gateway:decision:tools");
 
@@ -99,8 +100,9 @@ function modelIdsFrom(body: unknown): string[] | null {
   return [...new Set(ids)].sort();
 }
 
-/** What probing needs of a decision backend, saved or not. */
+/** What probing needs of a decision API, saved or not. */
 export interface DecisionProbeTarget {
+  /** The decision endpoint's URL. */
   url: string;
   preset?: string;
   protocol?: DecisionProtocol;
@@ -113,7 +115,7 @@ export async function probeDecisionBackend(
   allowRemoteInference: boolean,
   fetchFn?: typeof fetch,
 ): Promise<DecisionProbeResult> {
-  const preset = findDecisionPreset(cfg.preset, cfg.url);
+  const preset = findPreset(cfg.preset, { decisionUrl: cfg.url });
   if ((cfg.protocol ?? "systemone") !== "systemone" || preset?.kind === "cloud") {
     return { ok: true, models: [], listed: false };
   }
@@ -180,14 +182,14 @@ export function defaultReferencePath(): string {
 export interface DecisionCalibrationDeps {
   /** The current decision assignment. */
   resolve: () => ResolvedAssignment;
-  getDecisionBackend: (key: string) => ResolvedDecisionBackendConfig | undefined;
+  getDecisionEndpoint: (key: string) => DecisionEndpointConfig | undefined;
   /** The model's own (uncalibrated) client for an assignment. */
   createRawClient: (
     resolved: ResolvedDecisionBackend,
-    cfg: ResolvedDecisionBackendConfig,
+    cfg: DecisionEndpointConfig,
   ) => DecisionCapability;
   /**
-   * Store a calibration with the backend; resolves when the config is written.
+   * Store a calibration with the backend's decision API; resolves when the config is written.
    * Refuses when the backend no longer matches `fittedOn`: a calibration
    * fitted on one server or wire format says nothing about another.
    */
@@ -203,14 +205,14 @@ export interface DecisionCalibrationDeps {
   concurrency?: number;
 }
 
-/** What a calibration was fitted on: the parts of a backend that change its scores. */
+/** What a calibration was fitted on: the parts of a decision API that change its scores. */
 export interface DecisionBackendIdentity {
   url: string;
   protocol: DecisionProtocol;
   scoreField: DecisionScoreField;
 }
 
-export function decisionBackendIdentity(cfg: {
+function decisionBackendIdentity(cfg: {
   url: string;
   protocol?: DecisionProtocol;
   scoreField?: DecisionScoreField;
@@ -219,6 +221,56 @@ export function decisionBackendIdentity(cfg: {
     url: cfg.url,
     protocol: cfg.protocol ?? "systemone",
     scoreField: cfg.scoreField ?? "score",
+  };
+}
+
+/**
+ * `current` with a calibration stored on a backend's decision API. Refuses
+ * when the backend or its decision API was removed, or no longer matches
+ * `fittedOn`: a calibration fitted on one server or wire format says nothing
+ * about another.
+ */
+export function withStoredCalibration(
+  current: OmnesisConfig,
+  backendKey: string,
+  model: string,
+  calibration: DecisionCalibration,
+  fittedOn: DecisionBackendIdentity,
+): OmnesisConfig {
+  const inference = current.inference;
+  const backend = inference?.backends?.[backendKey];
+  const decision = backend?.decision;
+  if (!inference || !backend || !decision) {
+    throw new Error(`Backend "${backendKey}" no longer has a decision API`);
+  }
+  const now = decisionBackendIdentity(decision);
+  if (
+    now.url !== fittedOn.url ||
+    now.protocol !== fittedOn.protocol ||
+    now.scoreField !== fittedOn.scoreField
+  ) {
+    throw new Error(
+      `Backend "${backendKey}"'s decision API changed during calibration; calibrate it again`,
+    );
+  }
+  return {
+    ...current,
+    inference: {
+      ...inference,
+      backends: {
+        ...inference.backends,
+        [backendKey]: {
+          ...backend,
+          decision: {
+            ...decision,
+            calibration: {
+              ...decision.calibration,
+              [model]: { ...calibration, points: calibration.points.map(([x, y]) => [x, y]) },
+            },
+          },
+        },
+      },
+    },
   };
 }
 
@@ -249,14 +301,16 @@ export class DecisionCalibrationJob {
     if (resolved.kind !== "decision") {
       throw new CalibrationUnsupported(
         resolved.kind === "typesafe"
-          ? "TypeSafe's Jev is the reference itself; a decision backend's model is what gets calibrated."
-          : "Calibration needs the Decision model to be assigned to a decision backend.",
+          ? "TypeSafe's Jev is the reference itself; a backend's decision model is what gets calibrated."
+          : "Calibration needs the Decision model to be assigned to a backend's decision model.",
       );
     }
     if (!resolved.available)
       throw new CalibrationUnsupported(resolved.reason ?? "The Decision model is unavailable");
-    const cfg = this.deps.getDecisionBackend(resolved.backendKey);
-    if (!cfg) throw new CalibrationUnsupported(`Unknown decision backend "${resolved.backendKey}"`);
+    const cfg = this.deps.getDecisionEndpoint(resolved.backendKey);
+    if (!cfg) {
+      throw new CalibrationUnsupported(`Backend "${resolved.backendKey}" has no decision API`);
+    }
     const reference = this.deps.reference().filter((entry) => {
       const answer = entry.response.answers[EMAIL_WORTH_QUESTION_ID];
       return (

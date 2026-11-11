@@ -1240,7 +1240,7 @@ export class AgentLifecycle {
         break;
 
       case "decision":
-        agentDisabledReason = "A decision backend serves only the Decision model capability.";
+        agentDisabledReason = "A decision model serves only the Decision model capability.";
         log.warn(`agent disabled: ${agentDisabledReason}`);
         break;
 
@@ -1489,7 +1489,7 @@ export class AgentLifecycle {
         newReason = "TypeSafe serves only the Decision model capability.";
         break;
       case "decision":
-        newReason = "A decision backend serves only the Decision model capability.";
+        newReason = "A decision model serves only the Decision model capability.";
         break;
       default: {
         const _exhaustive: never = resolved;

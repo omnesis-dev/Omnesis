@@ -7,7 +7,7 @@
  * models.dev's default catalog leaves specialised model types out; decision
  * models are served by `api.json?type=decision`, one small document listing
  * each provider's decision models with their context window and price. The
- * decision setup forms use it to offer a provider's current models next to the
+ * setup forms use it to offer a provider's current decision models next to the
  * preset's own list. Like the main catalog, it ships as a snapshot so the forms
  * work offline, and a gateway-local copy is revalidated at most once a day
  * when the Models overview is read.
@@ -18,10 +18,11 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import {
-  DECISION_PROVIDER_PRESETS,
+  PROVIDER_PRESETS,
   createLogger,
+  providerPresetView,
   type DecisionModelOption,
-  type DecisionPresetView,
+  type ProviderPresetView,
 } from "@omnesis/core";
 import { readBounded } from "./models-dev-catalog.js";
 
@@ -210,20 +211,15 @@ export class ModelsDevDecisionCatalog {
   }
 
   /**
-   * Every decision preset with the models to offer: the preset's own list
-   * first (in its order, with models.dev's facts when it knows the model),
-   * then any further models models.dev lists for the provider.
+   * Every provider preset, a decision API's models merged from the preset's
+   * own list and the models models.dev lists for the provider.
    */
-  presets(): DecisionPresetView[] {
-    return DECISION_PROVIDER_PRESETS.map((preset) => {
-      const catalog = preset.modelsDevId ? this.models(preset.modelsDevId) : new Map();
-      const models: DecisionModelOption[] = preset.suggestedModels.map((id) => {
-        const known = catalog.get(id);
-        catalog.delete(id);
-        return known ? { ...known, source: "preset" as const } : { id, source: "preset" as const };
-      });
-      models.push(...[...catalog.values()].sort((a, b) => a.id.localeCompare(b.id)));
-      return { ...preset, models };
-    });
+  presets(): ProviderPresetView[] {
+    return PROVIDER_PRESETS.map((preset) =>
+      providerPresetView(
+        preset,
+        preset.decision?.modelsDevId ? this.models(preset.decision.modelsDevId) : undefined,
+      ),
+    );
   }
 }

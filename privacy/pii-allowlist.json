@@ -12582,7 +12582,7 @@
     {
       "value": "Cloudflare Workers",
       "paths": [
-        "packages/core/src/models/decision-presets.test.ts",
+        "packages/core/src/models/provider-presets.test.ts",
         "packages/core/src/models/provider-brands.test.ts"
       ],
       "reason": "Product name of a decision model provider preset, not a person's name."

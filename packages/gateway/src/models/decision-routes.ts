@@ -4,17 +4,18 @@
 /**
  * Admin routes for setting up the Decision model:
  *
- *   POST   /admin/inference/decision-backends/probe        {url, …} models a server not yet saved has
- *   POST   /admin/inference/decision-backends/:key/probe   models a saved backend's server has
- *   POST   /admin/inference/decision-backends/:key/verify  {model} → one test decision
+ *   POST   /admin/inference/decision/probe                 {url, …} models an unsaved decision API has
+ *   POST   /admin/inference/backends/:key/decision/probe   models a backend's decision API has
+ *   POST   /admin/inference/backends/:key/decision/verify  {model} → one test decision
  *   POST   /admin/inference/typesafe/verify                 {model} → the same, for TypeSafe
  *   GET    /admin/models/decision/calibration               the calibration job's status
  *   POST   /admin/models/decision/calibration               start calibrating the assigned model
  *   DELETE /admin/models/decision/calibration               cancel it
  *
- * Adding, removing and assigning decision backends goes through
- * `PATCH /admin/config` like every other backend, so the key in the body is
- * moved into the secret store on the way in.
+ * Adding a backend's decision API, removing it and assigning one of its
+ * models go through `PATCH /admin/config` like every other backend change
+ * (`inference.backends.<key>.decision`), so a key in the body is moved into
+ * the secret store on the way in.
  */
 
 import { BadRequestError, ConflictError, NotFoundError } from "../http/errors.js";
@@ -28,14 +29,18 @@ import {
   type DecisionCalibrationJob,
 } from "./decision-tools.js";
 import type { RouteApp } from "../http/routes/types.js";
-import type { ResolvedDecisionBackendConfig } from "../inference/registry.js";
+import type { DecisionEndpointConfig } from "../inference/registry.js";
 import type { DecisionClients } from "../inference/decision/decision-clients.js";
 import type { ResolvedAssignment } from "@omnesis/core";
 
 export interface DecisionRouteOptions {
   allowRemoteInference: () => boolean;
-  getDecisionBackend: (key: string) => ResolvedDecisionBackendConfig | undefined;
-  /** Resolve `<key>/<model>` (decision backend) or `typesafe/<model>` for the decision role. */
+  getDecisionEndpoint: (key: string) => DecisionEndpointConfig | undefined;
+  /** Whether a backend of that name is configured. */
+  hasBackend: (key: string) => boolean;
+  /** A configured backend's API key, when it has one. */
+  getBackendApiKey: (key: string) => string | undefined;
+  /** Resolve `<key>/<model>` (a backend's decision API) or `typesafe/<model>` for the decision role. */
   resolveDecision: (assignment: string) => ResolvedAssignment;
   clients: DecisionClients;
   calibration: DecisionCalibrationJob;
@@ -43,34 +48,39 @@ export interface DecisionRouteOptions {
 }
 
 export function registerDecisionRoutes(app: RouteApp, opts: DecisionRouteOptions): void {
-  const backendOr404 = (key: string): ResolvedDecisionBackendConfig => {
-    const cfg = opts.getDecisionBackend(key);
-    if (!cfg) throw new NotFoundError(`unknown decision backend: ${key}`);
+  const endpointOr404 = (key: string): DecisionEndpointConfig => {
+    const cfg = opts.getDecisionEndpoint(key);
+    if (!cfg) throw new NotFoundError(`backend "${key}" has no decision API`);
     return cfg;
   };
 
   app.post(
-    "/admin/inference/decision-backends/probe",
+    "/admin/inference/decision/probe",
     scope.admin(),
     validateJson(decisionProbeBody),
-    async (c) =>
-      c.json(
-        await probeDecisionBackend(c.req.valid("json"), opts.allowRemoteInference(), opts.fetchFn),
-      ),
+    async (c) => {
+      const { backendKey, ...target } = c.req.valid("json");
+      if (backendKey !== undefined && target.apiKey === undefined) {
+        if (!opts.hasBackend(backendKey)) throw new NotFoundError(`unknown backend: ${backendKey}`);
+        const apiKey = opts.getBackendApiKey(backendKey);
+        if (apiKey) target.apiKey = apiKey;
+      }
+      return c.json(await probeDecisionBackend(target, opts.allowRemoteInference(), opts.fetchFn));
+    },
   );
 
-  app.post("/admin/inference/decision-backends/:key/probe", scope.admin(), async (c) => {
-    const cfg = backendOr404(c.req.param("key"));
+  app.post("/admin/inference/backends/:key/decision/probe", scope.admin(), async (c) => {
+    const cfg = endpointOr404(c.req.param("key"));
     return c.json(await probeDecisionBackend(cfg, opts.allowRemoteInference(), opts.fetchFn));
   });
 
   app.post(
-    "/admin/inference/decision-backends/:key/verify",
+    "/admin/inference/backends/:key/decision/verify",
     scope.admin(),
     validateJson(decisionModelBody),
     async (c) => {
       const key = c.req.param("key");
-      backendOr404(key);
+      endpointOr404(key);
       const { model } = c.req.valid("json");
       return c.json(await opts.clients.verify(opts.resolveDecision(`${key}/${model}`)));
     },

@@ -25,7 +25,7 @@ import type { GgufCatalogEntry, AnthropicCatalogEntry } from "./types.js";
 import type { CapabilityRole } from "./capabilities.js";
 import type { ModelSettingsByRole, ModelControls, ModelBehaviorValues } from "./model-behavior.js";
 import type { DecisionCalibration } from "./decision-calibration.js";
-import type { DecisionAuth, DecisionProtocol } from "./decision-presets.js";
+import type { DecisionAuth, DecisionProtocol, DecisionScoreField } from "./decision-api.js";
 
 // ── Backend types ─────────────────────────────────────────────────────
 
@@ -57,12 +57,24 @@ export interface ModelTokenLimits {
   maxOutputTokens?: number;
 }
 
+/**
+ * A provider account: an OpenAI-compatible API (`url`), a decision API
+ * (`decision`), or both, reached with one API key.
+ */
 export interface HttpBackendConfig {
   type: "http";
-  url: string;
+  /**
+   * The preset the backend was made from (its brand and suggestions). Never
+   * changes how requests are sent.
+   */
+  preset?: string;
+  /** OpenAI-compatible base URL. Absent on a backend that serves only decision models. */
+  url?: string;
   apiKey?: string;
-  /** Reference to a gateway-local config secret containing the bearer token. */
+  /** Reference to a gateway-local config secret containing the API key. */
   apiKeySecret?: string;
+  /** The provider's decision API, which serves the Decision model. */
+  decision?: HttpBackendDecisionConfig;
   /**
    * Path segment between the base URL and the OpenAI-compatible endpoints
    * (`/chat/completions`, `/embeddings`, `/models`). Defaults to `"/v1"`.
@@ -90,6 +102,27 @@ export interface HttpBackendConfig {
   agentTimeoutMs?: number;
   /** How the transcriber role talks to this backend, when the probe's own finding is not wanted. */
   transcription?: TranscriptionBackendOptions;
+}
+
+/**
+ * A backend's decision API (`inference.backends.<key>.decision`), reached with
+ * the backend's own API key.
+ */
+export interface HttpBackendDecisionConfig {
+  /** The full endpoint, e.g. `http://127.0.0.1:11435/v1/systemone`. */
+  url: string;
+  /** Defaults to `systemone`. */
+  protocol?: DecisionProtocol;
+  /** The header that carries the key. Defaults to `bearer`. */
+  auth?: DecisionAuth;
+  /** Defaults to `score`. */
+  scoreField?: DecisionScoreField;
+  /** Whether the provider refuses requests without a key, so a missing key shows as unavailable. */
+  keyRequired?: boolean;
+  maxConcurrency?: number;
+  timeoutMs?: number;
+  /** Maps each model's scores onto Jev's scale, keyed by model id. */
+  calibration?: Record<string, DecisionCalibration>;
 }
 
 /**
@@ -339,12 +372,12 @@ export interface ResolvedTypeSafe extends ResolvedBase {
 }
 
 /**
- * A decision backend (`inference.decisionBackends.<key>`) serving the
+ * A backend's decision API (`inference.backends.<key>.decision`) serving the
  * Decision model: a local decision-model server or a hosted decision API.
  */
 export interface ResolvedDecisionBackend extends ResolvedBase {
   kind: "decision";
-  /** The decision backend's key, the part of the assignment before the slash. */
+  /** The backend's key, the part of the assignment before the slash. */
   backendKey: string;
   /** The preset the backend was made from, when it names one. */
   preset?: string;
@@ -378,6 +411,7 @@ export type ResolvedAssignment =
 
 export interface BackendStatus {
   type: BackendType;
+  /** OpenAI-compatible base URL; absent on a backend that serves only decision models. */
   url?: string;
   /** Wire protocol used by an HTTP backend. */
   protocol?: "chat-completions" | "responses";
@@ -391,8 +425,11 @@ export interface BackendStatus {
    *   still `unreachable` — the credentials must be fixed before it's usable.
    * - `unreachable` — the host couldn't be reached, or rejected the credentials.
    * - `probing` — a probe is in flight.
+   *
+   * Absent on a backend that serves only decision models: it has no
+   * OpenAI-compatible API to probe.
    */
-  status: "ok" | "reachable" | "unreachable" | "probing";
+  status?: "ok" | "reachable" | "unreachable" | "probing";
   /** Raw served-model ids reported by the backend's `/v1/models` probe. */
   models?: string[];
   /** Why the last probe wasn't fully `ok` (e.g. `"HTTP 500"`); set for `reachable`/`unreachable`. */
@@ -418,6 +455,10 @@ export interface BackendStatus {
   hasApiKey?: boolean;
   /** Where the effective API key came from, when the backend can report it. */
   credentialSource?: "environment" | "file";
+  /** The provider preset the backend was made from, or whose URL it uses. */
+  preset?: string;
+  /** The backend's decision API, when it has one. */
+  decision?: BackendDecisionStatus;
   /**
    * Configured API path prefix (see {@link HttpBackendConfig}). Surfaced so the
    * portal's edit form can round-trip it — a backend config is replaced
@@ -671,9 +712,8 @@ export interface ModelHealth {
   warnings: ModelHealthWarning[];
 }
 
-/** A decision backend as `/admin/models` reports it. */
-export interface DecisionBackendStatus {
-  preset?: string;
+/** A backend's decision API as `/admin/models` reports it. */
+export interface BackendDecisionStatus {
   url: string;
   protocol: DecisionProtocol;
   auth: DecisionAuth;
@@ -711,8 +751,6 @@ export interface InferenceOverview {
    * TypeSafe Jev. Absent on gateways that predate chat-model decisions.
    */
   decisionChatModels?: boolean;
-  /** Decision backends, by key. Absent on gateways that predate them. */
-  decisionBackends?: Record<string, DecisionBackendStatus>;
   assignments: Record<CapabilityRole, ResolvedAssignment>;
 }
 

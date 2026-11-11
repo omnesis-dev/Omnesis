@@ -724,16 +724,21 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <p>
           Assigning a decision model does not enable every use automatically; each flow keeps its
           own controls. Set it up under <strong>Settings → Models → Decision model</strong> in the
-          portal or the iPhone and Android apps: pick where the model runs, then a model. The model
-          is asked one test question when you save it, so a model the server does not have or a
-          refused key is reported then rather than by decisions that fail later.
+          portal or the iPhone and Android apps: pick the backend that runs the model, then a model.
+          The model is asked one test question when you save it, so a model the server does not have
+          or a refused key is reported then rather than by decisions that fail later.
         </p>
         <h4 id="decision-model-providers">Where the decision model runs</h4>
         <p>
           A decision model is not a chat model: it answers typed questions from probabilities over
-          fixed answers, through a decision API. Each place one runs is a
-          <em>decision backend</em>, stored under <code>inference.decisionBackends</code>, and the
-          assignment names the backend and the model, <code>&lt;backend&gt;/&lt;model&gt;</code>.
+          fixed answers, through a decision API. A provider's decision API belongs to the same
+          backend as its OpenAI-compatible API, under <code>inference.backends</code>, with the same
+          API key: a backend can serve chat models, decision models, or both. Its decision API is
+          the backend's <code>decision</code> block, and the assignment names the backend and the
+          model, <code>&lt;backend&gt;/&lt;model&gt;</code>. Adding a backend from a provider that
+          has a decision API sets up both; for a backend you already have, such as Fireworks AI set
+          up for the agent, the Decision model card offers its decision models and adds them with
+          the key the backend already holds.
         </p>
         <div class="table-wrap">
           <table>
@@ -773,16 +778,18 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
               </tr>
               <tr>
-                <td>
-                  OpenRouter, Ollama Cloud, Perplexity, Fireworks AI, Baseten, DeepInfra, Vercel AI
-                  Gateway, AI/ML API
-                </td>
+                <td>OpenRouter, Fireworks AI</td>
                 <td>Each provider's own decision endpoint</td>
                 <td>
-                  Hosted decision models with an API key. OpenRouter alone serves most of them,
-                  including Jev, Perplexity Decider, d1, Clef, Microsoft-Decision-1, Drex and GPT-6
-                  Luna.
+                  The same backend and key as the provider's chat models. OpenRouter alone serves
+                  most hosted decision models, including Jev, Perplexity Decider, d1, Clef,
+                  Microsoft-Decision-1, Drex and GPT-6 Luna.
                 </td>
+              </tr>
+              <tr>
+                <td>Ollama Cloud, Perplexity, Baseten, DeepInfra, Vercel AI Gateway, AI/ML API</td>
+                <td>Each provider's own decision endpoint</td>
+                <td>Hosted decision models with an API key; the backend serves only them.</td>
               </tr>
               <tr>
                 <td>Cloudflare Workers AI</td>
@@ -797,7 +804,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               <tr>
                 <td>OpenAI</td>
                 <td><code>https://api.openai.com/v1/decisions</code></td>
-                <td>GPT-6 Luna through OpenAI's own Decisions API.</td>
+                <td>
+                  GPT-6 Luna through OpenAI's own Decisions API, with the key of the OpenAI backend.
+                </td>
               </tr>
               <tr>
                 <td>Microsoft Foundry</td>
@@ -840,38 +849,39 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           recording. <strong>Calibrate</strong> on the Decision model card, or
           <code>omnesis decision calibrate</code>, asks the assigned model about 300 invented emails
           Jev has already scored, finds the score above which the model keeps 95% of the emails Jev
-          keeps, and moves that score onto Jev's threshold; the map is stored with the decision
-          backend. A model that rates everything higher than Jev is moved down, so it skips more of
-          what Jev skips; one that rates it lower is moved up. The map never reverses which of two
-          emails the model rates higher. The card shows how much of what Jev keeps the model keeps,
-          and how much of what Jev skips it skips, before and after. The emails are about 150,000
-          input tokens in all, so on a hosted provider calibration costs what that many tokens cost
-          there; on a local server running on the CPU it can take half an hour. Each model has its
-          own calibration: one assigned for the first time needs its own.
+          keeps, and moves that score onto Jev's threshold; the map is stored in the backend's
+          <code>decision</code> block. A model that rates everything higher than Jev is moved down,
+          so it skips more of what Jev skips; one that rates it lower is moved up. The map never
+          reverses which of two emails the model rates higher. The card shows how much of what Jev
+          keeps the model keeps, and how much of what Jev skips it skips, before and after. The
+          emails are about 150,000 input tokens in all, so on a hosted provider calibration costs
+          what that many tokens cost there; on a local server running on the CPU it can take half an
+          hour. Each model has its own calibration: one assigned for the first time needs its own.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd">omnesis decision add ollaya --model winnow:e4b</span>
+              <span class="t-cmd">omnesis backend add ollaya</span>
             </p>
             <pre>
-✔ Decision backend ollaya added (http://127.0.0.1:11435/v1/systemone)
-Assigned ollaya/winnow:e4b to the Decision model.</pre>
+✔ Backend ollaya added (decision models at http://127.0.0.1:11435/v1/systemone)</pre>
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >omnesis decision add openrouter --key sk-or-... --allow-remote</span
-              >
+              <span class="t-cmd">omnesis decision enable fireworks</span>
             </p>
+            <pre>
+✔ fireworks serves decision models at https://api.fireworks.ai/inference/v1/systemone, with its own key</pre>
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >omnesis decision verify openrouter perplexity/pplx-decider-flash-v1.2</span
-              >
+              <span class="t-cmd">omnesis decision verify ollaya winnow:e4b</span>
             </p>
-            <pre>✔ openrouter/perplexity/pplx-decider-flash-v1.2 answered in 310 ms</pre>
+            <pre>✔ ollaya/winnow:e4b answered in 310 ms</pre>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis model assign decision ollaya/winnow:e4b</span>
+            </p>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis decision calibrate</span>
@@ -892,7 +902,9 @@ Calibrating ollaya/winnow:e4b on 302 invented reference emails…
           <li>
             <strong>Any OpenAI-compatible HTTP server</strong>, with presets for OpenAI, Google,
             Mistral, Groq, Cerebras, Together, Fireworks, DeepSeek, NVIDIA, xAI, Meta, Moonshot AI,
-            Regolo AI and OpenRouter.
+            Regolo AI and OpenRouter. The same backend can also serve decision models through the
+            provider's decision API, and some backends serve only those; see
+            <a href="#decision-model-providers">Where the decision model runs</a>.
           </li>
           <li>
             <strong>Anthropic</strong>, assigned as <code>anthropic/&lt;model&gt;</code>. Add the
@@ -1729,8 +1741,8 @@ Calibrating ollaya/winnow:e4b on 302 invented reference emails…
               <tr>
                 <td><code>decision</code></td>
                 <td>
-                  Add a decision backend from a preset, list its models, verify and calibrate the
-                  Decision model
+                  List the providers with decision models, enable or disable a backend's decision
+                  API, list its models, verify and calibrate the Decision model
                 </td>
                 <td><a href="#decision-model">Decision model</a></td>
               </tr>

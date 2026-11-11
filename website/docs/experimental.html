@@ -743,8 +743,8 @@
                   Routes urgency, discovery, dependency repair and review, checks whether new
                   records belong in durable memory, and scores observations for the morning brief.
                   Served by a decision model (TypeSafe Jev or a
-                  <a href="operating#decision-model-providers">decision backend</a>), or by a
-                  <a href="#decision-chat-models">local or HTTP chat model</a>; see
+                  <a href="operating#decision-model-providers">backend's decision models</a>), or by
+                  a <a href="#decision-chat-models">local or HTTP chat model</a>; see
                   <a href="#brain-worth-gate">Routing maintenance</a> and
                   <a href="#brain-record-check">Checking what it writes</a>. The role itself is
                   stable; <a href="operating#models">Models</a> covers its setup.
@@ -828,7 +828,7 @@
           This is unstable. Every decision threshold was chosen on TypeSafe Jev's scores, and a chat
           model scores on its own scale: on a set of invented emails, 4-billion-parameter models
           kept 69–85% of the mail TypeSafe Jev keeps at the email worth gate's threshold, and
-          calibration covers decision backends only. Outside experimental mode such an assignment is
+          calibration covers decision models only. Outside experimental mode such an assignment is
           refused, and the portal offers decision models only.
         </p>
         <p>
@@ -1271,7 +1271,7 @@
         <p>
           These checks send the selected evidence context to the decision model. A hosted model
           needs <code>inference.allowRemoteInference: true</code> and the provider's API key; a
-          decision backend on this machine needs neither. Set it up from
+          decision server on this machine needs neither. Set it up from
           <strong>Settings → Models → Decision model</strong>, or from the terminal, for example
           with TypeSafe Jev:
         </p>
@@ -1285,7 +1285,7 @@
           </div>
         </div>
         <p>
-          A decision backend on this machine, such as Ollaya or Ollama, keeps the context there; see
+          A decision server on this machine, such as Ollaya or Ollama, keeps the context there; see
           <a href="operating#decision-model">Decision model</a> for every provider and for
           calibration, and <a href="#decision-chat-models">Local and HTTP decision models</a> for
           chat models.

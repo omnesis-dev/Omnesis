@@ -43,8 +43,10 @@ import {
   type ResolvedCodex,
   type ResolvedTypeSafe,
   type ResolvedDecisionBackend,
-  type DecisionBackendStatus,
-  findDecisionPreset,
+  type BackendDecisionStatus,
+  type HttpBackendDecisionConfig,
+  findPreset,
+  getPreset,
   isWorkersAiModelId,
   type InferenceOverview,
   type BackendStatus,
@@ -166,19 +168,24 @@ export interface ProbeOutcome {
   inconclusive?: boolean;
 }
 
-/** `inference.decisionBackends.<key>` as configured. */
-export type DecisionBackendConfig = NonNullable<
-  NonNullable<OmnesisConfig["inference"]>["decisionBackends"]
->[string];
-
-/** A decision backend's config with its API key read from the secret store, or why it could not be. */
-export type ResolvedDecisionBackendConfig = DecisionBackendConfig & {
+/**
+ * A backend's decision API (`inference.backends.<key>.decision`) with what
+ * its clients need of the backend: the preset it was made from, and the
+ * backend's API key read from the secret store, or why it could not be.
+ */
+export type DecisionEndpointConfig = HttpBackendDecisionConfig & {
+  /** The backend's preset: its recorded id, or the one whose URL it uses. */
+  preset?: string;
+  apiKey?: string;
   apiKeySecretError?: string;
 };
 
 type ResolvedHttpBackendConfig = HttpBackendConfig & {
   apiKeySecretError?: string;
 };
+
+/** A backend with an OpenAI-compatible API, the only kind that is probed. */
+type ChatBackendConfig = ResolvedHttpBackendConfig & { url: string };
 
 /**
  * Map capability roles to catalog roles for default resolution. Only the
@@ -221,12 +228,12 @@ export function isSelfHostedTypeSafeUrl(url: string): boolean {
 }
 
 const DECISION_MODEL_HINT =
-  'Assign a decision model: "typesafe/<model>", or "<decision backend>/<model>" for a decision backend added in Settings → Models → Decision model.';
+  'Assign a decision model: "typesafe/<model>", or "<backend>/<model>" for a backend with decision models, set up in Settings → Models.';
 
 const DECISION_CHAT_MODEL_EXPERIMENTAL_REASON = `A local or HTTP chat model serves the Decision model only in experimental mode (OMNESIS_EXPERIMENTAL=1): its scores do not match the thresholds the decisions were tuned on. ${DECISION_MODEL_HINT}`;
 
 /** Why a cloud chat runtime cannot serve the Decision model; names only what this mode accepts. */
-function decisionBackendsReason(): string {
+function decisionRoleRefusedReason(): string {
   return experimentalEnabled()
     ? `The Decision model needs token probabilities, which this backend does not return. ${DECISION_MODEL_HINT} In experimental mode a local GGUF chat model or an OpenAI-compatible HTTP backend ("<backend>/<model>") also works.`
     : `This backend cannot serve the Decision model. ${DECISION_MODEL_HINT}`;
@@ -246,7 +253,7 @@ const DECISION_REFUSED_PREFIXES: ReadonlySet<string> = new Set([
  * so the request builders don't append a second `/v1`. Idempotent and
  * self-healing — runs on every config load, no persisted migration needed.
  */
-function normalizeBackendConfig(cfg: HttpBackendConfig): HttpBackendConfig {
+function normalizeBackendConfig(cfg: ChatBackendConfig): ChatBackendConfig {
   if (cfg.apiPathPrefix) return cfg;
   let parsed: URL;
   try {
@@ -340,12 +347,12 @@ export class InferenceRegistry {
   private lookupCatalogEntry: (id: string) => CatalogEntry | undefined;
   private getAnthropicStatus: () => BackendStatus | undefined;
 
-  private httpBackends = new Map<
-    string,
-    { config: ResolvedHttpBackendConfig; status: BackendStatus }
-  >();
-  /** Decision backends (`inference.decisionBackends`), with their API keys read from the secret store. */
-  private decisionBackends = new Map<string, ResolvedDecisionBackendConfig>();
+  /** Every configured backend, in config order, its API key read from the secret store. */
+  private backendConfigs = new Map<string, ResolvedHttpBackendConfig>();
+  /** The backends with an OpenAI-compatible API, each with its probe status. */
+  private httpBackends = new Map<string, { config: ChatBackendConfig; status: BackendStatus }>();
+  /** The backends with a decision API. */
+  private decisionEndpoints = new Map<string, DecisionEndpointConfig>();
   private assignmentValues: Partial<Record<CapabilityRole, AssignmentValue>> = {};
   private modelSettings: import("@omnesis/core").ModelSettingsByRole = {};
   private getModelControls?: (
@@ -415,13 +422,28 @@ export class InferenceRegistry {
     this.typesafeUrl = config.inference?.typesafe?.url ?? TYPESAFE_DEFAULT_URL;
     const previous = new Map(this.httpBackends);
     this.httpBackends.clear();
+    this.backendConfigs.clear();
+    this.decisionEndpoints.clear();
 
     if (config.inference?.backends) {
       for (const [key, cfg] of Object.entries(config.inference.backends)) {
-        const typedCfg = this.resolveBackendSecrets(
-          key,
-          normalizeBackendConfig(cfg as HttpBackendConfig),
-        );
+        const backend = this.resolveBackendSecrets(key, cfg as HttpBackendConfig);
+        this.backendConfigs.set(key, backend);
+        if (backend.decision) {
+          const preset = findPreset(backend.preset, {
+            url: backend.url,
+            decisionUrl: backend.decision.url,
+          });
+          this.decisionEndpoints.set(key, {
+            ...backend.decision,
+            ...(preset ? { preset: preset.id } : {}),
+            ...(backend.apiKey ? { apiKey: backend.apiKey } : {}),
+            ...(backend.apiKeySecretError ? { apiKeySecretError: backend.apiKeySecretError } : {}),
+          });
+        }
+        // A backend that serves only decision models has nothing to probe.
+        if (backend.url === undefined) continue;
+        const typedCfg = normalizeBackendConfig({ ...backend, url: backend.url });
         const prev = previous.get(key);
         const hasApiKey = !!typedCfg.apiKey;
         const secretError = typedCfg.apiKeySecretError;
@@ -463,11 +485,6 @@ export class InferenceRegistry {
       }
     }
 
-    this.decisionBackends.clear();
-    for (const [key, cfg] of Object.entries(config.inference?.decisionBackends ?? {})) {
-      this.decisionBackends.set(key, this.resolveDecisionBackendSecrets(key, cfg));
-    }
-
     // Drop verdicts for backends that no longer exist.
     for (const key of previous.keys()) {
       if (!this.httpBackends.has(key)) this.clearVerifyCache(key);
@@ -487,12 +504,16 @@ export class InferenceRegistry {
               ? "local/default"
               : "disabled";
       const backendKey = assignment.split("/")[0] ?? assignment;
+      const backendConfig = this.backendConfigs.get(backendKey);
       const signature = createHash("sha256")
         .update(
           JSON.stringify({
             assignment,
+            // Only the Decision model reads a backend's decision API.
             backend:
-              this.httpBackends.get(backendKey)?.config ?? this.decisionBackends.get(backendKey),
+              role === "decision" || !backendConfig
+                ? backendConfig
+                : { ...backendConfig, decision: undefined },
             typesafe: backendKey === "typesafe" ? config.inference?.typesafe : undefined,
             local:
               backendKey === "local" || !assignment.includes("/")
@@ -585,6 +606,23 @@ export class InferenceRegistry {
     const slashIndex = value.indexOf("/");
     const prefixOf = slashIndex === -1 ? value : value.slice(0, slashIndex);
 
+    // A backend's decision API serves the Decision model, on the stable path:
+    // it is a decision model, whose scores a stored calibration maps onto
+    // Jev's scale.
+    if (role === "decision" && this.decisionEndpoints.has(prefixOf)) {
+      return this.resolveDecisionBackend(
+        role,
+        prefixOf,
+        slashIndex === -1 ? "" : value.slice(slashIndex + 1),
+      );
+    }
+    if (this.backendConfigs.has(prefixOf) && !this.httpBackends.has(prefixOf)) {
+      return {
+        role,
+        kind: "unresolved",
+        reason: `Backend "${prefixOf}" serves only decision models`,
+      };
+    }
     // The decision role reads answers from token probabilities, which the
     // cloud chat runtimes do not return; TypeSafe serves no other role. An
     // HTTP backend that happens to share one of these names keeps its role.
@@ -593,24 +631,7 @@ export class InferenceRegistry {
       DECISION_REFUSED_PREFIXES.has(prefixOf) &&
       !this.httpBackends.has(prefixOf)
     ) {
-      return { role, kind: "unresolved", reason: decisionBackendsReason() };
-    }
-    // A decision backend serves only the Decision model, on the stable path:
-    // it is a decision model, whose scores a stored calibration maps onto
-    // Jev's scale.
-    if (this.decisionBackends.has(prefixOf) && !this.httpBackends.has(prefixOf)) {
-      if (role !== "decision") {
-        return {
-          role,
-          kind: "unresolved",
-          reason: `"${prefixOf}" is a decision backend; it serves only the Decision model.`,
-        };
-      }
-      return this.resolveDecisionBackend(
-        role,
-        prefixOf,
-        slashIndex === -1 ? "" : value.slice(slashIndex + 1),
-      );
+      return { role, kind: "unresolved", reason: decisionRoleRefusedReason() };
     }
     // Every decision threshold was chosen on TypeSafe Jev's scores, and a chat
     // model read through its token probabilities scores on another scale
@@ -770,7 +791,7 @@ export class InferenceRegistry {
   async probeBackend(key: string): Promise<ProbeOutcome> {
     const entry = this.httpBackends.get(key);
     if (!entry) {
-      return { status: "unreachable", models: [], reason: `unknown backend "${key}"` };
+      return { status: "unreachable", models: [], reason: this.notChatBackendReason(key) };
     }
     if (entry.config.apiKeySecretError) {
       const reason = entry.config.apiKeySecretError;
@@ -838,7 +859,7 @@ export class InferenceRegistry {
         // still keeps the backoff flat, so it is re-asked shortly rather than
         // written off.
         this.consecutiveHolds.set(key, holds + 1);
-        const prior = entry.status.status;
+        const prior = entry.status.status ?? "probing";
         const held = prior === "probing" ? "unreachable" : prior;
         entry.status = {
           ...entry.status,
@@ -868,6 +889,13 @@ export class InferenceRegistry {
     }
   }
 
+  /** Why a backend cannot be probed or verified on an OpenAI-compatible API. */
+  private notChatBackendReason(key: string): string {
+    return this.backendConfigs.has(key)
+      ? `Backend "${key}" serves only decision models; it has no OpenAI-compatible API`
+      : `unknown backend "${key}"`;
+  }
+
   /** Forget every cached capability verdict for a backend. */
   private clearVerifyCache(key: string): void {
     const prefix = `${key}::`;
@@ -876,12 +904,15 @@ export class InferenceRegistry {
     }
   }
 
-  private resolveBackendSecrets(key: string, cfg: HttpBackendConfig): ResolvedHttpBackendConfig {
+  private resolveBackendSecrets<T extends HttpBackendConfig>(
+    key: string,
+    cfg: T,
+  ): T & { apiKeySecretError?: string } {
     if (!cfg.apiKeySecret) return cfg;
     if (!parseConfigSecretRef(cfg.apiKeySecret)) {
       const reason = `HTTP backend "${key}" API key secret reference is invalid`;
       log.warn(reason);
-      const next: ResolvedHttpBackendConfig = { ...cfg, apiKeySecretError: reason };
+      const next: T & { apiKeySecretError?: string } = { ...cfg, apiKeySecretError: reason };
       delete next.apiKey;
       return next;
     }
@@ -889,7 +920,7 @@ export class InferenceRegistry {
     if (!value) {
       const reason = `HTTP backend "${key}" API key secret is missing or unreadable`;
       log.warn(reason);
-      const next: ResolvedHttpBackendConfig = { ...cfg, apiKeySecretError: reason };
+      const next: T & { apiKeySecretError?: string } = { ...cfg, apiKeySecretError: reason };
       delete next.apiKey;
       return next;
     }
@@ -923,7 +954,7 @@ export class InferenceRegistry {
 
     const entry = this.httpBackends.get(key);
     if (!entry) {
-      return { role, model, supported: false, detail: `unknown backend "${key}"` };
+      return { role, model, supported: false, detail: this.notChatBackendReason(key) };
     }
     if (entry.config.apiKeySecretError) {
       return { role, model, supported: false, detail: entry.config.apiKeySecretError };
@@ -1271,7 +1302,21 @@ export class InferenceRegistry {
   getOverview(): InferenceOverview {
     const backends: Record<string, BackendStatus> = {};
     backends["local"] = { type: "local", status: "ok" };
-    for (const [key, entry] of this.httpBackends) {
+    for (const [key, config] of this.backendConfigs) {
+      const preset = findPreset(config.preset, {
+        url: config.url,
+        decisionUrl: config.decision?.url,
+      });
+      const decision = this.decisionEndpoints.get(key);
+      const shared = {
+        ...(preset ? { preset: preset.id } : {}),
+        ...(decision ? { decision: this.decisionStatus(decision) } : {}),
+      };
+      const entry = this.httpBackends.get(key);
+      if (!entry) {
+        backends[key] = { type: "http", hasApiKey: !!config.apiKey, ...shared };
+        continue;
+      }
       const verdicts = [...this.verifyCache.entries()]
         .filter(([cacheKey]) => cacheKey.startsWith(`${key}::`))
         .map(([, verdict]) => verdict);
@@ -1281,6 +1326,7 @@ export class InferenceRegistry {
         ...(verdicts.length > 0 ? { verdicts } : {}),
         apiPathPrefix: entry.config.apiPathPrefix,
         protocol: entry.config.protocol,
+        ...shared,
       };
     }
     if (this.checkAnthropicKey()) {
@@ -1305,9 +1351,6 @@ export class InferenceRegistry {
         onHost: isLoopbackInferenceUrl(this.typesafeUrl),
       },
       decisionChatModels: experimentalEnabled(),
-      decisionBackends: Object.fromEntries(
-        [...this.decisionBackends].map(([key, cfg]) => [key, this.decisionBackendStatus(cfg)]),
-      ),
       health: this.modelHealth(),
     };
   }
@@ -1321,7 +1364,7 @@ export class InferenceRegistry {
    */
   private classifyBackendModels(
     backendKey: string,
-    entry: { config: ResolvedHttpBackendConfig; status: BackendStatus },
+    entry: { config: ChatBackendConfig; status: BackendStatus },
   ): Record<string, CapabilityRole[]> {
     const roles = classifyModels([...(entry.status.models ?? [])]);
     if (
@@ -1355,10 +1398,8 @@ export class InferenceRegistry {
     return roles;
   }
 
-  private decisionBackendStatus(cfg: ResolvedDecisionBackendConfig): DecisionBackendStatus {
-    const preset = findDecisionPreset(cfg.preset, cfg.url);
+  private decisionStatus(cfg: DecisionEndpointConfig): BackendDecisionStatus {
     return {
-      ...(preset ? { preset: preset.id } : {}),
       url: cfg.url,
       protocol: cfg.protocol ?? "systemone",
       auth: cfg.auth ?? "bearer",
@@ -1371,7 +1412,12 @@ export class InferenceRegistry {
 
   /** Return the API key for a named HTTP backend, if configured. */
   getBackendApiKey(key: string): string | undefined {
-    return this.httpBackends.get(key)?.config.apiKey;
+    return this.backendConfigs.get(key)?.apiKey;
+  }
+
+  /** Whether `inference.backends` declares a backend of that name. */
+  hasBackend(key: string): boolean {
+    return this.backendConfigs.has(key);
   }
 
   async dispose(): Promise<void> {}
@@ -1617,14 +1663,14 @@ export class InferenceRegistry {
     backendKey: string,
     model: string,
   ): ResolvedDecisionBackend {
-    const cfg = this.decisionBackends.get(backendKey)!;
+    const cfg = this.decisionEndpoints.get(backendKey)!;
     const onHost = isLoopbackInferenceUrl(cfg.url);
-    const preset = findDecisionPreset(cfg.preset, cfg.url);
+    const preset = cfg.preset ? getPreset(cfg.preset) : undefined;
     const base = {
       role,
       kind: "decision" as const,
       backendKey,
-      ...(preset ? { preset: preset.id } : {}),
+      ...(cfg.preset ? { preset: cfg.preset } : {}),
       model,
       url: cfg.url,
       protocol: cfg.protocol ?? "systemone",
@@ -1637,7 +1683,7 @@ export class InferenceRegistry {
       return {
         ...base,
         available: false,
-        reason: `Decision assignment must include a model id, e.g. "${backendKey}/${preset?.suggestedModels[0] ?? "<model>"}"`,
+        reason: `Decision assignment must include a model id, e.g. "${backendKey}/${preset?.decision?.suggestedModels[0] ?? "<model>"}"`,
       };
     }
     if (cfg.apiKeySecretError) return { ...base, available: false, reason: cfg.apiKeySecretError };
@@ -1651,30 +1697,14 @@ export class InferenceRegistry {
     if (!this.allowRemoteInference && !onHost) {
       return { ...base, available: false, reason: CLOUD_EGRESS_DISABLED_REASON };
     }
-    if ((cfg.keyRequired ?? preset?.keyRequired ?? false) && !cfg.apiKey) {
+    if ((cfg.keyRequired ?? preset?.decision?.keyRequired ?? false) && !cfg.apiKey) {
       return {
         ...base,
         available: false,
-        reason: `${preset?.name ?? backendKey} needs an API key. Add it in Settings → Models → Decision model.`,
+        reason: `${preset?.name ?? backendKey} needs an API key. Add it to the "${backendKey}" backend in Settings → Models.`,
       };
     }
     return { ...base, available: true };
-  }
-
-  private resolveDecisionBackendSecrets(
-    key: string,
-    cfg: DecisionBackendConfig,
-  ): ResolvedDecisionBackendConfig {
-    if (!cfg.apiKeySecret) return cfg;
-    const value = parseConfigSecretRef(cfg.apiKeySecret)
-      ? readConfigSecretRefSync(cfg.apiKeySecret, { configDir: this.configDir })
-      : null;
-    if (value) return { ...cfg, apiKey: value };
-    const reason = `Decision backend "${key}" API key secret is missing or unreadable`;
-    log.warn(reason);
-    const next: ResolvedDecisionBackendConfig = { ...cfg, apiKeySecretError: reason };
-    delete next.apiKey;
-    return next;
   }
 
   /** The assignment value the config holds for a role, as written. */
@@ -1682,9 +1712,9 @@ export class InferenceRegistry {
     return this.assignmentValues[role];
   }
 
-  /** A decision backend's config with its API key read from the secret store. */
-  getDecisionBackend(key: string): ResolvedDecisionBackendConfig | undefined {
-    return this.decisionBackends.get(key);
+  /** A backend's decision API with the backend's API key, when it has one. */
+  getDecisionEndpoint(key: string): DecisionEndpointConfig | undefined {
+    return this.decisionEndpoints.get(key);
   }
 
   private resolveCodex(role: CapabilityRole, model: string): ResolvedCodex {

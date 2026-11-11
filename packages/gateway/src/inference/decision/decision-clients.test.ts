@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { DecisionClients } from "./decision-clients.js";
 import type { ResolvedAssignment, ResolvedDecisionBackend, ResolvedTypeSafe } from "@omnesis/core";
-import type { ResolvedDecisionBackendConfig } from "../registry.js";
+import type { DecisionEndpointConfig } from "../registry.js";
 
 const BACKEND: ResolvedDecisionBackend = {
   role: "decision",
@@ -40,12 +40,12 @@ const VERIFY_REPLY = {
 };
 
 function clients(opts: {
-  backends?: Record<string, ResolvedDecisionBackendConfig>;
+  backends?: Record<string, DecisionEndpointConfig>;
   typesafeKey?: string | null;
   fetchFn?: typeof fetch;
 }) {
   return new DecisionClients({
-    getDecisionBackend: (key) => opts.backends?.[key],
+    getDecisionEndpoint: (key) => opts.backends?.[key],
     readTypeSafeApiKey: () => opts.typesafeKey ?? null,
     ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}),
   });
@@ -87,7 +87,7 @@ describe("DecisionClients", () => {
 
   it("refuses to build a client for a backend it no longer has", () => {
     expect(() => clients({}).backend(BACKEND, { calibrated: false })).toThrow(
-      'Unknown decision backend "box"',
+      'Backend "box" has no decision API',
     );
   });
 
@@ -144,7 +144,7 @@ describe("DecisionClients.vetAssignment", () => {
     const c = clients({ backends: { box: { url: BACKEND.url } }, fetchFn: refusing });
     const body = {
       inference: {
-        decisionBackends: { box: { apiKey: "sk-new" } },
+        backends: { box: { apiKey: "sk-new" } },
         assignments: { decision: "box/kev" },
       },
     };

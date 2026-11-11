@@ -2,8 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * `omnesis decision` — set up the Decision model: the providers it can use,
- * decision backends, verifying a model, and calibrating it onto Jev's scale.
+ * `omnesis decision` — set up the Decision model: the providers that serve
+ * decision models, a backend's decision API, verifying a model, and
+ * calibrating it onto Jev's scale. Backends themselves are managed with
+ * `omnesis backend`, and the role is assigned with `omnesis model assign`.
  */
 
 import { setTimeout as delay } from "node:timers/promises";
@@ -18,7 +20,12 @@ import {
   EXIT_USER_ERROR,
   pickGatewayExitCode,
 } from "../utils.js";
-import { buildDecisionBackendPatch, describeCalibration, parseParams } from "./decision-backend.js";
+import {
+  buildDecisionDisablePatch,
+  buildDecisionEnablePatch,
+  describeCalibration,
+  parseParams,
+} from "./backend-patch.js";
 import type { DecisionCalibration, ModelsOverview } from "@omnesis/core";
 
 async function overview(): Promise<ModelsOverview> {
@@ -36,30 +43,38 @@ async function patchConfig(body: unknown, what: string): Promise<void> {
   }
 }
 
+function userError(err: unknown): CliError {
+  return new CliError(
+    `${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`,
+    EXIT_USER_ERROR,
+  );
+}
+
 const presetsCommand = defineCommand({
-  meta: { name: "presets", description: "List the decision model providers and their models" },
+  meta: { name: "presets", description: "List the providers that serve decision models" },
   async run() {
     const o = await withSpinner("Loading providers", () => overview());
-    for (const preset of o.decisionPresets ?? []) {
-      const tag = preset.builtIn ? "built in" : preset.kind;
+    for (const preset of o.presets) {
+      if (!preset.decision) continue;
+      const tag = preset.builtIn ? "built in" : preset.defaultUrl ? "also chat" : preset.kind;
       console.log(
-        `${c.bold}${preset.id}${c.reset}  ${preset.name} ${c.dim}(${tag}, ${preset.url})${c.reset}`,
+        `${c.bold}${preset.id}${c.reset}  ${preset.name} ${c.dim}(${tag}, ${preset.decision.url})${c.reset}`,
       );
-      const models = preset.models.slice(0, 8).map((m) => m.id);
+      const models = preset.decision.models.slice(0, 8).map((m) => m.id);
       if (models.length)
         console.log(
-          `  ${c.dim}${models.join(", ")}${preset.models.length > 8 ? ", …" : ""}${c.reset}`,
+          `  ${c.dim}${models.join(", ")}${preset.decision.models.length > 8 ? ", …" : ""}${c.reset}`,
         );
     }
   },
 });
 
-const listCommand = defineCommand({
-  meta: { name: "list", description: "List decision backends and the assigned Decision model" },
+/** The assigned Decision model and the backends that serve decision models. */
+const statusCommand = defineCommand({
+  meta: { name: "status", description: "Show the Decision model and the backends with decisions" },
   async run() {
-    const o = await withSpinner("Loading decision backends", () => overview());
+    const o = await withSpinner("Loading the Decision model", () => overview());
     const assigned = o.inference.assignments.decision;
-    const backends = o.inference.decisionBackends ?? {};
     const label =
       assigned.kind === "decision" || assigned.kind === "typesafe"
         ? `${assigned.kind === "decision" ? assigned.backendKey : "typesafe"}/${assigned.model}`
@@ -72,99 +87,106 @@ const listCommand = defineCommand({
     if ("reason" in assigned && assigned.reason)
       console.log(`  ${c.dim}${assigned.reason}${c.reset}`);
     if (assigned.kind === "decision") {
-      const calibration = backends[assigned.backendKey]?.calibrations[assigned.model];
+      const calibration =
+        o.inference.backends[assigned.backendKey]?.decision?.calibrations[assigned.model];
       console.log(`  ${describeCalibration(calibration)}`);
     }
-    const keys = Object.keys(backends);
-    if (!keys.length) {
+    const withDecisions = Object.entries(o.inference.backends).filter(([, b]) => b.decision);
+    if (!withDecisions.length) {
       console.log(
-        `${c.dim}No decision backends. Add one with "omnesis decision add <name> --preset <id>".${c.reset}`,
+        `${c.dim}No backend serves decision models. Add one with "omnesis backend add <preset>", or enable them on an existing backend with "omnesis decision enable <backend>".${c.reset}`,
       );
       return;
     }
     console.log();
-    for (const key of keys) {
-      const b = backends[key]!;
+    for (const [key, b] of withDecisions) {
+      const d = b.decision!;
       console.log(
-        `${c.bold}${key.padEnd(16)}${c.reset} ${(b.preset ?? "custom").padEnd(14)} ${b.url} ${b.hasApiKey ? "key" : c.dim + "no key" + c.reset}${b.apiKeySecretError ? ` ${c.red}${b.apiKeySecretError}${c.reset}` : ""}`,
+        `${c.bold}${key.padEnd(16)}${c.reset} ${(b.preset ?? "custom").padEnd(14)} ${d.url} ${d.hasApiKey ? "key" : c.dim + "no key" + c.reset}${d.apiKeySecretError ? ` ${c.red}${d.apiKeySecretError}${c.reset}` : ""}`,
       );
     }
   },
 });
 
-const addCommand = defineCommand({
-  meta: { name: "add", description: "Add a decision backend from a preset or a URL" },
+const enableCommand = defineCommand({
+  meta: {
+    name: "enable",
+    description: "Add its preset's decision API to an existing backend, with the backend's key",
+  },
   args: {
-    name: {
-      type: "positional",
-      description: "Backend name (a preset id like 'ollaya' picks that preset)",
-      required: true,
-    },
-    preset: { type: "string", description: "Decision preset id (see `omnesis decision presets`)" },
-    url: { type: "string", description: "Endpoint URL, for a server no preset describes" },
+    backend: { type: "positional", description: "Backend name", required: true },
+    preset: { type: "string", description: "Preset whose decision API to use" },
+    url: { type: "string", description: "Decision endpoint URL, for a server no preset describes" },
     param: {
       type: "string",
       description: "A preset URL value, key=value (repeatable), e.g. account=…",
     },
-    key: { type: "string", description: "API key (stored in the gateway's secret store)" },
     model: { type: "string", description: "Also assign this model to the Decision role" },
-    "allow-remote": {
-      type: "boolean",
-      description: "Allow inference off this host (needed for a cloud provider)",
-    },
   },
   async run(ctx) {
+    const backend = String(ctx.args.backend ?? "");
+    const status = (await overview()).inference.backends[backend];
+    if (!status || status.type !== "http") {
+      throw userError(`No backend "${backend}". Add it with "omnesis backend add".`);
+    }
     let built;
     try {
-      built = buildDecisionBackendPatch({
-        name: String(ctx.args.name ?? ""),
+      built = buildDecisionEnablePatch({
+        backend,
+        ...(status.preset ? { backendPreset: status.preset } : {}),
         ...(ctx.args.preset ? { presetId: String(ctx.args.preset) } : {}),
-        ...(ctx.args.url ? { url: String(ctx.args.url) } : {}),
+        ...(ctx.args.url ? { decisionUrl: String(ctx.args.url) } : {}),
         params: parseParams(ctx.args.param as string | string[] | undefined),
-        ...(ctx.args.key ? { apiKey: String(ctx.args.key) } : {}),
         ...(ctx.args.model ? { model: String(ctx.args.model) } : {}),
-        allowRemote: ctx.args["allow-remote"] === true,
       });
     } catch (err) {
-      throw new CliError(
-        `${c.red}${err instanceof Error ? err.message : String(err)}${c.reset}`,
-        EXIT_USER_ERROR,
-      );
+      throw userError(err);
     }
-    await patchConfig(built.patch, "add the decision backend");
-    const name = String(ctx.args.name);
+    await patchConfig(built.patch, "enable decision models");
     console.log(
-      `${c.green}✔${c.reset} Decision backend ${c.bold}${name}${c.reset} added (${built.url})`,
+      `${c.green}✔${c.reset} ${c.bold}${backend}${c.reset} serves decision models at ${built.url}, with its own key`,
     );
-    if (built.preset?.keyRequired && !ctx.args.key) {
-      console.log(
-        `${c.yellow}${built.preset.name} needs an API key:${c.reset} re-run with --key${built.preset.keyUrl ? ` (create one at ${built.preset.keyUrl})` : ""}.`,
-      );
-    }
     if (ctx.args.model)
-      console.log(`Assigned ${c.bold}${name}/${ctx.args.model}${c.reset} to the Decision model.`);
+      console.log(
+        `Assigned ${c.bold}${backend}/${ctx.args.model}${c.reset} to the Decision model.`,
+      );
     console.log(
-      `Next: ${c.cyan}omnesis decision verify ${name} <model>${c.reset}, then ${c.cyan}omnesis decision calibrate${c.reset}.`,
+      `Next: ${c.cyan}omnesis decision verify ${backend} <model>${c.reset}, then ${c.cyan}omnesis decision calibrate${c.reset}.`,
     );
   },
 });
 
-const removeCommand = defineCommand({
-  meta: { name: "remove", description: "Remove a decision backend" },
-  args: { name: { type: "positional", description: "Backend name", required: true } },
+const disableCommand = defineCommand({
+  meta: {
+    name: "disable",
+    description: "Remove a backend's decision API, keeping its OpenAI-compatible API",
+  },
+  args: { backend: { type: "positional", description: "Backend name", required: true } },
   async run(ctx) {
-    const name = String(ctx.args.name);
-    const assigned = (await overview()).inference.assignments.decision;
-    const inference: Record<string, unknown> = { decisionBackends: { [name]: null } };
-    if (assigned.kind === "decision" && assigned.backendKey === name)
-      inference.assignments = { decision: null };
-    await patchConfig({ inference }, "remove the decision backend");
-    console.log(`${c.green}✔${c.reset} Decision backend ${c.bold}${name}${c.reset} removed`);
+    const backend = String(ctx.args.backend ?? "");
+    const o = await overview();
+    const status = o.inference.backends[backend];
+    if (!status?.decision) throw userError(`"${backend}" serves no decision models.`);
+    const assigned = o.inference.assignments.decision;
+    let patch;
+    try {
+      patch = buildDecisionDisablePatch({
+        backend,
+        servesChat: status.url !== undefined,
+        decisionAssigned: assigned.kind === "decision" && assigned.backendKey === backend,
+      });
+    } catch (err) {
+      throw userError(err);
+    }
+    await patchConfig(patch, "disable decision models");
+    console.log(
+      `${c.green}✔${c.reset} ${c.bold}${backend}${c.reset} no longer serves decision models`,
+    );
   },
 });
 
 const modelsCommand = defineCommand({
-  meta: { name: "models", description: "List the models a decision backend offers" },
+  meta: { name: "models", description: "List the decision models a backend offers" },
   args: { name: { type: "positional", description: "Backend name", required: true } },
   async run(ctx) {
     const name = String(ctx.args.name);
@@ -172,17 +194,17 @@ const modelsCommand = defineCommand({
       Promise.all([
         overview(),
         gatewayJson<{ ok: boolean; models: string[]; listed: boolean; reason?: string }>(
-          `/admin/inference/decision-backends/${encodeURIComponent(name)}/probe`,
+          `/admin/inference/backends/${encodeURIComponent(name)}/decision/probe`,
           { method: "POST" },
         ),
       ]),
     );
-    const backend = o.inference.decisionBackends?.[name];
-    const preset = o.decisionPresets?.find((p) => p.id === backend?.preset);
+    const backend = o.inference.backends[name];
+    const offered = o.presets.find((p) => p.id === backend?.preset)?.decision?.models ?? [];
     if (!probe.ok) console.log(`${c.yellow}⚠${c.reset} ${probe.reason}`);
-    const ids = new Set([...probe.models, ...(preset?.models.map((m) => m.id) ?? [])]);
+    const ids = new Set([...probe.models, ...offered.map((m) => m.id)]);
     for (const id of ids) {
-      const facts = preset?.models.find((m) => m.id === id);
+      const facts = offered.find((m) => m.id === id);
       const note = [
         probe.models.includes(id) ? "installed" : "",
         facts?.contextTokens ? `${Math.round(facts.contextTokens / 1024)}k context` : "",
@@ -198,7 +220,7 @@ const verifyCommand = defineCommand({
   args: {
     name: {
       type: "positional",
-      description: "Decision backend name, or 'typesafe'",
+      description: "Backend name, or 'typesafe'",
       required: true,
     },
     model: { type: "positional", description: "Model id", required: true },
@@ -209,7 +231,7 @@ const verifyCommand = defineCommand({
     const path =
       name === "typesafe"
         ? "/admin/inference/typesafe/verify"
-        : `/admin/inference/decision-backends/${encodeURIComponent(name)}/verify`;
+        : `/admin/inference/backends/${encodeURIComponent(name)}/decision/verify`;
     const result = await withSpinner(`Asking ${name}/${model}`, () =>
       gatewayJson<{ ok: boolean; answeredBy?: string; latencyMs?: number; reason?: string }>(path, {
         method: "POST",
@@ -270,7 +292,7 @@ const calibrateCommand = defineCommand({
     );
     if (ctx.args.detach) {
       console.log(
-        `${c.dim}Follow it with "omnesis decision list" or cancel with "omnesis decision calibrate --cancel".${c.reset}`,
+        `${c.dim}Follow it with "omnesis decision status" or cancel with "omnesis decision calibrate --cancel".${c.reset}`,
       );
       return;
     }
@@ -296,13 +318,13 @@ const calibrateCommand = defineCommand({
 export const decisionCommand = defineCommand({
   meta: {
     name: "decision",
-    description: "Set up the Decision model: providers, backends, verify, calibrate",
+    description: "Set up the Decision model: providers, decision APIs, verify, calibrate",
   },
   subCommands: {
+    status: statusCommand,
     presets: presetsCommand,
-    list: listCommand,
-    add: addCommand,
-    remove: removeCommand,
+    enable: enableCommand,
+    disable: disableCommand,
     models: modelsCommand,
     verify: verifyCommand,
     calibrate: calibrateCommand,
@@ -310,7 +332,7 @@ export const decisionCommand = defineCommand({
   async run(ctx) {
     if (ctx.rawArgs.filter((a) => !a.startsWith("-")).length === 0) {
       const { runCommand } = await import("citty");
-      await runCommand(listCommand, { rawArgs: [] });
+      await runCommand(statusCommand, { rawArgs: [] });
     }
   },
 });

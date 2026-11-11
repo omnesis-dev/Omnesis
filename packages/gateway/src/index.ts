@@ -41,9 +41,9 @@ import { DecisionClients } from "./inference/decision/decision-clients.js";
 import { ModelsDevDecisionCatalog } from "./models/models-dev-decisions.js";
 import {
   DecisionCalibrationJob,
-  decisionBackendIdentity,
   defaultReferencePath,
   readReferenceSet,
+  withStoredCalibration,
 } from "./models/decision-tools.js";
 import {
   closeDrainingWal,
@@ -1391,10 +1391,11 @@ await subscriptionsPolicyStore.get();
 // worth gate whether an email's date mentions belong in time queries; unset,
 // both gates are absent. Re-resolved per use, so assigning a model or pasting
 // a key from the portal takes effect without a restart.
-// Every client of a decision backend — the live model, verify, the assignment
-// check, calibration — comes from here, sharing each backend's concurrency limit.
+// Every client of a backend's decision API — the live model, verify, the
+// assignment check, calibration — comes from here, sharing each backend's
+// concurrency limit.
 const decisionClients = new DecisionClients({
-  getDecisionBackend: (key) => inferenceRegistry.getDecisionBackend(key),
+  getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
   readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
 });
 const decisionService = new DecisionService({
@@ -1402,46 +1403,22 @@ const decisionService = new DecisionService({
   resolveAssignment: () => inferenceRegistry.resolve("decision"),
   readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
   getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
-  getDecisionBackend: (key) => inferenceRegistry.getDecisionBackend(key),
+  getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
   clients: decisionClients,
   defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
 });
 
 // Calibrating the Decision model replays the bundled Jev reference set through
-// it and stores the fitted map with its decision backend.
+// it and stores the fitted map with the backend's decision API.
 const decisionCalibration = new DecisionCalibrationJob({
   resolve: () => inferenceRegistry.resolve("decision"),
-  getDecisionBackend: (key) => inferenceRegistry.getDecisionBackend(key),
+  getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
   createRawClient: (resolved) => decisionClients.backend(resolved, { calibrated: false }),
   reference: () => readReferenceSet(defaultReferencePath()),
   store: async (backendKey, model, calibration, fittedOn) => {
-    const result = await configStore.update((current) => {
-      const backend = current.inference?.decisionBackends?.[backendKey];
-      if (!backend) throw new Error(`Decision backend "${backendKey}" was removed`);
-      const now = decisionBackendIdentity(backend);
-      if (
-        now.url !== fittedOn.url ||
-        now.protocol !== fittedOn.protocol ||
-        now.scoreField !== fittedOn.scoreField
-      ) {
-        throw new Error(
-          `Decision backend "${backendKey}" changed during calibration; calibrate it again`,
-        );
-      }
-      return {
-        ...current,
-        inference: {
-          ...current.inference,
-          decisionBackends: {
-            ...current.inference?.decisionBackends,
-            [backendKey]: {
-              ...backend,
-              calibration: { ...backend.calibration, [model]: calibration },
-            },
-          },
-        },
-      };
-    });
+    const result = await configStore.update((current) =>
+      withStoredCalibration(current, backendKey, model, calibration, fittedOn),
+    );
     if (!result.ok) {
       throw new Error(
         `Saving the calibration failed: ${result.errors.map((e) => `${e.path}: ${e.message}`).join("; ")}`,
@@ -2710,7 +2687,9 @@ const app = createServer(db, DB_PATH, {
   decisionCatalog,
   decisionRoutes: {
     allowRemoteInference: () => configStore.get().inference?.allowRemoteInference === true,
-    getDecisionBackend: (key) => inferenceRegistry.getDecisionBackend(key),
+    getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
+    hasBackend: (key) => inferenceRegistry.hasBackend(key),
+    getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
     resolveDecision: (assignment) => inferenceRegistry.resolveValue("decision", assignment),
     clients: decisionClients,
     calibration: decisionCalibration,

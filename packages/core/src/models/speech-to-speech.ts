@@ -15,7 +15,7 @@ export function speechToSpeechAssignment(
   if (slash < 1 || value.slice(slash + 1) !== SPEECH_TO_SPEECH_MODEL) return undefined;
   const backendKey = value.slice(0, slash);
   const backend = backends?.[backendKey];
-  if (!backend || backend.type !== "http") return undefined;
+  if (!backend || backend.type !== "http" || !backend.url) return undefined;
   try {
     const url = new URL(backend.url);
     if (url.origin !== "https://api.openai.com" || url.username || url.password) return undefined;

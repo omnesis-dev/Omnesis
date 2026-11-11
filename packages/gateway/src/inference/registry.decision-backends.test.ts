@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { CLOUD_EGRESS_DISABLED_REASON, writeConfigSecretSync } from "@omnesis/core";
 import { InferenceRegistry } from "./registry.js";
 import type { OmnesisConfig } from "@omnesis/config";
@@ -18,6 +18,7 @@ const { experimentalEnabled } = await import("@omnesis/core");
 
 let dir: string;
 let registry: InferenceRegistry;
+let fetchSpy: MockInstance<typeof fetch>;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-decision-backends-"));
@@ -29,9 +30,14 @@ beforeEach(() => {
     hasTypeSafeApiKey: () => false,
   });
   vi.mocked(experimentalEnabled).mockReturnValue(false);
+  // Loading a backend with an OpenAI-compatible URL probes its /models.
+  fetchSpy = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "chat-1" }] })));
 });
 
 afterEach(() => {
+  fetchSpy.mockRestore();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -39,19 +45,33 @@ function load(inference: Record<string, unknown>): void {
   registry.loadConfig({ inference } as unknown as OmnesisConfig);
 }
 
-const OLLAYA = { preset: "ollaya", url: "http://127.0.0.1:11435/v1/systemone" };
-const OPENROUTER = { preset: "openrouter", url: "https://openrouter.ai/api/v1/systemone" };
+/** A backend that serves only decision models. */
+const decisionOnly = (decision: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+  type: "http",
+  ...extra,
+  decision,
+});
 
-describe("InferenceRegistry — decision backends", () => {
-  it("serves a local decision backend on the stable path, with no key or consent", () => {
-    load({ decisionBackends: { ollaya: OLLAYA }, assignments: { decision: "ollaya/kev" } });
+const OLLAYA = decisionOnly({ url: "http://127.0.0.1:11435/v1/systemone" }, { preset: "ollaya" });
+const OPENROUTER_DECISION = { url: "https://openrouter.ai/api/v1/systemone" };
+const FIREWORKS = {
+  type: "http",
+  preset: "fireworks",
+  url: "https://api.fireworks.ai/inference",
+  apiKey: "fw-key",
+  decision: { url: "https://api.fireworks.ai/inference/v1/systemone" },
+};
+
+describe("InferenceRegistry — decision role on a backend's decision API", () => {
+  it("serves a local decision API on the stable path, with no key or consent", () => {
+    load({ backends: { ollaya: OLLAYA }, assignments: { decision: "ollaya/kev" } });
     expect(registry.resolve("decision")).toEqual({
       role: "decision",
       kind: "decision",
       backendKey: "ollaya",
       preset: "ollaya",
       model: "kev",
-      url: OLLAYA.url,
+      url: "http://127.0.0.1:11435/v1/systemone",
       protocol: "systemone",
       onHost: true,
       allowRemoteInference: false,
@@ -61,52 +81,98 @@ describe("InferenceRegistry — decision backends", () => {
     });
   });
 
+  it("uses the decision API of a backend that also serves chat, with the backend's one key", () => {
+    load({ allowRemoteInference: true, backends: { fireworks: FIREWORKS } });
+    expect(
+      registry.resolveValue("decision", "fireworks/accounts/fireworks/models/rune"),
+    ).toMatchObject({
+      kind: "decision",
+      backendKey: "fireworks",
+      preset: "fireworks",
+      url: "https://api.fireworks.ai/inference/v1/systemone",
+      hasApiKey: true,
+      available: true,
+    });
+    expect(registry.getDecisionEndpoint("fireworks")).toMatchObject({
+      url: "https://api.fireworks.ai/inference/v1/systemone",
+      preset: "fireworks",
+      apiKey: "fw-key",
+    });
+    // The chat side resolves as before.
+    expect(registry.resolveValue("agent", "fireworks/some-chat-model")).toMatchObject({
+      kind: "http",
+      backendKey: "fireworks",
+      url: "https://api.fireworks.ai/inference",
+    });
+  });
+
+  it("keeps a backend without a decision API on the experimental chat-model path", () => {
+    load({ backends: { vllm: { type: "http", url: "http://127.0.0.1:8000" } } });
+    const stable = registry.resolveValue("decision", "vllm/qwen3-4b");
+    expect(stable).toMatchObject({ kind: "unresolved" });
+    expect((stable as { reason: string }).reason).toContain("only in experimental mode");
+    expect((stable as { reason: string }).reason).toContain("<backend>/<model>");
+    vi.mocked(experimentalEnabled).mockReturnValue(true);
+    expect(registry.resolveValue("decision", "vllm/qwen3-4b")).toMatchObject({
+      kind: "http",
+      backendKey: "vllm",
+    });
+    expect(registry.getDecisionEndpoint("vllm")).toBeUndefined();
+  });
+
   it("keeps a model id with colons and slashes whole", () => {
-    load({ decisionBackends: { ollama: { url: "http://localhost:11434/v1/systemone" } } });
+    load({ backends: { ollama: decisionOnly({ url: "http://localhost:11434/v1/systemone" }) } });
     expect(registry.resolveValue("decision", "ollama/d3:4b")).toMatchObject({
       model: "d3:4b",
       available: true,
     });
-    load({ decisionBackends: { or: OPENROUTER }, allowRemoteInference: true });
+    load({
+      backends: { or: decisionOnly(OPENROUTER_DECISION, { preset: "openrouter", apiKey: "k" }) },
+      allowRemoteInference: true,
+    });
     expect(
       registry.resolveValue("decision", "or/perplexity/pplx-decider-flash-v1.2"),
     ).toMatchObject({ model: "perplexity/pplx-decider-flash-v1.2", preset: "openrouter" });
   });
 
-  it("needs remote-inference consent for a backend off this host", () => {
-    load({
-      decisionBackends: { openrouter: { ...OPENROUTER, apiKey: "sk-test" } },
-      assignments: { decision: "openrouter/liquid/d1.1" },
-    });
+  it("needs remote-inference consent for a decision API off this host", () => {
+    const backends = {
+      openrouter: decisionOnly(OPENROUTER_DECISION, { preset: "openrouter", apiKey: "sk-test" }),
+    };
+    load({ backends, assignments: { decision: "openrouter/liquid/d1.1" } });
     expect(registry.resolve("decision")).toMatchObject({
       available: false,
       reason: CLOUD_EGRESS_DISABLED_REASON,
     });
     load({
       allowRemoteInference: true,
-      decisionBackends: { openrouter: { ...OPENROUTER, apiKey: "sk-test" } },
+      backends,
       assignments: { decision: "openrouter/liquid/d1.1" },
     });
     expect(registry.resolve("decision")).toMatchObject({ available: true, hasApiKey: true });
   });
 
-  it("names the missing key for a provider that needs one", () => {
+  it("names the backend whose key is missing for a provider that needs one", () => {
     load({
       allowRemoteInference: true,
-      decisionBackends: { openrouter: OPENROUTER },
+      backends: { openrouter: decisionOnly(OPENROUTER_DECISION, { preset: "openrouter" }) },
       assignments: { decision: "openrouter/liquid/d1.1" },
     });
     expect(registry.resolve("decision")).toMatchObject({
       available: false,
-      reason: expect.stringContaining("OpenRouter needs an API key"),
+      reason:
+        'OpenRouter needs an API key. Add it to the "openrouter" backend in Settings → Models.',
     });
   });
 
   it("lets a hand-added server decide whether it needs a key", () => {
     const url = "http://192.0.2.5:8000/v1/systemone";
-    load({ allowRemoteInference: true, decisionBackends: { lab: { url } } });
+    load({ allowRemoteInference: true, backends: { lab: decisionOnly({ url }) } });
     expect(registry.resolveValue("decision", "lab/drex-9b")).toMatchObject({ available: true });
-    load({ allowRemoteInference: true, decisionBackends: { lab: { url, keyRequired: true } } });
+    load({
+      allowRemoteInference: true,
+      backends: { lab: decisionOnly({ url, keyRequired: true }) },
+    });
     expect(registry.resolveValue("decision", "lab/drex-9b")).toMatchObject({
       available: false,
       reason: expect.stringContaining("lab needs an API key"),
@@ -114,45 +180,38 @@ describe("InferenceRegistry — decision backends", () => {
   });
 
   it("asks for a model id when the assignment has none", () => {
-    load({ decisionBackends: { ollaya: OLLAYA } });
+    load({ backends: { ollaya: OLLAYA } });
     expect(registry.resolveValue("decision", "ollaya/")).toMatchObject({
       available: false,
       reason: 'Decision assignment must include a model id, e.g. "ollaya/kev"',
     });
   });
 
-  it("reads the key from the secret store, and reports one it cannot read", () => {
-    const ref = writeConfigSecretSync("inference.decision-backend.test.apiKey.x", "sk-secret", {
+  it("reads the backend's one key from the secret store for both APIs, and reports one it cannot read", () => {
+    const ref = writeConfigSecretSync("inference.backend.test.apiKey.x", "sk-secret", {
       configDir: dir,
     });
+    const { apiKey: _inline, ...fireworks } = FIREWORKS;
     load({
       allowRemoteInference: true,
-      decisionBackends: { openrouter: { ...OPENROUTER, apiKeySecret: ref } },
+      backends: { fireworks: { ...fireworks, apiKeySecret: ref } },
     });
-    expect(registry.getDecisionBackend("openrouter")?.apiKey).toBe("sk-secret");
-    expect(registry.resolveValue("decision", "openrouter/liquid/d1.1")).toMatchObject({
+    expect(registry.getDecisionEndpoint("fireworks")?.apiKey).toBe("sk-secret");
+    expect(registry.getBackendApiKey("fireworks")).toBe("sk-secret");
+    expect(registry.resolveValue("decision", "fireworks/rune")).toMatchObject({
       hasApiKey: true,
       available: true,
     });
 
     load({
       allowRemoteInference: true,
-      decisionBackends: {
-        openrouter: { ...OPENROUTER, apiKeySecret: "config-secret:inference.missing.apiKey" },
+      backends: {
+        fireworks: { ...fireworks, apiKeySecret: "config-secret:inference.missing.apiKey" },
       },
     });
-    expect(registry.resolveValue("decision", "openrouter/liquid/d1.1")).toMatchObject({
+    expect(registry.resolveValue("decision", "fireworks/rune")).toMatchObject({
       available: false,
-      reason: 'Decision backend "openrouter" API key secret is missing or unreadable',
-    });
-  });
-
-  it("serves only the Decision model", () => {
-    load({ decisionBackends: { ollaya: OLLAYA } });
-    expect(registry.resolveValue("agent", "ollaya/kev")).toEqual({
-      role: "agent",
-      kind: "unresolved",
-      reason: '"ollaya" is a decision backend; it serves only the Decision model.',
+      reason: 'HTTP backend "fireworks" API key secret is missing or unreadable',
     });
   });
 
@@ -165,37 +224,118 @@ describe("InferenceRegistry — decision backends", () => {
       reference: "jev-worth/email-worth-v1/jev-1.13.0",
       fittedAt: "2026-11-10T12:00:00.000Z",
     };
-    load({ decisionBackends: { ollaya: { ...OLLAYA, calibration: { kev: calibration } } } });
+    load({
+      backends: {
+        ollaya: { ...OLLAYA, decision: { ...OLLAYA.decision, calibration: { kev: calibration } } },
+      },
+    });
     expect(registry.resolveValue("decision", "ollaya/kev")).toMatchObject({ calibrated: true });
     expect(registry.resolveValue("decision", "ollaya/laya")).toMatchObject({ calibrated: false });
   });
 
-  it("lists decision backends in the overview without their keys", () => {
+  it("brands a backend by the preset whose decision URL it uses when it names none", () => {
+    load({ backends: { mine: decisionOnly({ url: "http://127.0.0.1:11434/v1/systemone" }) } });
+    expect(registry.resolveValue("decision", "mine/d3:4b")).toMatchObject({ preset: "ollama" });
+  });
+
+  it("makes an id that is not a Workers AI path unavailable instead of failing later", () => {
     load({
       allowRemoteInference: true,
-      decisionBackends: {
+      backends: {
+        cf: decisionOnly(
+          {
+            url: "https://api.cloudflare.com/client/v4/accounts/abc/ai/run",
+            protocol: "workers-ai",
+          },
+          { preset: "cloudflare", apiKey: "cf" },
+        ),
+      },
+    });
+    expect(registry.resolveValue("decision", "cf/@cf/cloudflare/clef-flash")).toMatchObject({
+      available: true,
+    });
+    expect(registry.resolveValue("decision", "cf/../../user/tokens")).toMatchObject({
+      available: false,
+      reason: expect.stringContaining("is not a Workers AI model id"),
+    });
+  });
+});
+
+describe("InferenceRegistry — a backend that serves only decision models", () => {
+  it("leaves every other role unavailable, naming why", () => {
+    load({ backends: { ollaya: OLLAYA } });
+    for (const role of ["agent", "embedder", "transcriber", "watch-judge"] as const) {
+      expect(registry.resolveValue(role, "ollaya/kev")).toEqual({
+        role,
+        kind: "unresolved",
+        reason: 'Backend "ollaya" serves only decision models',
+      });
+    }
+  });
+
+  it("is never probed, and the chat probe and verify say why", async () => {
+    load({ backends: { ollaya: OLLAYA } });
+    await registry.probeBackends();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await registry.probeBackend("ollaya")).toMatchObject({
+      status: "unreachable",
+      reason: 'Backend "ollaya" serves only decision models; it has no OpenAI-compatible API',
+    });
+    expect(await registry.verifyModel("ollaya", "kev", "agent")).toMatchObject({
+      supported: false,
+      detail: 'Backend "ollaya" serves only decision models; it has no OpenAI-compatible API',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await registry.probeBackend("gone")).toMatchObject({
+      reason: 'unknown backend "gone"',
+    });
+  });
+
+  it("probes a backend that also serves chat on its OpenAI-compatible URL only", async () => {
+    load({ allowRemoteInference: true, backends: { fireworks: FIREWORKS } });
+    await registry.probeBackends();
+    const urls = new Set(fetchSpy.mock.calls.map(([url]) => String(url)));
+    expect([...urls]).toEqual(["https://api.fireworks.ai/inference/v1/models"]);
+  });
+});
+
+describe("InferenceRegistry — overview", () => {
+  it("lists each backend once, with what it serves and no key", () => {
+    load({
+      allowRemoteInference: true,
+      backends: {
         ollaya: OLLAYA,
-        foundry: {
-          preset: "azure-foundry",
-          url: "https://my-foundry.services.ai.azure.com/providers/microsoft/v1/systemone",
-          auth: "api-key",
-          apiKey: "sk-foundry",
-        },
+        fireworks: FIREWORKS,
+        foundry: decisionOnly(
+          {
+            url: "https://my-foundry.services.ai.azure.com/providers/microsoft/v1/systemone",
+            auth: "api-key",
+          },
+          { preset: "azure-foundry", apiKey: "sk-foundry" },
+        ),
+        vllm: { type: "http", url: "http://127.0.0.1:8000" },
       },
     });
     const overview = registry.getOverview();
-    expect(overview.decisionBackends).toEqual({
-      ollaya: {
-        preset: "ollaya",
-        url: OLLAYA.url,
+    expect(overview).not.toHaveProperty("decisionBackends");
+    expect(overview.backends.ollaya).toEqual({
+      type: "http",
+      hasApiKey: false,
+      preset: "ollaya",
+      decision: {
+        url: "http://127.0.0.1:11435/v1/systemone",
         protocol: "systemone",
         auth: "bearer",
         onHost: true,
         hasApiKey: false,
         calibrations: {},
       },
-      foundry: {
-        preset: "azure-foundry",
+    });
+    expect(overview.backends.foundry).toEqual({
+      type: "http",
+      hasApiKey: true,
+      preset: "azure-foundry",
+      decision: {
         url: "https://my-foundry.services.ai.azure.com/providers/microsoft/v1/systemone",
         protocol: "systemone",
         auth: "api-key",
@@ -204,30 +344,22 @@ describe("InferenceRegistry — decision backends", () => {
         calibrations: {},
       },
     });
+    expect(overview.backends.fireworks).toMatchObject({
+      type: "http",
+      url: "https://api.fireworks.ai/inference",
+      status: "probing",
+      hasApiKey: true,
+      preset: "fireworks",
+      decision: {
+        url: "https://api.fireworks.ai/inference/v1/systemone",
+        hasApiKey: true,
+      },
+    });
+    expect(overview.backends.vllm).toMatchObject({ url: "http://127.0.0.1:8000" });
+    expect(overview.backends.vllm).not.toHaveProperty("decision");
+    expect(overview.backends.vllm).not.toHaveProperty("preset");
     expect(JSON.stringify(overview)).not.toContain("sk-foundry");
-  });
-
-  it("brands a backend by the preset whose URL it uses when it names none", () => {
-    load({ decisionBackends: { mine: { url: "http://127.0.0.1:11434/v1/systemone" } } });
-    expect(registry.resolveValue("decision", "mine/d3:4b")).toMatchObject({ preset: "ollama" });
-  });
-
-  describe("chat models and cloud runtimes", () => {
-    it("keeps a chat model on an HTTP backend experimental, naming decision backends", () => {
-      load({ backends: { vllm: { type: "http", url: "http://127.0.0.1:8000" } } });
-      const resolved = registry.resolveValue("decision", "vllm/qwen3-4b");
-      expect(resolved).toMatchObject({ kind: "unresolved" });
-      expect((resolved as { reason: string }).reason).toContain("<decision backend>/<model>");
-    });
-
-    it("tells a stable operator only what stable mode accepts for a cloud chat runtime", () => {
-      const stable = registry.resolveValue("decision", "anthropic/claude-sonnet-5-5");
-      expect((stable as { reason: string }).reason).not.toContain("GGUF");
-      expect((stable as { reason: string }).reason).toContain("decision backend");
-      vi.mocked(experimentalEnabled).mockReturnValue(true);
-      const experimental = registry.resolveValue("decision", "anthropic/claude-sonnet-5-5");
-      expect((experimental as { reason: string }).reason).toContain("local GGUF chat model");
-    });
+    expect(JSON.stringify(overview)).not.toContain("fw-key");
   });
 });
 
@@ -249,27 +381,14 @@ describe("InferenceRegistry — decision assignments naming nothing", () => {
       );
     }
   });
-});
 
-describe("InferenceRegistry — Workers AI model ids", () => {
-  it("makes an id that is not a Workers AI path unavailable instead of failing later", () => {
-    load({
-      allowRemoteInference: true,
-      decisionBackends: {
-        cf: {
-          preset: "cloudflare",
-          url: "https://api.cloudflare.com/client/v4/accounts/abc/ai/run",
-          protocol: "workers-ai",
-          apiKey: "cf",
-        },
-      },
-    });
-    expect(registry.resolveValue("decision", "cf/@cf/cloudflare/clef-flash")).toMatchObject({
-      available: true,
-    });
-    expect(registry.resolveValue("decision", "cf/../../user/tokens")).toMatchObject({
-      available: false,
-      reason: expect.stringContaining("is not a Workers AI model id"),
-    });
+  it("tells a stable operator only what stable mode accepts for a cloud chat runtime", () => {
+    registry.loadConfig({ inference: {} } as OmnesisConfig);
+    const stable = registry.resolveValue("decision", "anthropic/claude-sonnet-5-5");
+    expect((stable as { reason: string }).reason).not.toContain("GGUF");
+    expect((stable as { reason: string }).reason).toContain("<backend>/<model>");
+    vi.mocked(experimentalEnabled).mockReturnValue(true);
+    const experimental = registry.resolveValue("decision", "anthropic/claude-sonnet-5-5");
+    expect((experimental as { reason: string }).reason).toContain("local GGUF chat model");
   });
 });

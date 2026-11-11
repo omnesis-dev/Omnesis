@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DECISION_PROVIDER_PRESETS } from "@omnesis/core";
+import { PROVIDER_PRESETS } from "@omnesis/core";
 import { ModelsDevDecisionCatalog } from "./models-dev-decisions.js";
 
 let configDir: string;
@@ -56,8 +56,8 @@ describe("ModelsDevDecisionCatalog", () => {
       fetcher: vi.fn(),
     });
     const presets = md.presets();
-    expect(presets.map((p) => p.id)).toEqual(DECISION_PROVIDER_PRESETS.map((p) => p.id));
-    const openrouter = presets.find((p) => p.id === "openrouter")!;
+    expect(presets.map((p) => p.id)).toEqual(PROVIDER_PRESETS.map((p) => p.id));
+    const openrouter = presets.find((p) => p.id === "openrouter")!.decision!;
     const ids = openrouter.models.map((m) => m.id);
     expect(ids.slice(0, openrouter.suggestedModels.length)).toEqual([
       ...openrouter.suggestedModels,
@@ -73,8 +73,12 @@ describe("ModelsDevDecisionCatalog", () => {
       id: "alpha/y",
       source: "models.dev",
     });
-    const ollaya = presets.find((p) => p.id === "ollaya")!;
+    const ollaya = presets.find((p) => p.id === "ollaya")!.decision!;
     expect(ollaya.models.every((m) => m.source === "preset")).toBe(true);
+    // A provider with no decision API is served unchanged.
+    const groq = presets.find((p) => p.id === "groq")!;
+    expect(groq).not.toHaveProperty("decision");
+    expect(groq.defaultUrl).toBe("https://api.groq.com/openai");
   });
 
   it("refreshes once a day, keeps an ETag, and caches the copy", async () => {

@@ -287,7 +287,7 @@ describe("DecisionService — decision backends", () => {
     const service = new DecisionService({
       resolveAssignment: () => resolved,
       readTypeSafeApiKey: () => null,
-      getDecisionBackend: () => cfg as never,
+      getDecisionEndpoint: () => cfg as never,
       fetchFn: serve(1.5),
     });
     const raw = service.get()!;
@@ -307,7 +307,7 @@ describe("DecisionService — decision backends", () => {
     const service = new DecisionService({
       resolveAssignment: () => backend(),
       readTypeSafeApiKey: () => null,
-      getDecisionBackend: () => cfg as never,
+      getDecisionEndpoint: () => cfg as never,
     });
     const first = service.get();
     expect(service.get()).toBe(first);
@@ -319,7 +319,7 @@ describe("DecisionService — decision backends", () => {
     const service = new DecisionService({
       resolveAssignment: () => backend({ available: false, reason: "Ollaya needs an API key." }),
       readTypeSafeApiKey: () => null,
-      getDecisionBackend: () => ({ url: "http://127.0.0.1:9/v1/systemone" }),
+      getDecisionEndpoint: () => ({ url: "http://127.0.0.1:9/v1/systemone" }),
     });
     expect(service.get()).toBeNull();
   });
@@ -341,7 +341,7 @@ describe("DecisionService — decision backends", () => {
           protocol: "openai-decisions",
         }),
       readTypeSafeApiKey: () => null,
-      getDecisionBackend: () => ({
+      getDecisionEndpoint: () => ({
         url: "http://127.0.0.1:9/v1/decisions",
         protocol: "openai-decisions",
         apiKey: "sk",
@@ -378,7 +378,7 @@ describe("DecisionService — a client that cannot be built", () => {
       resolveAssignment: () => resolved,
       readTypeSafeApiKey: () => null,
       // The backend vanished between resolution and building its client.
-      getDecisionBackend: () => undefined,
+      getDecisionEndpoint: () => undefined,
     });
     expect(service.get()).toBeNull();
     expect(service.get()).toBeNull();

@@ -5,7 +5,6 @@
  * Keep API keys out of `omnesis.json`.
  *
  * A config mutation that carries an inline `inference.backends.<key>.apiKey`
- * or `inference.decisionBackends.<key>.apiKey`
  * stores the key in the secret store and rewrites the body to reference it
  * (`apiKeySecret`). Every writer of the file goes through this — the gateway's
  * admin config routes, and the CLI when it edits the file while no gateway is
@@ -40,41 +39,19 @@ export function materializeConfigSecrets(
   mode: "put" | "patch",
 ): ConfigSecretMaterialization {
   const previousRefs = collectConfigSecretRefs(currentConfig);
-  if (!isRecord(body) || !isRecord(body.inference)) return { body, newRefs: [], previousRefs };
-  const inference: Record<string, unknown> = { ...body.inference };
-  const newRefs: string[] = [];
-  for (const collection of BACKEND_COLLECTIONS) {
-    const backends = inference[collection];
-    if (!isRecord(backends)) continue;
-    const next = materializeCollection(backends, collection, configDir, mode, newRefs);
-    if (next) inference[collection] = next;
+  if (!isRecord(body)) return { body, newRefs: [], previousRefs };
+  const inference = body.inference;
+  if (!isRecord(inference) || !isRecord(inference.backends)) {
+    return { body, newRefs: [], previousRefs };
   }
-  if (!newRefs.length) return { body, newRefs: [], previousRefs };
-  return { body: { ...body, inference }, newRefs, previousRefs };
-}
 
-/**
- * The two config collections whose entries carry an API key: the
- * OpenAI-compatible backends and the decision backends.
- */
-const BACKEND_COLLECTIONS = ["backends", "decisionBackends"] as const;
-type BackendCollection = (typeof BACKEND_COLLECTIONS)[number];
-
-function materializeCollection(
-  backends: Record<string, unknown>,
-  collection: BackendCollection,
-  configDir: string,
-  mode: "put" | "patch",
-  newRefs: string[],
-): Record<string, unknown> | null {
   let changed = false;
-  const nextBackends: Record<string, unknown> = { ...backends };
-  for (const [backendKey, patchValue] of Object.entries(backends)) {
+  const nextBackends: Record<string, unknown> = { ...inference.backends };
+  const newRefs: string[] = [];
+
+  for (const [backendKey, patchValue] of Object.entries(inference.backends)) {
     if (!isRecord(patchValue) || typeof patchValue.apiKey !== "string") continue;
-    const secretName =
-      collection === "backends"
-        ? inferenceBackendApiKeySecretName(backendKey)
-        : decisionBackendApiKeySecretName(backendKey);
+    const secretName = inferenceBackendApiKeySecretName(backendKey);
     const ref = writeConfigSecretSync(secretName, patchValue.apiKey, { configDir });
     const nextBackend: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(patchValue)) {
@@ -86,7 +63,19 @@ function materializeCollection(
     newRefs.push(ref);
     changed = true;
   }
-  return changed ? nextBackends : null;
+
+  if (!changed) return { body, newRefs: [], previousRefs };
+  return {
+    body: {
+      ...body,
+      inference: {
+        ...inference,
+        backends: nextBackends,
+      },
+    },
+    newRefs,
+    previousRefs,
+  };
 }
 
 /**
@@ -113,12 +102,6 @@ export function inferenceBackendApiKeySecretName(backendKey: string): string {
   return `inference.backend.${encodedBackend}.apiKey.${randomBytes(6).toString("hex")}`;
 }
 
-/** A unique secret-store name for one decision backend's API key. */
-export function decisionBackendApiKeySecretName(backendKey: string): string {
-  const encodedBackend = Buffer.from(backendKey, "utf8").toString("base64url");
-  return `inference.decision-backend.${encodedBackend}.apiKey.${randomBytes(6).toString("hex")}`;
-}
-
 function refsRemovedByConfig(previousRefs: string[], committedConfig: OmnesisConfig): string[] {
   const committedRefs = new Set(collectConfigSecretRefs(committedConfig));
   return previousRefs.filter((ref) => !committedRefs.has(ref));
@@ -126,11 +109,7 @@ function refsRemovedByConfig(previousRefs: string[], committedConfig: OmnesisCon
 
 function collectConfigSecretRefs(config: OmnesisConfig): string[] {
   const refs = new Set<string>();
-  const entries = [
-    ...Object.values(config.inference?.backends ?? {}),
-    ...Object.values(config.inference?.decisionBackends ?? {}),
-  ];
-  for (const backend of entries) {
+  for (const backend of Object.values(config.inference?.backends ?? {})) {
     const ref = backend.apiKeySecret;
     if (typeof ref === "string" && parseConfigSecretRef(ref)) refs.add(ref);
   }

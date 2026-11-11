@@ -27,7 +27,7 @@ export type {
   ManifestEntry,
   ModelsOverview,
   DecisionModelOption,
-  DecisionPresetView,
+  ProviderPresetView,
 } from "./types.js";
 
 export { MODEL_ROLES, CATALOG_ROLE_CAPABILITY } from "./types.js";
@@ -97,7 +97,8 @@ export type {
   ResolvedClaudeCode,
   ResolvedTypeSafe,
   ResolvedDecisionBackend,
-  DecisionBackendStatus,
+  BackendDecisionStatus,
+  HttpBackendDecisionConfig,
   BackendStatus,
   CodexBackendStatus,
   ClaudeCodeBackendStatus,
@@ -172,19 +173,9 @@ export type {
   DecisionAuth,
   DecisionPresetUrlParam,
   DecisionProtocol,
-  DecisionProviderPreset,
   DecisionScoreField,
-} from "./decision-presets.js";
-export {
-  DECISION_AUTHS,
-  DECISION_PROTOCOLS,
-  DECISION_PROVIDER_PRESETS,
-  decisionUrlPlaceholders,
-  fillDecisionPresetUrl,
-  findDecisionPreset,
-  getDecisionPreset,
-  isWorkersAiModelId,
-} from "./decision-presets.js";
+} from "./decision-api.js";
+export { decisionUrlPlaceholders, isWorkersAiModelId } from "./decision-api.js";
 export type { DecisionCalibration, DecisionGateRates } from "./decision-calibration.js";
 export {
   MIN_CALIBRATION_SAMPLES,
@@ -194,8 +185,15 @@ export {
   CALIBRATION_RECALL,
   fitDecisionCalibration,
 } from "./decision-calibration.js";
-export type { ProviderPreset } from "./provider-presets.js";
-export { PROVIDER_PRESETS, getPreset, getPresetByUrl } from "./provider-presets.js";
+export type { ProviderDecisionPreset, ProviderPreset } from "./provider-presets.js";
+export {
+  PROVIDER_PRESETS,
+  fillDecisionPresetUrl,
+  findPreset,
+  getPreset,
+  getPresetByUrl,
+  providerPresetView,
+} from "./provider-presets.js";
 
 export {
   BACKGROUND_RATE_LIMIT_PATIENCE,

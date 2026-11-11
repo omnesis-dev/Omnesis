@@ -20,15 +20,17 @@ import {
 } from "./decision-provider-server.js";
 
 /**
- * Decision backends on a stable gateway, end to end: an operator adds decision
- * model providers through the same config write the portal and the apps make,
- * and the production registry, decision service, clients and gates use them.
+ * Backends with a decision API on a stable gateway, end to end: an operator
+ * adds providers — or decision models to a backend they already have — through
+ * the same config write the portal and the apps make, and the production
+ * registry, decision service, clients and gates use them with the backend's
+ * one key.
  *
  * One scripted provider speaks every wire format Omnesis supports — System One
  * with each auth header, Fastino's score field, Workers AI's envelope, and
- * OpenAI Decisions — so each format is exercised through the gateway. Answers
- * are scripted by content: whether a judgement is good is the eval lane's
- * concern, not this suite's.
+ * OpenAI Decisions — beside an OpenAI-compatible model listing, so each format
+ * is exercised through the gateway. Answers are scripted by content: whether a
+ * judgement is good is the eval lane's concern, not this suite's.
  *
  * Calibration replays the bundled Jev reference set through the assigned model;
  * the scripted model rates every reference email higher than Jev did, so the
@@ -38,6 +40,8 @@ import {
 type Db = InstanceType<typeof Database>;
 
 const KEY = "sk-scripted-provider";
+/** The key an operator rotates to. */
+const ROTATED_KEY = "sk-scripted-provider-rotated";
 const REFERENCE = parseDecisionCassette(
   readFileSync(
     new URL("../../../gateway/decision-reference/jev-worth.jsonl", import.meta.url),
@@ -84,17 +88,41 @@ async function waitForGate(db: Db): Promise<void> {
   }
 }
 
+async function until<T>(read: () => Promise<T>, done: (value: T) => boolean): Promise<T> {
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const value = await read();
+    if (done(value)) return value;
+    if (Date.now() > deadline) throw new Error(`Timed out: ${JSON.stringify(value)}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+interface BackendRow {
+  url?: string;
+  status?: string;
+  models?: string[];
+  hasApiKey?: boolean;
+  preset?: string;
+  decision?: { url: string; hasApiKey: boolean; calibrations: Record<string, unknown> };
+}
+
 interface Overview {
-  decisionPresets?: Array<{ id: string; models: Array<{ id: string }> }>;
+  presets: Array<{
+    id: string;
+    defaultUrl?: string;
+    builtIn?: string;
+    decision?: { url: string; models: Array<{ id: string }> };
+  }>;
   assignmentDisplays: Record<string, { providerId: string; modelName: string }>;
   inference: {
     allowRemoteInference?: boolean;
     assignments: Record<string, Record<string, unknown>>;
-    decisionBackends?: Record<string, Record<string, unknown>>;
+    backends: Record<string, BackendRow>;
   };
 }
 
-describe("decision backends — stable gateway, every wire format", () => {
+describe("backends with a decision API — stable gateway, every wire format", () => {
   let harness: SyntheticE2EHarness;
   let provider: DecisionProviderServer;
 
@@ -111,6 +139,14 @@ describe("decision backends — stable gateway, every wire format", () => {
       headers: { "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+  const postStatus = async (path: string, body?: unknown) =>
+    (
+      await harness.gatewayFetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+    ).status;
   const capture = async (text: string) => {
     const res = await harness.gatewayFetch("/capture/route", {
       method: "POST",
@@ -120,10 +156,12 @@ describe("decision backends — stable gateway, every wire format", () => {
     expect(res.status).toBe(200);
     return ((await res.json()) as { route: string }).route;
   };
+  const configOnDisk = () => readFileSync(join(harness.getConfigDir(), "omnesis.json"), "utf8");
+  const decisionAt = (path: string) => ({ url: `${provider.url}${path}` });
 
   beforeAll(async () => {
     provider = await startDecisionProviderServer({
-      apiKey: KEY,
+      apiKeys: [KEY, ROTATED_KEY],
       models: [
         "kev",
         "microsoft-decision-1",
@@ -147,36 +185,46 @@ describe("decision backends — stable gateway, every wire format", () => {
     await provider?.close();
   }, 15_000);
 
-  test("offers every decision provider, with models.dev's models, before any is added", async () => {
+  test("offers every provider with decision models, with models.dev's models, in the one preset list", async () => {
     const o = await overview();
-    const ids = (o.decisionPresets ?? []).map((p) => p.id);
-    expect(ids).toEqual(
+    expect(o).not.toHaveProperty("decisionPresets");
+    expect(o.inference).not.toHaveProperty("decisionBackends");
+    const withDecisions = o.presets.filter((p) => p.decision).map((p) => p.id);
+    expect(withDecisions).toEqual(
       expect.arrayContaining([
         "ollaya",
         "ollama",
         "typesafe",
         "openrouter",
+        "fireworks",
         "cloudflare",
         "openai",
       ]),
     );
-    const openrouter = o.decisionPresets!.find((p) => p.id === "openrouter")!;
-    expect(openrouter.models.length).toBeGreaterThan(10);
-    expect(o.inference.decisionBackends).toEqual({});
+    const openrouter = o.presets.find((p) => p.id === "openrouter")!;
+    expect(openrouter.defaultUrl).toBe("https://openrouter.ai/api");
+    expect(openrouter.decision!.models.length).toBeGreaterThan(10);
+    expect(o.presets.find((p) => p.id === "ollaya")).not.toHaveProperty("defaultUrl");
+    expect(o.presets.find((p) => p.id === "typesafe")).toMatchObject({ builtIn: "typesafe" });
     expect(o.inference.assignments.decision).toMatchObject({ kind: "disabled" });
   });
 
-  test("refuses a decision backend named like a built-in assignment prefix", async () => {
-    const res = await patch({
-      decisionBackends: { local: { url: `${provider.url}/v1/systemone` } },
+  test("refuses a backend with neither API, and a decision API on a backend named typesafe", async () => {
+    const empty = await patch({ backends: { nothing: { type: "http", preset: "ollaya" } } });
+    expect(empty.status).toBe(400);
+    expect(await empty.text()).toContain("A backend needs a url, a decision endpoint, or both");
+    const typesafe = await patch({
+      backends: { typesafe: { type: "http", decision: decisionAt("/v1/systemone") } },
     });
-    expect(res.status).toBe(400);
-    expect(await res.text()).toContain("Decision backend name cannot be");
+    expect(typesafe.status).toBe(400);
+    expect(await typesafe.text()).toContain(
+      'A backend named \\"typesafe\\" cannot serve decision models',
+    );
   });
 
-  test("adds a local decision backend and assigns it in one write, with no key and no consent", async () => {
+  test("adds a local decision-only backend and assigns it in one write, with no key and no consent", async () => {
     const res = await patch({
-      decisionBackends: { box: { preset: "ollaya", url: `${provider.url}/v1/systemone` } },
+      backends: { box: { type: "http", preset: "ollaya", decision: decisionAt("/v1/systemone") } },
       assignments: { decision: "box/kev" },
     });
     expect(res.status).toBe(200);
@@ -190,8 +238,33 @@ describe("decision backends — stable gateway, every wire format", () => {
       calibrated: false,
       available: true,
     });
+    expect(o.inference.backends.box).toEqual({
+      type: "http",
+      hasApiKey: false,
+      preset: "ollaya",
+      decision: {
+        url: `${provider.url}/v1/systemone`,
+        protocol: "systemone",
+        auth: "bearer",
+        onHost: true,
+        hasApiKey: false,
+        calibrations: {},
+      },
+    });
     expect(o.assignmentDisplays.decision).toMatchObject({ providerId: "ollaya", modelName: "kev" });
     expect(o.inference.allowRemoteInference).toBeFalsy();
+  });
+
+  test("a decision-only backend serves no other role and has no OpenAI-compatible API to probe", async () => {
+    const res = await patch({ assignments: { "watch-judge": "box/kev" } });
+    expect(res.status).toBe(200);
+    expect((await overview()).inference.assignments["watch-judge"]).toMatchObject({
+      kind: "unresolved",
+      reason: 'Backend "box" serves only decision models',
+    });
+    expect((await patch({ assignments: { "watch-judge": null } })).status).toBe(200);
+    expect(await postStatus("/admin/inference/backends/box/probe")).toBe(400);
+    expect(provider.listings).toEqual([]);
   });
 
   test("refuses a model the server does not have when it is assigned", async () => {
@@ -202,52 +275,167 @@ describe("decision backends — stable gateway, every wire format", () => {
   });
 
   test("lists the server's models and verifies one", async () => {
-    const probe = await post("/admin/inference/decision-backends/box/probe");
+    const probe = await post("/admin/inference/backends/box/decision/probe");
     expect(probe).toMatchObject({ ok: true, listed: true });
     expect(probe.models).toContain("kev");
-    const verify = await post("/admin/inference/decision-backends/box/verify", { model: "kev" });
+    const verify = await post("/admin/inference/backends/box/decision/verify", { model: "kev" });
     expect(verify).toMatchObject({ ok: true, answeredBy: "kev-20261101" });
+    expect(
+      await postStatus("/admin/inference/backends/nope/decision/verify", { model: "kev" }),
+    ).toBe(404);
+  });
+
+  test("enables decisions on a backend the agent already uses, with its key, and rotates the key for both", async () => {
+    // The backend as `omnesis backend add` makes it for a server with only an
+    // OpenAI-compatible API: a URL and a key.
+    expect(
+      (
+        await patch({
+          backends: { fw: { type: "http", url: `${provider.url}/chat`, apiKey: KEY } },
+        })
+      ).status,
+    ).toBe(200);
+    const listed = await until(overview, (o) => o.inference.backends.fw?.status === "ok");
+    expect(listed.inference.backends.fw).toMatchObject({ models: ["chat-model"], hasApiKey: true });
+    expect(listed.inference.backends.fw).not.toHaveProperty("decision");
+    expect(provider.listings.at(-1)).toEqual({ authorization: `Bearer ${KEY}` });
+
+    // One write adds the decision API, with no key in it.
+    const enable = await patch({
+      backends: {
+        fw: {
+          decision: {
+            url: `${provider.url}/chat/v1/systemone`,
+            protocol: "systemone",
+            auth: "bearer",
+          },
+        },
+      },
+    });
+    expect(enable.status).toBe(200);
+    const enabled = await overview();
+    expect(enabled.inference.backends.fw).toMatchObject({
+      url: `${provider.url}/chat`,
+      status: "ok",
+      hasApiKey: true,
+      decision: { url: `${provider.url}/chat/v1/systemone`, hasApiKey: true },
+    });
+
+    // Assigning it checks the model with the backend's key, and decisions use it.
+    const callsBefore = provider.callsTo("/chat/v1/systemone").length;
+    expect((await patch({ assignments: { decision: "fw/kev" } })).status).toBe(200);
+    expect(provider.callsTo("/chat/v1/systemone").length).toBeGreaterThan(callsBefore);
+    expect(provider.callsTo("/chat/v1/systemone").at(-1)!.headers.authorization).toBe(
+      `Bearer ${KEY}`,
+    );
+    expect(await capture("When is the dentist appointment?")).toBe("ask");
+    expect(provider.callsTo("/chat/v1/systemone").at(-1)!.headers.authorization).toBe(
+      `Bearer ${KEY}`,
+    );
+
+    // Rotating the key moves both APIs to the new one, and keeps both out of the file.
+    expect((await patch({ backends: { fw: { apiKey: ROTATED_KEY } } })).status).toBe(200);
+    expect(await capture("Remember that the gate code is 4417.")).toBe("note");
+    expect(provider.callsTo("/chat/v1/systemone").at(-1)!.headers.authorization).toBe(
+      `Bearer ${ROTATED_KEY}`,
+    );
+    await until(
+      async () => provider.listings.at(-1),
+      (last) => last?.authorization === `Bearer ${ROTATED_KEY}`,
+    );
+    expect(configOnDisk()).not.toContain(KEY);
+    expect(configOnDisk()).not.toContain(ROTATED_KEY);
+
+    // Removing only the decision API leaves the OpenAI-compatible side as it was.
+    expect((await patch({ backends: { fw: { decision: null } } })).status).toBe(200);
+    const after = await until(overview, (o) => o.inference.backends.fw?.status === "ok");
+    expect(after.inference.backends.fw).toMatchObject({
+      url: `${provider.url}/chat`,
+      status: "ok",
+      models: ["chat-model"],
+      hasApiKey: true,
+    });
+    expect(after.inference.backends.fw).not.toHaveProperty("decision");
+    expect(await post("/admin/inference/backends/fw/probe")).toMatchObject({
+      ok: true,
+      models: ["chat-model"],
+    });
+    expect(provider.listings.at(-1)).toEqual({ authorization: `Bearer ${ROTATED_KEY}` });
+    expect(await postStatus("/admin/inference/backends/fw/decision/verify", { model: "kev" })).toBe(
+      404,
+    );
+    // Without its decision API, "fw/kev" names a chat model, which is experimental.
+    expect(after.inference.assignments.decision).toMatchObject({
+      kind: "unresolved",
+      reason: expect.stringContaining("only in experimental mode"),
+    });
+    const saved = JSON.parse(configOnDisk()) as {
+      inference: { backends: Record<string, Record<string, unknown>> };
+    };
+    expect(saved.inference.backends.fw).toEqual({
+      type: "http",
+      url: `${provider.url}/chat`,
+      apiKeySecret: expect.stringMatching(/^config-secret:/),
+    });
+    expect((await patch({ assignments: { decision: "box/kev" } })).status).toBe(200);
   });
 
   test("keeps every key out of omnesis.json and sends each provider's own auth", async () => {
     const res = await patch({
-      decisionBackends: {
-        router: { url: `${provider.url}/keyed/v1/systemone`, keyRequired: true, apiKey: KEY },
-        foundry: {
-          preset: "azure-foundry",
-          url: `${provider.url}/foundry/providers/microsoft/v1/systemone`,
-          auth: "api-key",
+      backends: {
+        router: {
+          type: "http",
           apiKey: KEY,
+          decision: { url: `${provider.url}/keyed/v1/systemone`, keyRequired: true },
+        },
+        foundry: {
+          type: "http",
+          preset: "azure-foundry",
+          apiKey: KEY,
+          decision: {
+            url: `${provider.url}/foundry/providers/microsoft/v1/systemone`,
+            auth: "api-key",
+          },
         },
         fastino: {
+          type: "http",
           preset: "fastino",
-          url: `${provider.url}/fastino/v1/systemone`,
-          auth: "x-api-key",
-          scoreField: "expected_level",
           apiKey: KEY,
+          decision: {
+            url: `${provider.url}/fastino/v1/systemone`,
+            auth: "x-api-key",
+            scoreField: "expected_level",
+          },
         },
         cf: {
+          type: "http",
           preset: "cloudflare",
-          url: `${provider.url}/client/v4/accounts/acct-1/ai/run`,
-          protocol: "workers-ai",
           apiKey: KEY,
+          decision: {
+            url: `${provider.url}/client/v4/accounts/acct-1/ai/run`,
+            protocol: "workers-ai",
+          },
         },
         openai: {
+          type: "http",
           preset: "openai",
-          url: `${provider.url}/v1/decisions`,
-          protocol: "openai-decisions",
           apiKey: KEY,
+          decision: { url: `${provider.url}/v1/decisions`, protocol: "openai-decisions" },
         },
-        wrongkey: { url: `${provider.url}/keyed/v1/systemone`, apiKey: "sk-wrong" },
+        wrongkey: {
+          type: "http",
+          apiKey: "sk-wrong",
+          decision: { url: `${provider.url}/keyed/v1/systemone` },
+        },
       },
     });
     expect(res.status).toBe(200);
-    const onDisk = readFileSync(join(harness.getConfigDir(), "omnesis.json"), "utf8");
+    const onDisk = configOnDisk();
     expect(onDisk).not.toContain(KEY);
     expect(onDisk).not.toContain("sk-wrong");
-    const backends = (await overview()).inference.decisionBackends!;
+    const backends = (await overview()).inference.backends;
     for (const key of ["router", "foundry", "fastino", "cf", "openai", "wrongkey"]) {
-      expect(backends[key], key).toMatchObject({ hasApiKey: true });
+      expect(backends[key], key).toMatchObject({ hasApiKey: true, decision: { hasApiKey: true } });
     }
     expect(JSON.stringify(backends)).not.toContain(KEY);
 
@@ -258,7 +446,7 @@ describe("decision backends — stable gateway, every wire format", () => {
       ["cf", "@cf/cloudflare/clef-flash"],
       ["openai", "gpt-6-luna"],
     ] as const) {
-      const verify = await post(`/admin/inference/decision-backends/${key}/verify`, { model });
+      const verify = await post(`/admin/inference/backends/${key}/decision/verify`, { model });
       expect(verify, key).toMatchObject({ ok: true });
     }
     expect(provider.callsTo("/keyed").at(-1)!.headers.authorization).toBe(`Bearer ${KEY}`);
@@ -272,7 +460,7 @@ describe("decision backends — stable gateway, every wire format", () => {
       expect.arrayContaining([expect.objectContaining({ type: "predicate", name: "verify_noul" })]),
     );
 
-    const refused = await post("/admin/inference/decision-backends/wrongkey/verify", {
+    const refused = await post("/admin/inference/backends/wrongkey/decision/verify", {
       model: "kev",
     });
     expect(refused).toMatchObject({ ok: false, status: 401 });
@@ -286,37 +474,51 @@ describe("decision backends — stable gateway, every wire format", () => {
     expect(await alone.text()).toContain("The API key was refused");
     // ...but replacing the key in the same write saves, and the new key works.
     const fixed = await patch({
-      decisionBackends: { wrongkey: { apiKey: KEY } },
+      backends: { wrongkey: { apiKey: KEY } },
       assignments: { decision: "wrongkey/kev" },
     });
     expect(fixed.status).toBe(200);
-    const verify = await post("/admin/inference/decision-backends/wrongkey/verify", {
+    const verify = await post("/admin/inference/backends/wrongkey/decision/verify", {
       model: "kev",
     });
     expect(verify).toMatchObject({ ok: true });
   });
 
-  test("lists an unsaved server's models", async () => {
-    const probe = await post("/admin/inference/decision-backends/probe", {
+  test("lists an unsaved server's models, with a saved backend's key when asked", async () => {
+    const probe = await post("/admin/inference/decision/probe", {
       url: `${provider.url}/v1/systemone`,
     });
     expect(probe).toMatchObject({ ok: true, listed: true });
     expect(probe.models).toContain("kev");
+    const withKey = await post("/admin/inference/decision/probe", {
+      url: `${provider.url}/v1/systemone`,
+      backendKey: "router",
+    });
+    expect(withKey).toMatchObject({ ok: true, listed: true });
+    expect(
+      await postStatus("/admin/inference/decision/probe", {
+        url: `${provider.url}/v1/systemone`,
+        backendKey: "gone",
+      }),
+    ).toBe(404);
   });
 
-  test("leaves a backend off this host unused until remote inference is allowed", async () => {
+  test("leaves a decision API off this host unused until remote inference is allowed", async () => {
     const before = provider.calls.length;
     expect(
-      (await patch({ decisionBackends: { lan: { url: "http://192.0.2.1:9/v1/systemone" } } }))
-        .status,
+      (
+        await patch({
+          backends: { lan: { type: "http", decision: { url: "http://192.0.2.1:9/v1/systemone" } } },
+        })
+      ).status,
     ).toBe(200);
-    const verify = await post("/admin/inference/decision-backends/lan/verify", { model: "kev" });
+    const verify = await post("/admin/inference/backends/lan/decision/verify", { model: "kev" });
     expect(verify).toMatchObject({ ok: false });
     expect(String(verify.reason)).toContain("send data off your machine");
     expect(provider.calls.length).toBe(before);
   });
 
-  test("judges every email through the decision backend at the mention worth gate", async () => {
+  test("judges every email through the backend's decision API at the mention worth gate", async () => {
     await harness.syncAllSources();
     const db = new Database(harness.getDbPath(), { readonly: true });
     try {
@@ -385,10 +587,11 @@ describe("decision backends — stable gateway, every wire format", () => {
 
     const o = await overview();
     expect(o.inference.assignments.decision).toMatchObject({ calibrated: true });
-    expect(o.inference.decisionBackends!.box!.calibrations).toHaveProperty("kev");
-    expect(readFileSync(join(harness.getConfigDir(), "omnesis.json"), "utf8")).toContain(
-      '"calibration"',
-    );
+    expect(o.inference.backends.box!.decision!.calibrations).toHaveProperty("kev");
+    const saved = JSON.parse(configOnDisk()) as {
+      inference: { backends: Record<string, { decision?: { calibration?: object } }> };
+    };
+    expect(saved.inference.backends.box!.decision!.calibration).toHaveProperty("kev");
 
     // Decisions now carry the calibration: the spend ledger names the model as calibrated.
     expect(await capture("Remember to water the ferns on Friday.")).toBe("note");
@@ -416,9 +619,9 @@ describe("decision backends — stable gateway, every wire format", () => {
 
   test("removing the assigned backend leaves the role unresolved, naming it", async () => {
     expect((await patch({ assignments: { decision: "box/kev" } })).status).toBe(200);
-    expect((await patch({ decisionBackends: { box: null } })).status).toBe(200);
+    expect((await patch({ backends: { box: null } })).status).toBe(200);
     const o = await overview();
-    expect(o.inference.decisionBackends).not.toHaveProperty("box");
+    expect(o.inference.backends).not.toHaveProperty("box");
     expect(o.inference.assignments.decision).toMatchObject({
       kind: "unresolved",
       reason: 'Unknown backend "box" in assignment "box/kev"',

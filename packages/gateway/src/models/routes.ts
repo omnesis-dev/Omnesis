@@ -90,7 +90,7 @@ export const CAPABILITY_TO_CATALOG: Partial<Record<CapabilityRole, ModelRole>> =
 interface RegisterOptions {
   modelManager: ModelManager;
   modelsDevCatalog?: ModelsDevCatalog;
-  /** The decision presets with the models.dev decision catalog's models. */
+  /** Adds the models.dev decision catalog's models to the presets' decision APIs. */
   decisionCatalog?: ModelsDevDecisionCatalog;
   configStore: ConfigStore;
   getSystemInfo: () => SystemInfo;
@@ -224,7 +224,7 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     ]);
     const inference = modelInferenceOverview();
     const overview = modelManager.getOverview(inference);
-    if (opts.decisionCatalog) overview.decisionPresets = opts.decisionCatalog.presets();
+    if (opts.decisionCatalog) overview.presets = opts.decisionCatalog.presets();
     const behavior = opts.modelsDevCatalog?.overview(inference, configStore.get());
     const getRecentModels = opts.getRecentModels;
     const recentModels = getRecentModels
@@ -455,6 +455,11 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     if (!backend) throw new BadRequestError(`unknown backend: ${key}`);
     if (backend.type !== "http")
       throw new BadRequestError(`cannot probe a ${backend.type} backend`);
+    if (!backend.url) {
+      throw new BadRequestError(
+        `backend "${key}" serves only decision models; probe its decision API at /admin/inference/backends/${key}/decision/probe`,
+      );
+    }
     // Probe through the registry so the request carries the backend's
     // configured API key and the cached status the row reads is updated in
     // the same pass — the result the "Test" button sees can't disagree with
@@ -479,6 +484,11 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     if (!backend) throw new BadRequestError(`unknown backend: ${key}`);
     if (backend.type !== "http")
       throw new BadRequestError(`cannot verify a ${backend.type} backend`);
+    if (!backend.url) {
+      throw new BadRequestError(
+        `backend "${key}" serves only decision models; verify one at /admin/inference/backends/${key}/decision/verify`,
+      );
+    }
 
     const body = (await c.req.json().catch(() => null)) as {
       model?: unknown;

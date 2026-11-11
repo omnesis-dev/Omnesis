@@ -1020,10 +1020,12 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
 
         <p>
           To choose the decision model from the phone, open
-          <strong>Settings → Models → Decision model</strong>: pick a provider, such as Ollaya or
-          Ollama on the gateway's machine or a hosted decision API, enter its key when it needs one,
-          and pick a model. The app asks the model a test question when you save it. The same card
-          shows whether the model is calibrated to the thresholds and starts a calibration; see
+          <strong>Settings → Models → Decision model</strong>: pick a backend that serves decision
+          models, or add a provider such as Ollaya or Ollama on the gateway's machine or a hosted
+          decision API, entering its key when it needs one, and pick a model. A backend you already
+          have, such as one set up for the agent, uses the key it holds. The app asks the model a
+          test question when you save it. The same card shows whether the model is calibrated to the
+          thresholds and starts a calibration; see
           <a href="operating#decision-model">Decision model</a>.
         </p>
 

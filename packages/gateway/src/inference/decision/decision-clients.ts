@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Builds the clients for the decision model's API backends — decision
- * backends and the built-in TypeSafe slot — for every user of them: the live
+ * Builds the clients for the decision model's APIs — a backend's decision
+ * API and the built-in TypeSafe slot — for every user of them: the live
  * decision service, verify, the assignment check and calibration.
  *
  * Each backend has one concurrency limiter, shared by all its clients, so a
@@ -13,7 +13,7 @@
  */
 
 import {
-  findDecisionPreset,
+  getPreset,
   type AssignmentValue,
   type DecisionCapability,
   type ResolvedAssignment,
@@ -26,15 +26,15 @@ import { OpenAIDecisionsDecision } from "./openai-decisions-client.js";
 import { SystemOneDecision } from "./system-one-client.js";
 import { TypeSafeDecision } from "./typesafe-client.js";
 import { vetDecisionModel, verifyDecisionModel, type DecisionVerifyResult } from "./verify.js";
-import type { ResolvedDecisionBackendConfig } from "../registry.js";
+import type { DecisionEndpointConfig } from "../registry.js";
 
-/** Requests in flight on a decision backend, unless its config says otherwise. */
+/** Requests in flight on a backend's decision API, unless its config says otherwise. */
 export const DECISION_BACKEND_CONCURRENCY = 4;
 /** How long a verify or an assignment check waits for the test answer. */
 const CHECK_TIMEOUT_MS = 20_000;
 
 export interface DecisionClientsDeps {
-  getDecisionBackend: (key: string) => ResolvedDecisionBackendConfig | undefined;
+  getDecisionEndpoint: (key: string) => DecisionEndpointConfig | undefined;
   readTypeSafeApiKey: () => string | null;
   /** Test seam passed to the HTTP clients. */
   fetchFn?: typeof fetch;
@@ -65,16 +65,16 @@ export class DecisionClients {
   apiKeyFor(resolved: ResolvedAssignment): string | null {
     if (resolved.kind === "typesafe") return this.deps.readTypeSafeApiKey();
     if (resolved.kind === "decision") {
-      return this.deps.getDecisionBackend(resolved.backendKey)?.apiKey ?? null;
+      return this.deps.getDecisionEndpoint(resolved.backendKey)?.apiKey ?? null;
     }
     return null;
   }
 
-  /** A decision backend's client; throws for a backend the registry no longer has. */
+  /** A backend's decision client; throws for a backend with no decision API. */
   backend(resolved: ResolvedDecisionBackend, opts: DecisionClientOptions): DecisionCapability {
-    const cfg = this.deps.getDecisionBackend(resolved.backendKey);
-    if (!cfg) throw new Error(`Unknown decision backend "${resolved.backendKey}"`);
-    const preset = findDecisionPreset(cfg.preset, cfg.url);
+    const cfg = this.deps.getDecisionEndpoint(resolved.backendKey);
+    if (!cfg) throw new Error(`Backend "${resolved.backendKey}" has no decision API`);
+    const preset = cfg.preset ? getPreset(cfg.preset) : undefined;
     const common = {
       url: cfg.url,
       model: resolved.model,
@@ -124,7 +124,7 @@ export class DecisionClients {
   }
 
   /**
-   * One test decision for a decision backend or TypeSafe assignment, with no
+   * One test decision for a backend's decision API or TypeSafe, with no
    * retries and a short timeout, uncalibrated.
    */
   async verify(resolved: ResolvedAssignment): Promise<DecisionVerifyResult> {
@@ -164,7 +164,7 @@ export class DecisionClients {
     if (!resolved.available) return { ok: true };
     const inference = (ctx.body as { inference?: Record<string, unknown> } | null)?.inference;
     if (resolved.kind === "decision") {
-      const changed = (inference?.decisionBackends as Record<string, unknown> | undefined)?.[
+      const changed = (inference?.backends as Record<string, unknown> | undefined)?.[
         resolved.backendKey
       ];
       if (changed !== undefined) return { ok: true };

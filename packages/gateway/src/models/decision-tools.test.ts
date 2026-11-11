@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it, vi } from "vitest";
+import { validateConfig, type OmnesisConfig } from "@omnesis/config";
 import { DecisionHttpError } from "../inference/decision/transport.js";
 import { EMAIL_WORTH_QUESTIONS } from "../worth/rubric.js";
 import {
@@ -11,6 +12,7 @@ import {
   modelListUrls,
   probeDecisionBackend,
   readReferenceSet,
+  withStoredCalibration,
 } from "./decision-tools.js";
 import type {
   DecisionCapability,
@@ -170,7 +172,7 @@ function job(over: Partial<ConstructorParameters<typeof DecisionCalibrationJob>[
   const model = optimisticModel();
   const j = new DecisionCalibrationJob({
     resolve: () => RESOLVED,
-    getDecisionBackend: () => ({ url: RESOLVED.url }),
+    getDecisionEndpoint: () => ({ url: RESOLVED.url }),
     createRawClient: () => model,
     store,
     reference: () => reference(300),
@@ -252,7 +254,7 @@ describe("DecisionCalibrationJob", () => {
     [{ role: "decision", kind: "typesafe", model: "jev-1.13.0" }, "Jev is the reference itself"],
     [
       { role: "decision", kind: "disabled" },
-      "needs the Decision model to be assigned to a decision backend",
+      "needs the Decision model to be assigned to a backend's decision model",
     ],
     [
       { ...RESOLVED, available: false, reason: "OpenRouter needs an API key." },
@@ -277,31 +279,77 @@ describe("DecisionCalibrationJob", () => {
     expect(ok.j.start().state).toBe("running");
   });
 
-  it("refuses to store a fit when the backend changed during the run", async () => {
+  it("fails when saving the calibration fails, naming why", async () => {
     const { j } = job({
       store: vi.fn(async () =>
-        Promise.reject(
-          new Error('Decision backend "ollaya" changed during calibration; calibrate it again'),
-        ),
+        Promise.reject(new Error('Backend "ollaya" no longer has a decision API')),
       ),
     });
     j.start();
     await j.settled();
     expect(j.status()).toMatchObject({
       state: "failed",
-      error: 'Decision backend "ollaya" changed during calibration; calibrate it again',
+      error: 'Backend "ollaya" no longer has a decision API',
     });
   });
+});
 
-  it("fails when saving the calibration fails", async () => {
-    const { j } = job({
-      store: vi.fn(async () => Promise.reject(new Error('Decision backend "ollaya" was removed'))),
+describe("withStoredCalibration", () => {
+  const CALIBRATION = {
+    points: [[0.4, 0.36]] as const,
+    reference: "jev-worth/email-worth-v1/jev-1.13.0",
+    fittedAt: "2026-11-10T12:00:00.000Z",
+  };
+  const FITTED_ON = {
+    url: "https://api.fireworks.ai/inference/v1/systemone",
+    protocol: "systemone",
+    scoreField: "score",
+  } as const;
+  const config = (decision?: Record<string, unknown>) =>
+    ({
+      inference: {
+        backends: {
+          fireworks: {
+            type: "http",
+            url: "https://api.fireworks.ai/inference",
+            apiKeySecret: "config-secret:inference.backend.x.apiKey.y",
+            ...(decision ? { decision } : {}),
+          },
+        },
+        assignments: { agent: "fireworks/chat-model" },
+      },
+    }) as unknown as OmnesisConfig;
+
+  it("stores the fit on the backend's decision API, leaving the rest of the backend as it was", () => {
+    const current = config({
+      url: FITTED_ON.url,
+      calibration: { other: { ...CALIBRATION, points: [[0.5, 0.5]] } },
     });
-    j.start();
-    await j.settled();
-    expect(j.status()).toMatchObject({
-      state: "failed",
-      error: 'Decision backend "ollaya" was removed',
-    });
+    const next = withStoredCalibration(current, "fireworks", "rune", CALIBRATION, FITTED_ON);
+    const backend = next.inference!.backends!.fireworks!;
+    expect(backend.url).toBe("https://api.fireworks.ai/inference");
+    expect(backend.apiKeySecret).toBe("config-secret:inference.backend.x.apiKey.y");
+    expect(Object.keys(backend.decision!.calibration!)).toEqual(["other", "rune"]);
+    expect(backend.decision!.calibration!.rune).toEqual({ ...CALIBRATION, points: [[0.4, 0.36]] });
+    expect(next.inference!.assignments).toEqual({ agent: "fireworks/chat-model" });
+    expect(validateConfig(next).ok).toBe(true);
+  });
+
+  it("refuses when the decision API was removed or changed during the run", () => {
+    expect(() =>
+      withStoredCalibration(config(), "fireworks", "rune", CALIBRATION, FITTED_ON),
+    ).toThrow('Backend "fireworks" no longer has a decision API');
+    expect(() => withStoredCalibration(config(), "gone", "rune", CALIBRATION, FITTED_ON)).toThrow(
+      'Backend "gone" no longer has a decision API',
+    );
+    expect(() =>
+      withStoredCalibration(
+        config({ url: FITTED_ON.url, scoreField: "expected_level" }),
+        "fireworks",
+        "rune",
+        CALIBRATION,
+        FITTED_ON,
+      ),
+    ).toThrow('Backend "fireworks"\'s decision API changed during calibration; calibrate it again');
   });
 });

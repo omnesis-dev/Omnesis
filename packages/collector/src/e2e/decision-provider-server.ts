@@ -2,22 +2,26 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * A scripted decision provider for end-to-end tests: one loopback server that
+ * A scripted inference provider for end-to-end tests: one loopback server that
  * speaks each decision API Omnesis supports, at the paths the real providers
- * use, so a gateway's decision backends can be pointed at it.
+ * use, plus the model listing of an OpenAI-compatible API, so a gateway's
+ * backends can be pointed at it.
  *
  *   POST /v1/systemone                                   System One, keyless (a local server)
  *   POST /keyed/v1/systemone                             System One behind `Authorization: Bearer`
+ *   GET  /chat/v1/models                                 OpenAI-compatible model list behind `Authorization: Bearer`
+ *   POST /chat/v1/systemone                              System One beside it, behind the same header
  *   POST /foundry/providers/microsoft/v1/systemone       System One behind `api-key`
  *   POST /fastino/v1/systemone                           System One behind `X-API-Key`, argmax `score` + `expected_level`
  *   POST /client/v4/accounts/:acct/ai/run/@cf/cloudflare/:model   Workers AI: short model in the body, `{result}` envelope
  *   POST /v1/decisions                                   OpenAI Decisions schema
  *   GET  /api/tags                                       installed models, Ollama-style
  *
- * Every endpoint answers only the models in `models`, with a 404 otherwise, and
- * a wrong or missing key with a 401. Answers come from `answer(questionId,
- * question, state)`, so a test scripts them by content. Every request is
- * recorded.
+ * Every decision endpoint answers only the models in `models`, with a 404
+ * otherwise, and a key not in `apiKeys` with a 401. Answers come from
+ * `answer(questionId, question, state)`, so a test scripts them by content.
+ * Every decision request is recorded in `calls`, every model listing in
+ * `listings`.
  */
 
 import { createServer, type IncomingMessage, type Server } from "node:http";
@@ -33,8 +37,8 @@ export interface ProviderCall {
 export interface DecisionProviderOptions {
   /** Models every endpoint serves. */
   models: readonly string[];
-  /** The key the keyed endpoints expect. */
-  apiKey: string;
+  /** The keys the keyed endpoints accept. */
+  apiKeys: readonly string[];
   /** The answer to one question about one state. */
   answer: (questionId: string, question: DecisionQuestion, state: unknown) => DecisionAnswer;
 }
@@ -42,6 +46,8 @@ export interface DecisionProviderOptions {
 export interface DecisionProviderServer {
   url: string;
   calls: ProviderCall[];
+  /** Requests for `/chat/v1/models`, with their auth header. */
+  listings: Array<{ authorization: string | undefined }>;
   callsTo(pathPrefix: string): ProviderCall[];
   close(): Promise<void>;
 }
@@ -57,7 +63,9 @@ export async function startDecisionProviderServer(
   opts: DecisionProviderOptions,
 ): Promise<DecisionProviderServer> {
   const calls: ProviderCall[] = [];
+  const listings: DecisionProviderServer["listings"] = [];
   const served = new Set(opts.models);
+  const bearers = new Set(opts.apiKeys.map((key) => `Bearer ${key}`));
 
   const systemOneAnswers = (
     body: Record<string, unknown>,
@@ -86,6 +94,13 @@ export async function startDecisionProviderServer(
         send(200, { models: opts.models.map((name) => ({ name })) });
         return;
       }
+      if (req.method === "GET" && path === "/chat/v1/models") {
+        listings.push({ authorization: req.headers.authorization });
+        if (!bearers.has(req.headers.authorization ?? ""))
+          return send(401, { error: "invalid key" });
+        send(200, { object: "list", data: [{ id: "chat-model", object: "model" }] });
+        return;
+      }
       if (req.method !== "POST") return send(405, { error: "method" });
       const body = await readJson(req);
       calls.push({
@@ -97,8 +112,9 @@ export async function startDecisionProviderServer(
         },
         body,
       });
-      const needs = (header: string, value: string) => {
-        if (req.headers[header] !== value) {
+      const needs = (header: string, scheme: "Bearer " | "" = "") => {
+        const sent = req.headers[header];
+        if (typeof sent !== "string" || !opts.apiKeys.some((key) => sent === `${scheme}${key}`)) {
           send(401, { error: "invalid key" });
           return false;
         }
@@ -109,12 +125,14 @@ export async function startDecisionProviderServer(
       if (
         path === "/v1/systemone" ||
         path === "/keyed/v1/systemone" ||
+        path === "/chat/v1/systemone" ||
         path === "/foundry/providers/microsoft/v1/systemone" ||
         path === "/fastino/v1/systemone"
       ) {
-        if (path.startsWith("/keyed") && !needs("authorization", `Bearer ${opts.apiKey}`)) return;
-        if (path.startsWith("/foundry") && !needs("api-key", opts.apiKey)) return;
-        if (path.startsWith("/fastino") && !needs("x-api-key", opts.apiKey)) return;
+        const bearer = path.startsWith("/keyed") || path.startsWith("/chat");
+        if (bearer && !needs("authorization", "Bearer ")) return;
+        if (path.startsWith("/foundry") && !needs("api-key")) return;
+        if (path.startsWith("/fastino") && !needs("x-api-key")) return;
         if (!served.has(model)) return send(404, { error: `model "${model}" not found` });
         return send(200, {
           model: path.startsWith("/fastino") ? "glide" : `${model}-20261101`,
@@ -128,7 +146,7 @@ export async function startDecisionProviderServer(
         path,
       );
       if (workers) {
-        if (!needs("authorization", `Bearer ${opts.apiKey}`)) return;
+        if (!needs("authorization", "Bearer ")) return;
         if (workers[1] !== model || !served.has(`@cf/cloudflare/${model}`)) {
           return send(404, {
             result: null,
@@ -150,7 +168,7 @@ export async function startDecisionProviderServer(
       }
 
       if (path === "/v1/decisions") {
-        if (!needs("authorization", `Bearer ${opts.apiKey}`)) return;
+        if (!needs("authorization", "Bearer ")) return;
         if (!served.has(model)) return send(404, { error: { message: "model not found" } });
         const questions = body.questions as Array<Record<string, unknown>>;
         const input = body.input as unknown;
@@ -208,6 +226,7 @@ export async function startDecisionProviderServer(
   return {
     url: `http://127.0.0.1:${port}`,
     calls,
+    listings,
     callsTo: (prefix) => calls.filter((c) => c.path.startsWith(prefix)),
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };

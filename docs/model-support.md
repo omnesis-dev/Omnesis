@@ -301,13 +301,18 @@ the portal reads the gateway-computed result.
   bounded passes.
 
 `decision` is narrower at runtime still. Its stable backends are decision
-models: TypeSafe (`typesafe/<model>`) and decision backends
-(`inference.decisionBackends.<key>`, assigned `<key>/<model>`), which speak a
-decision API — System One at any path, Cloudflare Workers AI, or OpenAI
-Decisions (`packages/gateway/src/inference/decision/`). Their providers are the
-presets in `packages/core/src/models/decision-presets.ts`, and the models.dev
-decision catalog (`api.json?type=decision`) adds model ids, context and price.
-A calibrated decision backend's scores are moved onto Jev's scale by a per-model calibration
+models: TypeSafe (`typesafe/<model>`) and a backend's decision API
+(`inference.backends.<key>.decision`, assigned `<key>/<model>`). A backend is
+one provider account with one API key and up to two APIs: an OpenAI-compatible
+one (`url`) and a decision one (`decision`), which speaks System One at any
+path, Cloudflare Workers AI, or OpenAI Decisions
+(`packages/gateway/src/inference/decision/`). A backend without `url` serves
+only the Decision model; one without `decision` serves the role only as a chat
+model, below. The providers are the presets in
+`packages/core/src/models/provider-presets.ts`, whose `decision` block carries
+the decision API and its model ids, and the models.dev decision catalog
+(`api.json?type=decision`) adds model ids, context and price.
+A calibrated decision API's scores are moved onto Jev's scale by a per-model calibration
 that anchors the score keeping 95% of what Jev keeps on Jev's threshold, fitted on the bundled Jev reference set
 (`packages/gateway/decision-reference/jev-worth.jsonl`), so the Jev-tuned
 thresholds keep their meaning. A chat model serves the role only in experimental mode

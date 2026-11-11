@@ -2890,7 +2890,7 @@ describe("InferenceRegistry — decision role and TypeSafe", () => {
       const config = {
         inference: { allowRemoteInference: true, assignments: { decision: value } },
       } as OmnesisConfig;
-      // Each mode names only the decision backends it accepts.
+      // Each mode names only the decision models it accepts.
       withExperimentalEnv(undefined, () => {
         reg.loadConfig(config);
         const reason = (reg.resolve("decision") as { kind: string; reason: string }).reason;

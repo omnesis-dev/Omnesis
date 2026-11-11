@@ -26,8 +26,7 @@
 
 import type { InferenceOverview } from "./backends.js";
 import type { CapabilityMetadata, CapabilityRole } from "./capabilities.js";
-import type { ProviderPreset } from "./provider-presets.js";
-import type { DecisionProviderPreset } from "./decision-presets.js";
+import type { ProviderDecisionPreset, ProviderPreset } from "./provider-presets.js";
 import type { ModelDisplay } from "./provider-brands.js";
 import type { ModelControls, ModelSettingsByRole } from "./model-behavior.js";
 
@@ -160,9 +159,15 @@ export interface DecisionModelOption {
   source: "preset" | "models.dev";
 }
 
-/** A decision provider preset with the models to offer for it. */
-export interface DecisionPresetView extends DecisionProviderPreset {
-  models: DecisionModelOption[];
+/**
+ * A provider preset as `/admin/models` serves it: its decision API, when it
+ * has one, carries the decision models to offer.
+ */
+export interface ProviderPresetView extends Omit<ProviderPreset, "decision"> {
+  decision?: ProviderDecisionPreset & {
+    /** The preset's own models merged with the models.dev decision catalog's. */
+    models: DecisionModelOption[];
+  };
 }
 
 /**
@@ -176,17 +181,11 @@ export interface ModelsOverview {
   inference: InferenceOverview;
   modelsDir: string;
   /**
-   * Well-known provider presets (id, name, default URL, known models).
-   * Served so the portal renders the add-backend form and model
+   * Well-known provider presets (id, name, default URL, decision API and its
+   * models). Served so every client renders the add-backend form and model
    * suggestions from one source of truth rather than a hardcoded copy.
    */
-  presets: ProviderPreset[];
-  /**
-   * Decision model providers, each with the model ids to offer: the preset's
-   * own list merged with the models.dev decision catalog's. Absent on gateways
-   * that predate decision backends.
-   */
-  decisionPresets?: DecisionPresetView[];
+  presets: ProviderPresetView[];
   /**
    * Per-role display projection of the resolved assignments — provider
    * brand id + label + friendly model name for each capability role.

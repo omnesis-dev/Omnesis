@@ -2,7 +2,7 @@
 
 A reference for judging a candidate decision model against TypeSafe Jev on the
 email worth question. The gateway ships the same set as the reference that
-calibration fits a decision backend's scores to (`omnesis decision calibrate`),
+calibration fits a decision model's scores to (`omnesis decision calibrate`),
 so re-recording it changes what later calibrations are fitted against; existing
 calibrations keep the reference they name.
 

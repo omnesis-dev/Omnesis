@@ -8,8 +8,7 @@
  */
 
 import { assertNever } from "../utils.js";
-import { getPreset } from "./provider-presets.js";
-import { findDecisionPreset } from "./decision-presets.js";
+import { findPreset, getPreset } from "./provider-presets.js";
 import type { ResolvedAssignment } from "./backends.js";
 
 export interface ProviderBrand {
@@ -89,16 +88,6 @@ export interface ModelDisplay {
  */
 function httpProviderId(backendKey: string): string {
   const preset = getPreset(backendKey);
-  if (preset && PROVIDER_BRANDS[preset.id]) return preset.id;
-  return "http";
-}
-
-/**
- * Resolve the provider brand id for a decision backend: its preset's brand,
- * or the generic `http` brand for a server added by hand.
- */
-function decisionProviderId(presetId: string | undefined, url: string): string {
-  const preset = findDecisionPreset(presetId, url);
   if (preset && PROVIDER_BRANDS[preset.id]) return preset.id;
   return "http";
 }
@@ -185,12 +174,12 @@ export function resolveModelDisplay(assignment: ResolvedAssignment): ModelDispla
       };
     }
     case "decision": {
-      const preset = findDecisionPreset(assignment.preset, assignment.url);
-      const brand = getProviderBrand(decisionProviderId(assignment.preset, assignment.url));
+      const preset = findPreset(assignment.preset, { decisionUrl: assignment.url });
+      const brand = getProviderBrand(preset && PROVIDER_BRANDS[preset.id] ? preset.id : "http");
       return {
         // The models.dev provider id when the preset has one, so clients find
         // its logo the way they do an HTTP backend's.
-        providerId: preset?.modelsDevId ?? brand.id,
+        providerId: preset?.modelsDevId ?? preset?.decision?.modelsDevId ?? brand.id,
         providerLabel: brand.id === "http" ? assignment.backendKey : brand.label,
         modelName: assignment.model,
         available: assignment.available,
