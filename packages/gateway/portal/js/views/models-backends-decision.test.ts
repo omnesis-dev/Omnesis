@@ -604,10 +604,10 @@ describe("Models — backends that serve decisions", () => {
       expect(row("Ollaya").querySelector(".backend-serves").textContent).toBe("Decision models");
       expect(row("vllm").querySelector(".backend-serves").textContent).toBe("Chat models");
       // A decision-only backend has no model list to test, and shows its decision endpoint.
-      expect([...row("Ollaya").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Remove"]);
+      expect([...row("Ollaya").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Change key", "Remove"]);
       expect(row("Ollaya").querySelector("code").textContent).toBe("http://127.0.0.1:11435/v1/systemone");
       expect(row("Ollaya").textContent).toContain("Decision model: kev · not calibrated");
-      expect([...row("Fireworks AI").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Test", "Disable decisions", "Remove"]);
+      expect([...row("Fireworks AI").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Test", "Change key", "Disable decisions", "Remove"]);
       expect(row("vllm").textContent).not.toContain("Disable decisions");
       // Only backends with an OpenAI-compatible API are probed for models.
       expect(api.probeBackend.mock.calls.map(([key]) => key).sort()).toEqual(["fireworks", "vllm"]);
@@ -618,6 +618,38 @@ describe("Models — backends that serve decisions", () => {
       current = overviewWith({ backends: { ollaya: ollayaWith({ kev: calibration, laya: calibration }) } });
       await mount("backends");
       expect(row("Ollaya").textContent).toContain("2 calibrated decision models");
+    });
+
+    it("changes a backend's key in place, sending only the key", async () => {
+      const calibration = { points: [[0, 0], [1, 1]], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.8 };
+      current = overviewWith({ backends: { fireworks: { ...FIREWORKS, decision: { ...FIREWORKS_DECISION, calibrations: { "accounts/example/models/rune": calibration } } }, vllm: VLLM } });
+      await mount("backends");
+      await click(host.querySelector("button[aria-label='Change key for fireworks']"));
+      const save = () => [...row("Fireworks AI").querySelectorAll("button")].find((b) => b.textContent.trim() === "Save");
+      expect(save().disabled).toBe(true);
+      expect(row("Fireworks AI").textContent).not.toContain("Change key");
+      await type("New API key for fireworks", " rotated-key ");
+      await act(async () => { row("Fireworks AI").querySelector(".backend-key-form").dispatchEvent(new window.Event("submit", { bubbles: false, cancelable: true })); });
+      await flush();
+      // Only the key: the URLs, decision API and calibrations are not in the write.
+      expect(api.patchAdminConfig).toHaveBeenCalledExactlyOnceWith({ inference: { backends: { fireworks: { apiKey: "rotated-key" } } } });
+      expect(host.querySelector(".backend-key-form")).toBeNull();
+      expect(host.textContent).toContain('Changed the key for "fireworks".');
+    });
+
+    it("keeps the key form open with the gateway's refusal, and cancels without writing", async () => {
+      api.patchAdminConfig.mockResolvedValue({ ok: false, body: { errors: [{ message: "apiKey: too long" }] } });
+      current = overviewWith(onOllaya());
+      await mount("backends");
+      await click(host.querySelector("button[aria-label='Change key for ollaya']"));
+      await type("New API key for ollaya", "local-secret");
+      await act(async () => { host.querySelector(".backend-key-form").dispatchEvent(new window.Event("submit", { bubbles: false, cancelable: true })); });
+      await flush();
+      expect(host.querySelector(".backend-key-form .field-error")?.textContent).toBe("apiKey: too long");
+      api.patchAdminConfig.mockClear();
+      await clickText("Cancel");
+      expect(host.querySelector(".backend-key-form")).toBeNull();
+      expect(api.patchAdminConfig).not.toHaveBeenCalled();
     });
 
     it("disables a backend's decisions, keeping its chat side, and turns off the Decision model it served", async () => {

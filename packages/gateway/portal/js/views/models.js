@@ -229,9 +229,10 @@ const plural = (n, noun) => `${n} ${noun}${n !== 1 ? "s" : ""}`;
  * decision models or both), where, its key and models, and for its decision
  * API the Decision model it serves and its calibrations. A backend serving
  * both can drop its decision API alone; one serving only decisions is removed
- * whole.
+ * whole. "Change key" replaces the one key both APIs use, in place.
  */
-function HttpBackendRow({ backendKey: key, status, overview, testButton, onDisableDecisions, onRemove }) {
+function HttpBackendRow({ backendKey: key, status, overview, testButton, onChangeKey, onDisableDecisions, onRemove }) {
+  const [editingKey, setEditingKey] = useState(false);
   const preset = backendPreset(overview, status);
   const serves = backendServes(status);
   const decision = status.decision;
@@ -261,9 +262,15 @@ function HttpBackendRow({ backendKey: key, status, overview, testButton, onDisab
           : null}
         ${keyError ? html`<span class="decision-note-danger">${keyError}</span>` : null}
       </div>
+      ${editingKey
+        ? html`<${BackendKeyForm} backendKey=${key} onSave=${onChangeKey} onDone=${() => setEditingKey(false)} />`
+        : null}
     </div>
     <div class="backend-item-actions">
       ${testButton}
+      ${editingKey
+        ? null
+        : html`<button class="btn-tiny" aria-label=${`Change key for ${key}`} onClick=${() => setEditingKey(true)}>Change key</button>`}
       ${serves === "both"
         ? html`<button class="btn-tiny" aria-label=${`Disable decisions on ${key}`} onClick=${() => onDisableDecisions(key)}>Disable decisions</button>`
         : null}
@@ -272,7 +279,43 @@ function HttpBackendRow({ backendKey: key, status, overview, testButton, onDisab
   </div>`;
 }
 
-function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, claudeCodeRefreshBusy, onAddBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode, onRefreshAnthropic, onRefreshCodex, onRefreshClaudeCode, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onTestBackend, onDisableDecisions, testStates }) {
+/**
+ * Replace one backend's API key in place. `onSave(key, apiKey)` resolves to
+ * `{ok, error?}`; the backend's URLs, decision API and calibrations are left
+ * as they are.
+ */
+function BackendKeyForm({ backendKey, onSave, onDone }) {
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (!apiKey.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    const res = await onSave(backendKey, apiKey.trim());
+    setBusy(false);
+    if (res?.ok) onDone();
+    else setError(res?.error ?? "Could not change the key.");
+  };
+  return html`<form class="backend-key-form" onSubmit=${submit}>
+    <input
+      class="field-input"
+      type="password"
+      autocomplete="off"
+      aria-label=${`New API key for ${backendKey}`}
+      placeholder="New API key"
+      value=${apiKey}
+      onInput=${(e) => { setApiKey(e.target.value); setError(null); }}
+      autofocus
+    />
+    <button type="submit" class="btn-tiny" disabled=${!apiKey.trim() || busy}>${busy ? "Saving…" : "Save"}</button>
+    <button type="button" class="btn-tiny" disabled=${busy} onClick=${onDone}>Cancel</button>
+    ${error ? html`<span class="field-error" role="alert">${error}</span>` : null}
+  </form>`;
+}
+
+function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, claudeCodeRefreshBusy, onAddBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode, onRefreshAnthropic, onRefreshCodex, onRefreshClaudeCode, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onTestBackend, onChangeKey, onDisableDecisions, testStates }) {
   const inference = overview.inference;
   const httpBackends = Object.entries(inference.backends).filter(([, s]) => s.type === "http");
   const hasAnthropic = !!inference.backends.anthropic;
@@ -324,6 +367,7 @@ function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, code
           status=${status}
           overview=${overview}
           testButton=${status.url ? testBtn(key) : null}
+          onChangeKey=${onChangeKey}
           onDisableDecisions=${onDisableDecisions}
           onRemove=${onRemoveBackend}
         />`)}
@@ -1018,6 +1062,19 @@ export function ModelsView({ section, onModelsRefresh }) {
     return result;
   };
 
+  /** Replace a backend's API key; its URLs, decision API and calibrations stay. */
+  const changeBackendKey = async (key, apiKey) => {
+    try {
+      const res = await patchAdminConfig({ inference: { backends: { [key]: { apiKey } } } });
+      if (!res.ok) return { ok: false, error: res.body?.errors?.[0]?.message ?? res.body?.error ?? "Could not change the key." };
+      flashOk(`Changed the key for "${key}".`);
+      await refresh();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e?.message ?? String(e) };
+    }
+  };
+
   const onDisableDecisions = (key) => {
     const inUse = assignedDecisionBackend(overview)?.key === key;
     setConfirmState({
@@ -1516,6 +1573,7 @@ export function ModelsView({ section, onModelsRefresh }) {
             onRemoveBackend=${onRemoveBackend}
             onRemoveCodex=${onRemoveCodex}
             onTestBackend=${onTestBackend}
+            onChangeKey=${changeBackendKey}
             onDisableDecisions=${onDisableDecisions}
           />`
         : null}

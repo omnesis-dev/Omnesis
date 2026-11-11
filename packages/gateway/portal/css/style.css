@@ -13639,6 +13639,10 @@ div.source-activity-popover-link:hover {
   padding: 1px 7px;
   border-radius: 999px;
 }
+/* A backend row's inline key change. */
+.backend-key-form { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.backend-key-form .field-input { flex: 1 1 240px; max-width: 360px; padding: 5px 8px; font-size: 12.5px; }
+.backend-key-form .field-error { flex-basis: 100%; }
 /* What a backend serves: chat models, decision models, or both. */
 .backend-serves {
   margin-left: 4px;
