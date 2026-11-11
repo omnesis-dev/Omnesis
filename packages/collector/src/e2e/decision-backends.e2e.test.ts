@@ -107,13 +107,16 @@ interface BackendRow {
   decision?: { url: string; hasApiKey: boolean; calibrations: Record<string, unknown> };
 }
 
+interface PresetView {
+  id: string;
+  defaultUrl?: string;
+  builtIn?: string;
+  decision?: { url: string; models: Array<{ id: string }> };
+}
+
 interface Overview {
-  presets: Array<{
-    id: string;
-    defaultUrl?: string;
-    builtIn?: string;
-    decision?: { url: string; models: Array<{ id: string }> };
-  }>;
+  presets: PresetView[];
+  decisionProviders?: PresetView[];
   assignmentDisplays: Record<string, { providerId: string; modelName: string }>;
   inference: {
     allowRemoteInference?: boolean;
