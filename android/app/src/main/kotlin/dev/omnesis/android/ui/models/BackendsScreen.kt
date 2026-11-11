@@ -8,10 +8,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -1137,7 +1140,8 @@ fun CodexSetupForm(
             ) {
                 Text(if (status?.loggedIn == true) "Log in again" else "Log in to OpenAI", fontWeight = FontWeight.SemiBold)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm), modifier = Modifier.fillMaxWidth()) {
+            // Cards in a row share the taller one's height, so a two-line subtitle keeps them even.
+            Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
                 OutlinedButton(
                     onClick = onRefresh,
                     enabled = !busy,
@@ -1461,12 +1465,7 @@ private fun AddBackendPresetGrid(
         // 2-col grid built from rows so it nests inside the sheet's column
         // without a nested-scroll conflict (a LazyVerticalGrid would).
         val cards = presets.map { preset ->
-            val subtitle = when {
-                preset.decision != null && preset.hasOpenAiApi -> "OpenAI API and decisions"
-                preset.decision != null -> "Decision models"
-                else -> "Set up this provider"
-            }
-            PresetCardSpec(preset.id, preset.name, subtitle) { onSelectPreset(preset) }
+            PresetCardSpec(preset.id, preset.name, ModelManagement.servesLabel(preset)) { onSelectPreset(preset) }
         } +
             listOfNotNull(
                 codex?.let {
@@ -1480,7 +1479,8 @@ private fun AddBackendPresetGrid(
             ) +
             PresetCardSpec("http", "Custom", "Any OpenAI-compatible server", onSelectCustom)
         cards.chunked(2).forEach { rowCards ->
-            Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm), modifier = Modifier.fillMaxWidth()) {
+            // Cards in a row share the taller one's height, so a two-line subtitle keeps them even.
+            Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
                 rowCards.forEach { spec ->
                     PresetCard(spec, Modifier.weight(1f))
                 }
@@ -1504,7 +1504,8 @@ private fun PresetCard(spec: PresetCardSpec, modifier: Modifier = Modifier) {
     val c = OmTheme.colors
     Column(
         modifier
-            .height(96.dp)
+            .heightIn(min = 96.dp)
+            .fillMaxHeight()
             .background(c.bgSecondary, RoundedCornerShape(12.dp))
             .clickable(onClick = spec.onClick)
             .padding(OmSpacing.md),

@@ -113,7 +113,7 @@ object DecisionSetup {
      * Backends serving decisions first, then backends whose preset offers
      * decisions (each sorted by name); TypeSafe; then the presets a new backend
      * can be made from — servers on this machine, hosted APIs, and "Other
-     * server" last.
+     * server" last. A preset some backend was made from is not offered again.
      */
     fun providerGroups(overview: ModelsOverview): ProviderGroups {
         val backends = ModelManagement.httpBackends(overview)
@@ -127,7 +127,9 @@ object DecisionSetup {
                 ?.let { Provider.Enable(row.key, row.status, it) }
         }
         val all = presets(overview)
-        val addable = all.filter { it.builtIn == null }
+        // A preset a backend was already made from is offered above, on that backend.
+        val used = backends.mapNotNull { it.status.preset }.toSet()
+        val addable = all.filter { it.builtIn == null && it.id !in used }
         return ProviderGroups(
             yours = existing + enable,
             builtIn = all.filter { it.isTypeSafe }.map { Provider.Preset(it) },

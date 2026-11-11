@@ -69,11 +69,29 @@ class DecisionSetupTest {
         assertEquals("fireworks", enable.preset.id)
         assertEquals("Fireworks AI · uses your existing key", DecisionSetup.subtitle(enable))
         assertEquals(listOf("typesafe"), groups.builtIn.map { it.preset.id })
+        // Ollaya and Fireworks already have backends, offered above; they are not offered again.
         assertEquals(
-            listOf("Ollaya", "Ollama", "Fireworks AI", "OpenRouter", "Cloudflare Workers AI", "Perplexity", "Other server"),
+            listOf("Ollama", "OpenRouter", "Cloudflare Workers AI", "Perplexity", "Other server"),
             groups.add.map { it.title },
         )
         assertEquals(Provider.Custom, groups.add.last())
+    }
+
+    @Test fun a_preset_returns_to_the_add_list_once_no_backend_uses_it() {
+        val base = sampleDecisionOverview()
+        val withoutFireworks = base.copy(inference = base.inference.copy(backends = base.inference.backends - "fireworks"))
+        val groups = DecisionSetup.providerGroups(withoutFireworks)
+        assertEquals(listOf("ollaya"), groups.yours.map { it.title })
+        assertEquals(
+            listOf("Ollama", "Fireworks AI", "OpenRouter", "Cloudflare Workers AI", "Perplexity", "Other server"),
+            groups.add.map { it.title },
+        )
+        // A backend no preset names never hides one.
+        assertEquals(groups.add, DecisionSetup.providerGroups(
+            withoutFireworks.copy(inference = withoutFireworks.inference.copy(
+                backends = withoutFireworks.inference.backends + ("spare" to BackendStatus(type = "http", url = "https://api.example.com")),
+            )),
+        ).add)
     }
 
     @Test fun a_chat_backend_without_a_key_is_offered_to_add_decisions_with_one() {

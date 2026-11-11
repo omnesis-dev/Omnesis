@@ -398,9 +398,14 @@ object ModelManagement {
     }
 
     /** What a backend serves, as its row says it. */
-    fun servesLabel(status: BackendStatus): String = when {
-        status.decision != null && status.hasOpenAiApi -> "OpenAI-compatible and decision models"
-        status.decision != null -> "Decision models"
+    fun servesLabel(status: BackendStatus): String = servesLabel(status.hasOpenAiApi, status.decision != null)
+
+    /** What a backend made from [preset] would serve, as its add card says it. */
+    fun servesLabel(preset: ProviderPreset): String = servesLabel(preset.hasOpenAiApi, preset.decision != null)
+
+    private fun servesLabel(openAi: Boolean, decision: Boolean): String = when {
+        decision && openAi -> "OpenAI-compatible and decision models"
+        decision -> "Decision models"
         else -> "OpenAI-compatible models"
     }
 

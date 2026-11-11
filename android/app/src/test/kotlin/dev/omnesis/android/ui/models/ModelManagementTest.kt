@@ -666,6 +666,10 @@ class ModelManagementTest {
         assertEquals("OpenAI-compatible models", ModelManagement.servesLabel(chat))
         assertEquals("OpenAI-compatible and decision models", ModelManagement.servesLabel(chat.copy(decision = decision)))
         assertEquals("Decision models", ModelManagement.servesLabel(BackendStatus(type = "http", decision = decision)))
+        val presets = sampleDecisionPresets().associateBy { it.id }
+        assertEquals("OpenAI-compatible and decision models", ModelManagement.servesLabel(presets.getValue("fireworks")))
+        assertEquals("Decision models", ModelManagement.servesLabel(presets.getValue("ollaya")))
+        assertEquals("OpenAI-compatible models", ModelManagement.servesLabel(samplePresets().first()))
         // An older gateway's backend has a URL and no decision API.
         assertFalse(ModelManagement.BackendRow("old", chat).decisionOnly)
     }
