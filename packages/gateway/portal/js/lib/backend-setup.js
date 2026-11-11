@@ -7,7 +7,7 @@
  * A backend (`inference.backends.<key>`) is one provider account with one
  * key. It serves an OpenAI-compatible API (`url`: chat, embedding and other
  * models), a decision API (`decision`), or both, as the provider preset it
- * was made from offers them (`overview.presets`). Kept free of the DOM so the
+ * was made from offers them (`allProviders`). Kept free of the DOM so the
  * name rules, the URL filling and the `PATCH /admin/config` bodies are
  * unit-tested on their own.
  */
@@ -40,14 +40,23 @@ export const SERVES_LABEL = {
   both: "OpenAI-compatible and decision models",
 };
 
+/**
+ * Every provider preset `GET /admin/models` serves: `presets` (each with an
+ * OpenAI-compatible API, some with a decision API too) and `decisionProviders`
+ * (decision APIs only, the built-in TypeSafe among them).
+ */
+export function allProviders(overview) {
+  return [...(overview?.presets ?? []), ...(overview?.decisionProviders ?? [])];
+}
+
 /** The presets a backend can be made from: all but the built-in TypeSafe. */
 export function addablePresets(overview) {
-  return (overview?.presets ?? []).filter((preset) => !preset.builtIn);
+  return allProviders(overview).filter((preset) => !preset.builtIn);
 }
 
 /** The preset a backend was made from, as the gateway reports it. */
 export function backendPreset(overview, backend) {
-  return backend?.preset ? (overview?.presets ?? []).find((preset) => preset.id === backend.preset) : undefined;
+  return backend?.preset ? allProviders(overview).find((preset) => preset.id === backend.preset) : undefined;
 }
 
 /**

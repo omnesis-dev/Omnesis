@@ -36,7 +36,8 @@ const OLLAYA = { type: "http", status: "ok", preset: "ollaya", decision: { url: 
 
 function overview(inference: Record<string, unknown> = {}) {
   return {
-    presets: [CHAT_ONLY, BOTH, LOCAL, TYPESAFE],
+    presets: [CHAT_ONLY, BOTH],
+    decisionProviders: [LOCAL, TYPESAFE],
     inference: {
       backends: {
         vllm: { type: "http", status: "ok", url: "http://127.0.0.1:8000" },
@@ -71,7 +72,8 @@ describe("decision picker", () => {
   it("adds only providers with decisions that no backend was made from, never the built-in TypeSafe", () => {
     // Fireworks and Ollaya already have backends; they are offered above, with their own key.
     expect(newDecisionPresets(overview()).map((p: { id: string }) => p.id)).toEqual([]);
-    expect(newDecisionPresets({ presets: overview().presets, inference: { backends: { vllm: { type: "http", url: "http://127.0.0.1:8000" } } } }).map((p: { id: string }) => p.id))
+    const { presets, decisionProviders } = overview();
+    expect(newDecisionPresets({ presets, decisionProviders, inference: { backends: { vllm: { type: "http", url: "http://127.0.0.1:8000" } } } }).map((p: { id: string }) => p.id))
       .toEqual(["fireworks", "ollaya"]);
     expect(newDecisionPresets({})).toEqual([]);
   });

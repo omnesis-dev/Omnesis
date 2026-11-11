@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addablePresets,
+  allProviders,
   backendDisplayName,
   backendNameError,
   backendServes,
@@ -37,7 +38,8 @@ const CHAT = { id: "groq", name: "Groq", kind: "cloud", defaultUrl: "https://api
 const TYPESAFE = { id: "typesafe", name: "TypeSafe", kind: "cloud", builtIn: "typesafe", decision: { url: "https://api.example.net/v1/systemone" } };
 
 const overview = {
-  presets: [BOTH, SCORED, PARAMS, CHAT, TYPESAFE],
+  presets: [BOTH, CHAT],
+  decisionProviders: [SCORED, PARAMS, TYPESAFE],
   inference: {
     backends: { fireworks: { type: "http", url: BOTH.defaultUrl }, vllm: { type: "http", url: "http://127.0.0.1:8000" } },
     assignments: { decision: { kind: "decision", backendKey: "fireworks", model: "rune" } },
@@ -54,8 +56,14 @@ describe("what a backend serves", () => {
     expect(presetServes(CHAT)).toBe("chat");
   });
 
-  it("offers every preset but the built-in TypeSafe", () => {
-    expect(addablePresets(overview).map((p: { id: string }) => p.id)).toEqual(["fireworks", "fastino", "cloudflare", "groq"]);
+  it("offers every preset but the built-in TypeSafe, OpenAI-compatible providers first", () => {
+    expect(addablePresets(overview).map((p: { id: string }) => p.id)).toEqual(["fireworks", "groq", "fastino", "cloudflare"]);
+  });
+
+  it("reads decision-only providers beside the presets, and copes without them", () => {
+    expect(allProviders(overview).map((p: { id: string }) => p.id)).toEqual(["fireworks", "groq", "fastino", "cloudflare", "typesafe"]);
+    expect(allProviders({ presets: [CHAT] }).map((p: { id: string }) => p.id)).toEqual(["groq"]);
+    expect(allProviders({})).toEqual([]);
   });
 
   it("brands a preset by its decision catalog id when it has one, and names a backend by its preset", () => {

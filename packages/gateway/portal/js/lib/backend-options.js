@@ -15,7 +15,7 @@
  */
 
 import { filterBackendModels } from "./backend-model-filter.js";
-import { addablePresets, backendServes, presetServes } from "./backend-setup.js";
+import { addablePresets, backendServes } from "./backend-setup.js";
 
 /**
  * Capability role → bundled-catalog role. A capability with no bundled catalog
@@ -168,8 +168,9 @@ export function buildModelPickerOptions(overview, role) {
   if (localCount > 0) options.push({ kind: "local", count: localCount });
 
   const presetIds = new Set(presets.map((p) => p.id));
-  // A preset or backend that serves only decision models has no card here.
-  for (const preset of presets.filter((p) => !p.builtIn && presetServes(p) !== "decision")) {
+  // `presets` are the providers with an OpenAI-compatible API; a backend that
+  // serves only decision models has no card here.
+  for (const preset of presets) {
     const backend = backends[preset.id];
     if (needsChatCompletions && backend?.protocol === "responses") continue;
     const configured = backend?.type === "http" && backendServes(backend) !== "decision";

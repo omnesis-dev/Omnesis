@@ -8,7 +8,7 @@
  * `backend-setup.js`); TypeSafe is built in and never a backend.
  */
 
-import { backendPreset } from "./backend-setup.js";
+import { allProviders, backendPreset } from "./backend-setup.js";
 
 /** The configured HTTP backends, sorted by key. */
 function httpBackends(overview) {
@@ -40,7 +40,7 @@ export function decisionPickerGroups(overview) {
  */
 export function newDecisionPresets(overview) {
   const used = new Set(Object.values(overview?.inference?.backends ?? {}).map((backend) => backend?.preset).filter(Boolean));
-  return (overview?.presets ?? []).filter((preset) => preset.decision && !preset.builtIn && !used.has(preset.id));
+  return allProviders(overview).filter((preset) => preset.decision && !preset.builtIn && !used.has(preset.id));
 }
 
 /** The Decision model's current assignment as `<backend>/<model>`, when it is on a backend's decision API. */

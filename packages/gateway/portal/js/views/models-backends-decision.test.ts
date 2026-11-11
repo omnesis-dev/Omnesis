@@ -79,7 +79,10 @@ function overviewWith({ assignment = { kind: "disabled", role: "decision" }, bac
   return {
     capabilities: [DECISION],
     catalog: [], installed: [],
-    presets: PRESETS,
+    // The gateway serves providers with an OpenAI-compatible API in `presets`
+    // and decision-only providers, TypeSafe among them, in `decisionProviders`.
+    presets: PRESETS.filter((preset) => preset.defaultUrl),
+    decisionProviders: PRESETS.filter((preset) => !preset.defaultUrl),
     assignmentDisplays: display ? { decision: display } : {},
     inference: {
       allowRemoteInference,
