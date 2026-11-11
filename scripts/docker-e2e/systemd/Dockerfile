@@ -11,8 +11,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 # systemd and dbus for the service manager; git to fetch releases; a compiler
 # toolchain for native modules without a prebuilt binary; sudo, because an
 # operator runs the admin command through it; curl and procps for the
-# scenario's probes.
-RUN apt-get update \
+# scenario's probes. apt retries a failed mirror request instead of failing
+# the build on one dropped connection.
+RUN printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries \
+  && apt-get update \
   && apt-get install -y --no-install-recommends \
     systemd systemd-sysv dbus ca-certificates curl git python3 make g++ procps sudo \
   && rm -rf /var/lib/apt/lists/*
