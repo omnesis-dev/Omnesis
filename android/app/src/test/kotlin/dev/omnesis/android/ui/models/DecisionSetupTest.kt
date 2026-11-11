@@ -47,8 +47,10 @@ class DecisionSetupTest {
 
     @Test fun decision_card_is_configurable_only_when_the_gateway_sends_decision_presets() {
         assertTrue(DecisionSetup.isConfigurable(decisionCap, sampleDecisionOverview()))
-        // An older gateway: its presets have no decision API, so the card stays read-only.
+        // An older gateway: its presets have no decision API and it sends no decision-only
+        // providers, so the card stays read-only.
         assertTrue(sampleModelsOverview().presets.isNotEmpty())
+        assertTrue(sampleModelsOverview().decisionProviders.isEmpty())
         assertFalse(DecisionSetup.isConfigurable(decisionCap, sampleModelsOverview()))
         // A role of another backend family is never this setup's.
         val other = decisionCap.copy(role = "future", backendFamily = "future-family")
@@ -75,6 +77,16 @@ class DecisionSetupTest {
             groups.add.map { it.title },
         )
         assertEquals(Provider.Custom, groups.add.last())
+    }
+
+    @Test fun decision_only_providers_come_from_their_own_list() {
+        // A gateway whose OpenAI-compatible presets offer no decisions, with decision-only providers apart.
+        val overview = sampleModelsOverview().copy(decisionProviders = listOf(preset("ollaya"), preset("typesafe")))
+        assertTrue(DecisionSetup.isConfigurable(decisionCap, overview))
+        val groups = DecisionSetup.providerGroups(overview)
+        assertEquals(listOf("typesafe"), groups.builtIn.map { it.preset.id })
+        assertEquals(listOf("Ollaya", "Other server"), groups.add.map { it.title })
+        assertEquals("ollaya", DecisionSetup.presetFor(overview, "ollaya")?.id)
     }
 
     @Test fun a_preset_returns_to_the_add_list_once_no_backend_uses_it() {
@@ -119,7 +131,8 @@ class DecisionSetupTest {
 
     @Test fun an_unknown_preset_kind_is_offered_with_the_hosted_providers() {
         val overview = sampleDecisionOverview().copy(
-            presets = listOf(preset("ollaya").copy(id = "appliance", name = "Appliance", kind = "appliance"), preset("ollama")),
+            presets = emptyList(),
+            decisionProviders = listOf(preset("ollaya").copy(id = "appliance", name = "Appliance", kind = "appliance"), preset("ollama")),
         )
         val groups = DecisionSetup.providerGroups(overview)
         assertEquals(listOf("Ollama", "Appliance", "Other server"), groups.add.map { it.title })

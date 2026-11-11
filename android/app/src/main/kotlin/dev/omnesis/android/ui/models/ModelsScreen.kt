@@ -713,8 +713,8 @@ fun ModelPickerContent(
 
     if (showAddSheet) {
         AddBackendSheet(
-            // A model role is served by an OpenAI-compatible API; decision-only providers are added for the Decision model.
-            presets = overview.presets.filter { it.hasOpenAiApi },
+            // A model role is served by an OpenAI-compatible API: `presets` holds only providers with one.
+            presets = overview.presets,
             onAdd = { name, config ->
                 showAddSheet = false
                 onAddBackend(name, config)

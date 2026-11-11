@@ -456,25 +456,25 @@ class ModelsSettingsPairingParityScreenshotTest {
     @Test
     fun add_backend_grid_dark() = capture("add_backend_grid_dark", dark = true) {
         // Step 1: the provider-preset grid + the Custom card, providers with decision models among them.
-        AddBackendForm(presets = sampleBackendsOverview().presets)
+        AddBackendForm(presets = sampleBackendsOverview().providers)
     }
 
     @Test
     fun add_backend_grid_light() = capture("add_backend_grid_light", dark = false) {
-        AddBackendForm(presets = sampleBackendsOverview().presets)
+        AddBackendForm(presets = sampleBackendsOverview().providers)
     }
 
-    private fun decisionOnlyPreset() = sampleBackendsOverview().presets.first { it.id == "ollaya" }
+    private fun decisionOnlyPreset() = sampleBackendsOverview().providers.first { it.id == "ollaya" }
 
     @Test
     fun add_backend_form_decision_only_dark() = capture("add_backend_form_decision_only_dark", dark = true) {
         // Step 2 for a provider with only a decision API: no base URL, its decision endpoint instead.
-        AddBackendForm(presets = sampleBackendsOverview().presets, previewPreset = decisionOnlyPreset())
+        AddBackendForm(presets = sampleBackendsOverview().providers, previewPreset = decisionOnlyPreset())
     }
 
     @Test
     fun add_backend_form_decision_only_light() = capture("add_backend_form_decision_only_light", dark = false) {
-        AddBackendForm(presets = sampleBackendsOverview().presets, previewPreset = decisionOnlyPreset())
+        AddBackendForm(presets = sampleBackendsOverview().providers, previewPreset = decisionOnlyPreset())
     }
 
     // --- Model-provider credentials ---

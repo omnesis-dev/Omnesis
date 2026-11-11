@@ -181,7 +181,7 @@ fun BackendsContent(
     var clearCredentialConfirm by remember { mutableStateOf<ModelCredentialEntry?>(null) }
 
     val overview = (state as? Loadable.Content)?.value
-    val presets = overview?.presets ?: emptyList()
+    val presets = overview?.providers ?: emptyList()
     val codex = overview?.inference?.codex
 
     Scaffold(
@@ -1731,7 +1731,8 @@ internal fun sampleBackendsOverview() = ModelsOverview(
             refreshedAt = "2026-07-03T12:00:00Z",
         ),
     ),
-    presets = samplePresets() + sampleDecisionPresets().filter { it.id == "fireworks" || it.id == "ollaya" },
+    presets = samplePresets() + sampleDecisionPresets().filter { it.id == "fireworks" },
+    decisionProviders = sampleDecisionPresets().filter { it.id == "ollaya" },
 )
 
 /**

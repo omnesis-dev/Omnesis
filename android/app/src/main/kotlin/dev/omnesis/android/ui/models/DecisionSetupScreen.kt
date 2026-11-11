@@ -1040,7 +1040,8 @@ internal fun sampleDecisionOverview(calibrated: Boolean = false): ModelsOverview
         preset = "fireworks",
     )
     return base.copy(
-        presets = base.presets + sampleDecisionPresets(),
+        presets = base.presets + sampleDecisionPresets().filter { it.hasOpenAiApi },
+        decisionProviders = sampleDecisionPresets().filter { !it.hasOpenAiApi },
         assignmentDisplays = base.assignmentDisplays +
             (DecisionSetup.ROLE to ModelDisplay("ollaya", "Ollaya", "kev", available = true, configured = true)),
         inference = base.inference.copy(

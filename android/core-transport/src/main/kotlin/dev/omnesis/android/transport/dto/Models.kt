@@ -33,13 +33,18 @@ data class ModelsOverview(
      */
     val activeDownloads: List<ActiveDownload> = emptyList(),
     /**
-     * Provider presets the add-backend grid offers (OpenAI, Groq, Ollaya, …).
-     * Each carries the default backend name, its OpenAI-compatible URL and/or
-     * its decision API, and the roles it's typically used for. Defaults to
-     * empty so an older gateway that omits the key still decodes; a gateway
-     * that predates decision backends sends no preset with a decision API.
+     * Providers with an OpenAI-compatible API the add-backend grid offers
+     * (OpenAI, Groq, …), each with its default backend name and URL, the
+     * roles it's typically used for, and its decision API when it has one.
+     * Defaults to empty so an older gateway that omits the key still decodes.
      */
     val presets: List<ProviderPreset> = emptyList(),
+    /**
+     * Providers that serve only decision models (no OpenAI-compatible URL),
+     * TypeSafe's built-in slot among them. Absent on a gateway that predates
+     * decision backends.
+     */
+    val decisionProviders: List<ProviderPreset> = emptyList(),
     /** Provider-specific inference controls keyed by the full HTTP assignment. */
     val modelControls: Map<String, ModelControlInfo> = emptyMap(),
     /** Saved behavior for each capability, bound to its current assignment. */
@@ -51,7 +56,10 @@ data class ModelsOverview(
      * app falls back to the dedicated recent-models endpoint.
      */
     val recentModels: Map<String, List<RecentModelEntry>> = emptyMap(),
-)
+) {
+    /** Every provider a backend can be made from or the Decision model offered: [presets], then [decisionProviders]. */
+    val providers: List<ProviderPreset> get() = presets + decisionProviders
+}
 
 /** The catalog-backed options for one backend/model pair. */
 @Serializable
@@ -100,7 +108,8 @@ data class SaveModelBehaviorBody(
 )
 
 /**
- * One provider preset from `GET /admin/models` (`presets`). Mirrors
+ * One provider preset from `GET /admin/models` (`presets` or
+ * `decisionProviders`). Mirrors
  * `ProviderPresetView` in `@omnesis/core/models/provider-presets.ts`: the
  * short id (also the default backend name), the human-readable name, an
  * OpenAI-compatible API ([defaultUrl], with an optional non-`/v1` api-path

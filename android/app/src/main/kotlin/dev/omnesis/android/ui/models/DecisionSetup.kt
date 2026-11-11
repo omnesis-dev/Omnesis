@@ -53,7 +53,7 @@ object DecisionSetup {
      * card stays read-only.
      */
     fun isConfigurable(cap: CapabilityMeta, overview: ModelsOverview): Boolean =
-        cap.isTypedDecision && overview.presets.any { it.decision != null }
+        cap.isTypedDecision && overview.providers.any { it.decision != null }
 
     // --- Providers ---
 
@@ -104,10 +104,10 @@ object DecisionSetup {
     )
 
     /** Presets with a decision API, TypeSafe among them. */
-    fun presets(overview: ModelsOverview): List<ProviderPreset> = overview.presets.filter { it.decision != null }
+    fun presets(overview: ModelsOverview): List<ProviderPreset> = overview.providers.filter { it.decision != null }
 
     fun presetFor(overview: ModelsOverview, id: String?): ProviderPreset? =
-        id?.let { wanted -> overview.presets.firstOrNull { it.id == wanted } }
+        id?.let { wanted -> overview.providers.firstOrNull { it.id == wanted } }
 
     /**
      * Backends serving decisions first, then backends whose preset offers

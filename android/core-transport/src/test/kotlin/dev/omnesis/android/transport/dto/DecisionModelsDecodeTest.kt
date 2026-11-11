@@ -21,7 +21,9 @@ class DecisionModelsDecodeTest {
          "decision":{"url":"https://api.example.com/inference/v1/systemone","protocol":"systemone","auth":"bearer","keyRequired":true,
            "suggestedModels":["accounts/example/models/rune"],"docsUrl":"https://docs.example.com","keyUrl":"https://app.example.com/keys",
            "models":[{"id":"accounts/example/models/rune","source":"preset"}]}},
-        {"id":"groq","name":"Groq","kind":"cloud","defaultUrl":"https://api.example.net/openai","capabilities":["agent","transcribe"]},
+        {"id":"groq","name":"Groq","kind":"cloud","defaultUrl":"https://api.example.net/openai","capabilities":["agent","transcribe"]}
+      ],
+      "decisionProviders":[
         {"id":"ollaya","name":"Ollaya","kind":"local","capabilities":["decision"],
          "decision":{"url":"http://127.0.0.1:11435/v1/systemone","protocol":"systemone","auth":"bearer","keyRequired":false,
            "suggestedModels":["kev"],"note":"Runs on this machine.","docsUrl":"https://docs.example.com/api",
@@ -61,8 +63,12 @@ class DecisionModelsDecodeTest {
 
     @Test fun current_gateway_overview_decodes_presets_and_backends_with_decision_apis() {
         val overview = OmnesisJson.decodeFromString<ModelsOverview>(current)
-        val presets = overview.presets.associateBy { it.id }
-        assertEquals(listOf("fireworks", "groq", "ollaya", "typesafe", "cloudflare", "fastino"), overview.presets.map { it.id })
+        // Providers with an OpenAI-compatible API come in `presets`; decision-only ones, TypeSafe among them, apart.
+        assertEquals(listOf("fireworks", "groq"), overview.presets.map { it.id })
+        assertTrue(overview.presets.all { it.hasOpenAiApi })
+        assertEquals(listOf("ollaya", "typesafe", "cloudflare", "fastino"), overview.decisionProviders.map { it.id })
+        assertEquals(overview.presets + overview.decisionProviders, overview.providers)
+        val presets = overview.providers.associateBy { it.id }
 
         val fireworks = presets.getValue("fireworks")
         assertTrue(fireworks.hasOpenAiApi)
@@ -131,6 +137,7 @@ class DecisionModelsDecodeTest {
               "inference":{"backends":{"studio":{"type":"http","status":"ok","url":"http://192.0.2.5:8000/v1","models":["m"]}},
               "assignments":{"decision":{"kind":"typesafe","model":"jev-1.13.0","available":true}}}}""",
         )
+        assertTrue(overview.decisionProviders.isEmpty())
         val preset = overview.presets.single()
         assertNull(preset.decision)
         assertNull(preset.builtIn)
@@ -150,12 +157,12 @@ class DecisionModelsDecodeTest {
 
     @Test fun unknown_kinds_protocols_and_states_are_kept() {
         val overview = OmnesisJson.decodeFromString<ModelsOverview>(
-            """{"presets":[{"id":"edge-box","name":"Edge box","kind":"appliance","futureField":{"x":1},
+            """{"decisionProviders":[{"id":"edge-box","name":"Edge box","kind":"appliance","futureField":{"x":1},
               "decision":{"url":"https://decide.example.com","protocol":"future-proto","auth":"signature","futureField":1}}],
               "inference":{"assignments":{"decision":{"kind":"future-kind","available":false,"reason":"Not yet"}},
               "backends":{"edge":{"type":"http","status":"ok","decision":{"url":"https://decide.example.com","protocol":"future-proto","auth":"signature"}}}}}""",
         )
-        val preset = overview.presets.single()
+        val preset = overview.decisionProviders.single()
         assertEquals("appliance", preset.kind)
         assertFalse(preset.isLocal)
         assertEquals("future-proto", preset.decision!!.protocol)

@@ -54,7 +54,7 @@ class ProviderLogoLoaderTest {
                     else MockResponse().setResponseCode(404)
             }
             val overview = ModelsOverview(
-                presets = listOf(
+                decisionProviders = listOf(
                     ProviderPreset(
                         id = "cloudflare", name = "Cloudflare Workers AI", kind = "cloud",
                         decision = ProviderDecisionPreset(modelsDevId = "cloudflare-workers-ai"),

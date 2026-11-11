@@ -34,7 +34,7 @@ internal object ProviderLogoLoader {
      * TypeSafe's built-in slot is left out; "Other server" is no preset at all.
      */
     fun presetLogoSources(overview: ModelsOverview): Map<String, String> =
-        overview.presets
+        overview.providers
             .filter { it.builtIn == null && it.id.isNotBlank() }
             .associate { it.id to it.logoId }
 
