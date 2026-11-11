@@ -1703,12 +1703,6 @@ export const verifyBackendDecision = (key, model) =>
 export const verifyTypeSafeDecision = (model) =>
   request("POST", "/admin/inference/typesafe/verify", { body: { model } });
 
-/** The calibration job: `{state, assignment?, done, total, failed, result?, error?}`. */
-export const getDecisionCalibration = () => request("GET", "/admin/models/decision/calibration");
-/** Start calibrating the assigned decision model (409 while one runs, 400 when it cannot). */
-export const startDecisionCalibration = () => request("POST", "/admin/models/decision/calibration");
-export const cancelDecisionCalibration = () => request("DELETE", "/admin/models/decision/calibration");
-
 export const refreshCodexBackend = () =>
   request("POST", "/admin/inference/codex/refresh");
 

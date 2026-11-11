@@ -3,12 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  assignedCalibration,
   assignedDecisionBackend,
-  calibrationFraction,
-  calibrationPanelState,
-  calibrationProgressText,
-  calibrationSummary,
   canProbeDecisionModels,
   currentDecisionAssignment,
   decisionModelHint,
@@ -32,7 +27,7 @@ const BOTH = {
 const CHAT_ONLY = { id: "groq", name: "Groq", kind: "cloud", defaultUrl: "https://api.example.org/openai", capabilities: ["agent"] };
 const TYPESAFE = { id: "typesafe", name: "TypeSafe", kind: "cloud", builtIn: "typesafe", capabilities: ["decision"], decision: decisionApi({ url: "https://api.example.net/v1/systemone" }) };
 
-const OLLAYA = { type: "http", status: "ok", preset: "ollaya", decision: { url: LOCAL.decision.url, protocol: "systemone", auth: "bearer", onHost: true, hasApiKey: false, calibrations: {} } };
+const OLLAYA = { type: "http", status: "ok", preset: "ollaya", decision: { url: LOCAL.decision.url, protocol: "systemone", auth: "bearer", onHost: true, hasApiKey: false } };
 
 function overview(inference: Record<string, unknown> = {}) {
   return {
@@ -63,7 +58,7 @@ describe("decision picker", () => {
 
   it("stops offering to enable a backend once it serves decisions", () => {
     const o = overview();
-    (o.inference.backends as Record<string, unknown>).fireworks = { ...(o.inference.backends as Record<string, Record<string, unknown>>).fireworks, decision: { url: BOTH.decision.url, onHost: false, calibrations: {} } };
+    (o.inference.backends as Record<string, unknown>).fireworks = { ...(o.inference.backends as Record<string, Record<string, unknown>>).fireworks, decision: { url: BOTH.decision.url, onHost: false } };
     const { ready, enable } = decisionPickerGroups(o);
     expect(ready.map((entry: { key: string }) => entry.key)).toEqual(["fireworks", "ollaya"]);
     expect(enable).toEqual([]);
@@ -81,7 +76,7 @@ describe("decision picker", () => {
 
 describe("assigned decision backend", () => {
   it("reads the backend and preset behind a decision assignment", () => {
-    const o = overview({ assignments: { decision: { role: "decision", kind: "decision", backendKey: "ollaya", model: "kev", calibrated: false, available: true } } });
+    const o = overview({ assignments: { decision: { role: "decision", kind: "decision", backendKey: "ollaya", model: "kev", available: true } } });
     const assigned = assignedDecisionBackend(o);
     expect(assigned.key).toBe("ollaya");
     expect(assigned.model).toBe("kev");
@@ -137,56 +132,5 @@ describe("status sentences", () => {
     expect(decisionVerifyText({ ok: false, reason: "The API key was refused (HTTP 401)." })).toBe("The API key was refused (HTTP 401).");
     expect(decisionVerifyText({ ok: false })).toBe("The model did not answer.");
     expect(decisionVerifyText(null)).toBe("");
-  });
-
-  it("summarises what a calibration keeps and skips, with the shares before it", () => {
-    const text = calibrationSummary({
-      points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z",
-      keeps: 0.95, skips: 0.873, keepsBefore: 0.61, skipsBefore: 0.98, agreement: 0.9, agreementBefore: 0.8,
-    });
-    expect(text).toMatch(/^Calibrated against Jev on .+: keeps 95% of the reference emails Jev keeps and skips 87% of those it skips \(before: 61% and 98%\)\.$/);
-    expect(calibrationSummary({ points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.5 }))
-      .toMatch(/: keeps 95% of the reference emails Jev keeps and skips 50% of those it skips\.$/);
-    // Only one of the two shares: the older agreement sentence.
-    expect(calibrationSummary({ points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, agreement: 0.9 }))
-      .toMatch(/: agrees with Jev on 90% of the reference emails\.$/);
-  });
-
-  it("summarises a finished run's result until the overview stores it", () => {
-    const result = { points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.8 };
-    const assigned = { key: "ollaya", model: "kev", backend: { decision: { calibrations: {} } }, assignment: { calibrated: false } };
-    const done = { state: "done", assignment: "ollaya/kev", done: 300, total: 300, failed: 0, result };
-    expect(calibrationPanelState(done, assigned)).toBe("calibrated");
-    expect(assignedCalibration(assigned, done)).toBe(result);
-    expect(assignedCalibration(assigned, { ...done, assignment: "other/kev" })).toBeUndefined();
-    const stored = { ...result, keeps: 0.9 };
-    expect(assignedCalibration({ ...assigned, backend: { decision: { calibrations: { kev: stored } } } }, done)).toBe(stored);
-  });
-
-  it("summarises a calibration with its agreement before and after", () => {
-    const text = calibrationSummary({ points: [], reference: "r", fittedAt: "2026-03-04T10:00:00Z", agreement: 0.914, agreementBefore: 0.78 });
-    expect(text).toMatch(/^Calibrated against Jev on .+: agrees with Jev on 91% of the reference emails \(was 78%\)\.$/);
-    expect(calibrationSummary({ points: [], reference: "r", fittedAt: "not a date" })).toBe("Calibrated against Jev.");
-    expect(calibrationSummary(undefined)).toBe("");
-  });
-
-  it("reports progress in reference emails, with failures", () => {
-    expect(calibrationProgressText({ state: "running", done: 120, total: 300, failed: 0 })).toBe("120 of 300 reference emails");
-    expect(calibrationProgressText({ state: "running", done: 120, total: 300, failed: 3 })).toBe("120 of 300 reference emails · 3 failed");
-    expect(calibrationProgressText({ state: "running", done: 0, total: 0, failed: 0 })).toBe("Starting…");
-    expect(calibrationFraction({ done: 75, total: 300 })).toBe(0.25);
-    expect(calibrationFraction({ done: 0, total: 0 })).toBe(0);
-  });
-
-  it("shows a job's state only for the assigned model", () => {
-    const assigned = { key: "ollaya", model: "kev", assignment: { calibrated: false } };
-    expect(calibrationPanelState({ state: "running", assignment: "ollaya/kev" }, assigned)).toBe("running");
-    expect(calibrationPanelState({ state: "running", assignment: "other/kev" }, assigned)).toBe("other-running");
-    expect(calibrationPanelState({ state: "failed", assignment: "ollaya/kev" }, assigned)).toBe("failed");
-    expect(calibrationPanelState({ state: "cancelled", assignment: "ollaya/kev" }, assigned)).toBe("cancelled");
-    expect(calibrationPanelState({ state: "done", assignment: "ollaya/kev" }, { ...assigned, assignment: { calibrated: true } })).toBe("calibrated");
-    expect(calibrationPanelState(null, assigned)).toBe("uncalibrated");
-    // A failed recalibration of a calibrated model keeps the calibration in force.
-    expect(calibrationPanelState({ state: "failed", assignment: "ollaya/kev" }, { ...assigned, assignment: { calibrated: true } })).toBe("calibrated");
   });
 });

@@ -14,31 +14,16 @@
 //   • DecisionModelField      — the model input and its suggestions, shared
 //                               with the add-backend form.
 //   • DecisionCheckLine       — the answer of a test decision.
-//   • DecisionCalibrationPanel — maps the assigned model's scores onto Jev's
-//                               scale, so the decision thresholds keep their
-//                               meaning.
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import {
-  probeBackendDecisionModels,
-  probeDecisionEndpoint,
-  getDecisionCalibration,
-  startDecisionCalibration,
-  cancelDecisionCalibration,
-} from "../api.js";
+import { probeBackendDecisionModels, probeDecisionEndpoint } from "../api.js";
 import { BackendOptionCard, Monogram, ProviderLogo, LOCAL_GLYPH, TYPESAFE_GLYPH, ADD_GLYPH } from "../components/backend-option-card.js";
 import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
 import { endpointConsent, inferenceAssignmentPatch, remoteAssignmentConsent } from "../lib/cloud-inference.js";
-import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { backendDisplayName, backendPreset, enableDecisionPatch, fillDecisionUrl, presetLogoId } from "../lib/backend-setup.js";
 import {
-  assignedCalibration,
   assignedDecisionBackend,
-  calibrationFraction,
-  calibrationPanelState,
-  calibrationProgressText,
-  calibrationSummary,
   canProbeDecisionModels,
   currentDecisionAssignment,
   decisionModelHint,
@@ -346,129 +331,3 @@ export function DecisionModelPane({ overview, backendKey, checks = {}, onVerify,
     </form>
   `;
 }
-
-// ── Calibration ─────────────────────────────────────────────────────────────
-
-const CALIBRATION_POLL_MS = 2000;
-/** While nothing runs, the panel still looks now and then for a run started elsewhere (the CLI). */
-const CALIBRATION_IDLE_POLL_MS = 10_000;
-
-/**
- * Calibration of the model assigned on a backend's decision API onto Jev's
- * scale.
- * Reads the job status on mount and keeps polling while the card is open —
- * every 2 s during a run, now and then otherwise, so a run started from the
- * CLI shows too — and calls `onChanged` when a run ends so the overview
- * reloads with the stored calibration.
- */
-export function DecisionCalibrationPanel({ overview, onChanged }) {
-  const assigned = assignedDecisionBackend(overview);
-  const [status, setStatus] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  const wasRunning = useRef(false);
-
-  const read = async () => {
-    try {
-      const next = await getDecisionCalibration();
-      setStatus(next);
-      if (wasRunning.current && next?.state !== "running") {
-        wasRunning.current = false;
-        await onChanged?.();
-      }
-      if (next?.state === "running") wasRunning.current = true;
-    } catch {
-      // Keep the last status; the next poll tries again.
-    }
-  };
-  useEffect(() => { void read(); }, []);
-  useVisiblePoll(read, status?.state === "running" ? CALIBRATION_POLL_MS : CALIBRATION_IDLE_POLL_MS);
-
-  if (!assigned) return null;
-  const state = calibrationPanelState(status, assigned);
-  const stored = assignedCalibration(assigned, status);
-  const lastRunFailed = status?.state === "failed" && status.assignment === `${assigned.key}/${assigned.model}`;
-
-  const start = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const next = await startDecisionCalibration();
-      wasRunning.current = true;
-      setStatus(next);
-    } catch (e) {
-      if (e?.status === 409) {
-        wasRunning.current = true;
-        await read();
-      } else setError(e?.serverMessage ?? e?.message ?? String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const cancel = async () => {
-    setBusy(true);
-    try {
-      setStatus(await cancelDecisionCalibration());
-      await read();
-    } catch (e) {
-      setError(e?.serverMessage ?? e?.message ?? String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const cost = "Sends about 300 invented emails, no personal data, to the model: a few cents on a hosted provider, several minutes on a local CPU server.";
-
-  return html`
-    <div class=${`decision-calibration decision-calibration--${state}`}>
-      ${state === "running"
-        ? html`<div class="decision-calibration-row">
-            <div class="decision-calibration-main">
-              <div class="decision-calibration-title">Calibrating against Jev…</div>
-              <div
-                class="decision-calibration-bar"
-                role="progressbar"
-                aria-label="Calibration progress"
-                aria-valuemin="0"
-                aria-valuemax=${status?.total > 0 ? status.total : undefined}
-                aria-valuenow=${status?.total > 0 ? status.done ?? 0 : undefined}
-              >
-                <span style=${`width:${Math.round(calibrationFraction(status) * 100)}%`}></span>
-              </div>
-              <div class="decision-calibration-meta">${calibrationProgressText(status)}</div>
-            </div>
-            <button type="button" class="btn-tiny" disabled=${busy} onClick=${cancel}>Cancel</button>
-          </div>`
-        : state === "other-running"
-        ? html`<div class="decision-calibration-row">
-            <div class="decision-calibration-main">
-              <div class="decision-calibration-text">A calibration of ${status.assignment} is running: ${calibrationProgressText(status)}.</div>
-              <div class="decision-calibration-meta">This model can be calibrated once it ends.</div>
-            </div>
-            <button type="button" class="btn-tiny" disabled=${busy} onClick=${cancel}>Cancel it</button>
-          </div>`
-        : state === "calibrated"
-        ? html`<div class="decision-calibration-row">
-            <div class="decision-calibration-main">
-              ${lastRunFailed ? html`<div class="decision-calibration-warn">Recalibration failed; the earlier calibration still applies. ${status.error ?? ""}</div>` : null}
-              <div class="decision-calibration-text">${calibrationSummary(stored)}</div>
-            </div>
-            <button type="button" class="btn-tiny" disabled=${busy} onClick=${start}>Recalibrate</button>
-          </div>`
-        : html`<div class="decision-calibration-row">
-            <div class="decision-calibration-main">
-              ${state === "failed"
-                ? html`<div class="decision-calibration-warn">Calibration failed. ${status?.error ?? ""}</div>`
-                : state === "cancelled"
-                ? html`<div class="decision-calibration-text">Calibration cancelled.</div>`
-                : null}
-              <div class="decision-calibration-warn">Thresholds were tuned on TypeSafe's Jev. Calibrate this model so they mean the same thing.</div>
-              <div class="decision-calibration-meta">${cost}</div>
-            </div>
-            <button type="button" class="btn-secondary" disabled=${busy} onClick=${start}>${state === "failed" ? "Try again" : "Calibrate"}</button>
-          </div>`}
-      ${error ? html`<div class="field-error" role="alert">${error}</div>` : null}
-    </div>
-  `;
-}
-

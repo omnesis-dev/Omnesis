@@ -6,8 +6,8 @@
 // Settings → Models with backends that serve chat models, decision models or
 // both: the Decision model's picker (backends with decisions, backends whose
 // provider offers them with the key they have, TypeSafe, "Add a provider"),
-// the shared add form for each kind of provider, the calibration panel on the
-// Decision model's card, and the one Backends list.
+// the shared add form for each kind of provider, the Decision model's card,
+// and the one Backends list.
 
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -19,7 +19,6 @@ const api = vi.hoisted(() => ({
   patchAdminConfig: vi.fn(), getRecentModels: vi.fn(), probeBackend: vi.fn(), removeHttpBackend: vi.fn(),
   getModelCredentialsStatus: vi.fn(), setModelProviderCredentials: vi.fn(),
   probeBackendDecisionModels: vi.fn(), probeDecisionEndpoint: vi.fn(), verifyBackendDecision: vi.fn(), verifyTypeSafeDecision: vi.fn(),
-  getDecisionCalibration: vi.fn(), startDecisionCalibration: vi.fn(), cancelDecisionCalibration: vi.fn(),
 }));
 vi.mock("../api.js", async (importOriginal) => ({ ...(await importOriginal()), ...api }));
 import { ModelsView } from "./models.js";
@@ -68,11 +67,11 @@ const PRESETS = [
 ];
 
 const FIREWORKS = { type: "http", status: "ok", preset: "fireworks", url: "https://api.example.org/inference", hasApiKey: true, models: ["accounts/example/models/chat-1"] };
-const FIREWORKS_DECISION = { url: "https://api.example.org/inference/v1/systemone", protocol: "systemone", auth: "bearer", onHost: false, hasApiKey: true, calibrations: {} };
-const ollayaWith = (calibrations = {}) => ({
+const FIREWORKS_DECISION = { url: "https://api.example.org/inference/v1/systemone", protocol: "systemone", auth: "bearer", onHost: false, hasApiKey: true };
+const OLLAYA = {
   type: "http", status: "ok", preset: "ollaya",
-  decision: { url: "http://127.0.0.1:11435/v1/systemone", protocol: "systemone", auth: "bearer", onHost: true, hasApiKey: false, calibrations },
-});
+  decision: { url: "http://127.0.0.1:11435/v1/systemone", protocol: "systemone", auth: "bearer", onHost: true, hasApiKey: false },
+};
 const VLLM = { type: "http", status: "ok", url: "http://127.0.0.1:8000", models: ["example-chat"] };
 
 function overviewWith({ assignment = { kind: "disabled", role: "decision" }, backends = {}, allowRemoteInference = false, display } = {}) {
@@ -93,9 +92,9 @@ function overviewWith({ assignment = { kind: "disabled", role: "decision" }, bac
   };
 }
 
-const onOllaya = (extra = {}) => ({
-  assignment: { role: "decision", kind: "decision", backendKey: "ollaya", preset: "ollaya", model: "kev", url: "http://127.0.0.1:11435/v1/systemone", protocol: "systemone", onHost: true, allowRemoteInference: false, hasApiKey: false, calibrated: false, available: true, ...extra },
-  backends: { ollaya: ollayaWith() },
+const onOllaya = () => ({
+  assignment: { role: "decision", kind: "decision", backendKey: "ollaya", preset: "ollaya", model: "kev", url: "http://127.0.0.1:11435/v1/systemone", protocol: "systemone", onHost: true, allowRemoteInference: false, hasApiKey: false, available: true },
+  backends: { ollaya: OLLAYA },
   display: { providerId: "ollaya", providerLabel: "Ollaya", modelName: "kev", available: true, configured: true },
 });
 
@@ -164,9 +163,6 @@ describe("Models — backends that serve decisions", () => {
     api.probeDecisionEndpoint.mockReset().mockResolvedValue({ ok: true, models: ["kev", "tiny-decider"], listed: true });
     api.verifyBackendDecision.mockReset().mockResolvedValue({ ok: true, answeredBy: "kev", latencyMs: 240 });
     api.verifyTypeSafeDecision.mockReset().mockResolvedValue({ ok: true, latencyMs: 300 });
-    api.getDecisionCalibration.mockReset().mockResolvedValue({ state: "idle", done: 0, total: 0, failed: 0 });
-    api.startDecisionCalibration.mockReset().mockResolvedValue({ state: "running", assignment: "ollaya/kev", done: 0, total: 300, failed: 0 });
-    api.cancelDecisionCalibration.mockReset().mockResolvedValue({ state: "cancelled", assignment: "ollaya/kev", done: 40, total: 300, failed: 0 });
   });
   afterEach(() => {
     render(null, host);
@@ -176,7 +172,7 @@ describe("Models — backends that serve decisions", () => {
 
   describe("Decision model picker", () => {
     it("lists backends with decisions, then those whose provider offers them, then TypeSafe and Add a provider", async () => {
-      current = overviewWith({ backends: { ollaya: ollayaWith(), fireworks: FIREWORKS, vllm: VLLM, groq: { ...VLLM, preset: "groq", url: "https://api.example.net/openai" } } });
+      current = overviewWith({ backends: { ollaya: OLLAYA, fireworks: FIREWORKS, vllm: VLLM, groq: { ...VLLM, preset: "groq", url: "https://api.example.net/openai" } } });
       await openPicker();
       const groups = [...host.querySelectorAll(".decision-provider-group")];
       expect(groups.map((g) => g.querySelector(".decision-provider-heading").textContent.trim())).toEqual(["Your backends", "Other providers"]);
@@ -199,7 +195,7 @@ describe("Models — backends that serve decisions", () => {
         current = overviewWith({
           backends: { fireworks: { ...FIREWORKS, decision: FIREWORKS_DECISION } },
           allowRemoteInference: true,
-          assignment: { role: "decision", kind: "decision", backendKey: "fireworks", preset: "fireworks", model: "accounts/example/models/rune", calibrated: false, available: true },
+          assignment: { role: "decision", kind: "decision", backendKey: "fireworks", preset: "fireworks", model: "accounts/example/models/rune", available: true },
         });
         return { ok: true };
       });
@@ -262,7 +258,7 @@ describe("Models — backends that serve decisions", () => {
     });
 
     it("uses a backend with decisions: lists its server's models and writes only the assignment", async () => {
-      current = overviewWith({ backends: { ollaya: ollayaWith() } });
+      current = overviewWith({ backends: { ollaya: OLLAYA } });
       await openPicker();
       await click(card("Ollaya"));
       expect(api.probeBackendDecisionModels).toHaveBeenCalledWith("ollaya");
@@ -287,7 +283,7 @@ describe("Models — backends that serve decisions", () => {
     });
 
     it("verifies a backend's model without saving", async () => {
-      current = overviewWith({ backends: { ollaya: ollayaWith() } });
+      current = overviewWith({ backends: { ollaya: OLLAYA } });
       await openPicker();
       await click(card("Ollaya"));
       await type("Model id", "laya");
@@ -298,7 +294,7 @@ describe("Models — backends that serve decisions", () => {
     });
 
     it("shows the reason a test decision failed, verbatim", async () => {
-      current = overviewWith({ backends: { ollaya: ollayaWith() } });
+      current = overviewWith({ backends: { ollaya: OLLAYA } });
       api.verifyBackendDecision.mockResolvedValue({ ok: false, status: 404, reason: 'The server has no model "kev", or the URL is not its decision endpoint (HTTP 404).' });
       await openPicker();
       await click(card("Ollaya"));
@@ -318,7 +314,7 @@ describe("Models — backends that serve decisions", () => {
     });
 
     it("leaves out providers that already have a backend, which the picker offers above", async () => {
-      current = overviewWith({ backends: { fireworks: FIREWORKS, ollaya: ollayaWith(), vllm: VLLM } });
+      current = overviewWith({ backends: { fireworks: FIREWORKS, ollaya: OLLAYA, vllm: VLLM } });
       await openPicker();
       await click(card("Add a provider"));
       expect(cardTitles(host)).toEqual(["Other server", "OpenAI", "Edgeworks AI", "Fastino"]);
@@ -499,128 +495,8 @@ describe("Models — backends that serve decisions", () => {
       await mount();
       await clickText("Verify");
       expect(api.verifyTypeSafeDecision).toHaveBeenCalledWith("jev-1.14.0");
-      expect(host.querySelector(".decision-calibration")).toBeNull();
-    });
-
-    it("warns that an uncalibrated model reads Jev's thresholds, and starts calibrating", async () => {
-      current = overviewWith(onOllaya());
-      await mount();
-      expect(host.querySelector(".decision-calibration-warn").textContent).toBe("Thresholds were tuned on TypeSafe's Jev. Calibrate this model so they mean the same thing.");
-      expect(host.textContent).toContain("Sends about 300 invented emails, no personal data");
-      await clickText("Calibrate");
-      expect(api.startDecisionCalibration).toHaveBeenCalledOnce();
-      expect(host.querySelector(".decision-calibration--running .decision-calibration-meta").textContent).toBe("0 of 300 reference emails");
-    });
-
-    it("shows a running calibration on arrival, polls it, and reloads the models when it ends", async () => {
-      current = overviewWith(onOllaya());
-      api.getDecisionCalibration.mockResolvedValueOnce({ state: "running", assignment: "ollaya/kev", done: 120, total: 300, failed: 2 });
-      await mount();
-      expect(host.querySelector(".decision-calibration-meta").textContent).toBe("120 of 300 reference emails · 2 failed");
-      expect(host.querySelector("[role='progressbar']").getAttribute("aria-valuenow")).toBe("120");
-      const loads = api.getModelsOverview.mock.calls.length;
-      const calibration = {
-        points: [[0, 0], [1, 1]], reference: "jev-worth/v1/jev", fittedAt: "2026-03-04T10:00:00Z", samples: 300,
-        agreement: 0.91, agreementBefore: 0.78, keeps: 0.95, skips: 0.87, keepsBefore: 0.61, skipsBefore: 0.98,
-      };
-      api.getDecisionCalibration.mockResolvedValue({ state: "done", assignment: "ollaya/kev", done: 300, total: 300, failed: 0, result: calibration });
-      current = overviewWith({ ...onOllaya({ calibrated: true }), backends: { ollaya: ollayaWith({ kev: calibration }) } });
-      // The status poll runs every 2 s while a calibration runs.
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 2100)); });
-      await flush();
-      await flush();
-      expect(api.getModelsOverview.mock.calls.length).toBeGreaterThan(loads);
-      expect(host.querySelector(".decision-calibration--calibrated .decision-calibration-text").textContent).toMatch(/keeps 95% of the reference emails Jev keeps and skips 87% of those it skips \(before: 61% and 98%\)\.$/);
-      expect(button("Recalibrate")).toBeTruthy();
-    });
-
-    it("shows a run for another model instead of nothing, and leaves the progress bar indeterminate before its size is known", async () => {
-      current = overviewWith(onOllaya());
-      api.getDecisionCalibration.mockResolvedValue({ state: "running", assignment: "other/laya", done: 12, total: 300, failed: 0 });
-      await mount();
-      expect(host.querySelector(".decision-calibration--other-running").textContent).toContain("A calibration of other/laya is running: 12 of 300 reference emails.");
-      expect(button("Calibrate")).toBeFalsy();
-      render(null, host);
-      api.getDecisionCalibration.mockResolvedValue({ state: "running", assignment: "ollaya/kev", done: 0, total: 0, failed: 0 });
-      await mount();
-      const bar = host.querySelector("[role='progressbar']");
-      expect(bar.hasAttribute("aria-valuemax")).toBe(false);
-      expect(bar.hasAttribute("aria-valuenow")).toBe(false);
-    });
-
-    it("picks up a run started elsewhere while the card is open", async () => {
-      current = overviewWith(onOllaya());
-      // Nothing runs, so the panel looks again only every 10 s.
-      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-      try {
-        await mount();
-        expect(host.querySelector(".decision-calibration--uncalibrated")).toBeTruthy();
-        api.getDecisionCalibration.mockResolvedValue({ state: "running", assignment: "ollaya/kev", done: 5, total: 300, failed: 0 });
-        await act(async () => { vi.advanceTimersByTime(9_000); });
-        await flush();
-        expect(host.querySelector(".decision-calibration--running")).toBeNull();
-        await act(async () => { vi.advanceTimersByTime(1_000); });
-        await flush();
-      } finally {
-        vi.useRealTimers();
-      }
-      expect(host.querySelector(".decision-calibration--running .decision-calibration-meta").textContent).toBe("5 of 300 reference emails");
-    });
-
-    it("shows a finished run's result even before the overview reloads", async () => {
-      current = overviewWith(onOllaya());
-      const result = { points: [[0, 0], [1, 1]], reference: "jev-worth/v1/jev", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.9, keepsBefore: 0.5, skipsBefore: 0.99 };
-      api.getDecisionCalibration.mockResolvedValue({ state: "done", assignment: "ollaya/kev", done: 300, total: 300, failed: 0, result });
-      await mount();
-      expect(host.querySelector(".decision-calibration--calibrated .decision-calibration-text").textContent)
-        .toMatch(/keeps 95% of the reference emails Jev keeps and skips 90% of those it skips \(before: 50% and 99%\)\.$/);
-    });
-
-    it("keeps showing a stored calibration when a recalibration fails", async () => {
-      const calibration = { points: [[0, 0], [1, 1]], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.8, keepsBefore: 0.6, skipsBefore: 0.9 };
-      current = overviewWith({ ...onOllaya({ calibrated: true }), backends: { ollaya: ollayaWith({ kev: calibration }) } });
-      api.getDecisionCalibration.mockResolvedValue({ state: "failed", assignment: "ollaya/kev", done: 300, total: 300, failed: 0, error: "the server stopped answering" });
-      await mount();
-      const panel = host.querySelector(".decision-calibration--calibrated");
-      expect(panel.textContent).toContain("Recalibration failed; the earlier calibration still applies. the server stopped answering");
-      expect(panel.textContent).toContain("keeps 95% of the reference emails Jev keeps");
-      expect(button("Recalibrate")).toBeTruthy();
-    });
-
-    it("cancels a running calibration", async () => {
-      current = overviewWith(onOllaya());
-      api.getDecisionCalibration.mockResolvedValueOnce({ state: "running", assignment: "ollaya/kev", done: 40, total: 300, failed: 0 });
-      api.getDecisionCalibration.mockResolvedValue({ state: "cancelled", assignment: "ollaya/kev", done: 40, total: 300, failed: 0 });
-      await mount();
-      await clickText("Cancel");
-      expect(api.cancelDecisionCalibration).toHaveBeenCalledOnce();
-      expect(host.textContent).toContain("Calibration cancelled.");
-      expect(button("Calibrate")).toBeTruthy();
-    });
-
-    it("shows why calibration cannot start", async () => {
-      current = overviewWith(onOllaya());
-      api.startDecisionCalibration.mockRejectedValue(Object.assign(new Error("POST → 400"), { status: 400, serverMessage: "the decision model is unavailable" }));
-      await mount();
-      await clickText("Calibrate");
-      expect(host.querySelector(".decision-calibration .field-error").textContent).toBe("the decision model is unavailable");
-    });
-
-    it("shows a failed run and offers to try again", async () => {
-      current = overviewWith(onOllaya());
-      api.getDecisionCalibration.mockResolvedValue({ state: "failed", assignment: "ollaya/kev", done: 300, total: 300, failed: 290, error: "Only 10 of 300 reference emails were answered" });
-      await mount();
-      expect(host.textContent).toContain("Calibration failed. Only 10 of 300 reference emails were answered");
-      expect(button("Try again")).toBeTruthy();
-    });
-
-    it("marks an uncalibrated decision backend on the capability grid", async () => {
-      current = overviewWith(onOllaya());
-      await mount(null);
-      expect(host.querySelector(".cap-card-behavior")?.textContent).toBe("Not calibrated");
     });
   });
-
 
   describe("Backends page", () => {
     const row = (name) => [...host.querySelectorAll(".backend-item")].find((n) => n.querySelector(".backend-item-title")?.textContent.includes(name));
@@ -629,7 +505,7 @@ describe("Models — backends that serve decisions", () => {
     };
 
     it("lists every backend once, saying what each serves", async () => {
-      current = overviewWith({ ...onOllaya(), backends: { ollaya: ollayaWith(), fireworks: { ...FIREWORKS, decision: FIREWORKS_DECISION }, vllm: VLLM } });
+      current = overviewWith({ ...onOllaya(), backends: { ollaya: OLLAYA, fireworks: { ...FIREWORKS, decision: FIREWORKS_DECISION }, vllm: VLLM } });
       await mount("backends");
       expect([...host.querySelectorAll("h2")].map((n) => n.textContent)).not.toContain("Decision backends");
       expect(row("Fireworks AI").querySelector(".backend-serves").textContent).toBe("OpenAI-compatible and decision models");
@@ -638,23 +514,15 @@ describe("Models — backends that serve decisions", () => {
       // A decision-only backend has no model list to test, and shows its decision endpoint.
       expect([...row("Ollaya").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Change key", "Remove"]);
       expect(row("Ollaya").querySelector("code").textContent).toBe("http://127.0.0.1:11435/v1/systemone");
-      expect(row("Ollaya").textContent).toContain("Decision model: kev · not calibrated");
+      expect(row("Ollaya").textContent).toContain("Decision model: kev");
       expect([...row("Fireworks AI").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Test", "Change key", "Disable decisions", "Remove"]);
       expect(row("vllm").textContent).not.toContain("Disable decisions");
       // Only backends with an OpenAI-compatible API are probed for models.
       expect(api.probeBackend.mock.calls.map(([key]) => key).sort()).toEqual(["fireworks", "vllm"]);
     });
 
-    it("shows a backend's calibrated decision models", async () => {
-      const calibration = { points: [[0, 0], [1, 1]], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.8 };
-      current = overviewWith({ backends: { ollaya: ollayaWith({ kev: calibration, laya: calibration }) } });
-      await mount("backends");
-      expect(row("Ollaya").textContent).toContain("2 calibrated decision models");
-    });
-
     it("changes a backend's key in place, sending only the key", async () => {
-      const calibration = { points: [[0, 0], [1, 1]], reference: "r", fittedAt: "2026-03-04T10:00:00Z", keeps: 0.95, skips: 0.8 };
-      current = overviewWith({ backends: { fireworks: { ...FIREWORKS, decision: { ...FIREWORKS_DECISION, calibrations: { "accounts/example/models/rune": calibration } } }, vllm: VLLM } });
+      current = overviewWith({ backends: { fireworks: { ...FIREWORKS, decision: FIREWORKS_DECISION }, vllm: VLLM } });
       await mount("backends");
       await click(host.querySelector("button[aria-label='Change key for fireworks']"));
       const save = () => [...row("Fireworks AI").querySelectorAll("button")].find((b) => b.textContent.trim() === "Save");
@@ -663,7 +531,7 @@ describe("Models — backends that serve decisions", () => {
       await type("New API key for fireworks", " rotated-key ");
       await act(async () => { row("Fireworks AI").querySelector(".backend-key-form").dispatchEvent(new window.Event("submit", { bubbles: false, cancelable: true })); });
       await flush();
-      // Only the key: the URLs, decision API and calibrations are not in the write.
+      // Only the key: the URLs and decision API are not in the write.
       expect(api.patchAdminConfig).toHaveBeenCalledExactlyOnceWith({ inference: { backends: { fireworks: { apiKey: "rotated-key" } } } });
       expect(host.querySelector(".backend-key-form")).toBeNull();
       expect(host.textContent).toContain('Changed the key for "fireworks".');
@@ -687,7 +555,7 @@ describe("Models — backends that serve decisions", () => {
     it("disables a backend's decisions, keeping its chat side, and turns off the Decision model it served", async () => {
       current = overviewWith({
         backends: { fireworks: { ...FIREWORKS, decision: FIREWORKS_DECISION } },
-        assignment: { role: "decision", kind: "decision", backendKey: "fireworks", preset: "fireworks", model: "accounts/example/models/rune", calibrated: false, available: true },
+        assignment: { role: "decision", kind: "decision", backendKey: "fireworks", preset: "fireworks", model: "accounts/example/models/rune", available: true },
       });
       await mount("backends");
       await click(host.querySelector("button[aria-label='Disable decisions on fireworks']"));
@@ -702,7 +570,7 @@ describe("Models — backends that serve decisions", () => {
       current = overviewWith(onOllaya());
       await mount("backends");
       await click(host.querySelector("button[aria-label='Remove backend ollaya']"));
-      expect(host.textContent).toContain("Its decision calibrations are removed too.");
+      expect(host.textContent).toContain("Any capability using this backend will become unavailable.");
       await confirm("Remove");
       expect(api.removeHttpBackend).toHaveBeenCalledExactlyOnceWith("ollaya");
       expect(api.patchAdminConfig).not.toHaveBeenCalled();
