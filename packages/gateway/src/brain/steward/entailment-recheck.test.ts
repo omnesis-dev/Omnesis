@@ -9,6 +9,7 @@ import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createDocAnnotation, getDocAnnotation } from "../storage/annotations.js";
 import { createPersonAnnotation, getPersonAnnotation } from "../storage/person-annotations.js";
+import { VERIFIER_CALL_LIMIT_MS } from "../../inference/verifier-limits.js";
 import { buildAnnotationTools, type AnnotationToolDeps } from "./tools.js";
 import type Database from "better-sqlite3";
 
@@ -153,7 +154,7 @@ describe("waiting for a verifier slot", () => {
 
     expect(verify.mock.calls[0]?.[0].background).toEqual({
       queueWaitMs: 300_000,
-      callMs: 45_000,
+      callMs: VERIFIER_CALL_LIMIT_MS,
     });
   });
 

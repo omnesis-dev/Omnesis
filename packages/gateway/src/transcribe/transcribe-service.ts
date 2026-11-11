@@ -21,7 +21,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { createLogger, assertNever } from "@omnesis/core";
+import { MAX_TRANSCRIBE_AUDIO_BYTES, createLogger, assertNever } from "@omnesis/core";
 import { AudioDecodeError } from "./audio-decode.js";
 import { loadTranscriberFromResolved, type LoadTranscriberDeps } from "./loader.js";
 import { whisperDepsAvailable } from "./whisper-transcriber.js";
@@ -36,8 +36,12 @@ import type {
 
 const log = createLogger("gateway:transcribe");
 
-/** Reject audio larger than this. Voice notes are tiny; this guards against abuse. */
-export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+/**
+ * Reject audio larger than this. Voice notes are tiny; this guards against
+ * abuse. Shared with the sources, which skip a larger recording before
+ * uploading it.
+ */
+export const MAX_AUDIO_BYTES = MAX_TRANSCRIBE_AUDIO_BYTES;
 
 /**
  * An unavailable capability is distinct from a failed recording or cancelled

@@ -22,7 +22,7 @@ import {
   storageKeyPath,
 } from "@omnesis/core";
 import { openTranscriptDatabase } from "./imessage-transcript-storage.js";
-import { IMessageTranscriptCache } from "./imessage-transcript-cache.js";
+import { AUDIO_NOT_DOWNLOADED, IMessageTranscriptCache } from "./imessage-transcript-cache.js";
 
 describe("IMessageTranscriptCache", () => {
   let tmpDir: string | undefined;
@@ -123,7 +123,12 @@ describe("IMessageTranscriptCache", () => {
         nextAttemptMs: t0 + 20_000,
         lastError: "transcriber-unavailable",
       });
-      expect(cache.backlog()).toEqual({ awaiting: 3, transcriberUnavailable: 2, unreadable: 0 });
+      expect(cache.backlog()).toEqual({
+        awaiting: 3,
+        transcriberUnavailable: 2,
+        unreadable: 0,
+        tooLarge: 0,
+      });
       expect(cache.dueDayKeys(t0 + 19_000)).toEqual([]);
       expect(cache.dueDayKeys(t0 + 20_000)).toEqual([
         "+15550100100:2026-01-30",
@@ -143,7 +148,12 @@ describe("IMessageTranscriptCache", () => {
       // A transcript settles the clip; the day stays due through its sibling.
       cache.set("clip-a", 12, undefined, { transcript: "Invented voice note" });
       expect(cache.pending("clip-a")).toBeUndefined();
-      expect(cache.backlog()).toEqual({ awaiting: 2, transcriberUnavailable: 1, unreadable: 0 });
+      expect(cache.backlog()).toEqual({
+        awaiting: 2,
+        transcriberUnavailable: 1,
+        unreadable: 0,
+        tooLarge: 0,
+      });
       expect(cache.dueDayKeys(t0 + 60_000)).toContain("+15550100100:2026-01-30");
 
       // Retaining only the clips a pass saw drops a clip that left the chat.
@@ -152,7 +162,12 @@ describe("IMessageTranscriptCache", () => {
       cache.retainForDay("+15550100200:2026-01-31", ["clip-c"], []);
       expect(cache.pending("clip-c")).toBeDefined();
       cache.forgetDay("+15550100200:2026-01-31");
-      expect(cache.backlog()).toEqual({ awaiting: 0, transcriberUnavailable: 0, unreadable: 0 });
+      expect(cache.backlog()).toEqual({
+        awaiting: 0,
+        transcriberUnavailable: 0,
+        unreadable: 0,
+        tooLarge: 0,
+      });
     } finally {
       cache.close();
     }
@@ -164,34 +179,95 @@ describe("IMessageTranscriptCache", () => {
       const t0 = Date.parse("2026-02-01T12:00:00Z");
       const day = "+15550100100:2026-01-30";
       cache.recordFailure("clip-a", day, "backend down", t0);
-      cache.recordUnreadable("clip-a", day, 12, 1234);
+      cache.recordRejected("clip-a", day, 12, 1234, "audio-unreadable");
       expect(cache.pending("clip-a")).toBeUndefined();
       expect(cache.dueDayKeys(t0 + 60_000)).toEqual([]);
-      expect(cache.backlog()).toEqual({ awaiting: 0, transcriberUnavailable: 0, unreadable: 1 });
-      expect(cache.isUnreadable("clip-a", 12, 1234)).toBe(true);
+      expect(cache.backlog()).toEqual({
+        awaiting: 0,
+        transcriberUnavailable: 0,
+        unreadable: 1,
+        tooLarge: 0,
+      });
+      expect(cache.rejectedAs("clip-a", 12, 1234)).toBe("audio-unreadable");
       // A file that changed is another clip.
-      expect(cache.isUnreadable("clip-a", 13, 1234)).toBe(false);
-      expect(cache.isUnreadable("clip-a", 12, 1235)).toBe(false);
+      expect(cache.rejectedAs("clip-a", 13, 1234)).toBeUndefined();
+      expect(cache.rejectedAs("clip-a", 12, 1235)).toBeUndefined();
 
       // A later outcome for the clip replaces the verdict.
       cache.recordFailure("clip-a", day, "backend down", t0);
-      expect(cache.isUnreadable("clip-a", 12, 1234)).toBe(false);
-      cache.recordUnreadable("clip-a", day, 12, 1234);
+      expect(cache.rejectedAs("clip-a", 12, 1234)).toBeUndefined();
+      cache.recordRejected("clip-a", day, 12, 1234, "audio-unreadable");
       cache.set("clip-a", 12, 1234, { transcript: "Invented voice note" });
-      expect(cache.isUnreadable("clip-a", 12, 1234)).toBe(false);
+      expect(cache.rejectedAs("clip-a", 12, 1234)).toBeUndefined();
 
       // A clip that left the chat stops being reported; a resync forgets them all.
-      cache.recordUnreadable("clip-b", day, 8, 1);
-      cache.recordUnreadable("clip-c", day, 9, 2);
+      cache.recordRejected("clip-b", day, 8, 1, "audio-unreadable");
+      cache.recordRejected("clip-c", day, 9, 2, "audio-unreadable");
       cache.retainForDay(day, [], ["clip-c"]);
-      expect(cache.isUnreadable("clip-b", 8, 1)).toBe(false);
+      expect(cache.rejectedAs("clip-b", 8, 1)).toBeUndefined();
       expect(cache.backlog().unreadable).toBe(1);
-      cache.forgetUnreadable();
+      cache.forgetRejected();
       expect(cache.backlog().unreadable).toBe(0);
 
-      cache.recordUnreadable("clip-d", day, 9, 2);
+      cache.recordRejected("clip-d", day, 9, 2, "audio-unreadable");
       cache.forgetDay(day);
       expect(cache.backlog().unreadable).toBe(0);
+    } finally {
+      cache.close();
+    }
+  });
+
+  test("keeps a clip too large to transcribe apart from unreadable ones, and a clip not downloaded out of the backlog", () => {
+    const cache = new IMessageTranscriptCache();
+    try {
+      const t0 = Date.parse("2026-02-01T12:00:00Z");
+      const day = "+15550100100:2026-01-30";
+      cache.recordRejected("clip-big", day, 40_000_000, 1, "audio-too-large");
+      cache.recordRejected("clip-bad", day, 12, 2, "audio-unreadable");
+      cache.recordFailure("clip-empty", day, AUDIO_NOT_DOWNLOADED, t0);
+      cache.recordFailure("clip-wait", day, "transcriber-unavailable", t0);
+      expect(cache.rejectedAs("clip-big", 40_000_000, 1)).toBe("audio-too-large");
+      expect(cache.rejectedAs("clip-big", 40_000_001, 1)).toBeUndefined();
+      // The clip not downloaded keeps its day due but awaits no transcript.
+      expect(cache.backlog()).toEqual({
+        awaiting: 1,
+        transcriberUnavailable: 1,
+        unreadable: 1,
+        tooLarge: 1,
+      });
+      expect(cache.dueDayKeys(t0 + 20_000)).toEqual([day]);
+      cache.forgetRejected();
+      expect(cache.backlog()).toMatchObject({ unreadable: 0, tooLarge: 0 });
+    } finally {
+      cache.close();
+    }
+  });
+
+  test("gives the rejected clips of an older sidecar a reason, keeping them unreadable", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "imessage-transcripts-"));
+    const cacheDir = join(tmpDir, "apple-imessage");
+    mkdirSync(cacheDir, { recursive: true });
+    const db = new Database(join(cacheDir, "transcripts.db"));
+    db.exec(`
+      CREATE TABLE unreadable_clips (
+        attachment_guid TEXT PRIMARY KEY,
+        day_key TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        mtime_ms REAL
+      )
+    `);
+    db.prepare("INSERT INTO unreadable_clips VALUES (?, ?, ?, ?)").run(
+      "clip-old",
+      "+15550100100:2026-01-30",
+      12,
+      3,
+    );
+    db.close();
+
+    const cache = new IMessageTranscriptCache(tmpDir);
+    try {
+      expect(cache.rejectedAs("clip-old", 12, 3)).toBe("audio-unreadable");
+      expect(cache.backlog()).toMatchObject({ unreadable: 1, tooLarge: 0 });
     } finally {
       cache.close();
     }

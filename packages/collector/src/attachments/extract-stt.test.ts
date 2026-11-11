@@ -10,7 +10,7 @@
 
 import { describe, test, expect, vi } from "vitest";
 import { SyncError } from "@omnesis/types";
-import { AudioUnreadableError, type AudioTranscribeFn } from "@omnesis/core";
+import { AudioRejectedError, AudioUnreadableError, type AudioTranscribeFn } from "@omnesis/core";
 import { createAttachmentExtractor } from "./extract.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -65,6 +65,14 @@ describe("createAttachmentExtractor — STT", () => {
     };
     const extract = createAttachmentExtractor({ transcribe });
     expect(await extract(enc("not audio"), "audio/ogg")).toBeNull();
+  });
+
+  test("audio too large to transcribe has no text, rather than failing the attachment", async () => {
+    const transcribe: AudioTranscribeFn = async () => {
+      throw new AudioRejectedError("too-large", "too large");
+    };
+    const extract = createAttachmentExtractor({ transcribe });
+    expect(await extract(enc("long recording"), "audio/ogg")).toBeNull();
   });
 
   test("an audio fn does not interfere with text extraction", async () => {

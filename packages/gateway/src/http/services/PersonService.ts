@@ -31,7 +31,10 @@ import {
   countLiveDependentsForAnnotation,
   listLiveDependentsForAnnotation,
 } from "../../brain/storage/consumption-edges.js";
-import { listLivePersonAnnotationsForPerson } from "../../brain/storage/person-annotations.js";
+import {
+  listLivePersonAnnotationsForPerson,
+  personAnnotationIdsOnExcludedSources,
+} from "../../brain/storage/person-annotations.js";
 import { resolvePersonId } from "../../domain/PeopleResolutionService.js";
 import { ValidationError } from "../errors.js";
 import { listSelfIdentitySources } from "../../self-identity-sources.js";
@@ -132,6 +135,8 @@ export class PersonService {
        * servers) the mutation falls back to the periodic eval alone.
        */
       fastApplyMergeRules?: () => Promise<void>;
+      /** `brain.excludedSources`, read live; annotations resting on one are labelled. */
+      getBrainExcludedSources?: () => readonly string[];
     } = {},
     /** Read-worker gate. When present, {@link browse} runs the heavy people
      *  query off the main event loop; absent (tests, minimal servers) it
@@ -397,6 +402,8 @@ export class PersonService {
       createdAt: string;
       verificationState: string | null;
       lastVerifiedAt: string | null;
+      /** Set when the background re-check never revisits this row; its stored state is not current. */
+      notRechecked?: "source_excluded";
       dependentCount: number;
       dependents?: Array<{ kind: "observation" | "loop"; id: string; title: string }>;
       sortAt: number;
@@ -410,6 +417,11 @@ export class PersonService {
     });
     const hasMore = probe.length > options.limit;
     const annotations = hasMore ? probe.slice(0, options.limit) : probe;
+    const onExcludedSource = personAnnotationIdsOnExcludedSources(
+      this.db,
+      annotations.map((annotation) => annotation.id),
+      this.hooks.getBrainExcludedSources?.() ?? [],
+    );
     return {
       canonicalId,
       hasMore,
@@ -431,6 +443,9 @@ export class PersonService {
             annotation.lastVerifiedAt === null
               ? null
               : new Date(annotation.lastVerifiedAt).toISOString(),
+          ...(onExcludedSource.has(annotation.id)
+            ? { notRechecked: "source_excluded" as const }
+            : {}),
           dependentCount:
             dependents?.length ??
             countLiveDependentsForAnnotation(this.db, "person", annotation.id),

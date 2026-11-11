@@ -880,8 +880,11 @@ export type {
   TranscriptionVocabularyEntry,
 } from "./transcription.js";
 export {
+  AUDIO_TOO_LARGE,
   AUDIO_UNREADABLE,
+  AudioRejectedError,
   AudioUnreadableError,
+  MAX_TRANSCRIBE_AUDIO_BYTES,
   MAX_TRANSCRIPTION_MS,
   TRANSCRIBE_AUDIO_UNREADABLE_CODE,
   TRANSCRIBE_REPORT_UNREADABLE_HEADER,
@@ -889,7 +892,11 @@ export {
   transcriptionPlaceholderNote,
   transcriptionSyncIssues,
 } from "./transcription.js";
-export type { TranscriptionBacklog, TranscriptionPlaceholderState } from "./transcription.js";
+export type {
+  AudioRejectionReason,
+  TranscriptionBacklog,
+  TranscriptionPlaceholderState,
+} from "./transcription.js";
 
 export type { OcrFn, OcrResult } from "./ocr.js";
 

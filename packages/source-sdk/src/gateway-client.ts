@@ -438,8 +438,9 @@ export interface GatewayClient {
    * held only for the request — nothing is persisted. Returns null when
    * transcription is disabled or no transcriber is configured. Rejects with
    * a transient `SyncError` when the transcriber or the gateway could not be
-   * reached, and with an `AudioUnreadableError` when the bytes decode to no
-   * audio.
+   * reached, and with an item-scoped `AudioRejectedError` when the gateway
+   * will not transcribe this recording: empty, larger than it accepts, or
+   * (as an `AudioUnreadableError`) bytes that decode to no audio.
    */
   transcribe(
     audio: Uint8Array,
