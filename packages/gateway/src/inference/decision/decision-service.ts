@@ -10,8 +10,7 @@
  * restart. The backend it replaces is disposed, which frees a local model.
  *
  * Backends: TypeSafe (`typesafe/<model>`), a backend's decision API
- * (`<backend>/<model>`: a System One server, Workers AI or OpenAI Decisions,
- * its scores calibrated onto Jev's when a calibration is stored),
+ * (`<backend>/<model>`: a System One server, Workers AI or OpenAI Decisions),
  * a local GGUF chat model, an OpenAI-compatible HTTP backend that returns
  * token log-probabilities, and recorded replay. `get()` returns null when the role is unset or cannot run —
  * no key, remote inference off, a missing model file, an unreadable replay
@@ -51,8 +50,8 @@ export interface DecisionServiceDeps {
   /** Test seam: builds the local backend. */
   createLocal?: (modelPath: string) => DecisionCapability;
   /**
-   * Builds the decision API and TypeSafe clients; shared with verify and
-   * calibration so they share each backend's concurrency limit. Built from
+   * Builds the decision API and TypeSafe clients; shared with verify so
+   * they share each backend's concurrency limit. Built from
    * the deps above when omitted.
    */
   clients?: DecisionClients;
@@ -127,7 +126,7 @@ export class DecisionService {
         return null;
       }
       log.info(`decision model: ${resolved.backendKey}/${resolved.model} at ${resolved.url}`);
-      return this.clients.backend(resolved, { calibrated: true });
+      return this.clients.backend(resolved);
     }
     if (resolved.kind === "typesafe") {
       if (!resolved.available || (!apiKey && !resolved.selfHosted)) {
@@ -212,7 +211,6 @@ function signatureOf(
         decisionBackend?.scoreField,
         decisionBackend?.maxConcurrency,
         decisionBackend?.timeoutMs,
-        decisionBackend?.calibration?.[resolved.model] ?? null,
         keyPrintOf(apiKey),
       ]);
     case "typesafe": {

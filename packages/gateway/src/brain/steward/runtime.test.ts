@@ -40,7 +40,7 @@ import {
   transitionObservation,
 } from "../storage/observations.js";
 import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
-import { resolveBrainSettings } from "../config.js";
+import { BRAIN_DEFAULTS, resolveBrainSettings } from "../config.js";
 import { RecordCheck } from "../record-check/check.js";
 import { buildCognitionRunPrompt } from "./prompts.js";
 import { createOpenLoopMirror } from "./mirror.js";
@@ -420,6 +420,7 @@ describe("assembled Cognition Steward through the real driver", () => {
         dispose() {},
       }),
       getMode: () => "enforce",
+      getThresholds: () => BRAIN_DEFAULTS.thresholds,
       recordDecision: (record) => writeGate.recordCognitionDecision(record),
       recordSpend: async () => {},
       clock: () => NOW,

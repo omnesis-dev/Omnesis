@@ -4,10 +4,10 @@
 /**
  * Builds the clients for the decision model's APIs — a backend's decision
  * API and the built-in TypeSafe slot — for every user of them: the live
- * decision service, verify, the assignment check and calibration.
+ * decision service, verify and the assignment check.
  *
  * Each backend has one concurrency limiter, shared by all its clients, so a
- * calibration run, a verify and the live gates together never have more
+ * verify and the live gates together never have more
  * requests in flight than the backend allows: a single-slot local server
  * would otherwise time out the ones queued behind the first.
  */
@@ -20,7 +20,6 @@ import {
   type ResolvedDecisionBackend,
   type ResolvedTypeSafe,
 } from "@omnesis/core";
-import { CalibratedDecision } from "./calibrated-decision.js";
 import { ConcurrencyLimiter } from "./limiter.js";
 import { OpenAIDecisionsDecision } from "./openai-decisions-client.js";
 import { SystemOneDecision } from "./system-one-client.js";
@@ -41,8 +40,6 @@ export interface DecisionClientsDeps {
 }
 
 export interface DecisionClientOptions {
-  /** Apply the backend's stored calibration for the model. */
-  calibrated: boolean;
   maxRetries?: number;
   timeoutMs?: number;
 }
@@ -71,7 +68,7 @@ export class DecisionClients {
   }
 
   /** A backend's decision client; throws for a backend with no decision API. */
-  backend(resolved: ResolvedDecisionBackend, opts: DecisionClientOptions): DecisionCapability {
+  backend(resolved: ResolvedDecisionBackend, opts: DecisionClientOptions = {}): DecisionCapability {
     const cfg = this.deps.getDecisionEndpoint(resolved.backendKey);
     if (!cfg) throw new Error(`Backend "${resolved.backendKey}" has no decision API`);
     const preset = cfg.preset ? getPreset(cfg.preset) : undefined;
@@ -92,22 +89,19 @@ export class DecisionClients {
       ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
       ...(this.deps.fetchFn ? { fetchFn: this.deps.fetchFn } : {}),
     };
-    const raw: DecisionCapability =
-      resolved.protocol === "openai-decisions"
-        ? new OpenAIDecisionsDecision(common)
-        : new SystemOneDecision({
-            ...common,
-            protocol: resolved.protocol,
-            ...(cfg.scoreField ? { scoreField: cfg.scoreField } : {}),
-          });
-    const calibration = opts.calibrated ? cfg.calibration?.[resolved.model] : undefined;
-    return calibration ? new CalibratedDecision(raw, calibration) : raw;
+    return resolved.protocol === "openai-decisions"
+      ? new OpenAIDecisionsDecision(common)
+      : new SystemOneDecision({
+          ...common,
+          protocol: resolved.protocol,
+          ...(cfg.scoreField ? { scoreField: cfg.scoreField } : {}),
+        });
   }
 
   /** TypeSafe's client, or null when TypeSafe's own endpoint has no key. */
   typesafe(
     resolved: ResolvedTypeSafe,
-    opts: Omit<DecisionClientOptions, "calibrated"> = {},
+    opts: DecisionClientOptions = {},
   ): DecisionCapability | null {
     const apiKey = this.deps.readTypeSafeApiKey();
     if (!apiKey && !resolved.selfHosted) return null;
@@ -125,7 +119,7 @@ export class DecisionClients {
 
   /**
    * One test decision for a backend's decision API or TypeSafe, with no
-   * retries and a short timeout, uncalibrated.
+   * retries and a short timeout.
    */
   async verify(resolved: ResolvedAssignment): Promise<DecisionVerifyResult> {
     if (resolved.kind !== "decision" && resolved.kind !== "typesafe") {
@@ -181,7 +175,7 @@ export class DecisionClients {
   ): DecisionCapability | null {
     const opts = { maxRetries: 0, timeoutMs: CHECK_TIMEOUT_MS };
     return resolved.kind === "decision"
-      ? this.backend(resolved, { ...opts, calibrated: false })
+      ? this.backend(resolved, opts)
       : this.typesafe(resolved, opts);
   }
 }

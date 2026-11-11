@@ -411,7 +411,7 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     description:
       "Makes small routing and scoring decisions: whether an Apple Watch capture asks for a response or is a note to save, and, when the mention worth gate is on, which email dates time queries leave out. Runs on a decision model — Ollaya or Ollama on this machine, TypeSafe Jev, or a hosted decision API — which receives the transcript or email excerpt.",
     experimentalDescription:
-      "In experimental mode, also routes browser Find and helps the Brain prioritize, check memory and task changes, and select observations for briefs, sending that context to the decision model. A local or HTTP chat model that returns token log-probabilities can serve it too, though its scores do not match the Jev-tuned thresholds.",
+      "In experimental mode, also routes browser Find and helps the Brain prioritize, check memory and task changes, and select observations for briefs, sending that context to the decision model. A local or HTTP chat model that returns token log-probabilities can serve it too, though it may need the decision thresholds moved to match its scores.",
     icon: "scale",
     section: "cognition",
     backendFamily: "typed-decision",

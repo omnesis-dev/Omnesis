@@ -8,7 +8,6 @@ import {
   buildBackendAddPatch,
   buildDecisionDisablePatch,
   buildDecisionEnablePatch,
-  describeCalibration,
   parseParams,
 } from "./backend-patch.js";
 
@@ -257,36 +256,5 @@ describe("parseParams", () => {
     expect(parseParams(["a=1", "b = x=y"])).toEqual({ a: "1", b: "x=y" });
     expect(parseParams(undefined)).toEqual({});
     expect(() => parseParams("account")).toThrow("key=value");
-  });
-});
-
-describe("describeCalibration", () => {
-  it("says whether thresholds fit, and by how much calibration helped", () => {
-    expect(describeCalibration(undefined)).toContain("not calibrated");
-    expect(
-      describeCalibration({
-        points: [
-          [0, 0],
-          [1, 1],
-        ],
-        reference: "jev-worth/email-worth-v1/jev-1.13.0",
-        fittedAt: "2026-11-10T18:00:00.000Z",
-        agreement: 0.914,
-        agreementBefore: 0.62,
-      }),
-    ).toBe("calibrated 2026-11-10: agrees with Jev on 91% of the reference emails (was 62%)");
-    expect(
-      describeCalibration({
-        points: [[0.5, 0.36]],
-        reference: "jev-worth/email-worth-v1/jev-1.13.0",
-        fittedAt: "2026-11-10T18:00:00.000Z",
-        keeps: 0.95,
-        keepsBefore: 0.99,
-        skips: 0.64,
-        skipsBefore: 0.21,
-      }),
-    ).toBe(
-      "calibrated 2026-11-10: keeps 95% of the reference emails Jev keeps and skips 64% of those it skips (was 99% and 21%)",
-    );
   });
 });

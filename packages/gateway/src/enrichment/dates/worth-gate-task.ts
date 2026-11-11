@@ -39,7 +39,6 @@ import { askScore, type ScoreJudgement } from "../../brain/decision-call.js";
 import {
   EMAIL_WORTH_QUESTIONS,
   EMAIL_WORTH_QUESTION_ID,
-  EMAIL_WORTH_THRESHOLD,
   WORTH_GATE_RUBRIC_VERSION,
   passesWorthThreshold,
 } from "../../worth/rubric.js";
@@ -70,7 +69,7 @@ const ACTIVE_PERIOD_MS = 2_000;
 const IDLE_PERIOD_MS = 300_000;
 /** Documents judged in one stretch before its end is logged at info level. */
 const CAUGHT_UP_LOG_MIN = 100;
-/** Judgements requeued per writer call after a rubric change. */
+/** Judgements requeued per writer call after a rubric change, or re-sorted after a threshold change. */
 const REQUEUE_BATCH = 500;
 /** Backoff for a document that cannot be settled yet: doubling from a minute, capped at a day. */
 const RETRY_BASE_MS = 60_000;
@@ -78,7 +77,10 @@ const RETRY_MAX_MS = 86_400_000;
 
 export interface MentionWorthGateDeps {
   ioGate: Pick<IoGate, "fetchPendingMentionJudgements">;
-  writeGate: Pick<WriteGate, "applyMentionJudgements" | "requeueStaleMentionJudgements">;
+  writeGate: Pick<
+    WriteGate,
+    "applyMentionJudgements" | "requeueStaleMentionJudgements" | "resettleMentionJudgements"
+  >;
   getSettings: () => ResolvedDateEnrichmentSettings;
   getDecision: () => DecisionCapability | null;
   recordSpend: (modelId: string, inputTokens: number) => Promise<void>;
@@ -101,6 +103,8 @@ export function mentionWorthGateTask(
   const clock = deps.clock ?? Date.now;
   const judgeDeps = { ...deps, idGen: deps.idGen ?? (() => randomUUID()) };
   let requeued = false;
+  /** The threshold every stored verdict is sorted by, once the re-sort has caught up. */
+  let sortedBy: number | null = null;
   let judged = 0;
   return {
     name: MENTION_WORTH_GATE_TASK_NAME,
@@ -126,6 +130,15 @@ export function mentionWorthGateTask(
             );
             if (n > 0) log.info(`mention worth gate: ${n} judgements requeued for a new rubric`);
             if (n < REQUEUE_BATCH) requeued = true;
+            else return { idle: false };
+          }
+          const threshold = getSettings().worthThreshold;
+          if (sortedBy !== threshold) {
+            // Judgements stored under another threshold move to the side
+            // their score is on, a bounded batch per tick and no model call.
+            const n = await writeGate.resettleMentionJudgements(threshold, REQUEUE_BATCH);
+            if (n > 0) log.info(`mention worth gate: ${n} judgements re-sorted at ${threshold}`);
+            if (n < REQUEUE_BATCH) sortedBy = threshold;
             else return { idle: false };
           }
 
@@ -190,6 +203,7 @@ async function judge(
   const deferrals: MentionJudgementDeferral[] = [];
   const answers: WorthAnswer[] = [];
   const decisions: CognitionDecisionRecord[] = [];
+  const threshold = deps.getSettings().worthThreshold;
   const deferral = (p: PendingMentionJudgement): MentionJudgementDeferral => ({
     documentId: p.documentId,
     generation: p.generation,
@@ -202,7 +216,7 @@ async function judge(
   ): MentionJudgementRecord => ({
     documentId: p.documentId,
     generation: p.generation,
-    verdict: passesWorthThreshold(score) ? "keep" : "drop",
+    verdict: passesWorthThreshold(score, threshold) ? "keep" : "drop",
     subjectDocumentId: p.subjectDocumentId,
     contentHash,
     rubricVersion: WORTH_GATE_RUBRIC_VERSION,
@@ -256,7 +270,7 @@ async function judge(
         { recordSpend: deps.recordSpend, log: deps.log, timeoutMs: CALL_TIMEOUT_MS },
       );
       const score = reply.score;
-      decisions.push(mentionDecision(first, decision, reply, deps.idGen(), clock()));
+      decisions.push(mentionDecision(first, decision, reply, threshold, deps.idGen(), clock()));
       if (score === null) {
         failed += group.length;
         deferrals.push(...group.map(deferral));
@@ -288,6 +302,7 @@ function mentionDecision(
   ask: Ask,
   decision: DecisionCapability,
   reply: ScoreJudgement,
+  threshold: number,
   id: string,
   now: number,
 ): CognitionDecisionRecord {
@@ -305,9 +320,13 @@ function mentionDecision(
     requestJson: reply.requestJson,
     responseJson: reply.responseJson,
     score: reply.score,
-    threshold: EMAIL_WORTH_THRESHOLD,
+    threshold,
     verdict:
-      reply.score === null ? "unavailable" : passesWorthThreshold(reply.score) ? "pass" : "skip",
+      reply.score === null
+        ? "unavailable"
+        : passesWorthThreshold(reply.score, threshold)
+          ? "pass"
+          : "skip",
     error: reply.error,
     reusedFrom: null,
     recordId: null,

@@ -606,9 +606,7 @@ export class InferenceRegistry {
     const slashIndex = value.indexOf("/");
     const prefixOf = slashIndex === -1 ? value : value.slice(0, slashIndex);
 
-    // A backend's decision API serves the Decision model, on the stable path:
-    // it is a decision model, whose scores a stored calibration maps onto
-    // Jev's scale.
+    // A backend's decision API serves the Decision model, on the stable path.
     if (role === "decision" && this.decisionEndpoints.has(prefixOf)) {
       return this.resolveDecisionBackend(
         role,
@@ -1413,7 +1411,6 @@ export class InferenceRegistry {
       onHost: isLoopbackInferenceUrl(cfg.url),
       hasApiKey: !!cfg.apiKey,
       ...(cfg.apiKeySecretError ? { apiKeySecretError: cfg.apiKeySecretError } : {}),
-      calibrations: { ...(cfg.calibration ?? {}) },
     };
   }
 
@@ -1684,7 +1681,6 @@ export class InferenceRegistry {
       onHost,
       allowRemoteInference: this.allowRemoteInference,
       hasApiKey: !!cfg.apiKey,
-      calibrated: !!cfg.calibration?.[model],
     };
     if (!model.trim()) {
       return {

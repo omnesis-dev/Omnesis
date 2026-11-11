@@ -40,12 +40,6 @@ import { DecisionService } from "./inference/decision/decision-service.js";
 import { DecisionClients } from "./inference/decision/decision-clients.js";
 import { ModelsDevDecisionCatalog } from "./models/models-dev-decisions.js";
 import {
-  DecisionCalibrationJob,
-  defaultReferencePath,
-  readReferenceSet,
-  withStoredCalibration,
-} from "./models/decision-tools.js";
-import {
   closeDrainingWal,
   createDatabase,
   getDocumentTitlesAndSources,
@@ -1392,7 +1386,7 @@ await subscriptionsPolicyStore.get();
 // both gates are absent. Re-resolved per use, so assigning a model or pasting
 // a key from the portal takes effect without a restart.
 // Every client of a backend's decision API — the live model, verify, the
-// assignment check, calibration — comes from here, sharing each backend's
+// assignment check — comes from here, sharing each backend's
 // concurrency limit.
 const decisionClients = new DecisionClients({
   getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
@@ -1406,25 +1400,6 @@ const decisionService = new DecisionService({
   getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
   clients: decisionClients,
   defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
-});
-
-// Calibrating the Decision model replays the bundled Jev reference set through
-// it and stores the fitted map with the backend's decision API.
-const decisionCalibration = new DecisionCalibrationJob({
-  resolve: () => inferenceRegistry.resolve("decision"),
-  getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
-  createRawClient: (resolved) => decisionClients.backend(resolved, { calibrated: false }),
-  reference: () => readReferenceSet(defaultReferencePath()),
-  store: async (backendKey, model, calibration, fittedOn) => {
-    const result = await configStore.update((current) =>
-      withStoredCalibration(current, backendKey, model, calibration, fittedOn),
-    );
-    if (!result.ok) {
-      throw new Error(
-        `Saving the calibration failed: ${result.errors.map((e) => `${e.path}: ${e.message}`).join("; ")}`,
-      );
-    }
-  },
 });
 
 // The mention worth gate hides date mentions from email judged not worth
@@ -1712,6 +1687,12 @@ const mentionWorthGate = bootMentionWorthGate({
   countPending: () => countPendingMentionJudgements(db),
   active: mentionWorthGateActive,
   log: log.child("enrichment:mention-worth-gate"),
+});
+// A changed threshold re-sorts the stored verdicts on the gate's next tick;
+// kicked, so an idle gate does not wait out its idle period first.
+configStore.onChange((before, after) => {
+  const threshold = (c: OmnesisConfig) => c.enrichment?.dates?.worthThreshold;
+  if (threshold(before) !== threshold(after)) mentionWorthGate.kick();
 });
 
 // Date-enrichment pass: extract dates from every document, resolved against
@@ -2692,7 +2673,6 @@ const app = createServer(db, DB_PATH, {
     getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
     resolveDecision: (assignment) => inferenceRegistry.resolveValue("decision", assignment),
     clients: decisionClients,
-    calibration: decisionCalibration,
   },
   getSystemInfo: () => getSystemInfo(MODELS_DIR),
   getInferenceOverview: inferenceOverviewWithRuntimes,

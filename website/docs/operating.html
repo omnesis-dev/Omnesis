@@ -841,22 +841,17 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           the <a href="https://models.dev">models.dev</a> decision catalog; for Ollaya, Ollama and
           other servers on your network the gateway also lists the models installed there.
         </p>
-        <h4 id="decision-model-calibration">Calibration</h4>
+        <h4 id="decision-model-thresholds">Thresholds</h4>
         <p>
-          The decisions compare the model's scores with thresholds chosen on TypeSafe Jev's answers.
-          Other models rank email much as Jev does but spread their scores differently, so an
-          uncalibrated model can let much of the junk through, or leave out the dates in mail worth
-          recording. <strong>Calibrate</strong> on the Decision model card, or
-          <code>omnesis decision calibrate</code>, asks the assigned model about 300 invented emails
-          Jev has already scored, finds the score above which the model keeps 95% of the emails Jev
-          keeps, and moves that score onto Jev's threshold; the map is stored in the backend's
-          <code>decision</code> block. A model that rates everything higher than Jev is moved down,
-          so it skips more of what Jev skips; one that rates it lower is moved up. The map never
-          reverses which of two emails the model rates higher. The card shows how much of what Jev
-          keeps the model keeps, and how much of what Jev skips it skips, before and after. The
-          emails are about 150,000 input tokens in all, so on a hosted provider calibration costs
-          what that many tokens cost there; on a local server running on the CPU it can take half an
-          hour. Each model has its own calibration: one assigned for the first time needs its own.
+          A decision compares the model's score with a threshold. The defaults were chosen on
+          TypeSafe Jev's scores; another model may score the same email higher or lower, and so keep
+          more or less than Jev would. Each threshold is a setting you can move. For email dates,
+          <code>enrichment.dates.worthThreshold</code> is the worth an email must reach, on the
+          question's 0–3 scale, for its dates to stay in time queries (1.08 by default). A change
+          re-sorts the emails already judged from the scores they were given, without asking the
+          model again, and the decision ledger records the threshold each judgement used. Change it
+          under <strong>Settings → Config</strong> in the portal or with
+          <code>omnesis config</code>.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -882,13 +877,6 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
               <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis model assign decision ollaya/winnow:e4b</span>
             </p>
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd">omnesis decision calibrate</span>
-            </p>
-            <pre>
-Calibrating ollaya/winnow:e4b on 302 invented reference emails…
-✔ calibrated 2026-11-10: keeps 95% of the reference emails Jev keeps and skips 64% of those it skips (was 93% and 66%)</pre>
           </div>
         </div>
         <p>Backend support depends on the capability. Available backend families are:</p>
@@ -1742,7 +1730,7 @@ Calibrating ollaya/winnow:e4b on 302 invented reference emails…
                 <td><code>decision</code></td>
                 <td>
                   List the providers with decision models, enable or disable a backend's decision
-                  API, list its models, verify and calibrate the Decision model
+                  API, list its models, verify the Decision model
                 </td>
                 <td><a href="#decision-model">Decision model</a></td>
               </tr>

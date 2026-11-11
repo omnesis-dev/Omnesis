@@ -624,6 +624,9 @@ export class KnowledgeEngine {
             node?.validity === "stale"
               ? []
               : this.batchSources(batchId);
+          const settleBelow = source
+            ? this.deps.getSettings().thresholds.discovery
+            : this.deps.getSettings().thresholds.impact;
           const score =
             isReview ||
             isDiscoveryTarget ||
@@ -647,7 +650,7 @@ export class KnowledgeEngine {
                     runId,
                     batchId,
                     nodeId: item.nodeId,
-                    threshold: 0.25,
+                    threshold: settleBelow,
                     payloadCapture:
                       (await knowledgeSelectionReads(this.deps).knowledgeDecisionPayloadSubjects(
                         {
@@ -673,7 +676,7 @@ export class KnowledgeEngine {
             !isDiscoveryTarget &&
             !isInitialRoot &&
             score !== null &&
-            score < 0.25 &&
+            score < settleBelow &&
             (source
               ? !sourceHasDiscoveryObligation(this.deps.db, source.id)
               : node?.validity !== "stale")

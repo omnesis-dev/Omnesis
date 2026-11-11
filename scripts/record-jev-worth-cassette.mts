@@ -5,7 +5,7 @@
 /**
  * Ask TypeSafe Jev the email worth question for every invented email in
  * `scripts/lib/invented-worth-mail.mts` and write its replies as the decision cassette
- * `packages/gateway/decision-reference/jev-worth.jsonl`, the reference `scripts/eval-decision-cassette.mts`
+ * `evals/decision/jev-worth.jsonl`, the reference `scripts/eval-decision-cassette.mts`
  * compares a candidate decision model against. Re-record after changing the
  * worth rubric or the mail generator.
  *
@@ -26,8 +26,7 @@ const apiKey = process.env.TYPESAFE_API_KEY;
 if (!apiKey) throw new Error("TYPESAFE_API_KEY is not set");
 const count = Number(process.argv[2] ?? 312);
 const out =
-  process.argv[3] ??
-  new URL("../packages/gateway/decision-reference/jev-worth.jsonl", import.meta.url).pathname;
+  process.argv[3] ?? new URL("../evals/decision/jev-worth.jsonl", import.meta.url).pathname;
 
 const jev = new TypeSafeDecision({
   url: TYPESAFE_DEFAULT_URL,

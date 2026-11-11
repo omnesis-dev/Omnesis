@@ -149,7 +149,6 @@ describe("resolveModelDisplay — decision backends", () => {
     onHost: false,
     allowRemoteInference: true,
     hasApiKey: true,
-    calibrated: false,
     available: true,
   };
 

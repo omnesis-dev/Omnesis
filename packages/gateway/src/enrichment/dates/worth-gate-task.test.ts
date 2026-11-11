@@ -61,6 +61,7 @@ function scripted(scores: Record<string, number>): DecisionCapability & {
 
 function build(opts: {
   worthGate?: boolean;
+  worthThreshold?: number;
   decision: DecisionCapability | null;
   batches: PendingMentionJudgement[][];
 }) {
@@ -69,6 +70,7 @@ function build(opts: {
   const answered: WorthAnswer[] = [];
   const decisions: CognitionDecisionRecord[] = [];
   const requeued: string[] = [];
+  const resorted: number[] = [];
   const spend: Array<{ modelId: string; inputTokens: number }> = [];
   const tracker = new QueueTracker();
   const task = mentionWorthGateTask({
@@ -87,8 +89,16 @@ function build(opts: {
         requeued.push(version);
         return 0;
       },
+      resettleMentionJudgements: async (threshold) => {
+        resorted.push(threshold);
+        return 0;
+      },
     },
-    getSettings: () => ({ ...DATE_ENRICHMENT_DEFAULTS, worthGate: opts.worthGate ?? true }),
+    getSettings: () => ({
+      ...DATE_ENRICHMENT_DEFAULTS,
+      worthGate: opts.worthGate ?? true,
+      ...(opts.worthThreshold !== undefined ? { worthThreshold: opts.worthThreshold } : {}),
+    }),
     getDecision: () => opts.decision,
     recordSpend: async (modelId, inputTokens) => {
       spend.push({ modelId, inputTokens });
@@ -98,7 +108,7 @@ function build(opts: {
     idGen: () => "id-1",
     log,
   });
-  return { task, applied, deferred, answered, decisions, requeued, spend };
+  return { task, applied, deferred, answered, decisions, requeued, resorted, spend };
 }
 
 describe("mentionWorthGateTask", () => {
@@ -152,6 +162,68 @@ describe("mentionWorthGateTask", () => {
       { modelId: "jev-test", inputTokens: 1000 },
       { modelId: "jev-test", inputTokens: 1000 },
     ]);
+  });
+
+  it("keeps and drops at the configured threshold, and ledgers that threshold", async () => {
+    const decision = scripted({ keep: 2.4, drop: 2.3 });
+    const { task, applied, decisions } = build({
+      decision,
+      worthThreshold: 2.4,
+      batches: [
+        [
+          { ...ask("a"), state: { ...STATE, subject: "keep" } },
+          { ...ask("b"), state: { ...STATE, subject: "drop" } },
+        ],
+      ],
+    });
+    await tick(task);
+    const verdicts = Object.fromEntries(applied.map((r) => [r.documentId, r.verdict]));
+    expect(verdicts).toEqual({ a: "keep", b: "drop" });
+    expect(decisions.map((d) => [d.score, d.threshold, d.verdict])).toEqual(
+      expect.arrayContaining([
+        [2.4, 2.4, "pass"],
+        [2.3, 2.4, "skip"],
+      ]),
+    );
+  });
+
+  it("re-sorts stored judgements once per threshold, a batch per tick, before judging", async () => {
+    const decision = scripted({});
+    const sizes = [500, 12, 0];
+    const calls: number[] = [];
+    let threshold = 1.08;
+    const task = mentionWorthGateTask({
+      ioGate: { fetchPendingMentionJudgements: async () => [] },
+      writeGate: {
+        applyMentionJudgements: async () => 0,
+        requeueStaleMentionJudgements: async () => 0,
+        resettleMentionJudgements: async (t, limit) => {
+          calls.push(t);
+          expect(limit).toBe(500);
+          return sizes.shift() ?? 0;
+        },
+      },
+      getSettings: () => ({
+        ...DATE_ENRICHMENT_DEFAULTS,
+        worthGate: true,
+        worthThreshold: threshold,
+      }),
+      getDecision: () => decision,
+      recordSpend: async () => {},
+      tracker: new QueueTracker(),
+      log,
+    });
+    // At boot the stored verdicts are re-sorted once, whatever they were sorted by.
+    expect(await tick(task)).toMatchObject({ value: { idle: false } });
+    await tick(task);
+    await tick(task);
+    expect(calls).toEqual([1.08, 1.08]);
+    // A changed threshold re-sorts again; an unchanged one does not.
+    threshold = 2;
+    await tick(task);
+    await tick(task);
+    expect(calls).toEqual([1.08, 1.08, 2]);
+    expect(decision.calls).toEqual([]);
   });
 
   it("asks once for an email and its attachments", async () => {
@@ -292,6 +364,7 @@ describe("mentionWorthGateTask", () => {
           calls.push(limit);
           return requeueSizes.shift() ?? 0;
         },
+        resettleMentionJudgements: async () => 0,
       },
       getSettings: () => ({ ...DATE_ENRICHMENT_DEFAULTS, worthGate: true }),
       getDecision: () => decision,

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createLogger, type DecisionCapability } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { insertCognitionDecision, listDecisionsForRun } from "../storage/decisions.js";
+import { BRAIN_DEFAULTS } from "../config.js";
 import { TaskChecks } from "./task-checks.js";
 import type { DecisionPayloadCapture } from "../decision-payload.js";
 import type { OwnerInterest } from "../interest/lookup.js";
@@ -27,6 +28,7 @@ describe("TaskChecks ledger", () => {
   let interest: OwnerInterest | null;
   let lookups: string[];
   let now = 1_000;
+  let thresholds: { sameTask: number; taskNoteNew: number };
 
   const decision: DecisionCapability = {
     modelId: "scripted-decision",
@@ -42,6 +44,7 @@ describe("TaskChecks ledger", () => {
   };
   const checks = (withModel = true, withInterest = false) =>
     new TaskChecks({
+      getThresholds: () => thresholds,
       getDecision: () => (withModel ? decision : null),
       ...(withInterest
         ? {
@@ -79,11 +82,42 @@ describe("TaskChecks ledger", () => {
     records = [];
     interest = null;
     lookups = [];
+    thresholds = BRAIN_DEFAULTS.thresholds;
   });
   afterEach(() => {
     db.close();
     for (const suffix of ["", "-wal", "-shm", "-journal"])
       if (existsSync(path + suffix)) unlinkSync(path + suffix);
+  });
+
+  test("judges at the configured thresholds and ledgers them", async () => {
+    // Scored 1.5: a different task at the default of 2, the same one once the cut is 1.5.
+    score = 1.5;
+    expect(await rename(checks())).toBe("different");
+    thresholds = { sameTask: 1.5, taskNoteNew: 1 };
+    expect(await rename(checks())).toBe("same");
+    // Scored 1: a new note at the default of 1, a repeat once the cut is 1.2.
+    const note = (target: TaskChecks) =>
+      target.noteIsNew({
+        runId: "run_checks",
+        loopId: "loop_fixture",
+        documentId: null,
+        task: { title: "Book the hall", description: "" },
+        recentNotes: ["Asked for the deposit amount."],
+        note: "Asked about the deposit.",
+      });
+    score = 1;
+    expect(await note(checks())).toBe(true);
+    thresholds = { sameTask: 1.5, taskNoteNew: 1.2 };
+    expect(await note(checks())).toBe(false);
+    expect(
+      listDecisionsForRun(db, "run_checks").map((d) => [d.lane, d.threshold, d.verdict]),
+    ).toEqual([
+      ["same_task", 2, "skip"],
+      ["same_task", 1.5, "pass"],
+      ["adds_new", 1, "pass"],
+      ["adds_new", 1.2, "skip"],
+    ]);
   });
 
   test("every verdict, outage included, is a row even when no document anchors the task", async () => {
@@ -166,6 +200,7 @@ describe("TaskChecks ledger", () => {
   test("a failing lookup leaves the check to judge without it", async () => {
     score = 3;
     const failing = new TaskChecks({
+      getThresholds: () => BRAIN_DEFAULTS.thresholds,
       getDecision: () => decision,
       interest: { lookup: () => Promise.reject(new Error("ledger locked")) },
       recordDecision: (record) => {

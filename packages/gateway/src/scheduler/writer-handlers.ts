@@ -247,6 +247,7 @@ import { applyExtractedDates } from "../enrichment/dates/storage.js";
 import {
   applyMentionJudgements,
   requeueStaleMentionJudgements,
+  resettleMentionJudgements,
   type MentionJudgementDeferral,
   type MentionJudgementRecord,
 } from "../enrichment/dates/mention-judgements.js";
@@ -1061,6 +1062,8 @@ export const writerHandlers = {
   ) => applyMentionJudgements(db, records, deferrals, answers, decisions),
   "db.requeueStaleMentionJudgements": (db: Db, rubricVersion: string, limit: number) =>
     requeueStaleMentionJudgements(db, rubricVersion, limit),
+  "db.resettleMentionJudgements": (db: Db, threshold: number, limit: number) =>
+    resettleMentionJudgements(db, threshold, limit),
   // Drain of source-declared forward-reference edges: resolve parked
   // edges whose target has since been ingested, promote them into
   // document_links, and TTL-drop ones whose target never arrived.

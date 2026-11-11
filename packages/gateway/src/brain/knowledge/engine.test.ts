@@ -29,7 +29,7 @@ import { createAnnotationStorageTables } from "../storage/annotations.js";
 import { createPersonAnnotationStorageTables } from "../storage/person-annotations.js";
 import { retireLoop } from "../storage/retired-loops.js";
 import { createOpenLoop, updateOpenLoop, getOpenLoop } from "../storage/open-loops.js";
-import { resolveBrainSettings } from "../config.js";
+import { BRAIN_DEFAULTS, resolveBrainSettings } from "../config.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { OMNESIS_CHAT_SOURCE_ID } from "../../sources/omnesis-chat/ids.js";
 import { writerHandlers } from "../../scheduler/writer-handlers.js";
@@ -3848,7 +3848,7 @@ it("nominates untouched old-policy outcomes within the existing review limit and
     {
       fence,
       receipt: makeOutcomeAssessment(
-        outcomeRecordPolicyKey("enforce", "scripted"),
+        outcomeRecordPolicyKey("enforce", "scripted", BRAIN_DEFAULTS.thresholds),
         outcomeProposal(getOpenLoop(db, other)!),
         fence.sources,
         "outage",

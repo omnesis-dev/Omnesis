@@ -820,7 +820,7 @@ function printRoleLine(
               : resolved.kind === "typesafe"
                 ? `TypeSafe: ${resolved.model}`
                 : resolved.kind === "decision"
-                  ? `${resolved.backendKey}: ${resolved.model}${resolved.calibrated ? "" : " (not calibrated)"}`
+                  ? `${resolved.backendKey}: ${resolved.model}`
                   : resolved.kind === "unresolved"
                     ? "(none)"
                     : unknownAssignmentLabel(resolved);

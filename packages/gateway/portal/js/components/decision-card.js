@@ -55,9 +55,11 @@ const KNOWLEDGE_PURPOSES = new Set(["discovery", "impact", "review", "urgency"])
  * What a run-ledger verdict meant for the work it judged, by purpose (and,
  * for the task gates, by question). `label` is the verdict as a word,
  * `sentence` what happened because of it. A table with an `adopted` entry
- * reads a pass scored at or above ADOPT_SCORE as that stronger outcome.
+ * reads a pass scored at or above the row's threshold, the suggestion gate's
+ * adoption cut, as that stronger outcome. Rows of the gate's first rubric
+ * recorded another threshold; their adoption cut was 1.5.
  */
-const ADOPT_SCORE = 1.5;
+const adoptionCut = (d) => (d.rubricVersion === "task-propose-v1" ? 1.5 : d.threshold);
 const LEDGER_OUTCOMES = {
   "worth-gate": {
     pass: ["pass", "Admitted for agent review."],
@@ -109,7 +111,7 @@ function ledgerOutcome(d) {
   if (d.reusedFrom)
     return { label: d.verdict, tone: TONES[d.verdict] ?? "neutral", sentence: "Reused a prior judgement; no model call was made for this entry." };
   const table = LEDGER_OUTCOMES[`${d.purpose}:${d.lane}`] ?? LEDGER_OUTCOMES[d.purpose];
-  const adopted = d.verdict === "pass" && table?.adopted && d.score >= ADOPT_SCORE;
+  const adopted = d.verdict === "pass" && table?.adopted && d.score >= adoptionCut(d);
   const key = adopted
     ? d.enforced === false ? "wouldAdopt" : "adopted"
     : d.verdict === "skip" && d.enforced === false ? "shadowSkip" : d.verdict;

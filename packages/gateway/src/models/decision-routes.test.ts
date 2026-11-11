@@ -12,7 +12,6 @@ import { strictRoute } from "../http/scope.js";
 import { DecisionClients } from "../inference/decision/decision-clients.js";
 import { InferenceRegistry } from "../inference/registry.js";
 import { registerDecisionRoutes } from "./decision-routes.js";
-import { DecisionCalibrationJob } from "./decision-tools.js";
 import type { AppEnv } from "../http/routes/types.js";
 import type { OmnesisConfig } from "@omnesis/config";
 
@@ -20,7 +19,6 @@ let dir: string;
 let app: Hono<AppEnv>;
 let registry: InferenceRegistry;
 let decisionServer: ReturnType<typeof vi.fn>;
-let calibration: DecisionCalibrationJob;
 
 const VERIFY_ANSWERS = {
   verify_noul: { type: "noul", noul: 0.97 },
@@ -69,13 +67,6 @@ beforeEach(() => {
     readTypeSafeApiKey: () => null,
     fetchFn,
   });
-  calibration = new DecisionCalibrationJob({
-    resolve: () => registry.resolve("decision"),
-    getDecisionEndpoint: (key) => registry.getDecisionEndpoint(key),
-    createRawClient: (resolved) => clients.backend(resolved, { calibrated: false }),
-    store: async () => {},
-    reference: () => [],
-  });
 
   app = new Hono<AppEnv>();
   app.onError((err, c) => {
@@ -98,7 +89,6 @@ beforeEach(() => {
     getBackendApiKey: (key) => registry.getBackendApiKey(key),
     resolveDecision: (assignment) => registry.resolveValue("decision", assignment),
     clients,
-    calibration,
     fetchFn,
   });
 });
@@ -220,28 +210,8 @@ describe("decision routes", () => {
     expect(decisionServer).not.toHaveBeenCalled();
   });
 
-  it("starts, reports and refuses calibration as the job decides", async () => {
-    const idle = await app.request("/admin/models/decision/calibration");
-    expect(await idle.json()).toEqual({ state: "idle", done: 0, total: 0, failed: 0 });
-
-    const started = await post("/admin/models/decision/calibration");
-    expect(started.status).toBe(202);
-    await calibration.settled();
-    // An empty reference set cannot be fitted.
-    const status = (await (await app.request("/admin/models/decision/calibration")).json()) as {
-      state: string;
-      error: string;
-    };
-    expect(status.state).toBe("failed");
-    expect(status.error).toContain("Only 0 of 0");
-
-    registry.loadConfig({
-      inference: { assignments: { decision: "typesafe/jev-1.13.0" } },
-    } as unknown as OmnesisConfig);
-    const refused = await post("/admin/models/decision/calibration");
-    expect(refused.status).toBe(400);
-
-    const cancelled = await app.request("/admin/models/decision/calibration", { method: "DELETE" });
-    expect(cancelled.status).toBe(200);
+  it("serves no calibration routes", async () => {
+    expect((await app.request("/admin/models/decision/calibration")).status).toBe(404);
+    expect((await post("/admin/models/decision/calibration")).status).toBe(404);
   });
 });

@@ -424,7 +424,7 @@ export function createServer(
     /** Bundled and gateway-refreshed Models.dev model metadata and provider logos. */
     modelsDevCatalog?: import("./models/models-dev-catalog.js").ModelsDevCatalog;
     decisionCatalog?: import("./models/models-dev-decisions.js").ModelsDevDecisionCatalog;
-    /** Decision model setup routes (probe, verify, calibrate). */
+    /** Decision model setup routes (probe, verify). */
     decisionRoutes?: import("./models/decision-routes.js").DecisionRouteOptions;
     /** Snapshot getter for `/admin/system-info`. Required when modelManager is provided. */
     getSystemInfo?: () => SystemInfo;

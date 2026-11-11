@@ -259,19 +259,9 @@ describe("DecisionService — decision backends", () => {
     onHost: true,
     allowRemoteInference: false,
     hasApiKey: false,
-    calibrated: false,
     available: true,
     ...over,
   });
-  const calibration = {
-    points: [
-      [0.5, 0.25],
-      [0.9, 0.8],
-    ] as [number, number][],
-    reference: "jev-worth/email-worth-v1/jev-1.13.0",
-    fittedAt: "2026-11-10T00:00:00.000Z",
-  };
-
   function serve(score: number) {
     return vi.fn(async (_url: string | URL, init?: RequestInit) =>
       Response.json({
@@ -281,25 +271,19 @@ describe("DecisionService — decision backends", () => {
     ) as unknown as typeof fetch;
   }
 
-  it("answers through the backend's wire format and applies its calibration", async () => {
-    let cfg: Record<string, unknown> = { url: "http://127.0.0.1:9/v1/systemone" };
-    let resolved = backend();
+  it("answers through the backend's wire format, passing its scores through unchanged", async () => {
     const service = new DecisionService({
-      resolveAssignment: () => resolved,
+      resolveAssignment: () => backend(),
       readTypeSafeApiKey: () => null,
-      getDecisionEndpoint: () => cfg as never,
+      getDecisionEndpoint: () => ({ url: "http://127.0.0.1:9/v1/systemone" }) as never,
       fetchFn: serve(1.5),
     });
-    const raw = service.get()!;
-    expect((await raw.decide(request)).answers.worth_score).toEqual({ type: "score", score: 1.5 });
-
-    cfg = { ...cfg, calibration: { kev: calibration } };
-    resolved = backend({ calibrated: true });
-    const calibrated = service.get()!;
-    expect(calibrated).not.toBe(raw);
-    expect(calibrated.modelId).toBe("kev+cal");
-    const answer = (await calibrated.decide(request)).answers.worth_score;
-    expect(answer).toEqual({ type: "score", score: 0.75 });
+    const model = service.get()!;
+    expect(model.modelId).toBe("kev");
+    expect((await model.decide(request)).answers.worth_score).toEqual({
+      type: "score",
+      score: 1.5,
+    });
   });
 
   it("keeps one client while nothing changes, and rebuilds it when the key does", () => {
@@ -371,7 +355,6 @@ describe("DecisionService — a client that cannot be built", () => {
       onHost: true,
       allowRemoteInference: false,
       hasApiKey: false,
-      calibrated: false,
       available: true,
     };
     const service = new DecisionService({

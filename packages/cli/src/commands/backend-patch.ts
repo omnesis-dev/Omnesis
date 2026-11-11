@@ -4,15 +4,10 @@
 /**
  * Pure helpers for `omnesis backend` and `omnesis decision`: the
  * `PATCH /admin/config` bodies that add a backend from a preset, add or
- * remove a backend's decision API, and the line describing a calibration.
+ * remove a backend's decision API.
  */
 
-import {
-  fillDecisionPresetUrl,
-  getPreset,
-  type DecisionCalibration,
-  type ProviderPreset,
-} from "@omnesis/core";
+import { fillDecisionPresetUrl, getPreset, type ProviderPreset } from "@omnesis/core";
 
 /** Names that are built-in assignment prefixes, so cannot name a backend. */
 const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "claude-code", "replay"];
@@ -205,19 +200,6 @@ export function buildDecisionDisablePatch(input: {
   };
   if (input.decisionAssigned) inference.assignments = { decision: null };
   return { inference };
-}
-
-/** One line describing a stored calibration. */
-export function describeCalibration(calibration: DecisionCalibration | undefined): string {
-  if (!calibration) {
-    return "not calibrated — thresholds tuned on TypeSafe's Jev may not fit this model";
-  }
-  const date = calibration.fittedAt.slice(0, 10);
-  const pct = (v: number | undefined) => (v === undefined ? "?" : `${Math.round(v * 100)}%`);
-  if (calibration.keeps !== undefined && calibration.skips !== undefined) {
-    return `calibrated ${date}: keeps ${pct(calibration.keeps)} of the reference emails Jev keeps and skips ${pct(calibration.skips)} of those it skips (was ${pct(calibration.keepsBefore)} and ${pct(calibration.skipsBefore)})`;
-  }
-  return `calibrated ${date}: agrees with Jev on ${pct(calibration.agreement)} of the reference emails (was ${pct(calibration.agreementBefore)})`;
 }
 
 /** Which APIs a backend serves, as `omnesis backend list` shows it. */

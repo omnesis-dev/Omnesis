@@ -17,7 +17,6 @@ const BACKEND: ResolvedDecisionBackend = {
   onHost: true,
   allowRemoteInference: false,
   hasApiKey: false,
-  calibrated: false,
   available: true,
 };
 const TYPESAFE: ResolvedTypeSafe = {
@@ -66,12 +65,12 @@ describe("DecisionClients", () => {
       backends: { box: { url: BACKEND.url, maxConcurrency: 2 } },
       fetchFn,
     });
-    // The live model and a calibration client, built separately.
-    const live = c.backend(BACKEND, { calibrated: true });
-    const calibration = c.backend(BACKEND, { calibrated: false });
+    // The live model and a second client of the same backend, built separately.
+    const live = c.backend(BACKEND);
+    const other = c.backend(BACKEND, { maxRetries: 0 });
     await Promise.all(
       Array.from({ length: 6 }, (_, i) =>
-        (i % 2 ? live : calibration).decide({ state: "x", questions: {} }),
+        (i % 2 ? live : other).decide({ state: "x", questions: {} }),
       ),
     );
     expect(peak).toBe(2);
@@ -86,9 +85,7 @@ describe("DecisionClients", () => {
   });
 
   it("refuses to build a client for a backend it no longer has", () => {
-    expect(() => clients({}).backend(BACKEND, { calibrated: false })).toThrow(
-      'Backend "box" has no decision API',
-    );
+    expect(() => clients({}).backend(BACKEND)).toThrow('Backend "box" has no decision API');
   });
 
   it("verifies an assignment, and reports one it cannot", async () => {

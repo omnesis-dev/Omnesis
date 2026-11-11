@@ -24,7 +24,11 @@ import type { DecisionQuestion } from "@omnesis/core";
 
 export const WORTH_GATE_RUBRIC_VERSION = "email-worth-v1";
 
-/** Pass when the score is at or above this (levels run 0–3). */
+/**
+ * The default worth threshold (levels run 0–3), tuned on TypeSafe Jev: an
+ * email scored at or above it is worth recording. `brain.thresholds.worthGate`
+ * and `enrichment.dates.worthThreshold` move it for each gate.
+ */
 export const EMAIL_WORTH_THRESHOLD = 1.08;
 
 /** Body characters sent to the decision model. */
@@ -49,9 +53,9 @@ export const EMAIL_WORTH_QUESTIONS: Readonly<Record<string, DecisionQuestion>> =
 /** The document type the gate judges; attachments are judged by their parent of this type. */
 export const WORTH_GATED_DOCUMENT_TYPE = "email";
 
-/** True when a score clears the threshold: the email is worth recording. */
-export function passesWorthThreshold(score: number): boolean {
-  return score >= EMAIL_WORTH_THRESHOLD;
+/** True when a score clears `threshold`: the email is worth recording. */
+export function passesWorthThreshold(score: number, threshold: number): boolean {
+  return score >= threshold;
 }
 
 /**

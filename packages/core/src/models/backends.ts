@@ -24,7 +24,6 @@
 import type { GgufCatalogEntry, AnthropicCatalogEntry } from "./types.js";
 import type { CapabilityRole } from "./capabilities.js";
 import type { ModelSettingsByRole, ModelControls, ModelBehaviorValues } from "./model-behavior.js";
-import type { DecisionCalibration } from "./decision-calibration.js";
 import type { DecisionAuth, DecisionProtocol, DecisionScoreField } from "./decision-api.js";
 
 // ── Backend types ─────────────────────────────────────────────────────
@@ -121,8 +120,6 @@ export interface HttpBackendDecisionConfig {
   keyRequired?: boolean;
   maxConcurrency?: number;
   timeoutMs?: number;
-  /** Maps each model's scores onto Jev's scale, keyed by model id. */
-  calibration?: Record<string, DecisionCalibration>;
 }
 
 /**
@@ -389,8 +386,6 @@ export interface ResolvedDecisionBackend extends ResolvedBase {
   allowRemoteInference: boolean;
   /** Whether an API key is configured (the value is never exposed). */
   hasApiKey: boolean;
-  /** Whether a calibration onto Jev's scale is stored for this model. */
-  calibrated: boolean;
   available: boolean;
   reason?: string;
 }
@@ -721,8 +716,6 @@ export interface BackendDecisionStatus {
   hasApiKey: boolean;
   /** Why the stored API key could not be read, when it could not. */
   apiKeySecretError?: string;
-  /** Calibrations stored for this backend, by model id. */
-  calibrations: Record<string, DecisionCalibration>;
 }
 
 export interface InferenceOverview {

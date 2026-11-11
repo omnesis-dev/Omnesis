@@ -8,9 +8,6 @@
  *   POST   /admin/inference/backends/:key/decision/probe   models a backend's decision API has
  *   POST   /admin/inference/backends/:key/decision/verify  {model} → one test decision
  *   POST   /admin/inference/typesafe/verify                 {model} → the same, for TypeSafe
- *   GET    /admin/models/decision/calibration               the calibration job's status
- *   POST   /admin/models/decision/calibration               start calibrating the assigned model
- *   DELETE /admin/models/decision/calibration               cancel it
  *
  * Adding a backend's decision API, removing it and assigning one of its
  * models go through `PATCH /admin/config` like every other backend change
@@ -18,16 +15,11 @@
  * the secret store on the way in.
  */
 
-import { BadRequestError, ConflictError, NotFoundError } from "../http/errors.js";
+import { NotFoundError } from "../http/errors.js";
 import { decisionModelBody, decisionProbeBody } from "../http/schemas/decision.js";
 import { scope } from "../http/scope.js";
 import { validateJson } from "../http/validate.js";
-import {
-  CalibrationConflict,
-  CalibrationUnsupported,
-  probeDecisionBackend,
-  type DecisionCalibrationJob,
-} from "./decision-tools.js";
+import { probeDecisionBackend } from "./decision-tools.js";
 import type { RouteApp } from "../http/routes/types.js";
 import type { DecisionEndpointConfig } from "../inference/registry.js";
 import type { DecisionClients } from "../inference/decision/decision-clients.js";
@@ -43,7 +35,6 @@ export interface DecisionRouteOptions {
   /** Resolve `<key>/<model>` (a backend's decision API) or `typesafe/<model>` for the decision role. */
   resolveDecision: (assignment: string) => ResolvedAssignment;
   clients: DecisionClients;
-  calibration: DecisionCalibrationJob;
   fetchFn?: typeof fetch;
 }
 
@@ -94,23 +85,5 @@ export function registerDecisionRoutes(app: RouteApp, opts: DecisionRouteOptions
       const { model } = c.req.valid("json");
       return c.json(await opts.clients.verify(opts.resolveDecision(`typesafe/${model}`)));
     },
-  );
-
-  app.get("/admin/models/decision/calibration", scope.admin(), (c) =>
-    c.json(opts.calibration.status()),
-  );
-
-  app.post("/admin/models/decision/calibration", scope.admin(), (c) => {
-    try {
-      return c.json(opts.calibration.start(), 202);
-    } catch (err) {
-      if (err instanceof CalibrationConflict) throw new ConflictError(err.message);
-      if (err instanceof CalibrationUnsupported) throw new BadRequestError(err.message);
-      throw err;
-    }
-  });
-
-  app.delete("/admin/models/decision/calibration", scope.admin(), (c) =>
-    c.json(opts.calibration.cancel()),
   );
 }

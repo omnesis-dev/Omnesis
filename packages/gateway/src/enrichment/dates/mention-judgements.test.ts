@@ -17,6 +17,7 @@ import {
   countPendingMentionJudgements,
   fetchPendingMentionJudgements,
   requeueStaleMentionJudgements,
+  resettleMentionJudgements,
   type PendingMentionJudgement,
 } from "./mention-judgements.js";
 import type { Db } from "../../data/types.js";
@@ -383,5 +384,35 @@ describe("mention judgements", () => {
     expect(requeueStaleMentionJudgements(db, "email-worth-v2", 2)).toBe(1);
     expect(requeueStaleMentionJudgements(db, "email-worth-v2", 2)).toBe(0);
     expect(ids.map(verdictOf)).toEqual(["pending", "pending", "pending"]);
+  });
+
+  it("re-sorts stored judgements by their scores when the threshold moves, a batch at a time", () => {
+    const scores = { low: 0.2, mid: 1.5, high: 2.7 };
+    const ids = Object.fromEntries(
+      Object.entries(scores).map(([name, score]) => {
+        const id = seed(name);
+        extract(id);
+        settle(only(id), score);
+        return [name, id];
+      }),
+    );
+    const verdicts = () => Object.values(ids).map(verdictOf);
+    expect(verdicts()).toEqual(["drop", "keep", "keep"]);
+    // Nothing is on the wrong side of the threshold they were judged at.
+    expect(resettleMentionJudgements(db, 1.08, 10)).toBe(0);
+
+    // Raised: the email scored 1.5 now drops, two writer calls of one row each.
+    expect(resettleMentionJudgements(db, 2, 1)).toBe(1);
+    expect(resettleMentionJudgements(db, 2, 1)).toBe(0);
+    expect(verdicts()).toEqual(["drop", "drop", "keep"]);
+
+    // Lowered below every score: all keep, and the scores are untouched.
+    expect(resettleMentionJudgements(db, 0.1, 10)).toBe(2);
+    expect(verdicts()).toEqual(["keep", "keep", "keep"]);
+    const stored = db
+      .prepare<[], { score: number }>("SELECT score FROM date_mention_judgements ORDER BY score")
+      .all()
+      .map((r) => r.score);
+    expect(stored).toEqual([0.2, 1.5, 2.7]);
   });
 });

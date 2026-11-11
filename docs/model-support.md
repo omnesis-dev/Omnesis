@@ -312,10 +312,11 @@ model, below. The providers are the presets in
 `packages/core/src/models/provider-presets.ts`, whose `decision` block carries
 the decision API and its model ids, and the models.dev decision catalog
 (`api.json?type=decision`) adds model ids, context and price.
-A calibrated decision API's scores are moved onto Jev's scale by a per-model calibration
-that anchors the score keeping 95% of what Jev keeps on Jev's threshold, fitted on the bundled Jev reference set
-(`packages/gateway/decision-reference/jev-worth.jsonl`), so the Jev-tuned
-thresholds keep their meaning. A chat model serves the role only in experimental mode
+Every decision threshold defaults to the value tuned on TypeSafe Jev's scores
+and is a setting: `brain.thresholds` for the Brain's decisions and
+`enrichment.dates.worthThreshold` for email dates, each on its question's own
+scale, so a model that scores differently from Jev is brought in line by moving
+them. A chat model serves the role only in experimental mode
 (`OMNESIS_EXPERIMENTAL=1`), because every decision threshold was tuned on
 TypeSafe Jev's scores and a 4B chat model kept 69–85% of what Jev keeps at the
 email worth threshold (`scripts/eval-decision-cassette.mts` measures a

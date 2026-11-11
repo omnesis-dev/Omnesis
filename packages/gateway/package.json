@@ -71,7 +71,6 @@
     "dist",
     "portal",
     "models-dev",
-    "decision-reference",
     "duckdb-extensions"
   ],
   "exports": {

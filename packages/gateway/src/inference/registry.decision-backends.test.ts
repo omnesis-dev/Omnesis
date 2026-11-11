@@ -76,7 +76,6 @@ describe("InferenceRegistry — decision role on a backend's decision API", () =
       onHost: true,
       allowRemoteInference: false,
       hasApiKey: false,
-      calibrated: false,
       available: true,
     });
   });
@@ -215,24 +214,6 @@ describe("InferenceRegistry — decision role on a backend's decision API", () =
     });
   });
 
-  it("reports whether the assigned model is calibrated", () => {
-    const calibration = {
-      points: [
-        [0.2, 0.1],
-        [0.8, 0.9],
-      ] as [number, number][],
-      reference: "jev-worth/email-worth-v1/jev-1.13.0",
-      fittedAt: "2026-11-10T12:00:00.000Z",
-    };
-    load({
-      backends: {
-        ollaya: { ...OLLAYA, decision: { ...OLLAYA.decision, calibration: { kev: calibration } } },
-      },
-    });
-    expect(registry.resolveValue("decision", "ollaya/kev")).toMatchObject({ calibrated: true });
-    expect(registry.resolveValue("decision", "ollaya/laya")).toMatchObject({ calibrated: false });
-  });
-
   it("brands a backend by the preset whose decision URL it uses when it names none", () => {
     load({ backends: { mine: decisionOnly({ url: "http://127.0.0.1:11434/v1/systemone" }) } });
     expect(registry.resolveValue("decision", "mine/d3:4b")).toMatchObject({ preset: "ollama" });
@@ -329,7 +310,6 @@ describe("InferenceRegistry — overview", () => {
         auth: "bearer",
         onHost: true,
         hasApiKey: false,
-        calibrations: {},
       },
     });
     expect(overview.backends.foundry).toEqual({
@@ -343,7 +323,6 @@ describe("InferenceRegistry — overview", () => {
         auth: "api-key",
         onHost: false,
         hasApiKey: true,
-        calibrations: {},
       },
     });
     expect(overview.backends.fireworks).toMatchObject({

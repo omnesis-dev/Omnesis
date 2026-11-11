@@ -3168,6 +3168,105 @@ const brainKnowledge = z
       });
   });
 
+/**
+ * The decision model's cut-offs at each Brain decision point. Each is
+ * compared with the model's score on that question's own scale: levels
+ * 0–3 for a four-level question, 0–2 for a three-level one, or 0–1 where the
+ * score is normalized. The defaults are the values tuned on TypeSafe Jev; a
+ * model that scores higher or lower than Jev may want them moved. A change
+ * applies to judgements made after it; decisions already taken stand, and the
+ * decision ledger records the threshold each judgement used.
+ */
+const levelThreshold = (max: number, description: string) =>
+  z.number().min(0).max(max).describe(description).optional();
+
+const brainThresholds = z
+  .object({
+    worthGate: levelThreshold(
+      3,
+      "Email worth (levels 0–3) at or above which an email gets a background-agent run.",
+    ),
+    discovery: levelThreshold(
+      1,
+      "Normalized discovery score (0–1) below which a source is settled without being interpreted or organized.",
+    ),
+    impact: levelThreshold(
+      1,
+      "Normalized impact score (0–1) below which a change to a knowledge page's inputs is settled without inspecting the page.",
+    ),
+    reviewNow: levelThreshold(
+      1,
+      "Normalized review score (0–1) at or above which a knowledge page is reviewed at once.",
+    ),
+    reviewDormant: levelThreshold(
+      1,
+      "Normalized review score (0–1) below which a knowledge page waits for new evidence or its backstop.",
+    ),
+    recordBelongs: levelThreshold(
+      3,
+      "Score (levels 0–3) at or above which a new annotation, observation or wiki page belongs in life memory.",
+    ),
+    documentRecordValue: levelThreshold(
+      3,
+      "Score (levels 0–3) at or above which a note on a document adds enough value to keep.",
+    ),
+    personRecordValue: levelThreshold(
+      3,
+      "Score (levels 0–3) at or above which a fact earns a place in a person's profile.",
+    ),
+    personWithdrawal: levelThreshold(
+      3,
+      "Score (levels 0–3) a withdrawal from a person's profile must reach to show nothing useful is lost.",
+    ),
+    profileDistillation: levelThreshold(
+      3,
+      "Score (levels 0–3) a rewritten person profile must reach to show it keeps what the old one said.",
+    ),
+    wikiRepair: levelThreshold(
+      3,
+      "Score (levels 0–3) a factual repair of a wiki page must reach to be saved.",
+    ),
+    outcomeIntegrity: levelThreshold(
+      3,
+      "Score (levels 0–3) a changed outcome must reach to show it keeps the previous outcome's supported meaning.",
+    ),
+    outcomeDeadline: levelThreshold(
+      3,
+      "Score (levels 0–3) an outcome's deadline must reach to count as supported by its sources.",
+    ),
+    sameTask: levelThreshold(
+      2,
+      "Score (levels 0–2) at or above which a new title for one of your tasks still names the same task and applies directly.",
+    ),
+    taskNoteNew: levelThreshold(
+      2,
+      "Score (levels 0–2) at or above which a note on one of your tasks adds something new and is recorded.",
+    ),
+    taskAdopt: levelThreshold(
+      2,
+      "Score (levels 0–2) at or above which a new Brain suggestion becomes your task at once (proposal gate on enforce).",
+    ),
+    taskWithhold: levelThreshold(
+      2,
+      "Score (levels 0–2) below which a new Brain suggestion is withheld (proposal gate on enforce).",
+    ),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.reviewDormant ?? 0.25) > (value.reviewNow ?? 0.75))
+      ctx.addIssue({
+        code: "custom",
+        path: ["reviewDormant"],
+        message: "The dormant review threshold must not exceed the review-now threshold.",
+      });
+    if ((value.taskWithhold ?? 0.5) > (value.taskAdopt ?? 1.5))
+      ctx.addIssue({
+        code: "custom",
+        path: ["taskWithhold"],
+        message: "The withhold threshold must not exceed the adopt threshold.",
+      });
+  });
+
 // One `brain.excludedSources` entry: a bare source type covers every source of
 // that type, a `type:account` id exactly one source. The type need not be
 // installed yet, so only the syntax is checked.
@@ -3286,6 +3385,11 @@ const brain = z
       )
       .optional(),
     tasks: brainTasks.describe("How the Brain changes the tasks you own.").optional(),
+    thresholds: brainThresholds
+      .describe(
+        "The decision model's cut-off at each Brain decision point, on each question's own scale. Defaults are tuned on TypeSafe Jev.",
+      )
+      .optional(),
     interest: brainInterest
       .describe("What the Brain learns from your reactions, and where it uses it.")
       .optional(),
@@ -3330,29 +3434,6 @@ const brain = z
 
 // A backend's decision API: the endpoint that answers typed decisions for the
 // `decision` role ("<key>/<model>"), reached with the backend's own API key.
-const decisionCalibrationPoint = z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)]);
-const decisionCalibration = z
-  .object({
-    points: z
-      .array(decisionCalibrationPoint)
-      .min(1)
-      .max(17)
-      .refine(
-        (pts) => pts.every((p, i) => i === 0 || (p[0] > pts[i - 1]![0] && p[1] >= pts[i - 1]![1])),
-        "calibration points must be sorted by x with non-decreasing y",
-      ),
-    reference: z.string().min(1).max(200),
-    fittedAt: z.string().datetime(),
-    samples: z.number().int().nonnegative().optional(),
-    agreement: z.number().min(0).max(1).optional(),
-    agreementBefore: z.number().min(0).max(1).optional(),
-    keeps: z.number().min(0).max(1).optional(),
-    keepsBefore: z.number().min(0).max(1).optional(),
-    skips: z.number().min(0).max(1).optional(),
-    skipsBefore: z.number().min(0).max(1).optional(),
-  })
-  .strict();
-
 const backendDecisionConfig = z
   .object({
     // The full endpoint URL, e.g. "http://127.0.0.1:11435/v1/systemone".
@@ -3368,8 +3449,6 @@ const backendDecisionConfig = z
     keyRequired: z.boolean().optional(),
     maxConcurrency: z.number().int().min(1).max(16).optional(),
     timeoutMs: z.number().int().min(1000).max(300_000).optional(),
-    // Maps each model's scores onto Jev's scale, keyed by model id.
-    calibration: z.record(z.string().min(1), decisionCalibration).optional(),
   })
   .strict();
 
@@ -3890,6 +3969,14 @@ const enrichmentDates = z
       .boolean()
       .describe(
         "Hide the date mentions of email the decision model judges not worth recording — marketing, newsletters, notifications — from time queries. Takes effect only while the decision model is assigned; every email with a date mention, including those already stored, then has its subject, sender and first 2,000 characters sent to the decision model (TypeSafe, or your own TypeSafe-compatible endpoint), again only when its content changes.",
+      )
+      .optional(),
+    worthThreshold: z
+      .number()
+      .min(0)
+      .max(3)
+      .describe(
+        "Email worth (levels 0–3) at or above which an email's date mentions are kept for time queries. Tuned on TypeSafe Jev. A change re-sorts the emails already judged from their stored scores, with no new model calls.",
       )
       .optional(),
   })

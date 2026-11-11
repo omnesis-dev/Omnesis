@@ -176,15 +176,6 @@ export type {
   DecisionScoreField,
 } from "./decision-api.js";
 export { decisionUrlPlaceholders, isWorkersAiModelId } from "./decision-api.js";
-export type { DecisionCalibration, DecisionGateRates } from "./decision-calibration.js";
-export {
-  MIN_CALIBRATION_SAMPLES,
-  calibrateDecisionScore,
-  calibrateNormalized,
-  decisionGateRates,
-  CALIBRATION_RECALL,
-  fitDecisionCalibration,
-} from "./decision-calibration.js";
 export type { ProviderDecisionPreset, ProviderPreset } from "./provider-presets.js";
 export {
   PROVIDER_PRESETS,

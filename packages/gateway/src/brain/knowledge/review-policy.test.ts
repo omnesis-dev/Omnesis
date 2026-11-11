@@ -156,7 +156,16 @@ it.each([
   [1, "now"],
 ] as const)("maps normalized ordered review score %s to %s", (score, decision) => {
   const signals = knowledgeReviewSignals(db, page(), now);
-  expect(decideKnowledgeReview(signals, score, cfg).decision).toBe(decision);
+  expect(decideKnowledgeReview(signals, score, cfg, settings.thresholds).decision).toBe(decision);
+});
+it.each([
+  [0.3, "dormant"],
+  [0.4, "defer"],
+  [0.6, "now"],
+] as const)("reads review score %s as %s at configured thresholds", (score, decision) => {
+  const signals = knowledgeReviewSignals(db, page(), now);
+  const thresholds = { reviewNow: 0.6, reviewDormant: 0.35 };
+  expect(decideKnowledgeReview(signals, score, cfg, thresholds).decision).toBe(decision);
 });
 it("commits immediate scheduling metadata and work atomically under the node revision", () => {
   const node = page();
@@ -187,7 +196,7 @@ it("commits immediate scheduling metadata and work atomically under the node rev
 it("forces the maximum-interval backstop and falls back to review on unavailable judgement", async () => {
   const old = page("old", now - cfg.maxReviewIntervalMs);
   const signals = knowledgeReviewSignals(db, old, now);
-  expect(decideKnowledgeReview(signals, 0, cfg)).toMatchObject({
+  expect(decideKnowledgeReview(signals, 0, cfg, settings.thresholds)).toMatchObject({
     decision: "now",
     reason: "fairness_or_checkpoint",
   });
@@ -233,7 +242,7 @@ it("does not let repeated fresh wiki verification postpone its whole-page review
     );
     const signals = knowledgeReviewSignals(db, getKnowledgeNode(db, node.id)!, now);
     expect(signals.lastMeaningfulReviewAt).toBe(created);
-    expect(decideKnowledgeReview(signals, 0, cfg)).toMatchObject({
+    expect(decideKnowledgeReview(signals, 0, cfg, settings.thresholds)).toMatchObject({
       decision: "now",
       reason: "fairness_or_checkpoint",
     });
@@ -254,7 +263,7 @@ it("advances the wiki clock only for a completed whole review and preserves loop
   );
   const wikiSignals = knowledgeReviewSignals(db, getKnowledgeNode(db, node.id)!, now);
   expect(wikiSignals.lastMeaningfulReviewAt).toBe(now - 10);
-  expect(decideKnowledgeReview(wikiSignals, 0, cfg).nextReviewAt).toBe(
+  expect(decideKnowledgeReview(wikiSignals, 0, cfg, settings.thresholds).nextReviewAt).toBe(
     now - 10 + cfg.maxReviewIntervalMs,
   );
   createOpenLoop(
@@ -275,7 +284,7 @@ it("advances the wiki clock only for a completed whole review and preserves loop
   );
   const loopSignals = knowledgeReviewSignals(db, getKnowledgeNode(db, "verified-loop")!, now);
   expect(loopSignals.lastMeaningfulReviewAt).toBe(now - 1);
-  expect(decideKnowledgeReview(loopSignals, 0, cfg).nextReviewAt).toBe(
+  expect(decideKnowledgeReview(loopSignals, 0, cfg, settings.thresholds).nextReviewAt).toBe(
     now - 1 + cfg.maxReviewIntervalMs,
   );
   await upkeep(0).reviews();
@@ -325,7 +334,7 @@ it("keeps gate deferral authoritative for growth and an unchanged recently revie
   );
   const unchanged = knowledgeReviewSignals(db, getKnowledgeNode(db, baseline.id)!, now);
   expect(unchanged.editorial?.substantialGrowth).toBe(false);
-  expect(decideKnowledgeReview(unchanged, 0, cfg).nextReviewAt).toBe(
+  expect(decideKnowledgeReview(unchanged, 0, cfg, settings.thresholds).nextReviewAt).toBe(
     reviewed + cfg.maxReviewIntervalMs,
   );
   saveKnowledgeNode(
@@ -343,7 +352,7 @@ it("keeps gate deferral authoritative for growth and an unchanged recently revie
     now,
   );
   const grown = knowledgeReviewSignals(db, getKnowledgeNode(db, baseline.id)!, now);
-  expect(decideKnowledgeReview(grown, 0, cfg)).toMatchObject({
+  expect(decideKnowledgeReview(grown, 0, cfg, settings.thresholds)).toMatchObject({
     decision: "dormant",
     nextReviewAt: reviewed + cfg.maxReviewIntervalMs,
   });

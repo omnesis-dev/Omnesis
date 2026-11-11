@@ -827,9 +827,10 @@
         <p>
           This is unstable. Every decision threshold was chosen on TypeSafe Jev's scores, and a chat
           model scores on its own scale: on a set of invented emails, 4-billion-parameter models
-          kept 69–85% of the mail TypeSafe Jev keeps at the email worth gate's threshold, and
-          calibration covers decision models only. Outside experimental mode such an assignment is
-          refused, and the portal offers decision models only.
+          kept 69–85% of the mail TypeSafe Jev keeps at the email worth gate's threshold. The
+          thresholds can be moved (see <a href="#decision-thresholds">Decision thresholds</a>).
+          Outside experimental mode such an assignment is refused, and the portal offers decision
+          models only.
         </p>
         <p>
           A chat model answers each question from the probability it gives each option as its first
@@ -866,6 +867,140 @@
           how much of the mail the recorded model kept the candidate keeps too, and the threshold at
           which it would keep 95% of it.
         </p>
+
+        <h4 id="decision-thresholds">Decision thresholds</h4>
+        <p>
+          Each Brain decision compares the decision model's score with a threshold under
+          <code>brain.thresholds</code>, on that question's own scale. The defaults were chosen on
+          TypeSafe Jev's scores; a model that scores higher or lower than Jev can be brought in line
+          by moving them, for example the email worth threshold to the one the replay above reports.
+          A change applies to judgements made after it: decisions already taken stand, and the
+          decision ledger records the threshold each judgement used. With the record check on
+          <code>enforce</code>, moving a threshold that tracked outcomes use queues those outcomes
+          for review once, as a new rubric would. The proposal gate's two thresholds must not cross,
+          nor the two review thresholds.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Setting</th>
+                <th>Scale</th>
+                <th>Default</th>
+                <th>At or above it</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>worthGate</code></td>
+                <td>0–3</td>
+                <td>1.08</td>
+                <td>An email gets a background-agent run.</td>
+              </tr>
+              <tr>
+                <td><code>discovery</code></td>
+                <td>0–1</td>
+                <td>0.25</td>
+                <td>Below it, a new source is settled without being interpreted or organized.</td>
+              </tr>
+              <tr>
+                <td><code>impact</code></td>
+                <td>0–1</td>
+                <td>0.25</td>
+                <td>
+                  Below it, a change to a page's inputs is settled without inspecting the page.
+                </td>
+              </tr>
+              <tr>
+                <td><code>reviewNow</code></td>
+                <td>0–1</td>
+                <td>0.75</td>
+                <td>A knowledge page is reviewed at once.</td>
+              </tr>
+              <tr>
+                <td><code>reviewDormant</code></td>
+                <td>0–1</td>
+                <td>0.25</td>
+                <td>Below it, a page waits for new evidence or its backstop.</td>
+              </tr>
+              <tr>
+                <td><code>recordBelongs</code></td>
+                <td>0–3</td>
+                <td>0.81</td>
+                <td>
+                  A new timeline annotation, tracked outcome or wiki page is saved (record check on
+                  enforce).
+                </td>
+              </tr>
+              <tr>
+                <td><code>documentRecordValue</code></td>
+                <td>0–3</td>
+                <td>1.5</td>
+                <td>A note on a document is kept.</td>
+              </tr>
+              <tr>
+                <td><code>personRecordValue</code></td>
+                <td>0–3</td>
+                <td>1.5</td>
+                <td>A fact earns a place in a person's profile.</td>
+              </tr>
+              <tr>
+                <td><code>personWithdrawal</code></td>
+                <td>0–3</td>
+                <td>1.5</td>
+                <td>A withdrawal from a profile loses nothing useful.</td>
+              </tr>
+              <tr>
+                <td><code>profileDistillation</code></td>
+                <td>0–3</td>
+                <td>1.5</td>
+                <td>A rewritten profile keeps what the old one said.</td>
+              </tr>
+              <tr>
+                <td><code>wikiRepair</code></td>
+                <td>0–3</td>
+                <td>1.5</td>
+                <td>A factual repair of a wiki page is saved.</td>
+              </tr>
+              <tr>
+                <td><code>outcomeIntegrity</code></td>
+                <td>0–3</td>
+                <td>1.5</td>
+                <td>A changed outcome keeps the previous one's supported meaning.</td>
+              </tr>
+              <tr>
+                <td><code>outcomeDeadline</code></td>
+                <td>0–3</td>
+                <td>1.5</td>
+                <td>An outcome's deadline is supported by its sources.</td>
+              </tr>
+              <tr>
+                <td><code>sameTask</code></td>
+                <td>0–2</td>
+                <td>2</td>
+                <td>A new title for one of your tasks applies directly.</td>
+              </tr>
+              <tr>
+                <td><code>taskNoteNew</code></td>
+                <td>0–2</td>
+                <td>1</td>
+                <td>A note on one of your tasks is recorded.</td>
+              </tr>
+              <tr>
+                <td><code>taskAdopt</code></td>
+                <td>0–2</td>
+                <td>1.5</td>
+                <td>A new suggestion becomes your task (proposal gate on enforce).</td>
+              </tr>
+              <tr>
+                <td><code>taskWithhold</code></td>
+                <td>0–2</td>
+                <td>0.5</td>
+                <td>Below it, a new suggestion is withheld (proposal gate on enforce).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <p>
           Codex can serve <code>background-agent</code> and <code>entailment-verifier</code>
@@ -1286,9 +1421,9 @@
         </div>
         <p>
           A decision server on this machine, such as Ollaya or Ollama, keeps the context there; see
-          <a href="operating#decision-model">Decision model</a> for every provider and for
-          calibration, and <a href="#decision-chat-models">Local and HTTP decision models</a> for
-          chat models.
+          <a href="operating#decision-model">Decision model</a> for every provider,
+          <a href="#decision-thresholds">Decision thresholds</a> for the cut-off at each decision,
+          and <a href="#decision-chat-models">Local and HTTP decision models</a> for chat models.
         </p>
         <p>
           Discovery checks complete sources within a 128 KiB application input budget, including the

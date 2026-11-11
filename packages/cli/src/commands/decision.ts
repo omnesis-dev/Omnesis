@@ -3,12 +3,10 @@
 
 /**
  * `omnesis decision` — set up the Decision model: the providers that serve
- * decision models, a backend's decision API, verifying a model, and
- * calibrating it onto Jev's scale. Backends themselves are managed with
+ * decision models, a backend's decision API, and verifying a model. Backends themselves are managed with
  * `omnesis backend`, and the role is assigned with `omnesis model assign`.
  */
 
-import { setTimeout as delay } from "node:timers/promises";
 import { defineCommand } from "citty";
 import {
   c,
@@ -23,10 +21,9 @@ import {
 import {
   buildDecisionDisablePatch,
   buildDecisionEnablePatch,
-  describeCalibration,
   parseParams,
 } from "./backend-patch.js";
-import type { DecisionCalibration, ModelsOverview } from "@omnesis/core";
+import type { ModelsOverview } from "@omnesis/core";
 
 async function overview(): Promise<ModelsOverview> {
   return gatewayJson<ModelsOverview>("/admin/models");
@@ -86,11 +83,6 @@ const statusCommand = defineCommand({
     console.log(`Decision model: ${c.bold}${label}${c.reset} (${state})`);
     if ("reason" in assigned && assigned.reason)
       console.log(`  ${c.dim}${assigned.reason}${c.reset}`);
-    if (assigned.kind === "decision") {
-      const calibration =
-        o.inference.backends[assigned.backendKey]?.decision?.calibrations[assigned.model];
-      console.log(`  ${describeCalibration(calibration)}`);
-    }
     const withDecisions = Object.entries(o.inference.backends).filter(([, b]) => b.decision);
     if (!withDecisions.length) {
       console.log(
@@ -150,9 +142,7 @@ const enableCommand = defineCommand({
       console.log(
         `Assigned ${c.bold}${backend}/${ctx.args.model}${c.reset} to the Decision model.`,
       );
-    console.log(
-      `Next: ${c.cyan}omnesis decision verify ${backend} <model>${c.reset}, then ${c.cyan}omnesis decision calibrate${c.reset}.`,
-    );
+    console.log(`Next: ${c.cyan}omnesis decision verify ${backend} <model>${c.reset}.`);
   },
 });
 
@@ -250,77 +240,10 @@ const verifyCommand = defineCommand({
   },
 });
 
-interface CalibrationStatus {
-  state: "idle" | "running" | "done" | "failed" | "cancelled";
-  assignment?: string;
-  done: number;
-  total: number;
-  failed: number;
-  result?: DecisionCalibration;
-  error?: string;
-}
-
-const calibrateCommand = defineCommand({
-  meta: {
-    name: "calibrate",
-    description: "Calibrate the assigned Decision model onto Jev's scale",
-  },
-  args: {
-    detach: { type: "boolean", description: "Start the calibration and return without waiting" },
-    cancel: { type: "boolean", description: "Cancel a running calibration" },
-  },
-  async run(ctx) {
-    if (ctx.args.cancel) {
-      const status = await gatewayJson<CalibrationStatus>("/admin/models/decision/calibration", {
-        method: "DELETE",
-      });
-      console.log(`Calibration ${status.state}.`);
-      return;
-    }
-    const res = await gatewayFetch("/admin/models/decision/calibration", { method: "POST" });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as {
-        error?: string;
-        message?: string;
-      } | null;
-      throw new CliError(
-        `${c.red}${body?.message ?? body?.error ?? `HTTP ${res.status}`}${c.reset}`,
-        pickGatewayExitCode(res.status),
-      );
-    }
-    let status = (await res.json()) as CalibrationStatus;
-    console.log(
-      `Calibrating ${c.bold}${status.assignment}${c.reset} on ${status.total} invented reference emails…`,
-    );
-    if (ctx.args.detach) {
-      console.log(
-        `${c.dim}Follow it with "omnesis decision status" or cancel with "omnesis decision calibrate --cancel".${c.reset}`,
-      );
-      return;
-    }
-    while (status.state === "running") {
-      await delay(2000);
-      status = await gatewayJson<CalibrationStatus>("/admin/models/decision/calibration");
-      if (process.stdout.isTTY)
-        process.stdout.write(
-          `\r  ${status.done}/${status.total}${status.failed ? ` (${status.failed} failed)` : ""}   `,
-        );
-    }
-    if (process.stdout.isTTY) process.stdout.write("\n");
-    if (status.state !== "done") {
-      console.log(
-        `${c.red}✖${c.reset} Calibration ${status.state}${status.error ? `: ${status.error}` : ""}`,
-      );
-      throw new CliError("", EXIT_FAILURE);
-    }
-    console.log(`${c.green}✔${c.reset} ${describeCalibration(status.result)}`);
-  },
-});
-
 export const decisionCommand = defineCommand({
   meta: {
     name: "decision",
-    description: "Set up the Decision model: providers, decision APIs, verify, calibrate",
+    description: "Set up the Decision model: providers, decision APIs, verify",
   },
   subCommands: {
     status: statusCommand,
@@ -329,7 +252,6 @@ export const decisionCommand = defineCommand({
     disable: disableCommand,
     models: modelsCommand,
     verify: verifyCommand,
-    calibrate: calibrateCommand,
   },
   async run(ctx) {
     if (ctx.rawArgs.filter((a) => !a.startsWith("-")).length === 0) {

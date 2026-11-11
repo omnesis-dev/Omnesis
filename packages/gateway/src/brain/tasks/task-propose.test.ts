@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createLogger, type DecisionCapability, type DecisionRequest } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { insertCognitionDecision, listDecisionsForRun } from "../storage/decisions.js";
+import { BRAIN_DEFAULTS } from "../config.js";
 import { TaskProposeGate } from "./task-propose.js";
 import type { TaskProposeGateMode } from "../config.js";
 import type { DecisionPayloadCapture } from "../decision-payload.js";
@@ -46,6 +47,7 @@ describe("TaskProposeGate", () => {
   let asked: DecisionRequest[];
   let records: CognitionDecisionRecord[];
   let now = 1_000;
+  let thresholds: { taskAdopt: number; taskWithhold: number };
 
   const decision: DecisionCapability = {
     modelId: "scripted-decision",
@@ -62,6 +64,7 @@ describe("TaskProposeGate", () => {
   };
   const gate = (withModel = true) =>
     new TaskProposeGate({
+      getThresholds: () => thresholds,
       getDecision: () => (withModel ? decision : null),
       getMode: () => mode,
       interest: {
@@ -98,6 +101,7 @@ describe("TaskProposeGate", () => {
     lookups = [];
     mode = "enforce";
     score = 1;
+    thresholds = BRAIN_DEFAULTS.thresholds;
     interest = interestOf({ positive: [accepted("Renew the gym membership")] });
   });
   afterEach(() => {
@@ -190,9 +194,31 @@ describe("TaskProposeGate", () => {
       lane: "tier",
       recordId: "loop_new",
       documentId: null,
-      threshold: 1,
-      rubricVersion: "task-propose-v1",
+      threshold: 1.5,
+      rubricVersion: "task-propose-v2",
     });
+  });
+
+  test("reads the tier at the configured cuts, and ledgers the adoption cut", async () => {
+    // Scored 1.6: adopted at the 1.5 default, only suggested once adoption needs 1.8.
+    score = 1.6;
+    expect((await judge()).tier).toBe("adopt");
+    thresholds = { taskAdopt: 1.8, taskWithhold: 0.5 };
+    expect((await judge()).tier).toBe("suggest");
+    // Scored 0.6: suggested at the 0.5 default, withheld once withholding reaches 0.8.
+    interest = interestOf({ negative: [ignored("Renew the parking permit")] });
+    score = 0.6;
+    expect((await judge()).tier).toBe("suggest");
+    thresholds = { taskAdopt: 1.8, taskWithhold: 0.8 };
+    expect((await judge()).tier).toBe("withhold");
+    expect(
+      listDecisionsForRun(db, "run_propose").map((d) => [d.score, d.threshold, d.verdict]),
+    ).toEqual([
+      [1.6, 1.5, "pass"],
+      [1.6, 1.8, "pass"],
+      [0.6, 1.8, "pass"],
+      [0.6, 1.8, "skip"],
+    ]);
   });
 
   test("withhold needs something the owner did not want", async () => {
@@ -249,6 +275,7 @@ describe("TaskProposeGate", () => {
 
   test("a failing lookup offers the suggestion", async () => {
     const failing = new TaskProposeGate({
+      getThresholds: () => BRAIN_DEFAULTS.thresholds,
       getDecision: () => decision,
       getMode: () => mode,
       interest: { lookup: () => Promise.reject(new Error("ledger locked")) },

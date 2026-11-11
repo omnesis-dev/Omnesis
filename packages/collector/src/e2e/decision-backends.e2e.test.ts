@@ -6,12 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import {
-  decisionFingerprint,
-  parseDecisionCassette,
-  type DecisionAnswer,
-  type DecisionQuestion,
-} from "@omnesis/core";
+import { type DecisionAnswer, type DecisionQuestion } from "@omnesis/core";
 
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import {
@@ -31,10 +26,6 @@ import {
  * OpenAI Decisions — beside an OpenAI-compatible model listing, so each format
  * is exercised through the gateway. Answers are scripted by content: whether a
  * judgement is good is the eval lane's concern, not this suite's.
- *
- * Calibration replays the bundled Jev reference set through the assigned model;
- * the scripted model rates every reference email higher than Jev did, so the
- * fitted map has something to correct.
  */
 
 type Db = InstanceType<typeof Database>;
@@ -42,12 +33,6 @@ type Db = InstanceType<typeof Database>;
 const KEY = "sk-scripted-provider";
 /** The key an operator rotates to. */
 const ROTATED_KEY = "sk-scripted-provider-rotated";
-const REFERENCE = parseDecisionCassette(
-  readFileSync(
-    new URL("../../../gateway/decision-reference/jev-worth.jsonl", import.meta.url),
-    "utf8",
-  ),
-);
 
 function subjectOf(state: unknown): string {
   return String((state as { subject?: unknown } | null)?.subject ?? "");
@@ -58,9 +43,6 @@ const lowWorth = (subject: string) => subject.length % 2 === 0;
 
 function answer(id: string, question: DecisionQuestion, state: unknown): DecisionAnswer {
   if (question.type === "score" && id === "worth_score") {
-    const reference = REFERENCE.get(decisionFingerprint({ state, questions: { [id]: question } }));
-    const jev = reference?.response.answers.worth_score;
-    if (jev?.type === "score") return { type: "score", score: 3 * Math.sqrt(jev.score / 3) };
     return { type: "score", score: lowWorth(subjectOf(state)) ? 0.3 : 2.6 };
   }
   if (question.type === "choice") {
@@ -104,7 +86,7 @@ interface BackendRow {
   models?: string[];
   hasApiKey?: boolean;
   preset?: string;
-  decision?: { url: string; hasApiKey: boolean; calibrations: Record<string, unknown> };
+  decision?: { url: string; hasApiKey: boolean };
 }
 
 interface PresetView {
@@ -244,7 +226,6 @@ describe("backends with a decision API — stable gateway, every wire format", (
       preset: "ollaya",
       model: "kev",
       onHost: true,
-      calibrated: false,
       available: true,
     });
     expect(o.inference.backends.box).toEqual({
@@ -258,7 +239,6 @@ describe("backends with a decision API — stable gateway, every wire format", (
         auth: "bearer",
         onHost: true,
         hasApiKey: false,
-        calibrations: {},
       },
     });
     expect(o.assignmentDisplays.decision).toMatchObject({ providerId: "ollaya", modelName: "kev" });
@@ -556,6 +536,65 @@ describe("backends with a decision API — stable gateway, every wire format", (
     }
   }, 180_000);
 
+  test("re-sorts the judged emails when the mention threshold moves, with no new model call", async () => {
+    const db = new Database(harness.getDbPath(), { readonly: true });
+    const verdicts = () =>
+      db
+        .prepare<[], { verdict: string; n: number }>(
+          `SELECT verdict, COUNT(*) AS n FROM date_mention_judgements
+            WHERE verdict IN ('keep', 'drop') GROUP BY verdict`,
+        )
+        .all()
+        .reduce<Record<string, number>>((acc, r) => ({ ...acc, [r.verdict]: r.n }), {});
+    const setThreshold = (worthThreshold: number | null) =>
+      harness.gatewayFetch("/admin/config", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enrichment: { dates: { worthThreshold } } }),
+      });
+    try {
+      await waitForGate(db);
+      const before = verdicts();
+      expect(before.keep).toBeGreaterThan(0);
+      expect(before.drop).toBeGreaterThan(0);
+      const calls = provider.calls.length;
+      const ledgered = (
+        db
+          .prepare<[], { n: number }>(
+            `SELECT COUNT(*) AS n FROM cognition_decisions WHERE purpose = 'mention-worth'`,
+          )
+          .get() ?? { n: 0 }
+      ).n;
+
+      // The scripted model scores email worth recording 2.6: above 2.7 it drops too.
+      expect((await setThreshold(2.7)).status).toBe(200);
+      const raised = await until(
+        async () => verdicts(),
+        (v) => (v.keep ?? 0) === 0,
+      );
+      expect(raised.drop).toBe(before.keep! + before.drop!);
+
+      // Removing the setting returns to the default, and the verdicts with it.
+      expect((await setThreshold(null)).status).toBe(200);
+      const restored = await until(
+        async () => verdicts(),
+        (v) => v.keep === before.keep,
+      );
+      expect(restored).toEqual(before);
+
+      expect(provider.calls.length).toBe(calls);
+      expect(
+        db
+          .prepare<[], { n: number }>(
+            `SELECT COUNT(*) AS n FROM cognition_decisions WHERE purpose = 'mention-worth'`,
+          )
+          .get()!.n,
+      ).toBe(ledgered);
+    } finally {
+      db.close();
+    }
+  }, 180_000);
+
   test("routes a voice capture through each wire format", async () => {
     for (const [assignment, path] of [
       ["box/kev", "/v1/systemone"],
@@ -570,61 +609,6 @@ describe("backends with a decision API — stable gateway, every wire format", (
       expect(await capture("Remember that the gate code is 4417."), assignment).toBe("note");
       expect(provider.callsTo(path).length - before, assignment).toBe(2);
     }
-  });
-
-  test("calibrates the assigned model onto Jev's scale and answers with the calibration", async () => {
-    expect((await patch({ assignments: { decision: "box/kev" } })).status).toBe(200);
-    const started = await harness.gatewayFetch("/admin/models/decision/calibration", {
-      method: "POST",
-    });
-    expect(started.status).toBe(202);
-    let status: Record<string, unknown> = await started.json();
-    expect(status).toMatchObject({ state: "running", assignment: "box/kev" });
-    const deadline = Date.now() + 120_000;
-    while (status.state === "running" && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      status = await harness.gatewayJson("/admin/models/decision/calibration");
-    }
-    expect(status).toMatchObject({ state: "done", failed: 0 });
-    const result = status.result as Record<string, number>;
-    expect(result.samples).toBe(REFERENCE.size);
-    // The scripted model rates every reference email higher than Jev did:
-    // calibrated, it keeps about 95% of what Jev keeps and skips far more of the rest.
-    expect(result.keepsBefore).toBe(1);
-    expect(result.keeps).toBeGreaterThanOrEqual(0.94);
-    expect(result.skips).toBeGreaterThan(result.skipsBefore!);
-    expect(result.skips).toBeGreaterThanOrEqual(0.99);
-
-    const o = await overview();
-    expect(o.inference.assignments.decision).toMatchObject({ calibrated: true });
-    expect(o.inference.backends.box!.decision!.calibrations).toHaveProperty("kev");
-    const saved = JSON.parse(configOnDisk()) as {
-      inference: { backends: Record<string, { decision?: { calibration?: object } }> };
-    };
-    expect(saved.inference.backends.box!.decision!.calibration).toHaveProperty("kev");
-
-    // Decisions now carry the calibration: the spend ledger names the model as calibrated.
-    expect(await capture("Remember to water the ferns on Friday.")).toBe("note");
-    const db = new Database(harness.getDbPath(), { readonly: true });
-    try {
-      const models = db
-        .prepare<[], { model_id: string }>(
-          `SELECT model_id FROM cognition_spend WHERE mechanism = 'capture-decision'`,
-        )
-        .all()
-        .map((r) => r.model_id);
-      expect(models).toContain("kev-20261101+cal");
-    } finally {
-      db.close();
-    }
-  }, 180_000);
-
-  test("refuses to calibrate TypeSafe's Jev, the reference itself", async () => {
-    expect((await patch({ assignments: { decision: "typesafe/jev-1.13.0" } })).status).toBe(200);
-    const res = await harness.gatewayFetch("/admin/models/decision/calibration", {
-      method: "POST",
-    });
-    expect(res.status).toBe(400);
   });
 
   test("removing the assigned backend leaves the role unresolved, naming it", async () => {

@@ -22,6 +22,7 @@ import { createOpenLoop, getOpenLoop, listOpenLoopLedger } from "../storage/open
 import { applyTaskCommand } from "../storage/tasks.js";
 import { taskProposalFor } from "../tasks/auto-apply.js";
 import { TaskChecks } from "../tasks/task-checks.js";
+import { BRAIN_DEFAULTS } from "../config.js";
 import { createOpenLoopMirror } from "./mirror.js";
 import { buildCognitionOwnTools } from "./tools.js";
 import type { CognitionDecisionRecord } from "../storage/decisions.js";
@@ -369,6 +370,7 @@ describe("open_loop_update applies a verified change to the user's own task", ()
   };
   const taskChecks = (withModel = true) =>
     new TaskChecks({
+      getThresholds: () => BRAIN_DEFAULTS.thresholds,
       getDecision: () => (withModel ? decision : null),
       recordDecision: async (record) => {
         ledger.push(record);

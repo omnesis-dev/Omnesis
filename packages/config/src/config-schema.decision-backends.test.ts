@@ -9,19 +9,6 @@ const OLLAYA = {
   preset: "ollaya",
   decision: { url: "http://127.0.0.1:11435/v1/systemone" },
 };
-const CALIBRATION = {
-  points: [
-    [0.1, 0.05],
-    [0.5, 0.3],
-    [0.9, 0.85],
-  ],
-  reference: "jev-worth/email-worth-v1/jev-1.13.0",
-  fittedAt: "2026-11-10T12:00:00.000Z",
-  samples: 302,
-  agreement: 0.91,
-  agreementBefore: 0.62,
-};
-
 function errors(inference: unknown): string[] {
   const result = validateConfig({ inference });
   return result.ok ? [] : result.errors.map((e) => `${e.path}: ${e.message}`);
@@ -40,7 +27,7 @@ describe("validateConfig — backends with a decision API", () => {
         backends: {
           ollaya: {
             ...OLLAYA,
-            decision: { ...OLLAYA.decision, calibration: { kev: CALIBRATION } },
+            decision: OLLAYA.decision,
           },
           fireworks: {
             type: "http",
@@ -133,52 +120,10 @@ describe("validateConfig — backends with a decision API", () => {
     ).not.toEqual([]);
   });
 
-  test.each([
-    [{ ...CALIBRATION, points: [] }, "no points"],
-    [
-      {
-        ...CALIBRATION,
-        points: [
-          [0.5, 0.5],
-          [0.4, 0.6],
-        ],
-      },
-      "x not increasing",
-    ],
-    [
-      {
-        ...CALIBRATION,
-        points: [
-          [0.2, 0.6],
-          [0.4, 0.5],
-        ],
-      },
-      "y decreasing",
-    ],
-    [
-      {
-        ...CALIBRATION,
-        points: [
-          [0.2, 0.6],
-          [1.4, 0.7],
-        ],
-      },
-      "x above 1",
-    ],
-    [{ ...CALIBRATION, fittedAt: "yesterday" }, "fittedAt not a time"],
-    [{ ...CALIBRATION, agreement: 1.2 }, "agreement above 1"],
-  ])("refuses a broken calibration (%#: %s)", (calibration) => {
-    expect(errors(withDecision({ calibration: { kev: calibration } }))).not.toEqual([]);
-  });
-
-  test("accepts a single-anchor calibration, as the fit produces", () => {
-    expect(
-      errors(
-        withDecision({
-          calibration: { kev: { ...CALIBRATION, points: [[0.42, 0.36]], keeps: 0.95, skips: 0.6 } },
-        }),
-      ),
-    ).toEqual([]);
+  test("refuses a calibration, which a decision API does not carry", () => {
+    expect(errors(withDecision({ calibration: { kev: { points: [[0.5, 0.36]] } } }))).not.toEqual(
+      [],
+    );
   });
 
   test("a merge patch adds and removes a backend's decision API without touching the rest", () => {
