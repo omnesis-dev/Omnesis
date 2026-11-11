@@ -55,15 +55,18 @@ import dev.omnesis.android.designsystem.components.MiddleEllipsisText
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
+import dev.omnesis.android.transport.dto.BackendDecisionStatus
+import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
-import dev.omnesis.android.transport.dto.DecisionBackendStatus
 import dev.omnesis.android.transport.dto.DecisionCalibration
 import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
 import dev.omnesis.android.transport.dto.DecisionModelOption
-import dev.omnesis.android.transport.dto.DecisionPresetView
+import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionUrlParam
 import dev.omnesis.android.transport.dto.ModelDisplay
 import dev.omnesis.android.transport.dto.ModelsOverview
+import dev.omnesis.android.transport.dto.ProviderDecisionPreset
+import dev.omnesis.android.transport.dto.ProviderPreset
 import dev.omnesis.android.transport.dto.ResolvedAssignment
 import dev.omnesis.android.ui.models.DecisionSetup.CalibrationPanel
 import dev.omnesis.android.ui.models.DecisionSetup.Provider
@@ -87,10 +90,10 @@ data class DecisionActions(
     val onOpened: () -> Unit = {},
     val onSave: (SaveRequest, onSaved: () -> Unit) -> Unit = { _, _ -> },
     val onVerify: (String) -> Unit = {},
-    val onProbe: (String) -> Unit = {},
+    val onProbe: (ProbeTarget) -> Unit = {},
     val onCalibrate: () -> Unit = {},
     val onCancelCalibration: () -> Unit = {},
-    val onRemove: (key: String, clearAssignment: Boolean, onRemoved: () -> Unit) -> Unit = { _, _, _ -> },
+    val onRemove: (DecisionSetup.Removal, onRemoved: () -> Unit) -> Unit = { _, _ -> },
     val onClear: () -> Unit = {},
 )
 
@@ -115,8 +118,8 @@ internal fun DecisionSetupSheet(
 
 /**
  * The Decision model's setup, one step at a time: the assigned model with
- * its test decision and calibration; the provider picker (configured
- * backends, servers on this machine, hosted APIs); the provider's form; and,
+ * its test decision and calibration; the provider picker (the operator's
+ * backends, TypeSafe built in, providers to add); the provider's form; and,
  * for an endpoint off the gateway host, the cloud-inference question. Save is
  * one config patch, followed by a test decision whose reason is shown as the
  * gateway words it.
@@ -144,10 +147,15 @@ fun DecisionSetupContent(
     fun choose(choice: Provider) {
         provider = choice
         form = DecisionFormValues(
-            name = if (choice is Provider.Existing) choice.key else DecisionSetup.defaultName(DecisionSetup.presetOf(choice), overview),
+            name = when (choice) {
+                is Provider.Existing -> choice.key
+                is Provider.Enable -> choice.key
+                else -> DecisionSetup.defaultName(DecisionSetup.presetOf(choice), overview)
+            },
             url = when (choice) {
-                is Provider.Existing -> choice.backend.url
-                is Provider.Preset -> choice.preset.url.takeIf { choice.preset.urlParams.isEmpty() }.orEmpty()
+                is Provider.Existing -> choice.decision.url
+                is Provider.Enable -> choice.decision.url.takeIf { choice.decision.urlParams.isEmpty() }.orEmpty()
+                is Provider.Preset -> choice.preset.decision?.takeIf { it.urlParams.isEmpty() }?.url.orEmpty()
                 Provider.Custom -> ""
             },
             model = DecisionSetup.initialModel(choice, overview),
@@ -202,10 +210,7 @@ fun DecisionSetupContent(
                     onBack = { step = DecisionStep.Providers },
                     onProbe = actions.onProbe,
                     onSubmit = ::submit,
-                    onRemove = { key ->
-                        val clear = DecisionSetup.assignedBackend(overview)?.key == key
-                        actions.onRemove(key, clear) { step = DecisionStep.Providers }
-                    },
+                    onRemove = { removal -> actions.onRemove(removal) { step = DecisionStep.Providers } },
                 )
             }
             DecisionStep.Consent -> pending?.let { request ->
@@ -261,7 +266,7 @@ private fun DecisionHomePane(
                     color = c.textPrimary,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                val where = assigned?.backend?.let(DecisionSetup::where)
+                val where = assigned?.decision?.let(DecisionSetup::where)
                 Text(
                     listOfNotNull(display?.providerLabel?.takeIf { it.isNotBlank() }, where).joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
@@ -465,18 +470,18 @@ private fun DecisionProvidersPane(
         color = c.textSecondary,
     )
     val groups = DecisionSetup.providerGroups(overview)
-    if (groups.existing.isNotEmpty()) {
+    if (groups.yours.isNotEmpty()) {
         FlatSection("Your backends") {
-            groups.existing.forEach { ProviderRow(it, overview, onChoose) }
+            groups.yours.forEach { ProviderRow(it, overview, onChoose) }
         }
     }
-    FlatSection("Local") {
-        groups.local.forEach { ProviderRow(it, overview, onChoose) }
-    }
-    if (groups.cloud.isNotEmpty()) {
-        FlatSection("Cloud") {
-            groups.cloud.forEach { ProviderRow(it, overview, onChoose) }
+    if (groups.builtIn.isNotEmpty()) {
+        FlatSection("Built in") {
+            groups.builtIn.forEach { ProviderRow(it, overview, onChoose) }
         }
+    }
+    FlatSection("Add a provider") {
+        groups.add.forEach { ProviderRow(it, overview, onChoose) }
     }
 }
 
@@ -484,20 +489,15 @@ private fun DecisionProvidersPane(
 private fun ProviderRow(provider: Provider, overview: ModelsOverview, onChoose: (Provider) -> Unit) {
     val c = OmTheme.colors
     val current = DecisionSetup.isCurrent(provider, overview)
-    val subtitle = when (provider) {
-        is Provider.Existing -> listOfNotNull(provider.preset?.name, DecisionSetup.where(provider.backend)).joinToString(" · ")
-        is Provider.Preset -> if (provider.preset.isLocal) {
-            DecisionSetup.localPlace(provider.preset.url)
-        } else {
-            val count = provider.preset.models.size
-            "$count model${if (count == 1) "" else "s"}"
-        }
-        Provider.Custom -> "Any System One server, by URL"
+    val tag = when (provider) {
+        is Provider.Existing -> provider.key
+        is Provider.Enable -> provider.key
+        else -> DecisionSetup.brandId(provider)
     }
     Row(
         Modifier
             .fillMaxWidth()
-            .testTag("decision-provider-${(provider as? Provider.Existing)?.key ?: DecisionSetup.brandId(provider)}")
+            .testTag("decision-provider-$tag")
             .background(c.bgSecondary, RoundedCornerShape(12.dp))
             .clickable { onChoose(provider) }
             .padding(horizontal = OmSpacing.md, vertical = 12.dp),
@@ -517,7 +517,7 @@ private fun ProviderRow(provider: Provider, overview: ModelsOverview, onChoose: 
                 if ((provider as? Provider.Preset)?.preset?.isTypeSafe == true) Pill("REFERENCE", c.accent)
             }
             MiddleEllipsisText(
-                text = subtitle,
+                text = DecisionSetup.subtitle(provider),
                 style = MaterialTheme.typography.labelSmall,
                 color = c.textMuted,
                 modifier = Modifier.fillMaxWidth(),
@@ -541,26 +541,60 @@ private fun DecisionFormPane(
     values: DecisionFormValues,
     onValuesChange: (DecisionFormValues) -> Unit,
     onBack: () -> Unit,
-    onProbe: (String) -> Unit,
+    onProbe: (ProbeTarget) -> Unit,
     onSubmit: (SaveRequest) -> Unit,
-    onRemove: (String) -> Unit,
+    onRemove: (DecisionSetup.Removal) -> Unit,
 ) {
     val c = OmTheme.colors
     val preset = DecisionSetup.presetOf(provider)
+    val wire = preset?.decision
     val existing = provider as? Provider.Existing
-    val typesafe = preset?.isTypeSafe == true && existing == null
-    // A new backend from a preset whose URL has `{param}` placeholders asks for each value.
-    val paramsPreset = preset?.takeIf { existing == null && it.urlParams.isNotEmpty() }
-    val askParams = paramsPreset != null
-    val askUrl = !typesafe && !askParams && (preset == null || preset.isLocal)
+    val enable = provider as? Provider.Enable
+    val typesafe = preset?.isTypeSafe == true && provider is Provider.Preset
+    // A new backend, made from a preset or from "Other server".
+    val isNew = (provider is Provider.Preset && !typesafe) || provider is Provider.Custom
+    // A decision URL with `{param}` placeholders asks for each value.
+    val paramsWire = wire?.takeIf { (isNew || enable != null) && it.urlParams.isNotEmpty() }
+    val askParams = paramsWire != null
+    val askUrl = !typesafe && !askParams && enable == null && (preset == null || preset.isLocal)
     val keyRequired = DecisionSetup.keyRequired(provider, overview, ui.typesafeKey)
     val keyStored = DecisionSetup.keyStored(provider, overview, ui.typesafeKey)
     val keyUnknown = (DecisionSetup.typesafeKeyFor(overview, ui.typesafeKey) as? DecisionSetup.KeyState.Unknown)
         ?.takeIf { typesafe }
     var confirmRemove by remember { mutableStateOf(false) }
 
-    if (existing != null && DecisionSetup.canProbe(provider)) {
-        LaunchedEffect(existing.key) { onProbe(existing.key) }
+    val filled = paramsWire?.let { DecisionSetup.fillUrl(it, values.urlParams) }
+    val typedUrl = values.url.trim().takeIf { it.startsWith("http://") || it.startsWith("https://") }
+    val url = when {
+        askParams -> (filled as? DecisionSetup.FilledUrl.Ok)?.url
+        askUrl -> typedUrl
+        existing != null -> existing.decision.url
+        else -> wire?.url
+    }
+
+    // A server of the operator's own lists its installed models.
+    val canProbe = DecisionSetup.canProbe(provider) && !typesafe
+    val probeTarget: ProbeTarget? = when {
+        !canProbe -> null
+        existing != null -> ProbeTarget.Saved(existing.key)
+        url != null -> ProbeTarget.Unsaved(
+            DecisionProbeBody(
+                url = url,
+                preset = preset?.id,
+                protocol = wire?.protocol,
+                auth = wire?.auth,
+                apiKey = values.apiKey.trim().ifEmpty { null },
+            ),
+        )
+        else -> null
+    }
+    if (existing != null && canProbe) {
+        LaunchedEffect(existing.key) { onProbe(ProbeTarget.Saved(existing.key)) }
+    }
+    val newLocalPreset = preset?.takeIf { isNew && it.isLocal }
+    if (newLocalPreset != null) {
+        // A local preset's server is listed once, at its default address.
+        LaunchedEffect(newLocalPreset.id) { probeTarget?.let(onProbe) }
     }
 
     BackRow(onBack)
@@ -570,9 +604,10 @@ private fun DecisionFormPane(
             Text(provider.title, style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
             Text(
                 when {
-                    existing != null -> listOfNotNull(preset?.name, DecisionSetup.where(existing.backend)).joinToString(" · ")
+                    existing != null -> listOfNotNull(preset?.name, DecisionSetup.where(existing.decision)).joinToString(" · ")
+                    enable != null -> "${enable.preset.name} · adds its decision models"
                     preset == null -> "A server you run"
-                    preset.isLocal -> DecisionSetup.localPlace(preset.url)
+                    preset.isLocal -> DecisionSetup.localPlace(wire?.url.orEmpty())
                     else -> "Hosted API"
                 },
                 style = MaterialTheme.typography.labelSmall,
@@ -580,23 +615,31 @@ private fun DecisionFormPane(
             )
         }
     }
-    preset?.note?.takeIf { existing == null && it.isNotBlank() }?.let {
+    wire?.note?.takeIf { existing == null && it.isNotBlank() }?.let {
         Text(it, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
     }
-
-    val nameError = if (existing == null && !typesafe) {
-        values.name.takeIf { it.isNotEmpty() }?.let { DecisionSetup.nameError(it, overview) }
-    } else {
-        null
+    val bothApis = preset?.takeIf { isNew && it.hasOpenAiApi }
+    when {
+        enable != null && enable.backend.hasApiKey == true -> Text(
+            "Uses the API key this backend already has. Its other models stay as they are.",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.textSecondary,
+        )
+        bothApis != null -> Text(
+            "Adds ${bothApis.name} as one backend with one key, for its OpenAI-compatible models and its decision models.",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.textSecondary,
+        )
     }
-    if (existing == null && !typesafe) {
+
+    val nameError = if (isNew) values.name.takeIf { it.isNotEmpty() }?.let { DecisionSetup.nameError(it, overview) } else null
+    if (isNew) {
         Field("Name", "my-decision-server", values.name, { onValuesChange(values.copy(name = it)) }, error = nameError,
             hint = "How the assignment names this backend.")
     }
 
-    val filled = paramsPreset?.let { DecisionSetup.fillUrl(it, values.urlParams) }
-    if (paramsPreset != null) {
-        paramsPreset.urlParams.forEach { param ->
+    if (paramsWire != null) {
+        paramsWire.urlParams.forEach { param ->
             Field(
                 param.label,
                 param.placeholder,
@@ -616,14 +659,18 @@ private fun DecisionFormPane(
     if (askUrl) {
         Field(
             "URL",
-            preset?.url ?: "http://127.0.0.1:8080/v1/systemone",
+            wire?.url ?: "http://127.0.0.1:8080/v1/systemone",
             values.url,
             { onValuesChange(values.copy(url = it)) },
             hint = "The server's decision endpoint.",
         )
     }
 
-    val showKey = typesafe || keyRequired || keyStored || preset == null || preset.isLocal || preset.keyRequired
+    val showKey = if (enable != null) {
+        keyRequired
+    } else {
+        typesafe || keyRequired || keyStored || preset == null || preset.isLocal || wire?.keyRequired == true
+    }
     if (showKey) {
         val label = if (keyRequired) "API key" else "API key (optional)"
         val placeholder = when {
@@ -632,7 +679,9 @@ private fun DecisionFormPane(
             keyUnknown != null -> "Leave blank to keep a saved key"
             else -> "Leave blank for a server without a key"
         }
-        Field(label, placeholder, values.apiKey, { onValuesChange(values.copy(apiKey = it)) }, password = true)
+        val hint = "Also used by this backend's OpenAI-compatible models."
+            .takeIf { (existing?.backend ?: enable?.backend)?.hasOpenAiApi == true }
+        Field(label, placeholder, values.apiKey, { onValuesChange(values.copy(apiKey = it)) }, password = true, hint = hint)
         keyUnknown?.let {
             Text(
                 "Could not check for a saved TypeSafe key: ${it.reason}",
@@ -640,10 +689,10 @@ private fun DecisionFormPane(
                 color = c.warning,
             )
         }
-        existing?.backend?.apiKeySecretError?.let {
+        existing?.decision?.apiKeySecretError?.let {
             Text(it, style = MaterialTheme.typography.labelSmall, color = c.warning)
         }
-        val keyLink = preset?.keyUrl?.takeIf { it.isNotBlank() }
+        val keyLink = wire?.keyUrl?.takeIf { it.isNotBlank() }
         if (preset != null && keyLink != null) {
             val uriHandler = LocalUriHandler.current
             Text(
@@ -656,36 +705,32 @@ private fun DecisionFormPane(
         }
     }
 
-    val probe = existing?.let { ui.probes[it.key] }
+    val probe = probeTarget?.let { ui.probes[it.id] }
     val probed = ((probe as? ProbeState.Done)?.result?.models).orEmpty()
     ModelField(
         value = values.model,
-        suggestions = DecisionSetup.modelSuggestions(preset, probed),
+        suggestions = DecisionSetup.modelSuggestions(wire, probed),
         probe = probe,
         onValueChange = { onValuesChange(values.copy(model = it)) },
     )
+    if (existing == null && probeTarget != null && probe != ProbeState.Running) {
+        TextButton(onClick = { onProbe(probeTarget) }) {
+            Text("List the server's models", color = c.accent, fontWeight = FontWeight.SemiBold)
+        }
+    }
 
     ui.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = c.danger) }
 
-    val url = when {
-        askParams -> (filled as? DecisionSetup.FilledUrl.Ok)?.url
-        askUrl -> values.url.trim().takeIf { it.startsWith("http://") || it.startsWith("https://") }
-        existing != null -> existing.backend.url
-        else -> preset?.url
-    }
     val canSave = !ui.saving && values.model.isNotBlank() && nameError == null &&
-        (typesafe || existing != null || values.name.isNotBlank()) &&
+        (!isNew || values.name.isNotBlank()) &&
         (typesafe || url != null) && (!keyRequired || values.apiKey.isNotBlank())
     Button(
         onClick = {
-            val request = if (typesafe) {
-                SaveRequest.TypeSafe(model = values.model.trim(), apiKey = values.apiKey.trim().ifEmpty { null })
-            } else {
-                if (existing != null) {
-                    DecisionSetup.existingBackendSave(existing, url.orEmpty(), values.apiKey, values.model)
-                } else {
-                    DecisionSetup.newBackendSave(values.name, preset, url.orEmpty(), values.apiKey, values.model)
-                }
+            val request = when {
+                typesafe -> SaveRequest.TypeSafe(model = values.model.trim(), apiKey = values.apiKey.trim().ifEmpty { null })
+                existing != null -> DecisionSetup.existingBackendSave(existing, url.orEmpty(), values.apiKey, values.model)
+                enable != null -> DecisionSetup.enableSave(enable, url.orEmpty(), values.apiKey, values.model)
+                else -> DecisionSetup.newBackendSave(values.name, preset, url.orEmpty(), values.apiKey, values.model)
             }
             onSubmit(request)
         },
@@ -698,32 +743,37 @@ private fun DecisionFormPane(
     }
 
     if (existing != null) {
+        val removal = DecisionSetup.removalFor(existing, overview)
         TextButton(onClick = { confirmRemove = true }, enabled = !ui.saving, modifier = Modifier.fillMaxWidth()) {
-            Text("Remove this backend", color = c.danger)
+            Text(if (removal.wholeBackend) "Remove this backend" else "Stop using it for decision models", color = c.danger)
         }
-    }
-    if (confirmRemove && existing != null) {
-        AlertDialog(
-            onDismissRequest = { confirmRemove = false },
-            title = { Text("Remove ${existing.key}?") },
-            text = {
-                Text(
-                    if (DecisionSetup.assignedBackend(overview)?.key == existing.key) {
-                        "The Decision model uses this backend, so it will be turned off. Its stored key and calibrations are deleted."
-                    } else {
-                        "Its stored key and calibrations are deleted."
-                    },
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmRemove = false
-                    onRemove(existing.key)
-                }) { Text("Remove", color = c.danger) }
-            },
-            dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel") } },
-            containerColor = c.bgSecondary,
-        )
+        if (confirmRemove) {
+            val turnedOff = "The Decision model uses this backend, so it will be turned off. "
+                .takeIf { removal.clearAssignment }.orEmpty()
+            AlertDialog(
+                onDismissRequest = { confirmRemove = false },
+                title = {
+                    Text(if (removal.wholeBackend) "Remove ${existing.key}?" else "Stop decision models on ${existing.key}?")
+                },
+                text = {
+                    Text(
+                        if (removal.wholeBackend) {
+                            "${turnedOff}Its stored key and calibrations are deleted."
+                        } else {
+                            "${turnedOff}Its decision calibrations are deleted. Its OpenAI-compatible models and key stay."
+                        },
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmRemove = false
+                        onRemove(removal)
+                    }) { Text(if (removal.wholeBackend) "Remove" else "Stop", color = c.danger) }
+                },
+                dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel") } },
+                containerColor = c.bgSecondary,
+            )
+        }
     }
 }
 
@@ -864,46 +914,87 @@ private fun Pill(text: String, color: Color) {
 
 // --- previews / screenshot sample data (invented) ---
 
+/** A decision API with the given wire details; the sample presets below build theirs from it. */
+private fun sampleWire(
+    url: String,
+    models: List<DecisionModelOption>,
+    keyRequired: Boolean = true,
+    protocol: String = "systemone",
+    keyUrl: String? = null,
+    note: String? = null,
+    urlParams: List<DecisionUrlParam> = emptyList(),
+) = ProviderDecisionPreset(
+    url = url, protocol = protocol, keyRequired = keyRequired, keyUrl = keyUrl, note = note, urlParams = urlParams, models = models,
+)
+
+private fun presetModels(vararg ids: String) = ids.map { DecisionModelOption(it, source = "preset") }
+
+/**
+ * Presets with a decision API: servers on this machine, providers that serve
+ * OpenAI-compatible and decision models with one key, TypeSafe built in, and
+ * decision-only hosted APIs.
+ */
 internal fun sampleDecisionPresets() = listOf(
-    DecisionPresetView(
-        id = "ollaya", name = "Ollaya", kind = "local", url = "http://127.0.0.1:11435/v1/systemone",
-        note = "Runs open decision models on this machine. Pull a model with `ollaya pull <model>` first.",
-        models = listOf(DecisionModelOption("kev", source = "preset"), DecisionModelOption("laya", source = "preset"), DecisionModelOption("d1", source = "preset")),
-    ),
-    DecisionPresetView(
-        id = "ollama", name = "Ollama", kind = "local", url = "http://127.0.0.1:11434/v1/systemone",
-        note = "Ollama 0.40 or later serves decision models. Pull a model with `ollama pull <model>` first.",
-        models = listOf(DecisionModelOption("d3:4b", source = "preset"), DecisionModelOption("tev1:4b", source = "preset")),
-    ),
-    DecisionPresetView(
-        id = "openrouter", name = "OpenRouter", kind = "cloud", url = "https://openrouter.ai/api/v1/systemone", modelsDevId = "openrouter",
-        keyRequired = true, keyUrl = "https://openrouter.ai/keys", note = "One key for most hosted decision models.",
-        models = listOf(
-            DecisionModelOption("typesafe/jev-1.14", contextTokens = 32_000, inputCostPerMillion = 0.1, source = "models.dev"),
-            DecisionModelOption("liquid/d1.1", contextTokens = 128_000, inputCostPerMillion = 0.02, source = "models.dev"),
+    ProviderPreset(
+        id = "ollaya", name = "Ollaya", kind = "local", capabilities = listOf("decision"),
+        decision = sampleWire(
+            "http://127.0.0.1:11435/v1/systemone", presetModels("kev", "laya", "d1"), keyRequired = false,
+            note = "Runs open decision models on this machine. Pull a model with `ollaya pull <model>` first.",
         ),
     ),
-    DecisionPresetView(
-        id = "typesafe", name = "TypeSafe", kind = "cloud", url = "https://api.typesafe.ai/v1/systemone",
-        keyRequired = true, builtIn = "typesafe", keyUrl = "https://console.typesafe.ai/keys",
-        note = "Jev, the model every decision threshold was tuned on.",
-        models = listOf(DecisionModelOption("jev-1.14.0", source = "preset"), DecisionModelOption("jev-1.13.0", source = "preset")),
-    ),
-    DecisionPresetView(
-        id = "cloudflare", name = "Cloudflare Workers AI", kind = "cloud", modelsDevId = "cloudflare-workers-ai",
-        url = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run", protocol = "workers-ai",
-        keyRequired = true, keyUrl = "https://dash.cloudflare.com/profile/api-tokens",
-        note = "Workers AI shortens long text to fit Clef's context without saying so.",
-        urlParams = listOf(DecisionUrlParam("account", "Account ID", "0123456789abcdef0123456789abcdef")),
-        models = listOf(
-            DecisionModelOption("@cf/cloudflare/clef-flash", contextTokens = 128_000, inputCostPerMillion = 0.011, source = "preset"),
-            DecisionModelOption("@cf/cloudflare/clef", contextTokens = 128_000, source = "preset"),
+    ProviderPreset(
+        id = "ollama", name = "Ollama", kind = "local", capabilities = listOf("decision"),
+        decision = sampleWire(
+            "http://127.0.0.1:11434/v1/systemone", presetModels("d3:4b", "tev1:4b"), keyRequired = false,
+            note = "Ollama serves decision models too. Pull a model with `ollama pull <model>` first.",
         ),
     ),
-    DecisionPresetView(
-        id = "perplexity", name = "Perplexity", kind = "cloud", url = "https://api.perplexity.ai/v1/decisions",
-        keyRequired = true, keyUrl = "https://www.perplexity.ai/account/api/keys",
-        models = listOf(DecisionModelOption("pplx-decider-flash-v1.2", source = "preset"), DecisionModelOption("pplx-decider-v1.2", source = "preset")),
+    ProviderPreset(
+        id = "fireworks", name = "Fireworks AI", kind = "cloud", modelsDevId = "fireworks-ai",
+        defaultUrl = "https://api.fireworks.ai/inference", capabilities = listOf("agent", "embed", "decision"),
+        decision = sampleWire(
+            "https://api.fireworks.ai/inference/v1/systemone", presetModels("accounts/fireworks/models/rune"),
+            keyUrl = "https://app.fireworks.ai/settings/users/api-keys",
+        ),
+    ),
+    ProviderPreset(
+        id = "openrouter", name = "OpenRouter", kind = "cloud", defaultUrl = "https://openrouter.ai/api",
+        capabilities = listOf("agent", "decision"),
+        decision = sampleWire(
+            "https://openrouter.ai/api/v1/systemone",
+            listOf(
+                DecisionModelOption("typesafe/jev-1.14", contextTokens = 32_000, inputCostPerMillion = 0.1, source = "models.dev"),
+                DecisionModelOption("liquid/d1.1", contextTokens = 128_000, inputCostPerMillion = 0.02, source = "models.dev"),
+            ),
+            keyUrl = "https://openrouter.ai/keys", note = "One key for most hosted decision models.",
+        ).copy(modelsDevId = "openrouter"),
+    ),
+    ProviderPreset(
+        id = "typesafe", name = "TypeSafe", kind = "cloud", builtIn = "typesafe", capabilities = listOf("decision"),
+        decision = sampleWire(
+            "https://api.typesafe.ai/v1/systemone", presetModels("jev-1.14.0", "jev-1.13.0"),
+            keyUrl = "https://console.typesafe.ai/keys", note = "Jev, the model every decision threshold was tuned on.",
+        ),
+    ),
+    ProviderPreset(
+        id = "cloudflare", name = "Cloudflare Workers AI", kind = "cloud", capabilities = listOf("decision"),
+        decision = sampleWire(
+            "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run",
+            listOf(
+                DecisionModelOption("@cf/cloudflare/clef-flash", contextTokens = 128_000, inputCostPerMillion = 0.011, source = "preset"),
+                DecisionModelOption("@cf/cloudflare/clef", contextTokens = 128_000, source = "preset"),
+            ),
+            protocol = "workers-ai", keyUrl = "https://dash.cloudflare.com/profile/api-tokens",
+            note = "Workers AI shortens long text to fit Clef's context without saying so.",
+            urlParams = listOf(DecisionUrlParam("account", "Account ID", "0123456789abcdef0123456789abcdef")),
+        ).copy(modelsDevId = "cloudflare-workers-ai"),
+    ),
+    ProviderPreset(
+        id = "perplexity", name = "Perplexity", kind = "cloud", capabilities = listOf("decision"),
+        decision = sampleWire(
+            "https://api.perplexity.ai/v1/decisions", presetModels("pplx-decider-flash-v1.2", "pplx-decider-v1.2"),
+            keyUrl = "https://www.perplexity.ai/account/api/keys",
+        ),
     ),
 )
 
@@ -922,22 +1013,39 @@ internal fun sampleDecisionCalibration() = DecisionCalibration(
 
 /**
  * The sample overview with decision presets, the Decision model on a local
- * Ollaya server's `kev`, calibrated or not.
+ * Ollaya server's `kev` (a backend with only a decision API), calibrated or
+ * not, and a Fireworks backend set up for chat whose preset also offers
+ * decision models.
  */
 internal fun sampleDecisionOverview(calibrated: Boolean = false): ModelsOverview {
     val base = sampleModelsOverview()
-    val backend = DecisionBackendStatus(
+    val ollaya = BackendStatus(
+        type = "http",
+        status = "ok",
+        hasApiKey = false,
         preset = "ollaya",
-        url = "http://127.0.0.1:11435/v1/systemone",
-        onHost = true,
-        calibrations = if (calibrated) mapOf("kev" to sampleDecisionCalibration()) else emptyMap(),
+        decision = BackendDecisionStatus(
+            url = "http://127.0.0.1:11435/v1/systemone",
+            onHost = true,
+            calibrations = if (calibrated) mapOf("kev" to sampleDecisionCalibration()) else emptyMap(),
+        ),
+    )
+    val fireworks = BackendStatus(
+        type = "http",
+        status = "ok",
+        url = "https://api.fireworks.ai/inference",
+        models = listOf("accounts/fireworks/models/example-chat"),
+        modelRoles = mapOf("accounts/fireworks/models/example-chat" to listOf("agent")),
+        hasApiKey = true,
+        preset = "fireworks",
     )
     return base.copy(
-        decisionPresets = sampleDecisionPresets(),
+        presets = base.presets + sampleDecisionPresets().filter { it.hasOpenAiApi },
+        decisionProviders = sampleDecisionPresets().filter { !it.hasOpenAiApi },
         assignmentDisplays = base.assignmentDisplays +
             (DecisionSetup.ROLE to ModelDisplay("ollaya", "Ollaya", "kev", available = true, configured = true)),
         inference = base.inference.copy(
-            decisionBackends = mapOf("ollaya" to backend),
+            backends = base.inference.backends + mapOf("ollaya" to ollaya, "fireworks" to fireworks),
             assignments = base.inference.assignments + (
                 DecisionSetup.ROLE to ResolvedAssignment(
                     "decision", available = true, model = "kev", backendKey = "ollaya",

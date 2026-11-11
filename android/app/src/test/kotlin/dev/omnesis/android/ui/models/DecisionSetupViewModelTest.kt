@@ -5,8 +5,10 @@ package dev.omnesis.android.ui.models
 
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.dto.CredentialSpec
-import dev.omnesis.android.transport.dto.DecisionBackendConfig
+import dev.omnesis.android.transport.dto.BackendConfig
+import dev.omnesis.android.transport.dto.BackendConfigPatch
 import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
+import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionProbeResult
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
 import dev.omnesis.android.transport.dto.ModelCredentialEntry
@@ -36,6 +38,8 @@ class DecisionSetupViewModelTest {
 
     private class FakeGateway : DecisionGateway {
         val calls = mutableListOf<String>()
+        /** The `PATCH /admin/config` bodies the saves would send, rendered by the production builder. */
+        val patches = mutableListOf<String>()
         var credentials: List<ModelCredentialEntry> = emptyList()
         var credentialsFailure: Throwable? = null
         var saveFailure: Throwable? = null
@@ -51,18 +55,28 @@ class DecisionSetupViewModelTest {
             return credentials
         }
         override suspend fun setTypeSafeKey(apiKey: String) { calls += "credential:$apiKey" }
-        override suspend fun saveBackend(key: String, config: DecisionBackendConfig, model: String, enableRemote: Boolean) {
+        override suspend fun saveBackend(key: String, config: BackendConfig, model: String, enableRemote: Boolean) {
             saveFailure?.let { throw it }
             calls += "save:$key/$model remote=$enableRemote"
+            patches += BackendConfigPatch.saveBackend(key, config, model, enableRemote).toString()
         }
         override suspend fun assignTypeSafe(model: String, enableRemote: Boolean) {
             calls += "assign:typesafe/$model remote=$enableRemote"
         }
+        override suspend fun disableDecision(key: String, clearAssignment: Boolean) {
+            removeFailure?.let { throw it }
+            calls += "disable:$key clear=$clearAssignment"
+            patches += BackendConfigPatch.disableDecision(key, clearAssignment).toString()
+        }
         override suspend fun removeBackend(key: String, clearAssignment: Boolean) {
             removeFailure?.let { throw it }
             calls += "remove:$key clear=$clearAssignment"
+            patches += BackendConfigPatch.removeBackend(key, clearAssignment).toString()
         }
-        override suspend fun probe(key: String) = DecisionProbeResult(ok = true, models = listOf("kev"), listed = true)
+        override suspend fun probe(target: ProbeTarget): DecisionProbeResult {
+            calls += "probe:${target.id}"
+            return DecisionProbeResult(ok = true, models = listOf("kev"), listed = true)
+        }
         override suspend fun verifyBackend(key: String, model: String): DecisionVerifyResult {
             calls += "verify:$key/$model"
             return verifyResult
@@ -138,6 +152,48 @@ class DecisionSetupViewModelTest {
         assertNull(vm.state.value.error)
     }
 
+    @Test fun enabling_decisions_on_a_backend_with_a_key_sends_no_key() = runTest {
+        val overview = sampleDecisionOverview()
+        val enable = DecisionSetup.providerGroups(overview).yours.filterIsInstance<DecisionSetup.Provider.Enable>().single()
+        val vm = viewModel()
+        vm.save(DecisionSetup.enableSave(enable, enable.decision.url, "", "accounts/fireworks/models/rune").withConsent()) {}
+        assertEquals(
+            listOf(
+                "save:fireworks/accounts/fireworks/models/rune remote=true",
+                "verify:fireworks/accounts/fireworks/models/rune",
+            ),
+            gateway.calls,
+        )
+        assertEquals(
+            listOf(
+                """{"inference":{"allowRemoteInference":true,"backends":{"fireworks":{"decision":""" +
+                    """{"url":"https://api.fireworks.ai/inference/v1/systemone","protocol":"systemone","auth":"bearer"}}},""" +
+                    """"assignments":{"decision":"fireworks/accounts/fireworks/models/rune"}}}""",
+            ),
+            gateway.patches,
+        )
+    }
+
+    @Test fun adding_a_both_api_provider_configures_both_and_a_decision_only_one_only_decisions() = runTest {
+        val vm = viewModel()
+        val fireworks = sampleDecisionPresets().first { it.id == "fireworks" }
+        val perplexity = sampleDecisionPresets().first { it.id == "perplexity" }
+        vm.save(DecisionSetup.newBackendSave("fireworks-2", fireworks, fireworks.decision!!.url, "example-key-0010", "accounts/fireworks/models/rune")) {}
+        vm.save(DecisionSetup.newBackendSave("perplexity", perplexity, perplexity.decision!!.url, "example-key-0011", "pplx-decider-v1.2")) {}
+        assertEquals(
+            listOf(
+                """{"inference":{"backends":{"fireworks-2":{"type":"http","preset":"fireworks",""" +
+                    """"url":"https://api.fireworks.ai/inference","apiKey":"example-key-0010",""" +
+                    """"decision":{"url":"https://api.fireworks.ai/inference/v1/systemone","protocol":"systemone","auth":"bearer"}}},""" +
+                    """"assignments":{"decision":"fireworks-2/accounts/fireworks/models/rune"}}}""",
+                """{"inference":{"backends":{"perplexity":{"type":"http","preset":"perplexity","apiKey":"example-key-0011",""" +
+                    """"decision":{"url":"https://api.perplexity.ai/v1/decisions","protocol":"systemone","auth":"bearer"}}},""" +
+                    """"assignments":{"decision":"perplexity/pplx-decider-v1.2"}}}""",
+            ),
+            gateway.patches,
+        )
+    }
+
     @Test fun a_refused_save_shows_the_gateways_reason_verbatim() = runTest {
         val vm = viewModel()
         val changes = changesOf(vm)
@@ -159,12 +215,41 @@ class DecisionSetupViewModelTest {
         assertTrue(verified is VerifyState.Done)
 
         var removed = 0
-        vm.remove("spare", clearAssignment = false) { removed += 1 }
+        vm.remove(DecisionSetup.Removal("spare", wholeBackend = true, clearAssignment = false)) { removed += 1 }
         assertEquals(verified, vm.state.value.verify)
-        vm.remove("ollaya", clearAssignment = true) { removed += 1 }
+        vm.remove(DecisionSetup.Removal("ollaya", wholeBackend = true, clearAssignment = true)) { removed += 1 }
         assertEquals(VerifyState.Idle, vm.state.value.verify)
         assertEquals(2, removed)
         assertTrue("remove:ollaya clear=true" in gateway.calls)
+    }
+
+    @Test fun a_chat_backend_loses_only_its_decision_api_and_a_decision_only_one_goes_whole() = runTest {
+        val vm = viewModel()
+        vm.remove(DecisionSetup.Removal("fireworks", wholeBackend = false, clearAssignment = true)) {}
+        vm.remove(DecisionSetup.Removal("ollaya", wholeBackend = true, clearAssignment = false)) {}
+        assertEquals(listOf("disable:fireworks clear=true", "remove:ollaya clear=false"), gateway.calls)
+        assertEquals(
+            listOf(
+                """{"inference":{"backends":{"fireworks":{"decision":null}},"assignments":{"decision":null}}}""",
+                """{"inference":{"backends":{"ollaya":null}}}""",
+            ),
+            gateway.patches,
+        )
+    }
+
+    // --- Listing a server's models ---
+
+    @Test fun saved_and_unsaved_servers_are_listed_under_their_own_ids() = runTest {
+        val vm = viewModel()
+        vm.probe(ProbeTarget.Saved("ollaya"))
+        val unsaved = ProbeTarget.Unsaved(DecisionProbeBody(url = "http://127.0.0.1:11434/v1/systemone", preset = "ollama"))
+        vm.probe(unsaved)
+        assertEquals(listOf("probe:backend:ollaya", "probe:url:http://127.0.0.1:11434/v1/systemone"), gateway.calls)
+        val done = ProbeState.Done(DecisionProbeResult(ok = true, models = listOf("kev"), listed = true))
+        assertEquals(mapOf("backend:ollaya" to done, unsaved.id to done), vm.state.value.probes)
+        // Removing a backend forgets its listing.
+        vm.remove(DecisionSetup.Removal("ollaya", wholeBackend = true, clearAssignment = false)) {}
+        assertEquals(setOf(unsaved.id), vm.state.value.probes.keys)
     }
 
     @Test fun a_failed_removal_keeps_everything_and_says_why() = runTest {
@@ -172,7 +257,7 @@ class DecisionSetupViewModelTest {
         vm.verify("ollaya/kev")
         gateway.removeFailure = GatewayException.ServerError(500, "config is read-only")
         var removed = false
-        vm.remove("ollaya", clearAssignment = true) { removed = true }
+        vm.remove(DecisionSetup.Removal("ollaya", wholeBackend = true, clearAssignment = true)) { removed = true }
         assertFalse(removed)
         assertEquals("config is read-only", vm.state.value.error)
         assertTrue(vm.state.value.verify is VerifyState.Done)

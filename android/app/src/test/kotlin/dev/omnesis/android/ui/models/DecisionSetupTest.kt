@@ -3,12 +3,14 @@
 
 package dev.omnesis.android.ui.models
 
+import dev.omnesis.android.transport.dto.BackendConfigPatch
+import dev.omnesis.android.transport.dto.BackendDecisionStatus
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
-import dev.omnesis.android.transport.dto.DecisionBackendStatus
 import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
-import dev.omnesis.android.transport.dto.DecisionConfigPatch
 import dev.omnesis.android.transport.dto.DecisionModelOption
+import dev.omnesis.android.transport.dto.ProviderDecisionPreset
+import dev.omnesis.android.transport.dto.ProviderPreset
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
 import dev.omnesis.android.transport.dto.ResolvedAssignment
 import dev.omnesis.android.transport.dto.TypeSafeEndpointStatus
@@ -26,19 +28,29 @@ import java.time.ZoneOffset
 import java.util.Locale
 
 /**
- * The Decision model setup's rules, kept to the portal's
- * `lib/decision-backends.js` so the clients agree. All data is invented.
+ * The Decision model setup's rules, kept to the portal's decision setup so
+ * the clients agree. All data is invented.
  */
 class DecisionSetupTest {
 
     private val decisionCap = CapabilityMeta("decision", "Decision model", "d", "scale", backendFamily = "typed-decision")
     private fun preset(id: String) = sampleDecisionPresets().first { it.id == id }
+    private fun wire(id: String) = preset(id).decision!!
+    private fun save(request: SaveRequest.Backend) =
+        BackendConfigPatch.saveBackend(request.key, request.config, request.model, request.enableRemote).toString()
+
+    /** A backend that serves only a decision API, as the gateway reports one. */
+    private fun decisionOnly(decision: BackendDecisionStatus, preset: String? = null) =
+        BackendStatus(type = "http", status = "ok", preset = preset, hasApiKey = decision.hasApiKey, decision = decision)
 
     // --- Configurability ---
 
-    @Test fun decision_card_is_configurable_only_when_the_gateway_sends_presets() {
+    @Test fun decision_card_is_configurable_only_when_the_gateway_sends_decision_presets() {
         assertTrue(DecisionSetup.isConfigurable(decisionCap, sampleDecisionOverview()))
-        // An older gateway: no presets, so the card stays read-only.
+        // An older gateway: its presets have no decision API and it sends no decision-only
+        // providers, so the card stays read-only.
+        assertTrue(sampleModelsOverview().presets.isNotEmpty())
+        assertTrue(sampleModelsOverview().decisionProviders.isEmpty())
         assertFalse(DecisionSetup.isConfigurable(decisionCap, sampleModelsOverview()))
         // A role of another backend family is never this setup's.
         val other = decisionCap.copy(role = "future", backendFamily = "future-family")
@@ -48,40 +60,102 @@ class DecisionSetupTest {
 
     // --- Providers ---
 
-    @Test fun providers_list_configured_backends_then_local_then_cloud_with_typesafe_first() {
+    @Test fun providers_list_your_backends_then_typesafe_then_providers_to_add() {
         val groups = DecisionSetup.providerGroups(sampleDecisionOverview())
-        assertEquals(listOf("ollaya"), groups.existing.map { it.key })
-        assertEquals("ollaya", groups.existing.single().preset?.id)
-        assertEquals(listOf("Ollaya", "Ollama", "Other server"), groups.local.map { it.title })
-        assertEquals(Provider.Custom, groups.local.last())
+        // The backend serving decisions, then the chat backend whose preset offers them;
+        // a chat backend no decision preset names is not offered.
+        assertEquals(listOf("ollaya", "fireworks"), groups.yours.map { it.title })
+        val existing = groups.yours[0] as Provider.Existing
+        assertEquals("ollaya", existing.preset?.id)
+        val enable = groups.yours[1] as Provider.Enable
+        assertEquals("fireworks", enable.preset.id)
+        assertEquals("Fireworks AI · uses your existing key", DecisionSetup.subtitle(enable))
+        assertEquals(listOf("typesafe"), groups.builtIn.map { it.preset.id })
+        // Ollaya and Fireworks already have backends, offered above; they are not offered again.
         assertEquals(
-            listOf("typesafe", "openrouter", "cloudflare", "perplexity"),
-            groups.cloud.map { it.preset.id },
+            listOf("Ollama", "OpenRouter", "Cloudflare Workers AI", "Perplexity", "Other server"),
+            groups.add.map { it.title },
         )
+        assertEquals(Provider.Custom, groups.add.last())
     }
 
-    @Test fun an_unknown_preset_kind_is_offered_with_the_cloud_providers() {
+    @Test fun decision_only_providers_come_from_their_own_list() {
+        // A gateway whose OpenAI-compatible presets offer no decisions, with decision-only providers apart.
+        val overview = sampleModelsOverview().copy(decisionProviders = listOf(preset("ollaya"), preset("typesafe")))
+        assertTrue(DecisionSetup.isConfigurable(decisionCap, overview))
+        val groups = DecisionSetup.providerGroups(overview)
+        assertEquals(listOf("typesafe"), groups.builtIn.map { it.preset.id })
+        assertEquals(listOf("Ollaya", "Other server"), groups.add.map { it.title })
+        assertEquals("ollaya", DecisionSetup.presetFor(overview, "ollaya")?.id)
+    }
+
+    @Test fun a_preset_returns_to_the_add_list_once_no_backend_uses_it() {
+        val base = sampleDecisionOverview()
+        val withoutFireworks = base.copy(inference = base.inference.copy(backends = base.inference.backends - "fireworks"))
+        val groups = DecisionSetup.providerGroups(withoutFireworks)
+        assertEquals(listOf("ollaya"), groups.yours.map { it.title })
+        assertEquals(
+            listOf("Ollama", "Fireworks AI", "OpenRouter", "Cloudflare Workers AI", "Perplexity", "Other server"),
+            groups.add.map { it.title },
+        )
+        // A backend no preset names never hides one.
+        assertEquals(groups.add, DecisionSetup.providerGroups(
+            withoutFireworks.copy(inference = withoutFireworks.inference.copy(
+                backends = withoutFireworks.inference.backends + ("spare" to BackendStatus(type = "http", url = "https://api.example.com")),
+            )),
+        ).add)
+    }
+
+    @Test fun a_chat_backend_without_a_key_is_offered_to_add_decisions_with_one() {
+        val base = sampleDecisionOverview()
+        val keyless = base.copy(
+            inference = base.inference.copy(
+                backends = base.inference.backends + ("fireworks" to base.inference.backends.getValue("fireworks").copy(hasApiKey = false)),
+            ),
+        )
+        val enable = DecisionSetup.providerGroups(keyless).yours.filterIsInstance<Provider.Enable>().single()
+        assertEquals("Fireworks AI · add decision models", DecisionSetup.subtitle(enable))
+        assertTrue(DecisionSetup.keyRequired(enable, keyless, KeyState.Missing))
+        assertFalse(DecisionSetup.keyStored(enable, keyless, KeyState.Missing))
+    }
+
+    @Test fun a_backend_named_typesafe_is_never_offered_decisions() {
+        val base = sampleDecisionOverview()
+        val overview = base.copy(
+            inference = base.inference.copy(
+                backends = base.inference.backends + ("typesafe" to BackendStatus(type = "http", url = "https://api.example.com", preset = "fireworks")),
+            ),
+        )
+        assertEquals(listOf("ollaya", "fireworks"), DecisionSetup.providerGroups(overview).yours.map { it.title })
+    }
+
+    @Test fun an_unknown_preset_kind_is_offered_with_the_hosted_providers() {
         val overview = sampleDecisionOverview().copy(
-            decisionPresets = listOf(preset("ollaya").copy(id = "appliance", name = "Appliance", kind = "appliance")),
+            presets = emptyList(),
+            decisionProviders = listOf(preset("ollaya").copy(id = "appliance", name = "Appliance", kind = "appliance"), preset("ollama")),
         )
         val groups = DecisionSetup.providerGroups(overview)
-        assertEquals(listOf("appliance"), groups.cloud.map { it.preset.id })
-        assertEquals(listOf(Provider.Custom), groups.local)
+        assertEquals(listOf("Ollama", "Appliance", "Other server"), groups.add.map { it.title })
+        assertTrue(groups.builtIn.isEmpty())
     }
 
     @Test fun only_servers_of_the_operators_own_are_probed() {
         assertTrue(DecisionSetup.canProbe(Provider.Custom))
         assertTrue(DecisionSetup.canProbe(Provider.Preset(preset("ollama"))))
         assertFalse(DecisionSetup.canProbe(Provider.Preset(preset("openrouter"))))
-        val existing = DecisionSetup.providerGroups(sampleDecisionOverview()).existing.single()
-        assertTrue(DecisionSetup.canProbe(existing))
+        val groups = DecisionSetup.providerGroups(sampleDecisionOverview())
+        assertTrue(DecisionSetup.canProbe(groups.yours[0]))
+        // Adding decisions to a hosted chat backend lists its preset's models.
+        assertFalse(DecisionSetup.canProbe(groups.yours[1]))
     }
 
     @Test fun the_current_provider_is_marked_and_prefills_its_model() {
         val overview = sampleDecisionOverview()
-        val existing = DecisionSetup.providerGroups(overview).existing.single()
+        val (existing, enable) = DecisionSetup.providerGroups(overview).yours
         assertTrue(DecisionSetup.isCurrent(existing, overview))
         assertEquals("kev", DecisionSetup.initialModel(existing, overview))
+        assertFalse(DecisionSetup.isCurrent(enable, overview))
+        assertEquals("", DecisionSetup.initialModel(enable, overview))
         assertFalse(DecisionSetup.isCurrent(Provider.Preset(preset("typesafe")), overview))
         assertEquals("", DecisionSetup.initialModel(Provider.Preset(preset("ollama")), overview))
 
@@ -97,9 +171,9 @@ class DecisionSetupTest {
     }
 
     @Test fun where_names_the_host_or_this_machine() {
-        assertEquals("On this host", DecisionSetup.where(DecisionBackendStatus(url = "http://127.0.0.1:1/x", onHost = true)))
-        assertEquals("decide.example.com:8443", DecisionSetup.where(DecisionBackendStatus(url = "https://decide.example.com:8443/v1/systemone")))
-        assertEquals("api.example.com", DecisionSetup.where(DecisionBackendStatus(url = "https://api.example.com/v1/systemone")))
+        assertEquals("On this host", DecisionSetup.where(BackendDecisionStatus(url = "http://127.0.0.1:1/x", onHost = true)))
+        assertEquals("decide.example.com:8443", DecisionSetup.where(BackendDecisionStatus(url = "https://decide.example.com:8443/v1/systemone")))
+        assertEquals("api.example.com", DecisionSetup.where(BackendDecisionStatus(url = "https://api.example.com/v1/systemone")))
     }
 
     @Test fun local_presets_name_their_port_on_the_host() {
@@ -119,9 +193,9 @@ class DecisionSetupTest {
         }
         assertEquals("Use at most 64 characters.", DecisionSetup.nameError("x".repeat(65), overview))
         assertNull(DecisionSetup.nameError("x".repeat(64), overview))
-        // The sample's HTTP backend and decision backend names are taken…
-        assertEquals("\"northstar\" is already an HTTP backend.", DecisionSetup.nameError("northstar", overview))
-        assertEquals("\"ollaya\" is already a decision backend.", DecisionSetup.nameError("ollaya", overview))
+        // Every backend's name is taken, whatever it serves…
+        assertEquals("\"northstar\" is already a backend.", DecisionSetup.nameError("northstar", overview))
+        assertEquals("\"ollaya\" is already a backend.", DecisionSetup.nameError("ollaya", overview))
         // …except by the backend being edited.
         assertNull(DecisionSetup.nameError("ollaya", overview, existingKey = "ollaya"))
         assertNull(DecisionSetup.nameError("studio-decider", overview))
@@ -134,9 +208,9 @@ class DecisionSetupTest {
         assertEquals("decision-server", DecisionSetup.defaultName(null, overview))
         val taken = overview.copy(
             inference = overview.inference.copy(
-                decisionBackends = overview.inference.decisionBackends +
-                    ("ollaya-2" to DecisionBackendStatus(url = "http://127.0.0.1:2/x")),
-                backends = overview.inference.backends + ("decision-server" to BackendStatus(type = "http")),
+                backends = overview.inference.backends +
+                    ("ollaya-2" to decisionOnly(BackendDecisionStatus(url = "http://127.0.0.1:2/x"))) +
+                    ("decision-server" to BackendStatus(type = "http")),
             ),
         )
         assertEquals("ollaya-3", DecisionSetup.defaultName(preset("ollaya"), taken))
@@ -146,7 +220,7 @@ class DecisionSetupTest {
     // --- URLs ---
 
     @Test fun url_params_are_filled_and_encoded() {
-        val cloudflare = preset("cloudflare")
+        val cloudflare = wire("cloudflare")
         assertEquals(
             FilledUrl.Ok("https://api.cloudflare.com/client/v4/accounts/0123abcd/ai/run"),
             DecisionSetup.fillUrl(cloudflare, mapOf("account" to "  0123abcd ")),
@@ -162,7 +236,7 @@ class DecisionSetupTest {
             FilledUrl.Missing("The URL still has {resource}."),
             DecisionSetup.fillUrl(broken, mapOf("account" to "a")),
         )
-        assertEquals(FilledUrl.Ok(preset("ollaya").url), DecisionSetup.fillUrl(preset("ollaya"), emptyMap()))
+        assertEquals(FilledUrl.Ok(wire("ollaya").url), DecisionSetup.fillUrl(wire("ollaya"), emptyMap()))
     }
 
     @Test fun uri_component_encoding_matches_javascript() {
@@ -199,12 +273,17 @@ class DecisionSetupTest {
         assertTrue(DecisionSetup.keyRequired(Provider.Preset(preset("typesafe")), overview, missing))
         assertFalse(DecisionSetup.keyRequired(Provider.Preset(preset("typesafe")), overview, KeyState.Stored))
         assertTrue(DecisionSetup.keyStored(Provider.Preset(preset("typesafe")), overview, KeyState.Stored))
-        val keyed = Provider.Existing("router", DecisionBackendStatus(url = "https://openrouter.ai/x", hasApiKey = true), preset("openrouter"))
+        val routerApi = BackendDecisionStatus(url = "https://openrouter.ai/x", hasApiKey = true)
+        val keyed = Provider.Existing("router", decisionOnly(routerApi, "openrouter"), routerApi, preset("openrouter"))
         assertFalse(DecisionSetup.keyRequired(keyed, overview, missing))
         assertTrue(DecisionSetup.keyStored(keyed, overview, missing))
-        val unkeyed = keyed.copy(backend = keyed.backend.copy(hasApiKey = false))
+        val unkeyed = keyed.copy(decision = routerApi.copy(hasApiKey = false))
         assertTrue(DecisionSetup.keyRequired(unkeyed, overview, missing))
-        assertFalse(DecisionSetup.keyRequired(DecisionSetup.providerGroups(overview).existing.single(), overview, missing))
+        val (ollaya, fireworks) = DecisionSetup.providerGroups(overview).yours
+        assertFalse(DecisionSetup.keyRequired(ollaya, overview, missing))
+        // The chat backend's own key serves its decision API: none is asked.
+        assertFalse(DecisionSetup.keyRequired(fireworks, overview, missing))
+        assertTrue(DecisionSetup.keyStored(fireworks, overview, missing))
     }
 
     @Test fun typesafe_key_is_optional_on_a_self_hosted_deployment_or_when_its_state_is_unknown() {
@@ -237,91 +316,146 @@ class DecisionSetupTest {
 
     // --- Saving ---
 
-    @Test fun a_preset_save_carries_its_protocol_and_omits_a_blank_key() {
+    @Test fun a_decision_only_preset_save_carries_its_protocol_and_omits_a_blank_key() {
         val request = DecisionSetup.newBackendSave(" cloudflare ", preset("cloudflare"), " https://a.example.com/run ", "  ", " @cf/cloudflare/clef ")
         assertEquals("cloudflare", request.key)
         assertEquals("@cf/cloudflare/clef", request.model)
         assertEquals("cloudflare/@cf/cloudflare/clef", request.assignment)
         assertEquals("cloudflare", request.config.preset)
-        assertEquals("workers-ai", request.config.protocol)
-        assertEquals("https://a.example.com/run", request.config.url)
+        assertNull(request.config.url)
+        assertEquals("workers-ai", request.config.decision?.protocol)
+        assertEquals("https://a.example.com/run", request.config.decision?.url)
         assertNull(request.config.apiKey)
-        val patch = DecisionConfigPatch.saveBackend(request.key, request.config, request.model, request.enableRemote)
         assertEquals(
-            """{"inference":{"decisionBackends":{"cloudflare":{"preset":"cloudflare","url":"https://a.example.com/run",""" +
-                """"protocol":"workers-ai","auth":"bearer"}},"assignments":{"decision":"cloudflare/@cf/cloudflare/clef"}}}""",
-            patch.toString(),
+            """{"inference":{"backends":{"cloudflare":{"type":"http","preset":"cloudflare",""" +
+                """"decision":{"url":"https://a.example.com/run","protocol":"workers-ai","auth":"bearer"}}},""" +
+                """"assignments":{"decision":"cloudflare/@cf/cloudflare/clef"}}}""",
+            save(request),
         )
+    }
+
+    @Test fun a_both_api_preset_save_configures_both_with_one_key() {
+        val request = DecisionSetup.newBackendSave(
+            "fireworks-2", preset("fireworks"), wire("fireworks").url, " example-key-0006 ", "accounts/fireworks/models/rune",
+        )
+        assertEquals(
+            """{"inference":{"backends":{"fireworks-2":{"type":"http","preset":"fireworks",""" +
+                """"url":"https://api.fireworks.ai/inference","apiKey":"example-key-0006",""" +
+                """"decision":{"url":"https://api.fireworks.ai/inference/v1/systemone","protocol":"systemone","auth":"bearer"}}},""" +
+                """"assignments":{"decision":"fireworks-2/accounts/fireworks/models/rune"}}}""",
+            save(request),
+        )
+        assertEquals("https://api.fireworks.ai/inference/v1/systemone", request.endpoint)
+    }
+
+    @Test fun the_score_field_travels_with_its_preset() {
+        val fastino = ProviderPreset(
+            id = "fastino", name = "Fastino", kind = "cloud",
+            decision = ProviderDecisionPreset(url = "https://api.example.org/v1/systemone", auth = "x-api-key", scoreField = "expected_level", keyRequired = true),
+        )
+        val request = DecisionSetup.newBackendSave("fastino", fastino, fastino.decision!!.url, "example-key-0007", "fastino/GLiDE")
+        assertEquals(
+            """{"inference":{"backends":{"fastino":{"type":"http","preset":"fastino","apiKey":"example-key-0007",""" +
+                """"decision":{"url":"https://api.example.org/v1/systemone","protocol":"systemone","auth":"x-api-key",""" +
+                """"scoreField":"expected_level"}}},"assignments":{"decision":"fastino/fastino/GLiDE"}}}""",
+            save(request),
+        )
+    }
+
+    @Test fun enabling_decisions_on_an_existing_backend_sends_no_key() {
+        val overview = sampleDecisionOverview()
+        val enable = DecisionSetup.providerGroups(overview).yours.filterIsInstance<Provider.Enable>().single()
+        // A key typed anyway is not sent: the backend already has one.
+        val request = DecisionSetup.enableSave(enable, wire("fireworks").url, "example-key-0008", "accounts/fireworks/models/rune")
+        assertEquals(
+            """{"inference":{"backends":{"fireworks":{"decision":{"url":"https://api.fireworks.ai/inference/v1/systemone",""" +
+                """"protocol":"systemone","auth":"bearer"}}},"assignments":{"decision":"fireworks/accounts/fireworks/models/rune"}}}""",
+            save(request),
+        )
+        assertEquals(DecisionSetup.Consent("accounts/fireworks/models/rune", "Fireworks AI"), DecisionSetup.consentFor(request, overview, enable.preset))
+
+        // A backend without a key takes the one typed here, for both of its APIs.
+        val keyless = enable.copy(backend = enable.backend.copy(hasApiKey = false))
+        assertEquals("example-key-0008", DecisionSetup.enableSave(keyless, wire("fireworks").url, " example-key-0008 ", "m").config.apiKey)
     }
 
     @Test fun a_custom_server_records_no_preset_and_keeps_a_typed_key() {
         val request = DecisionSetup.newBackendSave("studio", null, "http://192.0.2.10:8080/v1/systemone", "example-key-0002", "kev")
         assertNull(request.config.preset)
-        assertEquals("systemone", request.config.protocol)
-        assertEquals("bearer", request.config.auth)
+        assertEquals("systemone", request.config.decision?.protocol)
+        assertEquals("bearer", request.config.decision?.auth)
         assertEquals("example-key-0002", request.config.apiKey)
         val withConsent = request.withConsent() as SaveRequest.Backend
         assertTrue(withConsent.enableRemote)
-        val patch = DecisionConfigPatch.saveBackend(withConsent.key, withConsent.config, withConsent.model, withConsent.enableRemote)
         assertEquals(
-            """{"inference":{"allowRemoteInference":true,"decisionBackends":{"studio":{"url":"http://192.0.2.10:8080/v1/systemone",""" +
-                """"protocol":"systemone","auth":"bearer","apiKey":"example-key-0002"}},"assignments":{"decision":"studio/kev"}}}""",
-            patch.toString(),
+            """{"inference":{"allowRemoteInference":true,"backends":{"studio":{"type":"http","apiKey":"example-key-0002",""" +
+                """"decision":{"url":"http://192.0.2.10:8080/v1/systemone","protocol":"systemone","auth":"bearer"}}},""" +
+                """"assignments":{"decision":"studio/kev"}}}""",
+            save(withConsent),
         )
     }
 
     @Test fun re_saving_a_hand_written_backend_never_rewrites_its_protocol_or_auth() {
         // A backend no preset names, speaking OpenAI's Decisions API with an X-API-Key header.
-        val existing = Provider.Existing(
-            "studio",
-            DecisionBackendStatus(url = "https://decide.example.com/v1/decisions", protocol = "openai-decisions", auth = "x-api-key", hasApiKey = true),
-            preset = null,
-        )
+        val api = BackendDecisionStatus(url = "https://decide.example.com/v1/decisions", protocol = "openai-decisions", auth = "x-api-key", hasApiKey = true)
+        val existing = Provider.Existing("studio", decisionOnly(api), api, preset = null)
         val modelOnly = DecisionSetup.existingBackendSave(existing, "https://decide.example.com/v1/decisions", "", "decider-v2")
         assertTrue(modelOnly.config.isEmpty)
         assertEquals("https://decide.example.com/v1/decisions", modelOnly.endpoint)
-        assertEquals(
-            """{"inference":{"assignments":{"decision":"studio/decider-v2"}}}""",
-            DecisionConfigPatch.saveBackend(modelOnly.key, modelOnly.config, modelOnly.model, modelOnly.enableRemote).toString(),
-        )
+        assertEquals("""{"inference":{"assignments":{"decision":"studio/decider-v2"}}}""", save(modelOnly))
 
         val changed = DecisionSetup.existingBackendSave(existing, " https://decide2.example.com/v1/decisions ", " example-key-0003 ", "decider-v2")
         assertEquals("https://decide2.example.com/v1/decisions", changed.endpoint)
         assertEquals(
-            """{"inference":{"decisionBackends":{"studio":{"url":"https://decide2.example.com/v1/decisions",""" +
-                """"apiKey":"example-key-0003"}},"assignments":{"decision":"studio/decider-v2"}}}""",
-            DecisionConfigPatch.saveBackend(changed.key, changed.config, changed.model, changed.enableRemote).toString(),
+            """{"inference":{"backends":{"studio":{"apiKey":"example-key-0003",""" +
+                """"decision":{"url":"https://decide2.example.com/v1/decisions"}}},"assignments":{"decision":"studio/decider-v2"}}}""",
+            save(changed),
         )
     }
 
     @Test fun re_saving_a_preset_backend_keeps_its_stored_preset_fields() {
-        val fastino = sampleDecisionPresets().first().copy(id = "fastino", name = "Fastino", kind = "cloud",
-            url = "https://api.example.org/v1/systemone", auth = "x-api-key", scoreField = "expected_level", keyRequired = true)
-        val existing = Provider.Existing(
-            "fastino",
-            DecisionBackendStatus(preset = "fastino", url = "https://api.example.org/v1/systemone", auth = "x-api-key", hasApiKey = true),
-            fastino,
+        val fastino = ProviderPreset(
+            id = "fastino", name = "Fastino", kind = "cloud",
+            decision = ProviderDecisionPreset(url = "https://api.example.org/v1/systemone", auth = "x-api-key", scoreField = "expected_level", keyRequired = true),
         )
-        val save = DecisionSetup.existingBackendSave(existing, existing.backend.url, "", "fastino/GLiDE")
-        assertEquals(null, save.config.protocol)
-        assertEquals(null, save.config.auth)
-        assertEquals(null, save.config.scoreField)
-        assertEquals(null, save.config.preset)
+        val api = BackendDecisionStatus(url = "https://api.example.org/v1/systemone", auth = "x-api-key", hasApiKey = true)
+        val existing = Provider.Existing("fastino", decisionOnly(api, "fastino"), api, fastino)
+        val save = DecisionSetup.existingBackendSave(existing, api.url, "", "fastino/GLiDE")
+        assertNull(save.config.decision)
+        assertNull(save.config.preset)
+        assertNull(save.config.type)
         assertEquals(DecisionSetup.Consent("fastino/GLiDE", "Fastino"), DecisionSetup.consentFor(save, sampleDecisionOverview(), fastino))
     }
 
     @Test fun keys_never_appear_in_printed_requests() {
-        val backend = DecisionSetup.newBackendSave("router", preset("openrouter"), preset("openrouter").url, "example-key-0004", "liquid/d1.1")
+        val backend = DecisionSetup.newBackendSave("router", preset("openrouter"), wire("openrouter").url, "example-key-0004", "liquid/d1.1")
         assertFalse(backend.toString().contains("example-key-0004"))
         assertTrue(backend.toString().contains("apiKey=<redacted>"))
         val typesafe = SaveRequest.TypeSafe("jev-1.14.0", apiKey = "example-key-0005")
         assertFalse(typesafe.toString().contains("example-key-0005"))
     }
 
-    @Test fun removing_the_assigned_backend_clears_the_assignment_in_the_same_patch() {
+    @Test fun a_decision_only_backend_is_removed_whole_and_a_chat_backend_loses_only_its_decisions() {
+        val overview = sampleDecisionOverview()
+        val ollaya = DecisionSetup.providerGroups(overview).yours.first() as Provider.Existing
+        val removal = DecisionSetup.removalFor(ollaya, overview)
+        assertEquals(DecisionSetup.Removal("ollaya", wholeBackend = true, clearAssignment = true), removal)
         assertEquals(
-            """{"inference":{"decisionBackends":{"ollaya":null},"assignments":{"decision":null}}}""",
-            DecisionConfigPatch.removeBackend("ollaya", clearAssignment = true).toString(),
+            """{"inference":{"backends":{"ollaya":null},"assignments":{"decision":null}}}""",
+            BackendConfigPatch.removeBackend("ollaya", clearAssignment = true).toString(),
+        )
+
+        val api = BackendDecisionStatus(url = "https://api.fireworks.ai/inference/v1/systemone", hasApiKey = true)
+        val both = Provider.Existing(
+            "fireworks",
+            overview.inference.backends.getValue("fireworks").copy(decision = api),
+            api,
+            preset("fireworks"),
+        )
+        assertEquals(DecisionSetup.Removal("fireworks", wholeBackend = false, clearAssignment = false), DecisionSetup.removalFor(both, overview))
+        assertEquals(
+            """{"inference":{"backends":{"fireworks":{"decision":null}}}}""",
+            BackendConfigPatch.disableDecision("fireworks", clearAssignment = false).toString(),
         )
     }
 
@@ -329,10 +463,10 @@ class DecisionSetupTest {
 
     @Test fun off_host_endpoints_ask_for_consent_while_cloud_inference_is_off() {
         val overview = sampleDecisionOverview()
-        val local = DecisionSetup.newBackendSave("ollama", preset("ollama"), preset("ollama").url, "", "d3:4b")
+        val local = DecisionSetup.newBackendSave("ollama", preset("ollama"), wire("ollama").url, "", "d3:4b")
         assertNull(DecisionSetup.consentFor(local, overview, preset("ollama")))
 
-        val router = DecisionSetup.newBackendSave("openrouter", preset("openrouter"), preset("openrouter").url, "k", "liquid/d1.1")
+        val router = DecisionSetup.newBackendSave("openrouter", preset("openrouter"), wire("openrouter").url, "k", "liquid/d1.1")
         assertEquals(DecisionSetup.Consent("liquid/d1.1", "OpenRouter"), DecisionSetup.consentFor(router, overview, preset("openrouter")))
 
         // A local preset pointed at another machine names the URL, as a custom server does.
@@ -361,7 +495,7 @@ class DecisionSetupTest {
         assertTrue((save.withConsent() as SaveRequest.TypeSafe).enableRemote)
         assertEquals(
             """{"inference":{"allowRemoteInference":true,"assignments":{"decision":"typesafe/jev-1.14.0"}}}""",
-            DecisionConfigPatch.assignTypeSafe("jev-1.14.0", enableRemote = true).toString(),
+            BackendConfigPatch.assignTypeSafe("jev-1.14.0", enableRemote = true).toString(),
         )
     }
 
@@ -375,11 +509,10 @@ class DecisionSetupTest {
     // --- Models ---
 
     @Test fun suggestions_put_installed_models_first_then_the_presets() {
-        val ollaya = preset("ollaya")
-        val suggestions = DecisionSetup.modelSuggestions(ollaya, listOf("laya", "nimble:9b", "laya", ""))
+        val suggestions = DecisionSetup.modelSuggestions(wire("ollaya"), listOf("laya", "nimble:9b", "laya", ""))
         assertEquals(listOf("laya", "nimble:9b", "kev", "d1"), suggestions.map { it.option.id })
         assertEquals(listOf(true, true, false, false), suggestions.map { it.installed })
-        assertEquals(listOf("pplx-decider-flash-v1.2", "pplx-decider-v1.2"), DecisionSetup.modelSuggestions(preset("perplexity"), emptyList()).map { it.option.id })
+        assertEquals(listOf("pplx-decider-flash-v1.2", "pplx-decider-v1.2"), DecisionSetup.modelSuggestions(wire("perplexity"), emptyList()).map { it.option.id })
         assertEquals(listOf("kev"), DecisionSetup.modelSuggestions(null, listOf("kev")).map { it.option.id })
     }
 
@@ -514,17 +647,16 @@ class DecisionSetupTest {
         assertNull(DecisionSetup.cardCalibrationLine(sampleModelsOverview(), null))
     }
 
-    @Test fun decision_logos_are_named_by_their_models_dev_id() {
+    @Test fun preset_logos_are_named_by_their_models_dev_id() {
         val overview = sampleDecisionOverview()
-        assertEquals(
-            mapOf(
-                "ollaya" to "ollaya", "ollama" to "ollama", "openrouter" to "openrouter",
-                "cloudflare" to "cloudflare-workers-ai", "perplexity" to "perplexity",
-            ),
-            ProviderLogoLoader.decisionLogoSources(overview),
-        )
+        val sources = ProviderLogoLoader.presetLogoSources(overview)
+        assertEquals("cloudflare-workers-ai", sources["cloudflare"])
+        assertEquals("fireworks-ai", sources["fireworks"])
+        assertEquals("ollaya", sources["ollaya"])
+        assertEquals("openai", sources["openai"])
+        assertFalse("typesafe" in sources)
         val ids = ProviderLogoLoader.providers(overview)
-        assertTrue(ids.containsAll(listOf("ollaya", "ollama", "openrouter", "cloudflare-workers-ai", "perplexity")))
+        assertTrue(ids.containsAll(listOf("ollaya", "ollama", "openrouter", "cloudflare-workers-ai", "fireworks-ai", "perplexity")))
         assertFalse("cloudflare" in ids)
     }
 }

@@ -33,12 +33,18 @@ data class ModelsOverview(
      */
     val activeDownloads: List<ActiveDownload> = emptyList(),
     /**
-     * Well-known cloud-provider presets the add-backend grid offers (OpenAI,
-     * Groq, …). Each carries the default backend name, URL, optional api-path
-     * prefix, and the catalog roles it's typically used for. Defaults to empty
-     * so an older gateway that omits the key still decodes.
+     * Providers with an OpenAI-compatible API the add-backend grid offers
+     * (OpenAI, Groq, …), each with its default backend name and URL, the
+     * roles it's typically used for, and its decision API when it has one.
+     * Defaults to empty so an older gateway that omits the key still decodes.
      */
     val presets: List<ProviderPreset> = emptyList(),
+    /**
+     * Providers that serve only decision models (no OpenAI-compatible URL),
+     * TypeSafe's built-in slot among them. Absent on a gateway that predates
+     * decision backends.
+     */
+    val decisionProviders: List<ProviderPreset> = emptyList(),
     /** Provider-specific inference controls keyed by the full HTTP assignment. */
     val modelControls: Map<String, ModelControlInfo> = emptyMap(),
     /** Saved behavior for each capability, bound to its current assignment. */
@@ -50,13 +56,10 @@ data class ModelsOverview(
      * app falls back to the dedicated recent-models endpoint.
      */
     val recentModels: Map<String, List<RecentModelEntry>> = emptyMap(),
-    /**
-     * Decision-model providers with the models to offer for each. Null on a
-     * gateway that predates decision backends: the app then shows the
-     * Decision model read-only, as before.
-     */
-    val decisionPresets: List<DecisionPresetView>? = null,
-)
+) {
+    /** Every provider a backend can be made from or the Decision model offered: [presets], then [decisionProviders]. */
+    val providers: List<ProviderPreset> get() = presets + decisionProviders
+}
 
 /** The catalog-backed options for one backend/model pair. */
 @Serializable
@@ -105,13 +108,15 @@ data class SaveModelBehaviorBody(
 )
 
 /**
- * One well-known cloud-provider preset from `GET /admin/models` (`presets`).
- * Mirrors `ProviderPreset` in `@omnesis/core/models/provider-presets.ts`: the
- * short id (also the default backend name), the human-readable name, the
- * default base URL, an optional non-`/v1` api-path prefix, optional pre-probe
- * model hints, and the catalog roles (`embed`/`agent`/…) this provider
- * is typically used for. The add-backend grid offers one card per preset to
- * prefill the HTTP-backend form.
+ * One provider preset from `GET /admin/models` (`presets` or
+ * `decisionProviders`). Mirrors
+ * `ProviderPresetView` in `@omnesis/core/models/provider-presets.ts`: the
+ * short id (also the default backend name), the human-readable name, an
+ * OpenAI-compatible API ([defaultUrl], with an optional non-`/v1` api-path
+ * prefix), a decision API ([decision]), or both — a backend made from it is
+ * one provider account with one key, used by both. TypeSafe is the one preset
+ * with [builtIn] set: it is served by the built-in `typesafe/<model>`
+ * assignment, never added as a backend.
  */
 @Serializable
 data class ProviderPreset(
@@ -119,8 +124,10 @@ data class ProviderPreset(
     val id: String = "",
     /** Human-readable provider name (e.g. "OpenAI"). */
     val name: String = "",
-    /** Default base URL (host, without a version path). */
-    val defaultUrl: String = "",
+    /** "local" (a server on the operator's machine) or "cloud"; any other value reads as cloud. */
+    val kind: String = "",
+    /** OpenAI-compatible base URL (host, without a version path); null for a decision-only provider. */
+    val defaultUrl: String? = null,
     /**
      * Path segment between the base URL and the OpenAI-compatible endpoints
      * (e.g. "/v1beta/openai" for Google); null → the gateway default "/v1".
@@ -128,9 +135,25 @@ data class ProviderPreset(
     val apiPathPrefix: String? = null,
     /** Pre-probe model-id hints (the live `/models` list takes precedence). */
     val knownModels: List<String>? = null,
-    /** Catalog roles this provider is typically used for. */
+    /** Roles this provider is typically used for ("agent", "embed", "decision", …). */
     val capabilities: List<String> = emptyList(),
-)
+    /** The provider's id in the models.dev catalog, which names its logo. */
+    val modelsDevId: String? = null,
+    /** "typesafe" on the preset served by the built-in TypeSafe assignment. */
+    val builtIn: String? = null,
+    /** The provider's decision API; null when it has none, or on a gateway that predates them. */
+    val decision: ProviderDecisionPreset? = null,
+) {
+    val isTypeSafe: Boolean get() = builtIn == "typesafe"
+    val isLocal: Boolean get() = kind == "local"
+
+    /** Whether the provider serves an OpenAI-compatible API. */
+    val hasOpenAiApi: Boolean get() = !defaultUrl.isNullOrBlank()
+
+    /** The id its logo is served under: the models.dev provider id when it names one. */
+    val logoId: String
+        get() = modelsDevId?.takeIf { it.isNotBlank() } ?: decision?.modelsDevId?.takeIf { it.isNotBlank() } ?: id
+}
 
 /**
  * One capability card's presentation metadata. Mirrors `CapabilityMetadata` in
@@ -168,7 +191,7 @@ data class CapabilityMeta(
      */
     val configurableOnDevice: Boolean get() = backendFamily == null
 
-    /** Whether the role is the Decision model, served by decision backends and TypeSafe. */
+    /** Whether the role is the Decision model, served by backends' decision APIs and TypeSafe. */
     val isTypedDecision: Boolean get() = backendFamily == "typed-decision"
 }
 
@@ -187,25 +210,36 @@ data class InferenceOverview(
     val allowRemoteInference: Boolean = false,
     /** The TypeSafe endpoint the Decision model would use; absent on older gateways. */
     val typesafe: TypeSafeEndpointStatus? = null,
-    /** Configured decision backends by key; empty on gateways that predate them. */
-    val decisionBackends: Map<String, DecisionBackendStatus> = emptyMap(),
 )
 
 /**
  * One HTTP / Anthropic backend's probed status. Only the keys the picker + the
- * backends list need are decoded.
+ * backends list need are decoded. An HTTP backend serves an OpenAI-compatible
+ * API ([url]), a decision API ([decision]), or both, with one key. A backend
+ * with only a decision API has no [url] and no [models]; its [status] is "ok",
+ * or "unreachable" when its key cannot be read.
  */
 @Serializable
 data class BackendStatus(
     val type: String = "",
     val status: String = "",
+    /** OpenAI-compatible base URL; null on a backend that serves only decision models. */
     val url: String? = null,
     val protocol: String? = null,
     val models: List<String>? = null,
     /** Model id -> the capability roles that model can serve (from the probe). */
     val modelRoles: Map<String, List<String>>? = null,
     val hasApiKey: Boolean? = null,
-)
+    /** Why the last probe was not fully ok. */
+    val reason: String? = null,
+    /** The provider preset the backend was made from, or whose URL it uses. */
+    val preset: String? = null,
+    /** The backend's decision API; null when it has none, or on a gateway that predates them. */
+    val decision: BackendDecisionStatus? = null,
+) {
+    /** Whether the backend serves an OpenAI-compatible API (every HTTP backend on an older gateway). */
+    val hasOpenAiApi: Boolean get() = !url.isNullOrBlank()
+}
 
 /** One Codex model from Codex model discovery. */
 @Serializable
@@ -286,15 +320,15 @@ data class ResolvedAssignment(
     val kind: String = "",
     val available: Boolean? = null,
     val reason: String? = null,
-    /** The model id after the slash (decision backends and TypeSafe). */
+    /** The model id after the slash (a backend's decision API, or TypeSafe). */
     val model: String? = null,
-    /** A decision backend's key, the part of the assignment before the slash. */
+    /** The backend's key, the part of a decision assignment before the slash. */
     val backendKey: String? = null,
-    /** The preset a decision backend was made from. */
+    /** The preset the decision assignment's backend was made from. */
     val preset: String? = null,
     /** Whether a calibration onto Jev's scale is stored for this decision model. */
     val calibrated: Boolean? = null,
-    /** Whether an API key is configured (decision backends and TypeSafe). */
+    /** Whether an API key is configured (a backend's decision API, or TypeSafe). */
     val hasApiKey: Boolean? = null,
 )
 
@@ -473,51 +507,6 @@ data class RecentModelApply(
     val catalogId: String? = null,
     val catalogRole: String? = null,
 )
-
-/**
- * `PATCH /admin/config` body for adding (or replacing) a named HTTP inference
- * backend — `{inference:{backends:{<key>:{type:"http",url,apiKey?,apiPathPrefix?}}}}`.
- * The backends map has a dynamic key (the backend name). `apiKey` is write-only:
- * it's sent here but never read back (the gateway only ever surfaces a
- * `hasApiKey` bool), so it is never rendered or logged.
- */
-@Serializable
-data class AddBackendBody(
-    val inference: AddBackendInference,
-) {
-    @Serializable
-    data class AddBackendInference(
-        val backends: Map<String, HttpBackendConfig>,
-    )
-
-    @Serializable
-    data class HttpBackendConfig(
-        // `type` is declared first and WITHOUT a default so it's always on the
-        // wire: `OmnesisJson` has `encodeDefaults = false` (its default), which
-        // would drop a defaulted `type` and the gateway's zod requires it.
-        val type: String,
-        val url: String,
-        val apiKey: String? = null,
-        val apiPathPrefix: String? = null,
-    )
-}
-
-/**
- * `PATCH /admin/config` body for removing an HTTP backend — sets the key to an
- * explicit `null`. The value is a [JsonElement] (`JsonNull`) so the remove
- * serializes as `{"<key>": null}`; `OmnesisJson` has `explicitNulls = false`,
- * which would otherwise DROP a `String?` null key and turn a remove into a
- * no-op patch.
- */
-@Serializable
-data class RemoveBackendBody(
-    val inference: RemoveBackendInference,
-) {
-    @Serializable
-    data class RemoveBackendInference(
-        val backends: Map<String, JsonElement>,
-    )
-}
 
 /**
  * Result of `POST /admin/inference/backends/:key/probe`. Mirrors the route's

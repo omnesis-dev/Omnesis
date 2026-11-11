@@ -7,8 +7,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.session.SessionManager
-import dev.omnesis.android.transport.dto.DecisionBackendConfig
+import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.DecisionCalibrationStatus
+import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionProbeResult
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
 import dev.omnesis.android.transport.dto.ModelCredentialEntry
@@ -30,7 +31,7 @@ import javax.inject.Inject
 /** What the Decision model's setup sheet shows besides the overview. */
 data class DecisionUiState(
     val verify: VerifyState = VerifyState.Idle,
-    /** Model listings by decision backend key. */
+    /** Model listings by [ProbeTarget.id]. */
     val probes: Map<String, ProbeState> = emptyMap(),
     /** The gateway's calibration job, once read. */
     val calibration: DecisionCalibrationStatus? = null,
@@ -48,14 +49,31 @@ sealed interface ProbeState {
     data class Done(val result: DecisionProbeResult) : ProbeState
 }
 
+/** A decision server whose installed models the form lists. */
+sealed interface ProbeTarget {
+    /** The key its listing is kept under in [DecisionUiState.probes]. */
+    val id: String
+
+    /** A saved backend's decision API. */
+    data class Saved(val key: String) : ProbeTarget {
+        override val id: String get() = "backend:$key"
+    }
+
+    /** A server the form describes but has not saved. */
+    data class Unsaved(val body: DecisionProbeBody) : ProbeTarget {
+        override val id: String get() = "url:${body.url}"
+    }
+}
+
 /** The admin routes the Decision setup calls; a seam so the view-model is tested without a gateway. */
 internal interface DecisionGateway {
     suspend fun modelCredentials(): List<ModelCredentialEntry>
     suspend fun setTypeSafeKey(apiKey: String)
-    suspend fun saveBackend(key: String, config: DecisionBackendConfig, model: String, enableRemote: Boolean)
+    suspend fun saveBackend(key: String, config: BackendConfig, model: String, enableRemote: Boolean)
     suspend fun assignTypeSafe(model: String, enableRemote: Boolean)
+    suspend fun disableDecision(key: String, clearAssignment: Boolean)
     suspend fun removeBackend(key: String, clearAssignment: Boolean)
-    suspend fun probe(key: String): DecisionProbeResult
+    suspend fun probe(target: ProbeTarget): DecisionProbeResult
     suspend fun verifyBackend(key: String, model: String): DecisionVerifyResult
     suspend fun verifyTypeSafe(model: String): DecisionVerifyResult
     suspend fun calibration(): DecisionCalibrationStatus
@@ -67,27 +85,30 @@ private class SessionDecisionGateway(private val session: SessionManager) : Deci
     private fun admin() = session.requireSession().admin
     override suspend fun modelCredentials() = admin().modelCredentials()
     override suspend fun setTypeSafeKey(apiKey: String) =
-        admin().setModelCredentials(TYPESAFE_CREDENTIAL, mapOf("apiKey" to apiKey))
-    override suspend fun saveBackend(key: String, config: DecisionBackendConfig, model: String, enableRemote: Boolean) =
-        admin().saveDecisionBackend(key, config, model, enableRemote)
+        admin().setModelCredentials(DecisionSetup.TYPESAFE_KEY, mapOf("apiKey" to apiKey))
+    override suspend fun saveBackend(key: String, config: BackendConfig, model: String, enableRemote: Boolean) =
+        admin().saveBackend(key, config, model, enableRemote)
     override suspend fun assignTypeSafe(model: String, enableRemote: Boolean) =
         admin().assignTypeSafeDecision(model, enableRemote)
+    override suspend fun disableDecision(key: String, clearAssignment: Boolean) =
+        admin().disableBackendDecision(key, clearAssignment)
     override suspend fun removeBackend(key: String, clearAssignment: Boolean) =
-        admin().removeDecisionBackend(key, clearAssignment)
-    override suspend fun probe(key: String) = admin().probeDecisionBackend(key)
-    override suspend fun verifyBackend(key: String, model: String) = admin().verifyDecisionBackend(key, model)
+        admin().removeBackend(key, clearAssignment)
+    override suspend fun probe(target: ProbeTarget) = when (target) {
+        is ProbeTarget.Saved -> admin().probeBackendDecision(target.key)
+        is ProbeTarget.Unsaved -> admin().probeDecisionServer(target.body)
+    }
+    override suspend fun verifyBackend(key: String, model: String) = admin().verifyBackendDecision(key, model)
     override suspend fun verifyTypeSafe(model: String) = admin().verifyTypeSafeDecision(model)
     override suspend fun calibration() = admin().decisionCalibration()
     override suspend fun startCalibration() = admin().startDecisionCalibration()
     override suspend fun cancelCalibration() = admin().cancelDecisionCalibration()
 }
 
-/** The credential file key, and assignment prefix, of TypeSafe's built-in slot. */
-private const val TYPESAFE_CREDENTIAL = "typesafe"
-
 /**
  * Drives the Decision model's setup: one config patch per save, then a test
- * decision; listing a local server's models; and the calibration job. The
+ * decision; listing a local or custom server's models; taking decision models
+ * away from a backend; and the calibration job. The
  * screen follows a running calibration through [followCalibration] while it
  * is visible. A config change is announced on [changes] so the Models screen
  * reloads its overview in place.
@@ -112,7 +133,7 @@ class DecisionSetupViewModel internal constructor(
         viewModelScope.launch {
             val key = runCatching { gateway.modelCredentials() }.fold(
                 onSuccess = { entries ->
-                    if (entries.firstOrNull { it.fileKey == TYPESAFE_CREDENTIAL }?.configured == true) KeyState.Stored
+                    if (entries.firstOrNull { it.fileKey == DecisionSetup.TYPESAFE_KEY }?.configured == true) KeyState.Stored
                     else KeyState.Missing
                 },
                 onFailure = { e -> KeyState.Unknown(gatewayMessage(e)) },
@@ -161,7 +182,7 @@ class DecisionSetupViewModel internal constructor(
         _state.update { it.copy(verify = VerifyState.Running(assignment)) }
         viewModelScope.launch {
             val result = runCatching {
-                if (key == TYPESAFE_CREDENTIAL) gateway.verifyTypeSafe(model) else gateway.verifyBackend(key, model)
+                if (key == DecisionSetup.TYPESAFE_KEY) gateway.verifyTypeSafe(model) else gateway.verifyBackend(key, model)
             }.getOrElse { e -> DecisionVerifyResult(ok = false, reason = gatewayMessage(e)) }
             _state.update { current ->
                 // A newer verify (another model) owns the line.
@@ -171,29 +192,37 @@ class DecisionSetupViewModel internal constructor(
         }
     }
 
-    /** List the models a configured local server has, for the form's suggestions. */
-    fun probe(key: String) {
-        if (_state.value.probes[key] == ProbeState.Running) return
-        _state.update { it.copy(probes = it.probes + (key to ProbeState.Running)) }
+    /** List the models a local or custom server has, for the form's suggestions. */
+    fun probe(target: ProbeTarget) {
+        if (_state.value.probes[target.id] == ProbeState.Running) return
+        _state.update { it.copy(probes = it.probes + (target.id to ProbeState.Running)) }
         viewModelScope.launch {
-            val result = runCatching { gateway.probe(key) }
+            val result = runCatching { gateway.probe(target) }
                 .getOrElse { e -> DecisionProbeResult(ok = false, reason = gatewayMessage(e)) }
-            _state.update { it.copy(probes = it.probes + (key to ProbeState.Done(result))) }
+            _state.update { it.copy(probes = it.probes + (target.id to ProbeState.Done(result))) }
         }
     }
 
-    /** Remove a decision backend, clearing the Decision model when it was assigned there. */
-    fun remove(key: String, clearAssignment: Boolean, onRemoved: () -> Unit) {
+    /**
+     * Take decision models away from a backend: remove its decision API, or
+     * the whole backend when it serves nothing else, clearing the Decision
+     * model in the same write when it was assigned there.
+     */
+    fun remove(removal: DecisionSetup.Removal, onRemoved: () -> Unit) {
         if (_state.value.saving) return
         _state.update { it.copy(saving = true, error = null) }
         viewModelScope.launch {
-            val outcome = runCatching { gateway.removeBackend(key, clearAssignment) }
+            val outcome = runCatching {
+                if (removal.wholeBackend) gateway.removeBackend(removal.key, removal.clearAssignment)
+                else gateway.disableDecision(removal.key, removal.clearAssignment)
+            }
+            val probeId = ProbeTarget.Saved(removal.key).id
             _state.update {
                 it.copy(
                     saving = false,
                     error = outcome.exceptionOrNull()?.let { e -> gatewayMessage(e) },
-                    probes = if (outcome.isSuccess) it.probes - key else it.probes,
-                    verify = if (outcome.isSuccess && clearAssignment) VerifyState.Idle else it.verify,
+                    probes = if (outcome.isSuccess) it.probes - probeId else it.probes,
+                    verify = if (outcome.isSuccess && removal.clearAssignment) VerifyState.Idle else it.verify,
                 )
             }
             if (outcome.isSuccess) {

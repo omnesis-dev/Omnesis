@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.ModelsOverview
 import dev.omnesis.android.transport.dto.ModelBehaviorValues
 import dev.omnesis.android.transport.dto.RecentModelEntry
@@ -435,15 +436,15 @@ class ModelsViewModel @Inject constructor(
      * backend appears in the picker grid. Mirrors `BackendsViewModel.add` (the
      * picker stays open so the new backend tile shows immediately).
      */
-    fun addBackend(name: String, url: String, apiKey: String?, apiPathPrefix: String?) {
+    fun addBackend(name: String, config: BackendConfig) {
         _busy.update { true }
         _notice.update { null }
         viewModelScope.launch {
             runCatching {
                 val admin = session.requireSession().admin
-                admin.addHttpBackend(name, url, apiKey, apiPathPrefix)
+                admin.saveBackend(name, config)
                 // Probe immediately so reachability + the model list show.
-                runCatching { admin.probeBackend(name) }
+                if (config.url != null) runCatching { admin.probeBackend(name) }
             }.fold(
                 onSuccess = {
                     overviewGeneration++

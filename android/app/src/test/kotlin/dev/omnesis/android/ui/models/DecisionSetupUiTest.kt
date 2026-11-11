@@ -70,6 +70,40 @@ class DecisionSetupUiTest {
         val save = saves.single() as SaveRequest.Backend
         assertEquals("ollama/d3:4b", save.assignment)
         assertEquals(false, save.enableRemote)
-        assertEquals("systemone", save.config.protocol)
+        assertEquals("systemone", save.config.decision?.protocol)
+        assertEquals(null, save.config.url)
+    }
+
+    @Test fun adding_decisions_to_a_chat_backend_asks_no_key() {
+        val overview = sampleDecisionOverview()
+        val enable = DecisionSetup.providerGroups(overview).yours.filterIsInstance<DecisionSetup.Provider.Enable>().single()
+        val saves = mutableListOf<SaveRequest>()
+        compose.setContent {
+            OmnesisTheme(darkTheme = false) {
+                DecisionSetupContent(
+                    cap = overview.capabilities.first { it.role == "decision" },
+                    overview = overview,
+                    ui = DecisionUiState(),
+                    actions = DecisionActions(onSave = { request, _ -> saves += request }),
+                    previewStep = DecisionStep.Form,
+                    previewProvider = enable,
+                    previewForm = DecisionFormValues(
+                        name = "fireworks",
+                        url = enable.decision.url,
+                        model = "accounts/fireworks/models/rune",
+                    ),
+                )
+            }
+        }
+        compose.onNodeWithText("API key").assertDoesNotExist()
+        compose.onNodeWithText("Uses the API key this backend already has. Its other models stay as they are.").assertIsDisplayed()
+        compose.onNodeWithText("Save and verify").performClick()
+        compose.onNodeWithText("Enable cloud inference and save").performClick()
+        val save = saves.single() as SaveRequest.Backend
+        assertEquals("fireworks/accounts/fireworks/models/rune", save.assignment)
+        assertTrue(save.enableRemote)
+        assertEquals(null, save.config.apiKey)
+        assertEquals(null, save.config.type)
+        assertEquals("https://api.fireworks.ai/inference/v1/systemone", save.config.decision?.url)
     }
 }

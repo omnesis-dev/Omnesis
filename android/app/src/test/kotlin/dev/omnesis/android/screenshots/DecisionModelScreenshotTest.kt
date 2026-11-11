@@ -25,6 +25,7 @@ import dev.omnesis.android.ui.models.DecisionStep
 import dev.omnesis.android.ui.models.DecisionUiState
 import dev.omnesis.android.ui.models.ModelsContent
 import dev.omnesis.android.ui.models.ProbeState
+import dev.omnesis.android.ui.models.ProbeTarget
 import dev.omnesis.android.ui.models.sampleDecisionOverview
 import dev.omnesis.android.ui.models.sampleDecisionPresets
 import dev.omnesis.android.ui.models.sampleRunningCalibration
@@ -37,8 +38,11 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * The Decision model's setup: the capability card with its calibration line,
  * the assigned model with its test decision and calibration states, the
- * provider picker, the local and cloud forms, and the cloud-inference
- * question. All sample data is invented.
+ * provider picker (a backend serving decisions, a chat backend that can add
+ * them with its key, TypeSafe, providers to add), the forms — a local
+ * backend, decisions added to a chat backend, a provider with both APIs, a
+ * decision-only provider with URL values, TypeSafe, another server — and the
+ * cloud-inference question. All sample data is invented.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -90,6 +94,14 @@ class DecisionModelScreenshotTest {
 
     @Test fun decision_card_uncalibrated_light() = capture("decision_card_uncalibrated_light", dark = false) {
         ModelsContent(Loadable.Content(sampleDecisionOverview()), connected, onBack = {}, onRetry = {})
+    }
+
+    @Test fun decision_card_calibrated_dark() = capture("decision_card_calibrated_dark", dark = true) {
+        ModelsContent(Loadable.Content(sampleDecisionOverview(calibrated = true)), connected, onBack = {}, onRetry = {})
+    }
+
+    @Test fun decision_card_calibrated_light() = capture("decision_card_calibrated_light", dark = false) {
+        ModelsContent(Loadable.Content(sampleDecisionOverview(calibrated = true)), connected, onBack = {}, onRetry = {})
     }
 
     // --- The assigned model ---
@@ -173,10 +185,17 @@ class DecisionModelScreenshotTest {
 
     // --- The forms ---
 
-    private fun existingOllaya() = DecisionSetup.providerGroups(sampleDecisionOverview()).existing.single()
+    private fun yours() = DecisionSetup.providerGroups(sampleDecisionOverview()).yours
+
+    private fun existingOllaya() = yours().filterIsInstance<DecisionSetup.Provider.Existing>().single()
+
+    private fun enableFireworks() = yours().filterIsInstance<DecisionSetup.Provider.Enable>().single()
 
     private val probed = DecisionUiState(
-        probes = mapOf("ollaya" to ProbeState.Done(DecisionProbeResult(ok = true, models = listOf("kev", "nimble:9b"), listed = true))),
+        probes = mapOf(
+            ProbeTarget.Saved("ollaya").id to
+                ProbeState.Done(DecisionProbeResult(ok = true, models = listOf("kev", "nimble:9b"), listed = true)),
+        ),
     )
 
     @Test fun decision_form_local_dark() = setup(
@@ -196,6 +215,34 @@ class DecisionModelScreenshotTest {
         provider = existingOllaya(),
         form = DecisionFormValues(name = "ollaya", url = "http://127.0.0.1:11435/v1/systemone", model = "kev"),
     )
+
+    private fun enableForm(name: String, dark: Boolean) = setup(
+        name,
+        dark = dark,
+        step = DecisionStep.Form,
+        provider = enableFireworks(),
+        form = DecisionFormValues(
+            name = "fireworks",
+            url = "https://api.fireworks.ai/inference/v1/systemone",
+            model = "accounts/fireworks/models/rune",
+        ),
+    )
+
+    @Test fun decision_form_enable_dark() = enableForm("decision_form_enable_dark", dark = true)
+
+    @Test fun decision_form_enable_light() = enableForm("decision_form_enable_light", dark = false)
+
+    private fun bothApisForm(name: String, dark: Boolean) = setup(
+        name,
+        dark = dark,
+        step = DecisionStep.Form,
+        provider = DecisionSetup.Provider.Preset(preset("openrouter")),
+        form = DecisionFormValues(name = "openrouter", url = "https://openrouter.ai/api/v1/systemone", model = "liquid/d1.1"),
+    )
+
+    @Test fun decision_form_both_apis_dark() = bothApisForm("decision_form_both_apis_dark", dark = true)
+
+    @Test fun decision_form_both_apis_light() = bothApisForm("decision_form_both_apis_light", dark = false)
 
     private val cloudflareForm = DecisionFormValues(
         name = "cloudflare",

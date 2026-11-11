@@ -79,6 +79,7 @@ import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.ActiveDownload
+import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
 import dev.omnesis.android.transport.dto.CatalogEntry
@@ -213,7 +214,7 @@ fun ModelsContent(
     onInstall: (String) -> Unit = {},
     onCancelDownload: (String) -> Unit = {},
     onUninstall: (String) -> Unit = {},
-    onAddBackend: (String, String, String?, String?) -> Unit = { _, _, _, _ -> },
+    onAddBackend: (String, BackendConfig) -> Unit = { _, _ -> },
     onSaveBehavior: (String, String, ModelBehaviorValues) -> Unit = { _, _, _ -> },
     onBudgetBehavior: (String, String, ModelBehaviorValues?) -> Unit = { _, _, _ -> },
     behaviorError: String? = null,
@@ -527,7 +528,7 @@ private fun ModelPickerSheet(
     onInstall: (String) -> Unit,
     onCancelDownload: (String) -> Unit,
     onUninstall: (String) -> Unit,
-    onAddBackend: (String, String, String?, String?) -> Unit,
+    onAddBackend: (String, BackendConfig) -> Unit,
     onSaveBehavior: (String, ModelBehaviorValues) -> Unit,
     onBudgetBehavior: (String, ModelBehaviorValues?) -> Unit = { _, _ -> },
     behaviorError: String? = null,
@@ -588,7 +589,7 @@ fun ModelPickerContent(
     onInstall: (String) -> Unit = {},
     onCancelDownload: (String) -> Unit = {},
     onUninstall: (String) -> Unit = {},
-    onAddBackend: (String, String, String?, String?) -> Unit = { _, _, _, _ -> },
+    onAddBackend: (String, BackendConfig) -> Unit = { _, _ -> },
     onSaveBehavior: (String, ModelBehaviorValues) -> Unit = { _, _ -> },
     onBudgetBehavior: (String, ModelBehaviorValues?) -> Unit = { _, _ -> },
     behaviorError: String? = null,
@@ -712,10 +713,11 @@ fun ModelPickerContent(
 
     if (showAddSheet) {
         AddBackendSheet(
+            // A model role is served by an OpenAI-compatible API: `presets` holds only providers with one.
             presets = overview.presets,
-            onAdd = { name, url, apiKey, prefix ->
+            onAdd = { name, config ->
                 showAddSheet = false
-                onAddBackend(name, url, apiKey, prefix)
+                onAddBackend(name, config)
             },
             onDismiss = { showAddSheet = false },
         )

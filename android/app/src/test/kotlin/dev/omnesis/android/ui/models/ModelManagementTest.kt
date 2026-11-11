@@ -4,6 +4,8 @@
 package dev.omnesis.android.ui.models
 
 import dev.omnesis.android.transport.dto.ActiveDownload
+import dev.omnesis.android.transport.dto.BackendConfigPatch
+import dev.omnesis.android.transport.dto.BackendDecisionStatus
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CatalogEntry
 import dev.omnesis.android.transport.dto.CodexBackendStatus
@@ -639,5 +641,63 @@ class ModelManagementTest {
         )
         // ocr has no catalog role → no local GGUF list.
         assertTrue(ModelManagement.localModelRows("ocr", overview, null).isEmpty())
+    }
+
+    @Test
+    fun decisionOnlyBackendsAreListedButNeverOfferedToAModelRole() {
+        val overview = sampleDecisionOverview()
+        // The Backends list shows every backend, the decision-only one too…
+        assertEquals(listOf("fireworks", "northstar", "ollaya"), ModelManagement.httpBackends(overview).map { it.key })
+        val ollaya = ModelManagement.httpBackends(overview).first { it.key == "ollaya" }
+        assertTrue(ollaya.decisionOnly)
+        assertEquals("http://127.0.0.1:11435/v1/systemone", ollaya.displayUrl)
+        // …but a model role's picker offers only backends with an OpenAI-compatible API.
+        assertEquals(
+            listOf("fireworks", "northstar"),
+            ModelManagement.pickerBackends("agent", overview).filter { it.isHttp }.map { it.providerId },
+        )
+        assertTrue(ModelManagement.pickerOptions("agent", overview).none { it.providerId == "ollaya" })
+    }
+
+    @Test
+    fun eachBackendRowSaysWhatItServes() {
+        val chat = BackendStatus(type = "http", url = "https://api.example.com")
+        val decision = BackendDecisionStatus(url = "https://api.example.com/v1/systemone")
+        assertEquals("OpenAI-compatible models", ModelManagement.servesLabel(chat))
+        assertEquals("OpenAI-compatible and decision models", ModelManagement.servesLabel(chat.copy(decision = decision)))
+        assertEquals("Decision models", ModelManagement.servesLabel(BackendStatus(type = "http", decision = decision)))
+        val presets = sampleDecisionPresets().associateBy { it.id }
+        assertEquals("OpenAI-compatible and decision models", ModelManagement.servesLabel(presets.getValue("fireworks")))
+        assertEquals("Decision models", ModelManagement.servesLabel(presets.getValue("ollaya")))
+        assertEquals("OpenAI-compatible models", ModelManagement.servesLabel(samplePresets().first()))
+        // An older gateway's backend has a URL and no decision API.
+        assertFalse(ModelManagement.BackendRow("old", chat).decisionOnly)
+    }
+
+    @Test
+    fun aNewBackendFromAPresetConfiguresWhicheverApisItHas() {
+        val fireworks = sampleDecisionPresets().first { it.id == "fireworks" }
+        val both = ModelManagement.newBackendConfig(
+            fireworks, fireworks.defaultUrl, null, fireworks.decision!!.url, " example-key-0009 ",
+        )
+        assertEquals(
+            """{"inference":{"backends":{"fireworks":{"type":"http","preset":"fireworks","url":"https://api.fireworks.ai/inference",""" +
+                """"apiKey":"example-key-0009","decision":{"url":"https://api.fireworks.ai/inference/v1/systemone",""" +
+                """"protocol":"systemone","auth":"bearer"}}}}}""",
+            BackendConfigPatch.saveBackend("fireworks", both).toString(),
+        )
+        val ollaya = sampleDecisionPresets().first { it.id == "ollaya" }
+        val decisionOnly = ModelManagement.newBackendConfig(ollaya, null, null, "http://127.0.0.1:11436/v1/systemone", "")
+        assertEquals(
+            """{"inference":{"backends":{"ollaya":{"type":"http","preset":"ollaya",""" +
+                """"decision":{"url":"http://127.0.0.1:11436/v1/systemone","protocol":"systemone","auth":"bearer"}}}}}""",
+            BackendConfigPatch.saveBackend("ollaya", decisionOnly).toString(),
+        )
+        // A custom OpenAI-compatible server: no preset, no decision API.
+        val custom = ModelManagement.newBackendConfig(null, "http://192.0.2.5:8000/v1", " ", null, null)
+        assertEquals(
+            """{"inference":{"backends":{"local-srv":{"type":"http","url":"http://192.0.2.5:8000/v1"}}}}""",
+            BackendConfigPatch.saveBackend("local-srv", custom).toString(),
+        )
     }
 }
