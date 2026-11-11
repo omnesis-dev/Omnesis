@@ -49,8 +49,14 @@ export type LauncherReply =
 
 const running = new Map<number, { abort: AbortController; pid?: number }>();
 
+/**
+ * A reply can meet a channel the gateway has already closed but whose
+ * disconnect this process has not seen yet. The write error is dropped: the
+ * disconnect follows and stops the programs, and an unhandled error would
+ * instead end the host before it can.
+ */
 function send(reply: LauncherReply): void {
-  if (process.connected) process.send?.(reply);
+  if (process.connected) process.send?.(reply, undefined, undefined, () => {});
 }
 
 process.on("message", (message: LauncherRequest) => {
@@ -77,10 +83,13 @@ process.on("message", (message: LauncherRequest) => {
 process.on("SIGINT", () => {});
 process.on("SIGTERM", () => {});
 
-// The gateway is gone: nobody will read these programs' output.
-process.on("disconnect", () => {
+// However the host ends, nobody will read these programs' output. The gateway
+// kills only the programs it was told about, so a program started just before
+// the host ended would otherwise outlive both.
+process.on("exit", () => {
   for (const { pid } of running.values()) if (pid !== undefined) killProcessGroup(pid);
-  process.exit(0);
 });
+
+process.on("disconnect", () => process.exit(0));
 
 send({ type: "ready" });
