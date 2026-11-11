@@ -919,8 +919,7 @@ internal fun sampleDecisionOverview(): ModelsOverview {
             backends = base.inference.backends + mapOf("ollaya" to ollaya, "fireworks" to fireworks),
             assignments = base.inference.assignments + (
                 DecisionSetup.ROLE to ResolvedAssignment(
-                    "decision", available = true, model = "kev", backendKey = "ollaya",
-                    preset = "ollaya", hasApiKey = false,
+                    "decision", available = true, model = "kev", backendKey = "ollaya", hasApiKey = false,
                 )
             ),
         ),

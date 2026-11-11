@@ -324,8 +324,6 @@ data class ResolvedAssignment(
     val model: String? = null,
     /** The backend's key, the part of a decision assignment before the slash. */
     val backendKey: String? = null,
-    /** The preset the decision assignment's backend was made from. */
-    val preset: String? = null,
     /** Whether an API key is configured (a backend's decision API, or TypeSafe). */
     val hasApiKey: Boolean? = null,
 )

@@ -528,7 +528,6 @@ object DecisionSetup {
         val key: String,
         val model: String,
         val backend: BackendStatus?,
-        val preset: ProviderPreset?,
     ) {
         val value: String get() = "$key/$model"
         val decision: BackendDecisionStatus? get() = backend?.decision
@@ -545,7 +544,6 @@ object DecisionSetup {
             key = key,
             model = assignment.model.orEmpty(),
             backend = backend,
-            preset = presetFor(overview, backend?.preset ?: assignment.preset),
         )
     }
 
