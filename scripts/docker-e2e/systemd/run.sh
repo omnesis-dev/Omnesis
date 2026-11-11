@@ -15,11 +15,8 @@ CPUS="${OMNESIS_E2E_CPUS:-4}"
 echo "==> building ${IMAGE} (from the current checkout)"
 # The build log stays quiet on success; a failed step's own output (an apt
 # mirror error, a failed compile) is printed so the failure names its cause.
-# The build uses the host's network, so it resolves names through the host's
-# resolver instead of the public fallback Docker gives build containers when
-# the host's resolver listens on loopback.
 BUILD_LOG="$(mktemp)"
-if ! docker build --network=host --progress=plain -f scripts/docker-e2e/systemd/Dockerfile -t "$IMAGE" . >"$BUILD_LOG" 2>&1; then
+if ! docker build --progress=plain -f scripts/docker-e2e/systemd/Dockerfile -t "$IMAGE" . >"$BUILD_LOG" 2>&1; then
   tail -n 80 "$BUILD_LOG" >&2
   rm -f "$BUILD_LOG"
   exit 1
