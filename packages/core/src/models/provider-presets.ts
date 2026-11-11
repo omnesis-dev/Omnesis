@@ -546,3 +546,19 @@ export function providerPresetView(
   models.push(...[...extra.values()].sort((a, b) => a.id.localeCompare(b.id)));
   return { ...rest, decision: { ...decision, models } };
 }
+
+/**
+ * Split preset views by wire field: `presets` holds the providers with an
+ * OpenAI-compatible API (every entry has `defaultUrl`, which released apps
+ * require), and `decisionProviders` the ones that serve only decisions,
+ * TypeSafe among them. Clients that set up decision models read both.
+ */
+export function splitPresetViews(views: readonly ProviderPresetView[]): {
+  presets: ProviderPresetView[];
+  decisionProviders: ProviderPresetView[];
+} {
+  return {
+    presets: views.filter((view) => view.defaultUrl !== undefined),
+    decisionProviders: views.filter((view) => view.defaultUrl === undefined),
+  };
+}

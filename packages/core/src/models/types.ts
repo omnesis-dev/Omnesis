@@ -181,11 +181,19 @@ export interface ModelsOverview {
   inference: InferenceOverview;
   modelsDir: string;
   /**
-   * Well-known provider presets (id, name, default URL, decision API and its
-   * models). Served so every client renders the add-backend form and model
-   * suggestions from one source of truth rather than a hardcoded copy.
+   * Well-known providers with an OpenAI-compatible API (id, name, default
+   * URL, and their decision API with its models when they have one). Served
+   * so every client renders the add-backend form and model suggestions from
+   * one source of truth rather than a hardcoded copy. Every entry has
+   * `defaultUrl`: released apps require it.
    */
   presets: ProviderPresetView[];
+  /**
+   * Providers that serve only decision models (no `defaultUrl`), TypeSafe
+   * among them. A client offering one list of providers merges these with
+   * `presets`. Absent on gateways that predate decision backends.
+   */
+  decisionProviders?: ProviderPresetView[];
   /**
    * Per-role display projection of the resolved assignments — provider
    * brand id + label + friendly model name for each capability role.
