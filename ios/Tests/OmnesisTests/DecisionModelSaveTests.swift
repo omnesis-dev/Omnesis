@@ -373,3 +373,69 @@ final class DecisionModelSaveTests: XCTestCase {
         XCTAssertTrue(Setup.calibrationExplanation(onHost: false).contains("no personal data"))
     }
 }
+
+// MARK: - Adding decisions to a backend without a key
+
+extension DecisionModelSaveTests {
+    private var keylessOpenRouter: Setup.ExistingBackend {
+        Setup.ExistingBackend(
+            key: "openrouter-lab",
+            status: DecisionFixtures.chatBackend("https://openrouter.ai/api", preset: "openrouter", hasApiKey: false),
+            preset: DecisionFixtures.openRouter
+        )
+    }
+
+    func testABackendWithoutAKeyAsksForOneThatServesBothItsAPIs() throws {
+        let backend = keylessOpenRouter
+        XCTAssertTrue(backend.needsKeyForDecisions)
+        XCTAssertEqual(
+            Setup.keyField(.enable(backend), in: DecisionFixtures.overview(), typesafeStored: nil),
+            Setup.KeyField(shown: true, required: true, stored: false)
+        )
+        XCTAssertEqual(Setup.enableSummary(backend), "OpenRouter — Needs a key")
+        XCTAssertEqual(Setup.sharedKeyNote, "It becomes this backend's key for its OpenAI-compatible and decision APIs.")
+        let plan = savePlan(draft(
+            .enable(backend),
+            name: "openrouter-lab",
+            url: "https://openrouter.ai/api/v1/systemone",
+            apiKey: " sk-example ",
+            model: "liquid/d1.1"
+        ))
+        let expected: NSDictionary = ["inference": [
+            "backends": ["openrouter-lab": [
+                "apiKey": "sk-example",
+                "decision": ["url": "https://openrouter.ai/api/v1/systemone", "protocol": "systemone", "auth": "bearer"],
+            ] as [String: Any]],
+            "assignments": ["decision": "openrouter-lab/liquid/d1.1"],
+        ] as [String: Any]]
+        XCTAssertEqual(try DecisionFixtures.json(plan.patch), expected)
+    }
+
+    func testABackendWithAKeyOrAKeylessProviderIsNeverAskedForOne() {
+        let withKey = Setup.ExistingBackend(
+            key: "fireworks",
+            status: DecisionFixtures.chatBackend("https://api.fireworks.ai/inference", preset: "fireworks"),
+            preset: DecisionFixtures.fireworks
+        )
+        XCTAssertFalse(withKey.needsKeyForDecisions)
+        XCTAssertEqual(Setup.enableSummary(withKey), "Fireworks AI — uses your existing key")
+        let keylessProvider = ProviderPreset(
+            id: "lan-decider",
+            name: "LAN decider",
+            kind: "local",
+            defaultUrl: "http://127.0.0.1:8080",
+            decision: ProviderDecisionPreset(url: "http://127.0.0.1:8080/v1/systemone", keyRequired: false)
+        )
+        let noKeyNeeded = Setup.ExistingBackend(
+            key: "lan",
+            status: DecisionFixtures.chatBackend("http://127.0.0.1:8080", preset: "lan-decider", hasApiKey: false),
+            preset: keylessProvider
+        )
+        XCTAssertFalse(noKeyNeeded.needsKeyForDecisions)
+        XCTAssertEqual(
+            Setup.keyField(.enable(noKeyNeeded), in: DecisionFixtures.overview(), typesafeStored: nil),
+            Setup.KeyField(shown: false, required: false, stored: false)
+        )
+        XCTAssertEqual(Setup.enableSummary(noKeyNeeded), "LAN decider — uses your existing key")
+    }
+}

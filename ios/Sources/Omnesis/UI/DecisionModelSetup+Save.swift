@@ -35,7 +35,8 @@ extension DecisionModelSetup {
     /// The key field for a choice. `typesafeStored` is
     /// `typesafeKeyStored(listed:in:)`; nil (unknown) never makes a key
     /// required. A backend has one key for both of its APIs, so adding
-    /// decisions to a backend never asks for one.
+    /// decisions to a backend asks for one only when it has none and the
+    /// provider needs one.
     static func keyField(_ choice: Choice, in overview: ModelsOverview, typesafeStored: Bool?) -> KeyField {
         switch choice {
         case .preset(let preset) where preset.isTypeSafe:
@@ -46,7 +47,8 @@ extension DecisionModelSetup {
         case .custom:
             return KeyField(shown: true, required: false, stored: false)
         case .enable(let backend):
-            return KeyField(shown: false, required: false, stored: backend.hasReadableKey)
+            let needed = backend.needsKeyForDecisions
+            return KeyField(shown: needed, required: needed, stored: backend.hasReadableKey)
         case .existing(let backend):
             let keyRequired = backend.preset?.decision?.keyRequired == true
             let readable = backend.hasReadableKey
@@ -85,7 +87,8 @@ extension DecisionModelSetup {
     /// The save for a form. A new backend gets every field its preset sets,
     /// its OpenAI-compatible URL too when the provider has one; a backend
     /// gaining decisions gets the preset's decision API and nothing else (its
-    /// key serves both); an existing decision API only what changed (its URL,
+    /// key serves both) — or, when it has no key and the provider needs one,
+    /// the key typed too; an existing decision API only what changed (its URL,
     /// a new key), so the protocol, auth and score field written for it are
     /// never replaced by a preset's. The assignment is sent only when it changes.
     static func savePlan(_ draft: Draft, in overview: ModelsOverview) -> SavePlan {
@@ -122,7 +125,7 @@ extension DecisionModelSetup {
                 ?? DecisionConfigPatch.DecisionAPI(url: url, protocol: "systemone", auth: "bearer")
             return backendPlan(
                 key: backend.key,
-                change: DecisionConfigPatch.Backend(decision: .set(api)),
+                change: DecisionConfigPatch.Backend(apiKey: backend.needsKeyForDecisions ? typedKey : nil, decision: .set(api)),
                 model: model,
                 draft: draft,
                 in: overview

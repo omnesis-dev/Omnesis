@@ -56,6 +56,22 @@ enum DecisionModelSetup {
         var hasReadableKey: Bool {
             status.hasApiKey == true && decision?.apiKeySecretError == nil
         }
+
+        /// Whether adding its provider's decision API needs a key typed: the
+        /// provider refuses decision requests without one and the backend has
+        /// none it can read.
+        var needsKeyForDecisions: Bool {
+            preset?.decision?.keyRequired == true && !hasReadableKey
+        }
+    }
+
+    /// What a key typed while adding decisions to a backend becomes.
+    static let sharedKeyNote = "It becomes this backend's key for its OpenAI-compatible and decision APIs."
+
+    /// The provider list's line under a backend that can add decision models.
+    static func enableSummary(_ backend: ExistingBackend) -> String {
+        let provider = backend.preset?.name ?? backend.key
+        return backend.needsKeyForDecisions ? "\(provider) — Needs a key" : "\(provider) — uses your existing key"
     }
 
     /// What the operator picked in the provider list.

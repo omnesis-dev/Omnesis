@@ -6,7 +6,7 @@ import SwiftUI
 
 /// Decision model fixtures for previews and snapshots: a slice of the
 /// gateway's provider presets (names and URLs as the gateway ships them, with
-/// illustrative context sizes and prices), backends serving chat models,
+/// illustrative context sizes and prices), backends serving OpenAI-compatible models,
 /// decision models or both, and the Models overview in each state the
 /// Decision sheet renders.
 @available(iOS 17.0, *)
@@ -55,7 +55,7 @@ enum DecisionPreviewData {
         builtIn: "typesafe"
     )
 
-    /// A provider with both APIs: chat models and decision models, one key.
+    /// A provider with both APIs: OpenAI-compatible and decision models, one key.
     static let openRouter = ProviderPreset(
         id: "openrouter",
         name: "OpenRouter",
@@ -154,6 +154,17 @@ enum DecisionPreviewData {
         preset: "fireworks"
     )
 
+    /// An OpenRouter backend set up for its OpenAI-compatible models without
+    /// a key: adding its decision models needs one.
+    static let openRouterLabBackend = BackendStatus(
+        type: "http",
+        status: "ok",
+        url: "https://openrouter.ai/api",
+        models: [],
+        hasApiKey: false,
+        preset: "openrouter"
+    )
+
     static let calibration = DecisionCalibration(
         reference: "jev-worth/email-worth-v1/jev-1.13.0",
         fittedAt: "2026-11-08T14:30:00Z",
@@ -196,15 +207,16 @@ enum DecisionPreviewData {
         )
     )
 
-    /// TypeSafe assigned, a local Ollaya backend set up beside it, and a
-    /// Fireworks AI backend whose decision models can be turned on.
+    /// TypeSafe assigned, a local Ollaya backend set up beside it, a Fireworks
+    /// AI backend whose decision models can be turned on with its key, and a
+    /// keyless OpenRouter backend whose decision models need one.
     static func typesafeOverview() -> ModelsOverview {
         overview(
             assignment: ResolvedAssignment(kind: "typesafe", available: true, model: "jev-1.14.0", hasApiKey: true),
             display: ModelDisplay(
                 providerId: "typesafe", providerLabel: "TypeSafe", modelName: "jev-1.14.0", available: true, configured: true
             ),
-            backends: ["ollaya": ollayaBackend, "fireworks": fireworksBackend]
+            backends: ["ollaya": ollayaBackend, "fireworks": fireworksBackend, "openrouter-lab": openRouterLabBackend]
         )
     }
 
@@ -295,7 +307,7 @@ enum DecisionPreviewData {
         )
     }
 
-    /// The Backends list with backends serving chat models, decision models,
+    /// The Backends list with backends serving OpenAI-compatible models, decision models,
     /// or both, and a decision-only backend whose key cannot be read.
     static func backendRows() -> [ModelManagement.BackendRow] {
         let unreadable = BackendStatus(
@@ -344,9 +356,14 @@ enum DecisionPreviewData {
         DecisionModelSetup.ExistingBackend(key: "openrouter", status: openRouterBackend, preset: openRouter)
     }
 
-    /// The Fireworks AI chat backend, offered to add decision models with its key.
+    /// The Fireworks AI backend, offered to add decision models with its key.
     static var fireworksForDecisions: DecisionModelSetup.ExistingBackend {
         DecisionModelSetup.ExistingBackend(key: "fireworks", status: fireworksBackend, preset: fireworks)
+    }
+
+    /// The keyless OpenRouter backend, offered to add decision models once given a key.
+    static var openRouterLabForDecisions: DecisionModelSetup.ExistingBackend {
+        DecisionModelSetup.ExistingBackend(key: "openrouter-lab", status: openRouterLabBackend, preset: openRouter)
     }
 }
 
@@ -439,6 +456,17 @@ enum DecisionPreviewData {
 #Preview("Decision — backend you have, existing key") {
     NavigationStack {
         DecisionBackendForm(choice: .enable(DecisionPreviewData.fireworksForDecisions), overview: DecisionPreviewData.typesafeOverview())
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Decision — backend you have, needs a key") {
+    NavigationStack {
+        DecisionBackendForm(
+            choice: .enable(DecisionPreviewData.openRouterLabForDecisions),
+            overview: DecisionPreviewData.typesafeOverview()
+        )
     }
     .environment(AppStore.preview())
 }

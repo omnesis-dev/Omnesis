@@ -104,7 +104,7 @@ struct AddBackendSheet: View {
                         presetCard(
                             providerId: preset.id,
                             title: preset.name,
-                            subtitle: preset.decision == nil ? "Set up this provider" : "Chat & decision models",
+                            subtitle: preset.decision == nil ? "Set up this provider" : "OpenAI-compatible and decision models",
                             action: { selectPreset(preset) }
                         )
                     }

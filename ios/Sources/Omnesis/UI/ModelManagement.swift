@@ -638,9 +638,9 @@ extension ModelManagement {
     /// What a backend serves, as its row in the Backends list says it.
     static func servesLabel(_ status: BackendStatus) -> String {
         switch (status.servesOpenAI, status.decision != nil) {
-        case (true, true): "Chat & decision models"
+        case (true, true): "OpenAI-compatible and decision models"
         case (false, true): "Decision models"
-        default: "Chat models"
+        default: "OpenAI-compatible models"
         }
     }
 

@@ -84,7 +84,7 @@ struct DecisionProviderList: View {
         row(
             providerId: backend.preset?.brandId ?? "http",
             title: backend.key,
-            subtitle: "\(backend.preset?.name ?? backend.key) — uses your existing key",
+            subtitle: DecisionModelSetup.enableSummary(backend),
             action: { onPick(.enable(backend)) }
         )
     }

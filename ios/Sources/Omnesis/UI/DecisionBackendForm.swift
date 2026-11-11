@@ -7,8 +7,9 @@ import SwiftUI
 /// Step two of changing the Decision model: what the chosen provider needs.
 /// A new backend asks for its name, its decision URL (or the values that
 /// complete a preset's URL), an API key when the provider takes one — the one
-/// key serves its chat models too when the provider has them — and the model.
-/// A backend gaining decisions asks only for the model: it keeps its key. A
+/// key serves its OpenAI-compatible models too when the provider has them —
+/// and the model. A backend gaining decisions asks for the model, and for a
+/// key only when it has none and the provider needs one. A
 /// backend already answering decisions asks for the model and lets its URL
 /// and key be changed; TypeSafe asks for the model and its key. A local or
 /// hand-added server is asked for its models. A URL off the gateway's host
@@ -268,16 +269,6 @@ struct DecisionBackendForm: View {
         preset?.name ?? resolvedURL.map(DecisionProviderList.hostLabel) ?? title
     }
 
-    private func removeTitle(_ backend: DecisionModelSetup.ExistingBackend) -> String {
-        backend.status.servesOpenAI ? "Stop using \(backend.key) for decisions" : "Remove \(backend.key)"
-    }
-
-    private var removeMessage: String {
-        existing?.status.servesOpenAI == true
-            ? "Its decision API is removed; its chat models and API key stay. A Decision model that uses it is turned off."
-            : "The backend and its API key are deleted. A Decision model that uses it is turned off."
-    }
-
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
             HStack(spacing: Theme.Spacing.sm) {
@@ -300,12 +291,13 @@ struct DecisionBackendForm: View {
     private var headerNote: String {
         if existing != nil { return "Already set up. Pick the model it should answer with." }
         if let enabling {
-            return "Adds \(preset?.name ?? "its provider")'s decision models to \(enabling.key), "
-                + "with the API key it already has."
+            let adds = "Adds \(preset?.name ?? "its provider")'s decision models to \(enabling.key)"
+            return enabling.needsKeyForDecisions ? adds + ". It has no API key yet." : adds + ", with the API key it already has."
         }
         guard let preset else { return "A server that answers System One decisions, on this machine or elsewhere." }
         let note = preset.decision?.note.map(DecisionProviderList.plainNote)
-        let both = isNewBackend && preset.defaultUrl != nil ? "Its chat models are set up too, with the same API key." : nil
+        let both = isNewBackend && preset.defaultUrl != nil
+            ? "Its OpenAI-compatible models are set up too, with the same API key." : nil
         return [note, both].compactMap(\.self).joined(separator: " ")
     }
 
@@ -347,7 +339,7 @@ struct DecisionBackendForm: View {
             }
             endpointCaption("Decision endpoint", resolvedURL ?? decision.url)
             if isNewBackend, let openAIURL = preset?.defaultUrl {
-                endpointCaption("Chat models (OpenAI-compatible)", openAIURL)
+                endpointCaption("OpenAI-compatible API", openAIURL)
             }
         }
     }
@@ -376,18 +368,13 @@ struct DecisionBackendForm: View {
                 secure: true,
                 error: existing?.decision?.apiKeySecretError
             )
+            if enabling != nil {
+                Text(DecisionModelSetup.sharedKeyNote)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
-    }
-
-    private func keyLabel(_ field: DecisionModelSetup.KeyField) -> String {
-        if field.required || isTypeSafe { return "API key" }
-        return field.stored ? "New API key (optional)" : "API key (optional)"
-    }
-
-    private func keyPlaceholder(_ field: DecisionModelSetup.KeyField) -> String {
-        if field.stored { return "Saved — leave blank to keep it" }
-        if isTypeSafe { return "Your TypeSafe key" }
-        return field.required ? "Paste the key" : "Leave blank for a server without one"
     }
 
     private func paramBinding(_ key: String) -> Binding<String> {
@@ -475,6 +462,33 @@ struct DecisionBackendForm: View {
                 saveError = "Could not remove: \(deviceGatewayMessage(error))"
             }
         }
+    }
+}
+
+// MARK: - Wording
+
+@available(iOS 17.0, *)
+extension DecisionBackendForm {
+    private func removeTitle(_ backend: DecisionModelSetup.ExistingBackend) -> String {
+        backend.status.servesOpenAI ? "Stop using \(backend.key) for decisions" : "Remove \(backend.key)"
+    }
+
+    private var removeMessage: String {
+        existing?.status.servesOpenAI == true
+            ? "Its decision API is removed; its OpenAI-compatible models and API key stay. "
+            + "A Decision model that uses it is turned off."
+            : "The backend and its API key are deleted. A Decision model that uses it is turned off."
+    }
+
+    private func keyLabel(_ field: DecisionModelSetup.KeyField) -> String {
+        if field.required || isTypeSafe { return "API key" }
+        return field.stored ? "New API key (optional)" : "API key (optional)"
+    }
+
+    private func keyPlaceholder(_ field: DecisionModelSetup.KeyField) -> String {
+        if field.stored { return "Saved — leave blank to keep it" }
+        if isTypeSafe { return "Your TypeSafe key" }
+        return field.required ? "Paste the key" : "Leave blank for a server without one"
     }
 }
 

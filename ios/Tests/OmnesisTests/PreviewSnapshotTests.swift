@@ -6380,6 +6380,17 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(
             NavigationStack {
                 DecisionBackendForm(
+                    choice: .enable(DecisionPreviewData.openRouterLabForDecisions),
+                    overview: DecisionPreviewData.typesafeOverview()
+                )
+            }
+            .environment(store),
+            name: "111df-decision-form-existing-backend-needs-key",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
                     choice: .preset(DecisionPreviewData.openRouter),
                     overview: DecisionPreviewData.typesafeOverview(),
                     previewApiKey: "example-key"

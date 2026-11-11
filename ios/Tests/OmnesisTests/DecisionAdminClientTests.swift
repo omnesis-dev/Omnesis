@@ -504,12 +504,15 @@ final class BackendDecisionAPITests: XCTestCase {
             "https://api.fireworks.ai/inference",
             decision: BackendDecisionStatus(url: "https://api.fireworks.ai/inference/v1/systemone")
         )
-        XCTAssertEqual(ModelManagement.servesLabel(both), "Chat & decision models")
+        XCTAssertEqual(ModelManagement.servesLabel(both), "OpenAI-compatible and decision models")
         XCTAssertEqual(
             ModelManagement.servesLabel(DecisionFixtures.decisionBackend("http://127.0.0.1:11435/v1/systemone")),
             "Decision models"
         )
-        XCTAssertEqual(ModelManagement.servesLabel(DecisionFixtures.chatBackend("http://127.0.0.1:8000")), "Chat models")
+        XCTAssertEqual(
+            ModelManagement.servesLabel(DecisionFixtures.chatBackend("http://127.0.0.1:8000")),
+            "OpenAI-compatible models"
+        )
     }
 
     func testOrdinaryPickersLeaveOutDecisionOnlyBackends() {
