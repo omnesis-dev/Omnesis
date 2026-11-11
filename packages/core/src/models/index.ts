@@ -193,6 +193,7 @@ export {
   getPreset,
   getPresetByUrl,
   providerPresetView,
+  splitPresetViews,
 } from "./provider-presets.js";
 
 export {

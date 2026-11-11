@@ -54,7 +54,7 @@ const presetsCommand = defineCommand({
   meta: { name: "presets", description: "List the providers that serve decision models" },
   async run() {
     const o = await withSpinner("Loading providers", () => overview());
-    for (const preset of o.presets) {
+    for (const preset of [...o.presets, ...(o.decisionProviders ?? [])]) {
       if (!preset.decision) continue;
       const tag = preset.builtIn ? "built in" : preset.defaultUrl ? "also chat" : preset.kind;
       console.log(
@@ -200,7 +200,9 @@ const modelsCommand = defineCommand({
       ]),
     );
     const backend = o.inference.backends[name];
-    const offered = o.presets.find((p) => p.id === backend?.preset)?.decision?.models ?? [];
+    const offered =
+      [...o.presets, ...(o.decisionProviders ?? [])].find((p) => p.id === backend?.preset)?.decision
+        ?.models ?? [];
     if (!probe.ok) console.log(`${c.yellow}⚠${c.reset} ${probe.reason}`);
     const ids = new Set([...probe.models, ...offered.map((m) => m.id)]);
     for (const id of ids) {

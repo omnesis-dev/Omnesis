@@ -90,6 +90,16 @@ describe("ModelManager", () => {
     // form and model suggestions from one source of truth.
     expect(overview.presets.length).toBeGreaterThan(0);
     expect(overview.presets.some((p) => p.id === "openai")).toBe(true);
+    // Released apps decode every `presets` entry with a required `defaultUrl`
+    // and offer it as an OpenAI-compatible provider, so decision-only
+    // providers travel in `decisionProviders` instead.
+    expect(overview.presets.every((p) => typeof p.defaultUrl === "string")).toBe(true);
+    expect(overview.presets.find((p) => p.id === "fireworks")?.decision).toBeDefined();
+    const decisionOnly = (overview.decisionProviders ?? []).map((p) => p.id);
+    expect(decisionOnly).toEqual(expect.arrayContaining(["fastino", "ollaya", "typesafe"]));
+    expect(overview.decisionProviders?.every((p) => p.defaultUrl === undefined && p.decision)).toBe(
+      true,
+    );
     // Capability metadata is served so the portal renders one card per
     // capability without hardcoding the titles/descriptions/icons.
     expect(overview.capabilities.length).toBeGreaterThan(0);

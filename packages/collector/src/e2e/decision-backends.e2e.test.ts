@@ -185,11 +185,14 @@ describe("backends with a decision API — stable gateway, every wire format", (
     await provider?.close();
   }, 15_000);
 
-  test("offers every provider with decision models, with models.dev's models, in the one preset list", async () => {
+  test("offers every provider with decision models, with models.dev's models, keeping presets readable by released apps", async () => {
     const o = await overview();
     expect(o).not.toHaveProperty("decisionPresets");
     expect(o.inference).not.toHaveProperty("decisionBackends");
-    const withDecisions = o.presets.filter((p) => p.decision).map((p) => p.id);
+    // Released apps require `defaultUrl` on every `presets` entry.
+    expect(o.presets.every((p) => typeof p.defaultUrl === "string")).toBe(true);
+    const all = [...o.presets, ...(o.decisionProviders ?? [])];
+    const withDecisions = all.filter((p) => p.decision).map((p) => p.id);
     expect(withDecisions).toEqual(
       expect.arrayContaining([
         "ollaya",
@@ -204,8 +207,11 @@ describe("backends with a decision API — stable gateway, every wire format", (
     const openrouter = o.presets.find((p) => p.id === "openrouter")!;
     expect(openrouter.defaultUrl).toBe("https://openrouter.ai/api");
     expect(openrouter.decision!.models.length).toBeGreaterThan(10);
-    expect(o.presets.find((p) => p.id === "ollaya")).not.toHaveProperty("defaultUrl");
-    expect(o.presets.find((p) => p.id === "typesafe")).toMatchObject({ builtIn: "typesafe" });
+    expect(o.presets.find((p) => p.id === "ollaya")).toBeUndefined();
+    expect(o.decisionProviders?.find((p) => p.id === "ollaya")).not.toHaveProperty("defaultUrl");
+    expect(o.decisionProviders?.find((p) => p.id === "typesafe")).toMatchObject({
+      builtIn: "typesafe",
+    });
     expect(o.inference.assignments.decision).toMatchObject({ kind: "disabled" });
   });
 

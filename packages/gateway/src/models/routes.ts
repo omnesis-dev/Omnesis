@@ -45,6 +45,7 @@
 import {
   CATALOG_ROLE_CAPABILITY,
   CAPABILITY_ROLES,
+  splitPresetViews,
   type ModelRole,
   type CapabilityRole,
   type InferenceOverview,
@@ -224,7 +225,8 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     ]);
     const inference = modelInferenceOverview();
     const overview = modelManager.getOverview(inference);
-    if (opts.decisionCatalog) overview.presets = opts.decisionCatalog.presets();
+    if (opts.decisionCatalog)
+      Object.assign(overview, splitPresetViews(opts.decisionCatalog.presets()));
     const behavior = opts.modelsDevCatalog?.overview(inference, configStore.get());
     const getRecentModels = opts.getRecentModels;
     const recentModels = getRecentModels
