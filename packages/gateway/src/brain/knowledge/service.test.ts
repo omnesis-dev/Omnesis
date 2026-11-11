@@ -14,6 +14,7 @@ import { ANNOTATION_CONTEXT_VERIFIER } from "../annotation-verification.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { createOpenLoop } from "../storage/open-loops.js";
 import { resolveBrainSettings } from "../config.js";
+import { VERIFIER_FOREGROUND_DEADLINE_MS } from "../../inference/verifier-limits.js";
 import { KnowledgeReferenceReader } from "./reference-reader.js";
 import { CONTEXTUAL_VERIFIER } from "./claim-context.js";
 import { KnowledgeService, type KnowledgeProposal } from "./service.js";
@@ -1326,7 +1327,7 @@ it.each(["resolution", "verification"] as const)(
     });
     try {
       const saving = brain.save(proposal("expired-verification"));
-      await vi.advanceTimersByTimeAsync(45_000);
+      await vi.advanceTimersByTimeAsync(VERIFIER_FOREGROUND_DEADLINE_MS);
       await saving;
       expect(stageSignal?.aborted).toBe(true);
       expect(getKnowledgeClaims(db, "expired-verification")[0]?.verification).toBe("unverified");

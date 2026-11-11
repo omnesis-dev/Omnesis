@@ -49,6 +49,7 @@ import {
 import { loadCompletionFromResolved, type LoadCompletionDeps } from "./completion-loader.js";
 import { LlamaCppCompleter } from "./llama-cpp-completer.js";
 import { AgentTurnCompleter } from "./agent-turn-completer.js";
+import { VERIFIER_CALL_LIMIT_MS } from "./verifier-limits.js";
 import { HttpCompleter, type HttpCompletion } from "./http-completer.js";
 
 import {
@@ -372,7 +373,7 @@ function withoutUsage(provider: CompleteCapability): EntailmentCompleter {
  * multi-minute default.
  */
 function anthropicEntailmentCompleter(modelId: string, apiKey: string): EntailmentCompleter {
-  const client = samplingClient({ apiKey, timeout: 45_000, maxRetries: 1 });
+  const client = samplingClient({ apiKey, timeout: VERIFIER_CALL_LIMIT_MS, maxRetries: 1 });
   const sampling = new AnthropicTemperature();
   return {
     modelId,
@@ -498,6 +499,7 @@ async function loadVerifier(
         allowRemoteInference: resolved.allowRemoteInference,
         modelControls: resolved.modelControls,
         modelBehavior: resolved.modelBehavior,
+        timeoutMs: VERIFIER_CALL_LIMIT_MS,
       });
       log.info(
         `Entailment verifier configured (http): backend=${resolved.backendKey} model=${resolved.model}`,
@@ -517,7 +519,12 @@ async function loadVerifier(
 
     case "codex":
     case "claude-code": {
-      const completer = loadCompletionFromResolved(resolved, { ...deps, health: undefined });
+      const completer = loadCompletionFromResolved(resolved, {
+        ...deps,
+        health: undefined,
+        // The agent-turn default (45 s) would end a call the caller still allows.
+        timeoutMs: VERIFIER_CALL_LIMIT_MS,
+      });
       if (!(completer instanceof AgentTurnCompleter)) return null;
       return build({
         modelId: completer.modelId,

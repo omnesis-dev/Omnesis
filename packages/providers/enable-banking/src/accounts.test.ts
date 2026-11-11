@@ -78,11 +78,15 @@ class FakeClient implements EnableBankingTransport {
   balancesCalls: string[] = [];
   transactionsCalls: Array<{ uid: string; params: GetTransactionsParams }> = [];
   balancesByUid = new Map<string, EbBalance[]>();
+  /** A balances request for one of these uids fails with its error. */
+  balanceErrorsByUid = new Map<string, Error>();
   /** Queue of pages per uid; the last entry is returned once the queue drains. */
   transactionPagesByUid = new Map<string, EbTransactionsPage[]>();
 
   async getBalances(uid: string): Promise<EbBalance[]> {
     this.balancesCalls.push(uid);
+    const error = this.balanceErrorsByUid.get(uid);
+    if (error) throw error;
     return this.balancesByUid.get(uid) ?? [];
   }
 
@@ -429,8 +433,41 @@ describe("phase: balances → incremental", () => {
     });
     expect(cursor?.phase).toBe("incremental");
     expect(cursor?.lastBalancesDate).toBe("2026-06-01");
+    expect(balancePage!.issues).toEqual([]);
+  });
+
+  test("a failed initial balances fetch is reported and retried next tick", async () => {
+    client.balanceErrorsByUid.set("uid-usd-1", bankSideError());
+    const source = makeSource();
+    const first = await runTick(source, null);
+    const balancePage = first.pages.at(-1)!;
+    expect(balancePage.issues).toEqual([
+      expect.objectContaining({ code: "balances-unavailable", subject: "account …sh-usd" }),
+    ]);
+    expect(first.cursor?.phase).toBe("incremental");
+    expect(first.cursor?.lastBalancesDate).toBeUndefined();
+
+    client.balanceErrorsByUid.clear();
+    client.balancesCalls = [];
+    await runTick(source, first.cursor ?? null);
+    expect(client.balancesCalls).toEqual(["uid-eur-1", "uid-usd-1"]);
   });
 });
+
+/** The transient error the client throws when the bank answered ASPSP_ERROR. */
+function bankSideError(): SyncError {
+  return new SyncError(
+    "transient",
+    "The bank returned an error to Enable Banking for /accounts/…/balances (HTTP 400) (ASPSP_ERROR).",
+    {
+      remediation: {
+        summary: "Your bank returned an error",
+        steps: ["This usually clears on its own; the next sync retries."],
+        restartRequired: false,
+      },
+    },
+  );
+}
 
 describe("phase: incremental", () => {
   /** Cursor as it looks after a completed bootstrap tick. */
@@ -474,6 +511,84 @@ describe("phase: incremental", () => {
     expect(
       pages.slice(2).every((p) => tablesWritten(p).every((t) => t === "bank_transactions")),
     ).toBe(true);
+  });
+
+  test("a bank error on one account's balances holds back no transactions and is reported", async () => {
+    client.balanceErrorsByUid.set("uid-eur-1", bankSideError());
+    client.balancesByUid.set("uid-usd-1", [
+      { balance_type: "CLBD", balance_amount: { currency: "USD", amount: "310.00" } },
+    ]);
+    client.transactionPagesByUid.set("uid-eur-1", [
+      { transactions: [txn({ booking_date: "2026-06-01" })] },
+    ]);
+    client.transactionPagesByUid.set("uid-usd-1", [
+      {
+        transactions: [
+          txn({
+            entry_reference: "ref-usd",
+            booking_date: "2026-06-01",
+            transaction_amount: { currency: "USD", amount: "12.00" },
+          }),
+        ],
+      },
+    ]);
+    const nextDay = new Date("2026-06-02T07:00:00.000Z");
+    const source = makeSource({ now: () => nextDay });
+    const run = await runTick(source, incrementalCursor());
+
+    // Both accounts' transactions were fetched and written.
+    expect(client.transactionsCalls.map((c) => c.uid)).toEqual(["uid-eur-1", "uid-usd-1"]);
+    const transactionRows = run.pages.flatMap((p) => rowsFor(p, "bank_transactions"));
+    expect(transactionRows.map((r) => r.account_key).sort()).toEqual(["hash-eur", "hash-usd"]);
+    expect(run.cursor?.lastBookingDates).toMatchObject({
+      "hash-eur": "2026-06-01",
+      "hash-usd": "2026-06-01",
+    });
+
+    // The healthy account's balance landed; the failed one is an issue
+    // carrying the bank's remediation.
+    const balancePage = run.pages[1];
+    expect(rowsFor(balancePage, "bank_balances").map((r) => r.account_key)).toEqual(["hash-usd"]);
+    expect(balancePage.issues).toEqual([
+      {
+        code: "balances-unavailable",
+        scope: "partition",
+        kind: "transient",
+        count: 1,
+        subject: "account …sh-eur",
+        message: expect.stringContaining("ASPSP_ERROR"),
+        remediation: expect.objectContaining({ summary: "Your bank returned an error" }),
+      },
+    ]);
+    // Only the balances page assessed issues; the transactions pages do not
+    // claim the failure has cleared.
+    expect(run.pages.filter((p) => p.issues !== undefined)).toHaveLength(1);
+
+    // The snapshot date is not advanced, so the next tick fetches balances
+    // again; once the bank answers, the page reports the issue cleared.
+    expect(run.cursor?.lastBalancesDate).toBe("2026-06-01");
+    client.balanceErrorsByUid.clear();
+    client.balancesCalls = [];
+    const retry = await runTick(source, run.cursor ?? null);
+    expect(client.balancesCalls).toEqual(["uid-eur-1", "uid-usd-1"]);
+    expect(retry.pages[1].issues).toEqual([]);
+    expect(retry.cursor?.lastBalancesDate).toBe("2026-06-02");
+  });
+
+  test("an auth or rate-limit failure on balances still stops the tick", async () => {
+    for (const error of [
+      new SyncError("auth", "Enable Banking rejected the request (HTTP 401)."),
+      new SyncError("rate-limit", "Enable Banking rate limit (HTTP 429).", {
+        retryAfterMs: 1000,
+      }),
+    ]) {
+      client.balanceErrorsByUid.set("uid-eur-1", error);
+      client.transactionsCalls = [];
+      const nextDay = new Date("2026-06-02T07:00:00.000Z");
+      const source = makeSource({ now: () => nextDay });
+      await expect(runTick(source, incrementalCursor())).rejects.toBe(error);
+      expect(client.transactionsCalls).toHaveLength(0);
+    }
   });
 
   test("snapshot idempotency: same-day re-syncs reuse the snapshot_date PK; a new day adds a row", async () => {

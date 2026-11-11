@@ -9,11 +9,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
+import { ConfigStore } from "../../config-store.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import {
@@ -316,6 +317,55 @@ describe("GET /documents/:id/annotations", () => {
       verificationState: "verified",
       lastVerifiedAt: new Date(5000).toISOString(),
     });
+  });
+
+  test("labels a row on a source excluded from the Brain, read from live config", async () => {
+    const subject = await ingest("subject-excluded");
+    createDocAnnotation(
+      db,
+      {
+        id: "ann_excluded",
+        docId: subject,
+        claimType: "commitment-status",
+        claimText: "The deposit is due on Friday",
+        evidenceDocId: subject,
+        evidenceQuote: "The studio deposit is due on Friday.",
+        confidence: 0.7,
+        claimBasis: "quoted",
+        createdByRun: "run_1",
+        verificationState: "verified",
+        lastVerifiedAt: 5000,
+      },
+      1000,
+    );
+    const configDir = `/tmp/omnesis-annotations-excluded-${randomUUID()}`;
+    const configStore = new ConfigStore({ filePath: `${configDir}/omnesis.json` });
+    await configStore.load();
+    try {
+      app = createServer(db, dbPath, { configStore });
+      const served = async () =>
+        (
+          (await (await req(`/documents/${subject}/annotations`)).json()) as {
+            annotations: Array<Record<string, unknown>>;
+          }
+        ).annotations[0];
+      expect(await served()).not.toHaveProperty("notRechecked");
+
+      await configStore.put({ brain: { excludedSources: ["gmail"] } });
+      // The stored state is still served; the label says it is not current.
+      expect(await served()).toMatchObject({
+        id: "ann_excluded",
+        verificationState: "verified",
+        lastVerifiedAt: new Date(5000).toISOString(),
+        notRechecked: "source_excluded",
+      });
+
+      await configStore.put({ brain: { excludedSources: [] } });
+      expect(await served()).not.toHaveProperty("notRechecked");
+    } finally {
+      configStore.stop();
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 
   test("excludes invalidated annotations", async () => {

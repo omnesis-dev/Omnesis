@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { SyncError } from "@omnesis/types";
+import { SyncError, type SyncRemediation } from "@omnesis/types";
 import { signEnableBankingJwt } from "./jwt.js";
 import {
   ebAspspsResponseSchema,
@@ -21,6 +21,22 @@ const EB_API_BASE = "https://api.enablebanking.com";
  * handed to the scheduler immediately — a tick must never sleep through it.
  */
 export const EB_RATE_LIMIT_RETRY_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Enable Banking's error code for a request the bank itself failed, as
+ * opposed to one Enable Banking refused. It arrives with a 4xx status, but
+ * says nothing about the request, so it is a bank-side outage to retry.
+ */
+const EB_ASPSP_ERROR = "ASPSP_ERROR";
+
+const ASPSP_ERROR_REMEDIATION: SyncRemediation = {
+  summary: "Your bank returned an error",
+  steps: [
+    "This usually clears on its own; the next sync retries.",
+    "If it keeps happening, reconnect the bank from its source in the portal.",
+  ],
+  restartRequired: false,
+};
 
 export interface EnableBankingClientOptions {
   applicationId: string;
@@ -70,7 +86,9 @@ export interface EnableBankingTransport {
  * collector routes the source correctly: `auth` parks it in needs-auth,
  * `rate-limit` carries the 6-hour `retryAfterMs` hint the sync engine
  * honors — it parks the source in `rate-limited` and defers the next tick
- * to that deadline — and `transient`/`network` retry on the next tick.
+ * to that deadline — and `transient`/`network` retry on the next tick. A
+ * failure the bank reported (`ASPSP_ERROR`, whatever its status) is
+ * `transient` and carries a remediation.
  * Error messages carry status + safe summary only — never tokens, JWTs,
  * or response bodies.
  */
@@ -192,6 +210,15 @@ export class EnableBankingClient implements EnableBankingTransport {
     if (!res.ok) {
       const code = await safeErrorCode(res);
       const suffix = code ? ` (${code})` : "";
+      if (code === EB_ASPSP_ERROR) {
+        // Enable Banking relays the bank's own failure, usually as a 400. The
+        // request was fine; the bank was not, and it typically recovers.
+        throw new SyncError(
+          "transient",
+          `The bank returned an error to Enable Banking for ${redactPath(path)} (HTTP ${res.status})${suffix}.`,
+          { remediation: ASPSP_ERROR_REMEDIATION },
+        );
+      }
       if (res.status === 401 || res.status === 403) {
         throw new SyncError(
           "auth",
