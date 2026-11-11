@@ -1688,11 +1688,17 @@ const mentionWorthGate = bootMentionWorthGate({
   active: mentionWorthGateActive,
   log: log.child("enrichment:mention-worth-gate"),
 });
-// A changed threshold re-sorts the stored verdicts on the gate's next tick;
-// kicked, so an idle gate does not wait out its idle period first.
+// Turning the gate on, assigning a decision model or moving the threshold
+// kicks the gate, so an idle gate does not wait out its idle period before
+// judging or re-sorting.
 configStore.onChange((before, after) => {
-  const threshold = (c: OmnesisConfig) => c.enrichment?.dates?.worthThreshold;
-  if (threshold(before) !== threshold(after)) mentionWorthGate.kick();
+  const inputs = (c: OmnesisConfig) =>
+    JSON.stringify([
+      c.enrichment?.dates?.worthGate,
+      c.enrichment?.dates?.worthThreshold,
+      c.inference?.assignments?.decision,
+    ]);
+  if (inputs(before) !== inputs(after)) mentionWorthGate.kick();
 });
 
 // Date-enrichment pass: extract dates from every document, resolved against

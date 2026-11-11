@@ -3204,7 +3204,7 @@ const brainThresholds = z
     ),
     recordBelongs: levelThreshold(
       3,
-      "Score (levels 0–3) at or above which a new annotation, observation or wiki page belongs in life memory.",
+      "Score (levels 0–3) at or above which a new timeline annotation, tracked outcome or wiki page belongs in life memory.",
     ),
     documentRecordValue: levelThreshold(
       3,
