@@ -13639,6 +13639,16 @@ div.source-activity-popover-link:hover {
   padding: 1px 7px;
   border-radius: 999px;
 }
+/* What a backend serves: chat models, decision models, or both. */
+.backend-serves {
+  margin-left: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
 
 /* Gateway-managed Codex runtime lifecycle. The runtime is independent from
    ChatGPT login and model discovery, so it gets a distinct card and status. */
@@ -13844,7 +13854,7 @@ div.source-activity-popover-link:hover {
 .backend-opt--row .backend-opt-icon { flex: 0 0 24px; justify-content: center; }
 .backend-opt-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .backend-opt--row .backend-opt-title { font-size: 13px; }
-.backend-opt--row .backend-opt-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.backend-opt--row .backend-opt-sub { line-height: 1.35; }
 .provider-monogram {
   display: inline-flex;
   align-items: center;
@@ -14045,7 +14055,7 @@ div.source-activity-popover-link:hover {
 
 /* ───── Decision model setup ───────────────────────────────────────────── */
 
-/* Provider picker: your backends, this machine, cloud — each a titled grid. */
+/* Provider pickers with many providers: titled groups of one-row cards. */
 .decision-provider-picker { display: flex; flex-direction: column; gap: 16px; }
 .decision-provider-group { display: flex; flex-direction: column; gap: 8px; }
 .decision-provider-picker .backend-opt-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }

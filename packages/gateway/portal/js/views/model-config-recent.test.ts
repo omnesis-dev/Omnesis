@@ -122,7 +122,7 @@ describe("ModelConfigModal Recently used section", () => {
     expect(host.textContent).not.toContain("Recently used");
     expect(host.querySelector(".recent-models")).toBeNull();
     // The backend grid still renders (the "+ custom" affordance).
-    expect(host.textContent).toContain("Custom HTTP backend");
+    expect(host.textContent).toContain("Other server");
   });
 
   it("hides the section when the fetch fails", async () => {
@@ -130,7 +130,7 @@ describe("ModelConfigModal Recently used section", () => {
     await act(async () => render(renderModal(), host));
 
     expect(host.querySelector(".recent-models")).toBeNull();
-    expect(host.textContent).toContain("Custom HTTP backend");
+    expect(host.textContent).toContain("Other server");
   });
 
   it("hides the section when every entry is malformed", async () => {

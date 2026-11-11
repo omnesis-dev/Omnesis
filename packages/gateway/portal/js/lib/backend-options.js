@@ -15,6 +15,7 @@
  */
 
 import { filterBackendModels } from "./backend-model-filter.js";
+import { addablePresets, backendServes, presetServes } from "./backend-setup.js";
 
 /**
  * Capability role → bundled-catalog role. A capability with no bundled catalog
@@ -42,10 +43,10 @@ export const TYPESAFE_DEFAULT_MODEL = "jev-1.13.0";
 
 /**
  * Whether a capability is the Decision model. The gateway serves it from
- * TypeSafe, a local chat model, or an OpenAI-compatible HTTP backend that
- * returns token probabilities, and refuses the cloud chat runtimes (Codex,
- * Claude Code, Anthropic), which return none; it refuses TypeSafe for every
- * other role. The picker mirrors both halves.
+ * TypeSafe or a backend's decision API, and in experimental mode from a local
+ * chat model or an OpenAI-compatible HTTP backend that returns token
+ * probabilities; it refuses the cloud chat runtimes (Codex, Claude Code,
+ * Anthropic), which return none, and refuses TypeSafe for every other role.
  */
 export function isDecisionRole(role) {
   return role === "decision";
@@ -113,13 +114,15 @@ export function catalogProviderForBackend(overview, backendKey) {
 
 /**
  * Options for the capability model picker — the grid the user picks a model
- * source from. Ordered: Local, each preset, each existing custom HTTP backend,
- * Codex and Claude Code for roles they advertise, Anthropic, then "add a
- * custom HTTP backend".
+ * source from. Ordered: Local, each preset with an OpenAI-compatible API,
+ * each other backend that has one, Codex and Claude Code for roles they
+ * advertise, Anthropic, then "Other server". A backend or preset that serves
+ * only decision models has no card here.
  * Local/Anthropic cards appear only when the role has bundled catalog entries
- * for them. A decision role gets the TypeSafe card first, then — only when the
- * gateway allows chat models for it (`decisionChatModels`, experimental mode)
- * — Local and the Chat Completions HTTP backends; Codex, Claude Code and
+ * for them. For a decision role this is the chat-model grid of its picker:
+ * the TypeSafe card first, then — only when the gateway allows chat models for
+ * it (`decisionChatModels`, experimental mode) — Local and the Chat
+ * Completions HTTP backends; Codex, Claude Code and
  * Anthropic return no token probabilities, so they are withheld, and TypeSafe
  * serves nothing else.
  *
@@ -165,10 +168,11 @@ export function buildModelPickerOptions(overview, role) {
   if (localCount > 0) options.push({ kind: "local", count: localCount });
 
   const presetIds = new Set(presets.map((p) => p.id));
-  for (const preset of presets) {
+  // A preset or backend that serves only decision models has no card here.
+  for (const preset of presets.filter((p) => !p.builtIn && presetServes(p) !== "decision")) {
     const backend = backends[preset.id];
     if (needsChatCompletions && backend?.protocol === "responses") continue;
-    const configured = !!backend && backend.type === "http";
+    const configured = backend?.type === "http" && backendServes(backend) !== "decision";
     options.push({
       kind: "preset",
       id: preset.id,
@@ -180,7 +184,7 @@ export function buildModelPickerOptions(overview, role) {
   }
 
   for (const [key, backend] of Object.entries(backends)) {
-    if (backend.type !== "http" || presetIds.has(key)) continue;
+    if (backend.type !== "http" || backendServes(backend) === "decision" || presetIds.has(key)) continue;
     if (needsChatCompletions && backend.protocol === "responses") continue;
     options.push({
       kind: "custom",
@@ -230,17 +234,17 @@ export function buildModelPickerOptions(overview, role) {
 
 /**
  * Options for the "Add a backend" grid — not capability-scoped, so no Local
- * card and no per-role counts. Each preset and Anthropic carry a `configured`
- * flag so the grid can mark backends you've already set up; "add-custom" is
- * always last. Claude Code is offered whenever the gateway reports on it, even
+ * card and no per-role counts. Every preset a backend can be made from (all
+ * but the built-in TypeSafe), whatever it serves; each preset and Anthropic
+ * carry a `configured` flag so the grid can mark backends you've already set
+ * up; "add-custom" (Other server) is always last. Claude Code is offered whenever the gateway reports on it, even
  * when the CLI is missing, so its pane can explain how to install it.
  */
 export function buildAddBackendOptions(overview) {
-  const presets = overview.presets ?? [];
   const backends = overview.inference?.backends ?? {};
   const codex = overview.inference?.codex;
   const claudeCode = overview.inference?.claudeCode;
-  const options = presets.map((preset) => ({
+  const options = addablePresets(overview).map((preset) => ({
     kind: "preset",
     id: preset.id,
     preset,

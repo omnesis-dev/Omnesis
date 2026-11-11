@@ -1654,15 +1654,6 @@ export const rebuildIndex = (mode = "graceful") =>
 export const assignCapability = (role, assignment) =>
   patchAdminConfig({ inference: { assignments: { [role]: assignment } } });
 
-export const addHttpBackend = (key, url, apiKey, apiPathPrefix, allowRemoteInference = false) => {
-  const cfg = { type: "http", url };
-  if (apiKey) cfg.apiKey = apiKey;
-  if (apiPathPrefix) cfg.apiPathPrefix = apiPathPrefix;
-  const inference = { backends: { [key]: cfg } };
-  if (allowRemoteInference) inference.allowRemoteInference = true;
-  return patchAdminConfig({ inference });
-};
-
 export const removeHttpBackend = (key) =>
   patchAdminConfig({ inference: { backends: { [key]: null } } });
 
@@ -1678,33 +1669,35 @@ export const verifyBackendModel = (key, model, role, force = false) =>
   });
 
 // --- Decision model setup ---
-// Decision backends are saved and assigned with one PATCH /admin/config (see
-// `decisionBackendPatch` in lib/decision-backends.js); these routes check them.
+// A backend's decision API is saved and assigned with one PATCH /admin/config
+// (see lib/backend-setup.js); these routes check it.
 
-/** Models a local decision server lists: `{ok, models, listed, reason?}`. */
-export const probeDecisionBackend = (key) =>
-  request("POST", `/admin/inference/decision-backends/${encodeURIComponent(key)}/probe`);
+/** Models a saved backend's local decision server lists: `{ok, models, listed, reason?}`. */
+export const probeBackendDecisionModels = (key) =>
+  request("POST", `/admin/inference/backends/${encodeURIComponent(key)}/decision/probe`);
 
 /**
- * Models a server not saved yet lists, for the setup form:
- * `{url, auth?, apiKey?, protocol?, preset?}` → the same shape as above. The
+ * Models a decision server not saved yet lists, for the setup forms:
+ * `{url, auth?, apiKey?, protocol?, preset?, backendKey?}` → the same shape as
+ * above. `backendKey` sends that saved backend's key when no key is typed. The
  * gateway applies its cloud-inference policy, so an off-host URL is refused
  * unless cloud inference is allowed.
  */
-export const probeDecisionEndpoint = ({ url, auth, apiKey, protocol, preset }) =>
-  request("POST", "/admin/inference/decision-backends/probe", {
+export const probeDecisionEndpoint = ({ url, auth, apiKey, protocol, preset, backendKey }) =>
+  request("POST", "/admin/inference/decision/probe", {
     body: {
       url,
       ...(auth ? { auth } : {}),
       ...(apiKey ? { apiKey } : {}),
       ...(protocol ? { protocol } : {}),
       ...(preset ? { preset } : {}),
+      ...(backendKey ? { backendKey } : {}),
     },
   });
 
 /** One test decision: `{ok, answeredBy?, latencyMs?, status?, reason?}`. */
-export const verifyDecisionBackend = (key, model) =>
-  request("POST", `/admin/inference/decision-backends/${encodeURIComponent(key)}/verify`, { body: { model } });
+export const verifyBackendDecision = (key, model) =>
+  request("POST", `/admin/inference/backends/${encodeURIComponent(key)}/decision/verify`, { body: { model } });
 
 /** The same test decision, on TypeSafe. */
 export const verifyTypeSafeDecision = (model) =>
