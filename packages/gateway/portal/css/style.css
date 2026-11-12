@@ -5472,19 +5472,39 @@ p.devices-pair-expiry {
 .devices-access-row select:disabled { opacity: 0.6; }
 .devices-access-level-name { color: var(--text-primary); font-weight: 500; }
 
-/* The device pair modal is wider than the confirm-modal default. That base
-   class sets a fixed 420px width later in this file, so the selector below
-   qualifies with `.confirm-modal.devices-modal` to win on specificity
-   regardless of source order. */
-.confirm-modal.devices-modal {
-  width: 520px;
-  max-width: calc(100vw - 40px);
-  max-height: calc(100dvh - 40px);
-  overflow-y: auto;
-  text-align: left;
+/* The pairing page replaces the device list inside the Devices tab: a way
+   back above the title, then the form and its result in a column narrow
+   enough to read as one step. */
+.devices-pair-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  max-width: 640px;
 }
-/* Kind selector above the action row, both spanning the modal's width. */
-.devices-modal .devices-pair-form {
+.devices-pair-page-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.devices-pair-page-header .doc-back {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+}
+.devices-pair-page-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 600;
+}
+.devices-pair-page-header h2:focus { outline: none; }
+.devices-pair-page > .devices-pair-label { margin: 0; }
+/* Kind selector above the action row, both spanning the page's column. */
+.devices-pair-page .devices-pair-form {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -5553,41 +5573,24 @@ p.devices-pair-expiry {
 @media (max-width: 480px) {
   .devices-kind-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-/* Generate + Close on one row. */
-.devices-modal .devices-pair-actions {
+/* The page's actions sit at the column's trailing edge. */
+.devices-pair-page .devices-pair-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
 }
-/* The primary + Close buttons in the pair action row share identical box
-   metrics so they line up at the same height. Both carry a 1px border
-   (transparent on the primary) so the visible border on the ghost Close
-   doesn't make it 2px shorter. */
-.devices-modal .devices-pair-actions .btn-primary,
-.devices-modal .devices-pair-actions .btn-ghost {
+.devices-pair-page .devices-pair-actions .btn-primary {
   padding: 8px 16px;
-  border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
-  border: 1px solid transparent;
-  cursor: pointer;
-  line-height: 1.2;
 }
-.devices-modal .devices-pair-actions .btn-ghost {
-  background: transparent;
-  border-color: var(--border);
-  color: var(--text-primary);
-}
-.devices-modal .devices-pair-actions .btn-ghost:hover {
-  background: var(--bg-tertiary);
-}
-.devices-modal .devices-pair-actions .btn-primary:disabled {
+.devices-pair-page .devices-pair-actions .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-/* Breathing room between the action row and the generated-code card. */
-.devices-modal .devices-pair-result {
+/* Breathing room between the code's instructions and the Done action. */
+.devices-pair-page .devices-pair-result .devices-pair-actions {
   margin-top: 16px;
 }
 
