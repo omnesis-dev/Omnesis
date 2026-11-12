@@ -78,6 +78,51 @@ describe("DecisionClients", () => {
     expect(c.limiter("decision:box", 3).max).toBe(3);
   });
 
+  it("verifies a Google backend through Gemini's format and key header", async () => {
+    let seen: { url: string; headers: Headers; body: Record<string, unknown> } | null = null;
+    const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      seen = {
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body)),
+      };
+      return Response.json({
+        answers: VERIFY_REPLY.answers,
+        usage: { total_input_tokens: 12, total_output_tokens: 0, total_tokens: 12 },
+      });
+    }) as unknown as typeof fetch;
+    const url = "https://generativelanguage.googleapis.com/v1beta/decisions";
+    const c = clients({
+      backends: {
+        google: {
+          url,
+          preset: "google",
+          protocol: "gemini",
+          auth: "x-goog-api-key",
+          apiKey: "gm-key",
+        },
+      },
+      fetchFn,
+    });
+    const result = await c.verify({
+      ...BACKEND,
+      backendKey: "google",
+      preset: "google",
+      model: "gemini-decision-1",
+      url,
+      protocol: "gemini",
+      onHost: false,
+      allowRemoteInference: true,
+      hasApiKey: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(seen!.url).toBe(url);
+    expect(seen!.headers.get("x-goog-api-key")).toBe("gm-key");
+    expect(seen!.body).toMatchObject({ model: "gemini-decision-1" });
+    expect(seen!.body).toHaveProperty("input");
+    expect(seen!.body).not.toHaveProperty("state");
+  });
+
   it("builds no TypeSafe client for TypeSafe's own endpoint without a key", () => {
     expect(clients({}).typesafe(TYPESAFE)).toBeNull();
     expect(clients({ typesafeKey: "ts-key" }).typesafe(TYPESAFE)).not.toBeNull();

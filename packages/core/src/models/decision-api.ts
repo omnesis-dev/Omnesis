@@ -21,7 +21,9 @@ export type DecisionProtocol =
   /** Cloudflare Workers AI: System One body posted to `<url>/<model>`, reply wrapped in `{result}`. */
   | "workers-ai"
   /** OpenAI's Decisions API: its own question and answer arrays. */
-  | "openai-decisions";
+  | "openai-decisions"
+  /** Google's Gemini Decisions API: `input` instead of `state`, its own criteria and usage fields. */
+  | "gemini";
 
 /** The header a decision endpoint reads the backend's API key from. */
 export type DecisionAuth =
@@ -30,7 +32,9 @@ export type DecisionAuth =
   /** `api-key: <key>` — Microsoft Foundry. */
   | "api-key"
   /** `X-API-Key: <key>` — Fastino. */
-  | "x-api-key";
+  | "x-api-key"
+  /** `x-goog-api-key: <key>` — Google's Gemini API. */
+  | "x-goog-api-key";
 
 /**
  * Which answer field holds the probability-weighted level of a score

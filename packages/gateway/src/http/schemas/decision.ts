@@ -15,8 +15,8 @@ export const decisionProbeBody = z
   .object({
     url: z.string().url().max(2048),
     preset: z.string().min(1).max(64).optional(),
-    protocol: z.enum(["systemone", "workers-ai", "openai-decisions"]).optional(),
-    auth: z.enum(["bearer", "api-key", "x-api-key"]).optional(),
+    protocol: z.enum(["systemone", "workers-ai", "openai-decisions", "gemini"]).optional(),
+    auth: z.enum(["bearer", "api-key", "x-api-key", "x-goog-api-key"]).optional(),
     apiKey: z.string().min(1).max(4096).optional(),
     backendKey: z.string().min(1).max(256).optional(),
   })

@@ -15,6 +15,7 @@
  *   POST /fastino/v1/systemone                           System One behind `X-API-Key`, argmax `score` + `expected_level`
  *   POST /client/v4/accounts/:acct/ai/run/@cf/cloudflare/:model   Workers AI: short model in the body, `{result}` envelope
  *   POST /v1/decisions                                   OpenAI Decisions schema
+ *   POST /v1beta/decisions                               Gemini Decisions schema behind `x-goog-api-key`
  *   GET  /api/tags                                       installed models, Ollama-style
  *
  * Every decision endpoint answers only the models in `models`, with a 404
@@ -109,6 +110,7 @@ export async function startDecisionProviderServer(
           authorization: req.headers.authorization,
           "api-key": req.headers["api-key"] as string | undefined,
           "x-api-key": req.headers["x-api-key"] as string | undefined,
+          "x-goog-api-key": req.headers["x-goog-api-key"] as string | undefined,
         },
         body,
       });
@@ -212,6 +214,40 @@ export async function startDecisionProviderServer(
           model,
           answers,
           usage: { input_tokens: 40, output_tokens: 0, total_tokens: 40 },
+        });
+      }
+
+      if (path === "/v1beta/decisions") {
+        if (!needs("x-goog-api-key")) return;
+        if (!served.has(model)) {
+          return send(404, { error: { code: 404, message: "model not found" } });
+        }
+        const input = String(body.input ?? "");
+        let state: unknown = input;
+        try {
+          state = JSON.parse(input);
+        } catch {
+          // Plain text input.
+        }
+        const questions = body.questions as Record<string, Record<string, unknown>>;
+        const answers: Record<string, unknown> = {};
+        for (const [id, q] of Object.entries(questions)) {
+          const instructions = String(q.instructions);
+          const asked: DecisionQuestion =
+            q.type === "noul"
+              ? { type: "noul", instructions }
+              : q.type === "score"
+                ? { type: "score", instructions, criteria: q.criteria as string[] }
+                : { type: "choice", instructions, criteria: q.criteria as Record<string, string> };
+          const a = opts.answer(id, asked, state);
+          answers[id] =
+            a.type === "noul"
+              ? { type: "noul", noul: a.noul, confidence: Math.max(a.noul, 1 - a.noul) }
+              : { ...a, confidence: 0.5, probabilities: {} };
+        }
+        return send(200, {
+          answers,
+          usage: { total_input_tokens: 40, total_output_tokens: 0, total_tokens: 40 },
         });
       }
 

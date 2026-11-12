@@ -61,6 +61,16 @@ describe("validateConfig — backends with a decision API", () => {
             apiKey: "sk",
             decision: { url: "https://api.openai.com/v1/decisions", protocol: "openai-decisions" },
           },
+          google: {
+            type: "http",
+            url: "https://generativelanguage.googleapis.com",
+            apiKey: "gm",
+            decision: {
+              url: "https://generativelanguage.googleapis.com/v1beta/decisions",
+              protocol: "gemini",
+              auth: "x-goog-api-key",
+            },
+          },
           glide: {
             type: "http",
             decision: {

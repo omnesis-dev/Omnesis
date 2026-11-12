@@ -133,6 +133,8 @@ export function decisionAuthHeaders(
       return { "api-key": apiKey };
     case "x-api-key":
       return { "x-api-key": apiKey };
+    case "x-goog-api-key":
+      return { "x-goog-api-key": apiKey };
     default:
       return assertNever(auth);
   }

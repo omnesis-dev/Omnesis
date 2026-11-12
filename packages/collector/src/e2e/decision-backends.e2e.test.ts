@@ -23,8 +23,8 @@ import {
  *
  * One scripted provider speaks every wire format Omnesis supports — System One
  * with each auth header, Fastino's score field, Workers AI's envelope, and
- * OpenAI Decisions — beside an OpenAI-compatible model listing, so each format
- * is exercised through the gateway. Answers are scripted by content: whether a
+ * the OpenAI and Google decision schemas — beside an OpenAI-compatible model
+ * listing, so each format is exercised through the gateway. Answers are scripted by content: whether a
  * judgement is good is the eval lane's concern, not this suite's.
  */
 
@@ -152,6 +152,7 @@ describe("backends with a decision API — stable gateway, every wire format", (
         "microsoft-decision-1",
         "fastino/GLiDE",
         "gpt-6-luna",
+        "gemini-decision-1",
         "@cf/cloudflare/clef-flash",
       ],
       answer,
@@ -187,6 +188,7 @@ describe("backends with a decision API — stable gateway, every wire format", (
         "fireworks",
         "cloudflare",
         "openai",
+        "google",
       ]),
     );
     const openrouter = o.presets.find((p) => p.id === "openrouter")!;
@@ -412,6 +414,16 @@ describe("backends with a decision API — stable gateway, every wire format", (
           apiKey: KEY,
           decision: { url: `${provider.url}/v1/decisions`, protocol: "openai-decisions" },
         },
+        gemini: {
+          type: "http",
+          preset: "google",
+          apiKey: KEY,
+          decision: {
+            url: `${provider.url}/v1beta/decisions`,
+            protocol: "gemini",
+            auth: "x-goog-api-key",
+          },
+        },
         wrongkey: {
           type: "http",
           apiKey: "sk-wrong",
@@ -424,7 +436,7 @@ describe("backends with a decision API — stable gateway, every wire format", (
     expect(onDisk).not.toContain(KEY);
     expect(onDisk).not.toContain("sk-wrong");
     const backends = (await overview()).inference.backends;
-    for (const key of ["router", "foundry", "fastino", "cf", "openai", "wrongkey"]) {
+    for (const key of ["router", "foundry", "fastino", "cf", "openai", "gemini", "wrongkey"]) {
       expect(backends[key], key).toMatchObject({ hasApiKey: true, decision: { hasApiKey: true } });
     }
     expect(JSON.stringify(backends)).not.toContain(KEY);
@@ -435,6 +447,7 @@ describe("backends with a decision API — stable gateway, every wire format", (
       ["fastino", "fastino/GLiDE"],
       ["cf", "@cf/cloudflare/clef-flash"],
       ["openai", "gpt-6-luna"],
+      ["gemini", "gemini-decision-1"],
     ] as const) {
       const verify = await post(`/admin/inference/backends/${key}/decision/verify`, { model });
       expect(verify, key).toMatchObject({ ok: true });
@@ -449,6 +462,11 @@ describe("backends with a decision API — stable gateway, every wire format", (
     expect(provider.callsTo("/v1/decisions").at(-1)!.body.questions).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: "predicate", name: "verify_noul" })]),
     );
+
+    const gemini = provider.callsTo("/v1beta/decisions").at(-1)!;
+    expect(gemini.headers).toMatchObject({ "x-goog-api-key": KEY, authorization: undefined });
+    expect(gemini.body).toHaveProperty("input");
+    expect(gemini.body).not.toHaveProperty("state");
 
     const refused = await post("/admin/inference/backends/wrongkey/decision/verify", {
       model: "kev",
@@ -602,6 +620,7 @@ describe("backends with a decision API — stable gateway, every wire format", (
       ["fastino/fastino/GLiDE", "/fastino"],
       ["cf/@cf/cloudflare/clef-flash", "/client/v4"],
       ["openai/gpt-6-luna", "/v1/decisions"],
+      ["gemini/gemini-decision-1", "/v1beta/decisions"],
     ] as const) {
       expect((await patch({ assignments: { decision: assignment } })).status, assignment).toBe(200);
       const before = provider.callsTo(path).length;

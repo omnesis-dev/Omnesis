@@ -305,7 +305,7 @@ models: TypeSafe (`typesafe/<model>`) and a backend's decision API
 (`inference.backends.<key>.decision`, assigned `<key>/<model>`). A backend is
 one provider account with one API key and up to two APIs: an OpenAI-compatible
 one (`url`) and a decision one (`decision`), which speaks System One at any
-path, Cloudflare Workers AI, or OpenAI Decisions
+path, Cloudflare Workers AI, OpenAI Decisions, or Gemini Decisions
 (`packages/gateway/src/inference/decision/`). A backend without `url` serves
 only the Decision model; one without `decision` serves the role only as a chat
 model, below. The providers are the presets in

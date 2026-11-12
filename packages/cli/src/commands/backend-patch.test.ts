@@ -51,13 +51,29 @@ describe("buildBackendAddPatch", () => {
     });
   });
 
-  it("adds a chat-only preset as before, with its path prefix", () => {
-    expect(backendOf(buildBackendAddPatch({ name: "google" }).patch, "google")).toEqual({
+  it("adds a chat-only preset with no decision API", () => {
+    expect(backendOf(buildBackendAddPatch({ name: "mistral" }).patch, "mistral")).toEqual({
+      type: "http",
+      preset: "mistral",
+      url: "https://api.mistral.ai",
+    });
+  });
+
+  it("adds Google with its path prefix and the Gemini decision API, on one key", () => {
+    const { patch } = buildBackendAddPatch({ name: "google", apiKey: "gm" });
+    expect(backendOf(patch, "google")).toEqual({
       type: "http",
       preset: "google",
       url: "https://generativelanguage.googleapis.com",
       apiPathPrefix: "/v1beta/openai",
+      apiKey: "gm",
+      decision: {
+        url: "https://generativelanguage.googleapis.com/v1beta/decisions",
+        protocol: "gemini",
+        auth: "x-goog-api-key",
+      },
     });
+    expect(validateConfig(patch).ok).toBe(true);
   });
 
   it("adds a decision-only preset with no OpenAI-compatible URL", () => {

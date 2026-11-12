@@ -179,7 +179,13 @@ describe("decision APIs", () => {
       url: "https://openrouter.ai/api/v1/systemone",
       modelsDevId: "openrouter",
     });
-    for (const id of ["openai", "fireworks", "openrouter"]) {
+    expect(getPreset("google")?.decision).toMatchObject({
+      url: "https://generativelanguage.googleapis.com/v1beta/decisions",
+      protocol: "gemini",
+      auth: "x-goog-api-key",
+      suggestedModels: ["gemini-decision-1"],
+    });
+    for (const id of ["openai", "fireworks", "openrouter", "google"]) {
       expect(getPreset(id)?.defaultUrl, id).toBeDefined();
       expect(getPreset(id)?.capabilities, id).toContain("decision");
     }

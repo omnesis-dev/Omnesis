@@ -13,6 +13,7 @@
  */
 
 import {
+  assertNever,
   getPreset,
   type AssignmentValue,
   type DecisionCapability,
@@ -21,6 +22,7 @@ import {
   type ResolvedTypeSafe,
 } from "@omnesis/core";
 import { ConcurrencyLimiter } from "./limiter.js";
+import { GeminiDecisionsDecision } from "./gemini-decisions-client.js";
 import { OpenAIDecisionsDecision } from "./openai-decisions-client.js";
 import { SystemOneDecision } from "./system-one-client.js";
 import { TypeSafeDecision } from "./typesafe-client.js";
@@ -89,13 +91,21 @@ export class DecisionClients {
       ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
       ...(this.deps.fetchFn ? { fetchFn: this.deps.fetchFn } : {}),
     };
-    return resolved.protocol === "openai-decisions"
-      ? new OpenAIDecisionsDecision(common)
-      : new SystemOneDecision({
+    switch (resolved.protocol) {
+      case "openai-decisions":
+        return new OpenAIDecisionsDecision(common);
+      case "gemini":
+        return new GeminiDecisionsDecision(common);
+      case "systemone":
+      case "workers-ai":
+        return new SystemOneDecision({
           ...common,
           protocol: resolved.protocol,
           ...(cfg.scoreField ? { scoreField: cfg.scoreField } : {}),
         });
+      default:
+        return assertNever(resolved.protocol);
+    }
   }
 
   /** TypeSafe's client, or null when TypeSafe's own endpoint has no key. */

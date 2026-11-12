@@ -172,7 +172,16 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     // path so consumers build `…/v1beta/openai/chat|embeddings|models`.
     defaultUrl: "https://generativelanguage.googleapis.com",
     apiPathPrefix: "/v1beta/openai",
-    capabilities: ["agent", "embed"],
+    capabilities: ["agent", "embed", "decision"],
+    decision: {
+      url: "https://generativelanguage.googleapis.com/v1beta/decisions",
+      protocol: "gemini",
+      auth: "x-goog-api-key",
+      keyRequired: true,
+      suggestedModels: ["gemini-decision-1"],
+      docsUrl: "https://aistudio.google.com/docs/decisions-api",
+      keyUrl: "https://aistudio.google.com/apikey",
+    },
   },
   {
     id: "xai",

@@ -3438,9 +3438,9 @@ const backendDecisionConfig = z
   .object({
     // The full endpoint URL, e.g. "http://127.0.0.1:11435/v1/systemone".
     url: z.string().url(),
-    protocol: z.enum(["systemone", "workers-ai", "openai-decisions"]).optional(),
+    protocol: z.enum(["systemone", "workers-ai", "openai-decisions", "gemini"]).optional(),
     // The header that carries the backend's API key.
-    auth: z.enum(["bearer", "api-key", "x-api-key"]).optional(),
+    auth: z.enum(["bearer", "api-key", "x-api-key", "x-goog-api-key"]).optional(),
     // Fastino puts the most likely level in `score` and the weighted one in
     // `expected_level`.
     scoreField: z.enum(["score", "expected_level"]).optional(),
