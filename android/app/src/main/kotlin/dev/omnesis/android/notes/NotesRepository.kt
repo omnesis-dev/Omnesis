@@ -9,6 +9,7 @@ import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.dto.CreateNoteBody
 import dev.omnesis.android.transport.dto.VoiceNoteBody
 import java.time.Instant
+import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -44,6 +45,33 @@ sealed interface CaptureOutcome {
     data class Queued(val reason: QueueReason) : CaptureOutcome
 }
 
+/** How a drain of the offline queue ended, for whoever decides whether to try again unprompted. */
+enum class DrainOutcome {
+    /**
+     * Nothing is left that another attempt could deliver on its own: the queue is empty,
+     * or what remains waits on the user — pairing, pairing again, a gateway upgrade, or a
+     * note the gateway rejected.
+     */
+    SETTLED,
+
+    /** The gateway could not be reached or failed transiently; the remainder is worth retrying. */
+    RETRY_LATER,
+}
+
+/**
+ * A capture made on another device and relayed to this phone. It keeps the moment it
+ * was captured there, and [noteId] (a UUID) is its idempotency key, so every copy of
+ * the relay saves one note.
+ */
+data class RelayedCapture(
+    val noteId: String,
+    val capturedAt: Instant,
+    /** The zone that device captured in; null when it reported none the gateway would accept. */
+    val zone: CaptureZone? = null,
+    /** The language tag that device recorded a voice note under; null when it named none. */
+    val language: String? = null,
+)
+
 /**
  * A voice note with no phone transcript that the gateway would not take with its audio:
  * sending it as text would save an empty note, so nothing was saved.
@@ -54,8 +82,10 @@ class VoiceNoteNotSavedException : Exception("Couldn't save your voice note.")
  * The single owner of quick-capture note flow: online saves POST `/notes`
  * directly; retryable transport failures — and a 404 from a gateway with the
  * feature off — fall into the durable [PendingNotesStore], drained oldest-first
- * whenever the app starts/foregrounds or right before the next capture save.
- * Queued notes keep their original `capturedAt` and idempotency key.
+ * whenever the app starts/foregrounds, right before the next capture save, and from
+ * the background: [requestBackgroundDrain] is called whenever notes are left waiting
+ * on nothing but a reachable gateway. Queued notes keep their original `capturedAt`,
+ * capture time zone and idempotency key.
  *
  * [gateway] resolves the CURRENT session's client on every call (sessions are
  * rebuilt on pair/unpair/url-change), so a long-lived repository never holds a
@@ -72,6 +102,8 @@ class NotesRepository(
     private val now: () -> Instant = Instant::now,
     private val audioFiles: VoiceNoteFiles? = null,
     private val language: () -> String = { Locale.getDefault().toLanguageTag() },
+    private val timeZone: () -> ZoneId = ZoneId::systemDefault,
+    private val requestBackgroundDrain: () -> Unit = {},
 ) {
 
     private val drainMutex = Mutex()
@@ -101,15 +133,27 @@ class NotesRepository(
      * With [audio], [text] is the phone's transcript and may be empty; see the class
      * notes for delivery. Throws [VoiceNoteNotSavedException] when the gateway refuses
      * the audio and there is no transcript to fall back on.
+     *
+     * [relayed] replaces the fresh idempotency key, capture time, time zone and voice
+     * note language with the ones the note was given where it was captured. This phone's
+     * zone and language stand in for the two that device did not report.
      */
-    suspend fun capture(text: String, surface: String, audio: VoiceNoteAudio? = null, taskId: String? = null): CaptureOutcome {
+    suspend fun capture(
+        text: String,
+        surface: String,
+        audio: VoiceNoteAudio? = null,
+        taskId: String? = null,
+        relayed: RelayedCapture? = null,
+    ): CaptureOutcome {
         val normalizedText = text.trim()
         if (audio == null) require(normalizedText.isNotEmpty()) { "Note text must not be empty" }
         require(normalizedText.length <= MAX_TEXT_LENGTH) {
             "Too long — notes are capped at $MAX_TEXT_LENGTH characters. Shorten it and try again."
         }
-        val capturedAt = now().toString()
-        val noteId = UUID.randomUUID().toString()
+        val capturedInstant = relayed?.capturedAt ?: now()
+        val capturedAt = capturedInstant.toString()
+        val capturedZone = relayed?.zone ?: CaptureZone.at(capturedInstant, timeZone())
+        val noteId = relayed?.noteId ?: UUID.randomUUID().toString()
         try {
             drain()
         } catch (cancelled: CancellationException) {
@@ -120,7 +164,7 @@ class NotesRepository(
         val ownedAudio = audio?.let {
             requireNotNull(audioFiles) { "voice notes need an audio folder" }.adopt(it, noteId)
         }
-        val noteLanguage = ownedAudio?.let { language() }
+        val noteLanguage = ownedAudio?.let { relayed?.language ?: language() }
         val g = gateway() ?: run {
             enqueue(
                 noteId,
@@ -131,13 +175,24 @@ class NotesRepository(
                 lastFailure = "Not paired with a gateway",
                 audio = ownedAudio,
                 language = noteLanguage,
+                zone = capturedZone,
             )
             return CaptureOutcome.Queued(QueueReason.UNPAIRED)
         }
         if (ownedAudio != null) {
             try {
                 g.client.createVoice(
-                    VoiceNoteBody(noteId, normalizedText, capturedAt, surface, g.deviceId, noteLanguage, taskId),
+                    VoiceNoteBody(
+                        id = noteId,
+                        text = normalizedText,
+                        capturedAt = capturedAt,
+                        surface = surface,
+                        deviceId = g.deviceId,
+                        language = noteLanguage,
+                        taskId = taskId,
+                        capturedTimeZoneId = capturedZone?.id,
+                        capturedUtcOffsetSeconds = capturedZone?.utcOffsetSeconds,
+                    ),
                     ownedAudio.file,
                     ownedAudio.mimeType,
                 )
@@ -166,8 +221,9 @@ class NotesRepository(
                             lastFailure = failureReason(error),
                             audio = ownedAudio,
                             language = noteLanguage,
+                            zone = capturedZone,
                         )
-                        return CaptureOutcome.Queued(error.queueReason())
+                        return queued(error.queueReason())
                     }
                 }
             }
@@ -181,6 +237,8 @@ class NotesRepository(
                     surface = surface,
                     deviceId = g.deviceId,
                     taskId = taskId,
+                    capturedTimeZoneId = capturedZone?.id,
+                    capturedUtcOffsetSeconds = capturedZone?.utcOffsetSeconds,
                 ),
             )
             CaptureOutcome.Posted
@@ -196,9 +254,16 @@ class NotesRepository(
                 taskId = taskId,
                 lastAttemptAt = now().toString(),
                 lastFailure = failureReason(error),
+                zone = capturedZone,
             )
-            CaptureOutcome.Queued(reason)
+            queued(reason)
         }
+    }
+
+    /** A note that waits only for the gateway to be reachable is retried without the app open. */
+    private fun queued(reason: QueueReason): CaptureOutcome.Queued {
+        if (reason == QueueReason.UNREACHABLE) requestBackgroundDrain()
+        return CaptureOutcome.Queued(reason)
     }
 
     /**
@@ -211,22 +276,34 @@ class NotesRepository(
      * drain (nothing else will get through either), and so does a 404 —
      * the whole `/notes` surface is off, so hammering every row is pointless;
      * both leave the remainder queued for the next attempt (app
-     * start/foreground, or the next capture save). Auth trouble and other
+     * start/foreground, the next capture save, or the background drain a
+     * [DrainOutcome.RETRY_LATER] asks for). Auth trouble and other
      * retryable transport failures also stop the drain. Deterministic per-note
      * failures (400/413/422) skip just that row and keep draining the rest, so
      * one rejected note can't wedge the queue; the row stays queued and the
      * diagnostic dialog's discard action remains the manual escape.
      * No-op while unpaired.
+     *
+     * Every caller — foreground, capture, background worker — goes through the one
+     * [drainMutex] and reads the queue only once it holds it, so two drains never post
+     * the same row concurrently or count one failure twice.
      */
-    suspend fun drain(): Unit = drainMutex.withLock {
+    suspend fun drain(): DrainOutcome {
+        val outcome = drainMutex.withLock { drainUnlocked() }
+        if (outcome == DrainOutcome.RETRY_LATER) requestBackgroundDrain()
+        return outcome
+    }
+
+    private suspend fun drainUnlocked(): DrainOutcome {
         sweepOrphanAudioUnlocked()
-        val g = gateway() ?: return
+        val g = gateway() ?: return DrainOutcome.SETTLED
         val queued = store.readAll()
         if (queued.isEmpty()) {
             _pending.value = emptyList()
-            return
+            return DrainOutcome.SETTLED
         }
         var drained = 0
+        var outcome = DrainOutcome.SETTLED
         for (note in queued) {
             try {
                 if (!deliverQueued(g, note)) continue
@@ -237,6 +314,7 @@ class NotesRepository(
                     continue
                 }
                 Log.i(TAG, "Drain stopped after $drained/${queued.size} notes: ${failureReason(error)}")
+                if (error.queueReason() == QueueReason.UNREACHABLE) outcome = DrainOutcome.RETRY_LATER
                 break
             }
             deleteRow(note)
@@ -244,6 +322,7 @@ class NotesRepository(
         }
         if (drained > 0) Log.i(TAG, "Drained $drained queued note(s) to the gateway")
         refreshPendingUnlocked()
+        return outcome
     }
 
     /**
@@ -278,7 +357,17 @@ class NotesRepository(
         if (audio != null) {
             try {
                 g.client.createVoice(
-                    VoiceNoteBody(note.noteId, note.text, note.capturedAt, note.surface, g.deviceId, note.language, note.taskId),
+                    VoiceNoteBody(
+                        id = note.noteId,
+                        text = note.text,
+                        capturedAt = note.capturedAt,
+                        surface = note.surface,
+                        deviceId = g.deviceId,
+                        language = note.language,
+                        taskId = note.taskId,
+                        capturedTimeZoneId = note.zone?.id,
+                        capturedUtcOffsetSeconds = note.zone?.utcOffsetSeconds,
+                    ),
                     audio.file,
                     audio.mimeType,
                 )
@@ -303,6 +392,8 @@ class NotesRepository(
                 surface = note.surface,
                 deviceId = g.deviceId,
                 taskId = note.taskId,
+                capturedTimeZoneId = note.zone?.id,
+                capturedUtcOffsetSeconds = note.zone?.utcOffsetSeconds,
             ),
         )
         return true
@@ -332,8 +423,9 @@ class NotesRepository(
         audio: VoiceNoteAudio? = null,
         language: String? = null,
         taskId: String? = null,
+        zone: CaptureZone? = null,
     ) {
-        store.insert(noteId, text, capturedAt, surface, lastAttemptAt, lastFailure, audio, language, taskId)
+        store.insert(noteId, text, capturedAt, surface, lastAttemptAt, lastFailure, audio, language, taskId, zone)
         refreshPending()
     }
 

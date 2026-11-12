@@ -174,6 +174,23 @@ class CaptureScreenshotTest {
         Screen(CaptureUiState())
     }
 
+    // --- about to listen: opened cold, the microphone is not open yet ---
+
+    @Test
+    fun capture_preparing_dark() = capture("capture_preparing_dark", dark = true) {
+        Screen(CaptureUiState(speech = SpeechState.PREPARING))
+    }
+
+    @Test
+    fun capture_preparing_light() = capture("capture_preparing_light", dark = false) {
+        Screen(CaptureUiState(speech = SpeechState.PREPARING))
+    }
+
+    @Test
+    fun voice_entry_preparing_dark() = capture("voice_entry_preparing_dark", true) {
+        Screen(CaptureUiState(unified = true, speech = SpeechState.PREPARING))
+    }
+
     // --- listening, partial result streaming in ---
 
     private val listening = CaptureUiState(

@@ -1696,4 +1696,27 @@ class AdminClientTest {
         assertTrue(internal.isEmpty())
     }
 
+
+    @Test
+    fun watch_decision_gate_patch_sends_only_its_own_setting() = runTest {
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        client().setWatchDecisionGate(false)
+        val request = server.takeRequest()
+        assertEquals("PATCH", request.method)
+        assertEquals("/admin/config", request.path)
+        assertEquals(
+            """{"inference":{"dictation":{"useDecisionGateForWatch":false}}}""",
+            request.body.readUtf8(),
+        )
+    }
+
+    @Test
+    fun gateway_dictation_patch_leaves_the_watch_setting_out() = runTest {
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        client().setTranscribeOnGateway(true)
+        assertEquals(
+            """{"inference":{"dictation":{"transcribeOnGateway":true}}}""",
+            server.takeRequest().body.readUtf8(),
+        )
+    }
 }

@@ -65,6 +65,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -124,8 +126,15 @@ fun CaptureScreen(
     }
     val historyOpen by vm.historyOpen.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     LaunchedEffect(state.questionToAsk) {
-        state.questionToAsk?.let(onAsk)
+        state.questionToAsk?.let { question ->
+            // The conversation opens on the answer; the keyboard that typed the question would cover it.
+            focusManager.clearFocus(force = true)
+            keyboard?.hide()
+            onAsk(question)
+        }
     }
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -182,7 +191,7 @@ fun CaptureScreen(
         state = state,
         onMicTap = {
             when (state.speech) {
-                SpeechState.LISTENING, SpeechState.RECORDING -> vm.stopListening()
+                SpeechState.PREPARING, SpeechState.LISTENING, SpeechState.RECORDING -> vm.stopListening()
                 SpeechState.IDLE -> vm.startListening()
                 // A tap on the muted mic re-asks; the system remembers a hard denial.
                 SpeechState.DENIED -> permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -451,7 +460,8 @@ private fun CaptureForm(
 @Composable
 private fun MicVisual(speech: SpeechState, hasVoiceNote: Boolean, onTap: () -> Unit) {
     val listening = speech == SpeechState.LISTENING || speech == SpeechState.RECORDING
-    val muted = !listening && speech != SpeechState.IDLE
+    // About to listen is neither lit nor struck out: the microphone is simply not open yet.
+    val muted = !listening && speech != SpeechState.IDLE && speech != SpeechState.PREPARING
 
     Box(contentAlignment = Alignment.Center) {
         // Outside the tap target, which is clipped to a circle — rings drawn inside
@@ -467,6 +477,7 @@ private fun MicVisual(speech: SpeechState, hasVoiceNote: Boolean, onTap: () -> U
                     onClickLabel = when {
                         speech == SpeechState.RECORDING -> "Stop recording"
                         speech == SpeechState.LISTENING -> "Stop listening"
+                        speech == SpeechState.PREPARING -> "Cancel"
                         hasVoiceNote -> "Record more"
                         else -> "Start listening"
                     },
@@ -535,6 +546,7 @@ private fun voiceNoteStatusLine(note: VoiceNoteUi): String =
     }
 
 private fun statusLine(speech: SpeechState): String = when (speech) {
+    SpeechState.PREPARING -> "Getting ready…"
     SpeechState.LISTENING -> "Listening…"
     SpeechState.RECORDING -> "Recording — your gateway will transcribe this note."
     SpeechState.IDLE -> "Tap the mic to talk, or just type"

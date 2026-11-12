@@ -71,6 +71,14 @@ class AssistantActionScreenshotTest {
         )
     }
 
+    @Test fun preparing_ask_light() = capture("assistant_preparing_ask_light", false) {
+        AssistantActionContent(AssistantActionUiState.Listening(AssistantActionKind.ASK), {}, preparing = true)
+    }
+
+    @Test fun preparing_capture_dark() = capture("assistant_preparing_capture_dark", true) {
+        AssistantActionContent(AssistantActionUiState.Listening(AssistantActionKind.CAPTURE), {}, preparing = true)
+    }
+
     @Test fun listening_ask_light() = capture("assistant_listening_ask_light", false) {
         AssistantActionContent(AssistantActionUiState.Listening(AssistantActionKind.ASK), {})
     }

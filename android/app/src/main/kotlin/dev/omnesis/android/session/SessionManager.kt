@@ -47,6 +47,7 @@ import dev.omnesis.android.transport.client.WatchesClient
 import dev.omnesis.android.transport.dto.ClaimedNotificationDelivery
 import dev.omnesis.android.transport.dto.NoteAgentStatusDto
 import dev.omnesis.android.transport.dto.DictationStatusDto
+import dev.omnesis.android.transport.dto.WatchCaptureStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.tls.PinnedOkHttp
@@ -67,6 +68,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -356,6 +358,16 @@ class SessionManager @Inject constructor(
      */
     private val _dictation = MutableStateFlow<DictationStatusDto?>(null)
     val dictation: StateFlow<DictationStatusDto?> = _dictation.asStateFlow()
+
+    /**
+     * What the gateway's status says a watch relayed through this phone may do, read as
+     * one value so a consumer never pairs one status's dictation gate with another's
+     * capture gate. Null until this session has read a status.
+     */
+    data class WatchRelayStatus(val dictation: DictationStatusDto?, val capture: WatchCaptureStatusDto)
+
+    private val _watchRelayStatus = MutableStateFlow<WatchRelayStatus?>(null)
+    val watchRelayStatus: StateFlow<WatchRelayStatus?> = _watchRelayStatus.asStateFlow()
     private val _relayConsentPrompt = MutableStateFlow<RelayConsentPrompt?>(null)
     override val relayConsentPrompt: StateFlow<RelayConsentPrompt?> = _relayConsentPrompt.asStateFlow()
     private val _pushPlan = MutableStateFlow<PushPlanState>(PushPlanState.Checking)
@@ -367,6 +379,9 @@ class SessionManager @Inject constructor(
     private val notificationDrainMutex = Mutex()
     private val revocationDrainMutex = Mutex()
     private val statusProbeSerializer = StatusProbeSerializer()
+
+    /** Whether a status read has completed, in success or failure, for the current session. */
+    private val statusProbed = MutableStateFlow(false)
 
     @Volatile
     var session: GatewaySession? = null
@@ -514,7 +529,9 @@ class SessionManager @Inject constructor(
         _taskNoteCaptureAvailable.value = false
         _taskConversationsAvailable.value = false
         _dictation.value = null
+        _watchRelayStatus.value = null
         _noteAgent.value = null
+        statusProbed.value = false
         _relayConsentPrompt.value = null
         _pushPlan.value = PushPlanState.Checking
         _pushRegistrationFailed.value = false
@@ -834,32 +851,49 @@ class SessionManager @Inject constructor(
      */
     suspend fun refreshStatus(): Boolean = session?.let { probeStatus(it) } ?: false
 
+    /**
+     * Suspends until the current pairing's gateway status has been read once — or the
+     * read has failed — so the feature gates it sets, gateway dictation and the speech
+     * vocabulary among them, are no longer the unknowns of a cold start. Returns at
+     * once while unpaired. The caller bounds the wait.
+     */
+    suspend fun awaitStatusProbe() {
+        if (session == null) return
+        statusProbed.first { it }
+    }
+
     private suspend fun probeStatus(current: GatewaySession): Boolean =
-        statusProbeSerializer.run probe@{
-            if (session !== current) return@probe false
-            // Re-reading status may reveal an updated gateway, so search re-asks its capabilities.
-            val vocabularyOwner = speechVocabulary.cache.ownerToken()
-            current.search.invalidateSearchCapabilities()
-            val status = runCatching { current.gateway.status() }.getOrElse {
-                if (session === current && (it is GatewayException.Unauthorized || it is GatewayException.Forbidden)) {
-                    speechVocabulary.cache.reset(expectedOwner = vocabularyOwner)
-                }
-                return@probe false
-            }
-            if (session !== current) return@probe false
-            _modelHealth.value = status.modelHealth
-            _experimentalEnabled.value = status.experimental
-            _developerEnabled.value = status.developer
-            _tasksAvailable.value = status.tasks?.available == true
-            _taskNoteCaptureAvailable.value = status.taskNoteCapture
-            _taskConversationsAvailable.value = status.taskConversations
-            _dictation.value = status.dictation
-            _noteAgent.value = status.noteAgent
-            this.current()?.let { childScope ->
-                speechVocabulary.cache.warm(status.transcriptionVocabulary, Locale.getDefault().toLanguageTag(), childScope, ownerToken = vocabularyOwner, fetch = current.vocabulary::fetch)
-            }
-            true
+        statusProbeSerializer.run {
+            readStatus(current).also { if (session === current) statusProbed.value = true }
         }
+
+    private suspend fun readStatus(current: GatewaySession): Boolean {
+        if (session !== current) return false
+        // Re-reading status may reveal an updated gateway, so search re-asks its capabilities.
+        val vocabularyOwner = speechVocabulary.cache.ownerToken()
+        current.search.invalidateSearchCapabilities()
+        val status = runCatching { current.gateway.status() }.getOrElse {
+            if (session === current && (it is GatewayException.Unauthorized || it is GatewayException.Forbidden)) {
+                speechVocabulary.cache.reset(expectedOwner = vocabularyOwner)
+            }
+            return false
+        }
+        if (session !== current) return false
+        _modelHealth.value = status.modelHealth
+        _experimentalEnabled.value = status.experimental
+        _developerEnabled.value = status.developer
+        _tasksAvailable.value = status.tasks?.available == true
+        _taskNoteCaptureAvailable.value = status.taskNoteCapture
+        _taskConversationsAvailable.value = status.taskConversations
+        _dictation.value = status.dictation
+        _watchRelayStatus.value =
+            WatchRelayStatus(status.dictation, status.watchCapture ?: WatchCaptureStatusDto())
+        _noteAgent.value = status.noteAgent
+        this.current()?.let { childScope ->
+            speechVocabulary.cache.warm(status.transcriptionVocabulary, Locale.getDefault().toLanguageTag(), childScope, ownerToken = vocabularyOwner, fetch = current.vocabulary::fetch)
+        }
+        return true
+    }
 
     private companion object {
         const val NOTIFICATION_DRAIN_LIMIT = 20

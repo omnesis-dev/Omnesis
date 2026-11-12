@@ -15,6 +15,10 @@ import dev.omnesis.android.voice.SpeechVocabulary
 import dev.omnesis.android.transport.client.TranscriptionVocabularySnapshot
 import dev.omnesis.android.transport.client.VocabularyEntry
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -58,16 +62,26 @@ class SpeechTranscriberTest {
         override fun onFinal(text: String) = Unit
         override fun onEnded(reason: SpeechTranscriber.EndReason) = Unit
     }
-    private fun setup(enabled: Boolean = true): Pair<SpeechTranscriber, Factory> {
-        val vocabulary = SpeechVocabulary()
+    private fun vocabulary(enabled: Boolean = true) = SpeechVocabulary().also { vocabulary ->
         runBlocking {
             vocabulary.cache.warm(enabled, Locale.getDefault().toLanguageTag(), this) { _, _ ->
                 TranscriptionVocabularySnapshot(true, listOf(VocabularyEntry("Veltrio", 2.0)))
             }
         }
-        val factory = Factory()
-        return SpeechTranscriber(ApplicationProvider.getApplicationContext<Context>(), vocabulary).also { it.factory = factory } to factory
     }
+    private fun setup(
+        enabled: Boolean = true,
+        vocabulary: SpeechVocabulary = vocabulary(enabled),
+        support: OnDeviceSpeechSupport = OnDeviceSpeechSupport(),
+        factory: Factory = Factory(),
+    ): Pair<SpeechTranscriber, Factory> =
+        SpeechTranscriber(ApplicationProvider.getApplicationContext<Context>(), vocabulary, support)
+            .also { it.factory = factory } to factory
+
+    /** Runs up to the first suspension, as a view model's scope does on the main thread. */
+    private fun prepare(transcriber: SpeechTranscriber): Job =
+        CoroutineScope(Dispatchers.Unconfined).launch { transcriber.prepare() }
+    private val locale: String get() = Locale.getDefault().toLanguageTag()
     private fun confirm(transcriber: SpeechTranscriber, factory: Factory) {
         transcriber.start(listener)
         assertTrue(factory.locals.isEmpty()) // Provider discovery is posted after microphone start.
@@ -115,18 +129,100 @@ class SpeechTranscriberTest {
         transcriber.cancel()
     }
 
-    @Test fun canceledProbeCannotConfirmAndCanBeRetried() {
+    @Test fun preparingAheadHintsTheFirstSession() {
         val (transcriber, factory) = setup()
+        val prepared = prepare(transcriber)
+        assertFalse(prepared.isCompleted)
+        factory.locals.single().callback!!.invoke(listOf(locale))
+        assertTrue(prepared.isCompleted)
+        assertTrue(factory.locals.single().destroyed)
+
         transcriber.start(listener)
-        shadowOf(Looper.getMainLooper()).idle()
-        val old = factory.locals.single()
+        assertEquals(listOf("Veltrio"), factory.locals.last().intent!!.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS))
+        assertTrue(factory.defaults.isEmpty())
         transcriber.cancel()
-        old.callback!!.invoke(listOf(Locale.getDefault().toLanguageTag()))
+    }
+
+    @Test fun preparingWithoutVocabularyAsksNoRecognizer() {
+        val (transcriber, factory) = setup(false)
+        assertTrue(prepare(transcriber).isCompleted)
+        assertTrue(factory.locals.isEmpty())
+    }
+
+    @Test @Config(sdk = [32]) fun preparingOnOlderAndroidAsksNoRecognizer() {
+        val (transcriber, factory) = setup()
+        assertTrue(prepare(transcriber).isCompleted)
+        assertTrue(factory.locals.isEmpty())
+    }
+
+    @Test fun preparingForAnUninstalledLanguageLeavesTheFirstSessionOnTheDefaultRecognizer() {
+        val (transcriber, factory) = setup()
+        val prepared = prepare(transcriber)
+        factory.locals.single().callback!!.invoke(listOf("zz-ZZ"))
+        assertTrue(prepared.isCompleted)
+
         transcriber.start(listener)
-        assertEquals(2, factory.defaults.size)
-        shadowOf(Looper.getMainLooper()).idle()
-        assertEquals(2, factory.locals.size)
+        assertFalse(factory.defaults.single().intent!!.hasExtra(RecognizerIntent.EXTRA_BIASING_STRINGS))
         transcriber.cancel()
+    }
+
+    @Test fun aCheckOutlivesTheSessionThatStartsWhileItIsPending() {
+        val (transcriber, factory) = setup()
+        val prepared = prepare(transcriber)
+        // The microphone starts before the recognizer has answered: unhinted, on the default.
+        transcriber.start(listener)
+        assertFalse(factory.defaults.single().intent!!.hasExtra(RecognizerIntent.EXTRA_BIASING_STRINGS))
+        transcriber.cancel()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(1, factory.locals.size)
+
+        factory.locals.single().callback!!.invoke(listOf(locale))
+        assertTrue(prepared.isCompleted)
+        transcriber.start(listener)
+        assertEquals(listOf("Veltrio"), factory.locals.last().intent!!.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS))
+        transcriber.cancel()
+    }
+
+    @Test fun anUnansweredCheckReleasesItsWaiterAndItsRecognizer() {
+        val (transcriber, factory) = setup()
+        val prepared = prepare(transcriber)
+        shadowOf(Looper.getMainLooper()).idleFor(11, java.util.concurrent.TimeUnit.SECONDS)
+        assertTrue(prepared.isCompleted)
+        assertTrue(factory.locals.single().destroyed)
+
+        // An answer that arrives after the recognizer was released confirms nothing.
+        factory.locals.single().callback!!.invoke(listOf(locale))
+        transcriber.start(listener)
+        assertFalse(factory.defaults.single().intent!!.hasExtra(RecognizerIntent.EXTRA_BIASING_STRINGS))
+        transcriber.cancel()
+    }
+
+    @Test fun aConfirmationHoldsForEveryTranscriberSharingTheSupport() {
+        val vocabulary = vocabulary()
+        val support = OnDeviceSpeechSupport()
+        val factory = Factory()
+        val (first, _) = setup(vocabulary = vocabulary, support = support, factory = factory)
+        confirm(first, factory)
+        first.cancel()
+
+        val (second, _) = setup(vocabulary = vocabulary, support = support, factory = factory)
+        second.start(listener)
+        assertEquals(listOf("Veltrio"), factory.locals.last().intent!!.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS))
+        assertEquals(1, factory.defaults.size)
+        second.cancel()
+    }
+
+    @Test fun waitersOnOneCheckAreAllReleasedByItsAnswer() {
+        val vocabulary = vocabulary()
+        val support = OnDeviceSpeechSupport()
+        val factory = Factory()
+        val (first, _) = setup(vocabulary = vocabulary, support = support, factory = factory)
+        val (second, _) = setup(vocabulary = vocabulary, support = support, factory = factory)
+        val a = prepare(first)
+        val b = prepare(second)
+        assertEquals(1, factory.locals.size)
+        factory.locals.single().callback!!.invoke(listOf(locale))
+        assertTrue(a.isCompleted && b.isCompleted)
     }
 
     @Test fun onDeviceCreationFailureFallsBackUnhinted() {

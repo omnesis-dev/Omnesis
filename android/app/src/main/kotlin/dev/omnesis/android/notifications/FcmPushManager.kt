@@ -163,6 +163,49 @@ class FcmPushManager @Inject constructor(
         preferences.edit().putLong(KEY_LAST_CLAIM_FAILURE_NOTICE, now).apply()
     }
 
+    /**
+     * Posts a notification this phone composed itself, about something that happened on it
+     * rather than something claimed from the gateway. One naming a conversation opens it and
+     * is filed with the agent's answers; any other opens the app. A later post with the same
+     * [tag] replaces the earlier one. False when the phone may not post it.
+     */
+    @SuppressLint("MissingPermission")
+    fun showLocal(tag: String, title: String, body: String, conversationId: String? = null): Boolean {
+        createNotificationChannel()
+        val conversation = conversationId?.takeIf(::validNotificationId)
+        val channel = if (conversation != null) AGENT_CHANNEL_ID else NOTIFICATION_CHANNEL_ID
+        if (!notificationsAllowed(channel)) return false
+        val intent = Intent(context, MainActivity::class.java).apply {
+            data = Uri.Builder().scheme("omnesis").authority("notification").appendPath(tag).build()
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            if (conversation != null) {
+                action = MainActivity.ACTION_AGENT_CONVERSATION
+                putExtra(MainActivity.EXTRA_CONVERSATION_ID, conversation)
+                putExtra(MainActivity.EXTRA_CONVERSATION_LAUNCH_STAMP, System.nanoTime())
+            }
+        }
+        val notification = NotificationCompat.Builder(context, channel)
+            .setSmallIcon(R.drawable.omnesis_logo)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setCategory(
+                if (conversation != null) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_STATUS,
+            )
+            .setAutoCancel(true)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    context,
+                    0,
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+            .build()
+        NotificationManagerCompat.from(context).notify(tag, 0, notification)
+        return true
+    }
+
     @SuppressLint("MissingPermission")
     internal fun showClaimedOutcome(
         delivery: ClaimedNotificationDelivery,
@@ -282,6 +325,9 @@ class FcmPushManager @Inject constructor(
             (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || channelId == null ||
                 context.getSystemService(NotificationManager::class.java)
                     .getNotificationChannel(channelId)?.importance != NotificationManager.IMPORTANCE_NONE)
+
+    /** Makes sure the app's notification channels exist, for a notification built outside this class. */
+    fun prepareChannels() = createNotificationChannel()
 
     private fun createNotificationChannel() {
         val manager = context.getSystemService(NotificationManager::class.java)

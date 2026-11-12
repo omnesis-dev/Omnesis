@@ -207,6 +207,10 @@ class MockGateway : AutoCloseable {
                             """"tokenId":"token-row-test","token":"token-test","scopes":["admin"]}""",
                     )
                     route == "/status" -> json(statusJson)
+                    route == "/inference/transcription-vocabulary" -> json(
+                        """{"enabled":true,"entries":[{"text":"Veltrio","score":2}],""" +
+                            """"refreshAfterSeconds":1800,"expiresAfterSeconds":86400}""",
+                    )
                     route == "/admin/privacy/approvals" -> approvalsPage()
                     route.startsWith("/admin/privacy/approvals/") -> json(
                         """{"approval":{"id":"${route.substringAfterLast('/')}","status":"pending",""" +
