@@ -874,8 +874,10 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           your draft. Notes are listed newest-first; open one to read its full text, capture details
           and Omnesis's reply, edit the text, or delete it after confirmation. Refresh the list to
           see notes saved on another device. Notes still waiting in this phone's offline queue
-          appear in history after they sync. Editing your captured note asks Agent to process the
-          correction, as described below. Deleting a note removes its saved text and reply; task
+          appear in history after they sync. Until then the Android app says how many are waiting at
+          the top of <strong>Notes</strong>, including while the gateway cannot be reached; tap that
+          row to read them, retry, or discard one. Editing your captured note asks Agent to process
+          the correction, as described below. Deleting a note removes its saved text and reply; task
           changes the agent already made remain until you undo them.
         </p>
         <p>
@@ -1020,9 +1022,10 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           matching <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong> shortcuts, or
           choose <strong>Omnesis</strong> for unified voice capture. Drag that shortcut to the home
           screen for one-tap access. In the expanded Quick Settings shade, choose Edit and add the
-          <strong>Omnesis</strong> tile for the same flow; on a phone that is not paired, the tile
-          says to open Omnesis to pair. Both start listening immediately and use Send with a
-          decision model, or Ask and Tell when routing is disabled or unavailable. They share
+          <strong>Omnesis</strong> tile for the same flow. The tile reads <strong>Speak</strong>, or
+          <strong>Not paired</strong> on a phone that has to be paired in the app first. Both start
+          listening immediately and use Send with a decision model, or Ask and Tell when routing is
+          disabled or unavailable. They share
           <code>inference.dictation.useDecisionGateForWatch</code> with the iPhone control. A
           phone's configurable hardware button or gesture can use the shortcut if its manufacturer
           supports app shortcuts; the available buttons and setup vary by device.
@@ -1040,10 +1043,13 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           The Omnesis app for Wear OS works through the Android phone the watch is paired with. It
           holds no gateway credentials and makes no gateway requests: questions, notes and
           recordings travel over the Wear OS Data Layer to the phone app, which uses its own
-          pairing. Install it on the watch from Google Play, where it shares the phone app's
-          listing, or build both apps yourself; the two connect only when they share a package id
-          and signing key. A watch whose phone app is missing, out of date or not paired with a
-          gateway says that the phone app must be opened first.
+          pairing. The watch app is built from source and installed with <code>adb</code>, together
+          with a phone app built from the same checkout (<a href="#build-android"
+            >Build and install Android</a
+          >): the two connect only when they share a package id and signing key, so a watch app you
+          build does not connect to the phone app from Google Play. A watch whose phone app is
+          missing, out of date or not paired with a gateway says that the phone app must be opened
+          first.
         </p>
         <p>
           There are three ways in. The <strong>Omnesis</strong> tile and the
