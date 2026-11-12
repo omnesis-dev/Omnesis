@@ -208,9 +208,7 @@ describe("SystemOneDecision", () => {
     const err = await missing.decide(REQUEST).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DecisionHttpError);
     expect((err as DecisionHttpError).status).toBe(404);
-    expect((err as Error).message).toBe(
-      'Ollaya HTTP 404 (request r-1): {"error":"model not found"}',
-    );
+    expect((err as Error).message).toBe("Ollaya HTTP 404 (request r-1): model not found");
     expect(refused.calls).toHaveLength(1);
   });
 

@@ -195,6 +195,6 @@ describe("GeminiDecisionsDecision", () => {
       maxRetries: 0,
       fetchFn,
     });
-    await expect(client.decide(REQUEST)).rejects.toThrow("Google HTTP 400");
+    await expect(client.decide(REQUEST)).rejects.toThrow("Google HTTP 400: Blocked");
   });
 });

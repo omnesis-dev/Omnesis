@@ -98,7 +98,7 @@ export class DecisionTransport {
         break;
       }
       if (response.ok) return response.json();
-      const detail = (await response.text().catch(() => "")).slice(0, 300);
+      const detail = errorDetail(await response.text().catch(() => "")).slice(0, 300);
       const requestId = REQUEST_ID_HEADERS.map((h) => response.headers.get(h)).find(Boolean);
       lastError = new DecisionHttpError(
         response.status,
@@ -138,6 +138,28 @@ export function decisionAuthHeaders(
     default:
       return assertNever(auth);
   }
+}
+
+/**
+ * The readable part of an error reply: the message of a JSON error body
+ * (`{error: {message}}`, `{error: "…"}` or `{message}`, as most providers
+ * send), else the body as sent.
+ */
+export function errorDetail(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: string | { message?: unknown };
+      message?: unknown;
+    } | null;
+    const message =
+      typeof parsed?.error === "string"
+        ? parsed.error
+        : (parsed?.error?.message ?? parsed?.message);
+    if (typeof message === "string" && message.trim()) return message.trim();
+  } catch {
+    // Not JSON: the body itself is the detail.
+  }
+  return body;
 }
 
 /** 425 is Fastino's "model warming up"; 529 is TypeSafe's "overloaded". */
