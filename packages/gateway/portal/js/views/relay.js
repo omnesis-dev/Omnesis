@@ -436,13 +436,40 @@ function addressState(status) {
   return "Checking that this address answers. This takes up to a minute after the gateway connects.";
 }
 
+const PORTAL_HINT =
+  "Your portal is now reachable at this link from anywhere, not only at home. A new browser asks you to sign in with your Omnesis account.";
+
+/** This gateway's portal at its public address, which works away from home too. */
+function portalUrl(status) {
+  const origin = relayHttpsUrl(status.publicOrigin);
+  return origin ? new URL("/portal/", origin).href : null;
+}
+
 function RemoteAccess({ status, busy, run }) {
   const address = status.publicMcp?.url;
   const addressHint = addressState(status);
+  // Shown alongside the address, once the gateway has one to offer.
+  const portal = address ? portalUrl(status) : null;
   const disabled = Boolean(busy) && busy !== "refresh";
   return html`<section class="relay-section" aria-labelledby="relay-remote-access-title">
     <h3 class="relay-section-title" id="relay-remote-access-title">Remote access</h3>
     <div class="relay-rows">
+      ${
+        portal &&
+        html`<${Row}
+          label="Portal"
+          action=${html`<${CopyIconButton} text=${portal} class="relay-copy" title="Copy portal link" />`}
+        >
+          <p class="relay-row-value relay-portal">
+            <a href=${portal} target="_blank" rel="noopener noreferrer">${displayUrl(portal)}</a>
+          </p>
+          ${
+            // Until the address answers, the line under the address says why.
+            !addressHint &&
+            html`<p class="relay-hint">${PORTAL_HINT}</p>`
+          }
+        <//>`
+      }
       ${
         address &&
         html`<${Row}

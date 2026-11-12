@@ -19212,6 +19212,7 @@ summary.decision-card-head {
 .relay-row-action .relay-copy { margin-top: -6px; }
 .relay-row-action:empty { display: none; }
 .relay-address { font-size: 13px; }
+.relay-portal a { color: var(--accent); overflow-wrap: anywhere; font-weight: 500; }
 
 /* Account, remote access, new devices. */
 .relay-section { margin-top: 28px; }
