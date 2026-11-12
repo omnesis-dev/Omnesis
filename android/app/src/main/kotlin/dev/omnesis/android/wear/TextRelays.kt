@@ -119,10 +119,13 @@ class TextAskRelay(
                 LiveAskLedger.Claim.Untracked -> return AskResult.of(AskOutcome.StillWorking, ref)
             }
         }
-        val run = AskProgressReporter.reporting(gateway, nodeId, ref) { report ->
-            report(AskActivityEvent.RelayReceived)
-            asker.ask(question, request.resumedConversationId, report)
-        }
+        // Whatever ends the turn, it is settled: a later copy of the question waits on this one.
+        val run = attempt {
+            AskProgressReporter.reporting(gateway, nodeId, ref) { report ->
+                report(AskActivityEvent.RelayReceived)
+                asker.ask(question, request.resumedConversationId, report)
+            }
+        } ?: AskRun(AskOutcome.Failed())
         val result = AskResult.of(run.outcome, ref, run.conversationId, run.messageId)
         attempt { gateway.sendMessage(nodeId, WearDataLayer.RESULT_PATH, result) }
         if (ref != null) synchronized(ledger) { ledger.settle(ref, result) }.forEach { it.complete(result) }

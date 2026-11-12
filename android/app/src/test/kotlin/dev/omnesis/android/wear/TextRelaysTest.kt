@@ -142,6 +142,19 @@ class TextAskRelayTest {
     }
 
     @Test
+    fun a_turn_that_ends_in_an_error_is_settled_as_a_failure_for_every_copy() = runTest {
+        asker.failure = IllegalStateException("session closed")
+        val relay = relay()
+
+        val first = relay.onRequest(WATCH, AskRequest("Question", "ref-1"))
+        val again = relay.onRequest(WATCH, AskRequest("Question", "ref-1"))
+
+        assertEquals(AskResult("failed", null, "ref-1"), first)
+        assertEquals(first, again)
+        assertEquals(first, gateway.messagesOn(WearDataLayer.RESULT_PATH).single())
+    }
+
+    @Test
     fun a_watch_out_of_reach_for_messages_still_gets_the_reply() = runTest {
         gateway.failMessages = true
         asker.activity = listOf(AskActivityEvent.AgentStarted)

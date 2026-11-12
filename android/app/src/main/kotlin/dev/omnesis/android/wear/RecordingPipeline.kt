@@ -82,7 +82,9 @@ class RecordingPipeline(
             return
         }
         val copy = item.audio ?: return
-        when (val admission = inbox.admit(key, metadata, item.sourceNodeId, copy)) {
+        // A copy that fails by throwing is a copy that failed: the watch still holds the recording.
+        val admitted = attempt { inbox.admit(key, metadata, item.sourceNodeId, copy) }
+        when (val admission = admitted ?: RecordingInbox.Admission.Failed) {
             // The watch keeps its copy and offers it again.
             RecordingInbox.Admission.Failed -> Unit
             // An earlier delivery of the same item is being processed; the phone owns the audio.

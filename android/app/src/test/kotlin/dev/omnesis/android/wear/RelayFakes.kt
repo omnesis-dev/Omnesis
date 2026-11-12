@@ -105,13 +105,17 @@ internal class FakeStateStore : RelayStateStore {
 /** One call the fake asker took. */
 internal data class Asked(val mode: String, val question: String, val resuming: String?)
 
-/** Answers every question with [run], reporting [activity] first; [gate] holds an ask open until completed. */
+/**
+ * Answers every question with [run], reporting [activity] first. [gate] holds an ask open
+ * until completed, and [failure] ends it by throwing.
+ */
 internal class FakeAsker(
     var run: AskRun = AskRun(AskOutcome.Answered("Tuesday at ten"), "conversation-1", "message-1"),
 ) : WatchAsker {
     val asked = mutableListOf<Asked>()
     var activity: List<AskActivityEvent> = emptyList()
     var gate: CompletableDeferred<Unit>? = null
+    var failure: Exception? = null
 
     override suspend fun ask(question: String, resuming: String?, onActivity: (AskActivityEvent) -> Unit): AskRun =
         take("ask", question, resuming, onActivity)
@@ -130,6 +134,7 @@ internal class FakeAsker(
         asked += Asked(mode, question, resuming)
         activity.forEach(onActivity)
         gate?.await()
+        failure?.let { throw it }
         return run
     }
 }

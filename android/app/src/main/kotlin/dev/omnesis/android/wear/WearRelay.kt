@@ -123,8 +123,11 @@ class WearRelay(
      * earlier process left unfinished.
      */
     suspend fun resumePending() = scan.withLock {
-        attempt { gateway.items(WearDataLayer.RECORDING_PATH_PREFIX) }.orEmpty().forEach { recordings.onItem(it) }
-        attempt { gateway.items(WearDataLayer.QUEUED_PATH_PREFIX) }.orEmpty().forEach { queued.handle(it) }
+        // One item that cannot be dealt with does not stop the others being reached.
+        attempt { gateway.items(WearDataLayer.RECORDING_PATH_PREFIX) }.orEmpty()
+            .forEach { item -> attempt { recordings.onItem(item) } }
+        attempt { gateway.items(WearDataLayer.QUEUED_PATH_PREFIX) }.orEmpty()
+            .forEach { item -> attempt { queued.handle(item) } }
         recordings.resume()
     }
 

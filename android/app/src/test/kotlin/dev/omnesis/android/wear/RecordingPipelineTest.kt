@@ -392,6 +392,15 @@ class RecordingPipelineTest {
     }
 
     @Test
+    fun a_copy_that_fails_by_throwing_is_a_copy_that_failed() = runTest {
+        pipeline().onItem(item(copy = { throw IOException("asset unavailable") }))
+
+        assertTrue(gateway.sent.isEmpty())
+        assertEquals(0, inbox().count())
+        assertTrue(notifier.posted.isEmpty())
+    }
+
+    @Test
     fun a_data_item_delivered_again_after_it_was_handled_is_confirmed_and_not_processed() = runTest {
         backend.route = CaptureRoute.NOTE
         val pipeline = pipeline()
