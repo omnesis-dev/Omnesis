@@ -27,6 +27,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dev.omnesis.android.wear.MainActivity
 import dev.omnesis.android.wear.R
+import dev.omnesis.android.wearprotocol.WearLine
 import dev.omnesis.android.wearprotocol.WearRoute
 
 /**
@@ -56,7 +57,6 @@ object CaptureTile {
     const val RESOURCES_VERSION = "1"
     private const val MARK = "mark"
     private const val MICROPHONE = "microphone"
-    private const val SPEAK = "Speak"
     private const val ACCENT = 0xFF58A6FF.toInt()
 
     fun layout(context: Context, device: DeviceParameters): LayoutElement {
@@ -79,7 +79,7 @@ object CaptureTile {
             )
             .setPrimaryChipContent(
                 // The full "Tap to speak" does not fit a compact chip on the smallest display.
-                CompactChip.Builder(context, SPEAK, open, device)
+                CompactChip.Builder(context, WearLine.SPEAK.text, open, device)
                     .setIconContent(MICROPHONE)
                     .setChipColors(ChipColors(ACCENT, Color.BLACK))
                     .build(),

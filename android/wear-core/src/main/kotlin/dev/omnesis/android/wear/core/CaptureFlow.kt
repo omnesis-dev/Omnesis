@@ -7,6 +7,7 @@ import dev.omnesis.android.wearprotocol.AskActivitySnapshot
 import dev.omnesis.android.wearprotocol.AskOutcome
 import dev.omnesis.android.wearprotocol.CaptureButtons
 import dev.omnesis.android.wearprotocol.CaptureDismissal
+import dev.omnesis.android.wearprotocol.CapturePatience
 import dev.omnesis.android.wearprotocol.CaptureRoute
 import dev.omnesis.android.wearprotocol.NoteCaptureTime
 import dev.omnesis.android.wearprotocol.OutboxPolicy
@@ -62,16 +63,24 @@ data class CaptureState(
     val level: Float = 0f,
     /** The step the phone reports a sent question is on. */
     val activity: AskActivitySnapshot? = null,
+    /**
+     * The watch has stopped waiting for a sent recording's route or answer:
+     * the phone said it will finish the recording later, or said nothing for
+     * as long as [CapturePatience] allows.
+     */
+    val deferred: Boolean = false,
 ) {
     val isSent: Boolean get() = phase is CapturePhase.Sent
 
     /** The line under "Got it." for a sent recording. */
     val sentLine: String?
         get() = when ((phase as? CapturePhase.Sent)?.route) {
-            CaptureRoute.ASK -> activity?.label ?: WearLine.WAITING_FOR_ANSWER.text
-            CaptureRoute.AUTOMATIC -> WearLine.WORKING_OUT_ROUTE.text
-            CaptureRoute.NOTE -> WearLine.NOTE_ACCEPTED.text
             null -> null
+            CaptureRoute.NOTE -> WearLine.NOTE_ACCEPTED.text
+            CaptureRoute.ASK ->
+                if (deferred) WearLine.CAPTURE_DEFERRED.text else activity?.label ?: WearLine.WAITING_FOR_ANSWER.text
+            CaptureRoute.AUTOMATIC ->
+                if (deferred) WearLine.CAPTURE_DEFERRED.text else WearLine.WORKING_OUT_ROUTE.text
         }
 }
 
@@ -97,6 +106,10 @@ object CaptureLevel {
  * and follow-ups: record, then choose what the recording is. Sending always
  * takes a press, even after the time limit, an interruption or leaving the
  * screen stopped the microphone.
+ *
+ * A sent recording's screen then follows what the phone makes of it: the
+ * route it decided, the steps of a question's turn, and the answer. It never
+ * waits on the phone for good: see [CapturePatience].
  */
 class CaptureFlow(
     private val deps: Deps,
@@ -138,6 +151,9 @@ class CaptureFlow(
     private var sentRef: String? = null
     private var answeredRef: String? = null
     private var carried: Deferred<Boolean>? = null
+
+    /** Runs out when the phone has said nothing about the sent recording for as long as it may. */
+    private var silence: Job? = null
 
     private val phase: CapturePhase get() = _state.value.phase
 
@@ -250,6 +266,8 @@ class CaptureFlow(
         sentRef = null
         answeredRef = null
         carried = null
+        silence?.cancel()
+        silence = null
         discard()
     }
 
@@ -307,24 +325,62 @@ class CaptureFlow(
         _state.update { it.copy(phase = CapturePhase.Sent(route), level = 0f, activity = null) }
         deps.haptics.play(WatchHaptic.SUCCESS)
         carried = scope.async { sent.ref in deps.outbox.flush(OutboxPolicy.Trigger.LINK_MAY_HAVE_CHANGED) }
-        if (route == CaptureRoute.NOTE) leaveAfterConfirmation()
+        if (route == CaptureRoute.NOTE) leaveAfterConfirmation() else awaitPhone(route)
     }
 
     /** The phone decided what the recording named [ref] is. */
     fun resolved(route: CaptureRoute, ref: String) {
         if (sentRef != ref || !_state.value.isSent) return
-        _state.update { it.copy(phase = CapturePhase.Sent(route)) }
+        _state.update { it.copy(phase = CapturePhase.Sent(route), deferred = false) }
+        // The phone resolving the route proves it has the audio.
+        carried = scope.async { true }
         if (route == CaptureRoute.NOTE) {
-            // The phone resolving the route proves it has the audio.
-            carried = scope.async { true }
+            silence?.cancel()
             leaveAfterConfirmation()
+        } else {
+            awaitPhone(route)
         }
     }
 
     /** Progress for the recorded question named [ref]. */
     fun report(activity: AskActivitySnapshot, ref: String?) {
-        if (sentRef != ref || !_state.value.isSent) return
-        _state.update { it.copy(activity = activity) }
+        val route = (phase as? CapturePhase.Sent)?.route
+        if (sentRef != ref || route == null) return
+        _state.update { it.copy(activity = activity, deferred = false) }
+        awaitPhone(route)
+    }
+
+    /** The phone keeps the recording named [ref] to finish later: stop waiting on this screen. */
+    fun deferred(ref: String) {
+        if (sentRef != ref) return
+        // The phone saying so proves it has the audio.
+        carried = scope.async { true }
+        defer()
+    }
+
+    /** Start, or start again, the wait for the phone's next word on a recording sent as [route]. */
+    private fun awaitPhone(route: CaptureRoute) {
+        silence?.cancel()
+        val limit = CapturePatience.silenceLimit(route) ?: return
+        val current = generation
+        silence = scope.launch {
+            delay(limit)
+            if (current == generation) defer()
+        }
+    }
+
+    /**
+     * Stop waiting for the route or the answer: say the phone will finish the
+     * recording and leave as a sent note does. What the phone sends later is
+     * still shown, here or on the ask screen.
+     */
+    private fun defer() {
+        silence?.cancel()
+        val waiting = (phase as? CapturePhase.Sent)?.route
+        if (waiting == null || waiting == CaptureRoute.NOTE || _state.value.deferred) return
+        _state.update { it.copy(deferred = true, activity = null) }
+        deps.haptics.play(WatchHaptic.NOTIFICATION)
+        leaveAfterConfirmation()
     }
 
     /**
@@ -343,13 +399,18 @@ class CaptureFlow(
         return deps.screen.isVisibleAndAwake()
     }
 
-    /** Leave for the watch face once the confirmation has been seen, when that is safe. */
+    /**
+     * Leave for the watch face once the confirmation has been seen, when that
+     * is safe. Only a screen with nothing more to show leaves: a note, or a
+     * recording the phone will finish later.
+     */
     private fun leaveAfterConfirmation() {
         val current = generation
         scope.launch {
             delay(CaptureDismissal.CONFIRMATION_DELAY)
             val handedOver = carried?.await() ?: false
-            if (current != generation || phase != CapturePhase.Sent(CaptureRoute.NOTE)) return@launch
+            val settled = phase == CapturePhase.Sent(CaptureRoute.NOTE) || _state.value.deferred
+            if (current != generation || !settled) return@launch
             if (CaptureDismissal.shouldLeave(_state.value.isSent, handedOver, deps.otherWorkInFlight())) deps.leave()
         }
     }

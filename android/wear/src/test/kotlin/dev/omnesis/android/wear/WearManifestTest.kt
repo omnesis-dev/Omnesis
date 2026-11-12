@@ -15,6 +15,7 @@ import androidx.wear.watchface.complications.data.ShortTextComplicationData
 import androidx.wear.watchface.complications.data.SmallImageComplicationData
 import dev.omnesis.android.wear.core.WatchHaptic
 import dev.omnesis.android.wear.device.VibratorHaptics
+import dev.omnesis.android.wear.link.PhoneListenerService
 import dev.omnesis.android.wear.surfaces.CaptureComplication
 import dev.omnesis.android.wear.surfaces.CaptureComplicationService
 import dev.omnesis.android.wear.surfaces.CaptureTileService
@@ -57,12 +58,35 @@ class WearManifestTest {
     }
 
     @Test
-    fun each_deep_link_resolves_to_the_app_screen() {
+    fun the_recorder_links_are_not_registered_for_other_apps_to_open() {
+        // The tile and the complication address the screen by its class, so the
+        // links need no filter, and a link from anywhere else finds nothing to open.
         for (route in WearRoute.entries) {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(route.uri)).setPackage(context.packageName)
-            val target = packages.resolveActivity(intent, 0)
-            assertEquals(route.uri, MainActivity::class.java.name, target?.activityInfo?.name)
+            assertNull(route.uri, packages.resolveActivity(intent, 0))
         }
+    }
+
+    @Test
+    fun the_listener_is_started_for_what_the_phone_sends_and_not_for_the_watchs_own_items() {
+        fun started(action: String, path: String): Boolean {
+            val intent = Intent("com.google.android.gms.wearable.$action", Uri.parse("wear://node$path"))
+                .setPackage(context.packageName)
+            return packages.queryIntentServices(intent, 0).any { it.serviceInfo.name == PhoneListenerService::class.java.name }
+        }
+        val fromPhone = listOf(
+            WearDataLayer.PROGRESS_PATH,
+            WearDataLayer.RESULT_PATH,
+            WearDataLayer.NOTE_ACK_PATH,
+            WearDataLayer.CAPTURE_UPDATE_PATH,
+            WearDataLayer.RECORDING_RECEIVED_PATH,
+        )
+        for (path in fromPhone) assertTrue(path, started("MESSAGE_RECEIVED", path))
+        assertTrue(started("REQUEST_RECEIVED", WearDataLayer.CAPTURE_UPDATE_PATH))
+        assertTrue(started("DATA_CHANGED", WearDataLayer.GATE_PATH))
+        // The watch's own recordings and queued relays change without waking it.
+        assertFalse(started("DATA_CHANGED", WearDataLayer.recordingPath("5f0c3b1e-8a47-4f6e-9d2b-7c1a2e3f4b5d")))
+        assertFalse(started("DATA_CHANGED", WearDataLayer.queuedPath("5f0c3b1e-8a47-4f6e-9d2b-7c1a2e3f4b5d")))
     }
 
     @Test
@@ -77,7 +101,15 @@ class WearManifestTest {
             PackageManager.GET_META_DATA,
         )
         val declared = complication.metaData.getString("android.support.wearable.complications.SUPPORTED_TYPES")
-        assertEquals(CaptureComplication.SUPPORTED_TYPES.map { it.name }, declared?.split(","))
+        // The manifest names two of the types as the system does, not as the enum does.
+        val tags = CaptureComplication.SUPPORTED_TYPES.map { type ->
+            when (type) {
+                ComplicationType.MONOCHROMATIC_IMAGE -> "ICON"
+                ComplicationType.PHOTO_IMAGE -> "LARGE_IMAGE"
+                else -> type.name
+            }
+        }
+        assertEquals(tags, declared?.split(","))
     }
 
     @Test

@@ -61,14 +61,30 @@ object WearDataLayer {
     const val RESULT_PATH = "/omnesis/result"
 
     /**
-     * A [CaptureRouteUpdate] (no reply expected), or a request carrying a
-     * [CaptureAnswer] whose reply is a [DisplayedReceipt].
+     * A [NoteAck] for a text note the phone took from its queued DataItem,
+     * where there is no request to reply to. The watch releases the note on
+     * it. It is a message, so it can miss a watch out of reach: the note then
+     * stays in the watch's outbox until the watch next hands it over live,
+     * and the phone, which remembers the ref, answers that it already
+     * arrived ([NoteOutcome.REACHED_PHONE]).
+     */
+    const val NOTE_ACK_PATH = "/omnesis/note-ack"
+
+    /**
+     * What became of a recording from the unified recorder: a
+     * [CaptureRouteUpdate] or a [CaptureDeferred] (no reply expected), or a
+     * request carrying a [CaptureAnswer] whose reply is a [DisplayedReceipt].
      */
     const val CAPTURE_UPDATE_PATH = "/omnesis/capture-update"
 
+    // Watch → phone, about something the phone sent.
+
     /**
-     * A [DisplayedReceipt] sent on its own, for a watch that showed an answer
-     * it received outside a request (for instance from a queued copy).
+     * A [DisplayedReceipt] for an answer the watch put in front of the
+     * person, sent as a message beside the reply to the [CaptureAnswer]
+     * request. The phone waits only [RelayPatience.DISPLAYED_REPLY_TIMEOUT]
+     * for the reply; this is how an answer shown after that is still marked
+     * seen. An answer that was not shown sends nothing here.
      */
     const val DISPLAYED_PATH = "/omnesis/displayed"
 
@@ -89,14 +105,17 @@ object WearDataLayer {
     /**
      * Prefix of a recording's DataItem, one per recording at
      * [recordingPath]: the audio as an Asset under [AUDIO_KEY] and its
-     * encoded [RecordingMetadata] under [PAYLOAD_KEY]. The same path names
-     * the channel when a recording is streamed with `ChannelClient` instead.
+     * encoded [RecordingMetadata] under [PAYLOAD_KEY]. The phone deletes the
+     * item once it has copied the audio and says so with a
+     * [RecordingReceipt].
      */
     const val RECORDING_PATH_PREFIX = "/omnesis/recording/"
 
     /**
      * Prefix of a queued relay's DataItem, one per relay at [queuedPath],
-     * with the encoded [QueuedRelay] under [PAYLOAD_KEY].
+     * with the encoded [QueuedRelay] under [PAYLOAD_KEY]. The phone deletes
+     * the item once it has dealt with the relay, whatever became of it; a
+     * note is also acknowledged on [NOTE_ACK_PATH].
      */
     const val QUEUED_PATH_PREFIX = "/omnesis/queued/"
 
@@ -110,7 +129,7 @@ object WearDataLayer {
 
     fun queuedPath(ref: String): String = QUEUED_PATH_PREFIX + ref
 
-    /** The ref named by a recording DataItem or channel path, or null for any other path. */
+    /** The ref named by a recording DataItem's path, or null for any other path. */
     fun recordingRef(path: String): String? = refAfter(RECORDING_PATH_PREFIX, path)
 
     /** The ref named by a queued-relay DataItem path, or null for any other path. */

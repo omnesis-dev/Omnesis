@@ -189,6 +189,12 @@ class WatchScreensScreenshotTest {
     fun recorder_sent_as_a_note() = capture("recorder_sent_note", recorder(CapturePhase.Sent(CaptureRoute.NOTE)))
 
     @Test
+    fun recorder_sent_and_left_to_the_phone() = capture(
+        "recorder_sent_deferred",
+        recorder(CapturePhase.Sent(CaptureRoute.AUTOMATIC), CaptureButtons.SEND).let { it.copy(capture = it.capture.copy(deferred = true)) },
+    )
+
+    @Test
     fun recorder_could_not_record() =
         capture("recorder_failed", recorder(CapturePhase.Failed, CaptureButtons.UNSUPPORTED))
 

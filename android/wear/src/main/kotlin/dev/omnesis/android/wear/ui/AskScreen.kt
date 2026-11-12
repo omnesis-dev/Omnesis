@@ -98,7 +98,7 @@ private fun AskIdle(hintVisible: Boolean, actions: WatchActions, modifier: Modif
                     colorFilter = ColorFilter.tint(WearPalette.Accent),
                 )
                 Spacer(Modifier.width(6.dp))
-                Text(APP_NAME, style = MaterialTheme.typography.title3)
+                Text(WearLine.APP_NAME.text, style = MaterialTheme.typography.title3)
             }
         }
         item {
@@ -112,7 +112,12 @@ private fun AskIdle(hintVisible: Boolean, actions: WatchActions, modifier: Modif
         }
         item {
             Row(modifier = Modifier.alpha(shown), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CircleIconButton(R.drawable.ic_keyboard, TYPE_QUESTION_LABEL, actions.enterQuestion, enabled = hintVisible)
+                CircleIconButton(
+                    R.drawable.ic_keyboard,
+                    WearLine.TYPE_A_QUESTION.text,
+                    actions.enterQuestion,
+                    enabled = hintVisible,
+                )
                 CircleIconButton(R.drawable.ic_note, WearLine.NOTE_TITLE.text, actions.showNotes, enabled = hintVisible)
             }
         }
@@ -246,9 +251,6 @@ internal fun readAlong(text: String, speaker: SpeakerState): AnnotatedString {
         withStyle(SpanStyle(color = WearPalette.SecondaryText)) { append(text.substring(split)) }
     }
 }
-
-private const val APP_NAME = "Omnesis"
-private const val TYPE_QUESTION_LABEL = "Type a question"
 
 private val STATUS_HEIGHT = 18.dp
 private val DOTS_WIDTH = 26.dp

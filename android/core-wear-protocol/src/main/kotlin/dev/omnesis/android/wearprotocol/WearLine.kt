@@ -10,6 +10,12 @@ package dev.omnesis.android.wearprotocol
  * the watch app's own status strings.
  */
 enum class WearLine(val text: String) {
+    // The app's name on its home screen, the button that opens the keyboard
+    // for a question, and the tile's label under its microphone.
+    APP_NAME("Omnesis"),
+    TYPE_A_QUESTION("Type a question"),
+    SPEAK("Speak"),
+
     // What ended a question.
     EMPTY_ANSWER("The agent finished without a spoken answer. Check the conversation in Omnesis."),
     UNEXPLAINED_FAILURE("Sorry, something went wrong while answering. Check the conversation in Omnesis."),
@@ -65,6 +71,7 @@ enum class WearLine(val text: String) {
     WAITING_FOR_ANSWER("Waiting for your answer…"),
     WORKING_OUT_ROUTE("Working out what you need…"),
     NOTE_ACCEPTED("I'll deal with it."),
+    CAPTURE_DEFERRED("Your phone will finish this."),
     COULDNT_RECORD("Couldn't record"),
     COULDNT_RECORD_HINT("Open the phone app. Check microphone access and updates."),
 

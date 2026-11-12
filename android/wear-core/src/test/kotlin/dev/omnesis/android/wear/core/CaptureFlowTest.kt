@@ -8,8 +8,10 @@ import dev.omnesis.android.wearprotocol.AskOutcome
 import dev.omnesis.android.wearprotocol.AskProgress
 import dev.omnesis.android.wearprotocol.CaptureAnswer
 import dev.omnesis.android.wearprotocol.CaptureButtons
+import dev.omnesis.android.wearprotocol.CaptureDeferred
 import dev.omnesis.android.wearprotocol.CaptureDismissal
 import dev.omnesis.android.wearprotocol.CaptureLaunchRequests
+import dev.omnesis.android.wearprotocol.CapturePatience
 import dev.omnesis.android.wearprotocol.CaptureRoute
 import dev.omnesis.android.wearprotocol.CaptureRouteUpdate
 import dev.omnesis.android.wearprotocol.DictationGate
@@ -249,6 +251,8 @@ class CaptureFlowTest {
         val answer = CaptureAnswer.of(AskOutcome.Answered("The dentist is at 3 pm on Thursday."), ref, conversationId = "c1")
         val reply = fromPhone(answer, WearDataLayer.CAPTURE_UPDATE_PATH, isRequest = true)
         assertEquals(DisplayedReceipt(displayed = true, ref = ref), reply)
+        // Said on its own as well, for a phone that stopped waiting for the reply.
+        assertEquals(listOf(WearDataLayer.DISPLAYED_PATH to DisplayedReceipt(true, ref)), link.sent.takeLast(1))
         assertEquals(CapturePhase.Idle, capturePhase)
         assertEquals(WatchScreen.ASK, core.screen.value)
         assertEquals(
@@ -427,6 +431,116 @@ class CaptureFlowTest {
         assertEquals("The boiler service is booked for the 14th.", (core.ask.state.value as AskState.Answered).text)
         pass(CaptureDismissal.CONFIRMATION_DELAY * 2)
         assertTrue(effects.isEmpty())
+    }
+
+    // Not waiting on the phone for good.
+
+    private fun WatchHarness.send(route: CaptureRoute): String {
+        publishGate(decisionGate = route == CaptureRoute.AUTOMATIC)
+        record()
+        core.capture.send(route)
+        settle()
+        return sentRecording().ref
+    }
+
+    @Test
+    fun a_phone_that_keeps_the_recording_for_later_ends_the_wait_and_the_app_leaves() = capture {
+        val ref = send(CaptureRoute.AUTOMATIC)
+        assertEquals(WearLine.WORKING_OUT_ROUTE.text, state().sentLine)
+
+        fromPhone(CaptureDeferred("another"), WearDataLayer.CAPTURE_UPDATE_PATH)
+        assertFalse(state().deferred)
+
+        fromPhone(CaptureDeferred(ref), WearDataLayer.CAPTURE_UPDATE_PATH)
+        assertTrue(state().deferred)
+        assertEquals(WearLine.CAPTURE_DEFERRED.text, state().sentLine)
+        assertEquals(WatchHaptic.NOTIFICATION, haptics.last())
+        assertTrue(effects.isEmpty())
+        pass(CaptureDismissal.CONFIRMATION_DELAY)
+        assertEquals(listOf<WatchEffect>(WatchEffect.Leave), effects)
+    }
+
+    @Test
+    fun a_recording_the_phone_says_nothing_about_stops_waiting_for_its_route() = capture {
+        send(CaptureRoute.AUTOMATIC)
+
+        pass(CapturePatience.ROUTE_WAIT - 1.seconds)
+        assertFalse(state().deferred)
+        assertEquals(WearLine.WORKING_OUT_ROUTE.text, state().sentLine)
+
+        pass(1.seconds)
+        assertTrue(state().deferred)
+        assertEquals(WearLine.CAPTURE_DEFERRED.text, state().sentLine)
+        // The DataItem carries the recording, so the app leaves once the line has been seen.
+        pass(CaptureDismissal.CONFIRMATION_DELAY)
+        assertEquals(listOf<WatchEffect>(WatchEffect.Leave), effects)
+        assertEquals("the recording still waits for the phone", 1, core.store.entries().size)
+    }
+
+    @Test
+    fun a_deferred_recording_nothing_carries_keeps_the_app_open() = capture {
+        publishGate(decisionGate = true)
+        record()
+        link.putsSucceed = false
+        core.capture.send(CaptureRoute.AUTOMATIC)
+        settle()
+
+        pass(CapturePatience.ROUTE_WAIT + CaptureDismissal.CONFIRMATION_DELAY)
+
+        assertTrue(state().deferred)
+        assertTrue("leaving could lose a recording only this process is retrying", effects.isEmpty())
+    }
+
+    @Test
+    fun a_recorded_question_is_waited_on_for_as_long_as_its_turn_shows_signs_of_life() = capture {
+        val ref = send(CaptureRoute.ASK)
+
+        // Each step the phone reports starts the wait again.
+        repeat(3) {
+            pass(CapturePatience.ANSWER_WAIT - 1.seconds)
+            fromPhone(AskProgress.of(AskActivitySnapshot("Searching…"), ref), WearDataLayer.PROGRESS_PATH)
+            assertFalse(state().deferred)
+        }
+
+        pass(CapturePatience.ANSWER_WAIT)
+        assertTrue(state().deferred)
+        assertEquals(WearLine.CAPTURE_DEFERRED.text, state().sentLine)
+    }
+
+    @Test
+    fun a_route_decided_after_the_wait_ran_out_is_still_shown() = capture {
+        val ref = send(CaptureRoute.AUTOMATIC)
+        // Keep the app open through the deferral, as with something else still in flight.
+        link.putsSucceed = false
+        pass(CapturePatience.ROUTE_WAIT)
+        assertTrue(state().deferred)
+
+        fromPhone(CaptureRouteUpdate(ref, CaptureRoute.ASK))
+        assertFalse(state().deferred)
+        assertEquals(WearLine.WAITING_FOR_ANSWER.text, state().sentLine)
+
+        fromPhone(CaptureAnswer.of(AskOutcome.Answered("The boiler service is booked for the 14th."), ref), isRequest = true)
+        assertEquals("The boiler service is booked for the 14th.", (core.ask.state.value as AskState.Answered).text)
+    }
+
+    @Test
+    fun an_answer_that_arrives_after_the_wait_ran_out_is_still_shown() = capture {
+        val ref = send(CaptureRoute.ASK)
+        pass(CapturePatience.ANSWER_WAIT)
+        assertTrue(state().deferred)
+
+        val reply = fromPhone(CaptureAnswer.of(AskOutcome.Answered("Thursday at 3 pm."), ref), isRequest = true)
+
+        assertEquals(DisplayedReceipt(displayed = true, ref = ref), reply)
+        assertEquals("Thursday at 3 pm.", (core.ask.state.value as AskState.Answered).text)
+    }
+
+    @Test
+    fun a_note_waits_for_nothing() = capture {
+        send(CaptureRoute.NOTE)
+        pass(CapturePatience.ANSWER_WAIT * 2)
+        assertFalse(state().deferred)
+        assertEquals(WearLine.NOTE_ACCEPTED.text, state().sentLine)
     }
 
     @Test

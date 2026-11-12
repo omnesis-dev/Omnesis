@@ -93,8 +93,9 @@ class OutboxEngine(
 
     /**
      * The refs of waiting text notes a queued DataItem holds. A queued note
-     * no longer waiting is deleted, and so is a queued question too old for
-     * the phone to answer.
+     * no longer waiting is deleted, and so is a queued question no phone ever
+     * took; one that is merely too old to answer stays for the phone, which
+     * tells the person.
      */
     private suspend fun heldQueuedNotes(waiting: Map<String, OutboxEntry>, now: Long): Set<String> {
         val held = mutableSetOf<String>()
@@ -103,7 +104,7 @@ class OutboxEngine(
             val queued = item.payload?.let(WearCodec::decode) as? QueuedRelay
             when {
                 ref in waiting -> held += ref
-                queued != null && queued.message is AskRequest && !RelayQueue.askIsExpired(queued.queuedAt, now) -> Unit
+                queued != null && queued.message is AskRequest && !RelayQueue.askIsAbandoned(queued.queuedAt, now) -> Unit
                 else -> link.deleteItem(item.path)
             }
         }

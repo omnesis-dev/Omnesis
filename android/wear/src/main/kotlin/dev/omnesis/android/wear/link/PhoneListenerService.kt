@@ -45,7 +45,7 @@ class PhoneListenerService : WearableListenerService() {
             val payload = try {
                 DataMapItem.fromDataItem(event.dataItem).dataMap.getByteArray(WearDataLayer.PAYLOAD_KEY)
             } catch (_: IllegalStateException) {
-                // An item with no data is not a gate.
+                // An item whose data cannot be read as a DataMap is not a gate.
                 null
             }
             val gate = payload?.let(WearCodec::decode) as? DictationGate ?: continue

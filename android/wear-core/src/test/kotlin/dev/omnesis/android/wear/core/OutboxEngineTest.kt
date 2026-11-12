@@ -226,12 +226,17 @@ class OutboxEngineTest {
     }
 
     @Test
-    fun a_queued_question_is_kept_until_it_is_too_old_to_answer() = outbox {
+    fun a_queued_question_too_old_to_answer_is_left_for_the_phone_to_report() = outbox {
         val path = WearDataLayer.queuedPath("q")
         link.items[path] = WearCodec.encode(QueuedRelay(AskRequest("When does the pool open?", "q"), now))
         core.outbox.flush(Trigger.LINK_MAY_HAVE_CHANGED)
         assertTrue(link.items.containsKey(path))
+        // Expired: the phone, not the watch, is the one that says so.
         pass(RelayQueue.ASK_EXPIRY + 1.seconds)
+        core.outbox.flush(Trigger.LINK_MAY_HAVE_CHANGED)
+        assertTrue(link.items.containsKey(path))
+        // No phone took it for as long as the outbox keeps anything.
+        pass(OutboxPolicy.RETENTION)
         core.outbox.flush(Trigger.LINK_MAY_HAVE_CHANGED)
         assertFalse(link.items.containsKey(path))
     }

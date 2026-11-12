@@ -6,6 +6,7 @@ package dev.omnesis.android.wear.core
 import dev.omnesis.android.wearprotocol.AskProgress
 import dev.omnesis.android.wearprotocol.AskResult
 import dev.omnesis.android.wearprotocol.CaptureAnswer
+import dev.omnesis.android.wearprotocol.CaptureDeferred
 import dev.omnesis.android.wearprotocol.CaptureLaunchRequests
 import dev.omnesis.android.wearprotocol.CaptureRouteUpdate
 import dev.omnesis.android.wearprotocol.DictationGate
@@ -260,11 +261,13 @@ class WatchCore(device: WatchDevice, private val scope: CoroutineScope) {
             // reply or the timeout settles the wait instead.
             is AskResult -> message.ref?.let { relay.resolve(it, message) }
             is CaptureRouteUpdate -> capture.resolved(message.route, message.ref)
+            is CaptureDeferred -> capture.deferred(message.ref)
             is CaptureAnswer -> {
                 val displayed = capture.answered(message.toOutcome(), message.ref, message.conversationId)
                 val receipt = WearCodec.encode(DisplayedReceipt(displayed, message.ref))
-                if (isRequest) return receipt
+                // Said on its own as well: the phone stops waiting for the reply after a moment.
                 if (displayed) scope.launch { link.send(WearDataLayer.DISPLAYED_PATH, receipt) }
+                if (isRequest) return receipt
             }
             is RecordingReceipt -> outbox.confirmed(message.ref)
             is NoteAck -> message.ref?.let(outbox::confirmed)

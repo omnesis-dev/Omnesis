@@ -75,29 +75,43 @@ class MicPermissionGate(private val context: Context) : MicPermission {
 
     private var host: Host? = null
 
+    /** Answers the request that is waiting on the prompt, once. */
+    private var pending: ((Boolean) -> Unit)? = null
+
     /** Whether the permission prompt is up, which stops the app's screen without the person leaving it. */
-    var promptShowing = false
-        private set
+    val promptShowing: Boolean get() = pending != null
 
     fun attach(host: Host) {
         this.host = host
     }
 
+    /**
+     * The screen is going away. A prompt it was showing can no longer report
+     * back, so the request waiting on it is answered as refused instead of
+     * left waiting for good.
+     */
     fun detach(host: Host) {
-        if (this.host === host) this.host = null
+        if (this.host !== host) return
+        this.host = null
+        settle(false)
     }
 
     override suspend fun request(): Boolean {
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
         if (granted == PackageManager.PERMISSION_GRANTED) return true
         val screen = host ?: return false
+        settle(false)
         return suspendCancellableCoroutine { continuation ->
-            promptShowing = true
-            screen.requestMicrophone { allowed ->
-                promptShowing = false
-                if (continuation.isActive) continuation.resume(allowed)
-            }
+            pending = { allowed -> if (continuation.isActive) continuation.resume(allowed) }
+            continuation.invokeOnCancellation { pending = null }
+            screen.requestMicrophone(::settle)
         }
+    }
+
+    private fun settle(allowed: Boolean) {
+        val waiting = pending ?: return
+        pending = null
+        waiting(allowed)
     }
 }
 

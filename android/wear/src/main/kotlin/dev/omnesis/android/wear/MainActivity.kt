@@ -54,6 +54,10 @@ class MainActivity : ComponentActivity(), MicPermissionGate.Host {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         container.permission.attach(this)
+        // The system input screen can outlive this one; what it returns is still for the same purpose.
+        textInputPurpose = savedInstanceState?.getString(STATE_TEXT_INPUT_PURPOSE)?.let { saved ->
+            TextInputPurpose.entries.firstOrNull { it.name == saved }
+        }
         // A restored screen is handed the intent that first opened it, which
         // nobody pressed just now.
         if (savedInstanceState == null) open(intent)
@@ -61,6 +65,11 @@ class MainActivity : ComponentActivity(), MicPermissionGate.Host {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.effects.collect(::perform) }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        textInputPurpose?.let { outState.putString(STATE_TEXT_INPUT_PURPOSE, it.name) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -146,6 +155,7 @@ class MainActivity : ComponentActivity(), MicPermissionGate.Host {
         /** Carries a [WearRoute] link when the launcher cannot set the intent's data, as a tile cannot. */
         const val EXTRA_ROUTE = "dev.omnesis.android.wear.extra.ROUTE"
         private const val TEXT_INPUT_KEY = "text"
+        private const val STATE_TEXT_INPUT_PURPOSE = "textInputPurpose"
 
         /**
          * Whether a launch asks for the recorder: its data, or failing that

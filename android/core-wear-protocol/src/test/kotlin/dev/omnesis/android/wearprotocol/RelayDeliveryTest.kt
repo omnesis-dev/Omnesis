@@ -78,6 +78,25 @@ class RelayDeliveryTest {
         assertFalse(RelayQueue.askIsExpired(queuedAt = now + 3_600_000, now = now))
     }
 
+    @Test
+    fun the_watch_leaves_an_expired_ask_for_the_phone_and_removes_it_only_after_a_week() {
+        val week = OutboxPolicy.RETENTION.inWholeMilliseconds
+        assertFalse(RelayQueue.askIsAbandoned(queuedAt = now - RelayQueue.ASK_EXPIRY.inWholeMilliseconds - 1, now = now))
+        assertFalse(RelayQueue.askIsAbandoned(queuedAt = now - week, now = now))
+        assertTrue(RelayQueue.askIsAbandoned(queuedAt = now - week - 1, now = now))
+    }
+
+    // What the watch waits for after sending a recording.
+
+    @Test
+    fun a_sent_recording_is_waited_on_for_a_bounded_time_and_a_note_for_none() {
+        assertEquals(CapturePatience.ROUTE_WAIT, CapturePatience.silenceLimit(CaptureRoute.AUTOMATIC))
+        assertEquals(CapturePatience.ANSWER_WAIT, CapturePatience.silenceLimit(CaptureRoute.ASK))
+        assertNull(CapturePatience.silenceLimit(CaptureRoute.NOTE))
+        // A turn the phone is still running is never given up on.
+        assertTrue(CapturePatience.ANSWER_WAIT > RelayPatience.SEND_TIMEOUT)
+    }
+
     // Recent refs.
 
     @Test

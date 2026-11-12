@@ -170,7 +170,9 @@ enum class NoteOutcome(val tag: String) {
 /**
  * Phone → watch: the phone has dealt with a note. Any acknowledgement naming
  * the note's [ref] lets the watch's outbox release it; [outcome] says what
- * the phone did.
+ * the phone did. A note sent live is acknowledged by the reply to its
+ * request; a note taken from its queued DataItem is acknowledged by a message
+ * on [WearDataLayer.NOTE_ACK_PATH].
  */
 @Serializable
 @SerialName("noteAck")
@@ -295,6 +297,15 @@ data class CaptureRouteUpdate(
 ) : WearMessage
 
 /**
+ * Phone → watch: the recording named by [ref] could not be turned into a note
+ * or a question now. The phone keeps it, tells the person on the phone, and
+ * finishes it later; the watch stops waiting for its route or answer.
+ */
+@Serializable
+@SerialName("captureDeferred")
+data class CaptureDeferred(val ref: String) : WearMessage
+
+/**
  * Phone → watch: the answer to a recorded question, sent as a request whose
  * reply is a [DisplayedReceipt].
  */
@@ -323,7 +334,9 @@ data class CaptureAnswer(
 /**
  * Watch → phone: whether the answer for [ref] was put on a screen the person
  * is looking at. When it was, the phone marks the answer seen; when it was
- * not, the phone posts a notification instead.
+ * not, the phone posts a notification unless the gateway announces the answer
+ * itself. It is the reply to a [CaptureAnswer] request, and a shown answer is
+ * also reported on [WearDataLayer.DISPLAYED_PATH].
  */
 @Serializable
 @SerialName("displayed")

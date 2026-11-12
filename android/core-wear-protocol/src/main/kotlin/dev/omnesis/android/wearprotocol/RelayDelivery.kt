@@ -21,9 +21,13 @@ object RelayPatience {
     val DELIVERY_WINDOW: Duration = 20.seconds
 
     /**
-     * The longest the watch waits on one send for the phone's reply. Past it
-     * the answer exists or will, but did not reach the watch
-     * ([AskOutcome.AnswerOnPhone]).
+     * The longest the watch waits on one send for the phone's reply. The
+     * phone answers within its own budget for a turn, which is shorter, with
+     * the answer or with [AskOutcome.StillWorking]; so a send still open past
+     * this was taken by the phone and its reply was lost on the way back. The
+     * watch settles it as [AskOutcome.AnswerOnPhone], never as a failure and
+     * never by asking again: the question was asked once and its answer is,
+     * or will be, in the conversation on the phone.
      */
     val SEND_TIMEOUT: Duration = 70.seconds
 
@@ -48,6 +52,35 @@ object RelayPatience {
     }
 }
 
+/**
+ * How long the watch keeps the screen of a sent recording waiting to hear
+ * what the phone made of it. A recording counts as sent once it is in the
+ * watch's outbox, which can be before the phone is in reach, and the phone
+ * can fail to process one it has; neither may leave the watch waiting for
+ * good. Past the wait the watch says the phone will finish the recording
+ * ([WearLine.CAPTURE_DEFERRED]), as it does at once when the phone says so
+ * itself ([CaptureDeferred]). A route or an answer that arrives later is
+ * still shown.
+ */
+object CapturePatience {
+    /** The wait for the phone's decision on a recording sent for it to classify. */
+    val ROUTE_WAIT: Duration = 30.seconds
+
+    /**
+     * The wait for a recorded question's next sign of life: its route, a
+     * step of the turn, or its answer. Longer than the phone's budget for a
+     * turn, so a turn that is running is never given up on.
+     */
+    val ANSWER_WAIT: Duration = 90.seconds
+
+    /** How long a recording sent as [route] may go unheard of, or null when the watch waits for nothing more. */
+    fun silenceLimit(route: CaptureRoute): Duration? = when (route) {
+        CaptureRoute.AUTOMATIC -> ROUTE_WAIT
+        CaptureRoute.ASK -> ANSWER_WAIT
+        CaptureRoute.NOTE -> null
+    }
+}
+
 /** The rules for a relay the phone app never took live. */
 object RelayQueue {
     /**
@@ -62,6 +95,16 @@ object RelayQueue {
      * time in the future (the two clocks disagree) is fresh.
      */
     fun askIsExpired(queuedAt: EpochMillis, now: EpochMillis): Boolean = (now - queuedAt).milliseconds > ASK_EXPIRY
+
+    /**
+     * Whether the watch may delete the DataItem of a question it queued at
+     * [queuedAt]. Expiry is the phone's to act on: it is the phone that
+     * tells the person a question came too late, so the watch leaves an
+     * expired question where the phone will find it. The watch removes only
+     * one no phone took for as long as its outbox keeps anything.
+     */
+    fun askIsAbandoned(queuedAt: EpochMillis, now: EpochMillis): Boolean =
+        (now - queuedAt).milliseconds > OutboxPolicy.RETENTION
 }
 
 /**
