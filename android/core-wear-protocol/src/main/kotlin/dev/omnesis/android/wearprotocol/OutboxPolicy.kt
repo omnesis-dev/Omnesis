@@ -34,8 +34,9 @@ data class OutboxEntry(
  * Something counts as sent once it is safely in the outbox, whatever the state
  * of the link. From there it is handed to the Data Layer, and handed again
  * whenever nothing carries it: at launch, when the phone becomes reachable,
- * and after a delivery fails (then after a backoff, so a failing link is not
- * hammered). It leaves the outbox only when the phone confirms it (a
+ * after a delivery fails (then after a backoff, so a failing link is not
+ * hammered), and every [UNCARRIED_RECHECK] while no phone app is there to
+ * take it. It leaves the outbox only when the phone confirms it (a
  * [NoteAck] or [RecordingReceipt] naming its ref) or when it has waited so
  * long it is dropped, and the person is told. Every copy carries the same ref,
  * so the phone acts on it once. The iOS counterpart is `WatchOutboxPolicy` in
@@ -51,6 +52,14 @@ object OutboxPolicy {
      * bounds the outbox to a few tens of megabytes.
      */
     const val MAX_ENTRIES = 50
+
+    /**
+     * How often an entry nothing carries is offered again while it is not
+     * backing off: no phone runs the phone app, so nothing took it and
+     * nothing failed. The phone app appearing normally prompts a pass at
+     * once; this is the pass that happens when that prompt never comes.
+     */
+    val UNCARRIED_RECHECK: Duration = 15.minutes
 
     private val BACKOFF: List<Duration> = listOf(30.seconds, 2.minutes, 10.minutes, 30.minutes, 60.minutes)
 
@@ -117,9 +126,21 @@ object OutboxPolicy {
         return actions
     }
 
-    /** When the next backed-off entry falls due, if any is waiting on one. */
-    fun nextRetry(entries: List<OutboxEntry>, carried: Set<String>, now: EpochMillis): EpochMillis? =
-        entries.filter { it.ref !in carried }.mapNotNull(::backoffEnd).filter { it > now }.minOrNull()
+    /**
+     * When the outbox next needs a pass that nothing else will prompt, or
+     * null when it is empty. A non-empty outbox always has one coming: for an
+     * entry nothing carries, when its backoff ends, or after
+     * [UNCARRIED_RECHECK] when it is not backing off; and for every entry,
+     * carried or not, the moment it has waited long enough to be dropped, so
+     * that the person is told.
+     */
+    fun nextRetry(entries: List<OutboxEntry>, carried: Set<String>, now: EpochMillis): EpochMillis? {
+        val handOvers = entries.filter { it.ref !in carried }.map { entry ->
+            backoffEnd(entry)?.takeIf { it > now } ?: (now + UNCARRIED_RECHECK.inWholeMilliseconds)
+        }
+        val expiries = entries.map { it.queuedAt + RETENTION.inWholeMilliseconds + 1 }
+        return (handOvers + expiries).minOrNull()
+    }
 
     /** When a failed entry's backoff ends, or null for one that has not failed. */
     private fun backoffEnd(entry: OutboxEntry): EpochMillis? {

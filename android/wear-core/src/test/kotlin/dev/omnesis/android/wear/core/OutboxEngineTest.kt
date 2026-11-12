@@ -191,7 +191,87 @@ class OutboxEngineTest {
         assertTrue(core.outbox.flush(Trigger.RETRY).isEmpty())
         pass(OutboxPolicy.backoff(1))
         assertEquals(setOf("a"), core.outbox.flush(Trigger.RETRY))
-        assertNull("nothing is left to retry", retries.last())
+        // Carried now: the only pass left is the one that would drop it after a week.
+        assertEquals(entry.queuedAt + OutboxPolicy.RETENTION.inWholeMilliseconds + 1, retries.last())
+    }
+
+    @Test
+    fun with_no_phone_app_anywhere_nothing_is_handed_over_and_a_pass_stays_scheduled() = outbox {
+        link.reachable = false
+        link.installed = false
+        addRecording("a")
+        addNote("n")
+
+        assertTrue(core.outbox.flush(Trigger.LINK_MAY_HAVE_CHANGED).isEmpty())
+
+        assertTrue(link.items.isEmpty())
+        assertTrue(link.requests.isEmpty())
+        assertEquals(setOf("a", "n"), refs())
+        assertTrue("waiting for a phone app is not a failed delivery", core.store.entries().all { it.failures == 0 })
+        assertEquals(now + OutboxPolicy.UNCARRIED_RECHECK.inWholeMilliseconds, retries.last())
+    }
+
+    @Test
+    fun each_scheduled_pass_with_still_no_phone_app_schedules_the_next() = outbox {
+        link.reachable = false
+        link.installed = false
+        addRecording("a")
+        core.outbox.flush(Trigger.LINK_MAY_HAVE_CHANGED)
+
+        repeat(3) {
+            pass(OutboxPolicy.UNCARRIED_RECHECK)
+            core.retryOutbox()
+            assertTrue(link.items.isEmpty())
+            assertEquals(now + OutboxPolicy.UNCARRIED_RECHECK.inWholeMilliseconds, retries.last())
+        }
+    }
+
+    @Test
+    fun a_scheduled_pass_hands_over_to_a_phone_app_whose_arrival_was_never_announced() = outbox {
+        link.reachable = false
+        link.installed = false
+        addRecording("a")
+        core.outbox.flush(Trigger.LINK_MAY_HAVE_CHANGED)
+
+        // The phone app appears, and nothing tells the watch.
+        link.reachable = true
+        link.installed = true
+        pass(OutboxPolicy.UNCARRIED_RECHECK)
+        core.retryOutbox()
+
+        assertTrue(link.items.containsKey(recordingA))
+        assertEquals(listOf(WearDataLayer.VOICE_NUDGE_PATH), link.sent.map { it.first })
+    }
+
+    @Test
+    fun a_note_waiting_for_a_phone_app_is_dropped_by_the_pass_scheduled_for_its_expiry() = outbox {
+        link.reachable = false
+        addRecording("a")
+        core.outbox.flush(Trigger.LINK_MAY_HAVE_CHANGED)
+        val expiry = retries.last()
+        assertEquals(now + OutboxPolicy.RETENTION.inWholeMilliseconds + 1, expiry)
+
+        pass(OutboxPolicy.RETENTION + 1.seconds)
+        core.retryOutbox()
+
+        assertTrue(refs().isEmpty())
+        assertEquals(1, core.store.droppedCount)
+        assertNull("an empty outbox schedules nothing", retries.last())
+    }
+
+    @Test
+    fun the_last_confirmation_cancels_the_scheduled_pass() = outbox {
+        link.reachable = false
+        addRecording("a")
+        addNote("n")
+        core.outbox.flush(Trigger.LINK_MAY_HAVE_CHANGED)
+
+        fromPhone(RecordingReceipt("a"), WearDataLayer.RECORDING_RECEIVED_PATH)
+        assertTrue("one note still waits", retries.last() != null)
+        fromPhone(NoteAck.of(NoteOutcome.SAVED, "n"), WearDataLayer.NOTE_PATH)
+
+        assertTrue(refs().isEmpty())
+        assertNull(retries.last())
     }
 
     @Test

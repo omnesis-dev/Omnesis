@@ -8,6 +8,7 @@ import dev.omnesis.android.wearprotocol.OutboxPolicy.Transport
 import dev.omnesis.android.wearprotocol.OutboxPolicy.Trigger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
@@ -113,16 +114,52 @@ class OutboxPolicyTest {
     }
 
     @Test
-    fun the_next_retry_is_the_earliest_backoff_still_running() {
+    fun the_next_pass_is_the_earliest_backoff_still_running() {
         val entries = listOf(
             recording("soon", failures = 1, failedAgoMs = 10_000),
             textNote("later", failures = 2, failedAgoMs = 10_000),
-            recording("due", failures = 1, failedAgoMs = 30_000),
-            recording("fresh"),
         )
         assertEquals(now + 20_000, OutboxPolicy.nextRetry(entries, emptySet(), now))
         assertEquals(now + 110_000, OutboxPolicy.nextRetry(entries, carried = setOf("soon"), now = now))
-        assertNull(OutboxPolicy.nextRetry(entries, carried = setOf("soon", "later"), now = now))
+    }
+
+    @Test
+    fun an_entry_nothing_took_and_nothing_failed_is_offered_again_after_the_recheck() {
+        val recheck = OutboxPolicy.UNCARRIED_RECHECK.inWholeMilliseconds
+        assertEquals(now + recheck, OutboxPolicy.nextRetry(listOf(recording("fresh")), emptySet(), now))
+        // A backoff that has run out is no reason to wait longer than the recheck either.
+        val due = recording("due", failures = 1, failedAgoMs = 30_000)
+        assertEquals(now + recheck, OutboxPolicy.nextRetry(listOf(due), emptySet(), now))
+        // A backoff still running comes first when it ends sooner.
+        val soon = recording("soon", failures = 1, failedAgoMs = 10_000)
+        assertEquals(now + 20_000, OutboxPolicy.nextRetry(listOf(recording("fresh"), soon), emptySet(), now))
+    }
+
+    @Test
+    fun a_carried_entry_still_has_the_pass_that_drops_it_once_it_has_waited_too_long() {
+        val retention = OutboxPolicy.RETENTION.inWholeMilliseconds
+        val entries = listOf(recording("old", ageMs = 3_600_000), textNote("new", ageMs = 60_000))
+        val dropsOldest = now - 3_600_000 + retention + 1
+        assertEquals(dropsOldest, OutboxPolicy.nextRetry(entries, carried = setOf("old", "new"), now = now))
+        // The pass at that moment drops it.
+        val plan = OutboxPolicy.plan(entries, setOf("old", "new"), Trigger.RETRY, dropsOldest)
+        assertEquals(Action.DROP, plan["old"])
+        assertEquals(Action.WAIT, plan["new"])
+    }
+
+    @Test
+    fun an_outbox_with_entries_always_has_a_pass_coming_and_an_empty_one_has_none() {
+        val entries = listOf(
+            recording("failed", failures = 3, failedAgoMs = 5_000),
+            recording("due", failures = 1, failedAgoMs = 30_000),
+            textNote("fresh"),
+            recording("old", ageMs = 6 * 24 * 3_600_000L),
+        )
+        val refs = entries.map { it.ref }
+        for (size in 0..refs.size) {
+            val next = OutboxPolicy.nextRetry(entries, carried = refs.take(size).toSet(), now = now)
+            assertTrue("carried=${refs.take(size)}", next != null && next > now)
+        }
         assertNull(OutboxPolicy.nextRetry(emptyList(), emptySet(), now))
     }
 

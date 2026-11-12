@@ -31,6 +31,7 @@ import java.io.File
 import java.nio.file.Files
 import java.util.UUID
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -173,6 +174,17 @@ internal class Loopback(private val test: TestScope) {
     fun pass(duration: Duration = 2.seconds) {
         test.advanceTimeBy(duration.inWholeMilliseconds)
         test.runCurrent()
+    }
+
+    /**
+     * The outbox pass the watch scheduled falls due and runs, as its
+     * background job runs it with the watch app closed.
+     */
+    fun runWatchRetry() {
+        val due = checkNotNull(watch.retries.lastOrNull()) { "the watch has no outbox pass scheduled" }
+        pass((due - now).coerceAtLeast(0).milliseconds)
+        test.backgroundScope.launch { watch.core.retryOutbox() }
+        pass()
     }
 
     /** Move the clock on without running what would have happened meanwhile, as a device left in a drawer. */

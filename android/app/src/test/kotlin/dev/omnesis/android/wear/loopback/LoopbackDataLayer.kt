@@ -43,7 +43,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   way its listener service is: the phone of recordings and queued relays,
  *   the watch of the gate.
  * - **Reachability** follows [connect] and [disconnect], which also deliver
- *   the capability change each app listens for.
+ *   the capability change each app listens for. With [phoneApp] false no
+ *   phone runs the phone app at all.
  *
  * Everything runs on [scope]'s dispatcher, so one virtual clock drives both
  * sides.
@@ -166,10 +167,16 @@ internal class LoopbackDataLayer(private val scope: CoroutineScope) {
         }
     }
 
-    /** The devices come into reach of each other: both apps hear the other's capability appear. */
-    fun connect() {
+    /**
+     * The devices come into reach of each other: both apps hear the other's
+     * capability appear. Unless the change is not [announced], as when Play
+     * services drops the callback or an app's process is not started for it;
+     * DataItems sync all the same.
+     */
+    fun connect(announced: Boolean = true) {
         if (connected) return
         connection.value = true
+        if (!announced) return
         scope.launch {
             delay(LATENCY)
             watch?.linkChanged()

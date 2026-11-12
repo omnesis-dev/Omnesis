@@ -126,6 +126,31 @@ class WearManifestTest {
     }
 
     @Test
+    fun the_listener_is_started_when_the_phone_app_comes_into_or_goes_out_of_reach() {
+        // Play services addresses a capability change as wear://<node>/<capability name>.
+        val change = Intent(
+            "com.google.android.gms.wearable.CAPABILITY_CHANGED",
+            Uri.parse("wear://node/${WearDataLayer.PHONE_CAPABILITY}"),
+        ).setPackage(context.packageName)
+        val started = packages.queryIntentServices(change, 0).map { it.serviceInfo.name }
+        assertEquals(listOf(PhoneListenerService::class.java.name), started)
+        // The watch's own capability changing is nothing the outbox waits for.
+        val own = Intent(change).setData(Uri.parse("wear://node/${WearDataLayer.WATCH_CAPABILITY}"))
+        assertTrue(packages.queryIntentServices(own, 0).isEmpty())
+    }
+
+    @Test
+    fun nothing_the_system_draws_for_the_app_reads_a_theme_attribute() {
+        // The tile, the complication and the launcher draw these outside the app's theme.
+        val drawables = java.io.File("src/main/res").listFiles { dir -> dir.name.startsWith("drawable") }
+            .orEmpty()
+            .flatMap { it.listFiles { file -> file.extension == "xml" }.orEmpty().toList() }
+        assertTrue(drawables.isNotEmpty())
+        val themed = drawables.filter { Regex("""="\?[^"]*"""").containsMatchIn(it.readText()) }.map { it.name }
+        assertEquals(emptyList<String>(), themed)
+    }
+
+    @Test
     fun the_four_signals_are_four_different_patterns() {
         val patterns = WatchHaptic.entries.map { VibratorHaptics.pattern(it).toList() }
         assertEquals(WatchHaptic.entries.size, patterns.toSet().size)

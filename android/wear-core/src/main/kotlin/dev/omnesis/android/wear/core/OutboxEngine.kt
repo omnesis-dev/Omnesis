@@ -24,6 +24,11 @@ import kotlinx.coroutines.sync.withLock
  * live request when the phone is reachable and as a queued DataItem
  * otherwise. A DataItem the system still holds is what carries a note between
  * launches, so a note is handed over again only when no item holds it.
+ *
+ * Nothing is handed over while no phone runs the phone app. Every pass ends
+ * by scheduling the next one [OutboxPolicy.nextRetry] names, so while
+ * anything waits there is always a pass to come, whether or not the phone
+ * app's arrival is ever announced.
  */
 class OutboxEngine(
     private val store: OutboxStore,
@@ -78,6 +83,7 @@ class OutboxEngine(
     /** The phone confirmed the note or recording named [ref]: it leaves the outbox, with any DataItem holding it. */
     fun confirmed(ref: String) {
         store.remove(ref)
+        if (store.entries().isEmpty()) retry.schedule(null)
         scope.launch { deleteItems(ref) }
     }
 
