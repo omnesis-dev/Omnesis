@@ -162,6 +162,8 @@ export interface BrainBenchOptions {
   clock?: "real" | "virtual";
   /** Experimental gate. Must be explicit because without it the whole engine is inert. */
   experimental: boolean;
+  /** Lab selection; experimental benches otherwise enable all three features. */
+  labFeatures?: SyntheticHarnessOptions["labFeatures"];
   /**
    * Merged into the spawned gateway's `brain` config block, over the bench's
    * quiet baseline — so a suite naming a producer here is the only way that
@@ -311,7 +313,7 @@ export class BrainBench {
     const harness = new SyntheticE2EHarness({
       gatewayMode: opts.experimental && !opts.initialInventory ? "experimental" : "stable",
       ...(opts.experimental && !opts.initialInventory
-        ? { labFeatures: { brain: true, tasks: true, watches: true } }
+        ? { labFeatures: opts.labFeatures ?? { brain: true, tasks: true, watches: true } }
         : {}),
       universe: opts.universe ?? "loops-test-life",
       ...(opts.embedder ? { embedderBackend: "fake" as const } : {}),
@@ -363,7 +365,7 @@ export class BrainBench {
       if (opts.initialInventory) {
         await harness.restartGateway({
           gatewayMode: "experimental",
-          labFeatures: { brain: true, tasks: true, watches: true },
+          labFeatures: opts.labFeatures ?? { brain: true, tasks: true, watches: true },
           whileStopped: () => {
             const db = new Database(harness.getDbPath(), { fileMustExist: true });
             try {

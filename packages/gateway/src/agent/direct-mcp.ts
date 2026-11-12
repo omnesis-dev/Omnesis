@@ -26,6 +26,7 @@ import {
 } from "@omnesis/agent";
 import { experimentalVisible, type ToolResult } from "@omnesis/core";
 import { labFeatureEnabled } from "../lab/store.js";
+import { LAB_FEATURES } from "../lab/catalog.js";
 
 import { createGatewayLoopReadPort } from "../brain/interactive-loop-port.js";
 import { listSources } from "../data/repositories/SourceRepository.js";
@@ -275,6 +276,13 @@ export class DirectMcpService {
     return this.labEnabled
       ? withLabTools([...this.byName.values()], this.labEnabled)
       : [...this.byName.values()];
+  }
+
+  /** Lab dependencies include flags that keep the same tool names. */
+  catalogRevision(): string {
+    return this.labEnabled
+      ? LAB_FEATURES.map(({ id }) => `${id}:${Number(this.labEnabled!(id))}`).join("|")
+      : "standalone";
   }
 
   manifest(authorization?: CorpusAuthorization): readonly DirectMcpToolManifest[] {

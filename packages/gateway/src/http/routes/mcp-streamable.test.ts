@@ -32,6 +32,7 @@ import type { AnswerService } from "../../privacy/answer-service.js";
 import type { AppendDirectAuditEventInput } from "../../privacy/store.js";
 import type { CorpusAuthorization } from "../../access/corpus-authorization.js";
 import type { ToolHandle } from "@omnesis/agent";
+import type { LabEnabled } from "../../agent/lab-tools.js";
 
 import type { OmnesisNotesRuntime, CaptureNoteInput } from "../../sources/omnesis-notes/index.js";
 
@@ -126,6 +127,7 @@ const PRINCIPAL_AUTH: Record<string, PrincipalOAuthAuthContext> = {
 function service(
   scopedHandles?: (authorization: CorpusAuthorization) => readonly ToolHandle[],
   canonicalOverrides: readonly ToolHandle[] = [],
+  labEnabled?: LabEnabled,
 ): DirectMcpService {
   return new DirectMcpService(
     DIRECT_MCP_TOOL_NAMES.map(
@@ -146,6 +148,7 @@ function service(
     ),
     () => Promise.resolve({}),
     scopedHandles,
+    labEnabled,
   );
 }
 
@@ -438,6 +441,96 @@ describe("gateway-hosted Streamable HTTP MCP", () => {
     await Promise.allSettled(closeables.splice(0).map((value) => value.close()));
     if (previousExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
     else process.env.OMNESIS_EXPERIMENTAL = previousExperimental;
+  });
+
+  it("refreshes the same client's Direct catalogue for rapid Lab changes, including instruction-only dependencies", async () => {
+    const flags = { brain: false, tasks: false, watches: false };
+    const direct = service(undefined, [], (id) => flags[id]);
+    vi.spyOn(direct, "instructions").mockImplementation(
+      async () => `Fictional direct instructions: watches=${flags.watches}`,
+    );
+    const { app, runtime } = appFixture(direct);
+    closeables.push(runtime);
+    const { client, transport } = await connect(app, directToken);
+    closeables.push(client, transport);
+    const names = async () =>
+      (await client.listTools(undefined, { cacheMode: "refresh" })).tools.map((tool) => tool.name);
+    expect(await names()).not.toContain("list_loops");
+    flags.brain = true;
+    flags.tasks = true;
+    expect(await names()).toContain("list_loops");
+    flags.tasks = false;
+    expect(await names()).not.toContain("list_loops");
+    flags.tasks = true;
+    expect(await names()).toContain("list_loops");
+    // Watches do not change Direct's tool names, but still invalidate cached
+    // instructions so additional Lab-dependent guidance cannot stay stale.
+    flags.watches = true;
+    const fresh = await connect(app, directToken);
+    closeables.push(fresh.client, fresh.transport);
+    expect(fresh.client.getInstructions()).toContain("watches=true");
+  });
+
+  it("rebuilds a suspended Direct catalogue after Lab changes without another request", async () => {
+    const flags = { brain: true, tasks: true, watches: false };
+    const direct = service(undefined, [], (id) => flags[id]);
+    let resolveOld!: (instructions: string) => void;
+    const instructions = vi
+      .spyOn(direct, "instructions")
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockResolvedValue("Current fictional task-free Direct instructions.");
+    const { app, runtime } = appFixture(direct);
+    closeables.push(runtime);
+    const pending = connect(app, directToken);
+    await vi.waitFor(() => expect(instructions).toHaveBeenCalledTimes(1));
+    flags.tasks = false;
+    resolveOld("Obsolete fictional instructions with task tools.");
+    const { client, transport } = await pending;
+    closeables.push(client, transport);
+    expect(client.getInstructions()).toContain("Current fictional task-free Direct instructions.");
+    expect(client.getInstructions()).not.toContain("Obsolete");
+    expect(
+      (await client.listTools(undefined, { cacheMode: "refresh" })).tools.map((tool) => tool.name),
+    ).not.toContain("list_loops");
+    expect(instructions).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a fresh Direct catalogue cached when an older instruction load fails", async () => {
+    const flags = { brain: false, tasks: false, watches: false };
+    const direct = service(undefined, [], (id) => flags[id]);
+    let rejectOld!: (error: Error) => void;
+    const instructions = vi
+      .spyOn(direct, "instructions")
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((_resolve, reject) => {
+            rejectOld = reject;
+          }),
+      )
+      .mockResolvedValue("Current fictional Direct instructions.");
+    const { app, runtime } = appFixture(direct);
+    closeables.push(runtime);
+    const stale = connect(app, directToken);
+    await vi.waitFor(() => expect(instructions).toHaveBeenCalledTimes(1));
+    flags.brain = true;
+    flags.tasks = true;
+    const fresh = await connect(app, directToken);
+    closeables.push(fresh.client, fresh.transport);
+    rejectOld(new Error("Fictional old catalogue read failed"));
+    const staleConnection = await stale;
+    closeables.push(staleConnection.client, staleConnection.transport);
+    expect(staleConnection.client.getInstructions()).toContain("currently unavailable");
+    expect(
+      (await fresh.client.listTools(undefined, { cacheMode: "refresh" })).tools.map(
+        (tool) => tool.name,
+      ),
+    ).toContain("list_loops");
+    expect(instructions).toHaveBeenCalledTimes(2);
   });
 
   it("delegates bounded waiting and records one audited egress per status tool call", async () => {
