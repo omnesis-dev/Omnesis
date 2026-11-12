@@ -333,6 +333,19 @@ Android dependency, ported from the iOS watch relay's shared files),
 `ModalNavigationDrawer`. A `SessionManager` (the iOS `AppStore` analogue) rebuilds
 the transport clients on pair/unpair/url-change.
 
+### Launch intents are acted on once
+
+The system hands an activity the intent that first opened it again on every
+rebuild: a rotation, a relaunch after it killed the process, a task reopened
+from the recent apps list. Later intents go to `onNewIntent` and never replace
+it. `MainActivity` therefore routes every launch that opens a screen (the tile,
+the shortcuts, the widget, notifications) through `OneShotLaunches`, and a new
+entry point must do the same; never compare a launch only with the last one
+handled. `MainActivityLaunchReplayTest` drives the real activity through
+create, new intent, and a rebuild from saved state with the first intent, and
+`:wear`'s `LaunchReplayTest` does the same for the watch screen (it runs on the
+real `WearApp`, which the other watch tests avoid).
+
 ## Wear OS app (`:wear-core`, `:wear`)
 
 The port of the Apple Watch app (`ios/Sources/OmnesisWatch/`, the canonical
