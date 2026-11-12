@@ -32,6 +32,7 @@
 #   scripts/android-logic.sh                       # the pure-logic JVM lane (core modules)
 #   scripts/android-logic.sh --module :feature-health   # one module's unit tests
 #   scripts/android-logic.sh --tests dev.omnesis.android.transport.dto.DtoDecodeTest
+#   scripts/android-logic.sh --module :wear --assemble   # the tests, then the module's debug APK
 #
 # Configuration (all optional except the host; generic defaults — nothing
 # operator-private is committed: the host alias / paths are read at runtime):
@@ -59,15 +60,24 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # --- Arguments. ----------------------------------------------------------------
 # --module <m>       restrict to a single Gradle module's unit-test task.
 # --tests <filter>   pass a --tests filter through to gradle.
+# --assemble         with --module on an application module, also package its
+#                    debug APK: the manifest merge, resource link and dexing a
+#                    unit-test task never runs.
 MODULE=""
 TESTS_FILTER=""
+ASSEMBLE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --module) shift; [[ -n "${1:-}" ]] || { echo "android-logic: --module needs a value" >&2; exit 64; }; MODULE="$1"; shift ;;
     --tests)  shift; [[ -n "${1:-}" ]] || { echo "android-logic: --tests needs a value" >&2; exit 64; }; TESTS_FILTER="$1"; shift ;;
+    --assemble) ASSEMBLE="1"; shift ;;
     *) echo "android-logic: unknown argument '$1'" >&2; exit 64 ;;
   esac
 done
+if [[ -n "$ASSEMBLE" && -z "$MODULE" ]]; then
+  echo "android-logic: --assemble needs --module" >&2
+  exit 64
+fi
 
 # --- Configuration (generic env, fail-loud on the host). -----------------------
 HOST="${OMNESIS_EPIC_MACOS_HOST:-}"
@@ -126,8 +136,8 @@ fi
 # --- Pick the Gradle tasks. ----------------------------------------------------
 # Default = the pure-logic JVM modules whose testDebugUnitTest needs NO emulator
 # and NO Robolectric Compose render: the transport decoders/clients, pairing,
-# the design-system markdown logic, the phone setup flow engine, and the watch
-# relay contract. (The :app and :feature-health modules
+# the design-system markdown logic, the phone setup flow engine, the watch
+# relay contract, and the Wear OS app's logic package. (The :app and :feature-health modules
 # also have logic tests, but they share a module with the slow Roborazzi
 # screenshot lane — narrow to them with --module + --tests when needed.)
 # A plain Kotlin/JVM module (no Android plugin) has a single `test` task rather
@@ -143,13 +153,29 @@ unit_test_task() {
     echo "$module:testDebugUnitTest"
   fi
 }
-if [[ -n "$MODULE" ]]; then
-  GRADLE_TASKS="$(unit_test_task "$MODULE")"
-else
-  GRADLE_TASKS=":core-transport:testDebugUnitTest :core-pairing:testDebugUnitTest :core-designsystem:testDebugUnitTest :core-setup:testDebugUnitTest :core-wear-protocol:test"
-fi
+# The debug APK task of an application module. The phone app has two editions;
+# the one unit tests run against is the one assembled.
+assemble_task() {
+  local module=":${1#:}"
+  if [[ "$module" == ":app" ]]; then
+    echo ":app:assemblePlayDebug"
+  else
+    echo "$module:assembleDebug"
+  fi
+}
 GRADLE_EXTRA=""
 [[ -n "$TESTS_FILTER" ]] && GRADLE_EXTRA="--tests $TESTS_FILTER"
+if [[ -n "$MODULE" ]]; then
+  GRADLE_TASKS="$(unit_test_task "$MODULE")"
+  # A --tests filter belongs to the test task, so the assemble task follows it.
+  if [[ -n "$ASSEMBLE" ]]; then
+    GRADLE_EXTRA="$GRADLE_EXTRA $(assemble_task "$MODULE")"
+  fi
+else
+  # The Wear OS app keeps its logic in one package, apart from the screenshot
+  # tests that share its module.
+  GRADLE_TASKS=":core-transport:testDebugUnitTest :core-pairing:testDebugUnitTest :core-designsystem:testDebugUnitTest :core-setup:testDebugUnitTest :wear:testDebugUnitTest --tests \"dev.omnesis.android.wear.core.*\" :core-wear-protocol:test"
+fi
 
 echo "→ macOS host:        $HOST"
 echo "→ warm scratch:      $RESOLVED_TARGET (persistent — Gradle cache reused)"
