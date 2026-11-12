@@ -27,7 +27,7 @@ healthConnectTesting = "1.0.0-alpha03"
 workManager = "2.10.0"
 # ActivityRecognitionClient (feature-activity-segments only, never project-wide).
 playServicesLocation = "21.3.0"
-# Wearable Data Layer: the phone side of the watch relay (app only).
+# Wearable Data Layer, which the phone app and the Wear OS app relay over.
 playServicesWearable = "19.0.0"
 # feature-photos: on-device OCR + scene labels.
 mlkitTextRecognition = "16.0.1"

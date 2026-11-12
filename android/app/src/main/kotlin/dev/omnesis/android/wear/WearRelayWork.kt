@@ -132,14 +132,15 @@ class WearRelayWorker(appContext: Context, params: WorkerParameters) : Coroutine
             }
             MODE_RETRY -> {
                 relay.resumePending()
-                relay.awaitIdle()
+                relay.retryRecordings()
+                relay.awaitQuiet()
                 if (relay.waitingRecordings() > 0) Result.retry() else Result.success()
             }
             else -> {
                 // A process started for this job has nothing running yet: pick up what an
                 // earlier one left, then stay for as long as anything is under way.
                 relay.resumePending()
-                relay.awaitIdle()
+                relay.awaitQuiet()
                 Result.success()
             }
         }

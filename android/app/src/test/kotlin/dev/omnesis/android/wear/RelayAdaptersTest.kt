@@ -21,6 +21,7 @@ import dev.omnesis.android.wearprotocol.DictationGate
 import dev.omnesis.android.wearprotocol.NoteOutcome
 import dev.omnesis.android.wearprotocol.RecentRefs
 import java.io.File
+import java.time.ZoneId
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -71,6 +72,8 @@ class RepositoryWatchNoteSaverTest {
                 NotesGateway(NotesClient(GatewayHttp(OkHttpClient(), baseUrl, "tok")), "dev-1")
             },
             audioFiles = files,
+            language = { "fr-FR" },
+            timeZone = { ZoneId.of("Asia/Tokyo") },
         )
         return RepositoryWatchNoteSaver(repository, files)
     }
@@ -79,7 +82,7 @@ class RepositoryWatchNoteSaverTest {
     fun a_text_note_is_posted_as_the_watch_surface_under_its_ref_and_capture_time() = runTest {
         server.enqueue(MockResponse().setResponseCode(201).setBody(entry))
 
-        assertEquals(NoteOutcome.SAVED, saver().save("Buy oat milk", CAPTURE_TIME, ref, audio = null))
+        assertEquals(NoteOutcome.SAVED, saver().save("Buy oat milk", CAPTURE_TIME, ref, audio = null, locale = null))
 
         val request = server.takeRequest()
         assertEquals("/notes", request.path)
@@ -88,6 +91,23 @@ class RepositoryWatchNoteSaverTest {
         assertEquals("2026-03-14T09:30:00Z", body["capturedAt"]?.jsonPrimitive?.content)
         assertEquals("android-watch", body["surface"]?.jsonPrimitive?.content)
         assertEquals("Buy oat milk", body["text"]?.jsonPrimitive?.content)
+        // The watch's zone, not the phone's.
+        assertEquals("Europe/Lisbon", body["capturedTimeZoneId"]?.jsonPrimitive?.content)
+        assertEquals("0", body["capturedUtcOffsetSeconds"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun a_zone_the_gateway_would_reject_falls_back_to_the_phones() = runTest {
+        for (unusable in listOf("GMT+02:00", "Nowhere/Invented")) {
+            server.enqueue(MockResponse().setResponseCode(201).setBody(entry))
+            val captureTime = CAPTURE_TIME.copy(timeZoneId = unusable, utcOffsetSeconds = 7_200)
+
+            assertEquals(NoteOutcome.SAVED, saver().save("Buy oat milk", captureTime, ref, audio = null, locale = null))
+
+            val body = OmnesisJson.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+            assertEquals(unusable, "Asia/Tokyo", body["capturedTimeZoneId"]?.jsonPrimitive?.content)
+            assertEquals(unusable, "32400", body["capturedUtcOffsetSeconds"]?.jsonPrimitive?.content)
+        }
     }
 
     @Test
@@ -95,7 +115,7 @@ class RepositoryWatchNoteSaverTest {
         server.enqueue(MockResponse().setResponseCode(202).setBody("""{"id":"n1","transcription":"pending"}"""))
         val recording = folder.newFile("recording.m4a").apply { writeBytes(byteArrayOf(1, 2, 3)) }
 
-        assertEquals(NoteOutcome.SAVED, saver().save("", CAPTURE_TIME, ref, recording))
+        assertEquals(NoteOutcome.SAVED, saver().save("", CAPTURE_TIME, ref, recording, locale = "en-GB"))
 
         val request = server.takeRequest()
         assertEquals("/notes/voice", request.path)
@@ -103,20 +123,34 @@ class RepositoryWatchNoteSaverTest {
         assertTrue(body.contains(""""surface":"android-watch""""))
         assertTrue(body.contains(""""id":"${ref.lowercase()}""""))
         assertTrue(body.contains("audio/mp4"))
+        // Transcribed in the language the watch recorded it under, and filed in the watch's zone.
+        assertTrue(body.contains(""""language":"en-GB""""))
+        assertTrue(body.contains(""""capturedTimeZoneId":"Europe/Lisbon""""))
+        assertTrue(body.contains(""""capturedUtcOffsetSeconds":0"""))
         assertTrue("the inbox keeps its recording until the note is known to be kept", recording.isFile)
         assertTrue("the uploaded copy is gone", File(folder.root, "voice-notes").listFiles().isNullOrEmpty())
     }
 
     @Test
+    fun a_voice_note_whose_watch_named_no_language_is_sent_under_the_phones() = runTest {
+        server.enqueue(MockResponse().setResponseCode(202).setBody("""{"id":"n1","transcription":"pending"}"""))
+        val recording = folder.newFile("recording.m4a").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+        assertEquals(NoteOutcome.SAVED, saver().save("", CAPTURE_TIME, ref, recording, locale = null))
+
+        assertTrue(server.takeRequest().body.readUtf8().contains(""""language":"fr-FR""""))
+    }
+
+    @Test
     fun an_unreachable_gateway_queues_the_note_on_the_phone() = runTest {
         server.shutdown()
-        assertEquals(NoteOutcome.QUEUED_ON_PHONE, saver().save("Buy oat milk", CAPTURE_TIME, ref, audio = null))
+        assertEquals(NoteOutcome.QUEUED_ON_PHONE, saver().save("Buy oat milk", CAPTURE_TIME, ref, audio = null, locale = null))
     }
 
     @Test
     fun a_note_the_gateway_will_never_take_is_rejected() = runTest {
         server.enqueue(MockResponse().setResponseCode(422).setBody("""{"error":"Invalid note"}"""))
-        assertEquals(NoteOutcome.REJECTED, saver().save("Buy oat milk", CAPTURE_TIME, ref, audio = null))
+        assertEquals(NoteOutcome.REJECTED, saver().save("Buy oat milk", CAPTURE_TIME, ref, audio = null, locale = null))
     }
 
     @Test
@@ -124,7 +158,7 @@ class RepositoryWatchNoteSaverTest {
         server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"Dictation disabled"}"""))
         val recording = folder.newFile("recording.m4a").apply { writeBytes(byteArrayOf(1, 2, 3)) }
 
-        assertEquals(NoteOutcome.CAPTURE_FAILED, saver().save("", CAPTURE_TIME, ref, recording))
+        assertEquals(NoteOutcome.CAPTURE_FAILED, saver().save("", CAPTURE_TIME, ref, recording, locale = "en-GB"))
         assertTrue(recording.isFile)
     }
 }

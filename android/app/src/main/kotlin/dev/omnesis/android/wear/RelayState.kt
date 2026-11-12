@@ -43,24 +43,40 @@ class HandledRefs(private val store: RelayStateStore) {
         }
     }
 
-    /** Records [ref] as handled; false when it already was. A relay without a ref is always new. */
+    /**
+     * Records [ref] as handled; false when it already was. A relay without a
+     * ref is always new.
+     *
+     * A question's ref is [durable] from the moment it is claimed: asked
+     * twice is worse than not asked, so a process that dies mid-turn leaves
+     * the question claimed. A note is the other way round. Saving one twice
+     * is harmless, since its ref is its idempotency key, while a note claimed
+     * on disk and never saved would be acknowledged to the watch from its
+     * next copy and lost; so a note is claimed in memory and written down by
+     * [settle] once its save has returned.
+     */
     @Synchronized
-    fun claim(ref: String?): Boolean {
+    fun claim(ref: String?, durable: Boolean = true): Boolean {
         val usable = ref?.takeIf { it.isNotEmpty() }
         val fresh = recent.insert(usable)
-        if (fresh && usable != null) remember(usable)
+        if (fresh && usable != null && durable) remember(usable)
         return fresh
     }
 
-    /** Decides what to do with a queued relay, recording its ref when it is acted on. */
+    /** Writes down a ref claimed without durability, now that what it names is done. */
+    @Synchronized
+    fun settle(ref: String) {
+        if (ref.isNotEmpty() && ref !in order) remember(ref)
+    }
+
+    /**
+     * Decides what to do with a queued relay, recording its ref when it is
+     * acted on: a question's durably, a note's until [settle].
+     */
     @Synchronized
     fun route(queued: QueuedRelay, now: Long): RelayInbox.Action {
         val action = RelayInbox.route(queued, now, recent)
-        when (action) {
-            is RelayInbox.Action.SaveNote -> remember(action.ref)
-            is RelayInbox.Action.Ask -> remember(action.ref)
-            is RelayInbox.Action.Drop -> Unit
-        }
+        if (action is RelayInbox.Action.Ask) remember(action.ref)
         return action
     }
 

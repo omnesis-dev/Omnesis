@@ -39,15 +39,17 @@ interface WatchAsker {
 /** Saves a note the watch relayed through the phone's own note pipeline. */
 fun interface WatchNoteSaver {
     /**
-     * Saves [text] captured at [captureTime]. [ref] is the relay's ref, the
-     * note's idempotency key when it is a UUID. With [audio] the note is a
-     * voice note for the gateway to transcribe and [text] may be empty; the
-     * file is copied, never consumed.
+     * Saves [text] captured at [captureTime], which carries the watch's own
+     * time zone. [ref] is the relay's ref, the note's idempotency key when it
+     * is a UUID. With [audio] the note is a voice note for the gateway to
+     * transcribe and [text] may be empty; the file is copied, never consumed,
+     * and [locale] is the language tag the watch recorded it under, null when
+     * it named none.
      *
      * [NoteOutcome.REJECTED] says the gateway will never take this note;
      * [NoteOutcome.CAPTURE_FAILED] that it could not be kept this time.
      */
-    suspend fun save(text: String, captureTime: NoteCaptureTime, ref: String, audio: File?): NoteOutcome
+    suspend fun save(text: String, captureTime: NoteCaptureTime, ref: String, audio: File?, locale: String?): NoteOutcome
 }
 
 /** What the paired gateway says about recordings, read when one is processed. */

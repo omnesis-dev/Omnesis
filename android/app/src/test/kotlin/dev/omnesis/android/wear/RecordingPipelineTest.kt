@@ -7,6 +7,7 @@ import dev.omnesis.android.wearprotocol.AskActivityEvent
 import dev.omnesis.android.wearprotocol.AskOutcome
 import dev.omnesis.android.wearprotocol.AskProgress
 import dev.omnesis.android.wearprotocol.CaptureAnswer
+import dev.omnesis.android.wearprotocol.CaptureDeferred
 import dev.omnesis.android.wearprotocol.CaptureRoute
 import dev.omnesis.android.wearprotocol.CaptureRouteUpdate
 import dev.omnesis.android.wearprotocol.DisplayedReceipt
@@ -276,7 +277,7 @@ class RecordingPipelineTest {
 
         backend.classifyFailure = null
         backend.route = CaptureRoute.NOTE
-        pipeline().resume()
+        pipeline().resume(retryKept = false)
 
         assertEquals(1, transcriber.heard.size)
         assertEquals("Remember the blue folder", notes.saved.single().text)
@@ -291,17 +292,39 @@ class RecordingPipelineTest {
         transcriber.transcript = null
 
         pipeline().onItem(item(metadata(route = CaptureRoute.ASK)))
-        repeat(RecordingInboxPolicy.MAX_ATTEMPTS + 2) { pipeline().resume() }
+        repeat(RecordingInboxPolicy.MAX_ATTEMPTS + 2) { pipeline().resume(retryKept = false) }
 
         assertEquals(listOf(RelayNotice.captureDelayed), notifier.posted)
         assertEquals(RecordingInboxPolicy.MAX_ATTEMPTS + 3, scheduler.retries)
         assertEquals("a failure that is not a crash never uses up the recording", 1, inbox().count())
-        assertEquals(listOf(receipt, deleted), gateway.sent)
+        // The watch is told once too, so it stops waiting for an answer.
+        val deferred = Sent.Message(WATCH, WearDataLayer.CAPTURE_UPDATE_PATH, CaptureDeferred(ref))
+        assertEquals(listOf(receipt, deleted, deferred), gateway.sent)
 
         transcriber.transcript = "When is the budget review"
         displays(true)
-        pipeline().resume()
+        pipeline().resume(retryKept = false)
         assertEquals(1, asker.asked.size)
+        assertEquals(0, inbox().count())
+    }
+
+    @Test
+    fun a_kept_recording_waits_for_a_retry_rather_than_run_again_whenever_the_relay_wakes() = runTest {
+        transcriber.transcript = null
+        val pipeline = pipeline()
+        pipeline.onItem(item(metadata(route = CaptureRoute.NOTE)))
+        assertEquals(1, transcriber.heard.size)
+
+        // What a nudge from the watch, or any other event, makes the relay do, and the
+        // same DataItem arriving again.
+        repeat(3) { pipeline.resume(retryKept = false) }
+        pipeline.onItem(item(metadata(route = CaptureRoute.NOTE)))
+        assertEquals("not transcribed again for every event", 1, transcriber.heard.size)
+
+        transcriber.transcript = "Remember the blue folder"
+        pipeline.resume(retryKept = true)
+        assertEquals(2, transcriber.heard.size)
+        assertEquals(1, notes.saved.size)
         assertEquals(0, inbox().count())
     }
 
@@ -323,7 +346,7 @@ class RecordingPipelineTest {
         assertEquals(listOf(RelayNotice.captureDelayed), notifier.posted)
 
         notes.outcome = NoteOutcome.REJECTED
-        pipeline().resume()
+        pipeline().resume(retryKept = false)
 
         assertEquals(0, inbox().count())
         assertEquals(listOf(RelayNotice.captureDelayed, RelayNotice.voiceNoteFailed), notifier.posted)
@@ -337,7 +360,7 @@ class RecordingPipelineTest {
 
         now = CAPTURED_AT + OutboxPolicy.RETENTION.inWholeMilliseconds + 1
         transcriber.transcript = "Remember the blue folder"
-        pipeline().resume()
+        pipeline().resume(retryKept = false)
 
         assertEquals(listOf(RelayNotice.captureDelayed, RelayNotice.captureExpired), notifier.posted)
         assertEquals(0, inbox().count())
@@ -354,7 +377,7 @@ class RecordingPipelineTest {
         inbox.save(owned)
 
         // The next process finds it.
-        pipeline().resume()
+        pipeline().resume(retryKept = false)
 
         assertTrue(asker.asked.isEmpty())
         assertEquals(listOf(RelayNotice.askInterrupted), notifier.posted)
@@ -370,7 +393,7 @@ class RecordingPipelineTest {
         owned.state = owned.state.copy(attempts = RecordingInboxPolicy.MAX_ATTEMPTS)
         inbox.save(owned)
 
-        pipeline().resume()
+        pipeline().resume(retryKept = false)
 
         assertEquals(listOf(RelayNotice.voiceNoteFailed), notifier.posted)
         assertTrue(notes.saved.isEmpty())

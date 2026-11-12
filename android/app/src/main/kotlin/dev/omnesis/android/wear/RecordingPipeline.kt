@@ -5,6 +5,7 @@ package dev.omnesis.android.wear
 
 import dev.omnesis.android.wearprotocol.AskOutcome
 import dev.omnesis.android.wearprotocol.CaptureAnswer
+import dev.omnesis.android.wearprotocol.CaptureDeferred
 import dev.omnesis.android.wearprotocol.CaptureRoute
 import dev.omnesis.android.wearprotocol.CaptureRouteUpdate
 import dev.omnesis.android.wearprotocol.DisplayedReceipt
@@ -35,7 +36,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   announce it.
  *
  * A step that fails leaves the recording in the inbox with what it had got to,
- * to be run again later, and tells the person once. Three things are never
+ * to be run again later, and the first time tells the person, and a watch
+ * that may still be waiting on it to stop. Three things are never
  * retried: a recording a week old is removed with a notice, a note the gateway
  * refuses for good is reported, and a question whose hand-off the process did
  * not survive is reported instead of asked again, since it may have been
@@ -89,6 +91,11 @@ class RecordingPipeline(
             RecordingInbox.Admission.Failed -> Unit
             // An earlier delivery of the same item is being processed; the phone owns the audio.
             RecordingInbox.Admission.Busy -> confirm(item.sourceNodeId, metadata.ref)
+            // An earlier delivery was processed and kept for retry; this copy has nothing to add.
+            RecordingInbox.Admission.Kept -> {
+                confirm(item.sourceNodeId, metadata.ref)
+                attempt { gateway.deleteItem(item.path, item.sourceNodeId) }
+            }
             is RecordingInbox.Admission.Owned -> {
                 confirm(item.sourceNodeId, metadata.ref)
                 attempt { gateway.deleteItem(item.path, item.sourceNodeId) }
@@ -97,9 +104,16 @@ class RecordingPipeline(
         }
     }
 
-    /** Processes every recording an earlier run left in the inbox. */
-    suspend fun resume() {
-        inbox.claimLeftovers().forEach { process(it) }
+    /**
+     * Processes the recordings an earlier process left in the inbox, and with
+     * [retryKept] those this process kept after a step failed. The second is
+     * for when the failure may have passed: the retry job, a new process, the
+     * person asking. Anything else that wakes the relay leaves them be, so a
+     * recording that cannot be processed is not transcribed again for every
+     * message the watch sends.
+     */
+    suspend fun resume(retryKept: Boolean) {
+        inbox.claimLeftovers(includingKept = retryKept).forEach { process(it) }
     }
 
     /** How many recordings are kept for a later run. */
@@ -155,7 +169,11 @@ class RecordingPipeline(
             item.state = item.state.copy(attempts = unfinished, failureNotified = true)
             inbox.save(item)
             inbox.release(item)
-            if (tell) notifier.post(RelayNotice.captureDelayed)
+            if (tell) {
+                notifier.post(RelayNotice.captureDelayed)
+                // A watch still showing this recording stops waiting for its route or answer.
+                if (recording.route != null) deferred(item, recording)
+            }
             retry.retryLater()
         }
     }
@@ -206,6 +224,7 @@ class RecordingPipeline(
             recording.captureTime,
             item.key,
             audio = inbox.audioFile(item.key).takeIf { withAudio },
+            locale = recording.locale.takeIf { withAudio },
         )
         when (outcome) {
             NoteOutcome.SAVED, NoteOutcome.QUEUED_ON_PHONE -> Unit
@@ -257,6 +276,12 @@ class RecordingPipeline(
     private suspend fun resolved(item: RecordingInbox.Item, recording: VoiceRecording, route: CaptureRoute) {
         val node = watchNode(item) ?: return
         attempt { gateway.sendMessage(node, WearDataLayer.CAPTURE_UPDATE_PATH, CaptureRouteUpdate(recording.ref, route)) }
+    }
+
+    /** Tells the watch the recording is kept to be finished later. Best effort. */
+    private suspend fun deferred(item: RecordingInbox.Item, recording: VoiceRecording) {
+        val node = watchNode(item) ?: return
+        attempt { gateway.sendMessage(node, WearDataLayer.CAPTURE_UPDATE_PATH, CaptureDeferred(recording.ref)) }
     }
 
     /** The watch the recording came from, or the watch in reach when that was not recorded. */

@@ -31,8 +31,11 @@ import kotlin.coroutines.resume
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -89,6 +92,9 @@ class OnDeviceFileTranscriber internal constructor(
         main = Dispatchers.Main.immediate,
     )
 
+    /** Where a recording is written into the recognizer's pipe, apart from the call that waits on the result. */
+    private val feeds = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** Why this phone can or cannot transcribe a recording itself. */
     enum class Availability {
         READY,
@@ -113,22 +119,27 @@ class OnDeviceFileTranscriber internal constructor(
         return decoded.use { withContext(main) { recognize(decoded, language) } }
     }
 
-    private suspend fun recognize(audio: DecodedAudio, language: String): String? = coroutineScope {
+    private suspend fun recognize(audio: DecodedAudio, language: String): String? {
         val recognizer = recognizers.onDevice()
-        val pipe = ParcelFileDescriptor.createPipe()
-        val source = pipe[0]
-        val sink = ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])
+        var source: ParcelFileDescriptor? = null
+        var feed: Job? = null
         val heard = CompletableDeferred<String?>()
-        val feed = launch(Dispatchers.IO) {
-            try {
-                sink.use(audio::writeTo)
-            } catch (_: IOException) {
-                // The recognizer stopped reading before the recording ended.
-            } catch (_: IllegalStateException) {
-                heard.complete(null)
+        return try {
+            val pipe = ParcelFileDescriptor.createPipe()
+            source = pipe[0]
+            val sink = ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])
+            // Not a child of this call. A write into a full pipe cannot be cancelled, so a
+            // recognizer that stops reading without closing its end would otherwise keep
+            // this call, and the relay waiting on it, from ever returning.
+            feed = feeds.launch {
+                try {
+                    sink.use(audio::writeTo)
+                } catch (_: IOException) {
+                    // The recognizer stopped reading before the recording ended.
+                } catch (_: IllegalStateException) {
+                    heard.complete(null)
+                }
             }
-        }
-        try {
             val installed = withTimeoutOrNull(SUPPORT_TIMEOUT) {
                 suspendCancellableCoroutine<List<String>?> { continuation ->
                     recognizer.support(intent(language, emptyList(), null, audio)) { languages ->
@@ -144,8 +155,13 @@ class OnDeviceFileTranscriber internal constructor(
         } finally {
             recognizer.cancel()
             recognizer.destroy()
-            runCatching { source.close() }
-            feed.cancel()
+            runCatching { source?.close() }
+            feed?.let { writing ->
+                writing.cancel()
+                // With the pipe closed the feed ends at its next write. The caller closes the
+                // decoder the feed reads from, so it is given a moment to get there first.
+                withContext(NonCancellable) { withTimeoutOrNull(FEED_STOP_TIMEOUT) { writing.join() } }
+            }
         }
     }
 
@@ -193,6 +209,9 @@ class OnDeviceFileTranscriber internal constructor(
         val TIMEOUT: Duration = 90.seconds
 
         private val SUPPORT_TIMEOUT: Duration = 5.seconds
+
+        /** How long a finished transcription waits for its audio feed to notice the pipe closed. */
+        private val FEED_STOP_TIMEOUT: Duration = 2.seconds
 
         /** A recording is dictation whatever it turns out to be for. */
         private const val VOCABULARY_PURPOSE = "dictation"
@@ -248,7 +267,8 @@ internal object MediaCodecAudioDecoder : AudioDecoder {
         } catch (_: IOException) {
             extractor.release()
             null
-        } catch (_: IllegalArgumentException) {
+        } catch (_: RuntimeException) {
+            // A source the extractor rejects, or a track format without the fields decoding needs.
             extractor.release()
             null
         }

@@ -64,11 +64,17 @@ class RecordingInbox(
         /** Another owner in this process is already working on it. */
         data object Busy : Admission
 
+        /** A run in this process kept it for a retry, which is what processes it next. */
+        data object Kept : Admission
+
         /** The audio could not be copied; the phone does not own the recording. */
         data object Failed : Admission
     }
 
     private val owned = mutableSetOf<String>()
+
+    /** Recordings a run in this process kept for later. Guarded by [owned]. */
+    private val kept = mutableSetOf<String>()
     private val receipts = File(directory, "receipts")
 
     fun audioFile(key: String): File = File(directory, "$key.${RecordingFormat.FILE_EXTENSION}")
@@ -85,6 +91,7 @@ class RecordingInbox(
         sourceNodeId: String?,
         copyAudio: suspend (File) -> Boolean,
     ): Admission {
+        if (synchronized(owned) { key in kept }) return Admission.Kept
         if (!own(key)) return Admission.Busy
         load(key)?.let { return Admission.Owned(it) }
         val item = Item(key, State(metadata, sourceNodeId))
@@ -104,10 +111,14 @@ class RecordingInbox(
     }
 
     /**
-     * Claims the recordings no owner in this process holds. A state file
-     * without its audio, or audio without its state file, is deleted.
+     * Claims the recordings no owner in this process holds: those an earlier
+     * process left, and with [includingKept] those a run in this process
+     * kept for later ([release]), which are only worth running again when
+     * something may have changed. A state file without its audio, or audio
+     * without its state file, is deleted.
      */
-    fun claimLeftovers(): List<Item> = keysOnDisk().mapNotNull { key ->
+    fun claimLeftovers(includingKept: Boolean): List<Item> = keysOnDisk().mapNotNull { key ->
+        if (!includingKept && synchronized(owned) { key in kept }) return@mapNotNull null
         if (!own(key)) return@mapNotNull null
         load(key) ?: run {
             delete(key)
@@ -137,7 +148,10 @@ class RecordingInbox(
 
     /** Leaves a kept recording for a later run. */
     fun release(item: Item) {
-        synchronized(owned) { owned.remove(item.key) }
+        synchronized(owned) {
+            owned.remove(item.key)
+            kept.add(item.key)
+        }
     }
 
     /** Whether this phone already finished with the recording [key] names. */
@@ -161,7 +175,10 @@ class RecordingInbox(
         stateFile(key).delete()
         File(directory, "$key.partial").delete()
         File(directory, "$key.json.tmp").delete()
-        synchronized(owned) { owned.remove(key) }
+        synchronized(owned) {
+            owned.remove(key)
+            kept.remove(key)
+        }
     }
 
     private fun load(key: String): Item? {

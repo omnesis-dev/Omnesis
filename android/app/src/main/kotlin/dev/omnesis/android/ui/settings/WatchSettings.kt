@@ -5,6 +5,7 @@ package dev.omnesis.android.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.transport.dto.WatchCaptureStatusDto
@@ -15,6 +16,7 @@ import dev.omnesis.android.wear.WearRelay
 import dev.omnesis.android.wear.watchLink
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** What the Watch section shows. */
 data class WatchSettingsState(
@@ -107,7 +110,8 @@ internal fun watchSettingsState(
 class WatchSettingsViewModel @Inject constructor(
     private val session: SessionManager,
     private val gateway: WearGateway,
-    private val relay: WearRelay,
+    // Resolved only where the Data Layer exists, so a phone without one never builds the relay.
+    private val relay: Lazy<WearRelay>,
     private val transcriber: OnDeviceFileTranscriber,
 ) : ViewModel() {
     private val local = MutableStateFlow(WatchLocalState())
@@ -130,13 +134,11 @@ class WatchSettingsViewModel @Inject constructor(
     /** Re-reads what the phone knows about the watch; run when the screen comes back into view. */
     fun refresh() {
         viewModelScope.launch {
-            val link = if (gateway.available()) readLink() else null
+            val available = gateway.available()
+            val link = if (available) readLink() else null
+            val waiting = if (available) withContext(Dispatchers.IO) { relay.get().waitingRecordings() } else 0
             local.update {
-                it.copy(
-                    link = link,
-                    transcription = transcriber.availability(),
-                    waitingRecordings = relay.waitingRecordings(),
-                )
+                it.copy(link = link, transcription = transcriber.availability(), waitingRecordings = waiting)
             }
         }
     }
@@ -178,13 +180,13 @@ class WatchSettingsViewModel @Inject constructor(
     /** Android answered the microphone prompt the section raised. */
     fun onMicrophoneAnswered(granted: Boolean) {
         local.update { it.copy(microphoneDenied = !granted) }
-        if (granted) relay.retryRecordings()
+        if (granted) relay.get().retryRecordings()
         refresh()
     }
 
     /** Runs the recordings kept on this phone again. */
     fun retryRecordings() {
-        relay.retryRecordings()
+        relay.get().retryRecordings()
         refresh()
     }
 }

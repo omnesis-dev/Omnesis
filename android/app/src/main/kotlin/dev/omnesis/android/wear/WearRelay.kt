@@ -13,6 +13,8 @@ import dev.omnesis.android.wearprotocol.TextNote
 import dev.omnesis.android.wearprotocol.WearCodec
 import dev.omnesis.android.wearprotocol.WearDataLayer
 import dev.omnesis.android.wearprotocol.WearMessage
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** What the relay asks of the system's scheduler. */
 interface RelayKeepAlive {
@@ -40,7 +43,7 @@ interface RelayKeepAlive {
  * the event. The Data Layer's listener service lives only as long as its
  * callbacks, while a question takes most of a minute: the work must not end
  * because the callback that started it returned. While anything is under way
- * [keepAlive] holds the process; [awaitIdle] is what it waits on.
+ * [keepAlive] holds the process; [awaitQuiet] is what it waits on.
  */
 class WearRelay(
     private val scope: CoroutineScope,
@@ -128,12 +131,16 @@ class WearRelay(
             .forEach { item -> attempt { recordings.onItem(item) } }
         attempt { gateway.items(WearDataLayer.QUEUED_PATH_PREFIX) }.orEmpty()
             .forEach { item -> attempt { queued.handle(item) } }
-        recordings.resume()
+        recordings.resume(retryKept = false)
     }
 
-    /** Runs the recordings kept for retry again, as the person asked from settings. */
+    /**
+     * Runs the recordings kept for retry again: the retry job's turn has
+     * come, the app's process has just started, or the person asked from
+     * settings.
+     */
     fun retryRecordings() {
-        work { recordings.resume() }
+        work { recordings.resume(retryKept = true) }
     }
 
     /** How many recordings are kept for a later run. */
@@ -147,6 +154,20 @@ class WearRelay(
     /** Suspends until nothing the relay started is still running. */
     suspend fun awaitIdle() {
         inFlight.first { it == 0 }
+    }
+
+    /**
+     * Suspends until the relay is idle and has stayed idle for [IDLE_LINGER].
+     * What holds the process waits on this, not on [awaitIdle]: a watch's
+     * message is often followed a moment later by the DataItem it announced,
+     * and a hold released in between would not be taken again in time.
+     */
+    suspend fun awaitQuiet() {
+        while (true) {
+            awaitIdle()
+            val busyAgain = withTimeoutOrNull(IDLE_LINGER) { inFlight.first { it != 0 } } != null
+            if (!busyAgain) return
+        }
     }
 
     /** The first sign of a watch is what arranges the daily gate refresh; a phone without one never has it. */
@@ -165,5 +186,10 @@ class WearRelay(
                 inFlight.update { it - 1 }
             }
         }
+    }
+
+    companion object {
+        /** How long the relay stays idle before whatever holds the process lets go. */
+        val IDLE_LINGER: Duration = 3.seconds
     }
 }

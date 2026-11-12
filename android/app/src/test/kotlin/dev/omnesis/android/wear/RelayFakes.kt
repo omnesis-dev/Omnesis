@@ -140,13 +140,28 @@ internal class FakeAsker(
 }
 
 /** One note the fake pipeline was handed. */
-internal data class SavedNote(val text: String, val captureTime: NoteCaptureTime, val ref: String, val audio: ByteArray?)
+internal data class SavedNote(
+    val text: String,
+    val captureTime: NoteCaptureTime,
+    val ref: String,
+    val audio: ByteArray?,
+    val locale: String? = null,
+)
 
+/** Keeps every note it is handed and answers [outcome]. [gate] holds a save open until completed. */
 internal class FakeNotes(var outcome: NoteOutcome = NoteOutcome.SAVED) : WatchNoteSaver {
     val saved = mutableListOf<SavedNote>()
+    var gate: CompletableDeferred<Unit>? = null
 
-    override suspend fun save(text: String, captureTime: NoteCaptureTime, ref: String, audio: File?): NoteOutcome {
-        saved += SavedNote(text, captureTime, ref, audio?.readBytes())
+    override suspend fun save(
+        text: String,
+        captureTime: NoteCaptureTime,
+        ref: String,
+        audio: File?,
+        locale: String?,
+    ): NoteOutcome {
+        saved += SavedNote(text, captureTime, ref, audio?.readBytes(), locale)
+        gate?.await()
         return outcome
     }
 }
@@ -186,11 +201,14 @@ internal class FakeBackend(
     }
 }
 
+/** Hears [transcript] in every recording. [gate] holds a transcription open until completed. */
 internal class FakeTranscriber(var transcript: String? = "Remember the blue folder") : CaptureTranscriber {
     val heard = mutableListOf<String?>()
+    var gate: CompletableDeferred<Unit>? = null
 
     override suspend fun transcribe(audio: File, locale: String?): String? {
         heard += locale
+        gate?.await()
         return transcript
     }
 }
@@ -231,14 +249,15 @@ internal class RelayHarness(scope: CoroutineScope, directory: File) {
     var knowledge = GateKnowledge(paired = true, status = RelayGatewayStatus(4_000_000, decisionGate = true))
     private val clock = { CAPTURED_AT + 5_000 }
     private val handled = HandledRefs(store)
+    private val textNotes = TextNoteRelay(notes, handled, notifier)
 
     val relay = WearRelay(
         scope = scope,
         gateway = gateway,
         gate = GatePublisher(gateway, store, clock),
         asks = TextAskRelay(gateway, asker, handled),
-        notes = TextNoteRelay(notes, handled),
-        queued = QueuedRelayHandler(gateway, asker, notes, handled, notifier, clock),
+        notes = textNotes,
+        queued = QueuedRelayHandler(gateway, asker, textNotes, handled, notifier, clock),
         recordings = RecordingPipeline(
             RecordingInbox(File(directory, "inbox"), clock),
             gateway, backend, FakeTranscriber(), notes, asker, notifier, scheduler, clock,

@@ -12,6 +12,7 @@ import dev.omnesis.android.wearprotocol.AskRequest
 import dev.omnesis.android.wearprotocol.AskResult
 import dev.omnesis.android.wearprotocol.LiveAskLedger
 import dev.omnesis.android.wearprotocol.NoteAck
+import dev.omnesis.android.wearprotocol.NoteCaptureTime
 import dev.omnesis.android.wearprotocol.NoteOutcome
 import dev.omnesis.android.wearprotocol.QueuedRelay
 import dev.omnesis.android.wearprotocol.RelayInbox
@@ -133,18 +134,40 @@ class TextAskRelay(
     }
 }
 
-/** Saves a note the watch dictated as text and says what became of it. */
+/**
+ * Saves a note the watch dictated as text and says what became of it. The
+ * watch releases a note on any acknowledgement, having already told the
+ * person it was sent; so a note that was not kept is reported here, on the
+ * phone.
+ */
 class TextNoteRelay(
     private val notes: WatchNoteSaver,
     private val handled: HandledRefs,
+    private val notifier: RelayNotifier,
 ) {
     suspend fun onRequest(note: TextNote): NoteAck {
         val text = note.trimmedText
         val captureTime = note.captureTime
         if (text == null || captureTime == null) return NoteAck.of(NoteOutcome.RELAY_FAILED, note.ref)
         // An earlier copy is already being saved: say it reached the phone rather than save it twice.
-        if (!handled.claim(note.ref)) return NoteAck.of(NoteOutcome.REACHED_PHONE, note.ref)
-        return NoteAck.of(notes.save(text, captureTime, note.ref, audio = null), note.ref)
+        if (!handled.claim(note.ref, durable = false)) return NoteAck.of(NoteOutcome.REACHED_PHONE, note.ref)
+        return NoteAck.of(save(text, captureTime, note.ref), note.ref)
+    }
+
+    /**
+     * Saves a note whose ref the caller has claimed, telling the person when
+     * it could not be kept. The claim is written down only once the save has
+     * returned, so a process that dies before then saves the note from its
+     * next copy.
+     */
+    suspend fun save(text: String, captureTime: NoteCaptureTime, ref: String): NoteOutcome {
+        val outcome = attempt { notes.save(text, captureTime, ref, audio = null, locale = null) }
+            ?: NoteOutcome.CAPTURE_FAILED
+        handled.settle(ref)
+        if (outcome == NoteOutcome.REJECTED || outcome == NoteOutcome.CAPTURE_FAILED) {
+            notifier.post(RelayNotice.textNoteFailed)
+        }
+        return outcome
     }
 }
 
@@ -159,7 +182,7 @@ class TextNoteRelay(
 class QueuedRelayHandler(
     private val gateway: WearGateway,
     private val asker: WatchAsker,
-    private val notes: WatchNoteSaver,
+    private val notes: TextNoteRelay,
     private val handled: HandledRefs,
     private val notifier: RelayNotifier,
     private val now: () -> Long,
@@ -169,7 +192,7 @@ class QueuedRelayHandler(
         val action = queued?.let { handled.route(it, now()) }
         when (action) {
             is RelayInbox.Action.SaveNote -> {
-                val outcome = notes.save(action.text, action.captureTime, action.ref, audio = null)
+                val outcome = notes.save(action.text, action.captureTime, action.ref)
                 acknowledge(item, NoteAck.of(outcome, action.ref))
             }
             is RelayInbox.Action.Ask -> {
@@ -193,9 +216,13 @@ class QueuedRelayHandler(
         return action
     }
 
-    /** Tells the watch its outbox may release the note, when the watch is in reach to hear it. */
+    /**
+     * Tells the watch its outbox may release the note. A watch out of reach
+     * misses it, hands the note over again when it next can, and is told then
+     * that it already arrived.
+     */
     private suspend fun acknowledge(item: WearItem, ack: NoteAck) {
         val node = item.sourceNodeId ?: return
-        attempt { gateway.sendMessage(node, WearDataLayer.NOTE_PATH, ack) }
+        attempt { gateway.sendMessage(node, WearDataLayer.NOTE_ACK_PATH, ack) }
     }
 }

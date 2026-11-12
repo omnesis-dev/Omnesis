@@ -166,7 +166,8 @@ class TextAskRelayTest {
 class TextNoteRelayTest {
     private val notes = FakeNotes()
     private val store = FakeStateStore()
-    private val relay = TextNoteRelay(notes, HandledRefs(store))
+    private val notifier = FakeNotifier()
+    private val relay = TextNoteRelay(notes, HandledRefs(store), notifier)
     private fun note(text: String = "Buy oat milk", ref: String = "ref-1") = TextNote.of(text, CAPTURE_TIME, ref)
 
     @Test
@@ -179,6 +180,7 @@ class TextNoteRelayTest {
     fun the_ack_says_what_the_phone_did() = runTest {
         notes.outcome = NoteOutcome.QUEUED_ON_PHONE
         assertEquals(NoteAck("queuedOnPhone", "ref-1"), relay.onRequest(note(ref = "ref-1")))
+        assertTrue("a note that was kept needs no notice", notifier.posted.isEmpty())
         notes.outcome = NoteOutcome.REJECTED
         assertEquals(NoteAck("rejected", "ref-2"), relay.onRequest(note(ref = "ref-2")))
         notes.outcome = NoteOutcome.CAPTURE_FAILED
@@ -186,10 +188,38 @@ class TextNoteRelayTest {
     }
 
     @Test
+    fun a_note_that_was_not_kept_is_reported_on_the_phone() = runTest {
+        // The watch releases the note on any acknowledgement, having said it was sent.
+        notes.outcome = NoteOutcome.REJECTED
+        relay.onRequest(note(ref = "ref-1"))
+        notes.outcome = NoteOutcome.CAPTURE_FAILED
+        relay.onRequest(note(ref = "ref-2"))
+        assertEquals(listOf(RelayNotice.textNoteFailed, RelayNotice.textNoteFailed), notifier.posted)
+    }
+
+    @Test
     fun a_second_copy_reached_the_phone_and_is_not_saved_twice() = runTest {
         relay.onRequest(note())
         assertEquals(NoteAck("reachedPhone", "ref-1"), relay.onRequest(note()))
         assertEquals(1, notes.saved.size)
+    }
+
+    @Test
+    fun a_notes_ref_is_written_down_only_once_it_is_saved() = runTest {
+        notes.gate = CompletableDeferred()
+        val saving = async { relay.onRequest(note()) }
+        runCurrent()
+        // Mid-save, a copy met by this process is a duplicate, but nothing is on disk yet:
+        // a process that died here would save the note from its next copy, not acknowledge
+        // one it never kept.
+        assertEquals(NoteAck("reachedPhone", "ref-1"), relay.onRequest(note()))
+        assertTrue(store.refs.isEmpty())
+        assertTrue(HandledRefs(store).claim("ref-1", durable = false))
+
+        notes.gate?.complete(Unit)
+        assertEquals(NoteAck("saved", "ref-1"), saving.await())
+        assertEquals(listOf("ref-1"), store.refs)
+        assertFalse(HandledRefs(store).claim("ref-1", durable = false))
     }
 
     @Test
@@ -209,7 +239,10 @@ class QueuedRelayHandlerTest {
     private val notifier = FakeNotifier()
     private val store = FakeStateStore()
     private var now = CAPTURED_AT + 60_000
-    private fun handler() = QueuedRelayHandler(gateway, asker, notes, HandledRefs(store), notifier) { now }
+    private fun handler(): QueuedRelayHandler {
+        val handled = HandledRefs(store)
+        return QueuedRelayHandler(gateway, asker, TextNoteRelay(notes, handled, notifier), handled, notifier) { now }
+    }
 
     private fun item(queued: QueuedRelay, ref: String = "ref-1") =
         WearItem(WearDataLayer.queuedPath(ref), WATCH, queued)
@@ -310,7 +343,7 @@ class QueuedRelayHandlerTest {
 
         assertEquals(listOf(SavedNote("Buy oat milk", CAPTURE_TIME, "ref-1", null)), notes.saved)
         assertEquals(
-            listOf(Sent.Message(WATCH, WearDataLayer.NOTE_PATH, NoteAck("saved", "ref-1")), deleted),
+            listOf(Sent.Message(WATCH, WearDataLayer.NOTE_ACK_PATH, NoteAck("saved", "ref-1")), deleted),
             gateway.sent,
         )
     }
@@ -318,13 +351,13 @@ class QueuedRelayHandlerTest {
     @Test
     fun a_queued_copy_of_a_note_saved_live_only_releases_the_watch() = runTest {
         val note = TextNote.of("Buy oat milk", CAPTURE_TIME, "ref-1")
-        TextNoteRelay(notes, HandledRefs(store)).onRequest(note)
+        TextNoteRelay(notes, HandledRefs(store), notifier).onRequest(note)
 
         handler().handle(item(QueuedRelay(note, queuedAt = CAPTURED_AT)))
 
         assertEquals(1, notes.saved.size)
         assertEquals(
-            listOf(Sent.Message(WATCH, WearDataLayer.NOTE_PATH, NoteAck("reachedPhone", "ref-1")), deleted),
+            listOf(Sent.Message(WATCH, WearDataLayer.NOTE_ACK_PATH, NoteAck("reachedPhone", "ref-1")), deleted),
             gateway.sent,
         )
     }

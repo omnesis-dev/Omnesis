@@ -33,7 +33,7 @@ class RecordingInboxTest {
         item.state = item.state.copy(transcript = "When is the budget review", route = CaptureRoute.ASK)
         assertTrue(first.save(item))
 
-        val claimed = inbox().claimLeftovers().single()
+        val claimed = inbox().claimLeftovers(includingKept = false).single()
 
         assertEquals(key, claimed.key)
         assertEquals(item.state, claimed.state)
@@ -47,10 +47,21 @@ class RecordingInboxTest {
         val owned = (inbox.admit(key, metadata, WATCH, copy) as RecordingInbox.Admission.Owned).item
 
         assertEquals(RecordingInbox.Admission.Busy, inbox.admit(key, metadata, WATCH, copy))
-        assertTrue(inbox.claimLeftovers().isEmpty())
+        assertTrue(inbox.claimLeftovers(includingKept = true).isEmpty())
 
+        // Released, it is kept for a retry: nothing else in this process picks it up again.
         inbox.release(owned)
-        assertEquals(key, inbox.claimLeftovers().single().key)
+        assertTrue(inbox.claimLeftovers(includingKept = false).isEmpty())
+        assertEquals(RecordingInbox.Admission.Kept, inbox.admit(key, metadata, WATCH, copy))
+        assertEquals(key, inbox.claimLeftovers(includingKept = true).single().key)
+    }
+
+    @Test
+    fun a_recording_one_process_kept_is_an_ordinary_leftover_to_the_next() = runTest {
+        val first = inbox()
+        first.release((first.admit(key, metadata, WATCH, copy) as RecordingInbox.Admission.Owned).item)
+
+        assertEquals(key, inbox().claimLeftovers(includingKept = false).single().key)
     }
 
     @Test
@@ -68,7 +79,7 @@ class RecordingInboxTest {
         File(directory, "$key.m4a").writeBytes(byteArrayOf(1))
         File(directory, "0b9f6c52-3d18-4a7e-8f21-6e5d4c3b2a19.json").writeText("{not json")
 
-        assertTrue(inbox().claimLeftovers().isEmpty())
+        assertTrue(inbox().claimLeftovers(includingKept = false).isEmpty())
         assertEquals(0, inbox().count())
     }
 

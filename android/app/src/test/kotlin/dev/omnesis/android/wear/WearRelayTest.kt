@@ -24,6 +24,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -83,6 +84,31 @@ class WearRelayTest {
         assertEquals(AskOutcome.Answered("Tuesday at ten"), result.toOutcome())
         assertEquals("ref-1", result.ref)
         idle.await()
+    }
+
+    @Test
+    fun what_holds_the_process_outlasts_the_gap_between_a_nudge_and_the_item_it_announced() = runTest {
+        val relay = relay()
+        relay.onMessage(WearDataLayer.VOICE_NUDGE_PATH, WearCodec.encode(VoiceNudge))
+        val quiet = async { relay.awaitQuiet() }
+        runCurrent()
+        assertFalse("idle, but not for long enough to let go", quiet.isCompleted)
+
+        // The DataItem lands a moment later and its work begins.
+        advanceTimeBy(WearRelay.IDLE_LINGER.inWholeMilliseconds - 1)
+        asker.gate = CompletableDeferred()
+        val reply = async { relay.onRequest(WATCH, WearDataLayer.ASK_PATH, WearCodec.encode(AskRequest("Question", "ref-1"))) }
+        advanceTimeBy(WearRelay.IDLE_LINGER.inWholeMilliseconds * 2)
+        assertFalse("held for as long as the work runs", quiet.isCompleted)
+
+        asker.gate?.complete(Unit)
+        reply.await()
+        advanceTimeBy(WearRelay.IDLE_LINGER.inWholeMilliseconds - 1)
+        runCurrent()
+        assertFalse(quiet.isCompleted)
+        advanceTimeBy(2)
+        runCurrent()
+        assertTrue(quiet.isCompleted)
     }
 
     @Test

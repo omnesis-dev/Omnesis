@@ -9,6 +9,7 @@ import dev.omnesis.android.assistant.VoiceAskOutcome
 import dev.omnesis.android.assistant.VoiceAskRun
 import dev.omnesis.android.assistant.VoiceAskRunner
 import dev.omnesis.android.notes.CaptureOutcome
+import dev.omnesis.android.notes.CaptureZone
 import dev.omnesis.android.notes.NotesRepository
 import dev.omnesis.android.notes.RelayedCapture
 import dev.omnesis.android.notes.VoiceNoteAudio
@@ -75,10 +76,18 @@ class RepositoryWatchNoteSaver(
     private val notes: NotesRepository,
     private val files: VoiceNoteFiles,
 ) : WatchNoteSaver {
-    override suspend fun save(text: String, captureTime: NoteCaptureTime, ref: String, audio: File?): NoteOutcome {
+    override suspend fun save(
+        text: String,
+        captureTime: NoteCaptureTime,
+        ref: String,
+        audio: File?,
+        locale: String?,
+    ): NoteOutcome {
         val relayed = RelayedCapture(
             noteId = RecordingInbox.canonicalRef(ref) ?: UUID.randomUUID().toString(),
             capturedAt = Instant.ofEpochMilli(captureTime.capturedAt),
+            zone = CaptureZone.relayed(captureTime.timeZoneId, captureTime.utcOffsetSeconds),
+            language = locale?.takeIf { it.isNotBlank() },
         )
         return try {
             // The note pipeline consumes the audio it is given, on refusal too. It gets a copy,
@@ -86,7 +95,12 @@ class RepositoryWatchNoteSaver(
             val voice = audio?.let { source ->
                 withContext(Dispatchers.IO) {
                     val copy = files.newRecording(RecordingFormat.FILE_EXTENSION)
-                    source.copyTo(copy, overwrite = true)
+                    try {
+                        source.copyTo(copy, overwrite = true)
+                    } catch (failure: IOException) {
+                        copy.delete()
+                        throw failure
+                    }
                     VoiceNoteAudio(copy, RecordingFormat.CONTENT_TYPE)
                 }
             }

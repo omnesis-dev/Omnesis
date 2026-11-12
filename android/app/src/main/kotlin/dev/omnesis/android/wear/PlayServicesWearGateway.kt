@@ -88,17 +88,26 @@ class PlayServicesWearGateway(private val context: Context) : WearGateway {
 
     override suspend fun connectedNodes(): List<WearNode> = nodes.connectedNodes.await().map(::wearNode)
 
-    /** [item] as the relay reads it. [item] must be frozen: its audio is copied after the event that carried it. */
+    /**
+     * [item] as the relay reads it. [item] must be frozen: its audio is copied
+     * after the event that carried it. An item whose data cannot be read as a
+     * DataMap comes back with no payload and no audio, which the relay treats
+     * as something it can never process; one bad item must not end the
+     * callback or the listing that carried it.
+     */
     fun wearItem(item: DataItem): WearItem {
-        val map = DataMapItem.fromDataItem(item).dataMap
+        val path = item.uri.path.orEmpty()
+        val source = item.uri.host?.takeIf { it.isNotEmpty() && it != ANY_NODE }
+        val map = try {
+            DataMapItem.fromDataItem(item).dataMap
+        } catch (_: IllegalStateException) {
+            return WearItem(path, source, payload = null)
+        } catch (_: IllegalArgumentException) {
+            return WearItem(path, source, payload = null)
+        }
         val asset = map.getAsset(WearDataLayer.AUDIO_KEY)
         val copy: (suspend (File) -> Boolean)? = if (asset == null) null else { target -> copyAsset(asset, target) }
-        return WearItem(
-            path = item.uri.path.orEmpty(),
-            sourceNodeId = item.uri.host?.takeIf { it.isNotEmpty() && it != ANY_NODE },
-            payload = map.getByteArray(WearDataLayer.PAYLOAD_KEY)?.let(WearCodec::decode),
-            audio = copy,
-        )
+        return WearItem(path, source, map.getByteArray(WearDataLayer.PAYLOAD_KEY)?.let(WearCodec::decode), copy)
     }
 
     private suspend fun copyAsset(asset: Asset, target: File): Boolean {

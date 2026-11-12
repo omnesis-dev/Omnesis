@@ -33,6 +33,12 @@ data class RelayNotice(
             body = "The note you recorded on your watch couldn't be saved. Record it again.",
         )
 
+        /** A note typed or dictated as text could not be saved. */
+        val textNoteFailed = RelayNotice(
+            title = "Couldn't save your watch note",
+            body = "The note you sent from your watch couldn't be saved. Write it again.",
+        )
+
         /** A queued question arrived too late to be worth asking. */
         val questionExpired = RelayNotice(
             title = "Your watch question wasn't asked",

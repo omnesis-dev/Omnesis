@@ -91,14 +91,15 @@ object WearRelayModule {
         val asker = RunnerWatchAsker(runner)
         val notes = RepositoryWatchNoteSaver(notesRepository, voiceNoteFiles)
         val notifier = SystemRelayNotifier(push)
+        val textNotes = TextNoteRelay(notes, handled, notifier)
         val scheduler = WorkManagerRelayScheduler(context)
         return WearRelay(
             scope = scope,
             gateway = gateway,
             gate = GatePublisher(gateway, store, clock),
             asks = TextAskRelay(gateway, asker, handled),
-            notes = TextNoteRelay(notes, handled),
-            queued = QueuedRelayHandler(gateway, asker, notes, handled, notifier, clock),
+            notes = textNotes,
+            queued = QueuedRelayHandler(gateway, asker, textNotes, handled, notifier, clock),
             recordings = RecordingPipeline(
                 // No-backup storage: the person's voice never goes to a cloud backup.
                 inbox = RecordingInbox(File(context.noBackupFilesDir, "watch-recordings"), clock),
