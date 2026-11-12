@@ -2082,6 +2082,7 @@ function tryStart<T>(what: string, build: () => T): T | null {
 const watchV2 = journal.ok
   ? tryStart("the watch journal", () =>
       startWatchV2({
+        active: () => labFeatureEnabled(db, "watches"),
         journalPath: journal.path,
         db,
         indexDb,
