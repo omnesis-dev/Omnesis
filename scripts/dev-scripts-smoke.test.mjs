@@ -1677,6 +1677,8 @@ describe("android.yml CI workflow structure (C20)", () => {
     // The unit-test lane runs too.
     expect(runs).toContain(":app:testPlayDebugUnitTest");
     expect(runs).toContain(":app:testFullDebugUnitTest");
+    // The plain Kotlin/JVM modules, which the build-wide testDebugUnitTest skips.
+    expect(runs).toContain(":core-wear-protocol:test");
     expect(runs).toContain(":app:verifyPlayReleasePolicy");
   });
 
@@ -3776,6 +3778,8 @@ describe("scripts/android-logic.sh emulator-less JVM logic lane guards (C11)", (
     expect(src).toMatch(/--build-cache --configuration-cache/);
     // Default scopes to the pure-JVM logic modules (no :app screenshot module).
     expect(src).toMatch(/:core-transport:testDebugUnitTest/);
+    // A plain Kotlin/JVM module has no per-variant test task.
+    expect(src).toMatch(/:core-wear-protocol:test(?!DebugUnitTest)/);
   });
 
   it("commits no operator-private default (no host alias / operator-home absolute path)", () => {

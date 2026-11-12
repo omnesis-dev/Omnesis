@@ -125,7 +125,7 @@ scripts/android-logic.sh --module :feature-health        # one module's testDebu
 scripts/android-logic.sh --tests dev.omnesis.android.transport.dto.DtoDecodeTest
 ```
 
-`scripts/android-logic.sh` mirrors `android-render.sh`'s bridge shape (env-host + path-guard + rsync-up) but runs `./gradlew <module>:testDebugUnitTest` — the plain-JVM unit lane, no AVD, no Robolectric Compose rasterisation. The default scopes to the modules whose tests are pure JVM logic (`:core-transport`, `:core-pairing`, `:core-designsystem`); the `:app` and `:feature-health` modules share a module with the slow Roborazzi screenshot tests, so narrow those with `--module` + `--tests` (e.g. `--module :feature-health --tests *HealthNormalizerTest`).
+`scripts/android-logic.sh` mirrors `android-render.sh`'s bridge shape (env-host + path-guard + rsync-up) but runs `./gradlew <module>:testDebugUnitTest` — the plain-JVM unit lane, no AVD, no Robolectric Compose rasterisation. The default scopes to the modules whose tests are pure JVM logic (`:core-transport`, `:core-pairing`, `:core-designsystem`, `:core-setup`, `:core-wear-protocol`). A plain Kotlin/JVM module such as `:core-wear-protocol` has a single `test` task instead of `testDebugUnitTest`; the script picks the right one, and the CI `android-jvm` lane names each such module because the build-wide `testDebugUnitTest` does not reach it; the `:app` and `:feature-health` modules share a module with the slow Roborazzi screenshot tests, so narrow those with `--module` + `--tests` (e.g. `--module :feature-health --tests *HealthNormalizerTest`).
 
 The scratch checkout is kept **warm**: the script rsyncs into a persistent dir (default `~/omnesis-android-logic` on the host, override with `OMNESIS_EPIC_MACOS_ANDROID_LOGIC_WORKTREE`) and **preserves the Gradle build cache** across runs (it excludes `.gradle` / `build` from the up-sync, so the host's caches survive) and opts into the **configuration cache** (`--configuration-cache`, a lane-local flag — `gradle.properties` keeps it off globally so the Roborazzi/CI lanes are unaffected). So a repeat run skips the configuration phase and most recompilation. Use this lane while iterating on logic; the Roborazzi lane to self-critique a UI change.
 
@@ -321,7 +321,10 @@ Modules: `:app` (Compose UI + ViewModels + Hilt root + nav), `:core-transport`
 (Retrofit/OkHttp clients, wire DTOs, `DeviceSocket` WS, `AgentEventSource` SSE,
 `LeafCertPinner`/`PinnedOkHttp`), `:core-pairing` (`PairingPayload`,
 `PairingService`, `SecureStore`), `:core-designsystem` (`OmnesisTheme`,
-`SourceCatalog`, atoms). MVVM + repository; Hilt DI; ViewModel + immutable
+`SourceCatalog`, atoms), `:core-wear-protocol` (the contract the Wear OS app
+and the phone app share for the watch relay: Data Layer paths, wire messages
+and the pure policies both ends apply; a plain Kotlin/JVM library with no
+Android dependency, ported from the iOS watch relay's shared files). MVVM + repository; Hilt DI; ViewModel + immutable
 `StateFlow<UiState>`; OkHttp + Retrofit + kotlinx.serialization; Material 3 +
 `ModalNavigationDrawer`. A `SessionManager` (the iOS `AppStore` analogue) rebuilds
 the transport clients on pair/unpair/url-change.

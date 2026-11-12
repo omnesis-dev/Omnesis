@@ -30,7 +30,7 @@
 #
 # Usage:
 #   scripts/android-logic.sh                       # the pure-logic JVM lane (core modules)
-#   scripts/android-logic.sh --module :feature-health   # one module's testDebugUnitTest
+#   scripts/android-logic.sh --module :feature-health   # one module's unit tests
 #   scripts/android-logic.sh --tests dev.omnesis.android.transport.dto.DtoDecodeTest
 #
 # Configuration (all optional except the host; generic defaults — nothing
@@ -57,7 +57,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # --- Arguments. ----------------------------------------------------------------
-# --module <m>       restrict to a single Gradle module's testDebugUnitTest.
+# --module <m>       restrict to a single Gradle module's unit-test task.
 # --tests <filter>   pass a --tests filter through to gradle.
 MODULE=""
 TESTS_FILTER=""
@@ -126,17 +126,27 @@ fi
 # --- Pick the Gradle tasks. ----------------------------------------------------
 # Default = the pure-logic JVM modules whose testDebugUnitTest needs NO emulator
 # and NO Robolectric Compose render: the transport decoders/clients, pairing,
-# the design-system markdown logic, and the phone setup flow engine. (The :app and :feature-health modules
+# the design-system markdown logic, the phone setup flow engine, and the watch
+# relay contract. (The :app and :feature-health modules
 # also have logic tests, but they share a module with the slow Roborazzi
 # screenshot lane — narrow to them with --module + --tests when needed.)
-if [[ -n "$MODULE" ]]; then
-  if [[ "$MODULE" == ":app" || "$MODULE" == "app" ]]; then
-    GRADLE_TASKS=":app:testPlayDebugUnitTest"
+# A plain Kotlin/JVM module (no Android plugin) has a single `test` task rather
+# than per-variant ones; it is recognised by the plugin its build script applies.
+unit_test_task() {
+  local module=":${1#:}"
+  local build_script="$ROOT/android/${module#:}/build.gradle.kts"
+  if [[ "$module" == ":app" ]]; then
+    echo ":app:testPlayDebugUnitTest"
+  elif [[ -f "$build_script" ]] && grep -q 'libs\.plugins\.kotlin\.jvm' "$build_script"; then
+    echo "$module:test"
   else
-    GRADLE_TASKS="$MODULE:testDebugUnitTest"
+    echo "$module:testDebugUnitTest"
   fi
+}
+if [[ -n "$MODULE" ]]; then
+  GRADLE_TASKS="$(unit_test_task "$MODULE")"
 else
-  GRADLE_TASKS=":core-transport:testDebugUnitTest :core-pairing:testDebugUnitTest :core-designsystem:testDebugUnitTest :core-setup:testDebugUnitTest"
+  GRADLE_TASKS=":core-transport:testDebugUnitTest :core-pairing:testDebugUnitTest :core-designsystem:testDebugUnitTest :core-setup:testDebugUnitTest :core-wear-protocol:test"
 fi
 GRADLE_EXTRA=""
 [[ -n "$TESTS_FILTER" ]] && GRADLE_EXTRA="--tests $TESTS_FILTER"
