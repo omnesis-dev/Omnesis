@@ -64,7 +64,7 @@ final class PreviewSnapshotTests: XCTestCase {
         )
         snapshot(
             NavigationStack {
-                LabView(snapshot: PreviewMocks.lab, error: URLError(.notConnectedToInternet), failedFeature: .brain, preview: true)
+                LabView(snapshot: PreviewMocks.lab, error: URLError(.notConnectedToInternet), failedFeature: "brain", preview: true)
             }.environment(AppStore.preview()), name: "omnesis-lab-save-failed"
         )
     }

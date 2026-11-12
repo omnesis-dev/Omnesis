@@ -19,7 +19,7 @@ It includes a Models.dev catalog notice, a DuckDB httpfs extension notice and se
 4. **Browser-extension libraries** — code bundled into the Chrome extension.
 5. **Docker client binaries** — the Docker CLI and its Compose plugin, copied
    into the published `omnesis-updater` image.
-6. **iOS runtime dependencies** — SwiftDraw's native SVG renderer.
+6. **Native runtime dependencies** — SwiftDraw and AndroidSVG renderers.
 7. **Runtime npm production dependencies** — the transitive closure of production
    (non-dev) npm packages pulled in by the published `@omnesis/*` packages.
 
@@ -359,13 +359,19 @@ image. They are redistributed unmodified; neither is present in the
 Both carry their own `LICENSE` and `NOTICE` upstream; a redistributor of the
 image should retain this attribution.
 
-## 6. iOS runtime dependency
+## 6. Native runtime dependencies
 
 The iOS app uses **SwiftDraw 0.29.0** to parse and rasterize provider SVG logos
 fetched through the gateway. SwiftDraw is licensed under **zlib**; Copyright
 (c) 2019 Simon Whitty. Omnesis does not alter its source. The complete upstream
 license and source are at
 [SwiftDraw 0.29.0](https://github.com/swhitty/SwiftDraw/blob/0.29.0/LICENSE.txt).
+
+The Android app uses **AndroidSVG 1.4** (`com.caverock:androidsvg-aar`) to
+rasterize the gateway's shared Omnesis Lab icons. It is licensed under
+**Apache-2.0** and is used without source changes. The complete upstream
+[license](https://github.com/BigBadaboom/androidsvg/blob/master/LICENSE)
+is available with the source.
 
 The Omnesis Demo iPhone app also uses **WebRTC M155**, distributed as the standalone
 **shiguredo-webrtc-build m155.8059.4.1** XCFramework. It contains WebRTC and

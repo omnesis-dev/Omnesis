@@ -42,8 +42,8 @@ final class AdminClientTests: XCTestCase {
         }
         let client = AdminClient(baseURL: base, token: "omn_example", session: session)
         let initial = try await client.getLab()
-        XCTAssertEqual(initial.features.first?.id, .tasks)
-        let updated = try await client.setLabFeature(.tasks, enabled: true)
+        XCTAssertEqual(initial.features.first?.id, "tasks")
+        let updated = try await client.setLabFeature("tasks", enabled: true)
         XCTAssertEqual(updated.features.first?.enabled, true)
         XCTAssertEqual(session.requests[0].httpMethod, "GET")
         XCTAssertEqual(session.requests[0].url?.path, "/admin/lab")

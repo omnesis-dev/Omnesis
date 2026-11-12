@@ -14,6 +14,15 @@ public struct LabFlags: Decodable, Sendable {
         self.tasks = tasks
         self.watches = watches
     }
+
+    private enum CodingKeys: String, CodingKey { case brain, tasks, watches }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        brain = try values.decodeIfPresent(Bool.self, forKey: .brain) ?? false
+        tasks = try values.decodeIfPresent(Bool.self, forKey: .tasks) ?? false
+        watches = try values.decodeIfPresent(Bool.self, forKey: .watches) ?? false
+    }
 }
 
 public struct LabSnapshot: Decodable, Sendable {
@@ -22,8 +31,7 @@ public struct LabSnapshot: Decodable, Sendable {
 }
 
 public struct LabFeature: Decodable, Identifiable, Sendable {
-    public enum FeatureID: String, Decodable, Sendable { case brain, tasks, watches }
-    public let id: FeatureID
+    public let id: String
     public let name: String
     public let description: String
     public let enabled: Bool

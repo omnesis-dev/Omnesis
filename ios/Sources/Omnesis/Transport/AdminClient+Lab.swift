@@ -9,10 +9,14 @@ extension AdminClient {
         return try decodeOrThrow(LabSnapshot.self, from: data)
     }
 
-    public func setLabFeature(_ id: LabFeature.FeatureID, enabled: Bool) async throws -> LabSnapshot {
+    public func setLabFeature(_ id: String, enabled: Bool) async throws -> LabSnapshot {
+        guard !id.isEmpty,
+              let encodedId = id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else {
+            throw GatewayClient.Error.invalidURL
+        }
         struct Body: Encodable { let enabled: Bool }
         let body = try JSONEncoder().encode(Body(enabled: enabled))
-        let (data, _) = try await dispatch(method: "PUT", path: "/admin/lab/\(id.rawValue)", body: body)
+        let (data, _) = try await dispatch(method: "PUT", path: "/admin/lab/\(encodedId)", body: body)
         return try decodeOrThrow(LabSnapshot.self, from: data)
     }
 }

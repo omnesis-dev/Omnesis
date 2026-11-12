@@ -10,11 +10,11 @@ struct LabView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var snapshot: LabSnapshot?
     @State private var error: Error?
-    @State private var saving: LabFeature.FeatureID?
-    @State private var failedFeature: LabFeature.FeatureID?
+    @State private var saving: String?
+    @State private var failedFeature: String?
     private let preview: Bool
 
-    init(snapshot: LabSnapshot? = nil, error: Error? = nil, failedFeature: LabFeature.FeatureID? = nil, preview: Bool = false) {
+    init(snapshot: LabSnapshot? = nil, error: Error? = nil, failedFeature: String? = nil, preview: Bool = false) {
         _snapshot = State(initialValue: snapshot)
         _error = State(initialValue: error)
         _failedFeature = State(initialValue: failedFeature)
@@ -81,7 +81,7 @@ struct LabView: View {
                 .labelsHidden()
                 .tint(Theme.accent)
                 .disabled(saving != nil)
-                .accessibilityIdentifier("lab-toggle-\(feature.id.rawValue)")
+                .accessibilityIdentifier("lab-toggle-\(feature.id)")
             }
             Text(feature.name).font(.title2.bold())
             Text(feature.description)
@@ -111,7 +111,7 @@ struct LabView: View {
         } catch { self.error = error }
     }
 
-    private func set(_ id: LabFeature.FeatureID, enabled: Bool) async {
+    private func set(_ id: String, enabled: Bool) async {
         guard !preview, let admin = store.admin, saving == nil else { return }
         saving = id
         error = nil
@@ -136,7 +136,7 @@ struct LabView: View {
 
 #Preview("Omnesis Lab · save failed") {
     NavigationStack {
-        LabView(snapshot: PreviewMocks.lab, error: URLError(.notConnectedToInternet), failedFeature: .brain, preview: true)
+        LabView(snapshot: PreviewMocks.lab, error: URLError(.notConnectedToInternet), failedFeature: "brain", preview: true)
     }.environment(AppStore.preview())
 }
 
