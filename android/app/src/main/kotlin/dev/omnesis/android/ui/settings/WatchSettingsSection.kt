@@ -169,7 +169,7 @@ private fun WatchLinkRow(link: WatchLink) {
             Icons.Outlined.Watch,
             c.warning,
             "Omnesis isn't on ${link.watchName}",
-            "Install Omnesis on the watch from the Play Store.",
+            "Install Omnesis on your watch.",
         )
         is WatchLink.Connected -> LinkRow(Icons.Outlined.CheckCircle, c.success, "Connected to ${link.watchName}", null)
     }
