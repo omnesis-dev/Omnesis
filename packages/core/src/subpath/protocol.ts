@@ -127,3 +127,6 @@ export type {
   AgentEventType,
   Citation,
 } from "../agent-protocol.js";
+
+export { connectionPathSchema, parseConnectionPath } from "../connection-path.js";
+export type { ConnectionPath } from "../connection-path.js";

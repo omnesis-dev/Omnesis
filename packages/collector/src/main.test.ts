@@ -32,6 +32,7 @@ import {
   resolveGatewayUrl,
   waitForGateway,
   withSelfPairRetries,
+  wsHeartbeatTimeoutMs,
 } from "./main.js";
 import { SourceConfigReconciler } from "./source-config-reconciler.js";
 import { createCommandDispatch } from "./ws-command-dispatch.js";
@@ -39,6 +40,8 @@ import type { RegisteredSource, SyncEngine } from "./sync-engine.js";
 
 const SAVED = {
   url: process.env.OMNESIS_GATEWAY_URL,
+  requestUrl: process.env.OMNESIS_GATEWAY_REQUEST_URL,
+  cloudRelay: process.env.OMNESIS_CLOUD_RELAY_ENABLED,
   disable: process.env.OMNESIS_MDNS_DISABLE,
 };
 
@@ -47,10 +50,16 @@ beforeEach(() => {
   localUrlMock.mockReset();
   localUrlMock.mockImplementation((url: string) => url);
   delete process.env.OMNESIS_GATEWAY_URL;
+  delete process.env.OMNESIS_GATEWAY_REQUEST_URL;
   delete process.env.OMNESIS_MDNS_DISABLE;
+  delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 });
 
 afterEach(() => {
+  if (SAVED.cloudRelay === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+  else process.env.OMNESIS_CLOUD_RELAY_ENABLED = SAVED.cloudRelay;
+  if (SAVED.requestUrl === undefined) delete process.env.OMNESIS_GATEWAY_REQUEST_URL;
+  else process.env.OMNESIS_GATEWAY_REQUEST_URL = SAVED.requestUrl;
   if (SAVED.url === undefined) delete process.env.OMNESIS_GATEWAY_URL;
   else process.env.OMNESIS_GATEWAY_URL = SAVED.url;
   if (SAVED.disable === undefined) delete process.env.OMNESIS_MDNS_DISABLE;
@@ -58,6 +67,34 @@ afterEach(() => {
 });
 
 describe("resolveGatewayUrl", () => {
+  test("paired transport connects through its adapter while retaining canonical public identity", async () => {
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
+    process.env.OMNESIS_GATEWAY_URL = "https://canonical.example.com";
+    process.env.OMNESIS_GATEWAY_REQUEST_URL = "http://127.0.0.1:12345";
+    expect(await resolveGatewayUrl()).toEqual({ url: "http://127.0.0.1:12345" });
+    expect(discoverMock).not.toHaveBeenCalled();
+  });
+
+  test("only a collector on the paired transport shortens the device socket's silence limit", () => {
+    process.env.OMNESIS_GATEWAY_REQUEST_URL = "http://127.0.0.1:12345";
+    // Without the opt-in the variable means nothing and the client keeps its own default.
+    expect(wsHeartbeatTimeoutMs()).toBeUndefined();
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
+    expect(wsHeartbeatTimeoutMs()).toBe(45_000);
+    delete process.env.OMNESIS_GATEWAY_REQUEST_URL;
+    expect(wsHeartbeatTimeoutMs()).toBeUndefined();
+  });
+
+  test("without the cloud relay opt-in the request URL variable is not read", async () => {
+    process.env.OMNESIS_GATEWAY_REQUEST_URL = "http://127.0.0.1:12345";
+    process.env.OMNESIS_GATEWAY_URL = "https://canonical.example.com";
+    expect(await resolveGatewayUrl()).toEqual({ url: "https://canonical.example.com" });
+    // Alone, it is no override at all and discovery runs as before.
+    delete process.env.OMNESIS_GATEWAY_URL;
+    process.env.OMNESIS_MDNS_DISABLE = "1";
+    expect((await resolveGatewayUrl()).url).not.toBe("http://127.0.0.1:12345");
+  });
+
   test("OMNESIS_GATEWAY_URL override beats mDNS discovery", async () => {
     process.env.OMNESIS_GATEWAY_URL = "https://gateway.example.com:7600";
     discoverMock.mockResolvedValue({ url: "https://192.168.1.20:7600", fingerprint: "deadbeef" });
@@ -308,6 +345,24 @@ describe("resolveCollectorToken", () => {
       unauthorizedAt: null,
       repairCommand: null,
     });
+
+  test("ephemeral adapter ports never replace the saved canonical identity or reset prior authentication", async () => {
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
+    process.env.OMNESIS_GATEWAY_URL = GATEWAY;
+    process.env.OMNESIS_GATEWAY_REQUEST_URL = "http://127.0.0.1:12345";
+    writeCollectorTokenFile("omn_saved", dir);
+    recordAuthenticated("omn_saved");
+    globalThis.fetch = answer({ config: 200 });
+    expect(await resolveCollectorToken(process.env.OMNESIS_GATEWAY_REQUEST_URL, dir)).toEqual({
+      outcome: "token",
+      token: "omn_saved",
+    });
+    expect(readCollectorPairingState(dir)?.gatewayUrl).toBe(GATEWAY);
+    globalThis.fetch = answer({ config: 401 });
+    expect(await resolveCollectorToken(process.env.OMNESIS_GATEWAY_REQUEST_URL, dir)).toEqual({
+      outcome: "needs-pairing",
+    });
+  });
 
   test("keeps a saved token the gateway still accepts, and records that it worked", async () => {
     writeCollectorTokenFile("omn_saved", dir);

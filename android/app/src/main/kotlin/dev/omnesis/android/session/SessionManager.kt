@@ -21,9 +21,12 @@ import dev.omnesis.android.feature.photos.PhotosSyncCoordinator
 import dev.omnesis.android.notifications.FcmPushManager
 import dev.omnesis.android.notifications.RelayEnroller
 import dev.omnesis.android.notifications.drainClaimedNotifications
+import dev.omnesis.android.pairing.DeviceTokenRotator
+import dev.omnesis.android.pairing.KeystoreDeviceKeys
 import dev.omnesis.android.pairing.Pairing
 import dev.omnesis.android.pairing.PairingService
-import dev.omnesis.android.pairing.PairingTlsMode
+import dev.omnesis.android.pairing.PairedGatewayRoutes
+import dev.omnesis.android.pairing.GatewayDirectCandidateDiscovery
 import dev.omnesis.android.setup.PhoneSetupStep
 import dev.omnesis.android.setup.flow.PhoneSetupRecord
 import dev.omnesis.android.setup.flow.pairingStartsClean
@@ -50,12 +53,10 @@ import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.dto.WatchCaptureStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.http.GatewayHttp
-import dev.omnesis.android.transport.tls.PinnedOkHttp
 import dev.omnesis.android.transport.ws.DeviceSocket
 import dev.omnesis.android.ui.agent.AgentCoordinator
 import dev.omnesis.android.voice.SpeechVocabulary
 import dev.omnesis.android.transport.client.TranscriptionVocabularyClient
-import java.net.URI
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Provider
@@ -238,7 +239,8 @@ class SessionManager @Inject constructor(
 
     /** The set of clients bound to the current pairing. */
     class GatewaySession(
-        val pairing: Pairing,
+        @Volatile var pairing: Pairing,
+        val routes: PairedGatewayRoutes,
         val vocabulary: TranscriptionVocabularyClient,
         val gateway: GatewayClient,
         val search: SearchClient,
@@ -379,6 +381,11 @@ class SessionManager @Inject constructor(
     private val notificationDrainMutex = Mutex()
     private val revocationDrainMutex = Mutex()
     private val statusProbeSerializer = StatusProbeSerializer()
+    /** Whether this build enables cloud connectivity, as its capabilities carry it. */
+    internal val cloudRelay: Boolean = deviceCapabilities.pairingNotifications
+    private val transport = SessionTransport(cloudRelay)
+    private val deviceTokenRotator by lazy { DeviceTokenRotator(KeystoreDeviceKeys()) }
+    private val tokenRotationAttempts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /** Whether a status read has completed, in success or failure, for the current session. */
     private val statusProbed = MutableStateFlow(false)
@@ -392,6 +399,9 @@ class SessionManager @Inject constructor(
     }
 
     suspend fun pairFromQr(raw: String): Pairing = pairAndBuild { pairingService.pair(raw) }
+
+    /** A sign-in enrollment: the gateway holds this install's device key, so its token can rotate. */
+    suspend fun pairFromEnrollment(raw: String): Pairing = pairAndBuild { pairingService.pairEnrolled(raw) }
 
     suspend fun pairManually(gatewayUrl: String, pairingCode: String, fingerprint: String?): Pairing =
         pairAndBuild { pairingService.pairManually(gatewayUrl, pairingCode, fingerprint) }
@@ -439,7 +449,7 @@ class SessionManager @Inject constructor(
                     continue
                 }
                 val http = GatewayHttp(
-                    PinnedOkHttp.build(pending.fingerprint, host = hostOf(pending.url)),
+                    transport.revocation(pending),
                     pending.url,
                     pending.token,
                     pending.pairingGeneration,
@@ -512,6 +522,19 @@ class SessionManager @Inject constructor(
     fun requireSession(): GatewaySession =
         session ?: error("no active gateway session — app is unpaired")
 
+    /** An asynchronous metadata result may update hints only for this still-current authority. */
+    internal fun acceptDirectCandidates(updated: Pairing) {
+        synchronized(this) {
+            val active = session
+            if (active != null && active.pairing.copy(directCandidates = updated.directCandidates) == updated) {
+                active.pairing = updated
+                _state.value = AppState.Paired(updated)
+                // Background widgets and notifications read the atomic bundle on their next request.
+                // Updating a hint never cancels an upload or replaces the authenticated session.
+            }
+        }
+    }
+
     private fun rebuild(atLaunch: Boolean = false) {
         speechVocabulary.cache.reset()
         sourceRemovalReconciler.invalidateSession()
@@ -519,6 +542,7 @@ class SessionManager @Inject constructor(
         sessionJob = null
         sessionGeneration++
         session?.socket?.stop()
+        session?.routes?.retire()
         session = null
         // Re-probe per rebuild; clear so a stale value from a prior pairing can't
         // surface an experimental feature against a non-experimental gateway.
@@ -547,33 +571,37 @@ class SessionManager @Inject constructor(
             return
         }
         settleLocalState(pairing, atLaunch)
-        val requirePin = pairing.tlsMode == PairingTlsMode.PINNED_LEAF
-        val host = hostOf(pairing.url)
         val upgrade = { onSystemTrustVerified(pairing) }
+        val routes = PairedGatewayRoutes(pairing, pairingService, { paired, route -> GatewayDirectCandidateDiscovery.fetch(paired, route) }, ::acceptDirectCandidates)
+        val httpClient = transport.http(pairing, upgrade, routes.http)
         val http = GatewayHttp(
-            PinnedOkHttp.build(
-                pairing.fingerprint,
-                requirePin = requirePin,
-                host = host,
-                onSystemTrustVerified = upgrade,
-            ),
+            httpClient,
             pairing.url,
             pairing.token,
             pairing.pairingGeneration,
         )
-        val streaming = PinnedOkHttp.buildStreaming(
-            pairing.fingerprint,
-            requirePin = requirePin,
-            host = host,
-            onSystemTrustVerified = upgrade,
-        )
+        val streaming = transport.streaming(pairing, upgrade, routes.streaming)
+        val socketRoute = transport.socketRoute(routes.socket)
         val socket = DeviceSocket(
-            client = streaming,
+            client = transport.socket(pairing, upgrade, socketRoute, streaming),
+            directRoute = socketRoute,
+            refreshHints = if (transport.refreshesHints(pairing)) ({ routes.refresh(); Unit }) else null,
+            expectedDeviceId = transport.expectedDeviceId(pairing),
+            cloudRelay = cloudRelay,
             gatewayUrl = pairing.url,
             token = pairing.token,
             scope = scope,
             capabilities = deviceCapabilities.withTlsMode(pairing.tlsMode.persistedValue),
             pathObserver = SystemNetworkPathObserver(applicationContext),
+            onRouteEvent = { event ->
+                // What was learned on the old network no longer holds: the next connection tries
+                // the home network first again.
+                if (event != DeviceSocket.RouteEvent.PATH_CHANGED) routes.hintsMayBeReachable()
+                // Idle pooled connections belong to the path that was left. Requests and streams
+                // in flight are not touched; the next request connects on the current path.
+                httpClient.connectionPool.evictAll()
+                streaming.connectionPool.evictAll()
+            },
         )
         val agent = AgentClient(http)
         val admin = AdminClient(http)
@@ -601,6 +629,7 @@ class SessionManager @Inject constructor(
         socket.start()
         val built = GatewaySession(
             pairing = pairing,
+            routes = routes,
             vocabulary = TranscriptionVocabularyClient(http),
             gateway = GatewayClient(http),
             search = SearchClient(http),
@@ -622,10 +651,11 @@ class SessionManager @Inject constructor(
                 ?.let { token ->
                     NotificationsClient(
                         GatewayHttp(
-                            PinnedOkHttp.build(pairing.fingerprint, requirePin = requirePin, host = host),
+                            transport.http(pairing, null, routes.http),
                             pairing.url,
                             token,
                         ),
+                        pairingNotifications = BuildConfig.CLOUD_RELAY_ENABLED,
                     )
                 },
             agentEventSourceFactory = {
@@ -647,6 +677,7 @@ class SessionManager @Inject constructor(
             launch {
                 probeStatus(built)
             }
+            if (BuildConfig.CLOUD_RELAY_ENABLED) launch { rotateDeviceTokenIfDue(built, http) }
             launch {
                 pushRegistrationMutex.withLock {
                     retryPushRegistrationForSession(
@@ -1038,14 +1069,11 @@ class SessionManager @Inject constructor(
         pairingService.setPushClaimCredential(deviceId, minted.token)
         current.notifications = NotificationsClient(
             GatewayHttp(
-                PinnedOkHttp.build(
-                    current.pairing.fingerprint,
-                    requirePin = current.pairing.tlsMode == PairingTlsMode.PINNED_LEAF,
-                    host = hostOf(current.pairing.url),
-                ),
+                transport.http(current.pairing, null, current.routes.http),
                 current.pairing.url,
                 minted.token,
             ),
+            pairingNotifications = BuildConfig.CLOUD_RELAY_ENABLED,
         )
     }
 
@@ -1119,5 +1147,14 @@ class SessionManager @Inject constructor(
         }
     }
 
-    private fun hostOf(url: String): String? = runCatching { URI(url).host }.getOrNull()
+    /** Tried once per pairing per process: a gateway without the routes costs one request a launch. */
+    private suspend fun rotateDeviceTokenIfDue(current: GatewaySession, http: GatewayHttp) {
+        val pairing = current.pairing
+        val rotator = deviceTokenRotator
+        val deviceId = pairing.deviceId ?: return
+        if (!rotator.due(pairing) || !tokenRotationAttempts.add(deviceId)) return
+        if (rotator.rotate(pairing, http, pairingService) && session === current) {
+            scope.launch(Dispatchers.Main) { if (session === current) rebuild() }
+        }
+    }
 }

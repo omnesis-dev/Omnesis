@@ -221,7 +221,7 @@ func homeTab(for target: PushTarget) -> HomeTab {
     case .privacyApproval: .privacy
     // HomeView intercepts this target and presents the authorization sheet.
     // The fallback keeps this function total for callers predating that sheet.
-    case .accessAuthorization: .agent
+    case .accessAuthorization, .pairingRequests, .deviceJoined: .agent
     case .agentAnswer: .agent
     case .watchFiring, .watch: .watches
     case .task, .taskJournal: .tasks

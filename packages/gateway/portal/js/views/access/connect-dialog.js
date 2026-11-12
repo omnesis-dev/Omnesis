@@ -22,11 +22,10 @@ import {
   agentSetups,
   harnessAddresses,
   reconnectableHarnessDevices,
-  isPrivateAddress,
   mainAddressCertificate,
   servesUntrustedCertificate,
-  usesNonStandardPort,
 } from "./client-setup.js";
+import { NO_RELAY, addressChoices, leadsWithLocalAddress } from "./public-address.js";
 import { AgentIcon } from "./agent-brand.js";
 import { errorMessage } from "./shared.js";
 
@@ -105,24 +104,33 @@ function CertificateTrustStep({ agent }) {
 }
 
 /**
- * For an agent that reaches the gateway from the Internet: whether it can
- * reach this address at all, and where the docs explain publishing it.
+ * A notice's text: strings, a bold lead, links to the docs, and links to
+ * another page of the portal.
  */
-function PublicAddressNotice({ agent, resource }) {
-  const privateAddress = isPrivateAddress(resource);
-  const wrongPort = !privateAddress && agent.standardPortOnly && usesNonStandardPort(resource);
-  const warning = privateAddress || wrongPort;
-  return html`<div class=${`access-agent-public ${warning ? "is-warning" : ""}`} role=${warning ? "alert" : null}>
-    <p>
-      ${privateAddress
-        ? html`<strong>This address is private.</strong> ${agent.needsPublicAddress}, so it cannot reach this gateway until you publish it.`
-        : wrongPort
-          ? html`<strong>This address uses port ${new URL(resource).port}.</strong> ${agent.standardPortOnly}, so it cannot reach this gateway there.`
-          : html`${agent.needsPublicAddress}, so the address above must be reachable from the Internet${agent.standardPortOnly ? " on port 443" : ""}.`}
-    </p>
-    <p>
-      <${ExternalLink} href=${PUBLISH_DOCS.funnel}>Publish the gateway with Tailscale Funnel<//>${" or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>.
-    </p>
+function NoticeText({ parts }) {
+  return parts.map((part) => {
+    if (typeof part === "string") return part;
+    if (part.strong) return html`<strong>${part.strong}</strong>`;
+    if (part.href) return html`<${ExternalLink} href=${part.href}>${part.text}<//>`;
+    return html`<a
+      href=${part.route}
+      onClick=${(event) => {
+        event.preventDefault();
+        navigate(part.route);
+      }}
+    >${part.text}</a>`;
+  });
+}
+
+/**
+ * What the selected address means for an agent: whether it can reach it, and
+ * what to do when it cannot. The wording is `hostedClientAddress`'s and
+ * `localClientAddress`'s, the same for every agent in the same situation.
+ */
+function AddressNotice({ agent }) {
+  const { notice } = agent.addressNotice;
+  return html`<div class=${`access-agent-public ${notice.warning ? "is-warning" : ""}`} role=${notice.warning ? "alert" : null}>
+    ${notice.paragraphs.map((parts) => html`<p><${NoticeText} parts=${parts} /></p>`)}
   </div>`;
 }
 
@@ -252,7 +260,12 @@ function AgentCommand({ agent, command, labelled }) {
 }
 
 /** A grid of common agents; choosing one shows only that agent's setup. */
-function AgentSetupPicker({ oauth }) {
+/**
+ * `oauth.resource` is the address selected above the grid. Where the person
+ * picks it there (`addressSelectable`), a managed integration pairs against
+ * that address and offers no second choice of its own.
+ */
+function AgentSetupPicker({ oauth, relay, addressSelectable }) {
   const [selectedId, setSelectedId] = useState(null);
   const [commandIdx, setCommandIdx] = useState(0);
   const [addressIdx, setAddressIdx] = useState(0);
@@ -262,9 +275,13 @@ function AgentSetupPicker({ oauth }) {
   // Bumped whenever the choice a code would be minted for changes, so a code
   // still being minted for an earlier choice is dropped when it arrives.
   const mintGeneration = useRef(0);
-  const addresses = harnessAddresses(oauth);
+  const everyAddress = harnessAddresses(oauth);
+  const selectedAddress = everyAddress.find(
+    (address) => address.gatewayUrl === oauth.resource.replace(/\/mcp$/u, ""),
+  );
+  const addresses = addressSelectable && selectedAddress ? [selectedAddress] : everyAddress;
   const harnessAddress = addresses[Math.min(addressIdx, addresses.length - 1)];
-  const agents = agentSetups(oauth, { harnessAddress, pairingCode: pairing.code ?? undefined });
+  const agents = agentSetups(oauth, { harnessAddress, pairingCode: pairing.code ?? undefined, relay });
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
   const pairsHarness = selected?.pairs ? selected.id : null;
 
@@ -348,8 +365,9 @@ function AgentSetupPicker({ oauth }) {
     </div>
     ${selected &&
     html`<div class="access-agent-steps" id="access-agent-steps" data-agent=${selected.id}>
-      ${selected.needsPublicAddress && html`<${PublicAddressNotice} agent=${selected} resource=${oauth.resource} />`}
+      ${selected.addressNotice && html`<${AddressNotice} agent=${selected} />`}
       ${selected.blocked &&
+      selected.addressNotice?.usable !== false &&
       selected.needsTrustedCertificate &&
       servesUntrustedCertificate(oauth) &&
       html`<${TrustedCertificateNotice} agent=${selected} certificate=${mainAddressCertificate(oauth)} />`}
@@ -413,7 +431,30 @@ function ConnectStep({ number, title, caption, children }) {
   </section>`;
 }
 
-export function ConnectAgentDialog({ oauth, onClose }) {
+/** What step 1 says about its address. A localhost address is no use to a hosted client. */
+function addressCaption(oauth, selectable) {
+  if (selectable) {
+    return "Pick the address the agent will use, then paste it into ChatGPT, Claude, Codex, or another OAuth-capable client.";
+  }
+  return leadsWithLocalAddress(oauth)
+    ? "This localhost address works only for agents running on the gateway’s machine. Hosted clients cannot reach it."
+    : "Paste it into ChatGPT, Claude, Codex, or another OAuth-capable client.";
+}
+
+/**
+ * `relay` is the gateway's relay-hosted address, from `relayPublicAddress`.
+ * With it and more than one address the gateway authorizes, step 1 is a
+ * choice between them, and the chosen address is the one every agent's setup
+ * below is written for.
+ */
+export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, onClose }) {
+  const [pickedAddress, setPickedAddress] = useState(null);
+  const choices = addressChoices(overviewOauth, relay);
+  const address =
+    choices.selectable && choices.options.some((option) => option.resource === pickedAddress)
+      ? pickedAddress
+      : choices.initial;
+  const oauth = address === overviewOauth.resource ? overviewOauth : { ...overviewOauth, resource: address };
   const [code, setCode] = useState("");
   const [lookingUp, setLookingUp] = useState(false);
   const [error, setError] = useState("");
@@ -462,10 +503,21 @@ export function ConnectAgentDialog({ oauth, onClose }) {
       <${ConnectStep}
         number="1"
         title="Add this MCP server to the client"
-        caption=${oauth.loopbackOnly
-          ? "This localhost address works only for agents running on the gateway’s machine. Hosted clients cannot reach it."
-          : "Paste it into ChatGPT, Claude, Codex, or another OAuth-capable client."}
+        caption=${addressCaption(oauth, choices.selectable)}
       >
+        ${choices.selectable &&
+        html`<label class="form-group access-address-choice">
+          <span>Address</span>
+          <select
+            id="access-mcp-address"
+            value=${address}
+            onChange=${(event) => setPickedAddress(event.currentTarget.value)}
+          >
+            ${choices.options.map(
+              (option) => html`<option key=${option.resource} value=${option.resource} selected=${option.resource === address}>${option.text}</option>`,
+            )}
+          </select>
+        </label>`}
         <div class="access-mcp-resource">
           <code>${oauth.resource}</code>
           <${CopyIconButton}
@@ -474,7 +526,7 @@ export function ConnectAgentDialog({ oauth, onClose }) {
             title="Copy MCP resource"
           />
         </div>
-        <${AgentSetupPicker} oauth=${oauth} />
+        <${AgentSetupPicker} oauth=${oauth} relay=${relay} addressSelectable=${choices.selectable} />
       <//>
       <${ConnectStep}
         number="2"

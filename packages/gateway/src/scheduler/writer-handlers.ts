@@ -423,6 +423,7 @@ import {
   createPairing,
   consumePairing,
   redeemDevicePairing,
+  rotateDeviceToken,
   revokePairing,
   redeemAgentIntegrationPairing,
   cleanupExpiredPairings,
@@ -1271,6 +1272,8 @@ export const writerHandlers = {
     },
   ) => redeemDevicePairing(db, input),
   "devices.revokePairing": (db: Db, pairingCode: string) => revokePairing(db, pairingCode),
+  "devices.rotateDeviceToken": (db: Db, input: Parameters<typeof rotateDeviceToken>[1]) =>
+    rotateDeviceToken(db, input),
   "devices.redeemAgentIntegrationPairing": (
     db: Db,
     input: Parameters<typeof redeemAgentIntegrationPairing>[1],

@@ -48,6 +48,21 @@ final class MobileJourneyUITests: XCTestCase {
     /// Onboarding → pairing screen → paste the QR payload the gateway minted
     /// → confirm the host → the app lands on the "You're connected" page of
     /// phone setup, and the gateway lists the new iPhone.
+    func testPairingReminderOpensDeviceManagementBeforeGatewayStatusResolves() {
+        for mode in ["pairing-warm", "pairing-cold"] {
+            let notificationApp = XCUIApplication()
+            notificationApp.launchEnvironment["DEMO_RESET_PAIRING"] = "1"
+            notificationApp.launchEnvironment["DEMO_PLAIN_GLASS"] = "1"
+            notificationApp.launchEnvironment["DEMO_PUSH_TAP"] = mode
+            notificationApp.launch()
+            XCTAssertTrue(
+                notificationApp.navigationBars["Devices"].waitForExistence(timeout: 30),
+                "The pairing reminder did not open device management (\(mode))"
+            )
+            notificationApp.terminate()
+        }
+    }
+
     func testPairingWithTheGatewaysPayload() throws {
         let deviceName = "Journey iPhone \(UUID().uuidString.prefix(8))"
         let payload = try gateway.mintPairingPayload(deviceName: deviceName)

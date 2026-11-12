@@ -33,6 +33,7 @@ const TABS = [
   { key: "access", label: "Access" },
   { key: "policies", label: "Policies" },
   { key: "devices", label: "Devices" },
+  { key: "account", label: "Omnesis account", cloudRelay: true },
 ];
 
 /** Every tab key — what the router accepts as a path segment. */
@@ -48,8 +49,8 @@ export const SETTINGS_TABS_WITH_SECTION = TABS.filter((t) => t.ownsSection).map(
 export const EXPERIMENTAL_SETTINGS_TABS = TABS.filter((t) => t.experimental).map((t) => t.key);
 
 /** The tab set to render, in display order. */
-export function settingsTabs({ experimental = false } = {}) {
-  return TABS.filter((t) => experimental || !t.experimental).map(({ key, label }) => ({
+export function settingsTabs({ experimental = false, cloudRelay = false } = {}) {
+  return TABS.filter((t) => (experimental || !t.experimental) && (cloudRelay || !t.cloudRelay)).map(({ key, label }) => ({
     key,
     label,
   }));

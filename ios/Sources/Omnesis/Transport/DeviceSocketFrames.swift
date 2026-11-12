@@ -7,6 +7,68 @@ import Foundation
 
 @available(iOS 17.0, *)
 extension DeviceSocket {
+    // MARK: - Send helpers
+
+    func send(object: [String: JSONValue], via connection: any DeviceSocketConnection) async throws {
+        let data = try JSONEncoder().encode(JSONValue.object(object))
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw GatewayClient.Error.decoding("ws encode")
+        }
+        try await connection.send(text)
+    }
+
+    // MARK: - Decoding
+
+    /// Parse a raw WebSocket message into a typed `WsFrame`. Returns nil
+    /// (and logs at debug) for non-JSON or unknown-shape frames.
+    func decodeFrame(_ message: URLSessionWebSocketTask.Message) -> WsFrame? {
+        let data: Data
+        switch message {
+        case .data(let bytes): data = bytes
+        case .string(let text): data = Data(text.utf8)
+        @unknown default: return nil
+        }
+        do {
+            return try JSONDecoder().decode(WsFrame.self, from: data)
+        } catch {
+            log.debug("WS drop non-JSON frame: \(String(describing: error), privacy: .private)")
+            return nil
+        }
+    }
+
+    func extractString(_ value: JSONValue?) -> String? {
+        if case .string(let text)? = value { return text }
+        return nil
+    }
+
+    func extractStringArray(_ value: JSONValue?) -> [String]? {
+        guard case .array(let values)? = value else { return nil }
+        var out: [String] = []
+        for item in values {
+            if case .string(let text) = item { out.append(text) }
+        }
+        return out
+    }
+
+    // MARK: - URL munging
+
+    /// Converts an `http(s)://` gateway URL into the matching `ws(s)://` URL
+    /// for the `/device/ws` endpoint. Preserves host, port, and any base path.
+    static func deriveWsURL(from gatewayUrl: URL) -> URL {
+        guard var comps = URLComponents(url: gatewayUrl, resolvingAgainstBaseURL: false) else {
+            return gatewayUrl
+        }
+        switch comps.scheme?.lowercased() {
+        case "https": comps.scheme = "wss"
+        case "http": comps.scheme = "ws"
+        default: break
+        }
+        let basePath = comps.path.hasSuffix("/") ? comps.path : (comps.path + "/")
+        comps.path = basePath + "device/ws"
+        comps.percentEncodedQuery = nil
+        return comps.url ?? gatewayUrl
+    }
+
     /// Outcome of running a gateway-originated command locally.
     ///
     /// The gateway validates a successful response's `result` against that

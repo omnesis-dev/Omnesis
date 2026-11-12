@@ -160,6 +160,7 @@ import { addCredentialApprovedAudience } from "./migration-183-credential-approv
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck-queued.js";
+import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -4978,6 +4979,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 213,
     description: "remember when the re-verification sweep last queued each annotation",
     up: addAnnotationRecheckQueuedAt,
+  },
+  {
+    version: 214,
+    description: "record how a device joined by signing in",
+    up: addDeviceEnrollment,
   },
 ];
 

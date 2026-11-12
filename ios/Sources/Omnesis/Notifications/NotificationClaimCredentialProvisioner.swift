@@ -31,32 +31,50 @@ public struct NotificationClaimCredentialProvisioner: Sendable {
         self.request = request
     }
 
+    /// Route-only publication preserves the extension's existing narrow token.
+    public static func updateDirectCandidates(pairing: Pairing, store: PairingStore) throws {
+        guard pairing.tlsMode.isStrict, let stored = try NotificationClaimCredentials.stored(keychain: store),
+              stored.url == pairing.url.absoluteString, stored.deviceId == pairing.deviceId,
+              stored.tlsMode == pairing.tlsMode.rawValue, stored.fingerprint == pairing.fingerprint,
+              stored.spkiFingerprint == pairing.spkiFingerprint,
+              stored.directCandidates != pairing.directCandidates else { return }
+        if let candidates = pairing.directCandidates { _ = try GatewayDirectRoute(origin: pairing.url, candidates: candidates) }
+        try NotificationClaimCredentials.commit(.init(
+            url: stored.url,
+            token: stored.token,
+            deviceId: stored.deviceId,
+            tlsMode: stored.tlsMode,
+            fingerprint: stored.fingerprint,
+            spkiFingerprint: stored.spkiFingerprint,
+            directCandidates: pairing.directCandidates
+        ), keychain: store)
+    }
+
     /// Idempotent for one pairing. A changed device id forces rotation before
     /// the new APNs identity is registered, so an old gateway credential is
     /// never paired with the new carrier token.
     public func ensure() async throws {
-        guard pairing.url.scheme?.lowercased() == "https" else {
-            throw NotificationClaimCredentialError.insecurePairing
-        }
-        let fingerprint: String?
-        switch pairing.tlsMode {
-        case .system:
-            fingerprint = nil
-        case .pinnedLeaf:
-            guard let value = pairing.fingerprint,
-                  value.count == 64,
-                  value.allSatisfy(\.isHexDigit)
-            else { throw NotificationClaimCredentialError.insecurePairing }
-            fingerprint = value.lowercased()
-        case .legacy:
-            throw NotificationClaimCredentialError.insecurePairing
-        }
+        let fingerprints = try trustedFingerprints()
+        let fingerprint = fingerprints.leaf
+        let spkiFingerprint = fingerprints.key
         if let stored = try NotificationClaimCredentials.stored(keychain: store),
            stored.url == pairing.url.absoluteString,
            stored.deviceId == pairing.deviceId,
            stored.tlsMode == pairing.tlsMode.rawValue,
            stored.fingerprint == fingerprint,
+           stored.spkiFingerprint == spkiFingerprint,
            !stored.token.isEmpty {
+            if stored.directCandidates != pairing.directCandidates {
+                try NotificationClaimCredentials.commit(.init(
+                    url: stored.url,
+                    token: stored.token,
+                    deviceId: stored.deviceId,
+                    tlsMode: stored.tlsMode,
+                    fingerprint: stored.fingerprint,
+                    spkiFingerprint: stored.spkiFingerprint,
+                    directCandidates: pairing.directCandidates
+                ), keychain: store)
+            }
             return
         }
 
@@ -95,10 +113,39 @@ public struct NotificationClaimCredentialProvisioner: Sendable {
                 token: minted.token,
                 deviceId: pairing.deviceId,
                 tlsMode: pairing.tlsMode.rawValue,
-                fingerprint: fingerprint
+                fingerprint: fingerprint,
+                spkiFingerprint: spkiFingerprint,
+                directCandidates: pairing.directCandidates
             ),
             keychain: store
         )
+    }
+
+    private func trustedFingerprints() throws -> (leaf: String?, key: String?) {
+        guard pairing.url.scheme?.lowercased() == "https" else {
+            throw NotificationClaimCredentialError.insecurePairing
+        }
+        let fingerprint: String?
+        var spkiFingerprint: String?
+        switch pairing.tlsMode {
+        case .system:
+            fingerprint = nil
+        case .pinnedKeyStrict:
+            guard let spki = pairing.spkiFingerprint, spki.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+                throw NotificationClaimCredentialError.insecurePairing
+            }
+            fingerprint = pairing.fingerprint
+            spkiFingerprint = spki.lowercased()
+        case .pinnedLeaf, .pinnedLeafStrict:
+            guard let value = pairing.fingerprint,
+                  value.count == 64,
+                  value.allSatisfy(\.isHexDigit)
+            else { throw NotificationClaimCredentialError.insecurePairing }
+            fingerprint = value.lowercased()
+        case .legacy:
+            throw NotificationClaimCredentialError.insecurePairing
+        }
+        return (fingerprint, spkiFingerprint)
     }
 
     private struct MintBody: Encodable {

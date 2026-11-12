@@ -53,6 +53,7 @@ data class DeviceCapabilities(
      * composition root knows the pairing.
      */
     val tls: TlsCapability? = null,
+    val pairingNotifications: Boolean = false,
 ) {
     @Serializable
     data class TlsCapability(val mode: String)
@@ -83,6 +84,8 @@ data class DeviceCapabilities(
             contracts: Collection<HostedSourceContract>,
             version: String? = null,
             pushAppId: String? = null,
+            /** Off unless the build enables cloud connectivity. */
+            pairingNotifications: Boolean = false,
         ): DeviceCapabilities {
             require(contracts.all { it.sourceType.isNotBlank() }) { "source types must not be blank" }
             require(contracts.map { it.sourceType }.distinct().size == contracts.size) {
@@ -91,6 +94,7 @@ data class DeviceCapabilities(
             val ordered = contracts.sortedBy(HostedSourceContract::sourceType)
             return DeviceCapabilities(
                 platform = "android",
+                pairingNotifications = pairingNotifications,
                 version = version,
                 pushAppId = pushAppId,
                 hostableSourceTypes = ordered.map(HostedSourceContract::sourceType),

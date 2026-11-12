@@ -318,6 +318,9 @@ const SENSITIVE_COLUMNS = new Map([
       "relay_url",
       "relay_credential",
       "notification_delivery_health",
+      // Binds a device's own key to this installation's row: it lets a reinstall
+      // reclaim the row and the device rotate its token. A clone holds no such bond.
+      "enrollment_public_key",
     ]),
   ],
   // Member-local source parameters may contain absolute filesystem paths.

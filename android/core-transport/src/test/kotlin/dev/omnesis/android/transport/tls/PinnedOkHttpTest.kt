@@ -41,6 +41,44 @@ class PinnedOkHttpTest {
     }
 
     @Test
+    fun strictMatchingPinRefusesExpiredCertificatesAndWrongHostnamesInRealTLS() {
+        val expired = HeldCertificate.Builder().addSubjectAlternativeName("localhost").validityInterval(1000, 2000).build()
+        val wrongHost = HeldCertificate.Builder().addSubjectAlternativeName("other.example.test").build()
+        for (certificate in listOf(expired, wrongHost)) {
+            MockWebServer().use { endpoint ->
+                endpoint.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
+                endpoint.start()
+                endpoint.enqueue(MockResponse().setBody("legacy"))
+                val pin = LeafCertPinner.sha256Hex(certificate.certificate.encoded)
+                val request = Request.Builder().url(endpoint.url("/")).build()
+                PinnedOkHttp.build(pin, requirePin = true).newCall(request).execute().use { assertEquals("legacy", it.body?.string()) }
+                assertThrows(IOException::class.java) {
+                    PinnedOkHttp.build(pin, requirePin = true, requireCertificateValidity = true).newCall(request).execute()
+                }
+                assertThrows(IOException::class.java) {
+                    PinnedOkHttp.buildStreaming(pin, requirePin = true, requireCertificateValidity = true).newCall(request).execute()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun strictCurrentMatchingCertificateWorksForHttpAndStreamingWithoutPublicTrust() {
+        val certificate = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+        val pin = LeafCertPinner.sha256Hex(certificate.certificate.encoded)
+        MockWebServer().use { endpoint ->
+            endpoint.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
+            endpoint.start()
+            for (client in listOf(PinnedOkHttp.build(pin, requirePin = true, requireCertificateValidity = true),
+                PinnedOkHttp.buildStreaming(pin, requirePin = true, requireCertificateValidity = true))) {
+                endpoint.enqueue(MockResponse().setBody("strict"))
+                client.newCall(Request.Builder().url(endpoint.url("/")).build()).execute().use { assertEquals("strict", it.body?.string()) }
+                client.connectionPool.evictAll()
+            }
+        }
+    }
+
+    @Test
     fun requiredPinRejectsMalformedFingerprint() {
         assertThrows(IllegalArgumentException::class.java) {
             PinnedOkHttp.buildStreaming(fingerprint = "not-a-pin", requirePin = true)
@@ -62,6 +100,36 @@ class PinnedOkHttpTest {
 
         assertThrows(IOException::class.java) {
             PinnedOkHttp.build().newCall(Request.Builder().url(server.url("/")).build()).execute()
+        }
+        assertThrows(IOException::class.java) {
+            PinnedOkHttp.buildStreaming().newCall(Request.Builder().url(server.url("/stream"))
+                .header("Authorization", "Bearer must-not-arrive").build()).execute()
+        }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun keyPinWithoutAnExplicitHostStillVerifiesTheActualRequestHostname() {
+        val leaf = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+        MockWebServer().use { endpoint ->
+            endpoint.useHttps(HandshakeCertificates.Builder().heldCertificate(leaf).build().sslSocketFactory(), false)
+            endpoint.start()
+            val pin = LeafCertPinner.sha256Hex(leaf.certificate.publicKey.encoded)
+            val client = PinnedOkHttp.build(spkiFingerprint = pin, requirePin = true)
+            endpoint.enqueue(MockResponse().setBody("verified"))
+            client.newCall(Request.Builder().url(endpoint.url("/"))
+                .header("Authorization", "Bearer device-token").build()).execute().use {
+                assertEquals("verified", it.body?.string())
+            }
+            assertEquals("Bearer device-token", endpoint.takeRequest().getHeader("Authorization"))
+            client.connectionPool.evictAll()
+            val wrongHostname = endpoint.url("/").newBuilder().host("127.0.0.1").build()
+            assertThrows(IOException::class.java) {
+                client.newCall(Request.Builder().url(wrongHostname)
+                    .header("Authorization", "Bearer must-not-arrive").build()).execute()
+            }
+            assertEquals(1, endpoint.requestCount)
+            client.connectionPool.evictAll()
         }
     }
 

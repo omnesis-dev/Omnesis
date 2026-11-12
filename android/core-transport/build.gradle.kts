@@ -7,6 +7,8 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+apply(from = rootProject.file("logic-coverage.gradle.kts"))
+
 android {
     namespace = "dev.omnesis.android.transport"
     compileSdk = 36

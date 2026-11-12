@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { parseWebSocketAuthProtocolHeader } from "@omnesis/core";
+import {
+  cloudRelayEnabled,
+  parseConnectionPath,
+  parseWebSocketAuthProtocolHeader,
+} from "@omnesis/core";
 import { scope } from "./http/scope.js";
 import { clientAddress } from "./http/client-ip.js";
 import type { DeviceWsServer } from "./ws.js";
@@ -39,7 +43,16 @@ export function mountDeviceWsRoute(
       if (!auth.ok) {
         return c.json({ error: auth.code, message: auth.message }, auth.status);
       }
-      c.set("wsAuth", auth.auth);
+      // The advisory path header means something only with the cloud relay opt-in.
+      c.set(
+        "wsAuth",
+        cloudRelayEnabled()
+          ? {
+              ...auth.auth,
+              connectionPath: parseConnectionPath(c.req.header("x-omnesis-connection-path")),
+            }
+          : auth.auth,
+      );
       c.set("wsClientIp", clientIp);
       return next();
     },

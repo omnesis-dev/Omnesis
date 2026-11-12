@@ -4,6 +4,7 @@
 import { isIP } from "node:net";
 import {
   assertNever,
+  cloudRelayEnabled,
   buildPairingPayloadV2,
   buildPairingPayloadV3,
   buildPairingPayloadV4,
@@ -13,6 +14,7 @@ import {
   pairingHost,
   pairingPlatformForKind,
   pairingReachRank,
+  relayPairingAddressOption,
   swapHost,
   type HostNetwork,
   type NetworkIdentity,
@@ -25,11 +27,59 @@ import {
 import { BadRequestError } from "../errors.js";
 import type { DeviceKind } from "@omnesis/types";
 
-export type PairingQrTrustMode = "auto" | "system" | "pinned-leaf";
+export type PairingQrTrustMode =
+  "auto" | "system" | "pinned-leaf" | "pinned-leaf-strict" | "pinned-key-strict";
+
+/**
+ * The address the gateway's Omnesis account gives it, as it stands right now.
+ * `ready` says phones can reach the gateway there: the gateway is connected,
+ * remote access is on, the address answers, and its certificate is one phones
+ * trust. An address that is known but not ready is never put in a QR code.
+ */
+export interface RelayPairingAddress {
+  origin: string;
+  ready: boolean;
+}
+
+/** The part of the cloud relay's status that decides `RelayPairingAddress`. */
+export interface RelayPairingStatus {
+  enabled: boolean;
+  publicOrigin?: string;
+  enrollment: { state: string };
+  certificate: { state: string };
+  publicMcp: { ready: boolean };
+}
+
+/** The gateway's Omnesis address from its relay status; null when it has none. */
+export function relayPairingAddress(status: RelayPairingStatus): RelayPairingAddress | null {
+  if (!status.publicOrigin) return null;
+  return {
+    origin: status.publicOrigin,
+    ready:
+      status.enabled &&
+      status.enrollment.state === "enrolled" &&
+      status.publicMcp.ready &&
+      // A phone refuses the self-signed certificate the address starts with.
+      (status.certificate.state === "valid" || status.certificate.state === "expiring"),
+  };
+}
 
 export interface PairingQrServiceOptions {
+  /**
+   * The gateway's Omnesis address, read on every request: it appears when the
+   * gateway is connected from the portal, and goes when remote access is
+   * turned off or the gateway leaves its account. Its pairings always pin the
+   * gateway's key, as `strictPinOrigins` do. Absent without the cloud relay.
+   */
+  relayAddress?: () => Promise<RelayPairingAddress | null>;
+  /** Relay origins retain their verified key even if another certificate passes WebPKI. */
+  strictPinOrigins?: readonly string[];
   /** The served leaf's fingerprint, read at encode time so a rotation applies at once. */
   tlsFingerprint?: string | (() => string);
+  /** SHA256 of the currently served leaf's complete DER SubjectPublicKeyInfo. */
+  tlsSpkiFingerprint?: string | (() => string);
+  /** Public SNI keys can renew independently of the direct gateway identity. */
+  strictPinSpkiFingerprint?: () => string | undefined;
   /** Exact HTTPS origins whose certificate phones verify through platform trust. */
   systemTrustOrigins?: readonly string[] | (() => readonly string[]);
   /**
@@ -172,11 +222,28 @@ export class PairingQrService {
     );
   }
 
-  /** Whether phones verify the gateway at an origin through platform trust, read live. */
-  private trustCheck(): (origin: string, host: string) => boolean {
+  /**
+   * Whether phones verify the gateway at an origin through platform trust, read live.
+   * A ready Omnesis address is served with a publicly trusted certificate.
+   */
+  private trustCheck(relayOrigin: string | null): (origin: string, host: string) => boolean {
     const origins = this.allowlistedOrigins();
     const hosts = new Set((this.options.publiclyTrustedHosts?.() ?? []).map(normalizeHost));
-    return (origin, host) => origins.has(origin) || hosts.has(host);
+    return (origin, host) => origins.has(origin) || hosts.has(host) || origin === relayOrigin;
+  }
+
+  /**
+   * The gateway's Omnesis address for one request, its origin canonical; null
+   * when there is none, the cloud relay is off, or its status cannot be read.
+   */
+  async relayAddress(): Promise<RelayPairingAddress | null> {
+    if (!cloudRelayEnabled() || !this.options.relayAddress) return null;
+    try {
+      const relay = await this.options.relayAddress();
+      return relay ? { origin: canonicalOrigin(relay.origin), ready: relay.ready } : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -184,11 +251,14 @@ export class PairingQrService {
    * trusted Tailscale name and the certificate's renewal date are live gateway
    * state, and each read touches configuration or the served certificate.
    */
-  private judgeContext(platform: PairingPlatform | null): PairingAddressContext {
+  private judgeContext(
+    platform: PairingPlatform | null,
+    relay: RelayPairingAddress | null = null,
+  ): PairingAddressContext {
     const renewsAt = this.options.certificateRenewsAt?.() ?? null;
     return {
       platform,
-      isSystemTrusted: this.trustCheck(),
+      isSystemTrusted: this.trustCheck(relay?.ready ? relay.origin : null),
       trustedTailnetName: this.trustedTailnetName(),
       pinnedUntil: renewsAt
         ? renewsAt.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })
@@ -293,6 +363,11 @@ export class PairingQrService {
    * addresses and the `.local` name it advertises on Docker's network are
    * listed as refused, and a caller that reached the gateway from inside
    * Docker does not add the address it used.
+   *
+   * A phone's list also carries the gateway's Omnesis address while it is
+   * ready (`relayAddress`), in place of any candidate with the same origin.
+   * While it is not ready, a caller that reached the gateway by it does not
+   * add it; an origin the operator allowlisted is left as it was.
    */
   async pairingAddresses(input: {
     pairingCode: string;
@@ -300,7 +375,8 @@ export class PairingQrService {
     requestPort: string;
   }): Promise<PairingAddressPlan> {
     const platform = this.platformFor(input.pairingCode);
-    const context = this.judgeContext(platform);
+    const relay = await this.relayAddress();
+    const context = this.judgeContext(platform, relay);
     const discovered = await this.options.discoverIdentities();
     const view = this.networkView(discovered, input.requestPort);
     const { identities, hostNames, container } = view;
@@ -354,6 +430,14 @@ export class PairingQrService {
     if (!requestedHostIsOwnLocalName && !requestedFromDocker && !candidates.has(requested)) {
       candidates.set(requested, labelFor(input.requestHost, "The address you're using now"));
     }
+    const offersRelay = relay !== null && relay.ready && platform !== null;
+    if (
+      relay &&
+      platform !== null &&
+      (offersRelay || !this.allowlistedOrigins().has(relay.origin))
+    ) {
+      candidates.delete(relay.origin);
+    }
 
     const judged = [...candidates].flatMap(([gatewayUrl, label], index) => {
       const verdict = judgePairingAddress(gatewayUrl, context);
@@ -381,6 +465,10 @@ export class PairingQrService {
         index: judged.length,
       });
     }
+    if (relay && offersRelay) {
+      const option = relayPairingAddressOption(relay.origin);
+      judged.push({ option, rank: pairingReachRank(option), index: judged.length });
+    }
     judged.sort((a, b) => a.rank - b.rank || a.index - b.index);
     const addresses = judged.map((j) => j.option);
     const reachesBeyondHome = addresses.some(
@@ -406,20 +494,55 @@ export class PairingQrService {
     };
   }
 
-  encode(input: {
-    pairingCode: string;
-    gatewayUrl: string;
-    trustMode?: PairingQrTrustMode;
-  }): string {
-    const verdict = judgePairingAddress(
-      input.gatewayUrl,
-      this.judgeContext(this.platformFor(input.pairingCode)),
-    );
+  /**
+   * Encode the QR payload for one address. `relay` is the gateway's Omnesis
+   * address as `relayAddress()` read it for this request; the route passes it,
+   * and without it no address is treated as that one.
+   */
+  encode(
+    input: {
+      pairingCode: string;
+      gatewayUrl: string;
+      trustMode?: PairingQrTrustMode;
+    },
+    relay: RelayPairingAddress | null = null,
+  ): string {
+    const platform = this.platformFor(input.pairingCode);
+    const isRelay = relay !== null && sameOrigin(relay.origin, input.gatewayUrl);
+    if (isRelay && !relay.ready && !this.allowlistedOrigins().has(relay.origin)) {
+      throw new BadRequestError(
+        "The gateway's Omnesis address can't be used right now. Turn on remote access, or pair with another address.",
+      );
+    }
+    const verdict = judgePairingAddress(input.gatewayUrl, this.judgeContext(platform, relay));
     if (!verdict.usable) throw new BadRequestError(verdict.reason);
 
-    // A caller that names no trust mode gets the one its origin earns: a pin
-    // on a publicly trusted name would strand the phone at the next renewal.
-    const trustMode = input.trustMode ?? "auto";
+    // The strict modes are the cloud relay's; without it nothing may name them.
+    if (
+      !cloudRelayEnabled() &&
+      (input.trustMode === "pinned-leaf-strict" || input.trustMode === "pinned-key-strict")
+    )
+      throw new BadRequestError("unsupported TLS trust mode");
+    // Relay pairing retains its verified key even when the origin also passes WebPKI.
+    const strictPin =
+      isRelay ||
+      this.options.strictPinOrigins?.some(
+        (origin) => canonicalOrigin(origin) === canonicalOrigin(input.gatewayUrl),
+      );
+    if (strictPin && input.trustMode === "system")
+      throw new BadRequestError("Relay pairing requires a verified gateway certificate pin");
+    const configuredSpki =
+      strictPin && this.options.strictPinSpkiFingerprint
+        ? this.options.strictPinSpkiFingerprint
+        : this.options.tlsSpkiFingerprint;
+    const spki = typeof configuredSpki === "function" ? configuredSpki() : configuredSpki;
+    if (strictPin && this.options.strictPinSpkiFingerprint && !spki)
+      throw new BadRequestError("Public gateway TLS identity is not ready for pairing");
+    const trustMode = strictPin
+      ? spki
+        ? "pinned-key-strict"
+        : "pinned-leaf-strict"
+      : (input.trustMode ?? "auto");
     switch (trustMode) {
       case "auto":
         return verdict.systemTrust
@@ -430,7 +553,18 @@ export class PairingQrService {
           throw new BadRequestError("system TLS trust is not allowed for this gateway origin");
         }
         return this.systemTrustPayload(input);
-      case "pinned-leaf": {
+      case "pinned-key-strict":
+        if (!spki || !/^[a-f0-9]{64}$/.test(spki))
+          throw new BadRequestError("pinned-key TLS trust requires a gateway SPKI fingerprint");
+        return JSON.stringify(
+          buildPairingPayloadV4({
+            gatewayUrl: canonicalOrigin(input.gatewayUrl),
+            pairingCode: input.pairingCode,
+            tls: { mode: "pinned-key-strict", spkiFingerprint: spki },
+          }),
+        );
+      case "pinned-leaf":
+      case "pinned-leaf-strict": {
         const fingerprint = this.tlsFingerprintSha256;
         if (!fingerprint) {
           throw new BadRequestError("pinned-leaf TLS trust requires a gateway fingerprint");
@@ -439,7 +573,7 @@ export class PairingQrService {
           buildPairingPayloadV4({
             gatewayUrl: canonicalOrigin(input.gatewayUrl),
             pairingCode: input.pairingCode,
-            tls: { mode: "pinned-leaf", fingerprint },
+            tls: { mode: trustMode, fingerprint },
           }),
         );
       }
@@ -512,6 +646,15 @@ function normalizeHost(host: string): string {
 
 function originAt(host: string, port: string): string {
   return canonicalOrigin(swapHost(port ? `https://localhost:${port}` : "https://localhost", host));
+}
+
+/** Whether `raw` names exactly the canonical `origin`; a URL that is not a bare origin does not. */
+function sameOrigin(origin: string, raw: string): boolean {
+  try {
+    return canonicalOrigin(raw) === origin;
+  } catch {
+    return false;
+  }
 }
 
 function canonicalOrigin(raw: string): string {

@@ -44,11 +44,14 @@ let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
+  // How a device joined is read back only with the cloud relay opt-in.
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   dbPath = `/tmp/omnesis-pairing-service-test-${randomUUID()}.db`;
   db = createDatabase(dbPath);
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);
@@ -819,5 +822,63 @@ describe("PairingService", () => {
         }),
       ).toMatchObject({ outcome: "invalid" });
     });
+  });
+});
+
+describe("PairingService join announcements", () => {
+  test.each([
+    ["an approved sign-in", { method: "approved" as const, devicePublicKey: "approved-key" }],
+    ["a code an administrator minted", undefined],
+  ])("%s is not announced", async (_label, enrollment) => {
+    const joined = vi.fn();
+    const pending = createPairing(db, {
+      kind: "cli",
+      scopes: [SCOPE_READ],
+      ...(enrollment ? { enrollment } : {}),
+    });
+    const result = await makeService({ onDeviceJoined: joined }).redeem({
+      pairingCode: pending.pairingCode,
+      capabilities: { suggestedName: `cli-${pending.pairingCode}` },
+    });
+    expect(result.outcome).toBe("paired-device");
+    expect(joined).not.toHaveBeenCalled();
+  });
+
+  test("an automatic join is announced once, and a replay is not announced again", async () => {
+    const joined = vi.fn();
+    const service = makeService({ onDeviceJoined: joined });
+    const pending = createPairing(db, {
+      kind: "cli",
+      scopes: [SCOPE_READ],
+      enrollment: { method: "automatic", signIn: "google", devicePublicKey: "automatic-key" },
+    });
+    const input = {
+      pairingCode: pending.pairingCode,
+      capabilities: { suggestedName: "Fresh laptop" },
+      idempotencyKey: "k".repeat(43),
+    };
+    const first = await service.redeem(input);
+    if (first.outcome !== "paired-device") throw new Error(first.outcome);
+    await service.redeem(input);
+    expect(joined).toHaveBeenCalledExactlyOnceWith({
+      deviceId: first.device.id,
+      name: "Fresh laptop",
+      kind: "cli",
+      signIn: "google",
+    });
+  });
+
+  test("a failing announcement does not lose the credential", async () => {
+    const pending = createPairing(db, {
+      kind: "cli",
+      scopes: [SCOPE_READ],
+      enrollment: { method: "automatic", devicePublicKey: "throwing-key" },
+    });
+    const result = await makeService({
+      onDeviceJoined: () => {
+        throw new Error("Synthetic notifier failure");
+      },
+    }).redeem({ pairingCode: pending.pairingCode, capabilities: {} });
+    expect(result.outcome).toBe("paired-device");
   });
 });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { cloudRelayEnabled } from "@omnesis/core";
 import { z } from "zod";
 import { NotFoundError } from "../errors.js";
 import { scope } from "../scope.js";
@@ -13,14 +14,21 @@ const emptyBody = z.object({}).strict();
 const confirmBody = z.object({ id: z.string().uuid() }).strict();
 
 export interface NotificationRoutesDeps {
-  claim(deviceId: DeviceId): Promise<ClaimedNotificationDelivery | null>;
+  claim(
+    deviceId: DeviceId,
+    supportsPairingNotifications?: boolean,
+  ): Promise<ClaimedNotificationDelivery | null>;
   confirm(deviceId: DeviceId, deliveryId: string): Promise<boolean>;
 }
 
 export function mountNotificationRoutes(app: RouteApp, deps: NotificationRoutesDeps): void {
   app.post("/notifications/claim", scope.pushClaim(), validateJson(emptyBody), async (c) => {
     const deviceId = c.get("auth").deviceId!;
-    const claimed = await deps.claim(deviceId);
+    // The header is part of the cloud relay opt-in and is ignored without it.
+    const claimed =
+      cloudRelayEnabled() && c.req.header("X-Omnesis-Pairing-Notifications") === "1"
+        ? await deps.claim(deviceId, true)
+        : await deps.claim(deviceId);
     return claimed ? c.json(claimed) : c.body(null, 204);
   });
 

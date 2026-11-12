@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.notifications
 
+import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.transport.dto.ClaimedNotificationDelivery
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -20,6 +21,10 @@ internal sealed interface NotificationTarget {
         val sourceName: String?,
         val deviceName: String?,
     ) : NotificationTarget
+    /** The Devices screen, on the device a notification names when that device is listed. */
+    data class Devices(val deviceId: String?) : NotificationTarget
+    /** The Pairing requests list, where a device that signed in waits for approval. */
+    data object PairingRequests : NotificationTarget
     data object App : NotificationTarget
 }
 
@@ -39,22 +44,34 @@ internal enum class NotificationRenderOutcome(val shouldConfirm: Boolean) {
     DeferredUnknownKind(false),
 }
 
-internal fun knownNotificationKind(kind: String): Boolean = kind in setOf(
+private val cloudNotificationKinds = setOf("device-pairing", "device-joined")
+
+/** A build without cloud connectivity defers the cloud kinds like any kind it has never heard of. */
+internal fun knownNotificationKind(kind: String, cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED): Boolean = kind in setOf(
     "diagnostic", "agent-answer", "conversation", "watch", "needs-auth", "privacy-approval",
     "source-permission",
     "access-authorization",
-)
+) || (cloudEnabled && kind in cloudNotificationKinds)
 
 /** Strict local routing for shared notification kinds. Unknown/malformed content is ignored. */
 internal fun notificationAction(
     notification: ClaimedNotificationDelivery,
     localDeviceId: String? = null,
+    cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ): ClaimedPushAction? {
+    if (!cloudEnabled && notification.kind in cloudNotificationKinds) return null
     val route = notification.route?.takeIf {
         it.string("kind") == notification.kind
     }
     return when (notification.kind) {
         "diagnostic" -> ClaimedPushAction(notification.kind, NotificationTarget.App)
+        "device-pairing" -> if (notification.targetId == "pairing") {
+            ClaimedPushAction(notification.kind, NotificationTarget.PairingRequests)
+        } else null
+        "device-joined" -> ClaimedPushAction(
+            notification.kind,
+            NotificationTarget.Devices(route?.string("deviceId")?.takeIf(::validOpaqueTarget)),
+        )
         "agent-answer", "conversation" ->
             (route?.string("conversationId") ?: notification.targetId)
                 .takeIf(::validNotificationId)?.let {

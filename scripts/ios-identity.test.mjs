@@ -540,6 +540,20 @@ describe("hosted iOS simulator preparation", () => {
       "OMNESIS_JOURNEY_IOS_UDID=$udid",
     );
     expect(read("scripts/run-mobile-journeys.sh")).toContain('udid="$OMNESIS_JOURNEY_IOS_UDID"');
+    const interactions = journeys.find(
+      (step) => step.name === "lane [ios-cloud-pairing-interactions]",
+    );
+    expect(journeys.indexOf(interactions)).toBeGreaterThan(
+      journeys.findIndex((step) => step.name === "lane [ios-journeys]"),
+    );
+    expect(interactions.run).toContain("-scheme OmnesisDemoUITests");
+    expect(interactions.run).toContain(
+      "-only-testing:OmnesisDemoUITests/CloudPairingInteractionUITests",
+    );
+    expect(interactions.run).toContain("platform=iOS Simulator,id=$OMNESIS_JOURNEY_IOS_UDID");
+    expect(interactions.run).toContain("-enableCodeCoverage YES");
+    expect(interactions.run).toContain("${{ runner.temp }}/mobile-journeys/cloud-pairing.xcresult");
+    expect(interactions.run).toContain("set -o pipefail");
   });
 });
 

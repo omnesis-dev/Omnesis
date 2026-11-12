@@ -37,12 +37,15 @@ export const PAIRING_PROTOCOL_VERSION = 4 as const;
 export const PAIRING_PROTOCOL_MIN_VERSION = 1 as const;
 
 export type PairingTlsTrust =
-  { readonly mode: "system" } | { readonly mode: "pinned-leaf"; readonly fingerprint: string };
+  | { readonly mode: "system" }
+  | { readonly mode: "pinned-key-strict"; readonly spkiFingerprint: string }
+  | { readonly mode: "pinned-leaf" | "pinned-leaf-strict"; readonly fingerprint: string };
 
 /**
  * V4 makes the TLS trust policy explicit. Public HTTPS gateways use normal
  * WebPKI hostname verification; private gateways retain leaf-certificate
- * pinning for their self-signed certificate.
+ * pinning. Strict pins remain mandatory even when another certificate would
+ * pass WebPKI, as required for a relay-operated hostname.
  */
 export interface PairingPayloadV4 {
   v: 4;
@@ -210,7 +213,24 @@ export function decodePairingPayload(
         },
       };
     }
-    if (tls.mode === "pinned-leaf") {
+    if (tls.mode === "pinned-key-strict") {
+      if (typeof tls.spkiFingerprint !== "string") {
+        return { ok: false, error: { kind: "missing-field", field: "tls.spkiFingerprint" } };
+      }
+      if (!FINGERPRINT_PATTERN.test(tls.spkiFingerprint)) {
+        return { ok: false, error: { kind: "invalid-fingerprint" } };
+      }
+      return {
+        ok: true,
+        payload: {
+          v: 4,
+          gatewayUrl,
+          pairingCode,
+          tls: { mode: "pinned-key-strict", spkiFingerprint: tls.spkiFingerprint },
+        },
+      };
+    }
+    if (tls.mode === "pinned-leaf" || tls.mode === "pinned-leaf-strict") {
       if (!("fingerprint" in tls) || typeof tls.fingerprint !== "string") {
         return { ok: false, error: { kind: "missing-field", field: "tls.fingerprint" } };
       }
@@ -223,7 +243,7 @@ export function decodePairingPayload(
           v: 4,
           gatewayUrl,
           pairingCode,
-          tls: { mode: "pinned-leaf", fingerprint: tls.fingerprint },
+          tls: { mode: tls.mode, fingerprint: tls.fingerprint },
         },
       };
     }

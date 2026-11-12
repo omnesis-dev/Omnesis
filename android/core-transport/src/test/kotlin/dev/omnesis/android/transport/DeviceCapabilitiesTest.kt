@@ -15,6 +15,16 @@ import org.junit.Test
 
 class DeviceCapabilitiesTest {
     @Test
+    fun pairingRemindersAreAdvertisedWhileOlderCapabilityPayloadsRemainSupported() {
+        assertFalse(DeviceCapabilities.android(emptyList()).pairingNotifications)
+        val current = DeviceCapabilities.android(emptyList(), pairingNotifications = true)
+        val wire = OmnesisJson.encodeToJsonElement(DeviceCapabilities.serializer(), current).jsonObject
+        assertEquals("true", wire["pairingNotifications"]!!.jsonPrimitive.content)
+        val legacy = kotlinx.serialization.json.JsonObject(wire.filterKeys { it != "pairingNotifications" })
+        assertFalse(OmnesisJson.decodeFromJsonElement(DeviceCapabilities.serializer(), legacy).pairingNotifications)
+    }
+
+    @Test
     fun sourceContractsProduceClosedWireValuesAndLeaseCapability() {
         val capabilities = DeviceCapabilities.android(
             listOf(

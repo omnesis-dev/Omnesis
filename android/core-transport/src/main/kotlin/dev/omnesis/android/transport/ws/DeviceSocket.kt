@@ -6,7 +6,12 @@ package dev.omnesis.android.transport.ws
 import android.util.Log
 import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.DeviceCapabilities
+import dev.omnesis.android.transport.routing.DirectGatewayRoute
+import dev.omnesis.android.transport.routing.DirectGatewayProbe
+import dev.omnesis.android.transport.routing.DirectGatewayProbing
+import dev.omnesis.android.transport.routing.GatewayConnectionPath
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -23,6 +28,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -34,6 +40,7 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
+import okhttp3.OkHttpClient
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -53,8 +60,10 @@ import kotlin.random.Random
  *   spends from its budget, whatever triggered it.
  * - Network-path changes and [appDidBecomeActive] are advisory wake signals: they shorten a
  *   pending wait or replace a stale attempt, but only the hello response counts as being
- *   connected. An open socket is left alone, because the client's ping interval already
- *   fails one that stopped answering.
+ *   connected. With cloud connectivity an open socket is asked to answer within
+ *   [DeviceSocketReconnectLimits.probeTimeoutMs] and replaced if it does not, so a connection left
+ *   on a network that is gone is noticed in seconds rather than by the client's ping interval.
+ *   Without it an open socket is left alone.
  * - [ConnectionState.Reconnecting] is the temporary state; [ConnectionState.Failed] means
  *   retries continue but are unlikely to help until something else changes.
  * - Each attempt goes through the one [client], so a retry can never use a different
@@ -67,12 +76,42 @@ class DeviceSocket(
     private val token: String,
     private val scope: CoroutineScope,
     private val capabilities: DeviceCapabilities = DeviceCapabilities.android(emptyList()),
+    directRoute: DirectGatewayRoute? = null,
+    private val directProbe: DirectGatewayProbing = DirectGatewayProbe,
+    expectedDeviceId: String? = null,
+    refreshHints: (suspend () -> Unit)? = null,
+    private val webSockets: WebSocket.Factory = client,
+    /** Off unless the build enables cloud connectivity. Off, routing, identity checks and the reworked lifecycle are unused. */
+    private val cloudRelay: Boolean = false,
     private val pathObserver: NetworkPathObserver = NetworkPathObserver.None,
+    /**
+     * Told when the way to the gateway may have changed: the network changed, the home network
+     * answered a check, or this socket connected on another path. The session uses it to let
+     * its other clients find the right path again. Never called without cloud connectivity.
+     */
+    private val onRouteEvent: (RouteEvent) -> Unit = {},
     limits: DeviceSocketReconnectLimits = DeviceSocketReconnectLimits(),
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
     private val randomUnit: () -> Double = { Random.nextDouble() },
 ) {
+    private val directRoute = directRoute.takeIf { cloudRelay }
+    private val expectedDeviceId = expectedDeviceId.takeIf { cloudRelay }
+    private val refreshHints = refreshHints.takeIf { cloudRelay }
+    private val probeClient = client as? OkHttpClient
+    init { require(this.directRoute == null || probeClient != null) { "direct probing requires the paired TLS client" } }
+
     enum class NetworkAvailability { UNKNOWN, AVAILABLE, UNAVAILABLE }
+
+    enum class RouteEvent {
+        /** The phone's network changed: every path is worth trying again. */
+        NETWORK_CHANGED,
+
+        /** A check reached the gateway on the home network. */
+        HOME_REACHABLE,
+
+        /** This socket connected on a different path than its last connection. */
+        PATH_CHANGED,
+    }
 
     enum class FailureKind { AUTHENTICATION, CERTIFICATE, INCOMPATIBLE }
 
@@ -84,6 +123,7 @@ class DeviceSocket(
             val deviceId: String,
             val deviceName: String,
             val scopes: List<String>,
+            val connectionPath: GatewayConnectionPath? = null,
         ) : ConnectionState
 
         /** No session is up and automatic retries are expected to restore one. */
@@ -139,7 +179,9 @@ class DeviceSocket(
 
     private var loop: Job? = null
     private var pathJob: Job? = null
-    private var helloId: String? = null
+    private var promotion: Job? = null
+    /** The hello a build without cloud connectivity matches replies against. */
+    private var sharedHelloId: String? = null
     private val lifecycleLock = Any()
     private var connectionGeneration = 0L
     private val policy = DeviceSocketReconnectPolicy(limits)
@@ -160,6 +202,12 @@ class DeviceSocket(
     private var failedAttemptsOnNetwork = 0
     private var lastConnectionError: String? = null
     private val wakes = Channel<Unit>(Channel.CONFLATED)
+
+    /** The liveness question an open socket has not answered yet, and the connection it was asked on. */
+    private var probeId: String? = null
+    private var probeGeneration = 0L
+    private var probeTimer: Job? = null
+    private var lastConnectedPath: GatewayConnectionPath? = null
 
     @Volatile
     private var activeWs: WebSocket? = null
@@ -187,18 +235,25 @@ class DeviceSocket(
                         publishAttemptProgress(ConnectionState.Connecting)
                         connectionGeneration
                     }
-                    val ws = client.newWebSocket(request, listener(ended, generation))
+                    val ws = webSockets.newWebSocket(request, listener(ended, generation))
                     val accepted = synchronized(lifecycleLock) {
-                        if (loop?.isActive != true) {
-                            false
-                        } else {
-                            if (connectionGeneration == generation) activeWs = ws
+                        if (!cloudRelay) {
+                            if (loop?.isActive != true) {
+                                false
+                            } else {
+                                if (connectionGeneration == generation) activeWs = ws
+                                true
+                            }
+                        } else if (loop?.isActive == true && connectionGeneration == generation && !ended.isCompleted) {
+                            activeWs = ws
                             true
-                        }
+                        } else false
                     }
                     if (!accepted) {
                         ws.cancel()
-                        break
+                        if (!cloudRelay || !isActive) break
+                        waitForNextAttempt()
+                        continue
                     }
 
                     val handshakeTimeout = launch {
@@ -210,10 +265,26 @@ class DeviceSocket(
                         }
                         if (timedOut) ws.cancel()
                     }
-                    ended.await()
-                    handshakeTimeout.cancel()
-                    // A replaced attempt may still be ending; its callbacks are already ignored.
-                    ws.cancel()
+                    if (!cloudRelay) {
+                        ended.await()
+                        handshakeTimeout.cancel()
+                        // A replaced attempt may still be ending; its callbacks are already ignored.
+                        ws.cancel()
+                    } else try { ended.await() }
+                    finally {
+                        handshakeTimeout.cancel()
+                        val cancel = synchronized(lifecycleLock) {
+                            val current = connectionGeneration == generation
+                            val owns = activeWs === ws
+                            if (!isActive && current) {
+                                activeWs = null
+                                phase = Phase.IDLE
+                                _state.value = ConnectionState.Disconnected
+                            }
+                            current && (owns || loop?.isActive == true)
+                        }
+                        if (cancel) ws.cancel()
+                    }
                     if (!isActive) break
                     waitForNextAttempt()
                 }
@@ -227,10 +298,23 @@ class DeviceSocket(
             }
         }
         job.start()
+        if (directRoute != null) synchronized(lifecycleLock) {
+            if (loop !== job || !job.isActive) return
+            promotion = scope.launch {
+                while (isActive) {
+                    delay(30_000)
+                    try { refreshDirectPath() }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { /* Rejected hints preserve current routes and trust. */ }
+                }
+            }
+        }
     }
 
     fun stop() {
         val (job, ws, wasConnected) = synchronized(lifecycleLock) {
+            promotion?.cancel()
+            promotion = null
             connectionGeneration += 1
             val stoppedJob = loop
             loop = null
@@ -249,6 +333,62 @@ class DeviceSocket(
         } else {
             ws?.cancel()
         }
+    }
+
+    /**
+     * Replaces the transport: the open socket stopped answering, so the next attempt starts at
+     * once and finds its own path. An unanswered liveness check ends here.
+     */
+    fun recoverAfterInterruption() {
+        if (!cloudRelay) return
+        val replaced = synchronized(lifecycleLock) {
+            if (loop?.isActive != true || !policy.accepts(DeviceSocketReconnectPolicy.WakeSignal.FOREGROUND)) return
+            replaceCurrentAttempt()
+        }
+        replaced?.cancel()
+    }
+
+    /** Called under lifecycleLock; the reconnect loop remains the only attempt/budget owner. */
+    private fun replaceCurrentAttempt(): WebSocket? {
+        connectionGeneration += 1
+        attemptFailure = null
+        retryWithoutBackoff = true
+        phase = Phase.IDLE
+        _state.value = ConnectionState.Connecting
+        val previous = activeWs
+        activeWs = null
+        attemptEnded?.complete(Unit)
+        wakes.trySend(Unit)
+        return previous
+    }
+
+    /** A verified LAN path replaces only this socket and spends the normal attempt budget. */
+    suspend fun promoteDirectPath() {
+        if (!cloudRelay) return
+        val before = synchronized(lifecycleLock) {
+            val connected = _state.value as? ConnectionState.Connected ?: return
+            if (loop?.isActive != true || phase != Phase.CONNECTED) return
+            connected to connectionGeneration
+        }
+        val route = directRoute ?: return
+        val trusted = probeClient ?: return
+        if (before.first.connectionPath != GatewayConnectionPath.RELAY || !directProbe.reachable(route, trusted)) return
+        // The device is home again: new connections try the home network first from now on.
+        route.hintsMayBeReachable()
+        onRouteEvent(RouteEvent.HOME_REACHABLE)
+        val replaced = synchronized(lifecycleLock) {
+            if (connectionGeneration != before.second || _state.value != before.first ||
+                phase != Phase.CONNECTED || loop?.isActive != true) return
+            replaceCurrentAttempt()
+        }
+        replaced?.cancel()
+    }
+
+    suspend fun refreshDirectPath() {
+        if (!cloudRelay) return
+        synchronized(lifecycleLock) { if (loop?.isActive != true) return }
+        refreshHints?.invoke()
+        promoteDirectPath()
     }
 
     /** The user returned to the app, so a retry parked on a long backoff should not make them wait. */
@@ -297,6 +437,7 @@ class DeviceSocket(
     }
 
     private fun handlePath(path: NetworkPathSnapshot) {
+        var changed = false
         val restored = synchronized(lifecycleLock) {
             if (loop == null) return
             val transition = path.transitionFrom(currentPath)
@@ -304,14 +445,71 @@ class DeviceSocket(
             // A connected socket stays as it is on LOST: only the socket itself can say the
             // session ended, and a brief loss may not end it.
             if (_state.value is ConnectionState.Reconnecting) publishReconnecting()
-            if (transition != NetworkPathSnapshot.Transition.RESTORED) return
-            if (!isForeground) restoredWhileBackgrounded = true
-            isForeground
+            if (transition != NetworkPathSnapshot.Transition.RESTORED) {
+                changed = cloudRelay && transition != NetworkPathSnapshot.Transition.UNCHANGED
+                false
+            } else {
+                changed = cloudRelay
+                if (!isForeground) restoredWhileBackgrounded = true
+                isForeground
+            }
+        }
+        if (changed) {
+            // What was out of reach on the old network says nothing about this one.
+            directRoute?.hintsMayBeReachable()
+            onRouteEvent(RouteEvent.NETWORK_CHANGED)
         }
         if (restored) wake(DeviceSocketReconnectPolicy.WakeSignal.CONNECTIVITY_RESTORED)
     }
 
+    /**
+     * Asks an open socket to answer. The gateway answers every command with a response that
+     * carries its id, whatever the command, so any response to this one proves the connection
+     * still carries traffic both ways. One question at a time per connection.
+     */
+    private fun probeOpenSocket() {
+        val (ws, id, generation) = synchronized(lifecycleLock) {
+            if (!cloudRelay || loop?.isActive != true || phase != Phase.CONNECTED) return
+            if (probeId != null && probeGeneration == connectionGeneration) return
+            val ws = activeWs ?: return
+            val id = UUID.randomUUID().toString()
+            probeId = id
+            probeGeneration = connectionGeneration
+            Triple(ws, id, connectionGeneration)
+        }
+        val frame = buildJsonObject {
+            put("kind", "command")
+            put("id", id)
+            put("type", "ping")
+            putJsonObject("payload") {}
+        }
+        val sent = ws.send(OmnesisJson.encodeToString(JsonObject.serializer(), frame))
+        val timer = scope.launch {
+            if (sent) delay(policy.limits.probeTimeoutMs)
+            val unanswered = synchronized(lifecycleLock) {
+                val current = probeId == id && connectionGeneration == generation
+                if (current) probeId = null
+                current
+            }
+            if (unanswered) recoverAfterInterruption()
+        }
+        synchronized(lifecycleLock) {
+            if (probeId == id) probeTimer = timer else timer.cancel()
+        }
+    }
+
+    /** Called under lifecycleLock when a response names the pending liveness question. */
+    private fun probeAnswered() {
+        probeId = null
+        probeTimer?.cancel()
+        probeTimer = null
+    }
+
     private fun wake(signal: DeviceSocketReconnectPolicy.WakeSignal) {
+        if (cloudRelay && synchronized(lifecycleLock) { loop != null && phase == Phase.CONNECTED }) {
+            probeOpenSocket()
+            return
+        }
         val stale = synchronized(lifecycleLock) {
             if (loop == null || phase == Phase.CONNECTED || !policy.accepts(signal)) return
             if (signal == DeviceSocketReconnectPolicy.WakeSignal.CONNECTIVITY_RESTORED) {
@@ -421,6 +619,8 @@ class DeviceSocket(
         ended: CompletableDeferred<Unit>,
         generation: Long,
     ) = object : WebSocketListener() {
+        private val helloId = UUID.randomUUID().toString()
+
         override fun onOpen(webSocket: WebSocket, response: Response) {
             // The callback may beat newWebSocket() returning, or arrive after
             // stop() cancelled this generation. The generation guard handles
@@ -438,8 +638,7 @@ class DeviceSocket(
                 webSocket.cancel()
                 return
             }
-            val id = UUID.randomUUID().toString()
-            helloId = id
+            val id = if (cloudRelay) helloId else UUID.randomUUID().toString().also { sharedHelloId = it }
             val hello = buildJsonObject {
                 put("kind", "command")
                 put("id", id)
@@ -453,10 +652,19 @@ class DeviceSocket(
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            val current = synchronized(lifecycleLock) {
-                connectionGeneration == generation && activeWs === webSocket
+            if (!cloudRelay) {
+                val current = synchronized(lifecycleLock) {
+                    connectionGeneration == generation && activeWs === webSocket
+                }
+                if (current) handleFrame(webSocket, text, sharedHelloId)
+                return
             }
-            if (current) handleFrame(webSocket, text)
+            synchronized(lifecycleLock) {
+                if (connectionGeneration == generation && activeWs === webSocket && loop?.isActive == true &&
+                    !ended.isCompleted && (phase == Phase.ATTEMPTING || phase == Phase.CONNECTED)) {
+                    handleFrame(webSocket, text, helloId)
+                }
+            }
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -490,16 +698,31 @@ class DeviceSocket(
         }
     }
 
-    private fun handleFrame(webSocket: WebSocket, text: String) {
+    private fun handleFrame(webSocket: WebSocket, text: String, helloId: String?) {
         val obj = runCatching { OmnesisJson.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
-        when (obj["kind"]?.jsonPrimitive?.contentOrNull) {
+        val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
+        if (cloudRelay && kind != "response" && phase != Phase.CONNECTED) return
+        when (kind) {
             "response" -> {
+                val answered = obj["correlationId"]?.jsonPrimitive?.contentOrNull
+                if (cloudRelay && answered != null && answered == probeId) {
+                    // Any answer will do, an error included: the connection carried it.
+                    probeAnswered()
+                    return
+                }
+                if (cloudRelay && phase != Phase.ATTEMPTING) return
                 if (obj["correlationId"]?.jsonPrimitive?.contentOrNull != helloId) return
                 val ok = obj["ok"]?.jsonPrimitive?.booleanOrNull ?: false
                 if (ok) {
-                    val result = obj["result"]?.jsonObject
+                    val result = if (cloudRelay) obj["result"] as? JsonObject else obj["result"]?.jsonObject
                     synchronized(lifecycleLock) {
                         if (activeWs !== webSocket) return
+                        if (expectedDeviceId != null && (result?.get("deviceId") as? JsonPrimitive)?.contentOrNull != expectedDeviceId) {
+                            endAttempt(DeviceSocketAttemptFailure.Authentication("Gateway returned a different device identity"))
+                            attemptEnded?.complete(Unit)
+                            webSocket.cancel()
+                            return
+                        }
                         policy.recordConnected()
                         failedAttemptsOnNetwork = 0
                         lastConnectionError = null
@@ -508,9 +731,15 @@ class DeviceSocket(
                         _state.value = ConnectionState.Connected(
                             deviceId = result?.get("deviceId")?.jsonPrimitive?.contentOrNull.orEmpty(),
                             deviceName = result?.get("deviceName")?.jsonPrimitive?.contentOrNull.orEmpty(),
+                            connectionPath = directRoute?.connectionPath?.value,
                             scopes = result?.get("scopes")?.jsonArray
                                 ?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
                         )
+                    }
+                    directRoute?.connectionPath?.value?.takeIf { it != GatewayConnectionPath.RECONNECTING }?.let { path ->
+                        val moved = synchronized(lifecycleLock) { (lastConnectedPath != null && lastConnectedPath != path).also { lastConnectedPath = path } }
+                        if (moved) onRouteEvent(RouteEvent.PATH_CHANGED)
+                        sendEvent("connection.path", buildJsonObject { put("path", if (path == GatewayConnectionPath.LOCAL) "local" else "relay") })
                     }
                 } else {
                     val msg = obj["error"]?.jsonObject?.get("message")

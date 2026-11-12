@@ -163,6 +163,29 @@ final class TaskWidgetTests: XCTestCase {
         XCTAssertNil(try TaskWidgetStorage.credential(store: store))
     }
 
+    func testStrictPairingTrustIsRetainedInWidgetCredentials() throws {
+        let store = InMemoryStore()
+        let strict = TaskWidgetCredential(
+            url: credential.url,
+            token: credential.token,
+            deviceId: credential.deviceId,
+            tlsMode: "pinned-leaf-strict",
+            fingerprint: String(repeating: "a", count: 64)
+        )
+        XCTAssertTrue(strict.isSecure)
+        try TaskWidgetStorage.configure(strict, store: store)
+        XCTAssertEqual(try TaskWidgetStorage.credential(store: store), strict)
+        let malformed = TaskWidgetCredential(
+            url: credential.url,
+            token: credential.token,
+            deviceId: credential.deviceId,
+            tlsMode: "pinned-leaf-strict",
+            fingerprint: "invalid"
+        )
+        try TaskWidgetStorage.configure(malformed, store: store)
+        XCTAssertNil(try TaskWidgetStorage.credential(store: store))
+    }
+
     func testStaleRenderedAuthorityCannotCompleteAgainstNewPairing() async throws {
         let store = InMemoryStore()
         try TaskWidgetStorage.configure(credential, store: store)

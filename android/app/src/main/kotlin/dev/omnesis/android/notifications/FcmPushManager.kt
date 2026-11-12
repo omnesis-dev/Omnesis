@@ -23,6 +23,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.MainActivity
 import dev.omnesis.android.R
+import dev.omnesis.android.access.PairingPendingRequests
 import dev.omnesis.android.setup.flow.NotificationPermissionState
 import dev.omnesis.android.setup.flow.notificationPermissionState as permissionStateFor
 import dev.omnesis.android.transport.dto.ClaimedNotificationDelivery
@@ -259,9 +260,21 @@ class FcmPushManager @Inject constructor(
                     putExtra(MainActivity.EXTRA_AFFECTED_DEVICE_NAME, target.deviceName)
                     putExtra(MainActivity.EXTRA_REMOTE_SOURCE_PERMISSION_LAUNCH_STAMP, System.nanoTime())
                 }
+                is NotificationTarget.Devices -> {
+                    action = MainActivity.ACTION_DEVICES
+                    putExtra(MainActivity.EXTRA_DEVICES_DEVICE_ID, target.deviceId)
+                    putExtra(MainActivity.EXTRA_DEVICES_LAUNCH_STAMP, System.nanoTime())
+                }
+                NotificationTarget.PairingRequests -> {
+                    action = MainActivity.ACTION_DEVICES
+                    putExtra(MainActivity.EXTRA_DEVICES_PAIRING_REQUESTS, true)
+                    putExtra(MainActivity.EXTRA_DEVICES_LAUNCH_STAMP, System.nanoTime())
+                }
                 NotificationTarget.App -> Unit
             }
         }
+        // A request that arrives while the app is open also refreshes the main screen's banner.
+        if (route.target == NotificationTarget.PairingRequests) PairingPendingRequests.requestRefresh()
         val pendingIntent = PendingIntent.getActivity(
             context,
             0,

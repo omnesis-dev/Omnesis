@@ -3,8 +3,13 @@
 
 package dev.omnesis.android.ui.pairing
 
+import dev.omnesis.android.BuildConfig
+import dev.omnesis.android.R
+
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,6 +50,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -71,9 +79,23 @@ fun PairingScreen(
     vm: PairingViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    BackHandler(enabled = state.mode == PairingViewModel.Mode.Google && (state.googlePhase == PairingViewModel.GooglePhase.Pairing || state.account?.phase == AccountPairingPhase.Pairing)) { }
+    // Direct pairing opened from the account entry goes back to it.
+    BackHandler(enabled = state.account != null && state.mode != PairingViewModel.Mode.Google && !state.isPairing) { vm.showGoogle() }
     PairingContent(
         state = state,
-        onBack = onBack,
+        onBack = {
+            val account = state.account
+            when {
+                account == null -> if (state.mode == PairingViewModel.Mode.Google) vm.showScanner() else onBack()
+                // With an Omnesis account, the entry is the first step: direct pairing returns to it,
+                // and a sign-in under way returns to its choices.
+                state.mode != PairingViewModel.Mode.Google -> vm.showGoogle()
+                account.phase != AccountPairingPhase.Idle && account.phase != AccountPairingPhase.Failed -> vm.cancelAccountSignIn()
+                else -> onBack()
+            }
+        },
         onShowScanner = vm::showScanner,
         onShowManual = vm::showManualEntry,
         onQrCode = vm::pairFromQr,
@@ -84,6 +106,12 @@ fun PairingScreen(
         onPair = vm::pair,
         onCancelPending = vm::cancelPending,
         onConfirmPending = vm::confirmPending,
+        onShowGoogle = vm::showGoogle,
+        onGoogleSignIn = { vm.startGoogle(context) },
+        onPasskeySignIn = { vm.startPasskey(context) },
+        onChooseGateway = vm::chooseAccountGateway,
+
+        onGooglePair = vm::finishGooglePairing,
     )
 }
 
@@ -102,14 +130,36 @@ fun PairingContent(
     onPair: () -> Unit,
     onCancelPending: () -> Unit = {},
     onConfirmPending: () -> Unit = {},
+    onShowGoogle: () -> Unit = {},
+    onGoogleSignIn: () -> Unit = {},
+    onGooglePair: () -> Unit = {},
+    onPasskeySignIn: () -> Unit = {},
+    onChooseGateway: (String) -> Unit = {},
+    /** The title shares its bar with a sign-in action, so it stays on one line. Off, it lays out as before. */
+    cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ) {
     val c = OmTheme.colors
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Pair with your gateway", style = MaterialTheme.typography.titleMedium, color = c.textPrimary) },
+                title = {
+                    if (cloudFeatures) Text("Pair with your gateway", style = MaterialTheme.typography.titleMedium, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    else Text("Pair with your gateway", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
+                },
                 navigationIcon = {
-                    TextButton(onClick = onBack) { Text("Cancel", color = c.accent) }
+                    TextButton(onClick = onBack, enabled = state.googlePhase != PairingViewModel.GooglePhase.Pairing && state.account?.phase != AccountPairingPhase.Pairing) {
+                        // Direct pairing opened from the account entry goes back to it.
+                        Text(if (state.account != null && state.mode != PairingViewModel.Mode.Google) "Back" else "Cancel", color = c.accent)
+                    }
+                },
+                actions = {
+                    if (state.googleAvailable && state.account == null && state.mode != PairingViewModel.Mode.Google) {
+                        TextButton(onClick = onShowGoogle) {
+                            Image(painterResource(R.drawable.google_sign_in_mark), contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Google", color = c.accent)
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = c.bgPrimary),
             )
@@ -138,6 +188,11 @@ fun PairingContent(
                     onPair = onPair,
                     onPairFromPayload = onQrCode,
                 )
+                PairingViewModel.Mode.Google -> {
+                    val account = state.account
+                    if (account != null) AccountCloudPairingPane(account, state.googleAvailable, state.passkeyAvailable, onGoogleSignIn, onPasskeySignIn, onChooseGateway, onGooglePair, onShowScanner, onShowManual)
+                    else GoogleCloudPairingPane(state, onGoogleSignIn, onGooglePair)
+                }
             }
         }
     }
@@ -481,12 +536,15 @@ fun PairingConfirmationSheet(
     onCancel: () -> Unit,
     onConfirm: () -> Unit,
     modifier: Modifier = Modifier,
+    /** A full key digest and its explanation need the scrolling layout. */
+    cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ) {
     val c = OmTheme.colors
     Column(
         modifier = modifier
             .fillMaxWidth()
             .background(c.bgPrimary)
+            .then(if (cloudFeatures) Modifier.verticalScroll(rememberScrollState()) else Modifier)
             .padding(OmSpacing.lg),
         verticalArrangement = Arrangement.spacedBy(OmSpacing.lg),
     ) {
@@ -514,7 +572,11 @@ fun PairingConfirmationSheet(
         OmnesisCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (trustKind == PairingViewModel.TrustKind.System) "TLS TRUST" else "FINGERPRINT",
+                    when (trustKind) {
+                        PairingViewModel.TrustKind.System -> "TLS TRUST"
+                        PairingViewModel.TrustKind.PinnedKey -> "PUBLIC KEY FINGERPRINT"
+                        else -> "FINGERPRINT"
+                    },
                     style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.6.sp),
                     fontWeight = FontWeight.Bold,
                     color = c.textMuted,
@@ -546,8 +608,17 @@ fun PairingConfirmationSheet(
                     style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
                     fontWeight = FontWeight.Normal,
                     color = c.textPrimary,
-                    maxLines = 4,
+                    maxLines = if (cloudFeatures) Int.MAX_VALUE else 4,
                 )
+                if (trustKind == PairingViewModel.TrustKind.PinnedKey) {
+                    Spacer(Modifier.height(OmSpacing.xs))
+                    Text(
+                        "Android verifies the gateway public key, hostname, and certificate validity. " +
+                            "Certificate renewals using this key remain trusted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.textSecondary,
+                    )
+                }
             } else {
                 Text("Not pinned (legacy payload)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = c.warning)
                 Spacer(Modifier.height(OmSpacing.xs))
@@ -561,7 +632,7 @@ fun PairingConfirmationSheet(
             }
         }
 
-        Spacer(Modifier.weight(1f))
+        Spacer(if (cloudFeatures) Modifier.height(OmSpacing.sm) else Modifier.weight(1f))
 
         Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.md)) {
             Button(

@@ -2088,7 +2088,10 @@
     },
     {
       "value": "10.0.0.42",
-      "paths": ["packages/cli/src/commands/devices.test.ts"],
+      "paths": [
+        "packages/cli/src/commands/devices.test.ts",
+        "ios/Tests/OmnesisTests/AppStoreHintPropagationTests.swift"
+      ],
       "reason": "reviewed existing fixture"
     },
     {
@@ -2103,6 +2106,8 @@
     {
       "value": "10.0.0.9",
       "paths": [
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "packages/cloud-relay/src/runtime-direct.test.ts",
         "packages/gateway/src/mdns-advertiser.test.ts",
         "packages/gateway/src/tls-lifecycle/service.test.ts"
       ],
@@ -2160,7 +2165,10 @@
     },
     {
       "value": "192.168.1.2",
-      "paths": ["packages/gateway/src/access/client-metadata-document.test.ts"],
+      "paths": [
+        "packages/gateway/src/access/client-metadata-document.test.ts",
+        "ios/Tests/OmnesisTests/GatewayRoutingLifecycleTests.swift"
+      ],
       "reason": "invented private-address fixture for mixed-answer SSRF rejection"
     },
     {
@@ -2171,7 +2179,12 @@
     {
       "value": "192.168.1.20",
       "paths": [
+        "android/app/src/test/kotlin/dev/omnesis/android/screenshots/DevicesScreenshotTest.kt",
+        "android/app/src/test/kotlin/dev/omnesis/android/ui/devices/PairDeviceLogicTest.kt",
         "packages/cli/src/commands/phone-pairing.test.ts",
+        "packages/cloud-relay/src/client-proxy-path.test.ts",
+        "packages/cloud-relay/src/device-file-hints.test.ts",
+        "packages/cloud-relay/src/metadata-recovery.test.ts",
         "packages/collector/src/e2e/pairing-lifecycle.e2e.test.ts",
         "packages/collector/src/main.test.ts",
         "packages/core/src/host-network.test.ts",
@@ -2204,6 +2217,186 @@
         "packages/gateway/src/http/services/PairingQrService.test.ts"
       ],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "10.0.0.1",
+      "paths": [
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/DirectCandidatePersistenceTest.kt",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/DirectGatewayCandidatesTest.kt",
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift",
+        "packages/cloud-relay/src/direct-path.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.2",
+      "paths": [
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairedGatewayTransportTest.kt",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairingGenerationTest.kt",
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "ios/Tests/OmnesisTests/GatewayDirectDiscoveryTests.swift",
+        "ios/Tests/OmnesisTests/GatewayListenerVerificationTests.swift",
+        "ios/Tests/OmnesisTests/GatewayPairingGenerationTests.swift"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.3.2.1",
+      "paths": [
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairingGenerationTest.kt"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "172.16.0.1",
+      "paths": [
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift",
+        "packages/cloud-relay/src/direct-path.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "172.31.255.254",
+      "paths": [
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "packages/cloud-relay/src/direct-path.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.256",
+      "paths": [
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.20",
+      "paths": [
+        "ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift",
+        "packages/cloud-relay/src/adaptive-path.test.ts",
+        "packages/cloud-relay/src/adaptive-probe.test.ts",
+        "packages/cloud-relay/src/adaptive-tls.test.ts",
+        "packages/cloud-relay/src/direct-path.test.ts",
+        "packages/cloud-relay/src/direct-tls.test.ts",
+        "packages/cloud-relay/src/runtime-direct.test.ts",
+        "packages/gateway/src/http/routes/direct-candidates.test.ts",
+        "packages/gateway/src/http/services/DirectCandidates.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "172.31.255.255",
+      "paths": ["ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.256",
+      "paths": ["ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.01.1",
+      "paths": ["ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.4.2.1",
+      "paths": ["ios/Tests/OmnesisTests/GatewayPairingGenerationTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.99",
+      "paths": ["packages/cloud-relay/src/adaptive-path.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.20",
+      "paths": [
+        "packages/cloud-relay/src/adaptive-path.test.ts",
+        "packages/cloud-relay/src/device-file-hints.test.ts",
+        "packages/cloud-relay/src/direct-path.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.10",
+      "paths": ["packages/cloud-relay/src/direct-discovery.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.1.2.3",
+      "paths": ["packages/cloud-relay/src/direct-path.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.1",
+      "paths": ["packages/cloud-relay/src/direct-path.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.01.2.3",
+      "paths": ["packages/cloud-relay/src/direct-path.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "172.17.0.1",
+      "paths": ["packages/gateway/src/http/services/DirectCandidates.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.4",
+      "paths": [
+        "ios/Tests/OmnesisTests/CloudRelayFlagOffTests.swift",
+        "ios/Tests/OmnesisTests/GatewayPairingCoordinatorTests.swift",
+        "packages/gateway/src/http/services/DirectCandidates.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.2",
+      "paths": [
+        "ios/Tests/OmnesisTests/GatewayExtensionCredentialPolicyTests.swift",
+        "android/app/src/test/kotlin/dev/omnesis/android/ui/pairing/GoogleDefaultCompositionTest.kt",
+        "android/app/src/test/kotlin/dev/omnesis/android/ui/pairing/GoogleSettingsRouteProjectionTest.kt",
+        "android/app/src/test/kotlin/dev/omnesis/android/widgets/TaskWidgetRepositoryTest.kt",
+        "ios/Tests/OmnesisTests/GatewayPairingRoutingFactoryTests.swift",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/DirectCandidatePersistenceTest.kt",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairedGatewayRoutesTest.kt",
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "ios/Tests/OmnesisTests/GatewayAdaptiveSocketTests.swift",
+        "ios/Tests/OmnesisTests/GatewayHintPublicationTests.swift",
+        "ios/Tests/OmnesisTests/GatewayPairedHintRefresherTests.swift",
+        "ios/Tests/OmnesisTests/GatewayRoutedSessionTests.swift"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.3",
+      "paths": ["ios/Tests/OmnesisTests/GatewayRoutingLifecycleTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.50.20",
+      "paths": ["ios/Tests/OmnesisTests/GatewayRoutingLifecycleTests.swift"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "192.168.1.21",
+      "paths": ["packages/cloud-relay/src/metadata-recovery.test.ts"],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "10.0.0.7",
+      "paths": ["packages/cli/src/commands/cloud-management.test.ts"],
+      "reason": "Invented private-address fixture."
+    },
+    {
+      "value": "192.168.77.10",
+      "paths": ["packages/collector/src/e2e/cloud-relay.e2e.test.ts"],
+      "reason": "Invented private-address fixture."
     }
   ],
   "tailnetIps": [
@@ -2238,7 +2431,12 @@
     {
       "value": "100.64.0.7",
       "paths": [
+        "android/app/src/test/kotlin/dev/omnesis/android/screenshots/DevicesScreenshotTest.kt",
+        "android/app/src/test/kotlin/dev/omnesis/android/ui/devices/PairDeviceLogicTest.kt",
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/client/AdminClientTest.kt",
         "packages/core/src/host-network.test.ts",
+        "packages/gateway/portal/js/views/access-cloud-relay.test.ts",
+        "packages/gateway/portal/js/views/access/public-address.test.ts",
         "packages/gateway/src/http/services/PairingQrService.test.ts",
         "scripts/release/install-sh-docker.test.mjs"
       ],
@@ -2261,6 +2459,14 @@
         "packages/core/src/pairing-address.test.ts"
       ],
       "reason": "Invented Tailscale ULA IPv6 fixture exercising the IPv4+IPv6 TailscaleIPs shape."
+    },
+    {
+      "value": "100.64.0.1",
+      "paths": [
+        "packages/cloud-relay/src/direct-path.test.ts",
+        "packages/gateway/src/http/services/DirectCandidates.test.ts"
+      ],
+      "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
     }
   ],
   "names": [
@@ -12577,6 +12783,65 @@
       "value": "Rate Limit Exceeded",
       "paths": ["packages/providers/google/src/broker.test.ts"],
       "reason": "Google API error message text."
+    },
+    {
+      "value": "Your Omnesis",
+      "paths": [
+        "packages/cloud-relay/src/account-browser.test.ts",
+        "packages/collector/src/e2e/account-deletion.e2e.test.ts",
+        "packages/collector/src/e2e/account-enrollment-flag-off.e2e.test.ts",
+        "packages/gateway/portal/js/views/relay.test.ts"
+      ],
+      "reason": "Start of the CLI help line \"Your Omnesis account\", not a person."
+    },
+    {
+      "value": "Link Google",
+      "paths": [
+        "packages/cloud-relay/src/account-browser.test.ts",
+        "packages/cloud-relay/src/account-browser-portal.test.ts"
+      ],
+      "reason": "Public account credential button label, not a person's name"
+    },
+    {
+      "value": "Upgrade Required",
+      "paths": ["packages/collector/src/e2e/cloud-relay-failclosed.e2e.test.ts"],
+      "reason": "Standard HTTP status phrase in a synthetic tunnel protocol fixture."
+    },
+    {
+      "value": "Opening Google",
+      "paths": ["packages/gateway/portal/js/components/cloud-pairing-login.test.ts"],
+      "reason": "Product sign-in status label, not a person."
+    },
+    {
+      "value": "Omnesis Account",
+      "paths": [
+        "packages/collector/src/e2e/account-enrollment-connect.e2e.test.ts",
+        "packages/gateway/portal/js/views/relay.test.ts"
+      ],
+      "reason": "Product name in interface text asserted by a test, not a person's name."
+    },
+    {
+      "value": "An Omnesis",
+      "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
+      "reason": "Product name in interface text asserted by a test, not a person's name."
+    },
+    {
+      "value": "Omnesis Relay",
+      "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
+      "reason": "Product name in interface text asserted by a test, not a person's name."
+    },
+    {
+      "value": "The Access",
+      "paths": ["packages/gateway/portal/js/views/access-cloud-relay.test.ts"],
+      "reason": "Product or interface text asserted by a test, not a person's name."
+    },
+    {
+      "value": "Tailscale Funnel",
+      "paths": [
+        "packages/gateway/portal/js/views/access-cloud-relay.test.ts",
+        "packages/gateway/portal/js/views/access/public-address.test.ts"
+      ],
+      "reason": "Product or interface text asserted by a test, not a person's name."
     }
   ],
   "secretFixtures": [
@@ -12620,6 +12885,11 @@
       "path": "packages/providers/strava/src/broker.test.ts",
       "kind": "bearer-token",
       "reason": "Invented brokered access token checked in an Authorization header in a credential-broker test."
+    },
+    {
+      "path": "packages/cloud-relay/src/google-commands.test.ts",
+      "kind": "private-key",
+      "reason": "Synthetic PEM header with non-key placeholder text verifies rejection of mixed certificate/private-key input; contains no private key."
     }
   ]
 }
