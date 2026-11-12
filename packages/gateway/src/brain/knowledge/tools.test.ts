@@ -780,7 +780,10 @@ it("prioritizes a newly appended synthesis source beyond nine retained claim ref
   // Existing converted claims cite all nine documents. The new source is last
   // in the proposed ref list, as happens when an agent appends fresh evidence.
   const refs = [...oldIds, "new-support"].map((id) => `source:${id}`).join(" ");
-  const check = vi.fn(async (_input: RecordCheckInput) => ({ save: true as const }));
+  const check = vi.fn(async (_input: RecordCheckInput) => ({
+    save: true as const,
+    assessment: { policy: RECORD_CHECK_RUBRIC_VERSION, decisionId: "source-priority-assessment" },
+  }));
   await checkKnowledgeOutcome(service, check, {
     id: "priority-loop",
     kind: "loop",

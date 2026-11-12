@@ -60,6 +60,8 @@ function policy(request: DecisionServerRequest): DecisionPolicyReply {
   );
   if (maintenancePurpose) return { [maintenancePurpose]: { type: "score", score: 2 } };
   const state = request.state as { subject?: string; record?: string; record_type?: string };
+  if (state.record_type === "outcome" && state.record?.includes("Exhibit installation"))
+    return { httpError: 400, message: "assessment unavailable" };
   if (state.record_type === "outcome") return { belongs: { type: "score", score: 0.1 } };
   if (typeof state.subject === "string") {
     return { worth_score: { type: "score" as const, score: 3 } };
@@ -120,6 +122,11 @@ const OUTCOME_MAIL = email({
   title: "Archive access status",
   content: "The catalog access transfer was completed by its administrator yesterday.",
 });
+const OUTCOME_OUTAGE_MAIL = email({
+  externalId: "rc-outcome-exhibit",
+  title: "Exhibit installation approval",
+  content: "The director approved the exhibit installation for the museum opening.",
+});
 
 describe("record check: a scripted decision model on source interpretation", () => {
   let bench: BrainBench;
@@ -149,6 +156,20 @@ describe("record check: a scripted decision model on source interpretation", () 
                   call("open_loop_search", { query: "catalog access" }),
                   call("open_loop_create", {
                     title: "Transfer catalog access",
+                    confidence: 0.8,
+                    importance: 0.7,
+                    docs: [ctx.subject],
+                  }),
+                ],
+              }),
+            },
+            {
+              docTitle: OUTCOME_OUTAGE_MAIL.title,
+              plan: (ctx) => ({
+                calls: [
+                  call("open_loop_search", { query: "exhibit installation" }),
+                  call("open_loop_create", {
+                    title: "Exhibit installation",
                     confidence: 0.8,
                     importance: 0.7,
                     docs: [ctx.subject],
@@ -314,6 +335,43 @@ describe("record check: a scripted decision model on source interpretation", () 
     const [decision] = await recordChecks(run.id);
     expect(decision).toMatchObject({ verdict: "unavailable", score: null, enforced: true });
     expect(decision!.error).toMatch(/400/);
+  });
+
+  test("an unavailable enforced outcome assessment prevents the canonical write", async () => {
+    await bench.patchConfig({ brain: { annotations: { recordCheck: "enforce" } } });
+    await bench.push(OUTCOME_OUTAGE_MAIL);
+    const docId = await bench.docId(OUTCOME_OUTAGE_MAIL.externalId);
+    const { value } = await waitFor(
+      "the unavailable outcome write is reported on its run",
+      async () => {
+        const row = bench.sql
+          .prepare<[string], { run_id: string }>(
+            "SELECT run_id FROM cognition_decisions WHERE purpose='record-check' AND document_id=? AND verdict='unavailable' ORDER BY created_at DESC LIMIT 1",
+          )
+          .get(docId);
+        if (!row) return null;
+        const step = (await bench.obs.executedTools(row.run_id)).find(
+          (step) => step.tool === "open_loop_create",
+        );
+        return step ? { value: { runId: row.run_id, step } } : null;
+      },
+      30_000,
+    );
+    await bench.patchConfig({ inference: { assignments: { "background-agent": null } } });
+    expect(value.step.result).toMatchObject({
+      kind: "error",
+      code: "outcome_assessment_unavailable",
+    });
+    expect(
+      bench.sql
+        .prepare("SELECT count(*) AS n FROM open_loops WHERE title='Exhibit installation'")
+        .get(),
+    ).toEqual({ n: 0 });
+    expect((await recordChecks(value.runId))[0]).toMatchObject({
+      verdict: "unavailable",
+      score: null,
+      enforced: true,
+    });
   });
 
   test("the check's tokens are recorded as record-check spend, never as runs", async () => {

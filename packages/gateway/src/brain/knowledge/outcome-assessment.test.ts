@@ -143,6 +143,36 @@ it.each(["refused", "unavailable"])(
     expect(check).toHaveBeenCalledTimes(2);
   },
 );
+it.each(["enforce", "shadow"] as const)(
+  "changed outcome prose requires an accepted assessment only in %s mode",
+  async (mode) => {
+    const input = proposal();
+    input.markdown = input.markdown.replace(
+      "before the survey.",
+      "before the survey. Record the calibration result.",
+    );
+    const check: CheckRecord = vi.fn(async () => ({ save: true as const }));
+    check.enforcesOutcomePolicy = () => mode === "enforce";
+    check.needsDocumentContext = () => false;
+    const before = service.fetch("task", true);
+    if (mode === "enforce") {
+      await expect(checkKnowledgeOutcome(service, check, input)).rejects.toThrow(
+        "Outcome assessment is unavailable",
+      );
+      expect(service.fetch("task", true)).toEqual(before);
+      expect(
+        db.prepare("SELECT status FROM knowledge_outcome_assessments WHERE owner_id='task'").all(),
+      ).toEqual([{ status: "unavailable" }]);
+      await expect(checkKnowledgeOutcome(service, check, input)).rejects.toThrow(
+        "until its scheduled retry",
+      );
+      expect(check).toHaveBeenCalledOnce();
+    } else {
+      expect(await checkKnowledgeOutcome(service, check, input)).toBeUndefined();
+      expect(check).not.toHaveBeenCalled();
+    }
+  },
+);
 it("does not reuse an approval after evidence changes, and refuses commit if the source changes during judgment", async () => {
   oldApproval(RECORD_CHECK_RUBRIC_VERSION);
   db.prepare("UPDATE documents SET content_hash='s2'").run();

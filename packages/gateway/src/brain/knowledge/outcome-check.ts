@@ -165,8 +165,7 @@ export async function checkKnowledgeOutcome(
   })();
   if (!snapshot) return;
   if ("reuse" in snapshot) return snapshot.outcomeFence;
-  const { loop, proposed, prepared, documentId, outcomeFence, receipt, unchanged, reviewBatchId } =
-    snapshot;
+  const { loop, proposed, prepared, documentId, outcomeFence, receipt } = snapshot;
   const result = await check(
     {
       recordId: loop.id,
@@ -178,10 +177,7 @@ export async function checkKnowledgeOutcome(
     },
     signal,
   );
-  if (
-    !result.save ||
-    (enforcePolicy && !result.assessment && (unchanged || reviewBatchId !== null))
-  ) {
+  if (!result.save || (enforcePolicy && !result.assessment)) {
     await service.deps.writeGate["knowledge.outcomeAssessmentAttempt"](
       {
         fence: outcomeFence,
