@@ -280,6 +280,51 @@ describe("interactive-agent substrate write access", () => {
     }
   });
 
+  it.each([false, true])(
+    "keeps the refreshed Lab prompt when resuming the current profile (queued voice: %s)",
+    async (queueVoice) => {
+      const fixture = refreshFixture();
+      let finishTurn = () => {};
+      let firstTurn = true;
+      const original = fixture.backend.runTurn.bind(fixture.backend);
+      const run = vi.spyOn(fixture.backend, "runTurn").mockImplementation(async function* (input) {
+        if (firstTurn) {
+          firstTurn = false;
+          await new Promise<void>((resolve) => {
+            finishTurn = resolve;
+          });
+        }
+        yield* original(input);
+      });
+      try {
+        const session = await fixture.service.createSession("device:A");
+        fixture.service.sendMessage("device:A", session.sessionId, "Start the conversation.");
+        await settle();
+        if (queueVoice)
+          await fixture.service.createSession("device:A", {
+            resumeFromId: session.sessionId,
+            profile: "voice",
+          });
+        fixture.flags.tasks = true;
+        await fixture.service.refreshLabFeatures();
+        await fixture.service.createSession("device:A", {
+          resumeFromId: session.sessionId,
+          profile: "interactive",
+        });
+        finishTurn();
+        await settle();
+        fixture.service.sendMessage("device:A", session.sessionId, "Show my tasks.");
+        await settle();
+        expect(fixture.backend.sawSystemPrompt).toContain("interactive tasks=true");
+        expect(fixture.backend.sawTools).toContain("task_list");
+      } finally {
+        finishTurn();
+        await fixture.service.dispose();
+        run.mockRestore();
+      }
+    },
+  );
+
   it("appends the profile's write tools to a top-level session, stamped interactive_<sessionId>", async () => {
     const { service, backend } = makeService();
     const { profile, seenRunIds } = makeProfile();

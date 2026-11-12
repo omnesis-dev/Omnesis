@@ -1340,28 +1340,20 @@ export class AgentService {
         // follow-up into an app-resumed conversation must start. No
         // profile requested ⇒ the session keeps its current profile.
         const requested = opts.profile;
-        if (requested !== undefined) {
-          if (requested === live.promptProfile) {
-            // The latest resume's explicit profile wins over an earlier,
-            // not-yet-applied switch request.
-            delete live.pendingProfileSwap;
+        if (
+          requested !== undefined &&
+          (requested !== live.promptProfile || live.pendingProfileSwap !== undefined)
+        ) {
+          // A pending swap can carry updated Lab instructions for this same
+          // profile. Rebuild the latest requested profile rather than dropping
+          // that update when a caller cancels a queued voice/profile switch.
+          const prompt = await this.resolveChatPrompt(requested, {
+            timeZone: live.session.timeZone,
+          });
+          if (live.session.busy || this.deepResearchActive.has(opts.resumeFromId)) {
+            live.pendingProfileSwap = { profile: requested, systemPrompt: prompt };
           } else {
-            // A live session's zone is fixed at construction: the prompt
-            // above the transcript was rendered in it and every tool call so
-            // far was framed in it, so a profile swap re-renders in the same
-            // zone rather than adopting the resuming client's. A caller who has
-            // genuinely moved gets re-grounded when the session falls out of
-            // memory and resumes from disk.
-            const prompt = await this.resolveChatPrompt(requested, {
-              timeZone: live.session.timeZone,
-            });
-            if (live.session.busy || this.deepResearchActive.has(opts.resumeFromId)) {
-              // The in-flight turn (and its persistence) owns the current
-              // session object — defer the swap to the next turn start.
-              live.pendingProfileSwap = { profile: requested, systemPrompt: prompt };
-            } else {
-              this.applyProfileSwap(opts.resumeFromId, live, requested, prompt);
-            }
+            this.applyProfileSwap(opts.resumeFromId, live, requested, prompt);
           }
         }
         // A second client can open a shared conversation mid-turn after some
