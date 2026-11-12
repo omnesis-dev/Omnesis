@@ -29,6 +29,12 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock("../api.js", () => apiMocks);
 
+const routerMocks = vi.hoisted(() => ({ replaceRoute: vi.fn() }));
+vi.mock("../lib/router.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  replaceRoute: routerMocks.replaceRoute,
+}));
+
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import {
   agentConnectCommands,
@@ -274,7 +280,7 @@ describe("fleet health action", () => {
     expect(host.querySelectorAll(".devices-card")).toHaveLength(0);
   });
 
-  test("a late repair response cannot cross into another device's modal", async () => {
+  test("a late repair response cannot cross into another device's pairing page", async () => {
     const rows = [
       { id: "device_a", name: "Fictional phone A", kind: "ios", online: false },
       { id: "device_b", name: "Fictional phone B", kind: "android", online: false },
@@ -321,15 +327,15 @@ describe("fleet health action", () => {
       );
     });
     await act(async () => {
-      const close = [...host.querySelectorAll("button")].find((button) =>
-        button.textContent?.trim() === "Close",
+      const back = [...host.querySelectorAll("button")].find((button) =>
+        button.textContent?.trim() === "← Back to devices",
       ) as HTMLButtonElement;
-      close.click();
+      back.click();
     });
     await openRepair("Fictional phone B");
     await act(async () => resolveFirst({ pairingCode: "ABCDEF0123", expiresAt: Date.now() + 60_000 }));
 
-    expect(host.querySelector("#pair-modal-title")?.textContent).toContain("Fictional phone B");
+    expect(host.querySelector("#pair-page-title")?.textContent).toContain("Fictional phone B");
     expect(host.querySelector(".devices-pair-result")).toBeNull();
   });
 
@@ -580,16 +586,16 @@ describe("browser extension pairing", () => {
     });
   });
 
-  test("a pair deep link opens the modal with the browser kind preselected", async () => {
+  test("a pair deep link opens the pairing page with the browser kind preselected", async () => {
     apiMocks.pairDevice.mockResolvedValue({ pairingCode: "FICTION-2486", expiresAt: Date.now() + 60000 });
     await act(async () => {
       render(h(DevicesView, { pairKindRequest: "browser" }), host);
     });
-    // The modal title is specific to the open modal — the page button reads
+    // The title is specific to the pairing page — the list's button reads
     // "Pair device", without "a new".
     expect(host.textContent).toContain("Pair a new device");
     expect(host.querySelector('input[name="pair-kind"][value="browser"]').hasAttribute("checked")).toBe(true);
-    // Minting from the deep-linked modal carries the preselected kind.
+    // Minting from the deep-linked page carries the preselected kind.
     await act(async () => {
       (host.querySelector(".devices-pair-form") as HTMLFormElement).dispatchEvent(
         new window.Event("submit", { bubbles: true, cancelable: true }),
@@ -762,7 +768,7 @@ describe("browser extension pairing", () => {
       item.textContent?.includes("Repair device"),
     ) as HTMLButtonElement;
     await act(async () => repair.click());
-    expect(host.querySelector(".devices-modal")?.textContent).toContain(
+    expect(host.querySelector(".devices-pair-page")?.textContent).toContain(
       "Re-pairing keeps its device identity and its access level.",
     );
     await act(async () => {
@@ -776,7 +782,7 @@ describe("browser extension pairing", () => {
     apiMocks.getAccessOverview.mockResolvedValue({ levels: [] });
   });
 
-  test("a refused pairing is explained inside the modal, and stays until the request changes", async () => {
+  test("a refused pairing is explained on the pairing page, and stays until the request changes", async () => {
     apiMocks.getAccessOverview.mockResolvedValue(accessOverview());
     apiMocks.pairDevice.mockRejectedValue(
       Object.assign(new Error("POST /admin/devices/pair: 400"), {
@@ -792,7 +798,7 @@ describe("browser extension pairing", () => {
         new window.Event("submit", { bubbles: true, cancelable: true }),
       );
     });
-    expect(host.querySelector(".devices-modal [role=alert]")?.textContent).toBe(
+    expect(host.querySelector(".devices-pair-page [role=alert]")?.textContent).toBe(
       "Name the integration when pairing it.",
     );
     const nameInput = host.querySelector("#pair-name") as HTMLInputElement;
@@ -800,7 +806,7 @@ describe("browser extension pairing", () => {
     await act(async () => {
       nameInput.dispatchEvent(new window.Event("input", { bubbles: true }));
     });
-    expect(host.querySelector(".devices-modal [role=alert]")).toBeNull();
+    expect(host.querySelector(".devices-pair-page [role=alert]")).toBeNull();
     apiMocks.pairDevice.mockReset();
     apiMocks.getAccessOverview.mockResolvedValue({ levels: [] });
   });
@@ -813,7 +819,7 @@ describe("browser extension pairing", () => {
     expect(resolvePairKindRequest(undefined)).toBe(null);
   });
 
-  test("a pair request arriving without a remount still opens the modal", async () => {
+  test("a pair request arriving without a remount still opens the pairing page", async () => {
     await act(async () => {
       render(h(DevicesView, { pairKindRequest: null }), host);
     });
@@ -825,14 +831,72 @@ describe("browser extension pairing", () => {
     expect(host.textContent).toContain("Pair a new device");
   });
 
-  test("an unknown pair kind leaves the modal closed", async () => {
+  test("pairing replaces the device list in place, and Back to devices restores it", async () => {
+    apiMocks.listDevices.mockResolvedValue({
+      items: [{
+        id: "device_laptop", name: "Fictional laptop", kind: "cli",
+        pairedAt: 1, lastSeenAt: Date.now(), online: true, capabilities: {},
+      }],
+    });
+    await act(async () => {
+      render(h(DevicesView, {}), host);
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Fictional laptop"));
+    await act(async () => {
+      const pair = [...host.querySelectorAll("button")].find((button) =>
+        button.textContent?.trim() === "Pair device",
+      ) as HTMLButtonElement;
+      pair.click();
+    });
+    // No dialog: the page takes the list's place inside the Devices tab.
+    expect(host.querySelector("[role=dialog]")).toBeNull();
+    expect(host.querySelector(".devices-header")).toBeNull();
+    expect(host.textContent).not.toContain("Fictional laptop");
+    const page = host.querySelector("section.devices-pair-page")!;
+    expect(page.getAttribute("aria-labelledby")).toBe("pair-page-title");
+    expect(page.querySelector("#pair-page-title")?.textContent?.trim()).toBe("Pair a new device");
+
+    await act(async () => {
+      (host.querySelector(".devices-pair-form") as HTMLFormElement).dispatchEvent(
+        new window.Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    await act(async () => {
+      const done = [...page.querySelectorAll("button")].find((button) =>
+        button.textContent?.trim() === "Done",
+      ) as HTMLButtonElement;
+      done.click();
+    });
+    expect(host.querySelector(".devices-pair-page")).toBeNull();
+    expect(host.textContent).toContain("Fictional laptop");
+    // A list opened without a deep link has no `?pair=` to drop.
+    expect(routerMocks.replaceRoute).not.toHaveBeenCalled();
+  });
+
+  test("leaving a deep-linked pairing page drops the request from the address bar", async () => {
+    routerMocks.replaceRoute.mockClear();
+    await act(async () => {
+      render(h(DevicesView, { pairKindRequest: "android" }), host);
+    });
+    await act(async () => {
+      const back = [...host.querySelectorAll("button")].find((button) =>
+        button.textContent?.trim() === "← Back to devices",
+      ) as HTMLButtonElement;
+      back.click();
+    });
+    expect(host.querySelector(".devices-pair-page")).toBeNull();
+    expect(host.querySelector(".devices-header")).not.toBeNull();
+    expect(routerMocks.replaceRoute).toHaveBeenCalledWith("/portal/settings/devices");
+  });
+
+  test("an unknown pair kind leaves the device list showing", async () => {
     await act(async () => {
       render(h(DevicesView, { pairKindRequest: "toaster" }), host);
     });
     expect(host.textContent).not.toContain("Pair a new device");
   });
 
-  test("no pair request leaves the modal closed", async () => {
+  test("no pair request leaves the device list showing", async () => {
     await act(async () => {
       render(h(DevicesView, {}), host);
     });
@@ -924,7 +988,7 @@ describe("browser extension pairing", () => {
     expect(host.textContent).toContain("open Options");
   });
 
-  test("minting a browser code from the modal shows the gateway's warning with the code", async () => {
+  test("minting a browser code from the pairing page shows the gateway's warning with the code", async () => {
     apiMocks.pairDevice.mockResolvedValue({
       pairingCode: "FICTION-2486",
       expiresAt: Date.now() + 60000,
