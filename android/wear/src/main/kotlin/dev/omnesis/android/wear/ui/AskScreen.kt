@@ -86,7 +86,7 @@ private fun AskIdle(hintVisible: Boolean, actions: WatchActions, modifier: Modif
         val eased by animateFloatAsState(if (hintVisible) 1f else 0f, label = "hint")
         eased
     }
-    WatchColumn(modifier) {
+    WatchColumn(modifier, insets = controlBlockInsets()) {
         // The mark and the name share a line, which leaves room for both
         // rows of buttons under them on the smallest display.
         item {

@@ -171,21 +171,37 @@ fun screenInsets(underTime: Boolean): ScreenInsets {
     }
 }
 
+/** The height the time takes at the top of a screen, with the gap that keeps content clear of it. */
+internal val TimeRoom: Dp = 24.dp
+
+/**
+ * The room a short block of controls keeps under the time. Its rows are
+ * narrower than a line of text, so on a round screen they need none of the
+ * depth [screenInsets] keeps for text: the block has everything from the
+ * time down to the bottom edge, and is centred in that.
+ */
+@Composable
+fun controlBlockInsets(): ScreenInsets {
+    val configuration = LocalConfiguration.current
+    if (!configuration.isScreenRound) return screenInsets(underTime = true)
+    return ScreenInsets(horizontal = configuration.screenWidthDp.dp * 0.1f, top = TimeRoom, bottom = 0.dp)
+}
+
 /**
  * A scrolling screen: a column that starts under the time, scrolls by touch
  * and by the crown, and shows where it is. Content shorter than the screen is
- * centred. [fadesAtEdges] darkens the top and bottom, for a screen of text
- * that scrolls under the curve of a round display.
+ * centred in the room [insets] leave. [fadesAtEdges] darkens the top and
+ * bottom, for a screen of text that scrolls under the curve of a round display.
  */
 @Composable
 fun WatchColumn(
     modifier: Modifier = Modifier,
     showTime: Boolean = true,
     fadesAtEdges: Boolean = false,
+    insets: ScreenInsets = screenInsets(underTime = showTime),
     content: ScalingLazyListScope.() -> Unit,
 ) {
     val listState = rememberScalingLazyListState(initialCenterItemIndex = 0)
-    val insets = screenInsets(underTime = showTime)
     Scaffold(
         modifier = modifier,
         vignette = { if (fadesAtEdges) Vignette(vignettePosition = VignettePosition.TopAndBottom) },
