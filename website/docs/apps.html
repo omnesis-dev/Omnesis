@@ -318,6 +318,27 @@
           >
           for the full process.
         </p>
+        <p>
+          The Wear OS app is built from the same checkout, so that it takes the phone app's package
+          id and signing key, without which the two do not connect. Connect the watch over
+          <code>adb</code> and install it there:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">./gradlew :wear:assembleDebug</span>
+            </p>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd"
+                >adb -s &lt;watch-serial&gt; install -r
+                wear/build/outputs/apk/debug/wear-debug.apk</span
+              >
+            </p>
+          </div>
+        </div>
 
         <h2 id="pairing">Pairing</h2>
         <p>On the gateway host, mint a pairing QR with the CLI:</p>
@@ -1016,47 +1037,78 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           </p>
         </div>
         <p>
-          The Omnesis app for Wear OS works through the Android phone it is paired with. It holds no
-          gateway credentials and makes no gateway requests: questions, notes and recordings travel
-          over the Wear OS Data Layer to the phone app, which uses its own pairing. Add the
-          <strong>Omnesis</strong> tile, or the <strong>Omnesis</strong> complication to a watch
-          face. Both open the recorder, which starts recording immediately, without showing a
-          transcript. Tap <strong>Ask</strong> to stop recording and open a conversation, or
-          <strong>Tell</strong> to save a note. “Got it. I'll deal with it.” confirms that the watch
-          has stored the recording; it does not wait for the phone or gateway. Recordings are kept
-          on the watch and retried for up to a week, then retained by the phone until processed.
+          The Omnesis app for Wear OS works through the Android phone the watch is paired with. It
+          holds no gateway credentials and makes no gateway requests: questions, notes and
+          recordings travel over the Wear OS Data Layer to the phone app, which uses its own
+          pairing. Install it on the watch from Google Play, where it shares the phone app's
+          listing, or build both apps yourself; the two connect only when they share a package id
+          and signing key. A watch whose phone app is missing, out of date or not paired with a
+          gateway says that the phone app must be opened first.
         </p>
         <p>
-          Questions keep the watch open for the answer, with the agent's current step shown while it
-          works. The microphone records a follow-up in the same conversation. If the watch cannot
-          display the answer, a notification on the phone opens the conversation; a confirmed
-          displayed answer suppresses that notification. A question the phone app does not take
-          within about twenty seconds is queued for it, and its answer arrives as a phone
-          notification. A queued question that reaches the phone more than ten minutes later is
-          reported, not asked. Queued notes have no such limit.
+          There are three ways in. The <strong>Omnesis</strong> tile and the
+          <strong>Omnesis</strong> complication open the recorder, which starts recording
+          immediately. Opening the app from the watch's app list shows
+          <strong>Tap to speak</strong>, which opens the same recorder, above two smaller buttons:
+          <strong>Type a question</strong> and <strong>Omnesis note</strong>. Wear OS gives a watch
+          app no voice-assistant entry point, so there is no spoken phrase that starts it.
         </p>
         <p>
-          With a decision model available, the recorder shows one <strong>Send</strong> button and
-          the gateway decides whether the words need an answer or should become a note. Disable
+          The recorder shows no transcript. Tap <strong>Ask</strong> to stop recording and get an
+          answer, or <strong>Tell</strong> to save a note. With a decision model available it shows
+          one <strong>Send</strong> button instead, and the gateway decides whether the words need
+          an answer or should become a note. Disable
           <strong>Use decision gate for watch capture</strong> in the <strong>Watch</strong> section
           of the phone app's Settings to restore Ask and Tell. It is the gateway setting the Apple
           Watch uses, <code>inference.dictation.useDecisionGateForWatch</code>, so it applies to
-          both. The Watch section appears on phones whose Google Play services include the wearable
-          Data Layer, and shows whether a watch is connected and whether Omnesis is installed on it.
-          The phone tells the watch which buttons to offer. A watch whose phone app is not paired
-          with a gateway reports that the phone app must be opened first.
+          both. The phone tells the watch which buttons to offer; a watch that has not heard from
+          its phone for a week offers Ask and Tell. A recording runs for at most two minutes.
+          Reaching that limit, an interruption or leaving the app stops the microphone and leaves
+          the recording ready for an explicit Ask, Tell or Send; an undecided recording is never
+          sent.
         </p>
         <p>
-          Gateway transcription applies to both Ask and Tell from the watch. When it is disabled,
-          the phone transcribes the recording itself, strictly on-device, with enabled personal
-          vocabulary hints once the recognizer confirms the recording's language is installed. This
-          requires Android 13 or later, an on-device speech recognizer with that language, and the
-          microphone permission, which Android's recognizer requires even to read a recording:
+          “Got it. I'll deal with it.” confirms that the watch has stored a note's recording; it
+          does not wait for the phone or gateway, and the watch returns to the watch face once the
+          transfer is safely under way. A question keeps the watch open for the answer, with the
+          agent's current step shown while it works. The answer is shown without being read aloud;
+          tap the speaker to hear it, or the microphone to record a follow-up in the same
+          conversation. If the watch is not showing the app when the answer arrives, a notification
+          on the phone opens the conversation; an answer the watch did show suppresses that
+          notification. When the phone cannot work on a recording yet, or the watch hears nothing
+          about it for a while, the watch says “Your phone will finish this.” and returns to the
+          watch face; the result then arrives on the phone.
+        </p>
+        <p>
+          <strong>Type a question</strong> opens the watch's own text input, keyboard or dictation.
+          Its answer is shown and read aloud while the app is on screen. A question the phone app
+          does not take within about twenty seconds is queued for it, and its answer arrives as a
+          phone notification. A queued question that reaches the phone more than ten minutes later
+          is reported on the phone, not asked.
+        </p>
+        <p>
+          <strong>Omnesis note</strong> opens the note screen. With gateway dictation on,
+          <strong>New note</strong> records a voice note for the gateway to transcribe; otherwise it
+          opens the watch's text input. Either way the watch confirms with “Sent to your phone.” as
+          soon as the note is stored on the watch, and keeps handing it to the phone until the phone
+          confirms it. Notes and recordings are filed under the time and time zone of the watch at
+          the moment of capture, however late they arrive. One that reaches no phone for a week is
+          removed, and the watch says so the next time the app is opened. A note the phone receives
+          but cannot save produces a notification on the phone.
+        </p>
+        <p>
+          Gateway transcription applies to every recording from the watch. When it is disabled, the
+          phone transcribes the recording itself, strictly on-device, in the watch's language, with
+          enabled personal vocabulary hints once the recognizer confirms that language is installed.
+          This requires Android 13 or later, an on-device speech recognizer with that language, and
+          the microphone permission, which Android's recognizer requires even to read a recording:
           choose <strong>Enable phone transcription for watch</strong> in the Watch section to grant
-          it. Until the recording can be transcribed it is kept on the phone and tried again when
-          the phone app opens, when the watch next sends something, and from time to time while a
-          network is available; one notification says it is delayed. Pending recordings expire after
-          a week, with a notification.
+          it. A recording the phone cannot process yet is kept on the phone and tried again when the
+          phone app next starts, from time to time while a network is available, and when you choose
+          the retry action the Watch section shows while recordings are waiting; one notification
+          says it is delayed. Pending recordings expire after a week, with a notification. The Watch
+          section appears on phones whose Google Play services include the wearable Data Layer, and
+          shows whether a watch is connected and whether Omnesis is installed on it.
         </p>
         <p>
           Voice questions wait a bounded time in the foreground. If the answer takes longer, the
@@ -1123,10 +1175,11 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           off for the gateway and every paired app. The apps fetch hints in the background, keep
           them in memory for offline use for up to 24 hours, and refresh them opportunistically
           after 30 minutes when returning to the foreground or refreshing gateway status. Starting a
-          recording in the app never waits for hints. A voice request from Google Assistant that has
-          to start the Android app waits up to one second for the gateway's status and hints before
-          it listens, then listens without them. See <a href="operating">Operating Omnesis</a> for
-          vocabulary behavior.
+          recording in a running app never waits for hints. On Android, a capture that has to start
+          the app first (from the Quick Settings tile, the launcher shortcut, or Google Assistant)
+          waits up to one second for the gateway's status and hints, showing
+          <strong>Getting ready…</strong> with the microphone still off, then listens with whatever
+          has arrived. See <a href="operating">Operating Omnesis</a> for vocabulary behavior.
         </p>
         <p>
           iOS supplies hints only to on-device recognition. Android requires Android 13 or later and
