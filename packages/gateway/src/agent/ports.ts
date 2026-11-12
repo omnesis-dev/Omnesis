@@ -198,7 +198,7 @@ export function createGatewaySearchPort(
             }
           : undefined,
         {
-          agentContext: !authorization?.restricted && (!db || labFeatureEnabled(db, "tasks")),
+          agentContext: !authorization?.restricted,
           excludeExternalDocuments: currentConversationId
             ? [
                 {
@@ -1193,7 +1193,12 @@ export function createGatewayPersonPort(
         ? await opts.lookupGate.lookupPeople(input.query, limit, { experimental })
         : assemblePersonLookup(db, input.query, limit, { experimental });
 
-      if (opts?.knowledgeReads === false) for (const result of results) delete result.openLoops;
+      if (
+        opts?.knowledgeReads === false ||
+        !labFeatureEnabled(db, "brain") ||
+        !labFeatureEnabled(db, "tasks")
+      )
+        for (const result of results) delete result.openLoops;
 
       return {
         query: input.query,

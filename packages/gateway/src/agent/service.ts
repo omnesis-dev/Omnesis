@@ -1624,12 +1624,6 @@ export class AgentService {
     }
   }
 
-  /**
-   * Resolve the system prompt for a switchable chat profile. The voice
-   * profile is the interactive prompt plus a spoken-reply fragment; the
-   * prompt builder also strips the Timeline guidance for it, matching the
-   * toolset `buildInteractiveTools` hands that profile.
-   */
   private labRefreshGeneration = 0;
 
   /** Refresh live conversations without interrupting an admitted turn. */
@@ -1655,6 +1649,12 @@ export class AgentService {
     }
   }
 
+  /**
+   * Resolve the system prompt for a switchable chat profile. The voice
+   * profile is the interactive prompt plus a spoken-reply fragment; the
+   * prompt builder also strips the Timeline guidance for it, matching the
+   * toolset `buildInteractiveTools` hands that profile.
+   */
   private async resolveChatPrompt(
     profile: "interactive" | "voice",
     context: AgentPromptContext,

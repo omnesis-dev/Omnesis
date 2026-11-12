@@ -1174,7 +1174,7 @@ test("disabled Tasks withholds task mirrors from fetch, URL lookup, search and g
     expect(search).toHaveBeenCalledWith(
       expect.objectContaining({ cognitiveProjection: false }),
       undefined,
-      expect.objectContaining({ agentContext: false }),
+      expect.objectContaining({ agentContext: true }),
     );
   } finally {
     vi.unstubAllEnvs();

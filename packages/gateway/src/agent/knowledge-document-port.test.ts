@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   createFetchDocumentTool,
   CitationReads,
@@ -19,6 +19,7 @@ import { renderConversation } from "../sources/omnesis-chat/render.js";
 import { renderedCitationsToInputs } from "../sources/omnesis-chat/upsert.js";
 import { upsertConversationCitations } from "../sources/omnesis-chat/citation-writer.js";
 import { createDatabase } from "../db.js";
+import { setLabFlag } from "../lab/store.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
 import { isKnowledgeDocumentReadable } from "../brain/knowledge/retrieval-fence.js";
 import { captureKnowledgeRootContext } from "../brain/knowledge/root-context.js";
@@ -52,6 +53,7 @@ beforeEach(() => {
   document("evidence", "notes", "The observatory opens Saturday.");
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   db.close();
   rmSync(directory, { recursive: true, force: true });
 });
@@ -1118,6 +1120,8 @@ it("persists an authorized alias citation as a canonical conversation edge", asy
 });
 
 it("exposes qualified loop assertions through the real fetch tool without promoting tracking state", async () => {
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+  setLabFlag(db, "tasks", true);
   projectedLoop("qualified-loop", ["evidence"], true);
   db.prepare(
     "UPDATE knowledge_dependencies SET relation='supports' WHERE node_id='qualified-loop'",

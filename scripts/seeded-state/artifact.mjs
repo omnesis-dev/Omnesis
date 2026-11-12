@@ -171,6 +171,8 @@ const SAFE_TABLES = new Set([
   "index_versions",
   "indexed_documents",
   "indexing_errors",
+  // Lab opt-ins contain feature preferences; the target still requires experimental mode.
+  "lab_features",
   "live_voice_usage",
   // The owner's reactions to morning-brief items and the interest examples
   // the Brain's decision gates read: feedback, with nothing to redeem.

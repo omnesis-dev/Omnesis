@@ -41,6 +41,7 @@ import {
 import { SweepService } from "./sweeps/service.js";
 import type { AgentEvent, Manifest, ResolvedAssignment } from "@omnesis/core";
 import type { ChatBackend, TurnInput } from "@omnesis/agent";
+import type { ChatRoleReadinessDeps } from "../models/chat-role-readiness.js";
 import type { WriteGate } from "../write-gate.js";
 import type { TaskContext, TaskOutcome } from "../scheduler/types.js";
 import type { BackgroundJob } from "../background-jobs/types.js";
@@ -914,7 +915,7 @@ describe("maintenanceContextBudget", () => {
   });
 });
 
-test("a host that supplies no Lab opt-in cannot start Brain with the environment alone", () => {
+it("a host that supplies no Lab opt-in cannot start Brain with the environment alone", () => {
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   expect(computeBriefsStatus(assignedResolver, READY_DEPS)).toMatchObject({
     enabled: false,

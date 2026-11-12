@@ -594,7 +594,8 @@ describe("Tasks Lab boundary", () => {
   test("Brain can be off while task commands remain available", async () => {
     setLabFlag(db, "brain", false);
     await addTask("Pack a telescope cover");
-    const status = await call("GET", "/status");
+    const status = await call("GET", "/status", undefined, reader);
+    expect(status.status).toBe(200);
     expect(status.json.lab).toEqual({ brain: false, tasks: true, watches: false });
     expect(status.json.labAvailable).toBe(true);
     expect(status.json.tasks.available).toBe(true);
@@ -606,7 +607,8 @@ describe("Tasks Lab boundary", () => {
     setLabFlag(db, "brain", true);
     expect((await call("GET", "/tasks?view=today&date=2026-03-10")).status).toBe(404);
     expect((await call("POST", "/tasks", { title: "Must remain absent" })).status).toBe(404);
-    const status = await call("GET", "/status");
+    const status = await call("GET", "/status", undefined, reader);
+    expect(status.status).toBe(200);
     expect(status.json.tasks.available).toBe(false);
     expect(status.json.lab).toEqual({ brain: true, tasks: false, watches: false });
     setLabFlag(db, "tasks", true);

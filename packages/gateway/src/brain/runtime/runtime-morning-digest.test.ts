@@ -22,6 +22,7 @@ import {
 import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
 import { readDailyBriefDetail } from "../observations/brief-detail.js";
 import { createDatabase } from "../../db.js";
+import { setLabFlag } from "../../lab/store.js";
 import { directWriteGate } from "../../write-gate.js";
 import { resolveBrainSettings } from "../config.js";
 import { createObservation, getObservation } from "../storage/observations.js";
@@ -179,6 +180,7 @@ beforeEach(() => {
     .mockResolvedValue(temporalResult([]) as never);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   query.mockRestore();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"])
@@ -233,7 +235,9 @@ describe("digest preflight", () => {
     expect(await rt.preflight!(digestRun())).toBe("continue");
   });
 
-  test("a loop coming due alone is enough to continue", async () => {
+  test("an enabled Tasks loop coming due alone is enough to continue", async () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    setLabFlag(db, "tasks", true);
     createOpenLoop(
       db,
       {
@@ -248,6 +252,8 @@ describe("digest preflight", () => {
     );
     const rt = await runtime();
     expect(await rt.preflight!(digestRun())).toBe("continue");
+    setLabFlag(db, "tasks", false);
+    expect(await rt.preflight!(digestRun())).toBe("complete");
   });
 
   test("the recheck ranks shippable observations into today's list and continues", async () => {

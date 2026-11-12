@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { computeContentHash, type SearchProvenance } from "@omnesis/core";
 import { createDatabase } from "../db.js";
+import { setLabFlag } from "../lab/store.js";
 import { saveKnowledgeNode, recordKnowledgeSourceDeletion } from "../brain/knowledge/storage.js";
 import { buildKnowledgeDocumentInput } from "../brain/knowledge/mirror.js";
 import { createGatewaySearchPort } from "../agent/ports.js";
@@ -351,6 +352,20 @@ describe("agent search v2 enrollment and compatibility", () => {
       expect(actual.results.every((hit) => hit.breadcrumb === undefined)).toBe(true);
     },
   );
+
+  test("Tasks disabled preserves ordinary agent grouping and provenance", async () => {
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    setLabFlag(gateway, "tasks", false);
+    const result = await createGatewaySearchPort(pipeline(), undefined, gateway).search({
+      query: "equipment",
+      limit: 10,
+    });
+    expect(result.results).toHaveLength(2);
+    const family = result.results.find((hit) => ["a", "b"].includes(hit.documentId))!;
+    expect(family.provenance?.copies.map((copy) => copy.documentId).sort()).toEqual(["a", "b"]);
+    expect(family.provenance?.modelContext).toBeDefined();
+    expect(result.results.every((hit) => hit.openLoops === undefined)).toBe(true);
+  });
 
   test("explicit false preserves the legacy agent result projection", async () => {
     const disabled = pipeline({ v2: { enabled: false } });

@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { createDatabase } from "../db.js";
+import { setLabFlag } from "../lab/store.js";
 import { createOpenLoop } from "../brain/storage/open-loops.js";
 import { createPersonAnnotation } from "../brain/storage/person-annotations.js";
 import { createGatewayPersonPort } from "../agent/ports.js";
@@ -71,11 +72,13 @@ function seedRichFixture(): void {
   insertPerson("p-maya2", "Maya Reeves", "maya@personal.example.org", 0.2);
 }
 
-const withExperimental = (on: boolean, fn: () => void): void => {
+const withTaskContext = async (on: boolean, fn: () => Promise<void>): Promise<void> => {
   const prev = process.env.OMNESIS_EXPERIMENTAL;
   process.env.OMNESIS_EXPERIMENTAL = on ? "1" : "0";
+  setLabFlag(db, "brain", on);
+  setLabFlag(db, "tasks", on);
   try {
-    fn();
+    await fn();
   } finally {
     if (prev === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
     else process.env.OMNESIS_EXPERIMENTAL = prev;
@@ -85,7 +88,7 @@ const withExperimental = (on: boolean, fn: () => void): void => {
 describe("assemblePersonLookup — golden equality with the person port", () => {
   test("experimental OFF: assembly matches the port's results exactly", async () => {
     seedRichFixture();
-    await withExperimental(false, async () => {
+    await withTaskContext(false, async () => {
       const port = createGatewayPersonPort(db);
       const out = await port.lookup({ query: "Maya", limit: 5 });
       const assembled = assemblePersonLookup(db, "Maya", 5, { experimental: false });
@@ -140,7 +143,7 @@ describe("assemblePersonLookup — golden equality with the person port", () => 
       5_000,
     );
 
-    await withExperimental(true, async () => {
+    await withTaskContext(true, async () => {
       const port = createGatewayPersonPort(db);
       const out = await port.lookup({ query: "Maya", limit: 5 });
       const assembled = assemblePersonLookup(db, "Maya", 5, { experimental: true });

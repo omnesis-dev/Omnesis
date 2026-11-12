@@ -15,6 +15,7 @@ import {
   enqueueCognitionRun,
 } from "../packages/gateway/src/brain/storage/run-queue.js";
 import { saveKnowledgeNode } from "../packages/gateway/src/brain/knowledge/storage.js";
+import { readKnowledgeOwner } from "../packages/gateway/src/brain/knowledge/owner-adapters.js";
 import {
   enqueueKnowledgeWork,
   createKnowledgeBatch,
@@ -128,7 +129,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
           ownerId: "browser-materials",
           kind: "loop",
           title: "Prepare workshop materials",
-          canonicalFields: { state: "open" },
+          canonicalFields: readKnowledgeOwner(db, "loop", "browser-materials").canonicalFields,
           expectedRevision: 0,
           markdown: `<claim id="outcome" refs="${ref}">Gather paper and pencils for the workshop.</claim>`,
           inputVersions: { [ref]: "knowledge-browser-v1" },
@@ -596,17 +597,34 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await page.goBack();
   await page.getByRole("button", { name: "History", exact: true }).click();
   await expect(page.getByText(/Edit 1|Version 1|Revision 1/).first()).toBeVisible();
-  await expect(page.locator(".kn-timeline details")).toHaveCount(2);
+  // Maintenance can append physical revisions; the authored versions retain their own diff.
+  await expect(page.locator(".kn-timeline .kn-revision h4")).toContainText([
+    "Version 2",
+    "Version 1",
+  ]);
   await expect(page.locator(".kn-timeline details[open]")).toHaveCount(0);
   await expect(page.locator(".kn-revision .kn-prose")).toHaveCount(0);
   await expect(page.locator(".kn-revision .privacy-policy-diff")).toHaveCount(0);
-  const latestRevision = page.locator(".kn-revision").first();
-  await latestRevision.locator("summary").click();
-  await expect(latestRevision.locator("details")).toHaveAttribute("open", "");
-  await expect(latestRevision.getByRole("table", { name: "Changes in version 2" })).toBeVisible();
-  await expect(latestRevision.locator(".privacy-policy-diff-row--add").first()).toBeVisible();
-  await expect(latestRevision.locator(".privacy-policy-diff-row--same").first()).toBeVisible();
-  await latestRevision.locator("summary").click();
+  const authoredRevision = page.locator(".kn-revision").filter({
+    has: page.getByRole("heading", { name: "Version 2", exact: true }),
+  });
+  await authoredRevision.locator("summary").click();
+  await expect(authoredRevision.locator("details")).toHaveAttribute("open", "");
+  await expect(authoredRevision.getByRole("table", { name: "Changes in version 2" })).toBeVisible();
+  await expect(authoredRevision.locator(".privacy-policy-diff-row--add").first()).toBeVisible();
+  await expect(authoredRevision.locator(".privacy-policy-diff-row--same").first()).toBeVisible();
+  await expect(authoredRevision.getByRole("table", { name: "Changes in version 2" })).toContainText(
+    "Bring paper and",
+  );
+  await expect(
+    authoredRevision
+      .locator(".privacy-policy-diff-row--same")
+      .filter({
+        hasText: "The workshop begins at ten.",
+      })
+      .first(),
+  ).toBeVisible();
+  await authoredRevision.locator("summary").click();
   await expect(page.locator(".kn-timeline details[open]")).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("knowledge-history.png"),

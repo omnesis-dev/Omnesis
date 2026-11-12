@@ -11,9 +11,10 @@ import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { vi, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, ProviderId, SourceId, type Scope } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
+import { setLabFlag } from "../../lab/store.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
@@ -111,11 +112,15 @@ beforeEach(() => {
   clock.set(NOW);
   dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(dbPath);
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+  setLabFlag(db, "tasks", true);
+  setLabFlag(db, "brain", false);
   convDir = mkdtempSync(join(tmpdir(), "omnesis-task-conversation-"));
   admin = mintToken([SCOPE_ADMIN]);
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   statusCache?.stop();
   db.close();
   rmSync(convDir, { recursive: true, force: true });
