@@ -244,7 +244,11 @@ export class WhisperTranscriber implements TranscribeCapability {
     this.pending.delete(msg.id);
     clearTimeout(pending.timer);
     if (msg.type === "result") {
-      pending.resolve({ text: msg.text, ...(msg.language ? { language: msg.language } : {}) });
+      pending.resolve({
+        text: msg.text,
+        ...(msg.language ? { language: msg.language } : {}),
+        ...(msg.segments ? { segments: msg.segments } : {}),
+      });
     } else {
       pending.reject(new Error(msg.error));
     }
@@ -290,7 +294,7 @@ export class WhisperTranscriber implements TranscribeCapability {
     // Budget per chunk = explicit override (tests) or a duration-scaled value
     // that covers a cold reload plus the inference itself — so a long clip on
     // CPU isn't killed mid-transcribe — raised to the caller's `minTimeoutMs`.
-    const { text, language } = await transcribeInChunks(
+    const { text, language, segments } = await transcribeInChunks(
       pcm,
       { minTimeoutMs: opts?.minTimeoutMs },
       (chunk, ms) =>
@@ -302,7 +306,12 @@ export class WhisperTranscriber implements TranscribeCapability {
           opts?.signal,
         ),
     );
-    return { text, language, durationSec: pcm.length / PCM_SAMPLE_RATE };
+    return {
+      text,
+      language,
+      durationSec: pcm.length / PCM_SAMPLE_RATE,
+      ...(segments ? { segments } : {}),
+    };
   }
 
   /** Send one chunk to the worker and wait for its result, within `timeoutMs`. */

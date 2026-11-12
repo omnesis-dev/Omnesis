@@ -185,6 +185,15 @@ export interface PersonMention {
    */
   isSelf?: boolean;
   /**
+   * The person this mention is, by id, when the owner said so explicitly —
+   * a speaker of a recorded conversation mapped to a person. It resolves to
+   * that person (or whoever it was merged into) without any lookup; an id
+   * that names nobody falls back to the mention's other fields. Only the
+   * gateway's own sources set it: documents written from outside have it
+   * removed at the HTTP boundary.
+   */
+  personId?: string;
+  /**
    * Whether this mention may create a person when none of its identifiers is
    * already known. Defaults to true. Free-text entity extraction sets this to
    * false: a phone in arbitrary prose is useful linking evidence, but is not

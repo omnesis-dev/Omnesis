@@ -392,13 +392,13 @@ de-duplicating by `name@version`. It includes optional production dependencies
 (e.g. platform-specific native binaries), so multiple platform variants of the
 same library each appear as a distinct entry.
 
-**532 distinct third-party production packages**, grouped by their declared SPDX
+**540 distinct third-party production packages**, grouped by their declared SPDX
 license expression:
 
 | Count | License (as declared in package metadata)            |
 | ----: | ---------------------------------------------------- |
 |   383 | MIT                                                  |
-|    38 | Apache-2.0                                           |
+|    46 | Apache-2.0                                           |
 |    30 | ISC                                                  |
 |    16 | BSD-3-Clause                                         |
 |    14 | MPL-2.0                                              |
@@ -419,6 +419,15 @@ license expression:
 |     1 | MIT-0                                                |
 |     1 | 0BSD                                                 |
 |     1 | Unlicense                                            |
+
+The gateway's optional `sherpa-onnx-node` (Apache-2.0), which tells the
+speakers of recorded conversations apart, adds itself and its seven
+platform-specific native packages (`sherpa-onnx-<platform>`), all Apache-2.0.
+The speaker models it runs are not distributed: the gateway downloads them on
+first use from Hugging Face, pinned by checksum — the pyannote
+segmentation-3.0 model (MIT, CNRS) and the WeSpeaker ResNet34-LM speaker
+embedding model trained on VoxCeleb, both exported to ONNX by the sherpa-onnx
+project.
 
 The experimental Telegram provider adds the MTProto client `@mtcute/*`
 (`core`, `node`, `file-id`, `tl-runtime`, `wasm`, `html-parser`,

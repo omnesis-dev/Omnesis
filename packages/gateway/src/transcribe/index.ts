@@ -22,7 +22,11 @@ export {
   assignmentReadiness,
   verifyTranscriberAssignment,
 } from "./transcribe-service.js";
-export type { TranscriberReadiness } from "./transcribe-service.js";
+export type {
+  TranscriberReadiness,
+  TranscribeOptions,
+  TranscriptionOutcome,
+} from "./transcribe-service.js";
 export {
   WhisperTranscriber,
   whisperDepsAvailable,

@@ -34,6 +34,22 @@ describe("SyntheticTranscriber", () => {
     expect(result.text).toBe("");
   });
 
+  test("a JSON script becomes timed segments", async () => {
+    const t = new SyntheticTranscriber();
+    const script = {
+      segments: [
+        { startMs: 0, endMs: 2_000, text: "Hello.", voice: "a" },
+        { startMs: 2_500, endMs: 4_000, text: "Hi there.", voice: "b" },
+      ],
+    };
+    const result = await t.transcribe(enc(JSON.stringify(script)), "audio/ogg");
+    expect(result.text).toBe("Hello. Hi there.");
+    expect(result.segments).toEqual([
+      { startMs: 0, endMs: 2_000, text: "Hello." },
+      { startMs: 2_500, endMs: 4_000, text: "Hi there." },
+    ]);
+  });
+
   test("dispose is a no-op", async () => {
     const t = new SyntheticTranscriber();
     await expect(t.dispose()).resolves.toBeUndefined();

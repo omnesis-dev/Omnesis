@@ -326,6 +326,23 @@ function dropNonIdentifyingEmails(
  * When `cache` is provided, alias lookups short-circuit through the cache
  * within a batch (usually cuts half the DB round-trips on a hot thread).
  */
+/** The person an id names, following merges to the survivor; null when it names nobody. */
+function livePersonId(db: Db, id: string): string | null {
+  let current = id;
+  // Merge chains are short; the bound only guards against a corrupt cycle.
+  for (let hops = 0; hops < 16; hops += 1) {
+    const row = db
+      .prepare<[string], { merged_into: string | null }>(
+        "SELECT merged_into FROM people WHERE id = ?",
+      )
+      .get(current);
+    if (!row) return null;
+    if (row.merged_into === null) return current;
+    current = row.merged_into;
+  }
+  return null;
+}
+
 export function findOrCreatePerson(
   db: Db,
   mention: PersonMention,
@@ -352,6 +369,16 @@ export function findOrCreatePerson(
   // DB, contacts not synced), the mention is silently dropped — we don't
   // create a placeholder, which would pollute the people graph.
   // Known gap: #621 — nothing re-resolves the dropped mention once self exists.
+  if (mention.personId !== undefined) {
+    const pinned = livePersonId(db, mention.personId);
+    if (pinned) {
+      db.prepare(
+        "UPDATE people SET last_seen = MAX(last_seen, ?), updated_at = ? WHERE id = ?",
+      ).run(docDate, new Date().toISOString(), pinned);
+      return pinned;
+    }
+  }
+
   if (mention.isSelf === true) {
     const selfRow = db
       .prepare<[], { id: string }>(

@@ -536,6 +536,25 @@ import {
   deletePendingVoiceNote,
   type NewPendingVoiceNote,
 } from "./voice-notes/storage.js";
+import {
+  insertRecordingSession,
+  insertRecordingChunk,
+  finishRecordingSession,
+  abandonRecordingSession,
+  rescheduleRecordingChunk,
+  settleRecordingChunk,
+  markRecordingSessionProjected,
+  assignRecordingVoices,
+  setRecordingSpeaker,
+  type RecordingSpeakerMapping,
+  deleteRecordingSession,
+  type FinishRecordingOutcome,
+  type InsertRecordingChunkOutcome,
+  type RecordingChunkSettlement,
+  type NewRecordingSession,
+  type NewRecordingChunk,
+} from "./recordings/storage.js";
+import type { VoiceWindow } from "./recordings/voices/voices.js";
 import { insertAgentMessage, type AgentMessageRow } from "./sources/agent-conversations/storage.js";
 import { resolveDerivationStages, type DerivationStageId } from "./domain/DocumentDerivation.js";
 import {
@@ -2237,6 +2256,49 @@ export interface WriteGate extends KnowledgeWriteGate {
   /** Drop a queued note and its audio. */
   deleteVoiceNote(noteId: string): Promise<void>;
 
+  // ── recorded conversations (experimental) ────────────────────────
+  /** Create a recording session. False when that id already exists. */
+  createRecordingSession(session: NewRecordingSession): Promise<boolean>;
+  /** Store one uploaded chunk; a chunk past a gateway-declared count reopens the session. */
+  insertRecordingChunk(chunk: NewRecordingChunk): Promise<InsertRecordingChunkOutcome>;
+  /** The device declares a session's chunk count. */
+  finishRecordingSession(
+    id: string,
+    chunkCount: number,
+    endedAt: string,
+    now: string,
+  ): Promise<FinishRecordingOutcome>;
+  /** Finish a quiet device's session provisionally. False when gone or already finished. */
+  abandonRecordingSession(id: string, now: string): Promise<boolean>;
+  /** Record a transcription attempt on a chunk and when to try next. */
+  rescheduleRecordingChunk(
+    sessionId: string,
+    seq: number,
+    attempts: number,
+    nextAttemptAt: string,
+  ): Promise<void>;
+  /** Keep a chunk's transcript (or its failure) and drop its audio. */
+  settleRecordingChunk(
+    sessionId: string,
+    seq: number,
+    outcome: RecordingChunkSettlement,
+  ): Promise<boolean>;
+  /** Stamp when a session's document was last written. */
+  markRecordingSessionProjected(id: string, revision: number): Promise<void>;
+  /** Record a session's grouped speakers and delete its voice vectors. */
+  assignRecordingVoices(
+    sessionId: string,
+    chunks: Array<{ seq: number; windows: VoiceWindow[] }>,
+  ): Promise<void>;
+  /** Map one speaker of a session; false when it has no such speaker. */
+  setRecordingSpeaker(
+    sessionId: string,
+    speaker: number,
+    mapping: RecordingSpeakerMapping,
+  ): Promise<boolean>;
+  /** Delete a session and its chunks. */
+  deleteRecordingSession(id: string): Promise<boolean>;
+
   // ── agent-conversations (pushed) ──────────────────────────────────
   /**
    * Append one pushed agent-conversation turn to the `agent_messages`
@@ -2939,6 +3001,22 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     rescheduleVoiceNote: (noteId, attempts, nextAttemptAt) =>
       call("voiceNotes.reschedule", [noteId, attempts, nextAttemptAt]),
     deleteVoiceNote: (noteId) => call("voiceNotes.delete", [noteId]),
+    createRecordingSession: (session) => call("recordings.createSession", [session]),
+    insertRecordingChunk: (chunk) => call("recordings.insertChunk", [chunk]),
+    finishRecordingSession: (id, chunkCount, endedAt, now) =>
+      call("recordings.finishSession", [id, chunkCount, endedAt, now]),
+    abandonRecordingSession: (id, now) => call("recordings.abandonSession", [id, now]),
+    rescheduleRecordingChunk: (sessionId, seq, attempts, nextAttemptAt) =>
+      call("recordings.rescheduleChunk", [sessionId, seq, attempts, nextAttemptAt]),
+    settleRecordingChunk: (sessionId, seq, outcome) =>
+      call("recordings.settleChunk", [sessionId, seq, outcome]),
+    markRecordingSessionProjected: (id, revision) =>
+      call("recordings.markProjected", [id, revision]),
+    assignRecordingVoices: (sessionId, chunks) =>
+      call("recordings.assignVoices", [sessionId, chunks]),
+    setRecordingSpeaker: (sessionId, speaker, mapping) =>
+      call("recordings.setSpeaker", [sessionId, speaker, mapping]),
+    deleteRecordingSession: (id) => call("recordings.deleteSession", [id]),
 
     appendAgentMessage: (message) => call("agentMessages.appendMessage", [message]),
 
@@ -3655,6 +3733,22 @@ export function directWriteGate(db: Db): WriteGate {
     rescheduleVoiceNote: async (noteId, attempts, nextAttemptAt) =>
       reschedulePendingVoiceNote(db, noteId, attempts, nextAttemptAt),
     deleteVoiceNote: async (noteId) => deletePendingVoiceNote(db, noteId),
+    createRecordingSession: async (session) => insertRecordingSession(db, session),
+    insertRecordingChunk: async (chunk) => insertRecordingChunk(db, chunk),
+    finishRecordingSession: async (id, chunkCount, endedAt, now) =>
+      finishRecordingSession(db, id, chunkCount, endedAt, now),
+    abandonRecordingSession: async (id, now) => abandonRecordingSession(db, id, now),
+    rescheduleRecordingChunk: async (sessionId, seq, attempts, nextAttemptAt) =>
+      rescheduleRecordingChunk(db, sessionId, seq, attempts, nextAttemptAt),
+    settleRecordingChunk: async (sessionId, seq, outcome) =>
+      settleRecordingChunk(db, sessionId, seq, outcome),
+    markRecordingSessionProjected: async (id, revision) =>
+      markRecordingSessionProjected(db, id, revision),
+    assignRecordingVoices: async (sessionId, chunks) =>
+      assignRecordingVoices(db, sessionId, chunks),
+    setRecordingSpeaker: async (sessionId, speaker, mapping) =>
+      setRecordingSpeaker(db, sessionId, speaker, mapping),
+    deleteRecordingSession: async (id) => deleteRecordingSession(db, id),
 
     appendAgentMessage: async (message) => insertAgentMessage(db, message),
 

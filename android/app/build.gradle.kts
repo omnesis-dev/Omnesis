@@ -239,6 +239,7 @@ dependencies {
     implementation(project(":feature-app-usage"))
     implementation(project(":feature-activity-segments"))
     implementation(project(":feature-photos"))
+    implementation(project(":feature-recording"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.work.runtime)

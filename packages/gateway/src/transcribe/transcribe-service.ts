@@ -69,6 +69,8 @@ export interface TranscribeOptions {
    * `"interactive"`.
    */
   priority?: TranscriptionPriority;
+  /** Ask the backend for timed segments (see `TranscribeCapability`). */
+  segments?: boolean;
 }
 
 export type TranscriptionPriority = "interactive" | "background";
@@ -343,6 +345,7 @@ export class TranscribeService {
           ...(opts?.language ? { language: opts.language } : {}),
           ...(opts?.minTimeoutMs !== undefined ? { minTimeoutMs: opts.minTimeoutMs } : {}),
           ...(opts?.signal ? { signal: opts.signal } : {}),
+          ...(opts?.segments ? { segments: true } : {}),
           ...(vocabulary && this.vocabulary?.enabled()
             ? {
                 vocabulary,

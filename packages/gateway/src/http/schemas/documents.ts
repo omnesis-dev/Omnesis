@@ -42,6 +42,17 @@ const documentInputShape = z
       // Older browser extensions sent this retired producer-detail field.
       // Accept those clients during upgrade, but never persist the field.
       const { captureMethod: _retired, ...metadata } = value;
+      // A person pinned by id is the gateway's own sources' assertion; a
+      // document written from outside never attaches to a person that way.
+      if (Array.isArray(metadata.people)) {
+        metadata.people = metadata.people.map((mention: unknown) => {
+          if (typeof mention !== "object" || mention === null || !("personId" in mention)) {
+            return mention;
+          }
+          const { personId: _pinned, ...rest } = mention as Record<string, unknown>;
+          return rest;
+        });
+      }
       return metadata;
     }),
     sourceCreatedAt: nonEmptyString,

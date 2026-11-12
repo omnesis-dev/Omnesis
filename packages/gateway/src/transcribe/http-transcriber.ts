@@ -37,6 +37,7 @@ import { adaptTranscriptionVocabulary } from "./vocabulary-adapter.js";
 import type {
   TranscribeCapability,
   TranscriptionResult,
+  TranscriptSegment,
   TranscriptionVocabulary,
 } from "@omnesis/core";
 
@@ -68,7 +69,12 @@ export interface HttpTranscriberOptions {
 interface TranscriptionResponse {
   text?: unknown;
   language?: unknown;
+  /** `verbose_json` only: `{ start, end, text }` in seconds. */
+  segments?: unknown;
 }
+
+/** A refusal that can mean the server does not know `verbose_json`. */
+const FORMAT_REFUSAL_STATUSES = new Set([400, 415, 422]);
 
 export class HttpTranscriber implements TranscribeCapability {
   readonly vocabularyRuntime = "openai-prompt" as const;
@@ -81,6 +87,8 @@ export class HttpTranscriber implements TranscribeCapability {
   private readonly fetchFn: typeof fetch;
   private readonly decodeAudio: AudioDecoder;
   private readonly maxChunkSamples: number;
+  /** The server refused `verbose_json` once; ask for plain `json` from then on. */
+  private verboseRefused = false;
 
   constructor(opts: HttpTranscriberOptions) {
     this.endpoint = `${opts.url.replace(/\/+$/, "")}${normalizeApiPathPrefix(opts.apiPathPrefix)}/audio/transcriptions`;
@@ -107,7 +115,6 @@ export class HttpTranscriber implements TranscribeCapability {
 
     const fields: Array<[string, string]> = [
       ["model", this.model],
-      ["response_format", "json"],
       ["temperature", "0"],
     ];
     if (opts?.language && opts.language !== "auto") fields.push(["language", opts.language]);
@@ -116,49 +123,46 @@ export class HttpTranscriber implements TranscribeCapability {
       : undefined;
     if (prompt) fields.push(["prompt", prompt]);
 
-    const { text, language } = await transcribeInChunks(
+    const { text, language, segments } = await transcribeInChunks(
       pcm,
       { maxChunkSamples: this.maxChunkSamples, minTimeoutMs: opts?.minTimeoutMs },
       (chunk, ms) => {
         const timeout = AbortSignal.timeout(ms);
         const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
-        return this.transcribeChunk(chunk, fields, signal);
+        return this.transcribeChunk(chunk, fields, signal, opts?.segments === true);
       },
     );
     log.debug(
       `Transcribed ${durationSec.toFixed(1)}s of audio via ${this.model} → ${text.length} chars`,
     );
-    return { text, ...(language ? { language } : {}), durationSec };
+    return {
+      text,
+      ...(language ? { language } : {}),
+      durationSec,
+      ...(segments ? { segments } : {}),
+    };
   }
 
   private async transcribeChunk(
     pcm: Float32Array,
     fields: ReadonlyArray<readonly [string, string]>,
     signal: AbortSignal,
+    wantSegments: boolean,
   ): Promise<ChunkTranscript> {
-    const { body, contentType } = encodeMultipart(fields, {
-      name: "file",
-      filename: "audio.wav",
-      contentType: "audio/wav",
-      data: encodeWav(pcm),
-    });
-    const headers: Record<string, string> = { "Content-Type": contentType };
-    if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
-    const res = await retryRateLimitedRequest(
-      () =>
-        fetchWithInferenceUrlPolicy(
-          this.endpoint,
-          { method: "POST", headers, body, signal },
-          { allowRemoteInference: this.allowRemoteInference, fetchFn: this.fetchFn },
-        ),
-      {
-        signal,
-        onRetry: ({ attempt, delayMs }) =>
-          log.warn(
-            `transcription rate-limited for model=${this.model}; retrying attempt ${attempt} after ${delayMs}ms`,
-          ),
-      },
+    const verbose = wantSegments && !this.verboseRefused;
+    const res = await this.post(
+      pcm,
+      [...fields, ["response_format", verbose ? "verbose_json" : "json"]],
+      signal,
     );
+    if (verbose && FORMAT_REFUSAL_STATUSES.has(res.status)) {
+      await res.text().catch(() => "");
+      this.verboseRefused = true;
+      log.info(
+        `transcription backend ${this.model} refused verbose_json; transcripts carry no timings`,
+      );
+      return this.transcribeChunk(pcm, fields, signal, false);
+    }
 
     if (!res.ok) {
       // Drain the body without keeping it: a backend can echo the request,
@@ -175,7 +179,42 @@ export class HttpTranscriber implements TranscribeCapability {
     }
     const parsed = parseTranscriptText(json.text);
     const language = typeof json.language === "string" ? json.language : parsed.language;
-    return { text: parsed.text, ...(language ? { language } : {}) };
+    const segments = verbose ? parseVerboseSegments(json.segments) : undefined;
+    return {
+      text: parsed.text,
+      ...(language ? { language } : {}),
+      ...(segments ? { segments } : {}),
+    };
+  }
+
+  private async post(
+    pcm: Float32Array,
+    fields: ReadonlyArray<readonly [string, string]>,
+    signal: AbortSignal,
+  ): Promise<Response> {
+    const { body, contentType } = encodeMultipart(fields, {
+      name: "file",
+      filename: "audio.wav",
+      contentType: "audio/wav",
+      data: encodeWav(pcm),
+    });
+    const headers: Record<string, string> = { "Content-Type": contentType };
+    if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
+    return retryRateLimitedRequest(
+      () =>
+        fetchWithInferenceUrlPolicy(
+          this.endpoint,
+          { method: "POST", headers, body, signal },
+          { allowRemoteInference: this.allowRemoteInference, fetchFn: this.fetchFn },
+        ),
+      {
+        signal,
+        onRetry: ({ attempt, delayMs }) =>
+          log.warn(
+            `transcription rate-limited for model=${this.model}; retrying attempt ${attempt} after ${delayMs}ms`,
+          ),
+      },
+    );
   }
 
   /** Personal vocabulary stays on the machine: only a loopback backend gets it. */
@@ -204,6 +243,30 @@ export class HttpTranscriber implements TranscribeCapability {
  * the words; the language is useful when the server reported none.
  */
 const QWEN3_ASR_PREFIX = /^\s*language\s+([A-Za-z-]+)\s*<asr_text>/;
+
+/**
+ * The timed segments of a `verbose_json` answer (seconds → ms), or undefined
+ * when the server sent none or sent them malformed.
+ */
+export function parseVerboseSegments(raw: unknown): TranscriptSegment[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: TranscriptSegment[] = [];
+  for (const s of raw as unknown[]) {
+    if (typeof s !== "object" || s === null) return undefined;
+    const { start, end, text } = s as Record<string, unknown>;
+    if (typeof start !== "number" || typeof end !== "number" || typeof text !== "string") {
+      return undefined;
+    }
+    const words = text.trim();
+    if (!words) continue;
+    out.push({
+      startMs: Math.max(0, Math.round(start * 1000)),
+      endMs: Math.max(0, Math.round(end * 1000)),
+      text: words,
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 /** The transcript's words, and a language the model wrote ahead of them. */
 export function parseTranscriptText(raw: string): { text: string; language?: string } {

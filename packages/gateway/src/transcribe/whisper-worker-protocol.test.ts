@@ -3,6 +3,7 @@
 
 import { describe, test, expect } from "vitest";
 import {
+  timedSegments,
   encodeFrame,
   FrameDecoder,
   type WhisperRequestHeader,
@@ -65,5 +66,21 @@ describe("whisper-worker-protocol framing", () => {
     const decoder = new FrameDecoder((h) => ids.push((h as { id: number }).id));
     decoder.push(Buffer.concat([a, b]));
     expect(ids).toEqual([1, 2]);
+  });
+});
+
+describe("timedSegments", () => {
+  test("keeps whisper.cpp's timings, trimmed, without empty or untimed segments", () => {
+    expect(
+      timedSegments([
+        { text: " Hello there.", from: 0, to: 1_520 },
+        { text: "  ", from: 1_520, to: 1_600 },
+        { text: "No timing." },
+        { text: " Goodbye.", from: 1_600.4, to: 2_999.6 },
+      ]),
+    ).toEqual([
+      { startMs: 0, endMs: 1_520, text: "Hello there." },
+      { startMs: 1_600, endMs: 3_000, text: "Goodbye." },
+    ]);
   });
 });
