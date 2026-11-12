@@ -211,7 +211,14 @@ test("portal offers no manual setup form; connected it is three plain sections, 
   ])
     await expect(view).not.toContainText(gone);
   await expect(view.locator(".relay-problems")).toHaveCount(0);
-  await expect(view.getByRole("button")).toHaveText(["Unlink this gateway", "", "Turn off"]);
+  // The two empty names are the icon buttons that copy the portal link and the address.
+  await expect(view.getByRole("button")).toHaveText(["Unlink this gateway", "", "", "Turn off"]);
+  // The portal at the public address is offered as a link that opens it.
+  const portal = view.locator(".relay-portal a");
+  await expect(portal).toHaveAttribute("href", /^https:\/\/[^/]+\/portal\/$/);
+  await expect(view).toContainText(
+    "Your portal is now reachable at this link from anywhere, not only at home.",
+  );
   await page.screenshot({ path: "/tmp/omnesis-relay-connected-desktop.png", fullPage: true });
 
   // Turn off explains itself to a pointer (title), a screen reader (description) and a keyboard (shown on focus).

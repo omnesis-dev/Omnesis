@@ -309,6 +309,27 @@ test("unavailable installations explain the situation, offer nothing to press an
   expect(host.querySelectorAll('[role="alert"]')).toHaveLength(0);
 });
 
+test("the portal link says why it cannot be used yet, and is left out without a public address", async () => {
+  state.status = connected({ enabled: false });
+  await show();
+  // The reason is said once, under the address; the portal link carries no promise meanwhile.
+  expect(host.querySelector(".relay-portal + .relay-hint")).toBeNull();
+  expect(host.querySelector(".relay-address + .relay-hint")?.textContent?.trim()).toBe(
+    "Not reachable while remote access is off.",
+  );
+  state.status = connected({ publicOrigin: "http://not-https.example.test" });
+  await show();
+  expect(host.querySelector(".relay-portal")).toBeNull();
+  state.status = connected({ publicOrigin: undefined });
+  await show();
+  expect(host.querySelector(".relay-portal")).toBeNull();
+  expect(host.querySelector('button[aria-label="Copy portal link"]')).toBeNull();
+  // No confirmed address yet: neither the address nor the portal is offered.
+  state.status = connected({ publicMcp: { ready: false } });
+  await show();
+  expect(host.querySelector(".relay-portal")).toBeNull();
+});
+
 test("connected: three plain sections, a copyable address and nothing technical", async () => {
   state.status = connected();
   await show();
@@ -320,10 +341,21 @@ test("connected: three plain sections, a copyable address and nothing technical"
   expect(new Set(titles.map((x) => x.tagName))).toEqual(new Set(["H3"]));
   expect([...host.querySelectorAll(".relay-row-label")].map((x) => x.textContent)).toEqual([
     "This gateway",
+    "Portal",
     "Address",
     "Status",
   ]);
   expect(text()).toContain(`https://${HOST}/mcp`);
+  // The portal itself, at the public address, as a link to open and to copy.
+  const portal = host.querySelector<HTMLAnchorElement>(".relay-portal a");
+  expect(portal?.getAttribute("href")).toBe(`https://${HOST}/portal/`);
+  expect(portal?.textContent).toBe(`${HOST}/portal/`);
+  expect(portal?.getAttribute("target")).toBe("_blank");
+  expect(portal?.getAttribute("rel")).toBe("noopener noreferrer");
+  expect(host.querySelector('button[aria-label="Copy portal link"]')).not.toBeNull();
+  expect(text()).toContain(
+    "Your portal is now reachable at this link from anywhere, not only at home. A new browser asks you to sign in with your Omnesis account.",
+  );
   // A ready address needs no hint under it.
   expect(host.querySelector(".relay-address + .relay-hint")).toBeNull();
   expect(host.querySelector('button[aria-label="Copy address"]')).not.toBeNull();
@@ -779,7 +811,7 @@ describe("account", () => {
     expect(text()).not.toContain("What happens when a new device signs in");
     state.status = connected({ account: undefined, google: { configured: false } });
     await show();
-    expect(host.querySelectorAll(".relay-row-label")[0]?.textContent).toBe("Address");
+    expect(host.querySelectorAll(".relay-row-label")[0]?.textContent).toBe("Portal");
     // No account of either kind: the page has no Account heading.
     expect(
       [...host.querySelectorAll(".relay-section-title")].map((x) => x.textContent),
