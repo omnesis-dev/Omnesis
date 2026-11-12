@@ -36,13 +36,17 @@ class NotesClient(private val http: GatewayHttp) {
     suspend fun routeCapture(text: String): CaptureRouteResponse =
         http.postJson("watch/capture/route", CaptureRouteBody(text))
 
-    /** Transcribes foreground voice capture without creating a note. */
-    suspend fun transcribeCapture(audio: File, mimeType: String): String? {
+    /**
+     * Transcribes a voice capture without creating a note. [locale] is the speaker's
+     * locale tag (`en-GB`, `en_GB`); its language rides as the transcriber's hint.
+     */
+    suspend fun transcribeCapture(audio: File, mimeType: String, locale: String? = null): String? {
+        val query = transcriptionLanguage(locale)?.let { mapOf("language" to it) }.orEmpty()
         val response: CaptureTranscriptResponse = try {
-            http.postBody("watch/capture/transcribe", audio.asRequestBody(mimeType.toMediaType()), VOICE_UPLOAD_TIMEOUT)
+            http.postBody("watch/capture/transcribe", audio.asRequestBody(mimeType.toMediaType()), VOICE_UPLOAD_TIMEOUT, query)
         } catch (_: dev.omnesis.android.transport.GatewayException.NotFound) {
             // Gateways predating Watch capture expose the same authenticated transcriber here.
-            http.postBody("inference/transcribe", audio.asRequestBody(mimeType.toMediaType()), VOICE_UPLOAD_TIMEOUT)
+            http.postBody("inference/transcribe", audio.asRequestBody(mimeType.toMediaType()), VOICE_UPLOAD_TIMEOUT, query)
         }
         return response.text?.takeIf { response.available }
     }
@@ -81,6 +85,12 @@ class NotesClient(private val http: GatewayHttp) {
     companion object {
         /** Minutes of audio over a phone's uplink outlast the ordinary API timeout. */
         val VOICE_UPLOAD_TIMEOUT: Duration = Duration.ofMinutes(3)
+
+        /** The language subtag of a locale tag written with either separator, or null without one. */
+        fun transcriptionLanguage(locale: String?): String? =
+            locale?.split('-', '_')?.firstOrNull()?.trim()?.lowercase()?.takeIf { tag ->
+                tag.length in 2..3 && tag.all { it in 'a'..'z' }
+            }
 
         /** The multipart body: a `note` JSON part, then the `audio` file part. */
         fun voiceNoteBody(note: VoiceNoteBody, audio: File, audioMimeType: String): MultipartBody =

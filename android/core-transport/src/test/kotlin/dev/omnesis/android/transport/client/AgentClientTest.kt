@@ -336,4 +336,20 @@ class AgentClientTest {
         }
     }
 
+
+    @Test
+    fun seen_names_the_answer_shown_away_from_the_conversation() = runTest {
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        assertTrue(client().markConversationSeen("conversation-1", viewing = false, messageId = "message-7"))
+        val request = server.takeRequest()
+        assertEquals("/agent/conversations/conversation-1/seen", request.path)
+        assertEquals("""{"viewing":false,"messageId":"message-7"}""", request.body.readUtf8())
+    }
+
+    @Test
+    fun seen_without_a_message_keeps_the_original_body() = runTest {
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        client().markConversationSeen("conversation-1", viewing = true)
+        assertEquals("""{"viewing":true}""", server.takeRequest().body.readUtf8())
+    }
 }
