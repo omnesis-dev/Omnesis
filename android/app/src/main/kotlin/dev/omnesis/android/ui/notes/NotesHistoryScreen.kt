@@ -371,6 +371,7 @@ internal fun noteSurface(surface: String?): String? = when (surface) {
     "android-tile" -> "Android Quick Settings"
     "android-shortcut" -> "Android shortcut"
     "android-assistant" -> "Android assistant"
+    "android-watch" -> "Wear OS watch"
     "cli" -> "Command line"
     null -> null
     else -> "Other capture"

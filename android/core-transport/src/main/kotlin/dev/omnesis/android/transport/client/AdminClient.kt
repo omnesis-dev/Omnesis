@@ -621,6 +621,18 @@ class AdminClient(private val http: GatewayHttp) {
     }
 
     /**
+     * `PATCH /admin/config` — choose whether a watch recording sent with one
+     * button is routed by the gateway's decision model. A gateway-wide setting;
+     * it takes effect with a decision model assigned (`watchCapture` on `/status`).
+     */
+    suspend fun setWatchDecisionGate(enabled: Boolean) {
+        http.patchJson<DictationConfigPatch, OkResponse>(
+            "admin/config",
+            DictationConfigPatch.useDecisionGateForWatch(enabled),
+        )
+    }
+
+    /**
      * `PATCH /admin/config` — remove an HTTP backend by setting its key to an
      * explicit `null` (mirrors the portal's `removeHttpBackend`). Like the
      * capability clear, the null must be serialized explicitly (a missing key

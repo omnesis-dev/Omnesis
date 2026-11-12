@@ -439,6 +439,7 @@ class DtoDecodeTest {
         }""")
         assertTrue(status.dictation!!.active)
         assertTrue(status.watchCapture!!.active)
+        assertTrue(status.watchCapture!!.completionNotifications)
     }
 
     @Test
@@ -448,6 +449,7 @@ class DtoDecodeTest {
             "watchCapture":{"supported":true,"enabled":false,"active":false}
         }""")
         assertFalse(status.watchCapture!!.active)
+        assertFalse(status.watchCapture!!.completionNotifications)
         val older = OmnesisJson.decodeFromString<StatusSnapshot>("""{"dictation":{"active":true}}""")
         assertNull(older.watchCapture)
     }

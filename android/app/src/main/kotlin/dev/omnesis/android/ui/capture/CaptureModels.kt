@@ -13,6 +13,9 @@ object CaptureSurface {
 
     fun unified(surface: String): Boolean = surface == TILE || surface == VOICE_SHORTCUT
 
+    /** A note or recording made on a paired Wear OS watch and relayed through this phone. */
+    const val WATCH = "android-watch"
+
     /** Capture launched by a Gemini or Google Assistant App Action. */
     const val ASSISTANT = "android-assistant"
 

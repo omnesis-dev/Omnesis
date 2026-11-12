@@ -263,7 +263,7 @@ class VoiceAskRunnerTest {
             sessionId: String,
             text: String,
             notifyAfterMs: Int,
-            viewingForMs: Int,
+            viewingForMs: Int?,
         ): SendMessageResponse {
             if (sendDelayMillis > 0) delay(sendDelayMillis)
             order += "send"

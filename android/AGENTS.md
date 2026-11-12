@@ -367,6 +367,39 @@ watch. Wear OS offers a third-party watch app no voice-assistant entry point, so
 there is no counterpart to the Apple Watch app's Siri phrases; the tile, the
 complication and the launcher are the ways in.
 
+### The watch relay (`:app`, package `wear`)
+
+The phone side of the Wear OS relay, the Android counterpart of iOS's
+`WatchRelayReceiver`. The watch holds no gateway credential: every question, note
+and recording reaches the gateway through this package. Read
+`:core-wear-protocol` first; it is the contract, and the watch app is built
+against it independently.
+
+- **Pure orchestrators, no Android types** — `GatePublisher` (the dictation gate
+  DataItem), `TextAskRelay`, `TextNoteRelay`, `QueuedRelayHandler`,
+  `RecordingInbox` + `RecordingPipeline`, and `WearRelay`, which routes every
+  watch event to them. They speak to the world through small ports
+  (`WearGateway`, `WatchAsker`, `WatchNoteSaver`, `CaptureBackend`,
+  `CaptureTranscriber`, `RelayNotifier`), so the whole relay runs in JVM tests
+  over fakes (`RelayFakes.kt`).
+- **Thin adapters** — `PlayServicesWearGateway` (the Data Layer), `RunnerWatchAsker`
+  (the phone's own `VoiceAskRunner`, on its relay plans), `RepositoryWatchNoteSaver`
+  (`NotesRepository`, surface `android-watch`), `SessionCaptureBackend`,
+  `OnDeviceFileTranscriber` (the on-device recognizer reading a decoded recording),
+  `SystemRelayNotifier`.
+- **`WearRelayService`** only routes. Play services binds a
+  `WearableListenerService` for the length of its callbacks and a question takes
+  most of a minute, so relay work runs in an app-owned scope and
+  `WorkManagerRelayScheduler` holds the process with expedited work until the relay
+  is idle. A request's reply is also sent as a message of its own, because the
+  service that owed the reply may be gone.
+- **No watch, no cost.** `WearRelayRuntime` builds nothing unless Play services
+  offers the Wearable API; periodic work exists only once a watch has sent
+  something.
+
+A change to what crosses the Data Layer is a contract change: make it in
+`:core-wear-protocol`, for both apps, never as a private convention here.
+
 ## Conventions (carried from the repo)
 
 - **Source encapsulation is sacred**: no source-specific branching/icons/colors/

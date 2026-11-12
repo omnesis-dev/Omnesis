@@ -27,6 +27,8 @@ healthConnectTesting = "1.0.0-alpha03"
 workManager = "2.10.0"
 # ActivityRecognitionClient (feature-activity-segments only, never project-wide).
 playServicesLocation = "21.3.0"
+# Wearable Data Layer: the phone side of the watch relay (app only).
+playServicesWearable = "19.0.0"
 # feature-photos: on-device OCR + scene labels.
 mlkitTextRecognition = "16.0.1"
 mlkitImageLabeling = "17.0.9"
@@ -38,7 +40,6 @@ wearTiles = "1.4.1"
 wearProtolayout = "1.2.1"
 wearWatchface = "1.2.1"
 wearInput = "1.1.0"
-playServicesWearable = "19.0.0"
 # Raises the Fragment library that Play services brings into :wear to one whose
 # activities work with the Activity Result APIs the watch app's screen uses.
 wearFragment = "1.8.5"

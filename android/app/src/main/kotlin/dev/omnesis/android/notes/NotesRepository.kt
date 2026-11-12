@@ -59,6 +59,13 @@ enum class DrainOutcome {
 }
 
 /**
+ * A capture made on another device and relayed to this phone. It keeps the moment it
+ * was captured there, and [noteId] (a UUID) is its idempotency key, so every copy of
+ * the relay saves one note.
+ */
+data class RelayedCapture(val noteId: String, val capturedAt: Instant)
+
+/**
  * A voice note with no phone transcript that the gateway would not take with its audio:
  * sending it as text would save an empty note, so nothing was saved.
  */
@@ -119,17 +126,26 @@ class NotesRepository(
      * With [audio], [text] is the phone's transcript and may be empty; see the class
      * notes for delivery. Throws [VoiceNoteNotSavedException] when the gateway refuses
      * the audio and there is no transcript to fall back on.
+     *
+     * [relayed] replaces the fresh idempotency key and capture time with the ones the
+     * note was given where it was captured.
      */
-    suspend fun capture(text: String, surface: String, audio: VoiceNoteAudio? = null, taskId: String? = null): CaptureOutcome {
+    suspend fun capture(
+        text: String,
+        surface: String,
+        audio: VoiceNoteAudio? = null,
+        taskId: String? = null,
+        relayed: RelayedCapture? = null,
+    ): CaptureOutcome {
         val normalizedText = text.trim()
         if (audio == null) require(normalizedText.isNotEmpty()) { "Note text must not be empty" }
         require(normalizedText.length <= MAX_TEXT_LENGTH) {
             "Too long — notes are capped at $MAX_TEXT_LENGTH characters. Shorten it and try again."
         }
-        val capturedInstant = now()
+        val capturedInstant = relayed?.capturedAt ?: now()
         val capturedAt = capturedInstant.toString()
         val capturedZone = CaptureZone.at(capturedInstant, timeZone())
-        val noteId = UUID.randomUUID().toString()
+        val noteId = relayed?.noteId ?: UUID.randomUUID().toString()
         try {
             drain()
         } catch (cancelled: CancellationException) {

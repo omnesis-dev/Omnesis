@@ -300,4 +300,41 @@ class NotesClientTest {
         client().delete("note/one")
         assertEquals("/notes/note%2Fone", server.takeRequest().path)
     }
+
+
+    @Test
+    fun transcribeCapturePassesTheRecordingLanguageAsAHint() = runTest {
+        val audio = Files.createTempFile("capture-language", ".m4a").toFile()
+        try {
+            audio.writeBytes(byteArrayOf(4, 5, 6))
+            server.enqueue(MockResponse().setBody("""{"available":true,"text":"Example note"}"""))
+            assertEquals("Example note", client().transcribeCapture(audio, "audio/mp4", locale = "en_GB"))
+            val request = server.takeRequest()
+            assertEquals("/watch/capture/transcribe?language=en", request.path)
+            assertEquals("audio/mp4", request.getHeader("Content-Type"))
+        } finally { audio.delete() }
+    }
+
+    @Test
+    fun transcribeCaptureKeepsTheLanguageOnTheLegacyEndpoint() = runTest {
+        val audio = Files.createTempFile("capture-language-legacy", ".m4a").toFile()
+        try {
+            audio.writeBytes(byteArrayOf(4, 5, 6))
+            server.enqueue(MockResponse().setResponseCode(404).setBody("Not found"))
+            server.enqueue(MockResponse().setBody("""{"available":false}"""))
+            assertNull(client().transcribeCapture(audio, "audio/mp4", locale = "fr-FR"))
+            assertEquals("/watch/capture/transcribe?language=fr", server.takeRequest().path)
+            assertEquals("/inference/transcribe?language=fr", server.takeRequest().path)
+        } finally { audio.delete() }
+    }
+
+    @Test
+    fun transcriptionLanguageReadsOnlyAPlainLanguageSubtag() {
+        assertEquals("en", NotesClient.transcriptionLanguage("en-GB"))
+        assertEquals("pt", NotesClient.transcriptionLanguage("PT_br"))
+        assertEquals("yue", NotesClient.transcriptionLanguage("yue"))
+        assertNull(NotesClient.transcriptionLanguage(null))
+        assertNull(NotesClient.transcriptionLanguage(""))
+        assertNull(NotesClient.transcriptionLanguage("e1-GB"))
+    }
 }

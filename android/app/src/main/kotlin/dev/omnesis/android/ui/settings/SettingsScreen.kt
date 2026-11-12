@@ -235,6 +235,7 @@ fun SettingsScreen(
                 )
             },
             // All health specifics live in :feature-health; the app just mounts the section.
+            watchSection = { WatchSettingsSection() },
             healthSection = { HealthSettingsSection() },
             // Distribution-specific sources are supplied only by the artifact that ships them.
             distributionSection = { DistributionSettingsSection() },
@@ -288,6 +289,8 @@ fun SettingsContent(
     deliveryBanner: @Composable () -> Unit = {},
     /** The top of the phone-source area: reopening phone setup, and background syncing. */
     phoneSection: @Composable () -> Unit = {},
+    /** A paired Wear OS watch, drawn under Voice because its recordings follow the same gateway dictation. */
+    watchSection: @Composable () -> Unit = {},
     healthSection: @Composable () -> Unit = {},
     distributionSection: @Composable () -> Unit = {},
     appUsageSection: @Composable () -> Unit = {},
@@ -400,6 +403,7 @@ fun SettingsContent(
                 VoiceSection(voice, onSetTranscribeOnGateway, onOpenModels)
             }
 
+            watchSection()
             phoneSection()
             healthSection()
             distributionSection()
@@ -631,7 +635,7 @@ internal fun AboutSection(appVersion: AppVersionInfo) {
  * 12sp semibold, 0.5sp tracking. Ports the iOS grouped-Form section header.
  */
 @Composable
-private fun SectionLabel(text: String) {
+internal fun SectionLabel(text: String) {
     Text(
         text.uppercase(),
         style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.5.sp),
@@ -653,7 +657,7 @@ private fun KeyValue(key: String, value: String) {
 
 /** Hairline separator between grouped card rows, echoing an iOS Form row divider. */
 @Composable
-private fun RowDivider() {
+internal fun RowDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(vertical = OmSpacing.xs),
         thickness = 1.dp,
