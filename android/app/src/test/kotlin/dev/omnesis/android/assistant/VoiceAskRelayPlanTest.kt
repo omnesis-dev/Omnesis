@@ -37,6 +37,8 @@ class VoiceAskRelayPlanTest {
         val gateway = ScriptedGateway(
             stream = listOf(
                 AgentStreamItem("1", AgentEvent.MessageStart("session-a", "message-a")),
+                // What the agent says before it looks is not part of the answer the watch speaks.
+                AgentStreamItem("1a", AgentEvent.TextDelta("session-a", "message-a", "Let me look that up. ")),
                 AgentStreamItem("2", AgentEvent.ToolInputStart("session-a", "message-a", "call-1", "search_documents")),
                 AgentStreamItem("3", AgentEvent.ToolStart("session-a", "message-a", "call-1", "search_documents")),
                 // Another conversation's tool on the caller-wide feed is not this ask's progress.

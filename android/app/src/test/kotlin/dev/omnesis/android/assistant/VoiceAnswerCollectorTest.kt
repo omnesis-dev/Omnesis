@@ -46,6 +46,47 @@ class VoiceAnswerCollectorTest {
     }
 
     @Test
+    fun the_answer_is_what_the_agent_says_after_its_last_tool_call() {
+        var collector = VoiceAnswerCollector("session-a", "message-a")
+        collector = collector.continueWith(AgentEvent.TextDelta("session-a", "message-a", "Let me check your calendar."))
+        collector = collector.continueWith(AgentEvent.ToolInputStart("session-a", "message-a", "call-1", "search"))
+        collector = collector.continueWith(AgentEvent.ToolStart("session-a", "message-a", "call-1", "search"))
+        collector = collector.continueWith(AgentEvent.TextDelta("session-a", "message-a", "One more look."))
+        collector = collector.continueWith(AgentEvent.ToolStart("session-a", "message-a", "call-2", "get_document"))
+        collector = collector.continueWith(AgentEvent.TextDelta("session-a", "message-a", "The dentist is at "))
+        collector = collector.continueWith(AgentEvent.TextDelta("session-a", "message-a", "three on Tuesday."))
+
+        assertEquals(
+            VoiceAnswerCollector.Result.Answered("The dentist is at three on Tuesday."),
+            collector.consume(AgentEvent.MessageEnd("session-a", "message-a")),
+        )
+    }
+
+    @Test
+    fun a_turn_that_ends_on_a_tool_call_has_no_answer_to_speak() {
+        var collector = VoiceAnswerCollector("session-a", "message-a")
+        collector = collector.continueWith(AgentEvent.TextDelta("session-a", "message-a", "Let me check your calendar."))
+        collector = collector.continueWith(AgentEvent.ToolStart("session-a", "message-a", "call-1", "search"))
+
+        assertEquals(
+            VoiceAnswerCollector.Result.Answered(""),
+            collector.consume(AgentEvent.MessageEnd("session-a", "message-a")),
+        )
+    }
+
+    @Test
+    fun another_turns_tool_call_leaves_the_answer_alone() {
+        var collector = VoiceAnswerCollector("session-a", "message-a", "The answer")
+        collector = collector.continueWith(AgentEvent.ToolStart("session-a", "message-b", "call-1", "search"))
+        collector = collector.continueWith(AgentEvent.ToolInputStart("session-b", "message-a", "call-2", "search"))
+
+        assertEquals(
+            VoiceAnswerCollector.Result.Answered("The answer"),
+            collector.consume(AgentEvent.MessageEnd("session-a", "message-a")),
+        )
+    }
+
+    @Test
     fun tool_boundary_is_not_a_terminal_answer() {
         val collector = VoiceAnswerCollector("session-a", "message-a", "before tool")
 
