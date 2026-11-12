@@ -39,12 +39,11 @@ class TellBrainTileServiceTest {
         val tile = service.qsTile
         assertEquals(Tile.STATE_INACTIVE, tile.state)
         assertEquals("Omnesis", tile.label.toString())
-        assertEquals("Speak to Omnesis", tile.subtitle.toString())
-        assertEquals("Omnesis, Speak to Omnesis", tile.contentDescription.toString())
+        assertEquals("Speak", tile.subtitle.toString())
     }
 
     @Test
-    fun an_unpaired_phone_is_told_to_open_the_app_to_pair() {
+    fun an_unpaired_phone_is_told_it_is_not_paired() {
         val service = service(paired = false)
 
         service.onStartListening()
@@ -52,7 +51,39 @@ class TellBrainTileServiceTest {
         val tile = service.qsTile
         assertEquals(Tile.STATE_INACTIVE, tile.state)
         assertEquals("Omnesis", tile.label.toString())
-        assertEquals("Open Omnesis to pair", tile.subtitle.toString())
+        assertEquals("Not paired", tile.subtitle.toString())
+    }
+
+    @Test
+    fun a_subtitle_is_short_enough_for_a_tile_to_show_whole() {
+        // "No alarm set" and "Unavailable" are subtitles the system's own tiles show without scrolling.
+        for (paired in listOf(true, false)) {
+            val service = service(paired)
+            service.onStartListening()
+            val subtitle = service.qsTile.subtitle.toString()
+            assertTrue(subtitle, subtitle.length <= 10 && subtitle.split(' ').size <= 2)
+        }
+    }
+
+    @Test
+    fun a_screen_reader_is_given_the_whole_sentence() {
+        val ready = service(paired = true).also { it.onStartListening() }.qsTile
+        assertEquals("Omnesis", ready.contentDescription.toString())
+        assertEquals("Speak to Omnesis", ready.stateDescription.toString())
+
+        val unpaired = service(paired = false).also { it.onStartListening() }.qsTile
+        assertEquals("Omnesis", unpaired.contentDescription.toString())
+        assertEquals("Open Omnesis to pair", unpaired.stateDescription.toString())
+    }
+
+    @Test
+    @Config(sdk = [28])
+    fun before_tiles_had_a_state_description_the_sentence_follows_the_label() {
+        val ready = service(paired = true).also { it.onStartListening() }.qsTile
+        assertEquals("Omnesis, Speak to Omnesis", ready.contentDescription.toString())
+
+        val unpaired = service(paired = false).also { it.onStartListening() }.qsTile
+        assertEquals("Omnesis, Open Omnesis to pair", unpaired.contentDescription.toString())
     }
 
     @Test
@@ -60,13 +91,13 @@ class TellBrainTileServiceTest {
         var paired = false
         val service = service(paired = false).also { it.paired = { paired } }
         service.onStartListening()
-        assertEquals("Open Omnesis to pair", service.qsTile.subtitle.toString())
+        assertEquals("Not paired", service.qsTile.subtitle.toString())
 
         paired = true
         service.onStopListening()
         service.onStartListening()
 
-        assertEquals("Speak to Omnesis", service.qsTile.subtitle.toString())
+        assertEquals("Speak", service.qsTile.subtitle.toString())
     }
 
     @Test

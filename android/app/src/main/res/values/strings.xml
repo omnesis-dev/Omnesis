@@ -2,8 +2,12 @@
 <resources>
     <string name="app_name">Omnesis</string>
     <string name="tile_tell_brain">Omnesis</string>
-    <string name="tile_subtitle_ready">Speak to Omnesis</string>
-    <string name="tile_subtitle_unpaired">Open Omnesis to pair</string>
+    <!-- A Quick Settings tile's second line is about ten characters wide; a longer one scrolls. -->
+    <string name="tile_subtitle_ready">Speak</string>
+    <string name="tile_subtitle_unpaired">Not paired</string>
+    <!-- What a screen reader says for the tile, where there is room for the whole sentence. -->
+    <string name="tile_description_ready">Speak to Omnesis</string>
+    <string name="tile_description_unpaired">Open Omnesis to pair</string>
     <string name="shortcut_voice_short">Omnesis</string>
     <string name="shortcut_voice_long">Speak to Omnesis</string>
     <string name="shortcut_tell_brain_short">Tell Omnesis</string>
