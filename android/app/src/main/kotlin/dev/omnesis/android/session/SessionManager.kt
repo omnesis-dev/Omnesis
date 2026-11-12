@@ -47,6 +47,7 @@ import dev.omnesis.android.transport.client.WatchesClient
 import dev.omnesis.android.transport.dto.ClaimedNotificationDelivery
 import dev.omnesis.android.transport.dto.NoteAgentStatusDto
 import dev.omnesis.android.transport.dto.DictationStatusDto
+import dev.omnesis.android.transport.dto.WatchCaptureStatusDto
 import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.tls.PinnedOkHttp
@@ -356,6 +357,16 @@ class SessionManager @Inject constructor(
      */
     private val _dictation = MutableStateFlow<DictationStatusDto?>(null)
     val dictation: StateFlow<DictationStatusDto?> = _dictation.asStateFlow()
+
+    /**
+     * What the gateway's status says a watch relayed through this phone may do, read as
+     * one value so a consumer never pairs one status's dictation gate with another's
+     * capture gate. Null until this session has read a status.
+     */
+    data class WatchRelayStatus(val dictation: DictationStatusDto?, val capture: WatchCaptureStatusDto)
+
+    private val _watchRelayStatus = MutableStateFlow<WatchRelayStatus?>(null)
+    val watchRelayStatus: StateFlow<WatchRelayStatus?> = _watchRelayStatus.asStateFlow()
     private val _relayConsentPrompt = MutableStateFlow<RelayConsentPrompt?>(null)
     override val relayConsentPrompt: StateFlow<RelayConsentPrompt?> = _relayConsentPrompt.asStateFlow()
     private val _pushPlan = MutableStateFlow<PushPlanState>(PushPlanState.Checking)
@@ -514,6 +525,7 @@ class SessionManager @Inject constructor(
         _taskNoteCaptureAvailable.value = false
         _taskConversationsAvailable.value = false
         _dictation.value = null
+        _watchRelayStatus.value = null
         _noteAgent.value = null
         _relayConsentPrompt.value = null
         _pushPlan.value = PushPlanState.Checking
@@ -854,6 +866,8 @@ class SessionManager @Inject constructor(
             _taskNoteCaptureAvailable.value = status.taskNoteCapture
             _taskConversationsAvailable.value = status.taskConversations
             _dictation.value = status.dictation
+            _watchRelayStatus.value =
+                WatchRelayStatus(status.dictation, status.watchCapture ?: WatchCaptureStatusDto())
             _noteAgent.value = status.noteAgent
             this.current()?.let { childScope ->
                 speechVocabulary.cache.warm(status.transcriptionVocabulary, Locale.getDefault().toLanguageTag(), childScope, ownerToken = vocabularyOwner, fetch = current.vocabulary::fetch)

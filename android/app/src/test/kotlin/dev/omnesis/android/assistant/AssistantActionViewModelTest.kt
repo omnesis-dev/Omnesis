@@ -404,7 +404,7 @@ class AssistantActionViewModelTest {
             sessionId: String,
             text: String,
             notifyAfterMs: Int,
-            viewingForMs: Int,
+            viewingForMs: Int?,
         ): SendMessageResponse {
             sendCount++
             return SendMessageResponse(messageId = "message-a")

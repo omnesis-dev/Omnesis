@@ -27,6 +27,8 @@ healthConnectTesting = "1.0.0-alpha03"
 workManager = "2.10.0"
 # ActivityRecognitionClient (feature-activity-segments only, never project-wide).
 playServicesLocation = "21.3.0"
+# Wearable Data Layer: the phone side of the watch relay (app only).
+playServicesWearable = "19.0.0"
 # feature-photos: on-device OCR + scene labels.
 mlkitTextRecognition = "16.0.1"
 mlkitImageLabeling = "17.0.9"
@@ -98,6 +100,7 @@ health-connect-testing = { module = "androidx.health.connect:connect-testing", v
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "workManager" }
 androidx-work-testing = { module = "androidx.work:work-testing", version.ref = "workManager" }
 play-services-location = { module = "com.google.android.gms:play-services-location", version.ref = "playServicesLocation" }
+play-services-wearable = { module = "com.google.android.gms:play-services-wearable", version.ref = "playServicesWearable" }
 # test
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
