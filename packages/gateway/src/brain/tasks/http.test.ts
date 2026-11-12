@@ -7,10 +7,9 @@
  * refers to, scopes, and that the routes are available without the Brain.
  */
 
-
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { vi, afterEach, beforeEach, describe, expect, test  } from "vitest";
+import { vi, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, ProviderId, SourceId, type Scope } from "@omnesis/types";
 import { setLabFlag } from "../../lab/store.js";
 import { createDatabase, upsertDocuments } from "../../db.js";

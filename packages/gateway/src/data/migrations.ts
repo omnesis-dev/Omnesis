@@ -33,7 +33,6 @@
  * (`migration-idempotency-seed.ts`) — see docs/conventions.md.
  */
 
-
 import { createHash, randomUUID } from "node:crypto";
 import { createLogger, type Logger } from "@omnesis/core";
 import { createLabTable } from "../lab/store.js";
