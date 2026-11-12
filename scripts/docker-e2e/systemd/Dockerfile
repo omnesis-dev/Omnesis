@@ -19,15 +19,20 @@ RUN apt-get update \
 
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+COPY --from=node /usr/local/include/node /usr/local/include/node
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
   && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
   && node --version && npm --version
 
 # The login account's own checkout, with its dependencies, for its collector.
-# Installing it also fills the npm cache the release builds start from.
+# Installing it also fills the npm cache the release builds start from. The CI
+# wrapper builds native modules against Node's headers, copied above, and fails
+# the build when npm drops an optional package such as DuckDB's binary, which
+# neither the checkout nor the cache could then supply.
 COPY . /src
 RUN cd /src \
-  && npm ci --no-audit --no-fund --cache /var/cache/omnesis-npm-seed \
+  && NPM_CI_REQUIRE_OPTIONAL=1 sh scripts/ci/npm-ci.sh --no-audit --no-fund \
+    --cache /var/cache/omnesis-npm-seed \
   && chmod -R a+rX /src /var/cache/omnesis-npm-seed
 
 # The repository root fetches releases from:
