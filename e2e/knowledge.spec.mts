@@ -24,11 +24,19 @@ import {
 
 // This spec owns its experimental gateway; the shared portal gateway stays stable.
 let harness: SyntheticE2EHarness;
-const route = "/portal/debug/cognition/knowledge";
+const route = "/portal/debug/brain/knowledge";
 test.beforeEach(async () => {
   test.setTimeout(180_000);
   harness = new SyntheticE2EHarness({ gatewayMode: "synthetic-experimental" });
   await harness.start();
+  for (const feature of ["brain", "tasks"] as const) {
+    const response = await fetch(`${harness.gatewayUrl}/admin/lab/${feature}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${harness.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(response.ok).toBe(true);
+  }
 });
 test.afterEach(async () => {
   await harness?.destroy();
@@ -284,7 +292,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
     fullPage: true,
     animations: "disabled",
   });
-  await page.goto(url("/portal/debug/cognition/maintenance"));
+  await page.goto(url("/portal/debug/brain/maintenance"));
   await expect(page.getByRole("heading", { name: "Maintenance batches" })).toBeVisible();
   await page
     .getByRole("navigation", { name: "Maintenance batch list" })
@@ -363,7 +371,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   await expect(search).toHaveValue("workshop");
   await expect(page.getByRole("combobox", { name: "Knowledge type" })).toHaveValue("");
   await expect(library).toContainText("Workshop supplies");
-  await library.locator('a[href="/portal/debug/cognition/knowledge/browser-supplies"]').click();
+  await library.locator('a[href="/portal/debug/brain/knowledge/browser-supplies"]').click();
   await expect(page.locator(".kn-reader")).toContainText(
     "Paper and pencils are workshop supplies.",
   );
@@ -462,7 +470,7 @@ test("knowledge library, readable page, evidence, history and mobile navigation"
   const previewConsumer = preview.getByRole("link", { name: "Current focus", exact: true });
   await expect(previewConsumer).toHaveAttribute(
     "href",
-    "/portal/debug/cognition/knowledge/browser-root?claim=focus",
+    "/portal/debug/brain/knowledge/browser-root?claim=focus",
   );
   await preview.hover();
   await expect(preview).toBeVisible();
@@ -703,12 +711,12 @@ test("brain navigation remains usable across its existing sections", async ({ pa
   await page.goto(url(`/portal/?token=${encodeURIComponent(token())}`));
   await expect(page.locator("nav.sidebar-nav")).toBeVisible();
   for (const section of ["overview", "runs", "notes", "memory", "calibration", "bootstrap"]) {
-    await page.goto(url(`/portal/debug/cognition/${section}`));
+    await page.goto(url(`/portal/debug/brain/${section}`));
     await expect(page.locator(".cognition-content")).toBeVisible();
     await expect(
       page
         .getByRole("navigation", { name: "Debug areas" })
-        .getByRole("link", { name: "Cognition", exact: true }),
+        .getByRole("link", { name: "Brain", exact: true }),
     ).toHaveCount(1);
     await expect(
       page
@@ -716,14 +724,14 @@ test("brain navigation remains usable across its existing sections", async ({ pa
         .getByRole("link", { name: "Knowledge", exact: true }),
     ).toHaveCount(0);
     if (section === "overview" || section === "runs") {
-      await expect(page).toHaveURL(/cognition\/runs$/);
+      await expect(page).toHaveURL(/brain\/runs$/);
       await expect(page.getByRole("region", { name: "Agent health and spend" })).toBeVisible();
       await expect(
         page.getByText("Token breakdown · last 14 recorded days", { exact: true }),
       ).toBeVisible();
       await expect(
         page
-          .getByRole("navigation", { name: "Cognition views" })
+          .getByRole("navigation", { name: "Brain views" })
           .getByRole("link", { name: "Activity", exact: true }),
       ).toHaveCount(0);
     }
@@ -929,7 +937,7 @@ test("populated operational readers preserve mobile navigation", async ({ page }
   }
   await page.goto(url(`/portal/?token=${encodeURIComponent(token())}`));
   await expect(page.locator("nav.sidebar-nav")).toBeVisible();
-  await page.goto(url("/portal/debug/cognition/knowledge"));
+  await page.goto(url("/portal/debug/brain/knowledge"));
   const allEntries = page.getByRole("navigation", { name: "Knowledge pages" });
   await allEntries.getByRole("link", { name: /Workshop preparation/ }).click();
   await expect(page.getByRole("combobox", { name: "Knowledge type" })).toHaveValue("");
@@ -947,7 +955,7 @@ test("populated operational readers preserve mobile navigation", async ({ page }
     ["runs", "browser-review-run"],
   ]) {
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.goto(url(`/portal/debug/cognition/${section}/${id}`));
+    await page.goto(url(`/portal/debug/brain/${section}/${id}`));
     await expect(page.locator(".cognition-content")).toBeVisible();
     await expect
       .poll(() => page.locator(".debug-workspace").evaluate((el) => getComputedStyle(el).width))
@@ -1003,8 +1011,8 @@ test("populated operational readers preserve mobile navigation", async ({ page }
       .click();
     await expect(page).toHaveURL(
       section === "loops"
-        ? /\/cognition\/knowledge(?:\?kind=loop)?$/
-        : new RegExp(`/cognition/${section}$`),
+        ? /\/brain\/knowledge(?:\?kind=loop)?$/
+        : new RegExp(`/brain/${section}$`),
     );
     if (section === "loops") {
       await page.getByRole("combobox", { name: "Knowledge type" }).selectOption("loop");
@@ -1015,7 +1023,7 @@ test("populated operational readers preserve mobile navigation", async ({ page }
       await expect(page.locator(".kn-card-list")).toContainText("Reserve workshop room");
       await expect(page.locator(".kn-card-list")).not.toContainText("Prepare workshop materials");
       await page.getByRole("combobox", { name: "Sort loops" }).selectOption("importance");
-      await page.goto(url("/portal/debug/cognition/loops/browser-legacy-loop"));
+      await page.goto(url("/portal/debug/brain/loops/browser-legacy-loop"));
       await expect(page).toHaveURL(/knowledge\/browser-legacy-loop\?kind=loop$/);
       await expect(page.getByRole("region", { name: "Loop details" })).toContainText(
         "Prepare name cards",

@@ -101,7 +101,7 @@ describe("Debug tab bar", () => {
 
   test("a Cognition route falls back to the default tab until experimental arrives", async () => {
     // The flag resolves async, so a cold deep link mounts with it still false.
-    await mount({ tab: "cognition", experimental: false });
+    await mount({ tab: "brain", experimental: false });
     expect(host.querySelector(".stub-cognition")).toBeNull();
     expect(activeTabLabel()).toBe("Tables");
 
@@ -114,7 +114,7 @@ describe("Debug tab bar", () => {
   });
 
   test("the same route resolves to Cognition once experimental is on", async () => {
-    await mount({ tab: "cognition", experimental: true });
+    await mount({ tab: "brain", experimental: true });
     expect(activeTabLabel()).toBe("Agent runs");
     expect(host.querySelector(".stub-cognition")).not.toBeNull();
   });

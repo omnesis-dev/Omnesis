@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Unit tests for the Cognition Steward's own tools, over a real SQLite store +
+ * Unit tests for the Brain's own tools, over a real SQLite store +
  * the direct write gate: mutations land in the tables, every loop
  * mutation keeps the searchable mirror document in sync, references to
  * unknown/deleted documents are dropped-and-reported, the notes cap is
@@ -144,7 +144,7 @@ function structured(result: ToolResult): { resultType: string; data: Record<stri
   return { resultType: result.resultType, data: result.data as Record<string, unknown> };
 }
 
-describe("Cognition Steward tools", () => {
+describe("Brain tools", () => {
   let path: string;
   let db: Db;
   let tools: ToolHandle[];

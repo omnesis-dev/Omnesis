@@ -1407,3 +1407,13 @@ consumers ask the registry and fail closed when a required projection is missing
 They preserve attributed speech as indivisible witnesses and never expand a
 partial read. The semantic `evidenceAuthority` metadata digest participates in
 normal Knowledge source invalidation; its value alone does not grant authority.
+
+### Omnesis Lab is runtime state, separate from configuration
+
+Brain, Tasks and Watches read their live opt-ins through `labFeatureEnabled(db, id)`.
+Persisted choices use the single writer and are advertised by `/status`; settings only
+control feature behavior. Agent tool discovery, prompts, context reads, invocation admission,
+and background producers must all respect the matching feature flag. Task automation
+requires both Brain and Tasks. Preserve cleanup and evidence invalidation when a feature
+is disabled. The canonical names, descriptions and original SVGs live in
+`packages/gateway/src/lab/catalog.ts` and are served to every client by `/admin/lab`.

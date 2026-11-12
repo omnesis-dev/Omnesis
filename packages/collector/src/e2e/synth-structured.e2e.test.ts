@@ -26,6 +26,7 @@ describe("Synthetic providers — structured sources", () => {
     // assigning it to the background role opens the gate without a real model.
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       agentBackend: "replay",
       extraInference: { assignments: { "background-agent": "replay" } },
     });

@@ -995,7 +995,7 @@ export interface InvalidatedTemporalAnnotation {
  * a casualty tied to the doc only through an atom is still presented at that
  * doc's runs. Deliberately deleted entries (`invalidation_cause =
  * 'deleted'`) never surface here: re-filing a curated-away entry would undo
- * the steward's delete. Runs on a read-only handle.
+ * the Brain's delete. Runs on a read-only handle.
  */
 export function listTemporalAnnotationsAwaitingRefile(
   db: Db,

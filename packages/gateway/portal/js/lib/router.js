@@ -466,16 +466,17 @@ export function parseRoute() {
     };
   }
 
-  // Cognition debug sub-area (experimental): the read-only Cognition Steward
-  // cognitive-state inspector. `/portal/debug/cognition[/<section>[/<id>]]`.
+  // Cognition debug sub-area (experimental): the read-only Brain
+  // cognitive-state inspector. `/portal/debug/brain[/<section>[/<id>]]`.
   // Nested one level deeper than the other Debug tabs (overview / loops /
   // runs / observations / memory rail sections, most with an optional
   // selected-entity id for the master-detail right pane; "scheduled" is a
   // legacy alias the view resolves to runs), so it needs its own matcher
   // ahead of the single-segment `debugMatch` below (which would otherwise
   // never match a two-segment cognition path and fall through to search).
-  const cognitionMatch = path.match(
-    /^\/portal\/debug\/cognition(?:\/([a-z-]+)(?:\/(.+))?)?\/?$/,
+  const legacyBrainPath = path.match(/^\/portal\/debug\/cognition(?=\/|$)(.*)$/);
+  const cognitionMatch = (legacyBrainPath ? `/portal/debug/brain${legacyBrainPath[1]}` : path).match(
+    /^\/portal\/debug\/brain(?:\/([a-z-]+)(?:\/(.+))?)?\/?$/,
   );
   // Cognition section names that address the Calendar redirect to its tab.
   if (cognitionMatch && CALENDAR_COGNITION_SECTIONS.has(cognitionMatch[1])) {
@@ -490,20 +491,21 @@ export function parseRoute() {
     };
   }
   if (cognitionMatch && (!cognitionMatch[1] || cognitionMatch[1] === "overview")) {
-    return { view: "debug", tab: "cognition", cognitionTab: "runs", cognitionId: null,
-      redirectTo: "/portal/debug/cognition/runs" };
+    return { view: "debug", tab: "brain", cognitionTab: "runs", cognitionId: null,
+      redirectTo: "/portal/debug/brain/runs" };
   }
   if (cognitionMatch?.[1] === "loops") {
     const id = cognitionMatch[2] ? decodePathSegment(cognitionMatch[2]) : null;
-    return { view: "debug", tab: "cognition", cognitionTab: "knowledge", cognitionId: id,
-      redirectTo: `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop` };
+    return { view: "debug", tab: "brain", cognitionTab: "knowledge", cognitionId: id,
+      redirectTo: `/portal/debug/brain/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop` };
   }
   if (cognitionMatch) {
     return {
       view: "debug",
-      tab: "cognition",
+      tab: "brain",
       cognitionTab: cognitionMatch[1] || "overview",
       cognitionId: cognitionMatch[2] ? decodeURIComponent(cognitionMatch[2]) : null,
+      ...(legacyBrainPath ? { redirectTo: `/portal/debug/brain${legacyBrainPath[1]}${location.search || ""}` } : {}),
     };
   }
 

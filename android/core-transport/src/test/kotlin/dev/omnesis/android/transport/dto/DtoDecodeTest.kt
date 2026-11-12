@@ -15,6 +15,15 @@ import org.junit.Test
 
 /** Decode-time contract tests using invented (non-corpus) fixtures. */
 class DtoDecodeTest {
+    @Test fun lab_features_fail_closed_and_decode_independent_switches() {
+        val old = OmnesisJson.decodeFromString<StatusSnapshot>("""{"experimental":true}""")
+        assertEquals(LabFlags(), old.lab)
+        val status = OmnesisJson.decodeFromString<StatusSnapshot>("""{"experimental":true,"lab":{"brain":false,"tasks":true,"watches":false}}""")
+        assertTrue(status.lab.tasks)
+        assertFalse(status.lab.brain)
+        assertFalse(status.lab.watches)
+    }
+
 
     @Test
     fun graph_context_decodes_optional_fields_and_ignores_future_fields() {

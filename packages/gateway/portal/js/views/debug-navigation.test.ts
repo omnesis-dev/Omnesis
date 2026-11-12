@@ -12,36 +12,44 @@ it("keeps stable timeline and system tools available without exposing Brain", ()
   expect(keys).toContain("calendar");
   expect(keys).toContain("doctor");
   expect(keys).toContain("graph");
-  expect(keys.some((key: string) => key.startsWith("cognition/"))).toBe(false);
+  expect(keys.some((key: string) => key.startsWith("brain/"))).toBe(false);
   expect(keys).not.toContain("watch");
-  expect(active.key).toBe("cognition");
+  expect(active.key).toBe("brain");
 });
 
 it("unifies library and activity while preserving routed selections", () => {
-  expect(debugNavigation(true, "cognition", "knowledge").active.key).toBe("cognition");
-  expect(debugNavigation(true, "cognition", "loops").active.key).toBe("cognition");
-  expect(debugNavigation(true, "cognition", "maintenance").active.key).toBe("cognition");
-  expect(debugNavigation(true, "cognition", "scheduled").key).toBe("cognition/runs");
-  expect(debugNavigation(true, "cognition").key).toBe("cognition/runs");
-  expect(debugNavigation(true, "cognition", "unknown").key).toBe("cognition/runs");
+  expect(debugNavigation(true, "brain", "knowledge").active.key).toBe("brain");
+  expect(debugNavigation(true, "brain", "loops").active.key).toBe("brain");
+  expect(debugNavigation(true, "brain", "maintenance").active.key).toBe("brain");
+  expect(debugNavigation(true, "brain", "scheduled").key).toBe("brain/runs");
+  expect(debugNavigation(true, "brain").key).toBe("brain/runs");
+  expect(debugNavigation(true, "brain", "unknown").key).toBe("brain/runs");
   expect(debugNavigation(true, "graph").active.key).toBe("data");
 });
 
 
 it("offers one Cognition area with all existing view URLs", () => {
-  const { groups, active } = debugNavigation(true, "cognition", "knowledge");
+  const { groups, active } = debugNavigation(true, "brain", "knowledge");
   expect(groups.map((group: { label: string }) => group.label)).toEqual([
-    "Cognition", "System", "Data tools",
+    "Brain", "System", "Data tools",
   ]);
   expect(active.items.map((item: { key: string }) => item.key)).toEqual([
-    "cognition/knowledge", "calendar",
-    "cognition/runs", "cognition/observations", "cognition/interest", "cognition/maintenance",
-    "cognition/bootstrap", "cognition/calibration", "cognition/notes",
+    "brain/knowledge", "calendar",
+    "brain/runs", "brain/observations", "brain/interest", "brain/maintenance",
+    "brain/bootstrap", "brain/calibration", "brain/notes",
   ]);
   for (const section of ["knowledge", "loops", "runs", "observations", "interest", "maintenance", "bootstrap"])
-    expect(debugNavigation(true, "cognition", section).active.key).toBe("cognition");
+    expect(debugNavigation(true, "brain", section).active.key).toBe("brain");
 });
 
 it("keeps memory deep links on the behavioral notes view", () => {
-  expect(debugNavigation(true, "cognition", "memory").key).toBe("cognition/notes");
+  expect(debugNavigation(true, "brain", "memory").key).toBe("brain/notes");
+});
+
+it("gates Brain and Watch independently from experimental mode", () => {
+  const keys = (lab: { brain: boolean; watches: boolean }) => debugNavigation(true, "data", null, lab).groups.flatMap((group: { items: { key: string }[] }) => group.items.map((item) => item.key));
+  expect(keys({ brain: false, watches: true })).toContain("watch");
+  expect(keys({ brain: false, watches: true })).not.toContain("brain/runs");
+  expect(keys({ brain: true, watches: false })).toContain("brain/runs");
+  expect(keys({ brain: true, watches: false })).not.toContain("watch");
 });

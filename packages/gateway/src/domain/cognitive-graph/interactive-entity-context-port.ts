@@ -6,7 +6,7 @@
  * adapter behind the `entity_context` reap tool. Reaps the cognitive
  * neighbourhood around a seed entity directly on the provided handle (like the
  * loop-read / temporal ports), with no writer round-trip. Shared by the
- * interactive agent (chat) and the background Cognition Steward.
+ * interactive agent (chat) and the background Brain.
  */
 
 import { reapEntityContext } from "./CognitiveGraphService.js";

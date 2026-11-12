@@ -44,8 +44,8 @@ than additional copies of supporting source text. The check runs after drafting,
 so its token benefit is downstream; the preflight discovery gate avoids whole runs.
 
 The autonomous Brain is experimental and unstable. Enable
-`OMNESIS_EXPERIMENTAL=1` and assign a reachable `background-agent` model to
-start it. Either alone leaves autonomous work inactive. Settings labels this experimental role
+`OMNESIS_EXPERIMENTAL=1`, turn on Brain in **Settings → Omnesis Lab**, and assign a reachable `background-agent` model to
+start it. All three are required for autonomous work. Tasks is an independent Lab opt-in: task suggestions and updates require both; the Brain runs without task tools or instructions when Tasks is off. Settings labels this experimental role
 **Brain agent**; its internal key remains `background-agent`. Chat and Tell Omnesis
 notes instead share the ordinary `agent` assignment. Each note gets a separate
 bounded session and needs no open chat. Assignments are never copied or used as
@@ -378,7 +378,7 @@ any source of it is installed. Every consumer reads the list live
   turn. A queued datum, bootstrap or daily run for an excluded subject completes
   in preflight without a model call.
 - **Reading.** A background run's read ports are wrapped
-  (`brain/steward/source-fence.ts`): search drops excluded hits, their
+  (`brain/runtime/source-fence.ts`): search drops excluded hits, their
   breadcrumbs and any graph-context provenance that touches one, a fetch or URL lookup of an excluded document reads as
   not found, connection traces, time-index results and entity context omit
   excluded documents and sources, and `run_sql` is scoped to the tables of the
@@ -1162,7 +1162,7 @@ examples are kept as history but no longer count.
 The ledger exists only in experimental mode, where the gates that read it
 run; a stable gateway records nothing.
 
-Debug → Cognition → Interest shows the ledger: every example with its
+Debug → Brain → Interest shows the ledger: every example with its
 polarity, source, text and note, whether its vector is ready, and whether it
 was superseded; the suggestions the gate withheld, each with an **Offer
 again** that undoes the withholding; the `task-propose` verdicts; and a
@@ -1555,7 +1555,7 @@ unavailable verdict is auditable under existing fail-open semantics; unchanged
 ordinary proof refreshes still avoid a new value assessment.
 
 During a wiki review, a refused synthesis-value proposal need not cause repeated cosmetic rewrites.
-After reviewing every offered claim against current evidence, the steward may retain the exact
+After reviewing every offered claim against current evidence, the Brain may retain the exact
 existing title and visible Markdown with `knowledge_save.curationDeferral` (reason code
 `insufficient_useful_context`). This defers editorial improvement to the existing routine review
 schedule without recording completed curation. It does not admit a new page, change prose, bypass

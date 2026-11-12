@@ -74,7 +74,11 @@ function everyEmail(fingerprint: string, name: string): unknown {
 let harness: SyntheticE2EHarness;
 
 beforeEach(async () => {
-  harness = new SyntheticE2EHarness({ gatewayMode: "experimental", universe: "e2e-minimal" });
+  harness = new SyntheticE2EHarness({
+    gatewayMode: "experimental",
+    labFeatures: { brain: true, tasks: true, watches: true },
+    universe: "e2e-minimal",
+  });
   await harness.start();
 }, 240_000);
 

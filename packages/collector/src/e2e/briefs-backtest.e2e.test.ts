@@ -104,6 +104,7 @@ describe("brain backtest bridge (virtual clock + mirror replay)", () => {
     Object.assign(process.env, MIRROR_ENV);
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "e2e-minimal",
       extraGatewayConfig: {
         brain: {

@@ -65,6 +65,7 @@ export interface CollisionSweepDeps {
    * exercising the classic sweep keep its historical behaviour.
    */
   getLoopCollisionsEnabled?: () => boolean;
+  tasksEnabled?: () => boolean;
   /** Annotation-contradiction arm (`brain.collision.annotationContradictions.enabled`). Absent = off. */
   getAnnotationContradictionsEnabled?: () => boolean;
   /** Max annotation-contradiction judge runs per sweep (its own budget). */
@@ -92,11 +93,14 @@ export async function runCollisionSweepPass(
   let enqueued = 0;
   if (deps.getLoopCollisionsEnabled?.() ?? true) {
     const maxPerSweep = Math.max(1, deps.getMaxPerSweep());
-    const candidates = await reads.collisionLoopCandidates({
-      limit: maxPerSweep,
-      selfPersonId: deps.getSelfPersonId(),
-      now,
-    });
+    const candidates =
+      deps.tasksEnabled?.() === false
+        ? []
+        : await reads.collisionLoopCandidates({
+            limit: maxPerSweep,
+            selfPersonId: deps.getSelfPersonId(),
+            now,
+          });
     for (const c of candidates) {
       await deps.writeGate.enqueueCognitionRun(
         {

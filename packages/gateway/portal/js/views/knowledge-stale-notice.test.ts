@@ -34,7 +34,7 @@ it("lists the changed documents and pages with links, and a gone document withou
   expect(html).toContain("Workshop agenda");
   expect(html).toContain("A document that is no longer available");
   expect(html).not.toContain("doc_gone");
-  expect(html).toContain('href="/portal/debug/cognition/knowledge/wiki_plan"');
+  expect(html).toContain('href="/portal/debug/brain/knowledge/wiki_plan"');
   expect(html).toContain("updated, not yet reflected here");
   expect(html).not.toContain("more</p>");
 });

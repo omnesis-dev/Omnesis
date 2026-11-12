@@ -22,7 +22,14 @@ it("advertises actual placement fields and dynamic revision maps to model backen
       getSettings = () => resolveBrainSettings(),
       clock = () => 1;
     const writeGate = directKnowledgeGate(db);
-    const service = new KnowledgeService({ db, writeGate, getSettings, clock, log });
+    const service = new KnowledgeService({
+      tasksEnabled: () => true,
+      db,
+      writeGate,
+      getSettings,
+      clock,
+      log,
+    });
     const engine = new KnowledgeEngine({
       db,
       service,

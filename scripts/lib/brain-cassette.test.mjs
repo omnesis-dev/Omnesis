@@ -8,7 +8,7 @@ import {
   triggersForKind,
   MUTATING_TOOLS,
 } from "./brain-cassette.mjs";
-import { COGNITION_MUTATING_TOOL_NAMES } from "../../packages/gateway/src/brain/steward/tools.ts";
+import { COGNITION_MUTATING_TOOL_NAMES } from "../../packages/gateway/src/brain/runtime/tools.ts";
 
 const S = "loop-agent-run-run_1-a1";
 const M = "msg_1";

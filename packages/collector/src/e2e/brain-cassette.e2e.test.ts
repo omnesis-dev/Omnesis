@@ -189,7 +189,7 @@ describe("Brain cassettes (background-agent and agent replay)", () => {
       "observation_note",
     ]);
     // Every live call succeeded: the document read is a batch, the rest are
-    // the steward's structured results.
+    // the Brain's structured results.
     expect(calls.map((call) => call.result?.kind)).toEqual([
       "document.batch",
       ...Array<string>(6).fill("structured"),

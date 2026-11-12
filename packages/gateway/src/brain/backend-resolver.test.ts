@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, expect, test, vi } from "vitest";
+import { experimentalEnabled } from "@omnesis/core";
 import { loadBrainCompletionProvider } from "./backend-resolver.js";
 import type { CapabilityRole, ResolvedAssignment } from "@omnesis/core";
 
@@ -35,16 +36,16 @@ test("live Brain activation, model removal and reactivation govern optional comp
   const registry = { resolve: vi.fn((_role: CapabilityRole) => current) };
   const deps = { configDir: ".", getBackendApiKey: vi.fn() };
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-  const first = loadBrainCompletionProvider(registry, readiness, deps);
+  const first = loadBrainCompletionProvider(registry, readiness, deps, experimentalEnabled);
   expect(first).not.toBeNull();
   first?.dispose();
   current = { role: "background-agent", kind: "disabled" };
-  expect(loadBrainCompletionProvider(registry, readiness, deps)).toBeNull();
+  expect(loadBrainCompletionProvider(registry, readiness, deps, experimentalEnabled)).toBeNull();
   current = assigned;
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
-  expect(loadBrainCompletionProvider(registry, readiness, deps)).toBeNull();
+  expect(loadBrainCompletionProvider(registry, readiness, deps, experimentalEnabled)).toBeNull();
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-  const second = loadBrainCompletionProvider(registry, readiness, deps);
+  const second = loadBrainCompletionProvider(registry, readiness, deps, experimentalEnabled);
   expect(second).not.toBeNull();
   expect(second).not.toBe(first);
   second?.dispose();
@@ -56,6 +57,15 @@ test("unrunnable Brain models cannot fall back to the owner Agent", () => {
   const registry = {
     resolve: vi.fn((): ResolvedAssignment => ({ ...assigned, available: false })),
   };
-  expect(loadBrainCompletionProvider(registry, readiness, { configDir: "." })).toBeNull();
+  expect(
+    loadBrainCompletionProvider(registry, readiness, { configDir: "." }, experimentalEnabled),
+  ).toBeNull();
   expect(registry.resolve).toHaveBeenCalledWith("background-agent");
+});
+
+test("experimental mode and a retained model do not enable automatic completion without the Lab opt-in", () => {
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+  expect(
+    loadBrainCompletionProvider({ resolve: () => assigned }, readiness, { configDir: "." }),
+  ).toBeNull();
 });

@@ -190,6 +190,18 @@ final class TaskWidgetTests: XCTestCase {
         XCTAssertNotEqual(renderedAuthority, replacement.authorityID)
     }
 
+    func testDisabledTasksDoesNotReadJournalViews() async throws {
+        let requests = Requests()
+        requests.status = 404
+        do {
+            _ = try await TaskWidgetClient(credential: credential, request: { requests.send($0) }).fetch()
+            XCTFail("Expected the Lab gate to close the widget")
+        } catch {
+            XCTAssertEqual(error as? TaskWidgetClientError, .featureDisabled)
+        }
+        XCTAssertEqual(requests.values.count, 1)
+    }
+
     func testCompletionFailureRetainsTaskAndSuccessRemovesIt() async throws {
         let store = InMemoryStore()
         try TaskWidgetStorage.configure(credential, store: store)

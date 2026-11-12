@@ -21,6 +21,8 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
+import { initializeLabFlags, setLabFlag, type LabFeatureId, type LabFlags } from "../lab/store.js";
+
 import {
   reserveNoteHandoff,
   claimNoteHandoff,
@@ -1504,7 +1506,7 @@ export const writerHandlers = {
     publishedAt: number,
   ) => upsertSourceDocumentProfiles(db, entries, publishedAt),
 
-  // ── briefs (the Cognition Steward run queue) ─────────────────────────────
+  // ── briefs (the Brain run queue) ─────────────────────────────
   "cognition.enqueue": (db: Db, input: EnqueueCognitionRunInput, now: number) =>
     enqueueCognitionRun(db, input, now),
   "cognition.claimDue": (db: Db, opts: Parameters<typeof claimDueCognitionRuns>[1]) =>
@@ -1578,7 +1580,7 @@ export const writerHandlers = {
     usage: CognitionRunUsage,
     opts?: { countRun?: boolean },
   ): void => recordCognitionSpend(db, day, mechanism, modelId, usage, opts),
-  // Open-loop / brief / notes mutations (the Cognition Steward's tool layer).
+  // Open-loop / brief / notes mutations (the Brain's tool layer).
   "cognition.openLoopCreate": (
     db: Db,
     input: CreateOpenLoopInput,
@@ -1703,6 +1705,8 @@ export const writerHandlers = {
   ): { openedEpisode: boolean } => recordAgentMessage(db, conversationId, now),
   "conversationReadState.forget": (db: Db, conversationIds: readonly string[]): void =>
     forgetConversationReadState(db, conversationIds),
+  "lab.initialize": (db: Db, flags: Partial<LabFlags>) => initializeLabFlags(db, flags),
+  "lab.set": (db: Db, id: LabFeatureId, enabled: boolean) => setLabFlag(db, id, enabled),
   "devAnnotations.create": (db: Db, input: CreateDevAnnotationInput, now: number) =>
     createDevAnnotation(db, input, now),
   "devAnnotations.resolve": (db: Db, id: string, now: number, resolvedNote?: string | null) =>

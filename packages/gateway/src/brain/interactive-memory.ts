@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Interactive memory shares the evidence firewall without starting background cognition. */
-import { buildAnnotationTools, type AnnotationToolDeps } from "./steward/tools.js";
+import { buildAnnotationTools, type AnnotationToolDeps } from "./runtime/tools.js";
 import { subscribeAnnotationInvalidator } from "./annotation-invalidator.js";
 import { subscribePersonAnnotationInvalidator } from "./person-annotation-invalidator.js";
 import { systemClock } from "./storage/types.js";

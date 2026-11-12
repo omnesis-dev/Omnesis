@@ -8,7 +8,7 @@ const { connectionHref, ConnectionReference, groupConnectionEdges } = connection
 it("links source documents and synthesis owners to their canonical portal routes", () => {
   expect(connectionHref({ id: "source:example/one" })).toBe("/portal/doc/example%2Fone");
   expect(connectionHref({ id: "loop:example" })).toBe(
-    "/portal/debug/cognition/knowledge/loop%3Aexample",
+    "/portal/debug/brain/knowledge/loop%3Aexample",
   );
 });
 

@@ -15,7 +15,7 @@
  * consumers are the admission paths (knowledge intake, historical and recent
  * inventory admission, organization cohorts, the daily batch enqueuer and the
  * waker), the retirement of pending work already queued, the read fence
- * around a background run's tools (`steward/source-fence.ts`), and the
+ * around a background run's tools (`runtime/source-fence.ts`), and the
  * verifier and judges behind a background run's page saves and the morning
  * recheck. The interactive agent never consults it.
  */

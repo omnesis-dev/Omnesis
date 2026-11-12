@@ -95,7 +95,7 @@ const RUN_COLUMNS = "id, kind, status, dedupe_key, payload_json, attempts";
  */
 const REVERIFICATION_MARKER_KEY = "reverification_last_run_at";
 
-// ── the verification steward ────────────────────────────────────────────────
+// ── the verification Brain ────────────────────────────────────────────────
 
 /**
  * Every annotation line the verification prompt renders, as the prompt

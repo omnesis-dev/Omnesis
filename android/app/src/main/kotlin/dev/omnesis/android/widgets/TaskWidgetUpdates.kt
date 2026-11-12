@@ -36,6 +36,13 @@ object TaskWidgetUpdates {
         if (authority != null && ids(app).isNotEmpty()) refresh(app)
     }
 
+    fun tasksDisabled(context: Context) {
+        WorkManager.getInstance(context).cancelAllWorkByTag(TAG)
+        runCatching { TaskWidgetCache(context).clear() }
+        TaskWidgetStore(context).status(TaskWidgetStatus.DISABLED)
+        renderAll(context)
+    }
+
     fun refresh(context: Context) {
         val app = context.applicationContext
         if (ids(app).isEmpty()) return

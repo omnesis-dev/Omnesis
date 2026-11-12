@@ -7,7 +7,7 @@
  * Transactional confirmation emails (flights, hotels, orders, reservations)
  * embed schema.org JSON-LD per Google's email-markup spec. Extracting the
  * planned-start / deadline dates promotes the typed `scheduledAt` / `dueAt`
- * document-metadata fields the steward waker keys its
+ * document-metadata fields the Brain waker keys its
  * actionable-transactional override off. Lives here so every mail-like
  * provider (Gmail, IMAP, …) shares one extraction contract instead of each
  * re-deriving it.

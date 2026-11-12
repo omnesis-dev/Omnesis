@@ -40,6 +40,7 @@ beforeEach(() => {
   createDecisionPayloadTables(db);
   now = 100;
   service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     clock: () => now,

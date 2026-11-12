@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * QoS contract: the background Cognition Steward's `lookup_people` must run at
+ * QoS contract: the background Brain's `lookup_people` must run at
  * BACKGROUND priority so it can never jump ahead of interactive person
  * lookups on the shared read-worker pool.
  *
@@ -42,7 +42,7 @@ function capturingGate(): { gate: PersonLookupGate; seen: () => Priority | null 
   };
 }
 
-describe("backgroundLookupGate — the Cognition Steward's lookup_people QoS contract", () => {
+describe("backgroundLookupGate — the Brain's lookup_people QoS contract", () => {
   test("runs the underlying gate inside a background-priority scope", async () => {
     const { gate, seen } = capturingGate();
     await backgroundLookupGate(gate).lookupPeople("Maya Reeves", 5, { experimental: false });

@@ -33,7 +33,7 @@ public enum PhotosDocumentBuilder {
             : DocumentInput.computeContentHash(extractedText)
         // A casual photo with no extracted text, no caption, no labels,
         // and no place name — little for the agent to reason about on
-        // its own, so it shouldn't wake the Cognition Steward (see the generic
+        // its own, so it shouldn't wake the Brain (see the generic
         // `lowSignal` waker marker, packages/types/src/document.ts). A
         // place name alone (folded into title/content above) IS
         // substantive signal — a geotagged photo with no other analysis

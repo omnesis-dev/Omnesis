@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// Steward-tool and fallback arms of the Direct static card mapping:
+/// Brain-tool and fallback arms of the Direct static card mapping:
 /// loops, structured results, errors, unknown tools, and missing payloads.
 final class PrivacyDirectStructuredCardsTests: XCTestCase {
     private func record(tool: String, args: JSONValue, result: JSONValue?) -> JSONValue {
@@ -26,7 +26,7 @@ final class PrivacyDirectStructuredCardsTests: XCTestCase {
         ])
     }
 
-    // MARK: - Loops and steward tools
+    // MARK: - Loops and Brain tools
 
     func testLoopsSearchedRendersLoopRows() {
         let content = directCardContent(

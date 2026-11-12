@@ -405,3 +405,9 @@ These are fixture controls, not a virtual product clock. A generator can
 materialize relative scenarios into an external universe directory for a chosen
 recording date, preserving fixed historical evidence and keeping prose, calendar
 records, tasks and analytics timestamps consistent before ingestion.
+
+Lab scenarios must also pass explicit `labFeatures: {brain: true, tasks: true, watches: true}`
+opt-ins (choose only what the scenario needs) with an experimental gateway mode. The harness
+saves these choices through the authenticated Lab API before ingesting initial documents.
+Omit them to test fresh-install defaults. Restart preserves saved choices unless the restart
+explicitly supplies new `labFeatures`.

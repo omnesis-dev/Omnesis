@@ -73,6 +73,7 @@ export interface ObservationRecheckWrites {
 }
 
 export interface ObservationRecheckDeps {
+  tasksEnabled?: () => boolean;
   db: Db;
   writes: ObservationRecheckWrites;
   getDecision: () => DecisionCapability | null;
@@ -257,6 +258,10 @@ export async function recheckObservations(
   const held: string[] = [];
   for (const observation of listOpenObservations(deps.db)) {
     input.signal?.throwIfAborted();
+    if (deps.tasksEnabled?.() === false && observation.relatedLoopIds.length > 0) {
+      held.push(observation.id);
+      continue;
+    }
     if (
       evidenceGone(deps.db, observation) ||
       claimQuoteGone(deps.db, observation) ||

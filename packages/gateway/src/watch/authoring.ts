@@ -177,6 +177,7 @@ function harnessName(target: WakeTarget): string {
 }
 
 export interface AuthorWatchDeps {
+  readonly enabled?: () => boolean;
   readonly definitions: WatchDefinitionStore;
   /**
    * The runs already going, so a request that arrives twice compiles once.
@@ -512,6 +513,8 @@ export async function authorWatch(
   deps: AuthorWatchDeps,
   input: AuthorWatchRequest,
 ): Promise<AuthorWatchResult> {
+  if (deps.enabled && !deps.enabled())
+    return { status: "conflict", because: "Watches are disabled in Omnesis Lab." };
   // Every compile goes through here, whether or not anything can share it: a
   // stop has to know what is running, and a count that saw only the shareable
   // ones would report zero while the operator's own compile ran.
@@ -606,9 +609,18 @@ async function authorOneWatch(
   // Before the write, and it has to be: a rewrite reuses the watch's id, so
   // forgetting after would drop the runtime state of the watch just stored
   // rather than of the one it replaced.
-  if (input.replaces !== undefined) deps.forget(input.replaces);
   try {
-    await deps.writes.run(() => Promise.resolve(deps.definitions.put(stored)));
+    const installed = await deps.writes.run(() => {
+      if (deps.enabled && !deps.enabled()) return Promise.resolve(false);
+      if (input.replaces !== undefined) deps.forget(input.replaces);
+      deps.definitions.put(stored);
+      return Promise.resolve(true);
+    });
+    if (!installed)
+      return {
+        status: "conflict",
+        because: "Watches were disabled in Omnesis Lab while compiling.",
+      };
   } catch (error) {
     // Two creates carrying one key, racing: both read no existing watch above,
     // both compiled, and the second reaches the unique index the first has just

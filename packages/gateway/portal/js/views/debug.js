@@ -147,6 +147,7 @@ export function DebugView({
   dataParams,
   sqlParams,
   experimental,
+  lab = { brain: experimental, watches: experimental },
   developer = false,
   cognitionTab,
   cognitionId,
@@ -154,7 +155,7 @@ export function DebugView({
   watchDebugId,
   watchDebugSeq,
 } = {}) {
-  const tabs = debugTabs(experimental);
+  const tabs = debugTabs(experimental, lab);
   const validTabs = new Set(tabs.map((t) => t.key));
   // The URL is the single source of truth for which tab is open — no mirrored
   // local state to drift out of sync. That means a link into a specific tab
@@ -165,7 +166,7 @@ export function DebugView({
 
   return html`
     <div class="debug-view debug-workspace">
-      <${DebugNavigation} tab=${activeTab} routeTab=${tab} cognitionTab=${cognitionTab} experimental=${experimental} />
+      <${DebugNavigation} tab=${activeTab} routeTab=${tab} cognitionTab=${cognitionTab} experimental=${experimental} lab=${lab} />
       ${DEBUG_INTROS[activeTab] && html`<header class="debug-section-heading"><h1>${DEBUG_INTROS[activeTab][0]}</h1><p>${DEBUG_INTROS[activeTab][1]}</p></header>`}
       ${activeTab === "data" && html`<${DataView}
         store=${dataParams?.store ?? null}
@@ -182,12 +183,12 @@ export function DebugView({
         selectedId=${calendarId ?? null}
         developer=${developer}
       />`}
-      ${activeTab === "cognition" && experimental && html`<${CognitionView}
+      ${activeTab === "brain" && lab.brain && html`<${CognitionView}
         subTab=${cognitionTab}
         selectedId=${cognitionId}
         developer=${developer}
       />`}
-      ${activeTab === "watch" && experimental && html`<${WatchDebugTab}
+      ${activeTab === "watch" && lab.watches && html`<${WatchDebugTab}
         watchId=${watchDebugId ?? null}
         seq=${watchDebugSeq ?? null}
       />`}
@@ -666,7 +667,7 @@ const CATEGORY_ORDER = [
   "auth",
   "search",
   "watches",
-  // Every Cognition Steward job reports this category. Absent from this list
+  // Every Brain job reports this category. Absent from this list
   // they still render, but sorted into the unknown-category tail rather than
   // in a deliberate position among their neighbours.
   "briefs",

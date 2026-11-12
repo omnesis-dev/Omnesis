@@ -7,6 +7,7 @@ public enum TaskWidgetClientError: Error, Equatable {
     case insecureCredential
     case invalidResponse
     case unavailable
+    case featureDisabled
     case unauthorized
 }
 
@@ -76,6 +77,7 @@ public struct TaskWidgetClient: Sendable {
         guard let http = response as? HTTPURLResponse else { throw TaskWidgetClientError.invalidResponse }
         switch http.statusCode {
         case 200 ... 299: return data
+        case 404: throw TaskWidgetClientError.featureDisabled
         case 401, 403: throw TaskWidgetClientError.unauthorized
         default: throw TaskWidgetClientError.unavailable
         }

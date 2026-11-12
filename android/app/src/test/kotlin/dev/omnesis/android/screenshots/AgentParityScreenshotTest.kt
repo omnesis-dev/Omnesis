@@ -1959,7 +1959,7 @@ class AgentParityScreenshotTest {
 
     // --- Loops (experimental): doc-row chip, search_loops, fetch_loop ---
     //
-    // The Cognition Steward's read-only surfaces. All fixture data is invented (privacy rule).
+    // The Brain's read-only surfaces. All fixture data is invented (privacy rule).
 
     private fun docRefWithLoops(id: String, title: String, loops: Int) = AgentDocRef(
         documentId = id,

@@ -9,6 +9,7 @@ import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.client.TaskAction
 import dev.omnesis.android.transport.client.TaskView
 import dev.omnesis.android.transport.client.TasksClient
+import dev.omnesis.android.transport.client.GatewayClient
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.tls.PinnedOkHttp
 import java.security.MessageDigest
@@ -20,6 +21,7 @@ import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
 interface WidgetTasksGateway {
+    suspend fun available(): Boolean = true
     suspend fun tasks(view: TaskView, day: String): List<WidgetTask>
     suspend fun complete(id: String)
 }
@@ -27,8 +29,7 @@ interface WidgetTasksGateway {
 /** The widget uses the same paired HTTPS trust contract and task routes as the app. */
 class PairedWidgetTasksGateway(pairing: Pairing) : WidgetTasksGateway {
     private val url = pairing.url.toHttpUrl().also { require(it.isHttps) }
-    private val client = TasksClient(
-        GatewayHttp(
+    private val http = GatewayHttp(
             PinnedOkHttp.build(
                 fingerprint = pairing.fingerprint,
                 requirePin = pairing.tlsMode == PairingTlsMode.PINNED_LEAF,
@@ -37,12 +38,18 @@ class PairedWidgetTasksGateway(pairing: Pairing) : WidgetTasksGateway {
             url,
             pairing.token,
             pairing.pairingGeneration,
-        ),
-    )
+        )
+    private val client = TasksClient(http)
+    private val gateway = GatewayClient(http)
+
+    override suspend fun available(): Boolean = gateway.status().let { it.experimental && it.lab.tasks && it.tasks?.available == true }
+
 
     override suspend fun tasks(view: TaskView, day: String) = client.view(view, day).tasks.map(WidgetTask::from)
     override suspend fun complete(id: String) { client.act(id, TaskAction.Complete()) }
 }
+
+class WidgetTasksDisabled : Exception("Tasks are disabled in Omnesis Lab")
 
 class StaleWidgetAuthority : Exception("The widget belongs to a previous pairing")
 
@@ -68,6 +75,10 @@ class TaskWidgetRepository(
         val started = now()
         try {
             val client = gateway(pairing)
+            if (!client.available()) {
+                cache.clear()
+                return@withLock TaskWidgetRead(null, TaskWidgetStatus.DISABLED)
+            }
             val day = today().toString()
             val tasks = linkedMapOf<String, WidgetTask>()
             // These owned journal views are complete partitions, not paginated.
@@ -83,6 +94,9 @@ class TaskWidgetRepository(
             if (error is GatewayException.Unauthorized || error is GatewayException.Forbidden) {
                 cache.clear()
                 TaskWidgetRead(null, TaskWidgetStatus.UNPAIRED)
+            } else if (error is GatewayException.NotFound || error is WidgetTasksDisabled) {
+                cache.clear()
+                TaskWidgetRead(null, TaskWidgetStatus.DISABLED)
             } else {
                 TaskWidgetRead(cache.read(authority), TaskWidgetStatus.OFFLINE)
             }
@@ -92,7 +106,14 @@ class TaskWidgetRepository(
     suspend fun complete(id: String, expectedAuthority: String) = operations.withLock {
         require(id.isNotBlank() && id.length <= 200 && id.none(Char::isISOControl))
         val pairing = currentPairing()?.takeIf { authority(it) == expectedAuthority } ?: throw StaleWidgetAuthority()
-        gateway(pairing).complete(id)
+        try {
+            val client = gateway(pairing)
+            if (!client.available()) throw WidgetTasksDisabled()
+            client.complete(id)
+        } catch (error: Exception) {
+            if (error is GatewayException.NotFound || error is WidgetTasksDisabled) cache.clear()
+            throw error
+        }
         // A confirmed gateway write remains successful if local cache storage fails.
         runCatching {
             if (currentAuthority() == expectedAuthority) {

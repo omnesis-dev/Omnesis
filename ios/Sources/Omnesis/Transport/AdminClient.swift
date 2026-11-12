@@ -689,7 +689,7 @@ public final class AdminClient: Sendable {
 
     // MARK: - Core request machinery
 
-    private func dispatch(
+    func dispatch(
         method: String,
         path: String,
         body: Data?
@@ -731,7 +731,7 @@ public final class AdminClient: Sendable {
         }
     }
 
-    private func decodeOrThrow<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    func decodeOrThrow<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
             return try decoder.decode(type, from: data)
         } catch {

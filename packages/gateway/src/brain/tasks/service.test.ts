@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { setLabFlag } from "../../lab/store.js";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { listLiveInterestSignals } from "../storage/interest.js";
@@ -21,8 +23,11 @@ let db: Database.Database;
 beforeEach(() => {
   path = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(path);
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+  setLabFlag(db, "tasks", true);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"])
     if (existsSync(path + suffix)) unlinkSync(path + suffix);
@@ -248,4 +253,19 @@ describe("accepting a suggestion with a note", () => {
     expect(result).toMatchObject({ ok: false, reason: "invalid" });
     expect(notes.captured).toHaveLength(0);
   });
+});
+
+test("a previously constructed task service rejects task writes after opt-out", async () => {
+  const { tasks } = service();
+  setLabFlag(db, "tasks", false);
+  const result = await tasks.apply({
+    kind: "create",
+    id: "disabled_task",
+    title: "Check an imaginary observatory",
+    origin: "user",
+    surface: "tasks",
+    runId: "test:disabled",
+  });
+  expect(result).toMatchObject({ ok: false, reason: "invalid" });
+  expect(getOpenLoop(db, "disabled_task")).toBeNull();
 });

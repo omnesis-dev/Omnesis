@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Assembly of the Cognition Steward proper — the three seams the run driver
+ * Assembly of the Brain proper — the three seams the run driver
  * takes (`buildTools` / `promptBuilder` / `systemPrompt`), filled with
  * the real toolset and prompts.
  *
- * Toolset contract: the background Cognition Steward gets an explicit ALLOW-LIST
+ * Toolset contract: the background Brain gets an explicit ALLOW-LIST
  * of the interactive Omnesis agent's read tools
  * ({@link COGNITION_INTERACTIVE_TOOLS}) — the read set the system prompt
- * advertises plus `plan` — combined with the Cognition Steward's own
+ * advertises plus `plan` — combined with the Brain's own
  * loop/brief/notes/schedule tools. It is an allow-list, not a denylist:
  * the full interactive registry is built and then filtered down to the
  * named tools, so any interactive-only tool (present or future) is
@@ -29,6 +29,9 @@
 
 import { buildBuiltinTools, PlanStore, type ToolHandle, type ToolPorts } from "@omnesis/agent";
 import { experimentalVisible, type EntailCapability, type Logger } from "@omnesis/core";
+import { labFeatureEnabled } from "../../lab/store.js";
+import { withTaskTemporalPolicy } from "../../agent/lab-temporal-policy.js";
+import { isolateTaskTools, isTaskRun } from "../task-isolation.js";
 import {
   parseCognitionSynthesisRunPayload,
   parseCognitionDataRunPayload,
@@ -126,7 +129,7 @@ export interface CognitionRuntime {
   promptBuilder: (run: ClaimedCognitionRun) => string | Promise<string>;
   systemPrompt: (run?: ClaimedCognitionRun) => string;
   /**
-   * Build ONLY the Cognition Steward's own mutating tools (open loops, observations, notes,
+   * Build ONLY the Brain's own mutating tools (open loops, observations, notes,
    * schedule, annotate, temporal annotation), stamped with `runId` as their
    * `created_by_run`. The top-level interactive agent augments its read
    * registry with these so user-provided facts can be written straight into the
@@ -140,8 +143,8 @@ export interface CognitionRuntime {
 }
 
 /**
- * The interactive Omnesis tools the background Cognition Steward is allowed to
- * have: the read set the steward system prompt advertises
+ * The interactive Omnesis tools the background Brain is allowed to
+ * have: the read set the Brain system prompt advertises
  * (`prompts.ts`) plus `plan`. An allow-list, not a denylist —
  * {@link buildCognitionToolset} builds the full interactive registry and
  * keeps only these names, so any interactive-only tool (annotation and
@@ -158,7 +161,7 @@ export const COGNITION_INTERACTIVE_TOOLS: ReadonlySet<string> = new Set([
   "lookup_document_by_url",
   "plan",
   // Read-only temporal lookup — shared with the interactive agent (only the
-  // LLM-owned annotation mutation surface is a steward own tool).
+  // LLM-owned annotation mutation surface is a Brain own tool).
   "temporal_query",
   // Read-only cognitive reap — shared with the interactive agent.
   "entity_context",
@@ -187,7 +190,7 @@ export interface CognitionToolsetDeps {
   clock: Clock;
   idGen?: () => string;
   log: Logger;
-  /** Advertise experimental surfaces to the steward (default: gateway mode). */
+  /** Advertise experimental surfaces to the Brain (default: gateway mode). */
   experimental?: boolean;
   /**
    * Body characters one `fetch_many` read returns per document unless the run
@@ -303,7 +306,7 @@ function unfencedSeedDocIds(db: Db, run: ClaimedCognitionRun): string[] {
   return [];
 }
 
-/** Compose the full per-run toolset: allow-listed read tools + the Cognition Steward's own. */
+/** Compose the full per-run toolset: allow-listed read tools + the Brain's own. */
 export function buildCognitionToolset(
   deps: CognitionToolsetDeps,
   run: ClaimedCognitionRun,
@@ -318,7 +321,7 @@ export function buildCognitionToolset(
     ports: deps.basePorts,
     planStore: deps.planStore ?? new PlanStore(),
     experimental: deps.experimental ?? experimentalVisible(),
-    // The steward reconciles against facts and its own annotations; the date
+    // The Brain reconciles against facts and its own annotations; the date
     // mentions of the documents it reads are a lead it asks for by name.
     temporalDefaultOrigins: ["projection", "annotation"],
     ...(deps.documentReadChars === undefined ? {} : { documentReadChars: deps.documentReadChars }),
@@ -407,6 +410,7 @@ function ownToolsInput(
   const reconcile = deps.getReconcileSettings?.();
   const annotations = deps.getAnnotationSettings?.();
   return {
+    tasksEnabled: () => labFeatureEnabled(deps.db, "tasks"),
     db: deps.db,
     personProfileReads: deps.personProfileReads,
     writeGate: deps.writeGate,
@@ -454,7 +458,7 @@ function ownToolsInput(
 }
 
 /**
- * The Cognition Steward's own MUTATING tools stamped with an interactive-origin
+ * The Brain's own MUTATING tools stamped with an interactive-origin
  * `runId`, for a TOP-LEVEL interactive session (never a sub-agent). Filtered to
  * the mutating set: the interactive registry already carries its own read tools
  * (search/fetch/loop-read), so only the write surface is added — a user-provided
@@ -548,7 +552,7 @@ export interface CognitionRuntimeDeps {
 /**
  * Wrap a {@link PersonLookupGate} so every enqueue runs inside a
  * `runWithPriority("background")` scope — the io task defaults to `user`
- * priority, and the background Cognition Steward must not jump its person lookups
+ * priority, and the background Brain must not jump its person lookups
  * ahead of interactive requests on the shared read-worker pool.
  *
  * Exported for the QoS-contract test: this demotion is the load-bearing
@@ -611,11 +615,14 @@ export async function createCognitionRuntime(
     // Read-only temporal lookup — surfaced as `temporal_query` via the
     // allow-list, so the background agent can reconcile annotations with
     // source-owned projections and prior annotations.
-    temporal: createGatewayTemporalPort(
+    temporal: withTaskTemporalPolicy(
+      createGatewayTemporalPort(
+        deps.db,
+        deps.analyticsDb,
+        undefined,
+        temporalStoreReads ? { storeReads: temporalStoreReads } : {},
+      ),
       deps.db,
-      deps.analyticsDb,
-      undefined,
-      temporalStoreReads ? { storeReads: temporalStoreReads } : {},
     ),
     // Read-only cognitive reap — surfaced as `entity_context` via the allow-list,
     // so the background agent can pull an entity's linked neighbourhood in one call.
@@ -677,7 +684,11 @@ export async function createCognitionRuntime(
   const consumptionByRun = new WeakMap<ClaimedCognitionRun, RunConsumptionTracker>();
   // Background runs never read a document of a source the operator excluded
   // from the Brain, in their prompts' temporal context or through any tool.
-  const sourceFence = createBrainSourceFence(deps.db, () => deps.getSettings().excludedSources);
+  const excludedSources = () => [
+    ...deps.getSettings().excludedSources,
+    ...(labFeatureEnabled(deps.db, "tasks") ? [] : ["open-loops"]),
+  ];
+  const sourceFence = createBrainSourceFence(deps.db, excludedSources);
   const temporalQuery = fenceTemporalReader(
     new TemporalQueryService(
       deps.db,
@@ -711,6 +722,7 @@ export async function createCognitionRuntime(
 
   return {
     preflight: async (run) => {
+      if (!labFeatureEnabled(deps.db, "tasks") && isTaskRun(run)) return "defer";
       // Queued before its source was excluded: settled without a model call.
       if (concernsExcludedSource(run)) return "complete";
       const digest = run.kind === "daily" ? parseCognitionDigestRunPayload(run.payload) : null;
@@ -739,7 +751,14 @@ export async function createCognitionRuntime(
           },
           { runId: run.id, day: digest.date },
         );
-      return readDigestInputs(deps.db, clock(), deps.getSettings(), horizon, digest.date).hasInputs
+      return readDigestInputs(
+        deps.db,
+        clock(),
+        deps.getSettings(),
+        horizon,
+        digest.date,
+        labFeatureEnabled(deps.db, "tasks"),
+      ).hasInputs
         ? "continue"
         : "complete";
     },
@@ -747,7 +766,14 @@ export async function createCognitionRuntime(
       const digest = run.kind === "daily" ? parseCognitionDigestRunPayload(run.payload) : null;
       if (!digest || !deps.observations || morningBriefSent(deps.db, digest.date)) return null;
       const horizon = await loadDigestHorizon(temporalQuery, clock(), localTimeZone());
-      return readDigestInputs(deps.db, clock(), deps.getSettings(), horizon, digest.date).hasInputs
+      return readDigestInputs(
+        deps.db,
+        clock(),
+        deps.getSettings(),
+        horizon,
+        digest.date,
+        labFeatureEnabled(deps.db, "tasks"),
+      ).hasInputs
         ? "The morning brief was not sent. Call morning_brief_send exactly once with the complete message."
         : null;
     },
@@ -910,7 +936,10 @@ export async function createCognitionRuntime(
           )
         : tools;
       return fenceExcludedDocumentArguments(
-        maintenance ? withKnowledgeSourceReadReceipts(deps.db, hinted) : hinted,
+        isolateTaskTools(
+          maintenance ? withKnowledgeSourceReadReceipts(deps.db, hinted) : hinted,
+          () => labFeatureEnabled(deps.db, "tasks"),
+        ),
         sourceFence,
         existingPageCitations(deps.db),
       );
@@ -989,7 +1018,7 @@ export async function createCognitionRuntime(
         );
       }
       const presentedRefileIds: string[] = [];
-      const cfg = deps.getSettings();
+      const cfg = { ...deps.getSettings(), excludedSources: excludedSources() };
       // The self person's live annotations, gated on the annotation feature
       // (person annotations are part of it). The rendered facts count as
       // consumed on every run, seeded from this same read so the seed matches
@@ -997,6 +1026,7 @@ export async function createCognitionRuntime(
       const self = resolveSelfMemory(deps.db, cfg.annotations.enabled);
       consumptionFor(run).note("person", [...self.annotationIds]);
       const basePrompt = buildCognitionRunPrompt(run, {
+        tasksEnabled: labFeatureEnabled(deps.db, "tasks"),
         maintenanceRulesInSystem: true,
         db: deps.db,
         graphContext: deps.searchPipeline.agentSearchV2Enabled,
@@ -1035,6 +1065,7 @@ export async function createCognitionRuntime(
       const annotationsOn = settings.annotations.enabled;
       return (
         buildCognitionSystemPrompt({
+          tasksEnabled: labFeatureEnabled(deps.db, "tasks"),
           workflowInstructions: buildCognitionWorkflowInstructions(run),
           notesMaxBytes: settings.notesMaxBytes,
           annotationsEnabled: annotationsOn,

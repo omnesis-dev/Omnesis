@@ -50,6 +50,7 @@ describe("Loop scorecard instrument validation", () => {
     const settles = new Map<string, { promptTokens: number; completionTokens: number }>();
     const result = await runScorecard({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       backend: { kind: "scripted", script: "perfect" },
       seed: FROZEN_ARC_SEED,
       guard: {
@@ -112,6 +113,7 @@ describe("Loop scorecard instrument validation", () => {
   test("the saboteur script is flagged on every planted defect", async () => {
     const result = await runScorecard({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       backend: { kind: "scripted", script: "saboteur" },
       seed: FROZEN_ARC_SEED,
     });

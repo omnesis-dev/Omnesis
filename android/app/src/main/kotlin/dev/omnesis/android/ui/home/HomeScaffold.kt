@@ -111,7 +111,8 @@ fun HomeScaffold(
     val connection by vm.connection.collectAsStateWithLifecycle()
     val agentState by vm.agentState.collectAsStateWithLifecycle()
     val modelHealth by vm.modelHealth.collectAsStateWithLifecycle()
-    val experimental by vm.experimentalEnabled.collectAsStateWithLifecycle()
+    val lab by vm.lab.collectAsStateWithLifecycle()
+    val labAvailable by vm.labAvailable.collectAsStateWithLifecycle()
     val tasksAvailable by vm.tasksAvailable.collectAsStateWithLifecycle()
     val noteAgent by vm.noteAgent.collectAsStateWithLifecycle()
     val tasksTodayCount by vm.tasksTodayCount.collectAsStateWithLifecycle()
@@ -137,6 +138,13 @@ fun HomeScaffold(
     val setupPresenting by vm.setupPresenting.collectAsStateWithLifecycle()
     val backStackEntry = nav.currentBackStackEntryAsState().value
     val currentRoute = backStackEntry?.destination?.route
+    LaunchedEffect(currentRoute, tasksAvailable, lab.watches) {
+        if ((currentRoute == "tasks" && !tasksAvailable) ||
+            (currentRoute?.startsWith("watches") == true && !lab.watches)) {
+            nav.navigate("agent") { popUpTo("agent") { inclusive = false }; launchSingleTop = true }
+        }
+    }
+
 
     // Dismissible notification warning: one visible epoch per disabled spell.
     // Persisted so a relaunch does not resurface it; cleared when the app
@@ -469,9 +477,10 @@ fun HomeScaffold(
         }
     }
 
-    LaunchedEffect(watchFiringRequest, setupPresenting) {
+    LaunchedEffect(watchFiringRequest, setupPresenting, lab.watches) {
         val request = watchFiringRequest
         if (request != null && !vm.setupPresenting.value) {
+            if (!lab.watches) { vm.consumeWatchFiringRequest(); return@LaunchedEffect }
             vm.recordExplicitLaunch()
             closeDrawer()
             nav.navigate(
@@ -542,7 +551,7 @@ fun HomeScaffold(
                 onOpenModelWarnings = openModels,
                 onRefreshConversations = { vm.refreshConversations() },
                 onLoadMoreConversations = { vm.loadMoreConversations() },
-                experimental = experimental,
+                experimental = lab.watches,
                 tasksAvailable = tasksAvailable,
                 tasksTodayCount = tasksTodayCount,
                 privacyPendingCount = privacyPending,
@@ -707,7 +716,7 @@ fun HomeScaffold(
                         vm.refreshConversations()
                         bringAgentForward()
                     },
-                    experimental = experimental,
+                    experimental = lab.brain,
                 )
             }
             composable("watches") {
@@ -954,6 +963,10 @@ fun HomeScaffold(
             composable(route = PHONE_SETUP_ROUTE_PATTERN, arguments = phoneSetupArguments(PhoneSetupEntry.SETTINGS)) {
                 PhoneSetupScreen(onClose = { nav.popBackStack() })
             }
+            composable(LAB_ROUTE) {
+                if (labAvailable) dev.omnesis.android.ui.settings.LabScreen(onBack = { nav.returnToSettings() })
+                else LaunchedEffect(Unit) { nav.returnToSettings() }
+            }
             composable(SETTINGS_ROUTE) {
                 SettingsScreen(
                     focusedSourceId = focusedSourcePermissionId,
@@ -965,6 +978,7 @@ fun HomeScaffold(
                     // the whole shell out for onboarding, so nothing extra is needed here.
                     onUnpaired = {},
                     onRepair = {},
+                    onOpenLab = { openSettingsChild(LAB_ROUTE) },
                     onOpenModels = { openSettingsChild(MODELS_ROUTE) },
                     onOpenDevices = {
                         focusedSourcePermissionId = null

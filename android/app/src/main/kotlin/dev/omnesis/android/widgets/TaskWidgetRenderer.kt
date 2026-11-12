@@ -100,6 +100,7 @@ object TaskWidgetRenderer {
         views.removeAllViews(R.id.tasks_widget_right)
         views.setViewVisibility(R.id.tasks_widget_right, if (size.columns == 2) View.VISIBLE else View.GONE)
         val message = when {
+            status == TaskWidgetStatus.DISABLED -> "Tasks are off" to "Enable Tasks in Settings → Omnesis Lab."
             status == TaskWidgetStatus.UNPAIRED -> "Open Omnesis" to "Pair your gateway to see your tasks."
             status == TaskWidgetStatus.LOADING && snapshot == null -> "Finding your tasks" to "Connecting to your gateway…"
             snapshot == null -> "Gateway unavailable" to "Tap refresh to try again."
@@ -162,6 +163,7 @@ object TaskWidgetRenderer {
         val label = when (status) {
             TaskWidgetStatus.OFFLINE -> if (snapshot == null) "Offline" else "Offline · saved"
             TaskWidgetStatus.COMPLETION_FAILED -> "Couldn't complete"
+            TaskWidgetStatus.DISABLED -> "Tasks are off"
             TaskWidgetStatus.UNPAIRED -> "Your tasks, close by"
             TaskWidgetStatus.LOADING -> "Refreshing…"
             TaskWidgetStatus.READY -> when (state.period) {

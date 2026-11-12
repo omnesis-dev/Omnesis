@@ -31,7 +31,7 @@ vi.mock("./cognition.js", async () => {
     LoadState: ({ loading, error }) =>
       error ? hh("div", { class: "debug-error" }, String(error)) : loading ? hh("div", { class: "debug-loading" }, "Loading…") : null,
     Pill: ({ color, children }) => hh("span", { class: "debug-pill", "data-color": color }, children),
-    cognitionPath: (section, id) => `/portal/debug/cognition/${section}/${encodeURIComponent(id)}`,
+    cognitionPath: (section, id) => `/portal/debug/brain/${section}/${encodeURIComponent(id)}`,
     fmtRel: () => "2d ago",
     fmtTs: (iso) => String(iso),
     useLoader: (fetcher) => {
@@ -86,11 +86,11 @@ describe("signalHref", () => {
   test("links a task signal to its task and an observation signal to its observation", () => {
     expect(interest.signalHref({ loopId: "loop_a", observationId: null })).toEqual({
       label: "Task",
-      href: "/portal/debug/cognition/knowledge/loop_a?kind=loop",
+      href: "/portal/debug/brain/knowledge/loop_a?kind=loop",
     });
     expect(interest.signalHref({ loopId: null, observationId: "obs/1" })).toEqual({
       label: "Observation",
-      href: "/portal/debug/cognition/observations/obs%2F1",
+      href: "/portal/debug/brain/observations/obs%2F1",
     });
     // The task wins when a signal carries both.
     expect(interest.signalHref({ loopId: "loop_a", observationId: "obs_1" }).label).toBe("Task");
@@ -253,7 +253,7 @@ describe("InterestTab", () => {
     expect(items).toHaveLength(2);
     expect(items[0].querySelector(".cognition-interest-withheld-title").textContent).toBe("Compare broadband deals");
     expect(items[0].querySelector(".cognition-interest-withheld-title").getAttribute("href")).toBe(
-      "/portal/debug/cognition/knowledge/loop_deals?kind=loop",
+      "/portal/debug/brain/knowledge/loop_deals?kind=loop",
     );
     expect(items[0].textContent).toContain("Like the broadband offers the owner ignored");
     expect(items[0].textContent).toContain("2d ago");
@@ -336,9 +336,9 @@ describe("InterestTab", () => {
     expect(rows()[0].textContent).toContain("“Stop showing me shop offers”");
     expect(rows()[0].textContent).toContain("said so in the brief");
     // Links go to the observation or the task.
-    expect(rows()[1].querySelector("a").getAttribute("href")).toBe("/portal/debug/cognition/observations/obs_sale");
+    expect(rows()[1].querySelector("a").getAttribute("href")).toBe("/portal/debug/brain/observations/obs_sale");
     expect(rows()[1].querySelector("a").textContent).toBe("Observation");
-    expect(rows()[2].querySelector("a").getAttribute("href")).toBe("/portal/debug/cognition/knowledge/loop_boiler?kind=loop");
+    expect(rows()[2].querySelector("a").getAttribute("href")).toBe("/portal/debug/brain/knowledge/loop_boiler?kind=loop");
     expect(rows()[2].querySelector("a").textContent).toBe("Task");
     expect(rows()[0].querySelector("a")).toBeNull();
     // Only the embedded signal carries a tick.

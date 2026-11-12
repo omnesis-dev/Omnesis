@@ -60,6 +60,30 @@ function handles(invoke: ToolHandle["invoke"] = async () => success): ToolHandle
 }
 
 describe("DirectMcpService", () => {
+  it("updates its manifest and instructions live when Tasks or the Brain is disabled", async () => {
+    const flags = { brain: true, tasks: true, watches: true };
+    const invoke = vi.fn(async () => success);
+    const service = new DirectMcpService(handles(invoke), undefined, undefined, (id) => flags[id]);
+    expect(service.manifest().some((tool) => tool.name === "entity_context")).toBe(true);
+    flags.tasks = false;
+    expect(
+      service
+        .manifest()
+        .some((tool) =>
+          ["list_loops", "search_loops", "fetch_loop", "entity_context"].includes(tool.name),
+        ),
+    ).toBe(false);
+    expect(
+      await service.invoke("fetch_loop", { query: "test" }, { requestId: "request" }),
+    ).toMatchObject({ kind: "error", code: "tool_not_found" });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(await service.instructions()).not.toContain("`entity_context(");
+    flags.tasks = true;
+    expect(service.manifest().some((tool) => tool.name === "fetch_loop")).toBe(true);
+    flags.brain = false;
+    expect(service.manifest().some((tool) => tool.name === "fetch_loop")).toBe(false);
+  });
+
   it("renders the retrieval playbook with live source types and independent schema discovery", async () => {
     const service = new DirectMcpService(handles(), async () => ({
       sourceTypes: ["fictional-calendar"],

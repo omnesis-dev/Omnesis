@@ -865,6 +865,18 @@ public final class AppStore {
         adminCoord.statusSnapshot?.experimental ?? false
     }
 
+    public var labAvailable: Bool {
+        statusSnapshot?.labAvailable == true
+    }
+
+    public var brainEnabled: Bool {
+        statusSnapshot?.lab?.brain == true
+    }
+
+    public var watchesEnabled: Bool {
+        statusSnapshot?.lab?.watches == true
+    }
+
     /// Whether the paired gateway runs in developer mode (`OMNESIS_DEV_MODE`).
     /// Reveals the developer-annotation capture affordance (shake-to-annotate).
     /// Defaults to `false` until `/status` has been fetched, and for any gateway
@@ -948,9 +960,9 @@ public final class AppStore {
     }
 
     /// Whether the paired gateway serves Tasks (`/status` → `tasks.available`).
-    /// Not an experimental surface: any gateway that serves it shows it.
+    /// The gateway advertises the effective Lab gate.
     public var tasksAvailable: Bool {
-        adminCoord.statusSnapshot?.tasks?.available == true
+        adminCoord.statusSnapshot?.lab?.tasks == true && adminCoord.statusSnapshot?.tasks?.available == true
     }
 
     /// Open tasks on today's page — the count on the drawer's Tasks entry.

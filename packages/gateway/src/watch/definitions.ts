@@ -251,6 +251,11 @@ export class WatchDefinitionStore {
   }
 
   /** Every watch, newest first. */
+  /** Upgrade discovery needs existence, without deserializing every watch definition. */
+  hasAny(): boolean {
+    return this.db.prepare("SELECT 1 FROM watch_defs LIMIT 1").get() !== undefined;
+  }
+
   list(): StoredWatch[] {
     return this.db
       .prepare<[], WatchRow>("SELECT * FROM watch_defs ORDER BY added_at DESC, id DESC")

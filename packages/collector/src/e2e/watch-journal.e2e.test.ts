@@ -76,7 +76,11 @@ describe("the watch journal (e2e-minimal universe)", () => {
   beforeAll(async () => {
     // The whole subsystem is gated: without this the gateway creates no file,
     // subscribes to nothing, and registers no task.
-    harness = new SyntheticE2EHarness({ gatewayMode: "experimental", universe: "e2e-minimal" });
+    harness = new SyntheticE2EHarness({
+      gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
+      universe: "e2e-minimal",
+    });
     await harness.start();
     journalPath = join(harness.getConfigDir(), "watch.db");
     await harness.syncAllSources();

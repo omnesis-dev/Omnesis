@@ -77,7 +77,7 @@ export const CONFIG_DEFAULTS = {
       contextHandoffTokens: 120000,
       maxStalledHandoffs: 2,
     },
-    // Omnesis Brain / Cognition Steward (experimental). Runtime resolution lives in
+    // Omnesis Brain (experimental). Runtime resolution lives in
     // packages/gateway/src/brain/config.ts; a cross-check test there keeps
     // these display mirrors honest.
     documentReadChars: 16384,

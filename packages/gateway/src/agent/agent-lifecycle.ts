@@ -37,6 +37,7 @@ import {
 } from "@omnesis/core";
 import { CONFIG_DEFAULTS, type AgentKnowledgeMode } from "@omnesis/config";
 import { SCOPE_ADMIN } from "@omnesis/types";
+import { labFeatureEnabled } from "../lab/store.js";
 
 import { resolveAnthropicApiKey } from "../model-credentials.js";
 import { directIndexWriteGate } from "../indexer/index-write-gate.js";
@@ -441,6 +442,9 @@ export function createAgentService(
       catalog,
       sourceTypes,
       experimental,
+      brainEnabled: !restricted && labFeatureEnabled(db, "brain"),
+      tasksEnabled: !restricted && labFeatureEnabled(db, "tasks"),
+      watchesEnabled: !restricted && labFeatureEnabled(db, "watches"),
       selfMemory,
       selfPersonId,
       knowledgeRootContext:
@@ -458,6 +462,7 @@ export function createAgentService(
     return prompt;
   };
   return new AgentService({
+    labEnabled: (id) => labFeatureEnabled(db, id),
     backendFactory,
     useBrainKnowledgeMode,
     namedPagesNote: knowledgeReads ? (message) => namedPagesNote(db, message) : undefined,

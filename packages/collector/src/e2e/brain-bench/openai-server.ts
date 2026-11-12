@@ -3,7 +3,7 @@
 
 /**
  * The minimal OpenAI-compatible chat server the bench's scripted model
- * roles are built on (the puppet steward, the conversation puppet, the
+ * roles are built on (the puppet Brain, the conversation puppet, the
  * entailment verifier).
  *
  * Only non-streamed completions are served: a `stream: true` request is

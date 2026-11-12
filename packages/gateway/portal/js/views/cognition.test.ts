@@ -24,7 +24,7 @@ describe("Cognition debug tab — experimental gating", () => {
       "calendar",
       "doctor",
     ]);
-    expect(off).not.toContain("cognition");
+    expect(off).not.toContain("brain");
     // Flipping experimental ONLY inserts the experimental tabs — the stock ones
     // keep both their membership and their relative order, with Doctor still last.
     expect(on).toEqual([
@@ -34,7 +34,7 @@ describe("Cognition debug tab — experimental gating", () => {
       "metrics",
       "background-jobs",
       "calendar",
-      "cognition",
+      "brain",
       "watch",
       "doctor",
     ]);

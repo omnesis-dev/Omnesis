@@ -42,8 +42,8 @@ describe("deriveDevTarget", () => {
     for (const [tab, type] of cases) {
       expect(
         deriveDevTarget(
-          { view: "debug", tab: "cognition", cognitionTab: tab, cognitionId: "x-1" },
-          `/portal/debug/cognition/${tab}/x-1`,
+          { view: "debug", tab: "brain", cognitionTab: tab, cognitionId: "x-1" },
+          `/portal/debug/brain/${tab}/x-1`,
         ),
       ).toMatchObject({ targetType: type, targetId: "x-1" });
     }
@@ -73,8 +73,8 @@ describe("deriveDevTarget", () => {
     );
     expect(
       deriveDevTarget(
-        { view: "debug", tab: "cognition", cognitionTab: "overview", cognitionId: null },
-        "/portal/debug/cognition",
+        { view: "debug", tab: "brain", cognitionTab: "overview", cognitionId: null },
+        "/portal/debug/brain",
       ).targetType,
     ).toBe("route");
   });

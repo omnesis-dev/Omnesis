@@ -7,7 +7,7 @@
  * One optional Markdown file at `<configDir>/OMNESIS.md`. When it exists, its
  * contents are injected into the system prompt of every reasoning agent run:
  * the interactive agent, its sub-agents, the deep-research specialists, the
- * background Cognition Steward and its brief talk-back threads. It is absent on
+ * background Brain and its brief talk-back threads. It is absent on
  * a fresh install and stays absent until someone writes it — no scaffolding, no
  * default content, and no behaviour change while it does not exist.
  *

@@ -17,7 +17,7 @@ import { KnowledgeConnections } from "./knowledge-connections.js";
 import { KnowledgeStaleNotice } from "./knowledge-stale-notice.js";
 import { knowledgeHistoryComparisons, KnowledgeHistoryRevision } from "./knowledge-history.js";
 
-export const knowledgePath = (id) => `/portal/debug/cognition/knowledge/${encodeURIComponent(id)}`;
+export const knowledgePath = (id) => `/portal/debug/brain/knowledge/${encodeURIComponent(id)}`;
 export const knowledgeKinds = [
   ["", "All knowledge"],
   ["root", "Life overview"],

@@ -227,6 +227,7 @@ roborazzi {
 }
 
 dependencies {
+    implementation(libs.androidsvg)
     implementation(project(":core-designsystem"))
     implementation(project(":core-transport"))
     implementation(project(":core-pairing"))

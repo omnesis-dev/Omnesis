@@ -302,7 +302,7 @@ export function renderPart(part, key, citations, dispatch, pillRuns, thinkingAct
       // In an after-the-fact / debug render (`live === false`) the rolling
       // cards would animate-then-vanish, leaving bare text. Render a static
       // chip showing the tool + its result instead.
-      // temporal_query and the steward loop reads keep the generic action
+      // temporal_query and the brain loop reads keep the generic action
       // card live, but their results deserve the same rich static card as
       // the rest once settled. This set is static-only on purpose: the
       // live stream and the reducer's resume/drop behavior are untouched.
@@ -442,7 +442,7 @@ function personHref(canonicalId) {
 // Loop detail lives on the debug cognition surface — the same target the
 // cognition view's own cross-entity links use.
 function loopHref(loopId) {
-  return `/portal/debug/cognition/knowledge/${encodeURIComponent(loopId)}?kind=loop`;
+  return `/portal/debug/brain/knowledge/${encodeURIComponent(loopId)}?kind=loop`;
 }
 
 // In-SPA navigation for transcript links. Modifier/middle clicks fall
@@ -1295,7 +1295,7 @@ function loopRow(loop) {
 }
 
 // The fetched-loop header: state pill + title, linked to the loop page.
-// Accepts both the interactive shape ({loopId}) and the steward fetch
+// Accepts both the interactive shape ({loopId}) and the brain fetch
 // shape ({loopId} or {id}).
 function loopHeaderExtra(loop) {
   const opened = html`
@@ -1356,7 +1356,7 @@ function loopDetailLines(loop) {
 }
 
 /**
- * A tiny "in N loop(s)" pill for a document row when the Cognition Steward tracks open
+ * A tiny "in N loop(s)" pill for a document row when the Brain tracks open
  * loops that document is a source for (experimental). Returns null otherwise.
  */
 function loopChip(ref) {

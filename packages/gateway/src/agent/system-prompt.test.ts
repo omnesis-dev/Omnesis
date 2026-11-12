@@ -721,3 +721,25 @@ test("continues unfinished work after a correction without treating courtesy as 
   expect(prompt).toContain("Stop or change tasks when the user explicitly asks");
   expect(prompt).toContain("only when a missing detail actually blocks progress");
 });
+
+test("gates the Brain, Tasks guidance, and Watches independently", () => {
+  const prompt = buildSystemPrompt({
+    experimental: true,
+    temporal: true,
+    brainEnabled: false,
+    tasksEnabled: false,
+    watchesEnabled: true,
+  });
+  expect(prompt).not.toContain("**`list_loops(");
+  expect(prompt).not.toContain("also returns `tasks`");
+  expect(prompt).toContain("# Watches");
+  const tasks = buildSystemPrompt({
+    experimental: true,
+    temporal: true,
+    brainEnabled: false,
+    tasksEnabled: true,
+    watchesEnabled: false,
+  });
+  expect(tasks).toContain("also returns `tasks`");
+  expect(tasks).not.toContain("# Watches");
+});

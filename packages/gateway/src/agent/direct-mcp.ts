@@ -25,12 +25,15 @@ import {
   type ToolContext,
 } from "@omnesis/agent";
 import { experimentalVisible, type ToolResult } from "@omnesis/core";
+import { labFeatureEnabled } from "../lab/store.js";
 
 import { createGatewayLoopReadPort } from "../brain/interactive-loop-port.js";
 import { listSources } from "../data/repositories/SourceRepository.js";
 import { permittedSourceIds } from "../access/permitted-sources.js";
 import { createGatewayEntityContextPort } from "../domain/cognitive-graph/interactive-entity-context-port.js";
 import { createGatewayTemporalPort } from "../enrichment/temporal/interactive-temporal-port.js";
+import { withTaskTemporalPolicy } from "./lab-temporal-policy.js";
+import { withLabTools, type LabEnabled } from "./lab-tools.js";
 import { createDirectListTablesTool } from "./direct-list-tables.js";
 import { DIRECT_MCP_ESSENTIAL_INSTRUCTIONS } from "./direct-instructions.js";
 import {
@@ -217,6 +220,7 @@ export class DirectMcpService {
       authorization?: CorpusAuthorization,
     ) => Promise<ReadOnlyRetrievalPlaybookInput> = () => Promise.resolve({}),
     private readonly scopedHandles?: (authorization: CorpusAuthorization) => readonly ToolHandle[],
+    private readonly labEnabled?: LabEnabled,
   ) {
     const available = new Map(handles.map((handle) => [handle.name, handle]));
     available.set("list_tables", this.listTablesHandle());
@@ -267,10 +271,19 @@ export class DirectMcpService {
     );
   }
 
+  private activeHandles(): readonly ToolHandle[] {
+    return this.labEnabled
+      ? withLabTools([...this.byName.values()], this.labEnabled)
+      : [...this.byName.values()];
+  }
+
   manifest(authorization?: CorpusAuthorization): readonly DirectMcpToolManifest[] {
-    return authorization?.restricted
-      ? this.toolsManifest.filter((tool) => RESTRICTED_DIRECT_MCP_TOOL_NAME_SET.has(tool.name))
-      : this.toolsManifest;
+    const available = new Set(this.activeHandles().map((handle) => handle.name));
+    return this.toolsManifest.filter(
+      (tool) =>
+        available.has(tool.name) &&
+        (!authorization?.restricted || RESTRICTED_DIRECT_MCP_TOOL_NAME_SET.has(tool.name)),
+    );
   }
 
   async instructions(authorization?: CorpusAuthorization): Promise<string> {
@@ -302,7 +315,7 @@ export class DirectMcpService {
         catalogMode: "discovery",
         fetchBatchLimit: MAX_DIRECT_MCP_FETCH_DOCUMENTS,
         includeTemporal: this.byName.has("temporal_query"),
-        includeCognition: this.byName.has("entity_context"),
+        includeCognition: this.activeHandles().some((tool) => tool.name === "entity_context"),
       });
     if (Buffer.byteLength(instructions, "utf8") > MAX_DIRECT_MCP_INSTRUCTIONS_BYTES) {
       throw new Error("Direct MCP instructions exceeded the safe size limit");
@@ -328,7 +341,7 @@ export class DirectMcpService {
                 candidate,
               ]),
             ).get(name)
-          : this.byName.get(name);
+          : this.activeHandles().find((tool) => tool.name === name);
     // The route validates the path first. Keep the service fail-closed too so
     // another future caller cannot widen the fixed surface by casting a name.
     if (!handle) {
@@ -565,16 +578,19 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
               graphContext: deps.searchPipeline.agentSearchV2Enabled,
             }),
             sql: createGatewaySqlPort(deps.analyticsDb),
-            temporal: createGatewayTemporalPort(
+            temporal: withTaskTemporalPolicy(
+              createGatewayTemporalPort(
+                deps.db,
+                deps.analyticsDb,
+                { maxWindowMs: MAX_DIRECT_MCP_TEMPORAL_WINDOW_MS },
+                {
+                  ...(deps.mentionWorthGateActive
+                    ? { hideUnworthyMentions: deps.mentionWorthGateActive }
+                    : {}),
+                  ...(deps.temporalStoreReads ? { storeReads: deps.temporalStoreReads } : {}),
+                },
+              ),
               deps.db,
-              deps.analyticsDb,
-              { maxWindowMs: MAX_DIRECT_MCP_TEMPORAL_WINDOW_MS },
-              {
-                ...(deps.mentionWorthGateActive
-                  ? { hideUnworthyMentions: deps.mentionWorthGateActive }
-                  : {}),
-                ...(deps.temporalStoreReads ? { storeReads: deps.temporalStoreReads } : {}),
-              },
             ),
             entityContext: createGatewayEntityContextPort(deps.db),
             loopRead: createGatewayLoopReadPort(deps.db, undefined, {
@@ -606,5 +622,6 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
       };
     },
     (authorization) => buildHandles(authorization),
+    (id) => labFeatureEnabled(deps.db, id),
   );
 }

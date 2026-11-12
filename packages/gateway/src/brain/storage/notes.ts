@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Cognition Steward's persistent notes blob — a single, durable,
+ * The Brain's persistent notes blob — a single, durable,
  * agent-curated text file injected into every run's prompt. Size-capped
  * at write time (the cap is a config knob; this layer takes it as a
  * parameter) so the per-run token cost stays bounded.

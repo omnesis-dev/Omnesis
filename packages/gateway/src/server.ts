@@ -4,10 +4,6 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { matchedRoutes } from "hono/route";
-import { strictRoute } from "./http/scope.js";
-import { httpActivityName, withActivity } from "./observability/main-activity.js";
-type Db = Database.Database;
-import { join } from "node:path";
 import {
   DEFAULT_PUSH_RELAY_URL,
   DEFAULT_SYNC_LEASE_TTL,
@@ -27,6 +23,14 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { labFeatureEnabled } from "./lab/store.js";
+import { LabService } from "./lab/service.js";
+import { mountLabRoutes } from "./http/routes/lab.js";
+
+import { strictRoute } from "./http/scope.js";
+import { httpActivityName, withActivity } from "./observability/main-activity.js";
+type Db = Database.Database;
+import { join } from "node:path";
 import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
 import { getDevice } from "./data/repositories/DeviceRepository.js";
 import {
@@ -459,7 +463,7 @@ export function createServer(
     /** The interest ledger, for the Debug → Cognition tab. Omitted ⇒ the tab's routes 404. */
     interest?: import("./brain/interest/engine.js").InterestEngine;
     /**
-     * The Cognition Steward drainer's live-run registry, shared by the composition
+     * The Brain drainer's live-run registry, shared by the composition
      * root so `/admin/brain/runs` can flag the run executing right now.
      */
     cognitionActivity?: import("./brain/admin-http.js").RunActivityReader;
@@ -1312,6 +1316,10 @@ export function createServer(
 
   // ── Routes ──────────────────────────────────────────────────────────
   mountMobilePermissionHealthRoute(app, mobilePermissionHealthService);
+  const labService = new LabService(db, w, async () => {
+    await agentDeps.agentService?.refreshLabFeatures();
+  });
+  mountLabRoutes(app, labService);
 
   const watchRouting = new WatchRoutingService({
     getConfig: () => opts?.configStore?.get() ?? opts?.config,
@@ -1328,6 +1336,7 @@ export function createServer(
 
   // Status block 1: /health, /config, /admin/config*, /status
   mountStatusRoutes(app, {
+    getLabStatus: () => labService.flags(),
     db,
     dbPath,
     config: opts?.config,
@@ -1703,6 +1712,7 @@ export function createServer(
       : undefined);
   if (subscriptionService) opts?.onSubscriptionService?.(subscriptionService);
   mountSubscriptionRoutes(app, {
+    isEnabled: () => labFeatureEnabled(db, "watches"),
     service: subscriptionService,
     getAnswerService: () => agentDeps.answerService,
     // The same authoring path the operator's own compile route takes, so a

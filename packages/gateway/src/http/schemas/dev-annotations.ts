@@ -26,7 +26,7 @@ export const createDevAnnotationBody = z
   .superRefine((body, ctx) => {
     // Most target kinds are addressed by an opaque id, so it must be present.
     // The exceptions are the idless singletons: `route` (a free-form note
-    // tagged with a screen) and `agent_notes` (the one steward notes blob).
+    // tagged with a screen) and `agent_notes` (the one Brain notes blob).
     // Declared here (a 400) rather than in the handler so the boundary owns
     // the whole validation contract.
     if (body.targetType !== "route" && body.targetType !== "agent_notes" && !body.targetId) {

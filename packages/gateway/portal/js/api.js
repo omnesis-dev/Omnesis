@@ -280,6 +280,9 @@ export const searchAgentContext = (text, limit = 30) =>
  * anchor the help reads "from:alice@example.com" forever, which the
  * user explicitly didn't want.
  */
+export const getLab = () => request("GET", "/admin/lab");
+export const setLabFeature = (id, enabled) => request("PUT", `/admin/lab/${encodeURIComponent(id)}`, { body: { enabled } });
+
 export const getStatus = () => request("GET", "/status");
 
 export const getDocument = (id) => request("GET", `/documents/${encodeURIComponent(id)}`);
@@ -688,7 +691,7 @@ export const getBackgroundJobs = () => request("GET", "/admin/background-jobs");
  */
 export const getDoctorReport = () => request("GET", "/admin/doctor");
 
-// --- Cognition (read-only Cognition Steward debug surface) ---
+// --- Cognition (read-only Brain debug surface) ---
 // Every one of these is a GET against the `/admin/brain/*` read surface —
 // the Cognition debug tab is strictly read-only, so there is no mutating
 // counterpart here (no dismiss/wipe). All 404 unless the Brain is active

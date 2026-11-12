@@ -45,6 +45,7 @@ describe("Codex agent backend — spawned gateway E2E", () => {
     const restoreEnv = applyCodexEnv(logPath, "tool");
     const harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "e2e-minimal",
       embedderBackend: "fake",
       extraInference: {

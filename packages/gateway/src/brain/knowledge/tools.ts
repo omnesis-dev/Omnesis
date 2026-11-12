@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { summaryExcerpt, type ToolHandle } from "@omnesis/agent";
 import { decisionPayloadErasureGeneration } from "../decision-payload.js";
-import { PersonProfileReads } from "../steward/person-profile-reads.js";
+import { PersonProfileReads } from "../runtime/person-profile-reads.js";
 import {
   listTemporalAnnotationsAwaitingRefile,
   listUngroundedTemporalAnnotationsForDoc,
@@ -398,6 +398,15 @@ export function buildKnowledgeTools(
     sourceFence?: BrainSourceFence;
   },
 ): ToolHandle[] {
+  const nodeKinds = service.tasksEnabled()
+    ? z.enum(["wiki", "root", "loop", "doc_annotation", "person_annotation"])
+    : z.enum(["wiki", "root", "doc_annotation", "person_annotation"]);
+  const listKinds = service.tasksEnabled()
+    ? z.enum(["wiki", "root", "loop", "doc_annotation", "person_annotation", "observation"])
+    : z.enum(["wiki", "root", "doc_annotation", "person_annotation", "observation"]);
+  const saveArgs = knowledgeSaveArgs.extend({
+    node: knowledgeSaveArgs.shape.node.extend({ kind: nodeKinds }),
+  });
   const personReview = new PersonEditorialReview(
     service.deps.db,
     context.personProfileReads ?? new PersonProfileReads(service.deps.db),
@@ -416,7 +425,12 @@ export function buildKnowledgeTools(
   };
   const relatedKnowledge = new RelatedKnowledgeCheck(
     service.deps.db,
-    context.relatedKnowledge,
+    context.relatedKnowledge
+      ? async (query, limit, signal) =>
+          (await context.relatedKnowledge!(query, limit, signal)).filter(
+            (id) => !service.taskNodeHidden(id),
+          )
+      : undefined,
     context.runId,
     (ref) => dependencyReceipts.hasRead(ref),
     service.deps.log.child("related-knowledge"),
@@ -449,6 +463,7 @@ export function buildKnowledgeTools(
   const nodeTitle = (nodeId: string): string => {
     const db = service.deps.db;
     const id = nodeId.startsWith("wiki:") ? nodeId.slice(5) : nodeId;
+    if (service.taskNodeHidden(id)) return "";
     const byNode = db
       .prepare<[string], { title: string }>("SELECT title FROM knowledge_nodes WHERE id = ?")
       .get(id)?.title;
@@ -467,6 +482,8 @@ export function buildKnowledgeTools(
       : "";
   };
   const saveNode = async (input: KnowledgeSaveArgs, signal?: AbortSignal) => {
+    if (input.node.kind === "loop" && !service.tasksEnabled())
+      throw new KnowledgeStorageError("reference_invalid", "Knowledge node unavailable");
     if (
       input.curationDeferral &&
       (!context.batchId ||
@@ -839,12 +856,19 @@ export function buildKnowledgeTools(
       "Read organizational links around a synthesis node. These links are distinct from evidence dependencies in claim refs.",
       z.object({ id }).strict(),
       false,
-      (input) => listKnowledgeLinks(service.deps.db, input.id),
+      (input) =>
+        service.taskNodeHidden(input.id)
+          ? []
+          : listKnowledgeLinks(service.deps.db, input.id).filter(
+              (link) => !service.taskNodeHidden(link.fromId) && !service.taskNodeHidden(link.toId),
+            ),
       (input) => nodeTitle(input.id),
     ),
     tool(
       "knowledge_link",
-      "Organize context and outcomes. belongs_to_project connects a node to its project wiki; part_of connects subloops to loops or pages to parent pages. These are navigation links and do not imply evidential support. Actual hierarchy changes schedule review of affected wiki/root pages. After changing hierarchy during maintenance, call knowledge_next_frontier before saving an affected page so its topology input is current. Change operational blocking through open_loop_update.",
+      service.tasksEnabled()
+        ? "Organize context and outcomes. belongs_to_project connects a node to its project wiki; part_of connects subloops to loops or pages to parent pages. These are navigation links and do not imply evidential support. Actual hierarchy changes schedule review of affected wiki/root pages. After changing hierarchy during maintenance, call knowledge_next_frontier before saving an affected page so its topology input is current. Change operational blocking through open_loop_update."
+        : "Organize pages: belongs_to_project connects a node to its project wiki; part_of connects child pages to parent pages. These are navigation links, not evidential support. Hierarchy changes schedule wiki/root review; refresh knowledge_next_frontier before saving a page whose topology changed.",
       z
         .object({
           fromId: id,
@@ -862,7 +886,11 @@ export function buildKnowledgeTools(
         })
         .strict(),
       true,
-      (input) => service.deps.writeGate["knowledge.link"](input, runFence, service.deps.clock()),
+      (input) => {
+        if (service.taskNodeHidden(input.fromId) || service.taskNodeHidden(input.toId))
+          throw new KnowledgeStorageError("reference_invalid", "Knowledge node unavailable");
+        return service.deps.writeGate["knowledge.link"](input, runFence, service.deps.clock());
+      },
       (input) => [nodeTitle(input.fromId), nodeTitle(input.toId)].filter(Boolean).join(" → "),
     ),
     tool(
@@ -903,9 +931,7 @@ export function buildKnowledgeTools(
       "List synthesis nodes for orientation; use search_many to retrieve their indexed contents.",
       z
         .object({
-          kind: z
-            .enum(["wiki", "root", "loop", "doc_annotation", "person_annotation", "observation"])
-            .optional(),
+          kind: listKinds.optional(),
           afterId: id.optional(),
           limit: z.number().int().min(1).max(100).default(30),
         })
@@ -938,8 +964,10 @@ export function buildKnowledgeTools(
     ),
     tool(
       "knowledge_reference",
-      "Resolve one reference with {ref}, or batch up to 16 with {refs}. Batch results contain complete successful views or per-item errors; retry deferredRefs in another batch and oversized references singly. Only returned successful views grant read receipts. Resolve an exact claim or evidence reference and read its current version. For a fetched document use source:<documentId>, not doc: or document:. Optional selectors: source:<documentId>#evidence:<evidenceId>, wiki:<pageId>#claim:<claimId> (also loop or annotation claims), or loop:<loopId>#field:<fieldName>. Use exact tool-returned IDs. knowledge_save retains this exact read revision for the current run, so you can omit its inputVersions entry. Explicit version overrides remain supported and are never silently refreshed. Scoped owner synthesis tools still require explicit versions. " +
-        LOOP_FIELD_REFERENCE_GUIDANCE,
+      service.tasksEnabled()
+        ? "Resolve one reference with {ref}, or batch up to 16 with {refs}. Batch results contain complete successful views or per-item errors; retry deferredRefs in another batch and oversized references singly. Only returned successful views grant read receipts. Resolve an exact claim or evidence reference and read its current version. For a fetched document use source:<documentId>, not doc: or document:. Optional selectors: source:<documentId>#evidence:<evidenceId>, wiki:<pageId>#claim:<claimId> (also loop or annotation claims), or loop:<loopId>#field:<fieldName>. Use exact tool-returned IDs. knowledge_save retains this exact read revision for the current run, so you can omit its inputVersions entry. Explicit version overrides remain supported and are never silently refreshed. Scoped owner synthesis tools still require explicit versions. " +
+            LOOP_FIELD_REFERENCE_GUIDANCE
+        : "Resolve one reference with {ref}, or batch up to 16 with {refs}. Resolve a source, wiki or annotation reference and read its current version. For documents use source:<documentId>, optionally #evidence:<evidenceId>; for page claims use wiki:<pageId>#claim:<claimId> or annotation:<annotationId>#claim:<claimId>. Only returned successful views grant read receipts. Retry deferredRefs in another batch and oversized references singly. knowledge_save retains this exact read revision for the current run; explicit version overrides remain authoritative. Reading a wiki does not read its original sources.",
       z.union([
         z.object({ ref: z.string().min(1).max(1024) }).strict(),
         z
@@ -1064,7 +1092,7 @@ export function buildKnowledgeTools(
     tool(
       "knowledge_save",
       `Create a synthesis page or replace a full one, preserving existing claim spans and stable IDs by default. To change part of an existing wiki or root page, use knowledge_edit instead of resending the whole page. For every deliberately omitted wiki/root claim, supply node.claimRemovals with its exact id and reason; reviewedClaimIds reports review and does not authorize removal. Empty wiki replacements are refused. Create or revise grounded synthesis with nested <claim id="..." refs="..."> spans. Inside those tags, use ordinary Markdown headings such as ## Heading, without an extra opening angle bracket. Every nonblank synthesis text span must be covered by tags; this structural check is separate from entailment. Use refs="" for explicitly unsupported text without inventing evidence; set its claim epistemicStatus to unsupported and preserve modality such as question, proposal or recommendation. Converted owner refs remain context unless explicitly changed: after reviewing evidence, set claims[].relations[ref] to supports only when it establishes the claim; keep merely related evidence as context. The verifier determines verification, not claim tags or asserted status. Never invent verification. New wikis require a reconciled candidate, top-level creationAssessment after library/candidate and relevant page reads, and claim support from at least two distinct current documents. Prefer enriching existing reusable scopes; one-document material belongs in a useful annotation or an unpublished candidate. Root is the compact overview itself and must fit its hard budget. Preserve canonical node.ownerId when revising an owned node. If omitted, an actual knowledge_fetch(editing:true) in this run can supply it only for the exact same id, kind and expectedRevision; explicit null or another owner is never repaired. Never infer or fabricate it. node.inputVersions is optional here: an actual knowledge_fetch(editing:true) lets unchanged claim trees retain their stored dependency versions; new or edited uses need knowledge_reference reads in this run or explicit exact versions. This never marks untouched claims reviewed. In maintenance, existing pages must match an offered frontier. Before revising an existing wiki, read knowledge_fetch({id:targetId,editing:true}) at node.expectedRevision. Neither the embedded frontier node nor an explicit inputFingerprint replaces this target read. After knowledge_next_frontier and then a complete knowledge_fetch(editing:true) for that exact node/revision, omit inputFingerprint to use this run’s bound read receipt. Otherwise include its exact fingerprint at the top level beside node. Explicit wrong or blank fingerprints are never corrected; changed authority requires refreshing the frontier and editing read. An offered review=true person annotation requires annotation_search({personId}) through every nextCursor first. Retention is assessed against the current whole profile; a refused retention must be corrected, consolidated or retracted through canonical person tools before saving. Ordinary proof refresh does not perform this editorial assessment. For an offered canonical owner, operational mutations must succeed BEFORE this terminal save: state, deadline, retirement, and ledger changes. Saving settles offered claim work and can end mutation authority for that owner. After operational changes, use knowledge_next_frontier and knowledge_fetch(editing=true) to refresh the retained owner, input versions, and fingerprint; if retired or removed, follow the refreshed frontier instead. Do not save while a required canonical action is refused or incomplete; reread and reconcile it first. A wiki title names the page's subject: a new or changed title that repeats the title of a document the page cites is refused, as is a save that adds another date-named section to a page whose sections are mostly date-named. Root budget: ${service.deps.getSettings().knowledge.rootMaxChars} characters including markup.`,
-      knowledgeSaveArgs,
+      saveArgs,
       true,
       saveAndLog,
       (input) => input.node.title,
@@ -1246,7 +1274,7 @@ export function buildKnowledgeTools(
     tools.push(
       tool(
         "knowledge_discovery_complete",
-        "Source frontier items only: sourceRead reports this run’s current-generation read progress. complete needs no reread; partial.nextOffset identifies the first unread UTF-16 offset for fetch_many; required needs a full read; unavailable requires refreshing the frontier. Deferred batch references are unread. Finish the presented source chunk before requesting more work. Read the complete source before recording considered coverage in any phase. Untruncated source offers count; truncated offers require a complete fetch_many read, whose pages combine, or a whole-source knowledge_reference at the same generation. A source_read_required refusal names the needed read; perform it and retry, rather than dropping the source. After interpreting an offered source, reconcile existing loops, annotations and pages; optionally propose a reusable page. A synthesis node is settled by knowledge_save, then knowledge_next_frontier; never complete a node or pair its fingerprint with a cited source ID. Copy the offered id including source: and the entire inputFingerprint verbatim. Include canonical owners needing grounded prose as targets; fresh owners are materialized before repair. Resolve unavailable target errors rather than dropping intended repairs. On revision conflict, fetch the frontier again. Known dependents are then inspected by the engine.",
+        `Source frontier items only: sourceRead reports this run’s current-generation read progress. complete needs no reread; partial.nextOffset identifies the first unread UTF-16 offset for fetch_many; required needs a full read; unavailable requires refreshing the frontier. Deferred batch references are unread. Finish the presented source chunk before requesting more work. Read the complete source before recording considered coverage in any phase. Untruncated source offers count; truncated offers require a complete fetch_many read, whose pages combine, or a whole-source knowledge_reference at the same generation. A source_read_required refusal names the needed read; perform it and retry, rather than dropping the source. After interpreting an offered source, reconcile existing ${service.tasksEnabled() ? "loops, annotations" : "annotations"} and pages; optionally propose a reusable page. A synthesis node is settled by knowledge_save, then knowledge_next_frontier; never complete a node or pair its fingerprint with a cited source ID. Copy the offered id including source: and the entire inputFingerprint verbatim. Include canonical owners needing grounded prose as targets; fresh owners are materialized before repair. Resolve unavailable target errors rather than dropping intended repairs. On revision conflict, fetch the frontier again. Known dependents are then inspected by the engine.`,
         z
           .object({
             id,
@@ -1297,32 +1325,36 @@ export function buildKnowledgeTools(
     ] as const;
     return guarded([
       ...tools.filter((entry) => !entry.mutates),
-      ...owners.map(([name, kind]) =>
-        tool(
-          name,
-          `Revise tagged claims on an existing canonical ${kind}. The ID must name the existing owner; read its current synthesis revision with knowledge_fetch and current evidence versions with knowledge_reference. This changes prose only, preserving operational fields. It cannot create wiki pages or change another artifact kind.`,
-          proposal.omit({ kind: true, ownerId: true }),
-          true,
-          async (input, signal) => {
-            const node = { ...input, kind, ownerId: input.id };
-            assertKnowledgeSavePreflight(service.deps.db, node, runFence);
-            const outcomeFence = await checkKnowledgeOutcome(
-              service,
-              context.checkRecord,
-              node,
-              signal,
-              runFence,
-              context.sourceFence,
-            );
-            return service.save(
-              context.sourceFence ? { ...node, sourceFence: context.sourceFence } : node,
-              undefined,
-              runFence,
-              outcomeFence,
-            );
-          },
+      ...owners
+        .filter(([, kind]) => kind !== "loop" || service.tasksEnabled())
+        .map(([name, kind]) =>
+          tool(
+            name,
+            `Revise tagged claims on an existing canonical ${kind}. The ID must name the existing owner; read its current synthesis revision with knowledge_fetch and current evidence versions with knowledge_reference. This changes prose only, preserving operational fields. It cannot create wiki pages or change another artifact kind.`,
+            proposal.omit({ kind: true, ownerId: true }),
+            true,
+            async (input, signal) => {
+              if (kind === "loop" && !service.tasksEnabled())
+                throw new KnowledgeStorageError("reference_invalid", "Knowledge node unavailable");
+              const node = { ...input, kind, ownerId: input.id };
+              assertKnowledgeSavePreflight(service.deps.db, node, runFence);
+              const outcomeFence = await checkKnowledgeOutcome(
+                service,
+                context.checkRecord,
+                node,
+                signal,
+                runFence,
+                context.sourceFence,
+              );
+              return service.save(
+                context.sourceFence ? { ...node, sourceFence: context.sourceFence } : node,
+                undefined,
+                runFence,
+                outcomeFence,
+              );
+            },
+          ),
         ),
-      ),
     ]);
   }
   return guarded(tools);

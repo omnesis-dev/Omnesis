@@ -1380,7 +1380,7 @@ struct AgentEphemeralUrlLookupCard: View {
 
 // MARK: - Loop chrome (shared)
 
-/// A subtle "in N loop(s)" pill for a document row when the Cognition Steward
+/// A subtle "in N loop(s)" pill for a document row when the Brain
 /// tracks open loops that document is a source for (experimental). A tiny
 /// chain-link glyph + count in accent, sized to read as a soft annotation
 /// on the row — not another action card. Renders nothing when the ref has
@@ -1474,7 +1474,7 @@ private struct AgentLoopImportanceMeter: View {
 /// single-line slot rotates through one tracked loop at a time (state
 /// chip + title), then the whole card disappears — the read-only twin of
 /// `AgentEphemeralSearchCard`, so the chat agent reading the background
-/// Cognition Steward's obligations reads visually the same as a document search.
+/// Brain's obligations reads visually the same as a document search.
 @available(iOS 17.0, *)
 struct AgentEphemeralLoopSearchCard: View {
     @Environment(AppStore.self) private var store
@@ -1847,7 +1847,7 @@ struct AgentEphemeralLoopFetchCard: View {
 /// It names the action, rolls one outcome, then dismisses; resumed history
 /// never rebuilds it.
 /// The action may come from stable interactive memory or an experimental
-/// steward surface; presentation follows the tool name rather than the
+/// Brain surface; presentation follows the tool name rather than the
 /// gateway's feature mode.
 @available(iOS 17.0, *)
 struct AgentEphemeralActionCard: View {

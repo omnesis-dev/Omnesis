@@ -29,6 +29,9 @@ data class StatusSnapshot(
      * features hidden.
      */
     val experimental: Boolean = false,
+    /** Effective per-feature switches advertised by the gateway. */
+    val lab: LabFlags = LabFlags(),
+    val labAvailable: Boolean = false,
     /** Private speech hints are opt-in; older gateways omit this field. */
     val transcriptionVocabulary: Boolean = false,
     /**

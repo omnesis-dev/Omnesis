@@ -2,10 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The puppet steward's mind — pure, so it can be unit-tested without a
+ * The puppet Brain's mind — pure, so it can be unit-tested without a
  * gateway.
  *
- * A bench test declares WHAT the steward should do for a given run as an
+ * A bench test declares WHAT the Brain should do for a given run as an
  * ordered list of tool calls (a {@link PuppetPlan}); this module works out
  * WHICH of those calls to emit next, by reconstructing the calls already
  * executed from the conversation the gateway sends back. The gateway then

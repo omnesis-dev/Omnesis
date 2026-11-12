@@ -1715,7 +1715,7 @@ export interface ApplyMergeAdjudicationInput {
   verdict: MergeAdjudicationVerdict;
   /** The model's user-visible rationale — becomes the rule reason on accept. */
   reason: string;
-  /** The steward run the verdict came from (stamped as rule createdBy). */
+  /** The Brain run the verdict came from (stamped as rule createdBy). */
   runId: string;
   /**
    * The person ids both sides resolved to when the run's evidence was built.

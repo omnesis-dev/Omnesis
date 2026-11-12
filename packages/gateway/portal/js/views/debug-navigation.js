@@ -4,11 +4,11 @@
 import { html } from "htm/preact";
 import { navigate } from "../lib/router.js";
 
-const brain = (key, label) => ({ key: `cognition/${key}`, label, experimental: true });
+const brain = (key, label) => ({ key: `brain/${key}`, label, feature: "brain", experimental: true });
 const GROUPS = [
   {
-    key: "cognition",
-    label: "Cognition",
+    key: "brain",
+    label: "Brain",
     items: [
       brain("knowledge", "Library"),
       { key: "calendar", label: "Timeline" },
@@ -28,7 +28,7 @@ const GROUPS = [
       { key: "doctor", label: "Health" },
       { key: "metrics", label: "Metrics" },
       { key: "background-jobs", label: "Gateway jobs" },
-      { key: "watch", label: "Watch runtime", experimental: true },
+      { key: "watch", label: "Watch runtime", feature: "watches", experimental: true },
     ],
   },
   {
@@ -42,18 +42,19 @@ const GROUPS = [
   },
 ];
 
-export function debugNavigation(experimental, tab, cognitionTab) {
+export function debugNavigation(experimental, tab, cognitionTab, lab = { brain: experimental, watches: experimental }) {
   const groups = GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => !item.experimental || experimental),
+    label: group.key === "brain" && !(experimental && lab.brain) ? "Timeline" : group.label,
+    items: group.items.filter((item) => !item.experimental || (experimental && lab[item.feature] === true)),
   })).filter((group) => group.items.length);
   const requested = cognitionTab === "memory" ? "notes" : cognitionTab === "loops" ? "knowledge" : cognitionTab === "scheduled" ? "runs" : cognitionTab || "runs";
   const section = GROUPS.some((group) =>
-    group.items.some((item) => item.key === `cognition/${requested}`),
+    group.items.some((item) => item.key === `brain/${requested}`),
   )
     ? requested
     : "runs";
-  const key = tab === "cognition" ? `cognition/${section}` : tab;
+  const key = tab === "brain" ? `brain/${section}` : tab;
   const active =
     groups.find((group) => group.items.some((item) => item.key === key)) ??
     groups.find((group) => group.key === "data");
@@ -67,8 +68,8 @@ function routeLink(event, key, currentKey) {
   if (key !== currentKey) navigate(`/portal/debug/${key}`);
 }
 
-export function DebugNavigation({ experimental, tab, routeTab = tab, cognitionTab }) {
-  const { groups, active, key } = debugNavigation(experimental, tab, cognitionTab);
+export function DebugNavigation({ experimental, tab, routeTab = tab, cognitionTab, lab }) {
+  const { groups, active, key } = debugNavigation(experimental, tab, cognitionTab, lab);
   const currentKey = routeTab === tab ? key : null;
   return html`<header class="debug-navigation">
     <div class="debug-navigation-top">

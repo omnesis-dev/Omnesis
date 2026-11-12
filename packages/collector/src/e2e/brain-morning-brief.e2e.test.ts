@@ -6,7 +6,7 @@
  *
  * The one message a day the Brain writes to the user. The morning run's
  * preflight rechecks the open observations; when there is anything to say
- * (ranked observations, a calendar horizon, a task coming due) the steward
+ * (ranked observations, a calendar horizon, a task coming due) the Brain
  * composes the message and calls `morning_brief_send`, which appends ONE
  * assistant message to the standing, pinned, undeletable "Morning brief"
  * conversation and ships that morning's ranked observations. A quiet morning

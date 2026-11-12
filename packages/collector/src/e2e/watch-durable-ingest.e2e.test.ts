@@ -12,6 +12,7 @@ let harness: SyntheticE2EHarness;
 beforeEach(async () => {
   harness = new SyntheticE2EHarness({
     gatewayMode: "experimental",
+    labFeatures: { brain: true, tasks: true, watches: true },
     universe: "e2e-minimal",
     extraGatewayConfig: {
       gateway: {

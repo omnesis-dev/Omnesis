@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { taskDocumentHidden } from "../../lab/document-policy.js";
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
 import { decisionPayloadErasureGeneration } from "../decision-payload.js";
 import { brainSourceInclusionSql } from "../source-exclusion.js";
@@ -201,6 +202,7 @@ export class KnowledgeEngine {
    * turn, and a batch's change summary never carries its content.
    */
   private source(id: string): SourceInput | null {
+    if (!this.deps.service.tasksEnabled() && taskDocumentHidden(this.deps.db, id)) return null;
     const inclusion = brainSourceInclusionSql(
       this.deps.getSettings().excludedSources,
       "d.source_id",
@@ -228,7 +230,7 @@ export class KnowledgeEngine {
       contentTruncated: source.content.length > cap,
     };
   }
-  /** A stored node as the steward reads it in a frontier offer. */
+  /** A stored node as the Brain reads it in a frontier offer. */
   private nodeView(id: string): KnowledgeNodeView | null {
     const node = this.deps.service.fetch(id, true);
     return node ? knowledgeNodeView(node) : null;
@@ -250,7 +252,12 @@ export class KnowledgeEngine {
       versions[id] = source.sourceRevision;
     } else {
       const node = getKnowledgeNode(this.deps.db, id);
-      if (!node || node.canonicalFields.withdrawn === true) return null;
+      if (
+        !node ||
+        node.canonicalFields.withdrawn === true ||
+        (node.kind === "loop" && !this.deps.service.tasksEnabled())
+      )
+        return null;
       versions[`node:${id}`] = node.revision;
       if (node.kind === "wiki" || node.kind === "root")
         versions[`organization:${id}`] = knowledgeOrganizationVersion(this.deps.db, id);

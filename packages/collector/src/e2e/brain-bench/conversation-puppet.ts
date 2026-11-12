@@ -5,12 +5,12 @@
  * The conversation puppet — an OpenAI-compatible server assigned to the
  * interactive `agent` role, standing in for the model in a conversation turn.
  *
- * It is the steward puppet's sibling for the other seam: a reply in a
+ * It is the Brain puppet's sibling for the other seam: a reply in a
  * conversation (the Morning brief thread included) runs through the real
  * agent service, toolset and write gates, and only the reasoning that picks
  * the tool calls is scripted. A behavior matches the user's latest message;
  * its plan runs strictly in order with `ref()` reading real results, exactly
- * like a steward plan (`emitNextPlanned`).
+ * like a Brain plan (`emitNextPlanned`).
  *
  * Stateless per request: the whole conversation arrives with each call, and
  * only the tool round-trips after the latest user message count towards the

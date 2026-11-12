@@ -809,6 +809,7 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
       // gateway is stopped. Delivery and answering then use the real gateway.
       await harness.restartGateway({
         gatewayMode: "experimental",
+        labFeatures: { brain: true, tasks: true, watches: true },
         whileStopped: () => {
           const db = new Database(harness.getDbPath());
           db.pragma("foreign_keys = ON");

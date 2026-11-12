@@ -399,6 +399,7 @@ test("priced scorecards refuse startup until actual maintenance runs are budgete
   await expect(
     runScorecard({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       seed: 1,
       backend: {
         kind: "http",

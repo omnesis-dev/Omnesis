@@ -4,7 +4,7 @@
 /**
  * Interactive-agent substrate write access: a TOP-LEVEL chat session, under
  * experimental mode with an InteractiveWriteProfile installed, is handed the
- * Cognition Steward's own mutating tools stamped with an interactive-origin run id —
+ * Brain's own mutating tools stamped with an interactive-origin run id —
  * so facts the user provides mid-conversation are written into the substrate.
  * With the profile absent — or experimental off — the session stays read-only.
  *
@@ -12,7 +12,7 @@
  * delegated child) is covered where it lives: the own-tools are appended only to
  * the per-session `tools` array (never `this.tools`, which subagents build from),
  * and `selectSubagentTools` strips every `mutates:true` handle — asserted in
- * `registry.test.ts` and `brain/steward/runtime.test.ts`.
+ * `registry.test.ts` and `brain/runtime/runtime.test.ts`.
  *
  * Fixture data is invented — no corpus content.
  */
@@ -39,6 +39,7 @@ import { buildKnowledgeTools } from "../brain/knowledge/tools.js";
 import { directKnowledgeGate } from "../brain/knowledge/writer.js";
 import { AgentService, type InteractiveWriteProfile } from "./service.js";
 import { FsConversationStore } from "./conversation-store.js";
+import type { LabEnabled } from "./lab-tools.js";
 
 const stubSearch: SearchPort = {
   async search(input) {
@@ -80,10 +81,15 @@ function makeProfile(): { profile: InteractiveWriteProfile; seenRunIds: string[]
   return { profile, seenRunIds };
 }
 
-function makeService(ports: Partial<ToolPorts> = {}, knowledgeReads = true) {
+function makeService(
+  ports: Partial<ToolPorts> = {},
+  knowledgeReads = true,
+  labEnabled?: LabEnabled,
+) {
   const captured: WsEvent[] = [];
   const backend = new RecordingBackend();
   const service = new AgentService({
+    ...(labEnabled ? { labEnabled } : {}),
     useBrainKnowledgeMode: knowledgeReads ? "check_stale_claims" : "off",
     backendFactory: (_role: CapabilityRole) => backend,
     ports: { search: stubSearch, document: stubDocument, ...ports },
@@ -136,6 +142,34 @@ describe("interactive-agent substrate write access", () => {
     expect(service.listTools().map((tool) => tool.name)).not.toContain("fetch_loop");
   });
 
+  it("refreshes an existing chat after a Lab toggle without enabling the Brain", async () => {
+    const flags = { brain: false, tasks: false, watches: false };
+    const { service, backend } = makeService({}, true, (id) => flags[id]);
+    const taskTool: ToolHandle = {
+      name: "task_list",
+      description: "tasks",
+      schema: {} as never,
+      invoke: async () => ({ kind: "structured", resultType: "tasks", data: { tasks: [] } }),
+    };
+    service.setTaskToolsProvider(() => [taskTool]);
+    const { sessionId } = await service.createSession("device:A");
+    service.sendMessage("device:A", sessionId, "What can you do?");
+    await settle();
+    expect(backend.sawTools).not.toContain("task_list");
+    flags.tasks = true;
+    await service.refreshLabFeatures();
+    service.sendMessage("device:A", sessionId, "What are my tasks?");
+    await settle();
+    expect(backend.sawTools).toContain("task_list");
+    expect(backend.sawTools).not.toContain("list_loops");
+    flags.tasks = false;
+    await service.refreshLabFeatures();
+    service.sendMessage("device:A", sessionId, "What can you do now?");
+    await settle();
+    expect(backend.sawTools).not.toContain("task_list");
+    await service.dispose();
+  });
+
   it("appends the profile's write tools to a top-level session, stamped interactive_<sessionId>", async () => {
     const { service, backend } = makeService();
     const { profile, seenRunIds } = makeProfile();
@@ -180,6 +214,7 @@ describe("interactive-agent substrate write access", () => {
       createKnowledgeTables(db);
       const knowledge = new KnowledgeService({
         db,
+        tasksEnabled: () => true,
         writeGate: directKnowledgeGate(db),
         getSettings: () => resolveBrainSettings(),
         clock: () => 1,

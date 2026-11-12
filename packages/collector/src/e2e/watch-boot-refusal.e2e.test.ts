@@ -44,7 +44,11 @@ describe("a gateway whose watch stores refuse to open", () => {
   beforeAll(async () => {
     // Without this the subsystem is off entirely: no file, no subscription, no
     // task — and the test would pass while proving nothing.
-    harness = new SyntheticE2EHarness({ gatewayMode: "experimental", universe: "e2e-minimal" });
+    harness = new SyntheticE2EHarness({
+      gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
+      universe: "e2e-minimal",
+    });
     // The config dir exists from the constructor; the gateway is not spawned
     // until `start()`. That gap is where the journal has to be planted.
     journalPath = join(harness.getConfigDir(), "watch.db");

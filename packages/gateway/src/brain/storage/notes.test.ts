@@ -26,7 +26,7 @@ function cleanupDb(path: string): void {
   }
 }
 
-describe("steward notes blob", () => {
+describe("Brain notes blob", () => {
   let path: string;
   let db: Db;
   beforeEach(() => {

@@ -8,7 +8,7 @@ import {
   createPersonAnnotation,
   createPersonAnnotationStorageTables,
 } from "../storage/person-annotations.js";
-import { PersonProfileReads } from "../steward/person-profile-reads.js";
+import { PersonProfileReads } from "../runtime/person-profile-reads.js";
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { PersonEditorialReview, assertPersonReviewFence } from "./person-review.js";

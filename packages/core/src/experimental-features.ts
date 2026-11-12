@@ -6,22 +6,16 @@
  *
  * Some capabilities — new sources, half-baked subsystems, anything not yet
  * battle-tested — should ship in the tree but stay invisible until the user
- * deliberately opts in. The single knob is the `OMNESIS_EXPERIMENTAL`
- * environment variable, and it is a simple on/off switch:
+ * deliberately opts in. `OMNESIS_EXPERIMENTAL` reveals Omnesis Lab and gates
+ * other experimental surfaces:
  *
  *   - unset / "0" / "false" / "off" / "no" → experimental mode is OFF (default)
  *   - "1" / "true" / "on" / "yes" / "all"  → experimental mode is ON
  *
- * There is no per-feature granularity: experimental mode is either fully on or
- * fully off. When on, every experimental surface (sources marked experimental,
- * Watches, Briefs, …) becomes visible and usable; when off, none of them are
- * discoverable on any client.
- *
- * This helper is available to any process (collector, gateway, CLI). The
- * collector reads it to gate experimental sources; the gateway reads it to
- * advertise an `experimental` capability to clients (portal / iOS / Android)
- * and to gate experimental routes. Any other subsystem can gate a code path on
- * it the same way with `experimentalEnabled()`.
+ * Brain, Tasks and Watches additionally require independent persisted Lab
+ * choices, enforced by the gateway. This process-level predicate alone never
+ * grants those features. Sources and other environment-gated capabilities
+ * read it directly. The collector, gateway and CLI share the same parsing.
  *
  * The env var is read fresh on every call (never cached) so a process can
  * toggle it — chiefly tests, which set/unset `process.env.OMNESIS_EXPERIMENTAL`
@@ -58,10 +52,10 @@ export function syntheticEnabled(): boolean {
  * Whether experimental surfaces should be *visible* in the current process.
  *
  * This is `experimentalEnabled()` with one extra escape hatch: synthetic mode
- * (`OMNESIS_SYNTHETIC=1`) exposes experimental features unconditionally so
- * tests and demos exercise them without setting `OMNESIS_EXPERIMENTAL`. It is
+ * (`OMNESIS_SYNTHETIC=1`) exposes environment-gated discovery so
+ * tests and demos exercise those surfaces without setting `OMNESIS_EXPERIMENTAL`. It is
  * the check the gateway advertises to clients and uses to gate experimental
- * routes, and the basis for hiding experimental sources from the picker.
+ * routes. It does not override persisted Lab choices. It is the basis for hiding experimental sources from the picker.
  */
 export function experimentalVisible(): boolean {
   return experimentalEnabled() || syntheticEnabled();

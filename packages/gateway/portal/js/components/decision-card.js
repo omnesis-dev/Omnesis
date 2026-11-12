@@ -224,14 +224,14 @@ function RecordRef({ view }) {
   if (view.purpose === "task-check" || view.purpose === "task-propose")
     return html`<a href=${internalKnowledgeHref(`loop:${view.recordId}`)}>Task <code>${view.recordId}</code></a>`;
   if (view.purpose === "observation-salience")
-    return html`<a href=${`/portal/debug/cognition/observations/${encodeURIComponent(view.recordId)}`}>Observation <code>${view.recordId}</code></a>`;
+    return html`<a href=${`/portal/debug/brain/observations/${encodeURIComponent(view.recordId)}`}>Observation <code>${view.recordId}</code></a>`;
   return html`${view.recordText && html`<span class="cognition-decision-record">${view.recordText}</span> `}<code>${view.recordId}</code>`;
 }
 
 function RunRef({ view }) {
   if (!view.runId) return view.knowledge ? null : html`Made outside any Brain run`;
   if (view.runAvailable === false) return html`No longer retained`;
-  return html`<a href=${`/portal/debug/cognition/runs/${encodeURIComponent(view.runId)}`}>View run</a>`;
+  return html`<a href=${`/portal/debug/brain/runs/${encodeURIComponent(view.runId)}`}>View run</a>`;
 }
 
 const delay = (milliseconds) => {
@@ -412,7 +412,7 @@ function Body({ view, showSubject }) {
       <dt>Model</dt><dd>${view.modelId ? html`<code>${view.modelId}</code>` : "Not recorded"}</dd>
       <dt>Decided</dt><dd>${timestamp(view.createdAt)}</dd>
       ${(view.runId || !view.knowledge) && html`<dt>Run</dt><dd>${run}</dd>`}
-      ${view.batchId && html`<dt>Maintenance</dt><dd><a href=${`/portal/debug/cognition/maintenance/${encodeURIComponent(view.batchId)}`}>View batch</a></dd>`}
+      ${view.batchId && html`<dt>Maintenance</dt><dd><a href=${`/portal/debug/brain/maintenance/${encodeURIComponent(view.batchId)}`}>View batch</a></dd>`}
     </dl>
     ${view.bypass && html`<p>No model call: ${bypassReason(view.bypass)}. Work was admitted for inspection. ${view.bypass.inputBytes} input bytes / ${view.bypass.budgetBytes} budget bytes.</p>`}
     <${DecisionScheduling} scheduling=${view.scheduling} />

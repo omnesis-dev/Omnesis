@@ -38,6 +38,7 @@ describe("Browser Find owner-approved standard read (spawned gateway)", () => {
   beforeAll(async () => {
     harness = new SyntheticE2EHarness({
       gatewayMode: "synthetic-experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "e2e-minimal",
       embedderBackend: "fake",
     });

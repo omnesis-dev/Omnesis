@@ -23,6 +23,8 @@ import {
   SOURCE_CONTRACT_WIRE_RANGE,
   resolveSourceMaxAge,
 } from "@omnesis/core";
+import { setLabFlag } from "./lab/store.js";
+
 import { computeSnapshotAbsencePlan, createDatabase, getSyncState, getWipeEpoch } from "./db.js";
 import { LATEST_SCHEMA_VERSION } from "./data/migrations.js";
 import { createServer } from "./server.js";
@@ -473,6 +475,8 @@ describe("health endpoint", () => {
       expect(syntheticOnly.capabilities).not.toHaveProperty("browserFeatures");
       expect(syntheticOnly.capabilities).not.toHaveProperty("browserNotesEdit");
       process.env.OMNESIS_EXPERIMENTAL = "1";
+      expect((await (await app.request("/health")).json()).capabilities.subscriptions).toBe(false);
+      setLabFlag(db, "watches", true);
       const on = await (await app.request("/health")).json();
       expect(on.experimental).toBe(true);
       expect(on.capabilities).toEqual({

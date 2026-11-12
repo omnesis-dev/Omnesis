@@ -78,6 +78,8 @@ const WOUND_BACK = [
   212,
   // 213 adds a column idempotently; the installed schema already carries it.
   213,
+  // 214 persists the Lab choices; windBack drops them before replay.
+  214,
 ];
 
 let dir: string;
@@ -261,6 +263,7 @@ function undoKnowledge(db: Db): void {
  * real code would have written.
  */
 function windBack(db: Db): void {
+  db.exec("DROP TABLE lab_features");
   db.exec("ALTER TABLE agent_messages DROP COLUMN author_json");
   undoInterest(db);
   undoDecisionAnchors(db);

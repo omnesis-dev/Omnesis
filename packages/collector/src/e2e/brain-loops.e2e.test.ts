@@ -4,7 +4,7 @@
 /**
  * Brain Bench — area B: open loops.
  *
- * The loop is the steward's unit of durable commitment, and almost every
+ * The loop is the Brain's unit of durable commitment, and almost every
  * invariant around it is a CASCADE rather than a row write: creating one
  * projects a searchable mirror document, reconciling onto one must not mint
  * a second, resolving one retires it into the consolidation store, deleting
@@ -13,7 +13,7 @@
  * itself.
  *
  * Every test asserts that a cascade fired (or deliberately did not), never
- * that the steward *should* have made the decision that triggered it — the
+ * that the Brain *should* have made the decision that triggered it — the
  * decisions are scripted by the behavior table.
  *
  * One gateway boot drives all of it, which makes the tests ORDER-DEPENDENT

@@ -4,7 +4,7 @@
 /**
  * Line-based content diff for the document-diff engine. Produces a
  * compact unified-diff-style text (`@@` hunks, `-`/`+`/space lines) that
- * the Cognition Steward's run prompt can carry verbatim — computed once at
+ * the Brain's run prompt can carry verbatim — computed once at
  * enqueue time and discarded when the run settles, never persisted
  * beyond the queue row.
  *

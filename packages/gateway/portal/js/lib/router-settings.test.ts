@@ -285,3 +285,10 @@ describe("Settings page tabs", () => {
     });
   });
 });
+
+test("Lab follows Config and Sweeps requires the Brain", () => {
+  const tabs = settingsTabs({ experimental: true, brain: false, labAvailable: true });
+  expect(tabs.slice(0, 2).map((tab: {key: string}) => tab.key)).toEqual(["config", "lab"]);
+  expect(tabs.map((tab: {key: string}) => tab.key)).not.toContain("sweeps");
+  expect(settingsTabs({ experimental: false }).map((tab: {key: string}) => tab.key)).not.toContain("lab");
+});

@@ -12,6 +12,17 @@ import SwiftUI
 /// Everything here is `#if DEBUG` only — never shipped in release.
 @available(iOS 17.0, *)
 enum PreviewMocks {
+    /// The gateway catalog copied for offline visual previews.
+    static let lab: LabSnapshot = try! JSONDecoder().decode(LabSnapshot.self, from: Data(#"""
+    {"experimental": true, "features": [{"id": "brain", "name": "Brain", "description": "Processes your data in the background to connect information, keep knowledge up to date, and surface useful insights. Chat and Tell Omnesis work independently.", "iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 5a3 3 0 0 0-5.8-1A3.5 3.5 0 0 0 3 8a4 4 0 0 0-1 7 3.5 3.5 0 0 0 4 5 3 3 0 0 0 6-1V5Zm0 0a3 3 0 0 1 5.8-1A3.5 3.5 0 0 1 21 8a4 4 0 0 1 1 7 3.5 3.5 0 0 1-4 5 3 3 0 0 1-6-1\"/><path d=\"M6 8c2 0 3 1 3 3m-6 4c2-1 4 0 4 2m11-9c-2 0-3 1-3 3m6 4c-2-1-4 0-4 2\"/></svg>", "enabled": false}, {"id": "tasks", "name": "Tasks", "description": "Keep a personal task journal. Add, schedule, and complete tasks yourself or ask Omnesis to help. Enable the Brain as well for background suggestions and updates.", "iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"4\" y=\"3\" width=\"16\" height=\"18\" rx=\"3\"/><path d=\"m7 8 1.5 1.5L11 7m2 2h4m-10 6 1.5 1.5L11 14m2 2h4\"/></svg>", "enabled": true}, {"id": "watches", "name": "Watches", "description": "Watch for changes in your data and receive a notification when your conditions are met. Watches run independently of the Brain.", "iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M12 1v2m0 18v2\"/></svg>", "enabled": false}]}
+    """#.utf8))
+
+    static func labFeatures(enabled: Bool) -> LabSnapshot {
+        LabSnapshot(experimental: true, features: lab.features.map {
+            LabFeature(id: $0.id, name: $0.name, description: $0.description, enabled: enabled, iconSvg: $0.iconSvg)
+        })
+    }
+
     static let copyableMarkdownInline = "Address: `42 Example Street, Exampleville`. Reference: `000042`. **Keep** this [link](https://example.com)."
     static let copyableMarkdownBlock = "42 Example Street\nExampleville\n"
     static let copyableMarkdownValueAndCode = """
@@ -1145,7 +1156,9 @@ enum PreviewMocks {
         ),
         dbSizeBytes: 4_000_000_000,
         latestActivityBySource: nil,
-        experimental: true
+        experimental: true,
+        lab: LabFlags(brain: true, tasks: true, watches: true),
+        labAvailable: true
     )
 
     /// Experimental mode on a gateway that also serves Tasks — every
@@ -1155,6 +1168,8 @@ enum PreviewMocks {
         dbSizeBytes: statusSnapshotExperimental.dbSizeBytes,
         latestActivityBySource: nil,
         experimental: true,
+        lab: LabFlags(brain: true, tasks: true, watches: true),
+        labAvailable: true,
         tasks: TasksStatus(available: true)
     )
 
@@ -4270,7 +4285,7 @@ enum PreviewMocks {
 
     //
     // Fully fictional loop scenario — invented names + example venues only.
-    // The chat agent reads the background Cognition Steward's tracked obligations
+    // The chat agent reads the background Brain's tracked obligations
     // around planning a team offsite.
 
     /// A document that two tracked loops rest on — drives the inline

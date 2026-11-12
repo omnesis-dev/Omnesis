@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Per-run tracker of the annotation PRIORS a steward run has actually
+ * Per-run tracker of the annotation PRIORS a Brain run has actually
  * SEEN — the "consumed" half of consumption provenance. Fed from every
  * surface that puts a prior in front of the model:
  *

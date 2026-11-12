@@ -33,8 +33,10 @@
  * (`migration-idempotency-seed.ts`) — see docs/conventions.md.
  */
 
+
 import { createHash, randomUUID } from "node:crypto";
 import { createLogger, type Logger } from "@omnesis/core";
+import { createLabTable } from "../lab/store.js";
 import { createKnowledgeTables } from "../brain/knowledge/schema.js";
 import { createKnowledgePendingReadIndexes } from "../brain/knowledge/pending-work-query.js";
 import { createKnowledgeBatchReadIndexes } from "../brain/knowledge/batch-query.js";
@@ -258,7 +260,7 @@ function addNameFrequencyColumns(db: Db): void {
 /**
  * The table a pre-rename migration must actually touch.
  *
- * Migration 72 renamed the steward's tables into the cognition vocabulary, and
+ * Migration 72 renamed the Brain's tables into the cognition vocabulary, and
  * the migrations before it were rewritten to the new names. That is only half
  * right: `runSchemaSetup` runs the current DDL on every boot BEFORE migrations,
  * so an install upgrading from before 72 reaches those earlier steps with the
@@ -1000,21 +1002,20 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Briefs / Cognition Steward storage (experimental): open loops + ledger +
+    // Briefs / Brain storage (experimental): open loops + ledger +
     // doc edges, briefs + citation/loop edges, the agent run queue, daily
     // spend totals, the agent-notes blob. Same idempotent DDL function
     // `runSchemaSetup` calls, so fresh and upgrading installs converge on
     // one source of truth.
     version: 33,
-    description:
-      "add Briefs / Cognition Steward storage tables (open loops, briefs, run queue, spend, notes)",
+    description: "add Briefs / Brain storage tables (open loops, briefs, run queue, spend, notes)",
     up(db) {
       createBriefsStorageTables(db);
       createLegacyBriefTables(db);
     },
   },
   {
-    // Decay engine (Briefs / Cognition Steward): the per-loop back-off counter
+    // Decay engine (Briefs / Brain): the per-loop back-off counter
     // on open_loops. The engine-state table it pairs with is covered by
     // the idempotent createBriefsStorageTables call. The ALTER is
     // pragma-guarded because installs whose open_loops was created by
@@ -1033,7 +1034,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Debounce-ceiling engine (Briefs / Cognition Steward): the mutable per-cycle
+    // Debounce-ceiling engine (Briefs / Brain): the mutable per-cycle
     // anchor `cognition_runs.cycle_anchor_at`. It anchors the max-defer
     // ceiling that keeps a continuously-folded `data` run claimable within a
     // bounded time — see storage/run-queue.ts. Existing rows back-fill to
@@ -1058,7 +1059,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Graph-based reconcile candidates (Briefs / Cognition Steward): the
+    // Graph-based reconcile candidates (Briefs / Brain): the
     // `open_loop_people` join table lets the identity-based reconcile scan
     // find loops sharing a datum's actors/involved people. The idempotent
     // createBriefsStorageTables call creates the table (and index) on both
@@ -1083,7 +1084,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Consolidation store (Briefs / Cognition Steward): the append-only
+    // Consolidation store (Briefs / Brain): the append-only
     // `retired_loops` table records a compact trace of every loop resolved or
     // removed, so reconcile can recognise a recurring commitment as a known
     // recurrence rather than a fresh loop. A brand-new IF NOT EXISTS table via
@@ -1102,7 +1103,7 @@ export const MIGRATIONS: readonly Migration[] = [
     // via the idempotent createAnnotationStorageTables (also called from
     // runSchemaSetup for fresh installs) — no ALTER, no backfill.
     version: 38,
-    description: "add doc_annotations store for the Cognition Steward",
+    description: "add doc_annotations store for the Brain",
     up(db) {
       createAnnotationStorageTables(db);
     },
@@ -1166,7 +1167,7 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
-    // Split prompt-cache usage out of the steward spend totals so the
+    // Split prompt-cache usage out of the Brain spend totals so the
     // cache-hit rate is observable per day. prompt_tokens stays the
     // input-side TOTAL; the new columns are subsets of it. Guarded ALTERs
     // (runSchemaSetup creates the full shape on fresh installs, ahead of
@@ -2107,11 +2108,11 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 72,
-    description: "rename the steward tables to the cognition vocabulary",
+    description: "rename the Brain tables to the cognition vocabulary",
     up(db) {
       // The tables were named after the Loop Agent, itself named after the
       // loops it first maintained. The actor now has a name covering what it
-      // does — the Cognition Steward — and `cognition` is the code vocabulary.
+      // does — the Brain — and `cognition` is the code vocabulary.
       //
       // The awkward part is ordering: `runSchemaSetup` runs its DDL on every
       // boot BEFORE migrations, so by the time this runs an upgrading install
@@ -4978,6 +4979,15 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 213,
     description: "remember when the re-verification sweep last queued each annotation",
     up: addAnnotationRecheckQueuedAt,
+  },
+  {
+    version: 214,
+    description: "persist Omnesis Lab feature opt-ins",
+    up(db) {
+      createLabTable(db);
+      db.exec(`INSERT OR IGNORE INTO lab_features (id, enabled)
+        VALUES ('tasks', EXISTS(SELECT 1 FROM open_loops UNION ALL SELECT 1 FROM open_loop_ledger LIMIT 1));`);
+    },
   },
 ];
 

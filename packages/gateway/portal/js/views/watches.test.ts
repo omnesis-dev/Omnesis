@@ -1003,7 +1003,7 @@ describe("watches the runtime is running", () => {
       onRemove: vi.fn(),
     }));
     const link = nodes.find((node) => node.text?.trim() === "View compilation transcript");
-    expect(link?.props.href).toBe("/portal/debug/cognition/runs/run-example");
+    expect(link?.props.href).toBe("/portal/debug/brain/runs/run-example");
     // On the header's own subtitle line, beside the name and the date added.
     expect(link).toBeTruthy();
     expect(nodes.find((node) => node.tag === "p" && node.text.includes("Added"))?.text)

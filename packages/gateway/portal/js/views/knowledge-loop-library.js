@@ -6,7 +6,7 @@ import { lazy } from "../lib/lazy.js";
 import { getCognitionLoop } from "../api.js";
 const LoopDetail = lazy(() => import("./cognition.js").then((module) => module.LoopDetail));
 export const loopLibraryPath = (id) =>
-  `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop`;
+  `/portal/debug/brain/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop`;
 export function loopDeadline(deadline) {
   if (!deadline) return null;
   const value =

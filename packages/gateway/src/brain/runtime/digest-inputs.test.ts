@@ -176,6 +176,37 @@ describe("renderMorningBriefItemLines", () => {
 });
 
 describe("readDigestInputs", () => {
+  test("disabled Tasks contribute neither due work nor task-linked observations", () => {
+    createOpenLoop(
+      db,
+      {
+        id: "loop_hidden",
+        createdByRun: "run_seed",
+        title: "Hidden task title",
+        confidence: 1,
+        importance: 1,
+        deadline: { type: "on_day", date: TODAY },
+      },
+      NOW,
+    );
+    createObservation(
+      db,
+      {
+        id: "obs_hidden",
+        createdByRun: "run_seed",
+        summary: "Hidden task update",
+        relatedLoopIds: ["loop_hidden"],
+      },
+      NOW,
+    );
+    replaceMorningBriefItems(db, TODAY, "run_seed", ["obs_hidden"]);
+    const inputs = readDigestInputs(db, NOW, settings(), EMPTY_HORIZON, TODAY, false);
+    expect(inputs.hasInputs).toBe(false);
+    expect(inputs.deltaPrime).toBe("");
+    expect(inputs.itemLines).toEqual([]);
+    expect(inputs.autoAppliedLines).toEqual([]);
+  });
+
   test("nothing anywhere: no inputs", () => {
     const inputs = readDigestInputs(db, NOW, settings(), EMPTY_HORIZON, TODAY);
     expect(inputs).toMatchObject({ horizonLines: [], itemLines: [], hasInputs: false });

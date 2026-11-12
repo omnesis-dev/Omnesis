@@ -3,7 +3,7 @@
 
 /**
  * The Brain Bench — the end-to-end correctness net for the Cognition
- * Steward.
+ * Brain.
  *
  * A bench test boots a real gateway with the whole cognition engine live,
  * drives deterministic stimuli (document events, clock advances, notes,
@@ -12,7 +12,7 @@
  * and asserts on what the brain left behind through the same admin surface
  * the portal and CLI read.
  *
- * What it deliberately does NOT do is judge the quality of the steward's
+ * What it deliberately does NOT do is judge the quality of the Brain's
  * reasoning. The bench answers "given this decision, did the machine do
  * the right thing?" — never "was this a good decision". Quality lives in
  * the scorecard/eval lane, so improving a prompt never reddens correctness

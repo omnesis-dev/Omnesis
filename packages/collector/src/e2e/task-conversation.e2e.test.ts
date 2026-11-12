@@ -56,7 +56,8 @@ describe("a conversation about a task", () => {
       },
     });
     harness = new SyntheticE2EHarness({
-      gatewayMode: "stable",
+      gatewayMode: "experimental",
+      labFeatures: { tasks: true },
       universe: "e2e-minimal",
       extraInference: {
         backends: { scripted: { type: "http", url: model.url } },

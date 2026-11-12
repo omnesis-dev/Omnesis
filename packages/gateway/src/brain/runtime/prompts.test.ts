@@ -133,7 +133,7 @@ function annotationItem(o: {
   };
 }
 
-describe("Cognition Steward system prompt", () => {
+describe("Brain system prompt", () => {
   test("ordinary source-run instructions allow only independently closable decomposition", () => {
     const prompt = buildCognitionSystemPrompt({ notesMaxBytes: 4096 });
     expect(prompt).toContain(
@@ -331,7 +331,7 @@ describe("Cognition Steward system prompt", () => {
   });
 });
 
-describe("Cognition Steward run prompts", () => {
+describe("Brain run prompts", () => {
   let path: string;
   let db: Db;
   const deps = () => ({ db, clock: () => NOW, cfg: resolveBrainSettings(), memory: NO_MEMORY });

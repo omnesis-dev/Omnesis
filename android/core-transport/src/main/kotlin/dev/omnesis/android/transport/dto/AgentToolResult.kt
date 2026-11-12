@@ -166,7 +166,7 @@ sealed interface AgentToolResult {
 
     /**
      * Result of an interactive `search_loops` call (experimental) — the chat agent
-     * reading the Cognition Steward's tracked obligations. Read-only; mirrors the
+     * reading the Brain's tracked obligations. Read-only; mirrors the
      * `search.results` / `person.results` rolling-slot shape. Empty [loops] is a
      * successful "nothing matched". Mirrors `loops.searched` in
      * `@omnesis/core/agent-protocol.ts`.

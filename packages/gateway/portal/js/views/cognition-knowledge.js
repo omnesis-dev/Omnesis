@@ -46,7 +46,7 @@ const preview = (text) =>
     .replace(/[#*`_]/g, "")
     .trim();
 export function knowledgeSelectionHref(id, kind = "", status = "all", entryKind = "") {
-  const path = id ? knowledgePath(id) : "/portal/debug/cognition/knowledge";
+  const path = id ? knowledgePath(id) : "/portal/debug/brain/knowledge";
   const query = new URLSearchParams();
   if (kind) query.set("kind", kind);
   if (id && !kind && ["loop", "observation"].includes(entryKind)) query.set("entryKind", entryKind);

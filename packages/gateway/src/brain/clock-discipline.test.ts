@@ -30,7 +30,7 @@ const WHITELIST: Record<string, string> = {
   "storage/open-loops.ts": "retireLoop's `opts.now ??` fallback for direct callers",
   "waker/event-handler.ts": "log rate-limiter in warnDropped — deliberately wall time",
   "interactive-loop-port.ts":
-    "serves the live interactive agent (not the replay-driven Cognition Steward); times a real search for the tool-call card's durationMs, like the sibling agent ports",
+    "serves the live interactive agent (not the replay-driven Brain); times a real search for the tool-call card's durationMs, like the sibling agent ports",
 };
 
 function walk(dir: string): string[] {

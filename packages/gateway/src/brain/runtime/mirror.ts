@@ -10,7 +10,7 @@
  *
  * Mirror writes go through `writeGate.upsertDocuments`, which does NOT
  * emit `document.upserted` — so refreshing a mirror can never wake the
- * Cognition Steward (belt-and-braces with the waker's self-trigger guard).
+ * Brain (belt-and-braces with the waker's self-trigger guard).
  */
 
 import { buildOpenLoopDocumentInput } from "../open-loop-source/document-projection.js";

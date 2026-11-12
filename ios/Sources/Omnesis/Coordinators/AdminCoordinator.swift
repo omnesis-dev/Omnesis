@@ -260,7 +260,7 @@ final class AdminCoordinator {
     func refreshTasksTodayCount(from counts: TaskCounts? = nil) async {
         if let counts {
             tasksTodayCount = counts.today
-        } else if statusSnapshot?.tasks?.available != true {
+        } else if statusSnapshot?.lab?.tasks != true || statusSnapshot?.tasks?.available != true {
             tasksTodayCount = 0
         } else if let client = tasksClient {
             let day = TaskSchedule().day(Date())
@@ -286,7 +286,7 @@ final class AdminCoordinator {
         do {
             privacyPendingCount = try await privacyPendingDecisionTotal(
                 client: client,
-                includesWatchRequests: statusSnapshot?.experimental == true
+                includesWatchRequests: statusSnapshot?.lab?.watches == true
             )
         } catch {
             privacyPendingCount = 0
@@ -472,6 +472,7 @@ final class AdminCoordinator {
         guard revision == sourceRegistryRevision, searchClient === client else { return }
         if let s {
             statusSnapshot = s
+            if s.lab?.tasks != true { TaskWidgetAppBridge.clearSnapshot() }
         }
         if let i {
             indexStats = i

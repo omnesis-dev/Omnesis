@@ -113,6 +113,7 @@ export interface WatchV2EngineTunables {
 }
 
 export interface WatchV2EngineOptions {
+  readonly enabled?: () => boolean;
   /**
    * The journal, already settled on its path.
    *
@@ -478,6 +479,7 @@ export function startWatchV2Engine(options: WatchV2EngineOptions): WatchV2Engine
   const analytics: AnalyticsPort = analyticsPortFor(options.analyticsDb);
 
   const host = new WatchEngineHost({
+    ...(options.enabled ? { enabled: options.enabled } : {}),
     db,
     journal: options.journal,
     ...(options.journalHistories ? { journalHistories: options.journalHistories } : {}),
@@ -519,8 +521,23 @@ export function startWatchV2Engine(options: WatchV2EngineOptions): WatchV2Engine
     initialArgs: undefined,
     isIdle: (result) => result.idle,
     async run(_args, ctx): Promise<TaskOutcome<unknown, EvaluationResult>> {
+      if (options.enabled && !options.enabled())
+        return {
+          kind: "done",
+          value: {
+            watches: 0,
+            events: 0,
+            firings: 0,
+            paused: 0,
+            delivered: 0,
+            suppressed: 0,
+            idle: true,
+          },
+        };
       try {
-        const result = await host.evaluate(ctx.shouldYield);
+        const result = await host.evaluate(
+          () => (options.enabled && !options.enabled()) || ctx.shouldYield(),
+        );
         if (!result.idle) {
           log.debug(
             `evaluated ${result.watches} watch(es) over ${result.events} event(s): ` +

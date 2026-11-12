@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Agent Run Queue — a durable SQLite outbox of typed Cognition Steward
+ * The Agent Run Queue — a durable SQLite outbox of typed Brain
  * runs with a durable, idempotent outbox shape:
  *
  *   pending → (claimed in-memory by the drain) → completed | failed
