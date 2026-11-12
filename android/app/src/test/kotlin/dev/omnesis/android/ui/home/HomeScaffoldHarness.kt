@@ -15,6 +15,9 @@ import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.compose.DialogNavigator
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.EntryPoint
@@ -281,6 +284,15 @@ class MockGateway : AutoCloseable {
 class HomeScaffoldHarness(
     private val compose: AndroidComposeTestRule<ActivityScenarioRule<HomeScaffoldHostActivity>, HomeScaffoldHostActivity>,
 ) : AutoCloseable {
+    init {
+        // HiltTestApplication does not provide the app's WorkManager configuration.
+        // Status probes also clear disabled Tasks widgets when no widgets exist.
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            ApplicationProvider.getApplicationContext<HiltTestApplication>(),
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build(),
+        )
+    }
+
     val gateway = MockGateway()
 
     lateinit var nav: NavHostController
