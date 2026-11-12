@@ -5,6 +5,7 @@ package dev.omnesis.android.access
 
 import android.content.Intent
 import android.net.Uri
+import dev.omnesis.android.MainActivity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -40,7 +41,7 @@ class AccessAuthorizationDeepLinkTest {
     }
 
     @Test fun recreation_cannot_replay_a_consumed_intent() {
-        val consumed = consumedAccessAuthorizationIntent(
+        val consumed = MainActivity.consumedLaunchIntent(
             view("omnesis://access-authorization?v=1&code=ABCD-EFGH"),
         )
         val routedCodes = mutableListOf<String>()
@@ -82,7 +83,7 @@ class AccessAuthorizationDeepLinkTest {
         val routedCodes = mutableListOf<String>()
         assertTrue(routeAccessAuthorizationDeepLink(original, true, null) { code, _ -> routedCodes += code })
 
-        val consumed = consumedAccessAuthorizationIntent(original)
+        val consumed = MainActivity.consumedLaunchIntent(original)
         assertFalse(routeAccessAuthorizationDeepLink(consumed, true, pairing) { code, _ -> routedCodes += code })
         assertTrue(routedCodes.isEmpty())
     }
