@@ -86,10 +86,13 @@ class OutboxStore(private val directory: File, private val now: () -> EpochMilli
     }
 
     /** The phone confirmed the note: it leaves the outbox. */
-    fun remove(ref: String) = synchronized(lock) { removeFiles(ref) }
+    fun remove(ref: String) = synchronized(lock) {
+        if (names(ref)) removeFiles(ref)
+    }
 
     /** A delivery failed: count it, for the backoff. */
     fun recordFailure(ref: String) = synchronized(lock) {
+        if (!names(ref)) return@synchronized
         val entry = read(ref) ?: return@synchronized
         try {
             writeDurably(entryFile(ref), entry.failed(now()))
@@ -100,6 +103,7 @@ class OutboxStore(private val directory: File, private val now: () -> EpochMilli
 
     /** Drop a note that waited too long, remembering it until the person has been told. */
     fun drop(ref: String) = synchronized(lock) {
+        if (!names(ref)) return@synchronized
         removeFiles(ref)
         writeDropped(droppedCount + 1)
     }
@@ -117,6 +121,13 @@ class OutboxStore(private val directory: File, private val now: () -> EpochMilli
     fun acknowledgeDropped() = synchronized(lock) { droppedFile.delete() }
 
     private fun entryFile(ref: String) = File(directory, "$ref$ENTRY_SUFFIX")
+
+    /**
+     * Whether [ref] can name a file in the outbox directory. A ref arrives
+     * from the phone as well as from this watch, and one holding a path
+     * separator would name a file somewhere else.
+     */
+    private fun names(ref: String): Boolean = ref.isNotEmpty() && ref.none { it == '/' || it == '\\' }
 
     private fun read(ref: String): OutboxEntry? = try {
         WearCodec.decodeOutboxEntry(entryFile(ref).readBytes())

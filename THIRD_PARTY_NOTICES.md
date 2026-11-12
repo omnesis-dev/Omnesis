@@ -223,6 +223,12 @@ license:
 The complete upstream license is at
 <https://github.com/lucide-icons/lucide/blob/main/LICENSE>.
 
+The Wear OS app's button and status glyphs
+(`android/wear/src/main/res/drawable/ic_*.xml`, apart from the launcher icon)
+are path data from Google's [Material Icons](https://github.com/google/material-design-icons),
+licensed under the
+[Apache License 2.0](https://github.com/google/material-design-icons/blob/master/LICENSE).
+
 The website footer bundles the X and Discord SVG marks, the portal's
 Sources page bundles the Android mark (`packages/gateway/portal/img/android-logo.svg`),
 and the portal's Connect an agent dialog bundles the Claude mark

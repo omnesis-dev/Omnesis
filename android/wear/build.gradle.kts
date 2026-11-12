@@ -116,6 +116,7 @@ dependencies {
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.androidx.test.core.ktx)
+    testImplementation(libs.androidx.work.testing)
     // The renderers the tile and complication screenshot tests draw with. They
     // carry Android resources, which a unit test only sees for dependencies of
     // the variant under test, so they are debug dependencies, not test ones.

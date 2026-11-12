@@ -145,6 +145,22 @@ class OutboxStoreTest {
     }
 
     @Test
+    fun a_ref_that_names_a_path_touches_nothing_outside_the_outbox() {
+        store.add(note("n"))
+        val outside = File(directory.parentFile, "keep.json").apply { writeText("{}") }
+        val audio = File(directory.parentFile, "keep.m4a").apply { writeBytes(byteArrayOf(1)) }
+        for (ref in listOf("../keep", "..\\keep", "")) {
+            store.remove(ref)
+            store.recordFailure(ref)
+            store.drop(ref)
+        }
+        assertTrue(outside.isFile)
+        assertTrue(audio.isFile)
+        assertEquals(0, store.droppedCount)
+        assertEquals(listOf("n"), store.entries().map { it.ref })
+    }
+
+    @Test
     fun dropped_notes_are_counted_until_acknowledged() {
         store.add(record("a"))
         store.add(note("n"))

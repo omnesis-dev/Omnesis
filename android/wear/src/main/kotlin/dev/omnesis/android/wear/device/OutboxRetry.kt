@@ -31,7 +31,8 @@ class WorkManagerRetryScheduler(private val context: Context, private val now: (
         work.enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.REPLACE, request)
     }
 
-    private companion object {
+    companion object {
+        /** The one pending pass; scheduling again replaces it. */
         const val WORK_NAME = "omnesis-outbox-retry"
         const val MINIMUM_DELAY_MS = 1_000L
     }
