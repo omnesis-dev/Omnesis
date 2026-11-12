@@ -1626,8 +1626,8 @@ describe("android.yml CI workflow structure (C20)", () => {
     }
   });
 
-  it.each([undefined, ":app:bundlePlayRelease", ":app:bundleFullRelease"])(
-    "builds both release variants in bounded fresh processes and propagates failure (%s)",
+  it.each([undefined, ":app:bundlePlayRelease", ":app:bundleFullRelease", ":wear:bundleRelease"])(
+    "builds both release variants and the Wear OS app in bounded fresh processes and propagates failure (%s)",
     (failedTask) => {
       const dir = tmpDir("omnesis-android-build-workflow-");
       const calls = join(dir, "calls.jsonl");
@@ -1655,13 +1655,18 @@ describe("android.yml CI workflow structure (C20)", () => {
       const expected = [
         [":app:bundlePlayRelease", "--no-daemon", "--max-workers=2"],
         [":app:bundleFullRelease", "--no-daemon", "--max-workers=2"],
+        [":wear:assembleDebug", ":wear:bundleRelease", "--no-daemon", "--max-workers=2"],
       ];
+      // A failed build stops the lane: nothing after it runs.
+      const ran = failedTask
+        ? expected.findIndex((command) => command.includes(failedTask)) + 1
+        : expected.length;
       expect(
         readFileSync(calls, "utf8")
           .trim()
           .split("\n")
           .map((line) => JSON.parse(line)),
-      ).toEqual(failedTask === ":app:bundlePlayRelease" ? expected.slice(0, 1) : expected);
+      ).toEqual(expected.slice(0, ran));
     },
   );
 
@@ -1679,6 +1684,11 @@ describe("android.yml CI workflow structure (C20)", () => {
     expect(runs).toContain(":app:testFullDebugUnitTest");
     // The plain Kotlin/JVM modules, which the build-wide testDebugUnitTest skips.
     expect(runs).toContain(":core-wear-protocol:test");
+    // Unit tests, goldens, APK and bundle of the watch app.
+    expect(runs).toContain(":wear:testDebugUnitTest");
+    expect(runs).toContain(":wear:verifyRoborazziDebug");
+    expect(runs).toContain(":wear:assembleDebug");
+    expect(runs).toContain(":wear:bundleRelease");
     expect(runs).toContain(":app:verifyPlayReleasePolicy");
   });
 
@@ -3780,6 +3790,10 @@ describe("scripts/android-logic.sh emulator-less JVM logic lane guards (C11)", (
     expect(src).toMatch(/:core-transport:testDebugUnitTest/);
     // A plain Kotlin/JVM module has no per-variant test task.
     expect(src).toMatch(/:core-wear-protocol:test(?!DebugUnitTest)/);
+    // Logic package of the watch app, without the screenshot tests beside it.
+    expect(src).toMatch(
+      /:wear:testDebugUnitTest --tests \\"dev\.omnesis\.android\.wear\.core\.\*\\"/,
+    );
   });
 
   it("commits no operator-private default (no host alias / operator-home absolute path)", () => {
