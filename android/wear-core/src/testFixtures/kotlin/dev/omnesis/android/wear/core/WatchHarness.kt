@@ -153,10 +153,20 @@ class FakeLog : WatchLog {
     }
 }
 
-/** A [WatchCore] on fakes and a temporary directory, driven by a test's virtual clock. */
+/**
+ * A [WatchCore] on fake device services and a temporary directory, driven by
+ * a test's virtual clock, over whatever [link] stands in for the Data Layer.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
-class WatchHarness(val test: TestScope, val storage: File = Files.createTempDirectory("omnesis-wear").toFile()) {
-    val link = FakeLink()
+open class WatchRig(
+    val test: TestScope,
+    link: PhoneLink,
+    val storage: File = Files.createTempDirectory("omnesis-wear").toFile(),
+    /** The wall clock; by default the test's start moment plus its virtual time. */
+    private val clock: () -> EpochMillis = { START + test.testScheduler.currentTime },
+    /** The source of relay refs, numbered from one; by default `ref-1`, `ref-2`, and so on. */
+    private val refFor: (Int) -> String = { "ref-$it" },
+) {
     val recorder = FakeRecorder()
     val speech = FakeSpeech()
     val permission = FakePermission()
@@ -167,13 +177,13 @@ class WatchHarness(val test: TestScope, val storage: File = Files.createTempDire
     private var refs = 0
 
     val environment = object : WatchEnvironment {
-        override fun now(): EpochMillis = START + test.testScheduler.currentTime
+        override fun now(): EpochMillis = clock()
 
         override fun zone(): ZoneId = ZoneId.of("Europe/London")
 
         override fun localeTag(): String = "en-GB"
 
-        override fun newRef(): String = "ref-${++refs}"
+        override fun newRef(): String = refFor(++refs)
     }
 
     val core = WatchCore(
@@ -210,6 +220,23 @@ class WatchHarness(val test: TestScope, val storage: File = Files.createTempDire
         test.runCurrent()
     }
 
+    val capturePhase: CapturePhase get() = core.capture.state.value.phase
+
+    fun cleanUp() {
+        storage.deleteRecursively()
+    }
+
+    companion object {
+        const val START = 1_790_000_000_000L
+    }
+}
+
+/** A [WatchRig] whose phone is a [FakeLink] the test scripts. */
+class WatchHarness(
+    test: TestScope,
+    storage: File = Files.createTempDirectory("omnesis-wear").toFile(),
+    val link: FakeLink = FakeLink(),
+) : WatchRig(test, link, storage) {
     /** A gate the phone published just now. */
     fun publishGate(
         captureSupported: Boolean = true,
@@ -234,13 +261,7 @@ class WatchHarness(val test: TestScope, val storage: File = Files.createTempDire
         return reply?.let(WearCodec::decode)
     }
 
-    val capturePhase: CapturePhase get() = core.capture.state.value.phase
-
-    fun cleanUp() {
-        storage.deleteRecursively()
-    }
-
     companion object {
-        const val START = 1_790_000_000_000L
+        const val START = WatchRig.START
     }
 }

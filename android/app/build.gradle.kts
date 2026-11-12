@@ -277,6 +277,9 @@ dependencies {
 
     // Screenshot + unit testing (Roborazzi renders Compose to PNGs off-emulator).
     testImplementation(libs.junit)
+    // The real watch logic and its fakes, for the loopback tests that run it against the relay.
+    testImplementation(project(":wear-core"))
+    testImplementation(testFixtures(project(":wear-core")))
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)

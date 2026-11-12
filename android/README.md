@@ -24,9 +24,11 @@ See the [Notifications guide](https://omnesis.dev/docs/notifications#setup) for 
 
 ## Wear OS app
 
-The `:wear` module is the watch app. It relays through the phone app, so build
-and install both from the same checkout with the same package id and signing
-key; the watch app reads its package id and version from the phone app's build.
+The `:wear` module is the watch app, and `:wear-core` its logic, a plain JVM
+library whose tests (`./gradlew :wear-core:test`) need no Android toolchain. The
+app relays through the phone app, so build and install both from the same
+checkout with the same package id and signing key; the watch app reads its
+package id and version from the phone app's build.
 
 ```sh
 cd android
@@ -34,8 +36,8 @@ cd android
 adb -s <watch-serial> install -r wear/build/outputs/apk/debug/wear-debug.apk
 ```
 
-Add the **Omnesis** tile or complication on the watch to open the recorder from
-the watch face.
+Open Omnesis from the watch's app list, or add the **Omnesis** tile or
+complication to open the recorder from the watch face.
 
 ## Task widgets
 
@@ -77,3 +79,7 @@ decision-gate setting and what on-device transcription needs.
 
 The relay needs Google Play services' Wearable API. Without it nothing is
 started and the Watch section is hidden.
+
+The phone app's unit tests include loopback tests (`app/src/test/.../wear/loopback/`)
+that run the watch's real logic against this relay over an in-memory Data Layer,
+so the two sides are tested against each other and not only against the contract.
