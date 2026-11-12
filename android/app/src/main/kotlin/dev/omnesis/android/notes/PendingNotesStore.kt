@@ -12,7 +12,29 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.Duration
 import java.time.Instant
+import java.time.ZoneId
 import java.util.UUID
+
+/**
+ * The time zone a note was captured in: its IANA [id] and the offset from UTC in force
+ * there at the capture instant. The gateway files the note under the day and time its
+ * author saw, wherever the gateway itself runs.
+ */
+data class CaptureZone(val id: String, val utcOffsetSeconds: Int) {
+    companion object {
+        /**
+         * [zone] as it stood at [instant], or null when its id is not one the gateway
+         * accepts: a fixed offset such as `GMT+02:00`, or a legacy alias outside the
+         * `Area/Location` form. The gateway rejects a note whose zone it cannot resolve,
+         * so such a note goes without a zone.
+         */
+        fun at(instant: Instant, zone: ZoneId): CaptureZone? {
+            val id = zone.id
+            if (id != "UTC" && !id.contains('/')) return null
+            return CaptureZone(id, zone.rules.getOffset(instant).totalSeconds)
+        }
+    }
+}
 
 /**
  * One captured note waiting for a reachable gateway. [capturedAt] is the
@@ -41,6 +63,8 @@ data class PendingNote(
     /** The device language tag recorded with a voice note, for the transcriber's hint. */
     val language: String? = null,
     val taskId: String? = null,
+    /** Where the clock stood at capture; null for a zone the gateway would not accept. */
+    val zone: CaptureZone? = null,
 )
 
 /** A queued note warrants operator attention after one failed retry or five minutes. */
@@ -65,7 +89,7 @@ internal val PENDING_WARNING_AGE: Duration = Duration.ofMillis(PENDING_WARNING_A
  */
 class PendingNotesStore(context: Context) {
 
-    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 5) {
+    private val helper: SQLiteOpenHelper = object : SQLiteOpenHelper(context, DB_NAME, null, 6) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """CREATE TABLE $TABLE (
@@ -80,7 +104,9 @@ class PendingNotesStore(context: Context) {
                     $COL_AUDIO_PATH TEXT,
                     $COL_AUDIO_MIME TEXT,
                     $COL_LANGUAGE TEXT,
-                    $COL_TASK_ID TEXT
+                    $COL_TASK_ID TEXT,
+                    $COL_TIME_ZONE_ID TEXT,
+                    $COL_UTC_OFFSET_SECONDS INTEGER
                 )""",
             )
         }
@@ -113,6 +139,12 @@ class PendingNotesStore(context: Context) {
             if (oldVersion < 5) {
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_TASK_ID TEXT")
             }
+            if (oldVersion < 6) {
+                // Rows queued without a zone stay without one: the zone the phone is in
+                // when they are delivered is not the one they were captured in.
+                db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_TIME_ZONE_ID TEXT")
+                db.execSQL("ALTER TABLE $TABLE ADD COLUMN $COL_UTC_OFFSET_SECONDS INTEGER")
+            }
         }
     }
 
@@ -126,6 +158,7 @@ class PendingNotesStore(context: Context) {
         audio: VoiceNoteAudio? = null,
         language: String? = null,
         taskId: String? = null,
+        zone: CaptureZone? = null,
     ): Unit =
         withContext(Dispatchers.IO) {
             val values = ContentValues().apply {
@@ -139,6 +172,8 @@ class PendingNotesStore(context: Context) {
                 put(COL_AUDIO_MIME, audio?.mimeType)
                 put(COL_LANGUAGE, language)
                 put(COL_TASK_ID, taskId)
+                put(COL_TIME_ZONE_ID, zone?.id)
+                put(COL_UTC_OFFSET_SECONDS, zone?.utcOffsetSeconds)
             }
             helper.writableDatabase.insertOrThrow(TABLE, null, values)
             Unit
@@ -162,6 +197,8 @@ class PendingNotesStore(context: Context) {
                 COL_AUDIO_MIME,
                 COL_LANGUAGE,
                 COL_TASK_ID,
+                COL_TIME_ZONE_ID,
+                COL_UTC_OFFSET_SECONDS,
             ),
             null,
             null,
@@ -181,6 +218,8 @@ class PendingNotesStore(context: Context) {
             val audioIdx = cursor.getColumnIndexOrThrow(COL_AUDIO_PATH)
             val mimeIdx = cursor.getColumnIndexOrThrow(COL_AUDIO_MIME)
             val languageIdx = cursor.getColumnIndexOrThrow(COL_LANGUAGE)
+            val zoneIdx = cursor.getColumnIndexOrThrow(COL_TIME_ZONE_ID)
+            val offsetIdx = cursor.getColumnIndexOrThrow(COL_UTC_OFFSET_SECONDS)
             while (cursor.moveToNext()) {
                 rows += PendingNote(
                     id = cursor.getLong(idIdx),
@@ -198,6 +237,11 @@ class PendingNotesStore(context: Context) {
                     },
                     language = if (cursor.isNull(languageIdx)) null else cursor.getString(languageIdx),
                     taskId = if (cursor.isNull(taskIdx)) null else cursor.getString(taskIdx),
+                    zone = if (cursor.isNull(zoneIdx) || cursor.isNull(offsetIdx)) {
+                        null
+                    } else {
+                        CaptureZone(cursor.getString(zoneIdx), cursor.getInt(offsetIdx))
+                    },
                 )
             }
         }
@@ -248,5 +292,7 @@ class PendingNotesStore(context: Context) {
         const val COL_AUDIO_MIME = "audio_mime"
         const val COL_LANGUAGE = "language"
         const val COL_TASK_ID = "task_id"
+        const val COL_TIME_ZONE_ID = "captured_time_zone_id"
+        const val COL_UTC_OFFSET_SECONDS = "captured_utc_offset_seconds"
     }
 }

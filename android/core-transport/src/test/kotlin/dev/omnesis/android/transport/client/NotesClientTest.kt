@@ -135,6 +135,8 @@ class NotesClientTest {
                 capturedAt = "2026-07-13T09:15:00.000Z",
                 surface = "android-tile",
                 deviceId = "dev-42",
+                capturedTimeZoneId = "Europe/Lisbon",
+                capturedUtcOffsetSeconds = 3600,
             ),
         )
         assertEquals("n1", entry.id)
@@ -152,6 +154,8 @@ class NotesClientTest {
         assertEquals("3f1a2b64-8c05-4e7d-9a11-5b0c2d6e7f80", sent["id"]?.jsonPrimitive?.content)
         assertEquals("2026-07-13T09:15:00.000Z", sent["capturedAt"]?.jsonPrimitive?.content)
         assertEquals("android-tile", sent["surface"]?.jsonPrimitive?.content)
+        assertEquals("Europe/Lisbon", sent["capturedTimeZoneId"]?.jsonPrimitive?.content)
+        assertEquals("3600", sent["capturedUtcOffsetSeconds"]?.jsonPrimitive?.content)
     }
 
     @Test
@@ -198,6 +202,8 @@ class NotesClientTest {
                     surface = "android-tile",
                     deviceId = "dev-42",
                     language = "en-GB",
+                    capturedTimeZoneId = "America/Halifax",
+                    capturedUtcOffsetSeconds = -10800,
                 ),
                 audio,
                 "audio/wav",
@@ -214,6 +220,8 @@ class NotesClientTest {
             assertTrue(body.contains("Content-Disposition: form-data; name=\"note\""))
             assertTrue(body.contains("\"id\":\"3f1a2b64-8c05-4e7d-9a11-5b0c2d6e7f80\""))
             assertTrue(body.contains("\"language\":\"en-GB\""))
+            assertTrue(body.contains("\"capturedTimeZoneId\":\"America/Halifax\""))
+            assertTrue(body.contains("\"capturedUtcOffsetSeconds\":-10800"))
             assertTrue(body.contains("Content-Disposition: form-data; name=\"audio\"; filename=\"${audio.name}\""))
             assertTrue(body.contains("Content-Type: audio/wav"))
             assertTrue(body.contains("RIFF-invented"))
