@@ -40,3 +40,25 @@ inputs. A failed completion leaves the task open.
 
 `TaskWidgetScreenshotTest` renders the actual RemoteViews in compact, medium,
 large and tablet sizes, including light/dark and offline/empty/error states.
+
+## Wear OS watch relay
+
+A paired Wear OS watch running Omnesis holds no gateway credentials. It hands
+questions, notes and recordings to this phone app over the Wearable Data Layer,
+and the phone app asks the gateway with its own pairing. The contract both apps
+share (paths, messages and the policies each end applies) is the plain-JVM
+`:core-wear-protocol` module.
+
+`app/.../wear/` is the phone side. `WearRelayService` receives what the watch
+sends, with the app not running if need be, and hands it to `WearRelay`, which
+routes to one orchestrator per job: publishing the gate that tells the watch
+which buttons to show, answering a text question, saving a text note, acting on
+relays the watch queued, and turning a recording into a note or an answered
+question. A recording is copied into a no-backup inbox before the watch is told
+the phone has it, and stays there until it is processed. Relay work is held
+alive by expedited WorkManager work, since the listener service is bound only
+for its callbacks. Settings → Watch shows the watch's connection, the gateway's
+decision-gate setting and what on-device transcription needs.
+
+The relay needs Google Play services' Wearable API. Without it nothing is
+started and the Watch section is hidden.

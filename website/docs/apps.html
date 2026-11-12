@@ -1011,6 +1011,49 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           </p>
         </div>
         <p>
+          The Omnesis app for Wear OS works through the Android phone it is paired with. It holds no
+          gateway credentials and makes no gateway requests: questions, notes and recordings travel
+          over the Wear OS Data Layer to the phone app, which uses its own pairing. Add the
+          <strong>Omnesis</strong> tile, or the <strong>Omnesis</strong> complication to a watch
+          face. Both open the recorder, which starts recording immediately, without showing a
+          transcript. Tap <strong>Ask</strong> to stop recording and open a conversation, or
+          <strong>Tell</strong> to save a note. “Got it. I'll deal with it.” confirms that the watch
+          has stored the recording; it does not wait for the phone or gateway. Recordings are kept
+          on the watch and retried for up to a week, then retained by the phone until processed.
+        </p>
+        <p>
+          Questions keep the watch open for the answer, with the agent's current step shown while it
+          works. The microphone records a follow-up in the same conversation. If the watch cannot
+          display the answer, a notification on the phone opens the conversation; a confirmed
+          displayed answer suppresses that notification. A question the phone app does not take
+          within about twenty seconds is queued for it, and its answer arrives as a phone
+          notification. A queued question that reaches the phone more than ten minutes later is
+          reported, not asked. Queued notes have no such limit.
+        </p>
+        <p>
+          With a decision model available, the recorder shows one <strong>Send</strong> button and
+          the gateway decides whether the words need an answer or should become a note. Disable
+          <strong>Use decision gate for watch capture</strong> in the <strong>Watch</strong> section
+          of the phone app's Settings to restore Ask and Tell. It is the gateway setting the Apple
+          Watch uses, <code>inference.dictation.useDecisionGateForWatch</code>, so it applies to
+          both. The Watch section appears on phones whose Google Play services include the wearable
+          Data Layer, and shows whether a watch is connected and whether Omnesis is installed on it.
+          The phone tells the watch which buttons to offer. A watch whose phone app is not paired
+          with a gateway reports that the phone app must be opened first.
+        </p>
+        <p>
+          Gateway transcription applies to both Ask and Tell from the watch. When it is disabled,
+          the phone transcribes the recording itself, strictly on-device, with enabled personal
+          vocabulary hints once the recognizer confirms the recording's language is installed. This
+          requires Android 13 or later, an on-device speech recognizer with that language, and the
+          microphone permission, which Android's recognizer requires even to read a recording:
+          choose <strong>Enable phone transcription for watch</strong> in the Watch section to grant
+          it. Until the recording can be transcribed it is kept on the phone and tried again when
+          the phone app opens, when the watch next sends something, and from time to time while a
+          network is available; one notification says it is delayed. Pending recordings expire after
+          a week, with a notification.
+        </p>
+        <p>
           Voice questions wait a bounded time in the foreground. If the answer takes longer, the
           assistant tells you it is still working; once the answer is ready, your phone gets an
           <a href="notifications#what-sends-a-notification">Answer ready</a> notification and
@@ -1082,10 +1125,11 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           iOS supplies hints only to on-device recognition. Android requires Android 13 or later and
           a compatible on-device recognizer; the recognition service may ignore hints. Recognition
           that uses an operating-system cloud service receives no personal dictionary. Apple Watch
-          recordings transcribed on the paired iPhone can use hints. Watch system dictation,
-          keyboard dictation, and voice-assistant input do not expose vocabulary hints to the app.
-          Android hints apply to the app's Ask/Tell voice capture and voice follow-ups; typing or
-          using the keyboard microphone in the agent composer does not use this dictionary.
+          recordings transcribed on the paired iPhone can use hints, as can Wear OS recordings
+          transcribed on the paired Android phone. Watch system dictation, keyboard dictation, and
+          voice-assistant input do not expose vocabulary hints to the app. Android hints apply to
+          the app's Ask/Tell voice capture and voice follow-ups; typing or using the keyboard
+          microphone in the agent composer does not use this dictionary.
         </p>
         <h3 id="gateway-dictation-behaviour">What happens to a voice note</h3>
         <p>
@@ -1106,7 +1150,8 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           Watch voice notes also carry the phone's fallback transcript when available. The watch
           keeps each note, recorded or dictated, until the iPhone confirms it has it, retrying for
           up to a week when the phone is out of reach. When the phone has no transcript to offer,
-          the note reads "Voice note — transcribing…" until the gateway's arrives.
+          the note reads "Voice note — transcribing…" until the gateway's arrives. A Tell recording
+          from a Wear OS watch reaches the voice-note queue the same way, through the Android phone.
         </p>
         <p>
           The gateway keeps the recording in its database, alongside the rest of your data and under
