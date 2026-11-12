@@ -19,6 +19,7 @@ import dev.omnesis.android.ui.capture.RecognizerAudioInput
 import dev.omnesis.android.ui.capture.SpeechTranscriber
 import dev.omnesis.android.voice.FakeVoiceNoteSession
 import dev.omnesis.android.voice.SpeechReadiness
+import dev.omnesis.android.voice.SpeechWarmUp
 import dev.omnesis.android.voice.VoiceNoteSessions
 import dev.omnesis.android.voice.VoiceNoteSession
 import java.io.File
@@ -271,12 +272,16 @@ class AssistantActionViewModelTest {
         )
         vm.handle(Intent(AssistantActionActivity.ACTION_ASK), freshDelivery = true, trustedDelivery = true)
 
+        assertEquals(false, vm.preparing.value)
         vm.startListening()
         vm.startListening()
         assertEquals(0, transcriber.startCount)
         assertEquals(0, transcriber.prepareCount)
+        // The overlay is told the microphone is not open yet.
+        assertEquals(true, vm.preparing.value)
 
         ready.complete(Unit)
+        assertEquals(false, vm.preparing.value)
         // The recognizer's language check ran before the one session that then started.
         assertEquals(1, transcriber.prepareCount)
         assertEquals(1, transcriber.startCount)
@@ -320,7 +325,7 @@ class AssistantActionViewModelTest {
         vm.handle(Intent(AssistantActionActivity.ACTION_ASK), freshDelivery = true, trustedDelivery = true)
         vm.startListening()
 
-        mainDispatcher.scheduler.advanceTimeBy(AssistantActionViewModel.SPEECH_WARM_UP_TIMEOUT_MS - 1)
+        mainDispatcher.scheduler.advanceTimeBy(SpeechWarmUp.TIMEOUT_MS - 1)
         assertEquals(0, transcriber.startCount)
         mainDispatcher.scheduler.advanceTimeBy(2)
         assertEquals(1, transcriber.startCount)
@@ -336,7 +341,7 @@ class AssistantActionViewModelTest {
         assertEquals(1, transcriber.prepareCount)
         assertEquals(0, transcriber.startCount)
 
-        mainDispatcher.scheduler.advanceTimeBy(AssistantActionViewModel.SPEECH_WARM_UP_TIMEOUT_MS + 1)
+        mainDispatcher.scheduler.advanceTimeBy(SpeechWarmUp.TIMEOUT_MS + 1)
         assertEquals(1, transcriber.startCount)
     }
 

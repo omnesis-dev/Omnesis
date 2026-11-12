@@ -28,6 +28,12 @@ enum class SpeechState {
     /** Mic idle — tap to (re)start listening; typing always works. */
     IDLE,
 
+    /**
+     * Dictation was asked for and is about to start: the app has just started and is
+     * still learning what its gateway offers. The microphone is not open yet.
+     */
+    PREPARING,
+
     /** Actively recognizing; partial results stream into the text field. */
     LISTENING,
 
