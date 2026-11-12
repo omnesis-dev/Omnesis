@@ -1079,7 +1079,9 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           off for the gateway and every paired app. The apps fetch hints in the background, keep
           them in memory for offline use for up to 24 hours, and refresh them opportunistically
           after 30 minutes when returning to the foreground or refreshing gateway status. Starting a
-          recording never waits for hints. See <a href="operating">Operating Omnesis</a> for
+          recording in the app never waits for hints. A voice request from Google Assistant that has
+          to start the Android app waits up to one second for the gateway's status and hints before
+          it listens, then listens without them. See <a href="operating">Operating Omnesis</a> for
           vocabulary behavior.
         </p>
         <p>

@@ -12,6 +12,7 @@ import dev.omnesis.android.notes.CaptureOutcome
 import dev.omnesis.android.notes.NotesRepository
 import dev.omnesis.android.notes.VoiceNoteAudio
 import dev.omnesis.android.ui.common.classifyGatewayError
+import dev.omnesis.android.voice.SpeechReadiness
 import dev.omnesis.android.voice.VoiceNoteSession
 import dev.omnesis.android.voice.VoiceNoteSessions
 import dev.omnesis.android.voice.audioLevel
@@ -46,6 +47,7 @@ class CaptureViewModel @Inject constructor(
     private val voiceNotes: VoiceNoteSessions,
     private val savedStateHandle: SavedStateHandle,
     private val routing: CaptureRouting? = null,
+    private val speechReadiness: SpeechReadiness = SpeechReadiness {},
 ) : ViewModel() {
 
     private val surface: String = savedStateHandle.get<String>("surface") ?: CaptureSurface.APP
@@ -66,6 +68,13 @@ class CaptureViewModel @Inject constructor(
     }
 
     init {
+        // Has the recognizer's language check done by the time the microphone starts, so the
+        // first dictation gets vocabulary hints. Nothing here holds the microphone up: a
+        // session that starts first is simply unhinted.
+        viewModelScope.launch {
+            speechReadiness.await()
+            transcriber.prepare()
+        }
         if (CaptureSurface.unified(surface)) {
             viewModelScope.launch {
                 val active = try {

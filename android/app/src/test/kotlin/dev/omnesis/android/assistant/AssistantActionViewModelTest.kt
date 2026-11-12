@@ -18,6 +18,8 @@ import dev.omnesis.android.notes.VoiceNoteFiles
 import dev.omnesis.android.ui.capture.RecognizerAudioInput
 import dev.omnesis.android.ui.capture.SpeechTranscriber
 import dev.omnesis.android.voice.FakeVoiceNoteSession
+import dev.omnesis.android.voice.SpeechReadiness
+import dev.omnesis.android.voice.VoiceNoteSessions
 import dev.omnesis.android.voice.VoiceNoteSession
 import java.io.File
 import java.time.Instant
@@ -45,7 +47,9 @@ import org.robolectric.RobolectricTestRunner
 class AssistantActionViewModelTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
-    @Before fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
+    private val mainDispatcher = UnconfinedTestDispatcher()
+
+    @Before fun setUp() = Dispatchers.setMain(mainDispatcher)
     @After fun tearDown() = Dispatchers.resetMain()
 
     @Test
@@ -256,6 +260,118 @@ class AssistantActionViewModelTest {
         assertEquals(true, second.deliveryId > first.deliveryId)
     }
 
+    @Test
+    fun listening_waits_for_speech_readiness_and_starts_once() {
+        val ready = CompletableDeferred<Unit>()
+        val transcriber = FakeTranscriber(context)
+        val vm = viewModel(
+            FakeGateway(CompletableDeferred()),
+            transcriber = transcriber,
+            speechReadiness = { ready.await() },
+        )
+        vm.handle(Intent(AssistantActionActivity.ACTION_ASK), freshDelivery = true, trustedDelivery = true)
+
+        vm.startListening()
+        vm.startListening()
+        assertEquals(0, transcriber.startCount)
+        assertEquals(0, transcriber.prepareCount)
+
+        ready.complete(Unit)
+        // The recognizer's language check ran before the one session that then started.
+        assertEquals(1, transcriber.prepareCount)
+        assertEquals(1, transcriber.startCount)
+        assertEquals(true, vm.state.value is AssistantActionUiState.Listening)
+    }
+
+    @Test
+    fun a_cold_start_capture_becomes_a_voice_note_once_the_gateway_status_is_known() {
+        // What the gateway's status decides is unknown until readiness: asked earlier, the
+        // capture would be a phone-transcribed note without its recording.
+        val ready = CompletableDeferred<Unit>()
+        val transcriber = FakeTranscriber(context)
+        val recording = session()
+        val vm = viewModel(
+            FakeGateway(CompletableDeferred()),
+            transcriber = transcriber,
+            voiceNotes = { recording.takeIf { ready.isCompleted } },
+            speechReadiness = { ready.await() },
+        )
+        vm.handle(Intent(AssistantActionActivity.ACTION_CAPTURE), freshDelivery = true, trustedDelivery = true)
+        vm.startListening()
+        assertEquals(0, transcriber.startCount)
+
+        ready.complete(Unit)
+
+        assertEquals(1, transcriber.audioStarts)
+        assertEquals(
+            AssistantActionUiState.Listening(AssistantActionKind.CAPTURE, deliveryId = 1, recordingVoiceNote = true),
+            vm.state.value,
+        )
+    }
+
+    @Test
+    fun listening_starts_without_readiness_once_the_warm_up_budget_is_spent() {
+        val transcriber = FakeTranscriber(context)
+        val vm = viewModel(
+            FakeGateway(CompletableDeferred()),
+            transcriber = transcriber,
+            speechReadiness = { CompletableDeferred<Unit>().await() },
+        )
+        vm.handle(Intent(AssistantActionActivity.ACTION_ASK), freshDelivery = true, trustedDelivery = true)
+        vm.startListening()
+
+        mainDispatcher.scheduler.advanceTimeBy(AssistantActionViewModel.SPEECH_WARM_UP_TIMEOUT_MS - 1)
+        assertEquals(0, transcriber.startCount)
+        mainDispatcher.scheduler.advanceTimeBy(2)
+        assertEquals(1, transcriber.startCount)
+        assertEquals(0, transcriber.prepareCount)
+    }
+
+    @Test
+    fun a_slow_language_check_is_cut_off_by_the_same_budget() {
+        val transcriber = FakeTranscriber(context).apply { prepareGate = CompletableDeferred() }
+        val vm = viewModel(FakeGateway(CompletableDeferred()), transcriber = transcriber)
+        vm.handle(Intent(AssistantActionActivity.ACTION_ASK), freshDelivery = true, trustedDelivery = true)
+        vm.startListening()
+        assertEquals(1, transcriber.prepareCount)
+        assertEquals(0, transcriber.startCount)
+
+        mainDispatcher.scheduler.advanceTimeBy(AssistantActionViewModel.SPEECH_WARM_UP_TIMEOUT_MS + 1)
+        assertEquals(1, transcriber.startCount)
+    }
+
+    @Test
+    fun leaving_the_foreground_during_the_warm_up_never_opens_the_microphone() {
+        val ready = CompletableDeferred<Unit>()
+        val transcriber = FakeTranscriber(context)
+        val vm = viewModel(
+            FakeGateway(CompletableDeferred()),
+            transcriber = transcriber,
+            speechReadiness = { ready.await() },
+        )
+        vm.handle(Intent(AssistantActionActivity.ACTION_ASK), freshDelivery = true, trustedDelivery = true)
+        vm.startListening()
+
+        vm.stopListening()
+        ready.complete(Unit)
+
+        assertEquals(0, transcriber.startCount)
+        assertEquals(AssistantActionUiState.ReadyToListen(AssistantActionKind.ASK), vm.state.value)
+    }
+
+    @Test
+    fun a_request_that_carries_its_words_does_not_wait_for_the_warm_up() {
+        val gateway = FakeGateway(CompletableDeferred())
+        val vm = viewModel(gateway, speechReadiness = { CompletableDeferred<Unit>().await() })
+        vm.handle(
+            Intent(AssistantActionActivity.ACTION_ASK)
+                .putExtra(AssistantActionActivity.EXTRA_QUESTION, "What is next?"),
+            freshDelivery = true,
+            trustedDelivery = true,
+        )
+        assertTrueWorking(vm.state.value)
+    }
+
     private fun voiceNotesRepo(store: PendingNotesStore) = NotesRepository(
         store,
         gateway = { null },
@@ -374,6 +490,8 @@ class AssistantActionViewModelTest {
         },
         voiceNote: VoiceNoteSession? = null,
         notes: NotesRepository = NotesRepository(PendingNotesStore(context), gateway = { null }),
+        voiceNotes: VoiceNoteSessions = VoiceNoteSessions { voiceNote },
+        speechReadiness: SpeechReadiness = SpeechReadiness {},
     ): AssistantActionViewModel = AssistantActionViewModel(
         askRunner = VoiceAskRunner({ gateway }, object : VoiceAskContinuity {
             override fun conversationToResume(): String? = null
@@ -381,8 +499,9 @@ class AssistantActionViewModelTest {
         }) { 0L },
         notes = notes,
         transcriber = transcriber,
-        voiceNotes = { voiceNote },
+        voiceNotes = voiceNotes,
         savedState = state,
+        speechReadiness = speechReadiness,
     )
 
     private fun assertTrueWorking(state: AssistantActionUiState) {
@@ -425,7 +544,14 @@ class AssistantActionViewModelTest {
         var startCount = 0
         var audioStarts = 0
         var cancelCount = 0
+        var prepareCount = 0
+        var prepareGate: CompletableDeferred<Unit>? = null
         val listeners = mutableListOf<Listener>()
+
+        override suspend fun prepare() {
+            prepareCount++
+            prepareGate?.await()
+        }
 
         override fun isAvailable() = true
 

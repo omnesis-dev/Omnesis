@@ -7,6 +7,7 @@ import dev.omnesis.android.transport.client.TranscriptionVocabularySnapshot
 import dev.omnesis.android.transport.client.VocabularyEntry
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
@@ -37,6 +38,38 @@ class TranscriptionVocabularyCacheTest {
         cache.warm(true, "en-US", backgroundScope, fetch = fetch)
         runCurrent()
         assertEquals(2, calls)
+    }
+
+    @Test fun awaitingFetchesReturnsOnceTheWarmFetchesLandAndAtOnceWithNoneInFlight() = runTest {
+        val cache = TranscriptionVocabularyCache { 1L }
+        cache.awaitFetches()
+        val reply = CompletableDeferred<TranscriptionVocabularySnapshot>()
+        cache.warm(true, "en-US", backgroundScope) { _, _ -> reply.await() }
+        runCurrent()
+        val waiting = async { cache.awaitFetches() }
+        runCurrent()
+        assertFalse(waiting.isCompleted)
+        reply.complete(snapshot())
+        waiting.await()
+        assertEquals(listOf("Veltrio"), cache.phrases("dictation", "en-US"))
+        assertEquals(listOf("Veltrio"), cache.phrases("agent", "en-US"))
+    }
+
+    @Test fun awaitingFetchesIsReleasedByARefusalOrAReset() = runTest {
+        val cache = TranscriptionVocabularyCache { 1L }
+        cache.warm(true, "en-US", backgroundScope) { _, _ -> throw GatewayException.NotFound() }
+        cache.awaitFetches()
+        assertTrue(cache.phrases("dictation", "en-US").isEmpty())
+
+        val never = CompletableDeferred<TranscriptionVocabularySnapshot>()
+        val repaired = TranscriptionVocabularyCache { 1L }
+        repaired.warm(true, "en-US", backgroundScope) { _, _ -> never.await() }
+        runCurrent()
+        val waiting = async { repaired.awaitFetches() }
+        runCurrent()
+        assertFalse(waiting.isCompleted)
+        repaired.reset()
+        waiting.await()
     }
 
     @Test fun stalePairingOrDisabledRepliesCannotRepopulate() = runTest {
