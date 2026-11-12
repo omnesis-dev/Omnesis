@@ -1030,7 +1030,9 @@ omnesis.example.com {
           keeps its identity, so it can be <a href="#repairing-a-device">brought back</a>. Revoking
           an OpenClaw or Hermes device also signs its agent out of its connection.
           <code>omnesis devices revoke &lt;device&gt; --forget</code> deletes the device for good,
-          and is refused while it still hosts sources.
+          and is refused while it still hosts sources. In the portal, use <em>Forget device</em>
+          on a revoked device. A refusal stays in the confirmation dialog so you can address it
+          before trying again; a successful removal takes the device out of the list.
         </p>
         <p>
           One device does not stay revoked: the collector on the gateway host. It registers itself

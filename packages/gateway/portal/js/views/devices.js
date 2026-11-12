@@ -1379,9 +1379,9 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
   const [identities, setIdentities] = useState([]);
   const [selectedHostIdx, setSelectedHostIdx] = useState(0);
 
-  // Confirm-modal state — used for revoke-device + revoke-token, both
-  // destructive.
+  // Confirmation state also holds action errors, independently of roster polling.
   const [confirmState, setConfirmState] = useState(null);
+  const confirmPending = useRef(false);
 
   // Device id backing the current portal session (from /whoami) — pins the
   // "This device" card. Null when the session isn't bound to a device.
@@ -1620,12 +1620,8 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
       confirmLabel: "Forget",
       destructive: true,
       onConfirm: async () => {
-        try {
-          await forgetDevice(id);
-          await refresh();
-        } catch (e) {
-          setError(String(e.message || e));
-        }
+        await forgetDevice(id);
+        await refresh();
       },
     });
   }
@@ -1943,14 +1939,33 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
       <${ConfirmModal}
         open=${!!confirmState}
         title=${confirmState?.title}
-        body=${confirmState?.body}
-        confirmLabel=${confirmState?.confirmLabel}
+        body=${html`
+          ${confirmState?.body}
+          ${confirmState?.error && html`<div class="devices-banner error" role="alert">${confirmState.error}</div>`}
+        `}
+        confirmLabel=${confirmState?.pending ? "Working…" : confirmState?.confirmLabel}
+        confirmDisabled=${!!confirmState?.pending}
+        cancelDisabled=${!!confirmState?.pending}
         destructive=${!!confirmState?.destructive}
-        onCancel=${() => setConfirmState(null)}
+        onCancel=${() => { if (!confirmPending.current) setConfirmState(null); }}
         onConfirm=${async () => {
-          const fn = confirmState?.onConfirm;
-          setConfirmState(null);
-          try { if (fn) await fn(); } catch (err) { console.error(err); }
+          if (confirmPending.current || !confirmState) return;
+          confirmPending.current = true;
+          setConfirmState((state) => ({ ...state, pending: true, error: null }));
+          try {
+            await confirmState.onConfirm();
+            setConfirmState(null);
+          } catch (err) {
+            setConfirmState((state) => ({
+              ...state,
+              pending: false,
+              error: err?.code === "DEVICE_STILL_HOSTS_SOURCES"
+                ? "This device still hosts sources. Move or remove them from Sources before forgetting it."
+                : sentence(errorMessage(err, "The action could not be completed.")),
+            }));
+          } finally {
+            confirmPending.current = false;
+          }
         }}
       />
     </div>

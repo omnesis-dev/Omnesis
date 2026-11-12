@@ -173,6 +173,80 @@ describe("fleet health action", () => {
     else globalThis.window = originalWindow;
   });
 
+  async function openForgetDialog() {
+    const device = {
+      id: "device-retired", name: "Retired notebook", kind: "collector",
+      pairedAt: 1, lastSeenAt: 2, online: false, revokedAt: 3, capabilities: {},
+    };
+    apiMocks.listDevices.mockResolvedValue({ items: [device] });
+    await act(async () => {
+      render(h(DevicesView, {}), host);
+    });
+    await vi.waitFor(() => expect(host.querySelector(".devices-group-toggle")).not.toBeNull());
+    await act(async () => (host.querySelector(".devices-group-toggle") as HTMLButtonElement).click());
+    const trigger = host.querySelector(".source-action-trigger") as HTMLButtonElement;
+    trigger.getBoundingClientRect = () => ({ top: 100, bottom: 120, right: 400 }) as DOMRect;
+    await act(async () => trigger.click());
+    const forget = [...host.querySelectorAll('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Forget device",
+    ) as HTMLButtonElement;
+    await act(async () => forget.click());
+    return host.querySelector(".confirm-modal .btn-primary") as HTMLButtonElement;
+  }
+
+  test("forget keeps a refusal visible through roster refreshes and permits retry", async () => {
+    vi.useFakeTimers();
+    try {
+      apiMocks.forgetDevice.mockReset();
+      apiMocks.forgetDevice.mockRejectedValueOnce(Object.assign(new Error("HTTP 409"), {
+        code: "DEVICE_STILL_HOSTS_SOURCES",
+        serverMessage: "The device still hosts sources: fictional-source:private-account.",
+      }));
+      const confirm = await openForgetDialog();
+      await act(async () => confirm.click());
+      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("still hosts sources"));
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("Move or remove them from Sources");
+      expect(host.querySelector('[role="alert"]')?.textContent).not.toContain("private-account");
+      expect(host.querySelector(".confirm-modal")).not.toBeNull();
+      const refreshCount = apiMocks.listDevices.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      expect(apiMocks.listDevices.mock.calls.length).toBeGreaterThan(refreshCount);
+      await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain("still hosts sources"));
+      apiMocks.forgetDevice.mockResolvedValueOnce(true);
+      apiMocks.listDevices.mockResolvedValue({ items: [] });
+      await act(async () => confirm.click());
+      expect(apiMocks.forgetDevice).toHaveBeenCalledTimes(2);
+      expect(apiMocks.forgetDevice).toHaveBeenLastCalledWith("device-retired");
+      await vi.waitFor(() => expect(host.querySelector(".confirm-modal")).toBeNull());
+      expect(host.querySelector(".devices-card")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("forget stays pending until completion and sends only one request", async () => {
+    let resolveForget: (value: boolean) => void = () => {};
+    apiMocks.forgetDevice.mockReset();
+    apiMocks.forgetDevice.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { resolveForget = resolve; }),
+    );
+    const confirm = await openForgetDialog();
+    await act(async () => { confirm.click(); confirm.click(); });
+    expect(apiMocks.forgetDevice).toHaveBeenCalledTimes(1);
+    expect(confirm.disabled).toBe(true);
+    expect(confirm.textContent).toContain("Working");
+    const cancel = host.querySelector(".confirm-modal .btn-ghost") as HTMLButtonElement;
+    expect(cancel.disabled).toBe(true);
+    const escape = new window.Event("keydown");
+    Object.assign(escape, { key: "Escape" });
+    await act(async () => { window.dispatchEvent(escape); });
+    expect(host.querySelector(".confirm-modal")).not.toBeNull();
+    apiMocks.listDevices.mockResolvedValue({ items: [] });
+    await act(async () => resolveForget(true));
+    await vi.waitFor(() => expect(host.querySelector(".confirm-modal")).toBeNull());
+    expect(host.querySelector(".devices-card")).toBeNull();
+  });
+
   test("the global action requests all devices by omitting ids", async () => {
     await act(async () => {
       render(h(DevicesView, {}), host);
