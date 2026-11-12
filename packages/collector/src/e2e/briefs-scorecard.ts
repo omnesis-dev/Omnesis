@@ -1309,6 +1309,7 @@ export async function runScorecard(opts: {
 
   const harness = new SyntheticE2EHarness({
     gatewayMode: opts.gatewayMode,
+    labFeatures: { brain: true, tasks: true },
     universe: "loops-test-life",
     embedderBackend: "fake",
     extraInference: {
