@@ -62,6 +62,60 @@ function wal(db: Database.Database): { log: number; checkpointed: number } {
   return rows[0];
 }
 
+/**
+ * The writer as the checkpointer sees it, with a clock only its copies move:
+ * each PASSIVE statement advances it by 1 ms, and `advance` moves it by hand.
+ * The copies run for real, but every copy costs the same on this clock however
+ * long the disk takes, so whether a rewind's RESTART has time left depends on
+ * the checkpointer's logic and not on the machine's speed. While a reader
+ * keeps the copy incomplete, the checkpointer retries it after each real 2 ms
+ * poll, so `restartWaitMs` on this clock gives readers about twice that long
+ * in real time. `busyTimeouts` lists each busy timeout the checkpointer
+ * sets on the connection, in order.
+ */
+function copyClock(db: Database.Database): {
+  db: Database.Database;
+  now: () => number;
+  advance: (ms: number) => void;
+  busyTimeouts: number[];
+} {
+  let ms = 0;
+  const busyTimeouts: number[] = [];
+  const counted = new Proxy(db, {
+    get(target, prop) {
+      if (prop === "prepare") {
+        return (sql: string) => {
+          const statement = target.prepare(sql);
+          if (!sql.includes("(PASSIVE)")) return statement;
+          return {
+            get: () => {
+              ms += 1;
+              return statement.get();
+            },
+          };
+        };
+      }
+      if (prop === "pragma") {
+        return (source: string, options?: Database.PragmaOptions) => {
+          const set = /^busy_timeout = (\d+)$/.exec(source);
+          if (set) busyTimeouts.push(Number(set[1]));
+          return target.pragma(source, options);
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: counted,
+    now: () => ms,
+    advance: (by) => {
+      ms += by;
+    },
+    busyTimeouts,
+  };
+}
+
 /** A thread that runs short read statements back to back until told to stop. */
 function busyReader(): { stop: () => Promise<number> } {
   const flag = new Int32Array(new SharedArrayBuffer(4));
@@ -136,7 +190,12 @@ describe("WalCheckpointer", () => {
   it("rewinds a long WAL and the next commit cuts the file to the size limit", () => {
     const db = writer();
     expect(db.pragma("journal_size_limit", { simple: true })).toBe(WAL_SIZE_LIMIT_BYTES);
-    const checkpointer = new WalCheckpointer(db, { ...POLICY, pendingFrames: 1_000_000 });
+    const clock = copyClock(db);
+    const checkpointer = new WalCheckpointer(
+      clock.db,
+      { ...POLICY, pendingFrames: 1_000_000 },
+      clock.now,
+    );
     write(db, 1_200);
     expect(wal(db).log).toBeGreaterThanOrEqual(POLICY.restartFrames);
 
@@ -151,7 +210,12 @@ describe("WalCheckpointer", () => {
   it("truncates a rewound WAL past the limit", () => {
     const db = writer();
     db.pragma("journal_size_limit = 1048576");
-    const checkpointer = new WalCheckpointer(db, { ...POLICY, pendingFrames: 1_000_000 });
+    const clock = copyClock(db);
+    const checkpointer = new WalCheckpointer(
+      clock.db,
+      { ...POLICY, pendingFrames: 1_000_000 },
+      clock.now,
+    );
     write(db, 1_200);
     expect(statSync(`${path}-wal`).size).toBeGreaterThan(4 * 1024 * 1024);
     expect(checkpointer.maintain()).toMatchObject({ outcome: "rewound" });
@@ -161,11 +225,11 @@ describe("WalCheckpointer", () => {
 
   it("gives up within its wait while a reader holds an old snapshot, and retries after the interval", () => {
     const db = writer();
-    let clock = 0;
+    const clock = copyClock(db);
     const checkpointer = new WalCheckpointer(
-      db,
+      clock.db,
       { ...POLICY, pendingFrames: 1_000_000 },
-      () => clock + performance.now(),
+      clock.now,
     );
     write(db, 600);
     const held = reader();
@@ -173,22 +237,28 @@ describe("WalCheckpointer", () => {
     held.prepare("SELECT count(*) FROM notes").get();
     write(db, 600);
 
-    const started = performance.now();
     const blocked = checkpointer.maintain();
-    expect(performance.now() - started).toBeLessThan(POLICY.restartWaitMs + 150);
     expect(blocked).toMatchObject({ mode: "RESTART", outcome: "deferred" });
+    expect(blocked!.ms).toBeGreaterThanOrEqual(POLICY.restartWaitMs);
+    expect(blocked!.ms).toBeLessThan(POLICY.restartWaitMs + 2);
+    expect(clock.busyTimeouts).toEqual([]);
     expect(wal(db).log).toBeGreaterThanOrEqual(POLICY.restartFrames);
     expect(checkpointer.maintain()).toBeNull();
 
     held.exec("COMMIT");
-    clock += POLICY.restartRetryMinMs;
+    clock.advance(POLICY.restartRetryMinMs);
     expect(checkpointer.maintain()).toMatchObject({ mode: "RESTART", outcome: "rewound" });
     expect(db.pragma("busy_timeout", { simple: true })).toBe(POLICY.busyTimeoutMs);
   });
 
   it("rewinds while another thread reads back to back", async () => {
     const db = writer();
-    const checkpointer = new WalCheckpointer(db, { ...POLICY, pendingFrames: 1_000_000 });
+    const clock = copyClock(db);
+    const checkpointer = new WalCheckpointer(
+      clock.db,
+      { ...POLICY, pendingFrames: 1_000_000 },
+      clock.now,
+    );
     const readers = [busyReader(), busyReader()] as Array<
       ReturnType<typeof busyReader> & { started: Promise<unknown> }
     >;
@@ -197,7 +267,10 @@ describe("WalCheckpointer", () => {
 
     const run = checkpointer.maintain();
     expect(run).toMatchObject({ mode: "RESTART", outcome: "rewound" });
-    expect(run!.ms).toBeLessThan(POLICY.restartWaitMs + 150);
+    const [restartWait, restored] = clock.busyTimeouts;
+    expect(restartWait).toBeGreaterThan(0);
+    expect(restartWait).toBeLessThanOrEqual(POLICY.restartWaitMs);
+    expect(restored).toBe(POLICY.busyTimeoutMs);
     write(db, 1);
     expect(wal(db).log).toBeLessThan(10);
     for (const r of readers) expect(await r.stop()).toBeGreaterThan(0);
