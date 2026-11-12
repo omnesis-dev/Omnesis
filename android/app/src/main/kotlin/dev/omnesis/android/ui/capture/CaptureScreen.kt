@@ -65,6 +65,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -124,8 +126,15 @@ fun CaptureScreen(
     }
     val historyOpen by vm.historyOpen.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     LaunchedEffect(state.questionToAsk) {
-        state.questionToAsk?.let(onAsk)
+        state.questionToAsk?.let { question ->
+            // The conversation opens on the answer; the keyboard that typed the question would cover it.
+            focusManager.clearFocus(force = true)
+            keyboard?.hide()
+            onAsk(question)
+        }
     }
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle

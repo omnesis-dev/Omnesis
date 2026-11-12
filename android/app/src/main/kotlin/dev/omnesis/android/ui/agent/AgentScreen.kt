@@ -308,8 +308,7 @@ fun AgentContent(
                             pendingRestore = state.sendRejectedText,
                             pendingRestoreCommandId = state.sendRejectedCommandId,
                             onRestoreConsumed = onAckSendRejected,
-                            requestFocus = state.sessionId == null || state.composer.editingPrompt ||
-                                awaitsFirstMessage(state),
+                            requestFocus = composerTakesFocus(state),
                             composerGeneration = state.composerGeneration,
                             idlePlaceholder = DailyBriefCopy.composerPrompt(state.conversationOrigin),
                             initialText = state.composer.text,
