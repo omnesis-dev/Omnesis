@@ -10,11 +10,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
+import { ConfigStore } from "../../config-store.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import {
@@ -352,6 +353,42 @@ describe("GET /people/:id/annotations", () => {
     expect(experimental.annotations[0].dependents).toEqual([
       expect.objectContaining({ id: "obs_dep" }),
     ]);
+  });
+
+  test("labels a fact resting on a source excluded from the Brain", async () => {
+    insertPerson("per_a");
+    insertDoc("doc_1");
+    createPersonAnnotation(
+      db,
+      {
+        id: "panno_excluded",
+        personId: "per_a",
+        claimType: "role",
+        claimText: "runs the weekly sync",
+        evidenceDocId: "doc_1",
+        evidenceQuote: "runs the weekly sync",
+        confidence: 0.8,
+        claimBasis: "quoted",
+        createdByRun: "run_1",
+      },
+      1000,
+    );
+    const configDir = `/tmp/omnesis-people-excluded-${randomUUID()}`;
+    const configStore = new ConfigStore({ filePath: `${configDir}/omnesis.json` });
+    await configStore.load();
+    try {
+      app = createServer(db, dbPath, { configStore });
+      await configStore.put({ brain: { excludedSources: ["test"] } });
+      const res = await req("/people/per_a/annotations");
+      const body = (await res.json()) as { annotations: Array<Record<string, unknown>> };
+      expect(body.annotations[0]).toMatchObject({
+        id: "panno_excluded",
+        notRechecked: "source_excluded",
+      });
+    } finally {
+      configStore.stop();
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 
   test("requires auth", async () => {

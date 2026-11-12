@@ -4954,7 +4954,7 @@ p.devices-pair-expiry {
   align-items: flex-start;
   gap: 12px;
   margin-top: 4px;
-  max-width: 480px;
+  max-width: 760px;
 }
 .devices-host-pick {
   display: flex;
@@ -5472,19 +5472,41 @@ p.devices-pair-expiry {
 .devices-access-row select:disabled { opacity: 0.6; }
 .devices-access-level-name { color: var(--text-primary); font-weight: 500; }
 
-/* The device pair modal is wider than the confirm-modal default. That base
-   class sets a fixed 420px width later in this file, so the selector below
-   qualifies with `.confirm-modal.devices-modal` to win on specificity
-   regardless of source order. */
-.confirm-modal.devices-modal {
-  width: 520px;
-  max-width: calc(100vw - 40px);
-  max-height: calc(100dvh - 40px);
-  overflow-y: auto;
-  text-align: left;
+/* The pairing page replaces the device list inside the Devices tab and uses
+   its full width: a way back above the title, the kind picker, then the code
+   and its instructions laid flat on the page. The kind grid sizes itself to
+   this container rather than to the viewport. */
+.devices-pair-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
 }
-/* Kind selector above the action row, both spanning the modal's width. */
-.devices-modal .devices-pair-form {
+.devices-pair-page-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.devices-pair-page-header .doc-back {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+}
+.devices-pair-page-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 600;
+}
+.devices-pair-page-header h2:focus { outline: none; }
+.devices-pair-page > .devices-pair-label { margin: 0; }
+/* Kind selector above the action row, both spanning the page's column. */
+.devices-pair-page .devices-pair-form {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -5550,45 +5572,55 @@ p.devices-pair-expiry {
 .devices-pair-logo { flex-shrink: 0; object-fit: contain; }
 .devices-pair-logo-apple { filter: invert(1); }
 [data-theme="light"] .devices-pair-logo-apple { filter: none; }
-@media (max-width: 480px) {
+/* Eight kinds: one row of eight where the tab is wide enough, two rows of
+   four in between, four rows of two on a phone. */
+@container (min-width: 960px) {
+  .devices-kind-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+}
+@container (max-width: 440px) {
   .devices-kind-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-/* Generate + Close on one row. */
-.devices-modal .devices-pair-actions {
+/* The page's actions follow the content they act on, at its leading edge. */
+.devices-pair-page .devices-pair-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px;
 }
-/* The primary + Close buttons in the pair action row share identical box
-   metrics so they line up at the same height. Both carry a 1px border
-   (transparent on the primary) so the visible border on the ghost Close
-   doesn't make it 2px shorter. */
-.devices-modal .devices-pair-actions .btn-primary,
-.devices-modal .devices-pair-actions .btn-ghost {
+.devices-pair-page .devices-pair-actions .btn-primary {
   padding: 8px 16px;
-  border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
-  border: 1px solid transparent;
-  cursor: pointer;
-  line-height: 1.2;
 }
-.devices-modal .devices-pair-actions .btn-ghost {
-  background: transparent;
-  border-color: var(--border);
-  color: var(--text-primary);
-}
-.devices-modal .devices-pair-actions .btn-ghost:hover {
-  background: var(--bg-tertiary);
-}
-.devices-modal .devices-pair-actions .btn-primary:disabled {
+.devices-pair-page .devices-pair-actions .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-/* Breathing room between the action row and the generated-code card. */
-.devices-modal .devices-pair-result {
-  margin-top: 16px;
+/* The generated code sits flat on the page, set off from the form by a rule
+   rather than a panel; only its inner callouts keep their own boxes. */
+.devices-pair-page .devices-pair-result {
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  padding: 20px 0 0;
+  gap: 14px;
+}
+.devices-pair-page .devices-pair-result .devices-pair-actions {
+  margin-top: 8px;
+}
+/* A command wraps instead of hiding its tail behind a sideways scroll; the
+   copy button copies the original single line either way. */
+.devices-pair-page .copy-block-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Form fields keep a field's width rather than the tab's. */
+.devices-pair-page .form-group { max-width: 480px; }
+/* Explanatory prose keeps a readable measure on a wide tab. */
+.devices-pair-page .devices-pair-ext-note,
+.devices-pair-page .devices-pair-level-note {
+  max-width: 80ch;
 }
 
 .btn-tiny.active {

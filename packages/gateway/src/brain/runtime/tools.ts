@@ -37,6 +37,10 @@ import { raceAbort } from "../decision-call.js";
 import { readKnowledgeSourceRevision } from "../knowledge/source-revision.js";
 import { annotationEntailmentFailures } from "../../inference/annotation-entailment.js";
 import {
+  VERIFIER_CALL_LIMIT_MS,
+  VERIFIER_FOREGROUND_DEADLINE_MS,
+} from "../../inference/verifier-limits.js";
+import {
   annotationVerificationContext,
   annotationEvidenceFrame,
 } from "../annotation-verification.js";
@@ -699,11 +703,11 @@ async function runEntailmentGate(
   callerSignal?.throwIfAborted();
   const background =
     recheck && deps.backgroundEntailmentRechecks
-      ? { queueWaitMs: ENTAILMENT_RECHECK_QUEUE_WAIT_MS, callMs: ENTAILMENT_GATE_TIMEOUT_MS }
+      ? { queueWaitMs: ENTAILMENT_RECHECK_QUEUE_WAIT_MS, callMs: VERIFIER_CALL_LIMIT_MS }
       : undefined;
   const limit = background
     ? background.queueWaitMs + background.callMs
-    : ENTAILMENT_GATE_TIMEOUT_MS;
+    : VERIFIER_FOREGROUND_DEADLINE_MS;
   const signal = callerSignal
     ? AbortSignal.any([callerSignal, AbortSignal.timeout(limit)])
     : AbortSignal.timeout(limit);
@@ -756,9 +760,6 @@ async function runEntailmentGate(
     return { kind: "pass", state: "unverified", verifiedAt: null };
   }
 }
-
-/** Hard ceiling on one entailment check; beyond it the gate fails open. */
-const ENTAILMENT_GATE_TIMEOUT_MS = 45_000;
 
 /**
  * How long a background re-check may wait for a verifier slot. A verification

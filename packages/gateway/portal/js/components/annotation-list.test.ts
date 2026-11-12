@@ -69,6 +69,15 @@ describe("AnnotationList", () => {
     expect(verify).toContain("2d ago");
   });
 
+  test("a row on an excluded source says it is not re-checked, not its stale state", () => {
+    const nodes = expandToHostNodes(
+      AnnotationList({ annotations: [{ ...ANN, notRechecked: "source_excluded" }] }),
+    );
+    const verify = nodes.find((n) => n.class === "meta-annotation-verify")?.text.trim();
+    expect(verify).toBe("not re-checked · source excluded");
+    expect(verify).not.toContain("2d ago");
+  });
+
   test("a verification stamp without a check time renders the bare state", () => {
     const nodes = expandToHostNodes(
       AnnotationList({

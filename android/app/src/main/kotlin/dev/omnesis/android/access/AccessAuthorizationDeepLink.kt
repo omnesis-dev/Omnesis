@@ -80,9 +80,3 @@ internal fun routeAccessAuthorizationDeepLink(
     pairingIdentity?.let { identity -> onLaunch(code, identity) }
     return true
 }
-
-/** Removes a handled public URI so an Activity recreation cannot replay it. */
-internal fun consumedAccessAuthorizationIntent(intent: Intent): Intent = Intent(intent).apply {
-    action = null
-    data = null
-}

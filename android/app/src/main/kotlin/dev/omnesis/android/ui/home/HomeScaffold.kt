@@ -931,6 +931,11 @@ fun HomeScaffold(
                         bringAgentForward()
                     },
                     onOpenSettings = openSettings,
+                    pendingNotes = pendingNotes,
+                    onOpenPendingNotes = {
+                        attentionNow = Instant.now()
+                        pendingSheetOpen = true
+                    },
                 )
             }
             composable(

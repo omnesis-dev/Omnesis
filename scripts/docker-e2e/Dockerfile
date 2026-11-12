@@ -13,7 +13,10 @@ WORKDIR /repo
 COPY . .
 # Native modules (better-sqlite3-multiple-ciphers, duckdb) install their
 # prebuilt binaries here; the layer is reused while the lockfile is unchanged.
-RUN npm ci --no-audit --no-fund
+# DuckDB's binary is an optional package npm drops without an error when its
+# download fails, so the CI wrapper installs again and fails the build if it
+# stays missing, rather than every scenario failing to start the gateway.
+RUN NPM_CI_REQUIRE_OPTIONAL=1 sh scripts/ci/npm-ci.sh --no-audit --no-fund
 # The build host's umask can bake owner-only modes into the copied tree; the
 # dedicated-user scenario needs non-root accounts to read + traverse the repo.
 RUN chmod -R a+rX /repo && chmod 0777 /e2e

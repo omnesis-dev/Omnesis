@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import com.github.takahirom.roborazzi.captureRoboImage
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
+import dev.omnesis.android.notes.PendingNote
 import dev.omnesis.android.transport.dto.NoteAgentDto
 import dev.omnesis.android.transport.dto.NoteReceiptDto
 import dev.omnesis.android.transport.dto.NoteChangeDto
@@ -41,12 +42,25 @@ class NotesHistoryScreenshotTest {
     private val entries = listOf(note, note.copy(id = "note-2", text = "Remember that the spare projector cable is in the studio cupboard.",
         agent = NoteAgentDto("running")), note.copy(id = "note-3", text = "Voice note", agent = null, transcription = "pending"))
 
-    private fun capture(name: String, dark: Boolean, state: NotesHistoryState, captureLabel: String = "Tell", fontScale: Float = 1f) {
+    private val waiting = listOf(
+        PendingNote(1, "pending-1", "Ask the plumber about the kitchen tap on Thursday.", "2026-03-04T08:15:00Z", "android-tile"),
+        PendingNote(2, "pending-2", "The spare bike key is in the blue tin.", "2026-03-04T08:40:00Z", "android-app"),
+    )
+
+    private fun capture(
+        name: String,
+        dark: Boolean,
+        state: NotesHistoryState,
+        captureLabel: String = "Tell",
+        fontScale: Float = 1f,
+        pending: List<PendingNote> = emptyList(),
+    ) {
         captureRoboImage(filePath = "src/test/roborazzi/$name.png") {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalInspectionMode provides true, LocalDensity provides Density(density.density, fontScale)) {
                 OmnesisTheme(darkTheme = dark) {
-                    NotesHistoryContent(state, {}, {}, {}, {}, {}, {}, {}, {}, {}, captureLabel = captureLabel)
+                    NotesHistoryContent(state, {}, {}, {}, {}, {}, {}, {}, {}, {}, captureLabel = captureLabel,
+                        pendingNotes = pending)
                 }
             }
         }
@@ -66,6 +80,17 @@ class NotesHistoryScreenshotTest {
     @Test fun notes_empty_dark() = capture("notes_empty_dark", true, NotesHistoryState(loading = false))
     @Test fun notes_loading_light() = capture("notes_loading_light", false, NotesHistoryState())
     @Test fun notes_error_dark() = capture("notes_error_dark", true, NotesHistoryState(loading = false, error = java.io.IOException("Offline")))
+    private fun offlineWithWaitingNotes(dark: Boolean) = capture(
+        "notes_offline_pending_${if (dark) "dark" else "light"}", dark,
+        NotesHistoryState(loading = false, error = java.io.IOException("Offline")), pending = waiting)
+    @Test fun notes_offline_pending_light() = offlineWithWaitingNotes(false)
+    @Test fun notes_offline_pending_dark() = offlineWithWaitingNotes(true)
+    @Test fun notes_history_pending_light() = capture("notes_history_pending_light", false,
+        NotesHistoryState(entries, loading = false), pending = waiting.take(1))
+    @Test fun notes_history_pending_dark() = capture("notes_history_pending_dark", true,
+        NotesHistoryState(entries, loading = false), pending = waiting.take(1))
+    @Test fun notes_empty_pending_accessibility_light() = capture("notes_empty_pending_accessibility_light", false,
+        NotesHistoryState(loading = false), fontScale = 1.6f, pending = waiting)
     @Test fun notes_reading_detail_light() = capture("notes_reading_detail_light", false,
         NotesHistoryState(entries, loading = false, selectedId = "note-2"))
     @Test fun notes_transcribing_detail_dark() = capture("notes_transcribing_detail_dark", true,

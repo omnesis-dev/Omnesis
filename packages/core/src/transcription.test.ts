@@ -5,6 +5,7 @@ import { describe, expect, test } from "vitest";
 import { SyncError, isTransientSyncError } from "@omnesis/types";
 import { syncIssuesSchema } from "./sync-issues.js";
 import {
+  AudioRejectedError,
   AudioUnreadableError,
   transcriptionPlaceholderNote,
   transcriptionSyncIssues,
@@ -105,6 +106,37 @@ describe("unreadable audio", () => {
   });
 });
 
+describe("audio too large to transcribe", () => {
+  test("is its own warning naming the cap", () => {
+    const issues = transcriptionSyncIssues(
+      { awaiting: 0, transcriberUnavailable: 0, unavailable: 0, unreadable: 0, tooLarge: 1 },
+      "voice clips",
+    );
+    expect(issues).toEqual([
+      {
+        code: "transcription-audio-too-large",
+        scope: "item",
+        kind: "unknown",
+        count: 1,
+        severity: "warning",
+        message:
+          "1 voice clip could not be transcribed: the audio is larger than the 25 MB the transcriber accepts",
+      },
+    ]);
+    expect(syncIssuesSchema.safeParse(issues).success).toBe(true);
+  });
+
+  test("a rejected recording concerns one item, is never transient, and says why", () => {
+    const err = new AudioRejectedError("too-large", "too large");
+    expect(err).toBeInstanceOf(SyncError);
+    expect(err.reason).toBe("too-large");
+    expect(err.scope).toBe("item");
+    expect(isTransientSyncError(err)).toBe(false);
+    expect(new AudioUnreadableError()).toBeInstanceOf(AudioRejectedError);
+    expect(new AudioUnreadableError().reason).toBe("unreadable");
+  });
+});
+
 describe("transcriptionPlaceholderNote", () => {
   test("names each state in plain words", () => {
     expect(transcriptionPlaceholderNote("awaiting")).toBe("awaiting transcription");
@@ -117,5 +149,6 @@ describe("transcriptionPlaceholderNote", () => {
       "audio not downloaded on this device",
     );
     expect(transcriptionPlaceholderNote("audio-unreadable")).toBe("audio could not be decoded");
+    expect(transcriptionPlaceholderNote("audio-too-large")).toBe("audio too large to transcribe");
   });
 });

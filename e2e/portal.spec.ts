@@ -720,30 +720,35 @@ test.describe("Portal", () => {
     await loginToPortal(page);
     await page.goto("/portal/settings/devices");
     await page.getByRole("button", { name: "Pair device", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Pair a new device" });
-    const cli = dialog.getByRole("radio", { name: "CLI", exact: true });
+    const pairing = page.getByRole("region", { name: "Pair a new device" });
+    // The pairing page takes the device list's place; nothing opens over it.
+    await expect(pairing).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator(".devices-header")).toHaveCount(0);
+    const cli = pairing.getByRole("radio", { name: "CLI", exact: true });
     await expect(cli).toBeChecked();
     await cli.focus();
     await cli.press("ArrowRight");
-    await expect(dialog.getByRole("radio", { name: "Portal", exact: true })).toBeChecked();
-    await dialog.getByText("Browser extension", { exact: true }).click();
-    await expect(dialog.getByRole("radio", { name: "Browser extension" })).toBeChecked();
-    await dialog.getByRole("button", { name: "Generate pairing code" }).click();
-    await expect(dialog.locator(".devices-pair-result")).toContainText("Chrome Web Store");
-    await dialog.getByText("Integration", { exact: true }).click();
-    await expect(dialog.locator(".devices-pair-result")).toHaveCount(0);
-    await expect(dialog.getByLabel("Name", { exact: true })).toBeVisible();
+    await expect(pairing.getByRole("radio", { name: "Portal", exact: true })).toBeChecked();
+    await pairing.getByText("Browser extension", { exact: true }).click();
+    await expect(pairing.getByRole("radio", { name: "Browser extension" })).toBeChecked();
+    await pairing.getByRole("button", { name: "Generate pairing code" }).click();
+    await expect(pairing.locator(".devices-pair-result")).toContainText("Chrome Web Store");
+    await pairing.getByText("Integration", { exact: true }).click();
+    await expect(pairing.locator(".devices-pair-result")).toHaveCount(0);
+    await expect(pairing.getByLabel("Name", { exact: true })).toBeVisible();
     await page.setViewportSize({ width: 390, height: 667 });
-    const modal = dialog.locator(".devices-modal");
-    const bounds = await modal.boundingBox();
+    // On a phone the page scrolls with the tab; it never runs off the side.
+    const bounds = await pairing.boundingBox();
     expect(bounds).not.toBeNull();
-    expect(bounds!.y).toBeGreaterThanOrEqual(0);
-    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(667);
-    await dialog.getByLabel("Name", { exact: true }).fill("Example display");
-    await dialog.getByRole("button", { name: "Generate pairing code" }).click();
-    await expect(dialog.locator(".devices-pair-result")).toBeVisible();
-    await dialog.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(dialog).toHaveCount(0);
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+    await pairing.getByLabel("Name", { exact: true }).fill("Example display");
+    await pairing.getByRole("button", { name: "Generate pairing code" }).click();
+    await expect(pairing.locator(".devices-pair-result")).toBeVisible();
+    await pairing.getByRole("button", { name: "← Back to devices" }).click();
+    await expect(pairing).toHaveCount(0);
+    await expect(page.locator(".devices-header")).toBeVisible();
   });
 
   test("picking a Settings tab moves the URL with it", async ({ page }) => {

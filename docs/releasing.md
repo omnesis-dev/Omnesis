@@ -284,7 +284,9 @@ native files are `ios/project.yml` (`MARKETING_VERSION`), both iOS Info plists
 (`CFBundleShortVersionString`) and `android/app/build.gradle.kts`
 (`versionName`). Their build counters — `CURRENT_PROJECT_VERSION`,
 `CFBundleVersion`, `versionCode` — are deliberately untouched: they advance per
-store upload, independently of the product version.
+store upload, independently of the product version. The Wear OS app
+(`android/wear`) has no version of its own to edit: its build reads the
+application id, `versionName` and `versionCode` from the Android app's.
 
 The lockfile is refreshed with `--package-lock-only` rather than a full
 `npm install`, so versioning never rebuilds `node_modules` — which would be slow

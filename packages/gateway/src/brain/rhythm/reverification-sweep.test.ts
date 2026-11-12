@@ -25,8 +25,12 @@ import {
   createDocAnnotation,
   invalidateAnnotationsForDoc,
   listDueVerificationDocAnnotations,
+  docAnnotationIdsOnExcludedSources,
 } from "../storage/annotations.js";
-import { createPersonAnnotation } from "../storage/person-annotations.js";
+import {
+  createPersonAnnotation,
+  personAnnotationIdsOnExcludedSources,
+} from "../storage/person-annotations.js";
 import { verificationRunDedupeKey } from "../run-payloads.js";
 import {
   runReverificationSweepPass,
@@ -240,6 +244,22 @@ describe("runReverificationSweepPass", () => {
     expect(verificationRuns(db).map((run) => run.payload)).toEqual([
       { annotationIds: ["anno_mail"], store: "doc" },
     ]);
+    // Readers label exactly the rows the sweep skips, by the same rule.
+    expect(
+      [
+        ...docAnnotationIdsOnExcludedSources(
+          db,
+          ["anno_about_session", "anno_from_session", "anno_mail"],
+          ["codex"],
+        ),
+      ].sort(),
+    ).toEqual(["anno_about_session", "anno_from_session"]);
+    expect([...personAnnotationIdsOnExcludedSources(db, ["panno_session"], ["codex"])]).toEqual([
+      "panno_session",
+    ]);
+    expect(
+      docAnnotationIdsOnExcludedSources(db, ["anno_about_session", "anno_mail"], []).size,
+    ).toBe(0);
   });
 
   test("annotations inside the freshness interval, and invalidated rows, are not due", async () => {

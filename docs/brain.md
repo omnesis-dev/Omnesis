@@ -418,7 +418,10 @@ any source of it is installed. Every consumer reads the list live
 The interactive agent and its own memory tools are unaffected. Existing
 knowledge derived from an excluded source is kept and stays visible to Brain
 runs as knowledge (annotation evidence quotes, loop document ids, page claims);
-its doc and person annotations are skipped by the re-verification sweep. Source edits and deletions still invalidate
+its doc and person annotations are skipped by the re-verification sweep. Their stored
+verification state is therefore never refreshed, so the annotation routes mark them
+`notRechecked: "source_excluded"` by the sweep's own rule, read from the live list,
+and the portal shows that label instead of the stored state. Source edits and deletions still invalidate
 dependent knowledge as usual. Journal entries acknowledged while a source was
 excluded are not replayed; historical review within `brain.bootstrap.horizon`
 admits those documents once the exclusion is removed. Bootstrap status reports
@@ -1474,9 +1477,14 @@ a positive proof requires complete textual and semantic coverage plus authorized
 This preserves one synthesized note rather than creating a record per clause. Textual coverage
 is mechanically checked; semantic decomposition and entailment remain fallible model judgments.
 The annotation protocol makes one inference call, with bounded output and no malformed-response
-repair call. Verifier acquisition now has its own 45-second bound in Knowledge writes,
-followed by the existing separate 45-second bound for each claim check. Canonical
-annotation gates share their existing deadline across acquisition and checking;
+repair call. One verification may run for `VERIFIER_CALL_LIMIT_MS` (90 s) once admitted,
+and every transport timer is set to that limit, so the Codex agent-turn default cannot end
+a call its caller still allows (`inference/verifier-limits.ts`). Foreground callers
+(annotation gates, Knowledge claim checks, the morning recheck) allow
+`VERIFIER_FOREGROUND_DEADLINE_MS`, a 30 s wait for a verifier slot plus one call, shared
+across acquisition and checking; background re-checks wait up to five minutes for a
+slot and then get one call. In Knowledge writes, verifier acquisition and each claim
+check have separate bounds of that length;
 Answer uses its caller cancellation signal without adding a deadline. Cancellation
 removes expired work before inference admission and reaches remote transports.
 The service retains each active operation through capability-operation settlement, including
@@ -1489,7 +1497,7 @@ operation cancellation boundaries. Contended, canceled and failed operations log
 at INFO; routine uncontended successes use DEBUG. These timings do not isolate
 model generation from transport or pool waiting inside a capability.
 
-The existing 45-second limit remains: an unavailable configured verifier still
+Whatever the limit, an unavailable configured verifier still
 saves an explicitly unverified annotation, never a verified stamp. More detailed assessments
 can cost more output tokens and can time out. Wiki proof policies are unchanged.
 Old annotation proof-policy markers lose support authority and enter existing bounded policy

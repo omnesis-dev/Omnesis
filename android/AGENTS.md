@@ -59,7 +59,7 @@ scanner — Roborazzi here renders only the composables a test hands it. Each su
 has a `*ScreenshotTest.kt` under
 `app/src/test/kotlin/dev/omnesis/android/screenshots/` (and one in `:feature-health`)
 whose `@Test` methods call a local `capture(name, dark) { … }` helper wrapping
-`captureRoboImage(filePath = "build/outputs/roborazzi/$name.png") { … }`. **`@Preview`
+`captureRoboImage(filePath = "src/test/roborazzi/$name.png") { … }`. **`@Preview`
 annotations on the production composables are NOT what gets rendered** — adding a new
 `@Preview` produces no PNG. To cover a new state you add an explicit `captureRoboImage`
 case to the matching `*ScreenshotTest.kt` (cover each meaningful state **and light +
@@ -125,7 +125,7 @@ scripts/android-logic.sh --module :feature-health        # one module's testDebu
 scripts/android-logic.sh --tests dev.omnesis.android.transport.dto.DtoDecodeTest
 ```
 
-`scripts/android-logic.sh` mirrors `android-render.sh`'s bridge shape (env-host + path-guard + rsync-up) but runs `./gradlew <module>:testDebugUnitTest` — the plain-JVM unit lane, no AVD, no Robolectric Compose rasterisation. The default scopes to the modules whose tests are pure JVM logic (`:core-transport`, `:core-pairing`, `:core-designsystem`); the `:app` and `:feature-health` modules share a module with the slow Roborazzi screenshot tests, so narrow those with `--module` + `--tests` (e.g. `--module :feature-health --tests *HealthNormalizerTest`).
+`scripts/android-logic.sh` mirrors `android-render.sh`'s bridge shape (env-host + path-guard + rsync-up) but runs `./gradlew <module>:testDebugUnitTest` — the plain-JVM unit lane, no AVD, no Robolectric Compose rasterisation. The default scopes to the modules whose tests are pure JVM logic (`:core-transport`, `:core-pairing`, `:core-designsystem`, `:core-setup`, `:core-wear-protocol`, `:wear-core`). A plain Kotlin/JVM module such as `:core-wear-protocol` or `:wear-core` has a single `test` task instead of `testDebugUnitTest`; the script picks the right one, and the CI `android-jvm` lane names each such module because the build-wide `testDebugUnitTest` does not reach it; the `:app` and `:feature-health` modules share a module with the slow Roborazzi screenshot tests, so narrow those with `--module` + `--tests` (e.g. `--module :feature-health --tests *HealthNormalizerTest`). With `--module` on an application module, `--assemble` also packages its debug APK (`--module :wear --assemble`), which proves the manifest merges and the code dexes. `--task <gradle task>` (repeatable, with `--keep-going` to run them all past a failure) runs exactly the tasks a CI lane names when no other option reaches them: the other app edition's unit tests (`--task :app:testFullDebugUnitTest`), a release bundle (`--task :wear:bundleRelease`).
 
 The scratch checkout is kept **warm**: the script rsyncs into a persistent dir (default `~/omnesis-android-logic` on the host, override with `OMNESIS_EPIC_MACOS_ANDROID_LOGIC_WORKTREE`) and **preserves the Gradle build cache** across runs (it excludes `.gradle` / `build` from the up-sync, so the host's caches survive) and opts into the **configuration cache** (`--configuration-cache`, a lane-local flag — `gradle.properties` keeps it off globally so the Roborazzi/CI lanes are unaffected). So a repeat run skips the configuration phase and most recompilation. Use this lane while iterating on logic; the Roborazzi lane to self-critique a UI change.
 
@@ -157,7 +157,9 @@ Android JVM CI failures retain XML and HTML reports as `android-jvm-failures`.
   `:feature-health`. `scripts/android-render.sh` bridges both forms to a macOS host.
 - **Live-gateway E2E** (the port of `ios/Tests/.../GatewayLiveE2ETests.swift`):
   `scripts/run-android-e2e.sh` boots a synth gateway on a high port and runs the real
-  transport clients against it via `10.0.2.2`. A green E2E is a **per-phase gate**.
+  transport clients against it on the **host JVM** (`:core-transport` unit tests, no
+  emulator), reaching it at `https://localhost:<port>` with the leaf certificate pinned.
+  A green E2E is a **per-phase gate**.
 
 ### Tier B — instrumented Health Connect round-trip
 
@@ -223,8 +225,8 @@ Things that have bitten agents working in this module. Read before testing.
   (`roborazzi.test.record=true`) truly renders. Always record + `Read` the PNGs.
 - **Infinite animations hang record mode** — see the boxed rule above. Symptom: a Gradle
   worker (`GradleWorkerMain` / `Gradle Test Executor`) pinned near 97% CPU for minutes
-  with **no new** files under `app/build/outputs/roborazzi/` (the run may write the first N
-  PNGs, then stall on test N+1). Fix: gate the animation on `LocalInspectionMode.current`.
+  with **no newly written** files under `app/src/test/roborazzi/` (the run may rewrite the
+  first N PNGs, then stall on test N+1). Fix: gate the animation on `LocalInspectionMode.current`.
 - **The subtle one: indeterminate progress spinners.** A raw indeterminate
   `CircularProgressIndicator` animates forever and hangs capture just like a
   `rememberInfiniteTransition` — but it's easy to miss because it looks static. **Always use
@@ -321,10 +323,117 @@ Modules: `:app` (Compose UI + ViewModels + Hilt root + nav), `:core-transport`
 (Retrofit/OkHttp clients, wire DTOs, `DeviceSocket` WS, `AgentEventSource` SSE,
 `LeafCertPinner`/`PinnedOkHttp`), `:core-pairing` (`PairingPayload`,
 `PairingService`, `SecureStore`), `:core-designsystem` (`OmnesisTheme`,
-`SourceCatalog`, atoms). MVVM + repository; Hilt DI; ViewModel + immutable
+`SourceCatalog`, atoms), `:core-wear-protocol` (the contract the Wear OS app
+and the phone app share for the watch relay: Data Layer paths, wire messages
+and the pure policies both ends apply; a plain Kotlin/JVM library with no
+Android dependency, ported from the iOS watch relay's shared files),
+`:wear-core` (the Wear OS app's logic, a plain Kotlin/JVM library too) and
+`:wear` (the Wear OS app itself; see "Wear OS app" below). MVVM + repository; Hilt DI; ViewModel + immutable
 `StateFlow<UiState>`; OkHttp + Retrofit + kotlinx.serialization; Material 3 +
 `ModalNavigationDrawer`. A `SessionManager` (the iOS `AppStore` analogue) rebuilds
 the transport clients on pair/unpair/url-change.
+
+### Launch intents are acted on once
+
+The system hands an activity the intent that first opened it again on every
+rebuild: a rotation, a relaunch after it killed the process, a task reopened
+from the recent apps list. Later intents go to `onNewIntent` and never replace
+it. `MainActivity` therefore routes every launch that opens a screen (the tile,
+the shortcuts, the widget, notifications) through `OneShotLaunches`, and a new
+entry point must do the same; never compare a launch only with the last one
+handled. `MainActivityLaunchReplayTest` drives the real activity through
+create, new intent, and a rebuild from saved state with the first intent, and
+`:wear`'s `LaunchReplayTest` does the same for the watch screen (it runs on the
+real `WearApp`, which the other watch tests avoid).
+
+## Wear OS app (`:wear-core`, `:wear`)
+
+The port of the Apple Watch app (`ios/Sources/OmnesisWatch/`, the canonical
+reference). It holds no gateway credential and makes no gateway call: every
+question, note and recording is relayed through the phone app over the Wearable
+Data Layer, as `:core-wear-protocol` defines. It takes its application id and
+version from `:app`'s evaluated configuration, because the Data Layer only
+connects two apps with the same application id and signing key.
+
+- `:wear-core` is the logic, a JVM library that cannot import Android: the ask
+  router, the unified recorder, the two note flows, the outbox and its store,
+  and `WatchCore`, which wires them and routes what the phone sends. It runs on
+  the interfaces in `Ports.kt`, so its tests are plain JVM tests on fakes with a
+  virtual clock. The fakes are its test fixtures (`src/testFixtures`), which
+  the phone app's loopback tests use as well.
+- The rest is `:wear`. `link/` is the Data Layer (`GmsPhoneLink`, and `PhoneListenerService`, which
+  the system starts for every message and DataItem, running or not). `device/`
+  is the microphone, the voice, haptics and the WorkManager retry.
+- `ui/` is Compose for Wear OS, stateless over `WatchUiState`; `WatchApp` binds
+  it to `WatchViewModel`. `surfaces/` is the tile and the complication.
+- Wear Compose **Material 2.x** (1.4), the line built on the Compose runtime
+  the BOM pins; Wear Material 3 needs a newer runtime than the rest of the build.
+
+```bash
+./gradlew :wear-core:test                # the watch logic, on any machine with a JDK
+./gradlew :wear:assembleDebug            # -> wear/build/outputs/apk/debug/wear-debug.apk
+./gradlew :wear:testDebugUnitTest        # manifest and UI-state tests (screenshots are no-ops here)
+./gradlew :wear:recordRoborazziDebug     # -> wear/src/test/roborazzi/*.png (tracked goldens)
+```
+
+Every screen and state is captured on a small round, a large round and a square
+display by `captureOnEveryWatch` (`wear/src/test/.../screenshots/`). A round
+capture is a black disc on grey: anything outside the disc is cut off on a real
+watch. Wear OS offers a third-party watch app no voice-assistant entry point, so
+there is no counterpart to the Apple Watch app's Siri phrases; the tile, the
+complication and the launcher are the ways in.
+
+### The watch relay (`:app`, package `wear`)
+
+The phone side of the Wear OS relay, the Android counterpart of iOS's
+`WatchRelayReceiver`. The watch holds no gateway credential: every question, note
+and recording reaches the gateway through this package. Read
+`:core-wear-protocol` first; it is the contract, and the watch app is built
+against it independently.
+
+- **Pure orchestrators, no Android types** — `GatePublisher` (the dictation gate
+  DataItem), `TextAskRelay`, `TextNoteRelay`, `QueuedRelayHandler`,
+  `RecordingInbox` + `RecordingPipeline`, and `WearRelay`, which routes every
+  watch event to them. They speak to the world through small ports
+  (`WearGateway`, `WatchAsker`, `WatchNoteSaver`, `CaptureBackend`,
+  `CaptureTranscriber`, `RelayNotifier`), so the whole relay runs in JVM tests
+  over fakes (`RelayFakes.kt`).
+- **Thin adapters** — `PlayServicesWearGateway` (the Data Layer), `RunnerWatchAsker`
+  (the phone's own `VoiceAskRunner`, on its relay plans), `RepositoryWatchNoteSaver`
+  (`NotesRepository`, surface `android-watch`), `SessionCaptureBackend`,
+  `OnDeviceFileTranscriber` (the on-device recognizer reading a decoded recording),
+  `SystemRelayNotifier`.
+- **`WearRelayService`** only routes. Play services binds a
+  `WearableListenerService` for the length of its callbacks and a question takes
+  most of a minute, so relay work runs in an app-owned scope and
+  `WorkManagerRelayScheduler` holds the process with expedited work until the relay
+  is idle. A request's reply is also sent as a message of its own, because the
+  service that owed the reply may be gone.
+- **No watch, no cost.** `WearRelayRuntime` builds nothing unless Play services
+  offers the Wearable API; periodic work exists only once a watch has sent
+  something.
+
+A change to what crosses the Data Layer is a contract change: make it in
+`:core-wear-protocol`, for both apps, never as a private convention here.
+
+### Loopback tests: both sides against each other
+
+`app/src/test/.../wear/loopback/` runs the real `WatchCore` against the real
+`WearRelay` over `LoopbackDataLayer`, an in-memory Data Layer that implements
+both the watch's `PhoneLink` and the phone's `WearGateway`: messages and
+requests with latency, timeouts and lost replies, DataItems in a replica per
+node that sync when the two are connected, and the capability changes each app
+listens for. One virtual clock drives both. Only what lies outside the two is
+faked: the watch's microphone, voice and haptics, and the phone's `WatchAsker`,
+`CaptureBackend`, `CaptureTranscriber`, `WatchNoteSaver` and notifier. The
+phone side can be ended and rebuilt over the same storage, as a process death.
+
+Every scenario asserts what both devices end up showing and holding, and that
+no DataItem is left behind (`assertNothingLeft`). A change to either side of
+the relay, or to the contract, runs these (`--module :app --tests
+'dev.omnesis.android.wear.loopback.*'`); a behavior that involves both sides
+gets its scenario here, not a pair of one-sided tests that each assume the
+other.
 
 ## Conventions (carried from the repo)
 

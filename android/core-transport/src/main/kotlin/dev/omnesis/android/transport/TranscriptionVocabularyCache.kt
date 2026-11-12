@@ -8,9 +8,15 @@ import java.text.Normalizer
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-/** Memory-only cache. Reads never wait for HTTP; reset invalidates even uncancellable old replies. */
+/**
+ * Memory-only cache. Reads never wait for HTTP; reset invalidates even uncancellable old
+ * replies. A caller that would rather wait for the fetches under way does so explicitly,
+ * and bounds the wait itself, through [awaitFetches].
+ */
 class TranscriptionVocabularyCache(private val now: () -> Long = { System.nanoTime() / 1_000_000 }) {
     private data class Key(val purpose: String, val locale: String)
     private data class Cached(val phrases: List<String>, val refreshAt: Long, val expiresAt: Long)
@@ -21,6 +27,7 @@ class TranscriptionVocabularyCache(private val now: () -> Long = { System.nanoTi
     private var cachedLocale: String? = null
     private val values = mutableMapOf<Key, Cached>()
     private val pending = mutableSetOf<Key>()
+    private val pendingCount = MutableStateFlow(0)
     private val retryAt = mutableMapOf<Key, Long>()
 
     @Synchronized fun ownerToken(): Long = owner
@@ -34,12 +41,21 @@ class TranscriptionVocabularyCache(private val now: () -> Long = { System.nanoTi
         cachedLocale = null
         values.clear()
         pending.clear()
+        pendingCount.value = pending.size
         retryAt.clear()
     }
 
     @Synchronized fun phrases(purpose: String, locale: String): List<String> {
         if (!enabled || denied) return emptyList()
         return values[Key(purpose, locale)]?.takeIf { now() < it.expiresAt }?.phrases.orEmpty()
+    }
+
+    /**
+     * Suspends while a [warm] fetch is in flight, so the phrases it brings are there for a
+     * recognition session about to start. Returns at once when nothing is being fetched.
+     */
+    suspend fun awaitFetches() {
+        pendingCount.first { it == 0 }
     }
 
     /** Called after authenticated status/foreground polls, in the pairing-owned coroutine scope. */
@@ -56,6 +72,7 @@ class TranscriptionVocabularyCache(private val now: () -> Long = { System.nanoTi
             enabled = false
             values.clear()
             pending.clear()
+            pendingCount.value = pending.size
             retryAt.clear()
             return
         }
@@ -66,12 +83,14 @@ class TranscriptionVocabularyCache(private val now: () -> Long = { System.nanoTi
             cachedLocale = locale
             values.clear()
             pending.clear()
+            pendingCount.value = pending.size
             retryAt.clear()
         }
         for (purpose in listOf("dictation", "agent")) {
             val key = Key(purpose, locale)
             if (key in pending || now() < (retryAt[key] ?: Long.MIN_VALUE) || now() < (values[key]?.refreshAt ?: Long.MIN_VALUE)) continue
             pending.add(key)
+            pendingCount.value = pending.size
             val captured = generation
             scope.launch {
                 try {
@@ -84,6 +103,7 @@ class TranscriptionVocabularyCache(private val now: () -> Long = { System.nanoTi
                             enabled = false
                             values.clear()
                             pending.clear()
+                            pendingCount.value = pending.size
                             retryAt.clear()
                         } else {
                             val received = now()
@@ -105,12 +125,16 @@ class TranscriptionVocabularyCache(private val now: () -> Long = { System.nanoTi
                                 denied = true
                                 values.clear()
                                 pending.clear()
+                                pendingCount.value = pending.size
                             } else retryAt[key] = now() + 300_000
                         }
                     }
                 } finally {
                     synchronized(this@TranscriptionVocabularyCache) {
-                        if (generation == captured) pending.remove(key)
+                        if (generation == captured) {
+                            pending.remove(key)
+                            pendingCount.value = pending.size
+                        }
                     }
                 }
             }

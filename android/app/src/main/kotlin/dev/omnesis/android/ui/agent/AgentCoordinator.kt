@@ -2168,6 +2168,17 @@ internal fun awaitsFirstMessage(state: AgentCoordinator.UiState): Boolean =
         state.chat.turns.isEmpty()
 
 /**
+ * Whether the composer asks for the keyboard when the conversation comes on screen: a blank
+ * chat waiting for its first words, a prompt being edited, or a task conversation nobody has
+ * written in. A new chat that already carries a question — one asked from the capture
+ * screen, still being sent — shows its answer instead, with the keyboard down.
+ */
+internal fun composerTakesFocus(state: AgentCoordinator.UiState): Boolean =
+    (state.sessionId == null && state.chat.turns.isEmpty()) ||
+        state.composer.editingPrompt ||
+        awaitsFirstMessage(state)
+
+/**
  * Legacy gateways can return the creating run's folded transcript before the messages the user
  * wrote in an anchored thread. Hide that prefix only when the origin also carries the snapshot
  * that replaces it visually; unknown/partial origins remain fully visible.

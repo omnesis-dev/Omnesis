@@ -11,7 +11,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.omnesis.android.notes.VoiceNoteFiles
 import dev.omnesis.android.session.SessionManager
+import dev.omnesis.android.voice.GatewaySpeechReadiness
 import dev.omnesis.android.voice.GatewayVoiceNoteSessions
+import dev.omnesis.android.voice.SpeechReadiness
+import dev.omnesis.android.voice.SpeechVocabulary
 import dev.omnesis.android.voice.VoiceNoteSessions
 
 @Module
@@ -23,4 +26,8 @@ object VoiceNoteModule {
         session: SessionManager,
         files: VoiceNoteFiles,
     ): VoiceNoteSessions = GatewayVoiceNoteSessions(context, session.dictation, files)
+
+    @Provides
+    fun provideSpeechReadiness(session: SessionManager, vocabulary: SpeechVocabulary): SpeechReadiness =
+        GatewaySpeechReadiness(session, vocabulary)
 }

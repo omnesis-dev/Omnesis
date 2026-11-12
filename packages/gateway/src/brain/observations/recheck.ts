@@ -26,6 +26,7 @@ import { observationEvidenceContext } from "../observation-evidence-context.js";
 import { containsNormalizedForContent } from "../quote-match.js";
 import { listOpenObservations } from "../storage/observations.js";
 import { cognitionSpendDay } from "../storage/spend.js";
+import { VERIFIER_FOREGROUND_DEADLINE_MS } from "../../inference/verifier-limits.js";
 import {
   compareSalience,
   judgeSalience,
@@ -95,8 +96,6 @@ export interface RecheckResult {
   held: string[];
   dropped: Array<{ id: string; reason: ObservationCloseReason }>;
 }
-
-const VERIFIER_TIMEOUT_MS = 45_000;
 
 /** Titles, sources and dates of the cited documents, for the decision state. */
 export function observationSources(
@@ -210,7 +209,7 @@ async function verifyClaims(
     return null;
   }
   if (!input) return null;
-  const timeout = AbortSignal.timeout(VERIFIER_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(VERIFIER_FOREGROUND_DEADLINE_MS);
   const bounded = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
     const verifier = await raceAbort(deps.getEntailmentVerifier(bounded), bounded);

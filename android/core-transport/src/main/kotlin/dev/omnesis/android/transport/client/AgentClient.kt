@@ -104,13 +104,18 @@ class AgentClient(private val http: GatewayHttp) {
      *
      * [viewing] says whether it is still on screen. True holds it open, so an
      * answer arriving now counts as seen; false says the user moved on.
+     *
+     * [messageId] names an answer shown somewhere other than this app's
+     * conversation screen (a watch face), so the gateway counts that answer as
+     * read without holding the conversation open.
      */
     suspend fun markConversationSeen(
         id: String,
         viewing: Boolean,
+        messageId: String? = null,
     ): Boolean = http.postJson<ConversationSeenBody, OkResponse>(
         "agent/conversations/$id/seen",
-        ConversationSeenBody(viewing),
+        ConversationSeenBody(viewing, messageId),
     ).ok
 
     suspend fun conversationMessages(
@@ -232,7 +237,7 @@ data class OkResponse(val ok: Boolean = false)
 
 /** Body of `POST /agent/conversations/:id/seen`. */
 @Serializable
-data class ConversationSeenBody(val viewing: Boolean)
+data class ConversationSeenBody(val viewing: Boolean, val messageId: String? = null)
 
 @Serializable
 data class ConversationChoice(val label: String, val description: String? = null)

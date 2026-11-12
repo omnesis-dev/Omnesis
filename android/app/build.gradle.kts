@@ -232,6 +232,7 @@ dependencies {
     implementation(project(":core-transport"))
     implementation(project(":core-pairing"))
     implementation(project(":core-setup"))
+    implementation(project(":core-wear-protocol"))
     implementation(project(":feature-health"))
     // Restricted call-log APIs are intentionally absent from the Google Play
     // artifact. The full flavor remains available to people who build/sideload
@@ -265,6 +266,8 @@ dependencies {
 
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
+    // The watch relay speaks to a paired Wear OS watch over the Data Layer, in every flavor.
+    implementation(libs.play.services.wearable)
 
     // QR pairing: CameraX preview + ML Kit on-device barcode scanning (bundled
     // model) to *scan*; zxing-core to *generate* a QR when pairing a new device.
@@ -275,6 +278,9 @@ dependencies {
 
     // Screenshot + unit testing (Roborazzi renders Compose to PNGs off-emulator).
     testImplementation(libs.junit)
+    // The real watch logic and its fakes, for the loopback tests that run it against the relay.
+    testImplementation(project(":wear-core"))
+    testImplementation(testFixtures(project(":wear-core")))
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
@@ -290,6 +296,8 @@ dependencies {
     testImplementation(libs.hilt.android.testing)
     kspTest(libs.hilt.compiler)
     testImplementation(libs.okhttp.tls)
+    // The background note drain is scheduled against WorkManager's synchronous test instance.
+    testImplementation(libs.androidx.work.testing)
 
     // UI journeys on an emulator against a synthetic gateway (scripts/run-mobile-journeys.sh).
     androidTestImplementation(platform(libs.androidx.compose.bom))

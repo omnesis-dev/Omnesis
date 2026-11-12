@@ -17,6 +17,8 @@ import {
 import { startVerdictServer, type VerdictServer } from "./brain-bench/verdict-servers.js";
 
 compressCognitionCadences();
+// Hold each hung verifier call for 45 s rather than the shipped 90 s limit.
+process.env.OMNESIS_VERIFIER_CALL_LIMIT_MS = "45000";
 const documents = [
   note({
     externalId: "dial-inspection",

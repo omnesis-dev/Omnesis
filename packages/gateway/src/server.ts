@@ -62,6 +62,7 @@ import { createCollectorDeviceResolver } from "./collector-device-resolver.js";
 import { mountLoopRoutes } from "./brain/http.js";
 import { mountTaskRoutes } from "./brain/tasks/http.js";
 import { getNoteRuns } from "./brain/note-agent/storage.js";
+import { resolveBrainSettings } from "./brain/config.js";
 import { mountBrainAdminRoutes } from "./brain/admin-http.js";
 import { mountCognitionRoutes } from "./http/routes/cognition.js";
 import { mountTemporalRoutes } from "./http/routes/temporal.js";
@@ -842,6 +843,12 @@ export function createServer(
     {
       wakeMergeEval: opts?.peopleControl?.wakeMergeEval,
       fastApplyMergeRules: opts?.peopleControl?.fastApplyMergeRules,
+      ...(opts?.configStore
+        ? {
+            getBrainExcludedSources: () =>
+              resolveBrainSettings(opts.configStore!.get().brain).excludedSources,
+          }
+        : {}),
     },
     opts?.ioGate,
   );

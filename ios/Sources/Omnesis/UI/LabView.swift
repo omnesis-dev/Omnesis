@@ -40,7 +40,6 @@ struct LabView: View {
                         ForEach(snapshot.features) { feature in
                             featureCard(feature)
                         }
-
                     }
                     .padding(20)
                 }
@@ -90,10 +89,12 @@ struct LabView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let error, failedFeature == feature.id {
-                Label("Change wasn’t saved. " + GatewayErrorView.classify(error).title,
-                      systemImage: GatewayErrorView.classify(error).symbol)
-                    .font(.callout)
-                    .foregroundStyle(Theme.danger)
+                Label(
+                    "Change wasn’t saved. " + GatewayErrorView.classify(error).title,
+                    systemImage: GatewayErrorView.classify(error).symbol
+                )
+                .font(.callout)
+                .foregroundStyle(Theme.danger)
             }
         }
         .padding(20)

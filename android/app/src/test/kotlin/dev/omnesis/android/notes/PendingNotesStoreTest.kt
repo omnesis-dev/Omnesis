@@ -18,6 +18,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.File
+import java.time.ZoneOffset
+import java.time.ZoneId
 import java.time.Instant
 
 /** Durability contract of the offline quick-capture queue (real SQLite via Robolectric). */
@@ -253,5 +255,83 @@ class PendingNotesStoreTest {
         assertNull(upgraded.audio)
         assertNull(upgraded.language)
         assertNull(upgraded.taskId)
+    }
+
+    @Test
+    fun a_note_keeps_the_zone_it_was_captured_in() = runTest {
+        val s = store()
+        s.insert("z1", "Zoned", "2026-07-13T08:00:00.000Z", "android-tile", zone = CaptureZone("America/Halifax", -10800))
+        s.insert("z2", "Zoneless", "2026-07-13T08:01:00.000Z", "android-app")
+
+        val (zoned, zoneless) = s.readAll()
+        assertEquals(CaptureZone("America/Halifax", -10800), zoned.zone)
+        assertNull(zoneless.zone)
+    }
+
+    @Test
+    fun upgrading_a_v5_database_keeps_rows_without_a_zone() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val v5 = object : SQLiteOpenHelper(context, "omnesis_pending_notes.db", null, 5) {
+            override fun onCreate(db: SQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE pending_notes (
+                        _id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        note_id TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        captured_at TEXT NOT NULL,
+                        surface TEXT NOT NULL,
+                        last_attempt_at TEXT,
+                        last_failure TEXT,
+                        retry_count INTEGER NOT NULL DEFAULT 0,
+                        audio_path TEXT,
+                        audio_mime TEXT,
+                        language TEXT,
+                        task_id TEXT
+                    )""",
+                )
+            }
+
+            override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        }
+        v5.writableDatabase.insert(
+            "pending_notes",
+            null,
+            ContentValues().apply {
+                put("note_id", "v5-key")
+                put("text", "Queued before capture zones")
+                put("captured_at", "2026-07-13T07:00:00.000Z")
+                put("surface", "android-assistant")
+                put("task_id", "task-7")
+                put("retry_count", 1)
+            },
+        )
+        v5.close()
+
+        val s = store()
+        val upgraded = s.readAll().single()
+        assertEquals("Queued before capture zones", upgraded.text)
+        assertEquals("task-7", upgraded.taskId)
+        assertEquals(1, upgraded.retryCount)
+        assertNull(upgraded.zone)
+
+        // The upgraded table takes a zone for the notes queued from here on.
+        s.insert("v6-key", "Queued after", "2026-07-13T07:05:00.000Z", "android-app", zone = CaptureZone("Asia/Tokyo", 32400))
+        assertEquals(CaptureZone("Asia/Tokyo", 32400), s.readAll().last().zone)
+    }
+
+    @Test
+    fun a_capture_zone_carries_the_offset_in_force_at_the_capture_instant() {
+        val halifax = ZoneId.of("America/Halifax")
+        assertEquals(CaptureZone("America/Halifax", -10800), CaptureZone.at(Instant.parse("2026-07-13T09:00:00Z"), halifax))
+        assertEquals(CaptureZone("America/Halifax", -14400), CaptureZone.at(Instant.parse("2026-01-13T09:00:00Z"), halifax))
+        assertEquals(CaptureZone("UTC", 0), CaptureZone.at(Instant.parse("2026-07-13T09:00:00Z"), ZoneId.of("UTC")))
+    }
+
+    @Test
+    fun a_zone_the_gateway_would_reject_is_left_out() {
+        val at = Instant.parse("2026-07-13T09:00:00Z")
+        assertNull(CaptureZone.at(at, ZoneId.of("GMT+02:00")))
+        assertNull(CaptureZone.at(at, ZoneOffset.ofHours(-5)))
+        assertNull(CaptureZone.at(at, ZoneId.of("UTC+01:00")))
     }
 }

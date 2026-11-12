@@ -781,12 +781,8 @@ export function listDueVerificationPersonAnnotations(
     excludedSources?: readonly string[];
   },
 ): DueVerificationPersonAnnotation[] {
-  const excluded = opts.excludedSources ?? [];
-  const inclusion = brainSourceInclusionSql(excluded, "d.source_id");
-  const fence = excluded.length
-    ? `AND NOT EXISTS (SELECT 1 FROM person_annotation_evidence e JOIN documents d ON d.id = e.evidence_doc_id
-         WHERE e.annotation_id = pa.id AND e.broken_at IS NULL AND NOT (${inclusion.sql}))`
-    : "";
+  const excludedRow = personAnnotationOnExcludedSourceSql(opts.excludedSources ?? [], "pa");
+  const fence = excludedRow ? `AND NOT (${excludedRow.sql})` : "";
   return db
     .prepare<
       unknown[],
@@ -809,7 +805,7 @@ export function listDueVerificationPersonAnnotations(
         ORDER BY COALESCE(p.is_self, 0) DESC, considered_at ASC, pa.created_at ASC
         LIMIT ?`,
     )
-    .all(opts.cutoff, ...(fence ? inclusion.params : []), opts.limit)
+    .all(opts.cutoff, ...(excludedRow?.params ?? []), opts.limit)
     .map((r) => ({
       id: r.id,
       lastVerifiedAt: r.last_verified_at,
@@ -817,6 +813,51 @@ export function listDueVerificationPersonAnnotations(
       createdAt: r.created_at,
       isSelf: r.is_self !== 0,
     }));
+}
+
+/**
+ * True for a `person_annotations` row (aliased `alias`) the re-verification
+ * sweep never picks because one of its live evidence documents comes from a
+ * source in `brain.excludedSources`. Null with no exclusions.
+ */
+function personAnnotationOnExcludedSourceSql(
+  excluded: readonly string[],
+  alias: string,
+): { sql: string; params: string[] } | null {
+  if (excluded.length === 0) return null;
+  const inclusion = brainSourceInclusionSql(excluded, "d.source_id");
+  return {
+    sql: `EXISTS (SELECT 1 FROM person_annotation_evidence e JOIN documents d ON d.id = e.evidence_doc_id
+         WHERE e.annotation_id = ${alias}.id AND e.broken_at IS NULL AND NOT (${inclusion.sql}))`,
+    params: inclusion.params,
+  };
+}
+
+/**
+ * The subset of `ids` that rest on a source excluded from the Brain, by the
+ * same rule that keeps them out of {@link listDueVerificationPersonAnnotations}.
+ * Their stored verification state is never refreshed, so readers label them
+ * instead of presenting that state as current.
+ */
+export function personAnnotationIdsOnExcludedSources(
+  db: Db,
+  ids: readonly string[],
+  excludedSources: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  const excludedRow = personAnnotationOnExcludedSourceSql(excludedSources, "pa");
+  if (!excludedRow) return out;
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const batch = ids.slice(i, i + ID_CHUNK);
+    const rows = db
+      .prepare<unknown[], { id: string }>(
+        `SELECT pa.id FROM person_annotations pa
+          WHERE pa.id IN (${batch.map(() => "?").join(", ")}) AND ${excludedRow.sql}`,
+      )
+      .all(...batch, ...excludedRow.params);
+    for (const row of rows) out.add(row.id);
+  }
+  return out;
 }
 
 /**

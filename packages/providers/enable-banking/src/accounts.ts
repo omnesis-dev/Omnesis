@@ -21,7 +21,7 @@ import {
   type BootstrapMarker,
 } from "./session.js";
 import type { HistoryCoverage, StructuredSyncResult } from "@omnesis/source-sdk";
-import type { DocumentInput, ProviderId, SourceId } from "@omnesis/types";
+import type { DocumentInput, ProviderId, SourceId, SyncIssue } from "@omnesis/types";
 import type { EnableBankingTransport } from "./client.js";
 import type { EnableBankingCursor, StoredSession, StoredSessionAccount } from "./types.js";
 
@@ -432,14 +432,16 @@ export class EnableBankingAccountsSource {
     // been ingested and its cursor persisted — the prefetched raw history is
     // now redundant on disk, so it goes.
     removeBootstrapCaches(this.accountId, this.configDir);
-    const { records, snapshotDate } = await this.fetchAllBalances(session);
+    const { records, snapshotDate, issues } = await this.fetchAllBalances(session);
     return {
       analytics: { tableName: bankBalancesSchema.tableName, records },
+      issues,
       cursor: {
         phase: "incremental",
         lastBookingDates: cursor.lastBookingDates ?? {},
         bootstrapReach: cursor.bootstrapReach,
-        lastBalancesDate: snapshotDate,
+        // A balance that could not be fetched is fetched again next tick.
+        lastBalancesDate: issues.length === 0 ? snapshotDate : cursor.lastBalancesDate,
       },
       hasMore: false,
     };
@@ -474,12 +476,15 @@ export class EnableBankingAccountsSource {
     }
 
     if (stage === "balances") {
-      const { records, snapshotDate } = await this.fetchAllBalances(session);
+      const { records, snapshotDate, issues } = await this.fetchAllBalances(session);
       return {
         analytics: { tableName: bankBalancesSchema.tableName, records },
+        issues,
         cursor: {
           ...baseIncrementalCursor(cursor),
-          lastBalancesDate: snapshotDate,
+          // A balance that could not be fetched is fetched again next tick;
+          // the transactions go ahead either way.
+          lastBalancesDate: issues.length === 0 ? snapshotDate : cursor.lastBalancesDate,
           incStage: "transactions",
           incrementalAccountIndex: 0,
         },
@@ -624,16 +629,48 @@ export class EnableBankingAccountsSource {
     };
   }
 
-  private async fetchAllBalances(
-    session: StoredSession,
-  ): Promise<{ records: Record<string, unknown>[]; snapshotDate: string }> {
+  /**
+   * Every account's balances, and an issue for each account whose balances
+   * could not be fetched. A balance is a daily snapshot beside the
+   * transactions, so a bank failing that one request must not hold back this
+   * account's transactions, or any other account's: the failure is reported
+   * as an issue of the page — which also clears it once a later fetch
+   * succeeds — and the tick goes on. A failure that stops every request on
+   * this connection (auth, the bank's rate limit, the network) is still
+   * thrown, since the transactions would meet it too.
+   */
+  private async fetchAllBalances(session: StoredSession): Promise<{
+    records: Record<string, unknown>[];
+    snapshotDate: string;
+    issues: SyncIssue[];
+  }> {
     // snapshot_date is ALWAYS the UTC date of the fetch — "latest
     // observation that day". Two same-day fetches upsert the same PK; a
     // midnight-crossing retry leaves one benign extra row.
     const snapshotDate = utcDateOf(this.now());
     const records: Record<string, unknown>[] = [];
+    const issues: SyncIssue[] = [];
     for (const account of session.accounts) {
-      const balances = await this.client.getBalances(account.uid);
+      let balances;
+      try {
+        balances = await this.client.getBalances(account.uid);
+      } catch (err) {
+        if (!isAccountScopedFailure(err)) throw err;
+        const subject = `account …${account.account_key.slice(-6)}`;
+        log.warn(
+          `Balances for ${this.accountId} ${subject} unavailable (${err.message}); syncing transactions anyway`,
+        );
+        issues.push({
+          code: "balances-unavailable",
+          scope: "partition",
+          kind: err.kind,
+          count: 1,
+          subject,
+          message: `The balance of ${subject} could not be refreshed: ${err.message}`,
+          ...(err.remediation ? { remediation: err.remediation } : {}),
+        });
+        continue;
+      }
       const result = balancesToRecords(balances, {
         accountKey: account.account_key,
         sourceAccountId: this.accountId,
@@ -644,7 +681,7 @@ export class EnableBankingAccountsSource {
       }
       records.push(...result.records);
     }
-    return { records, snapshotDate };
+    return { records, snapshotDate, issues };
   }
 
   private processPage(
@@ -698,6 +735,15 @@ export class EnableBankingAccountsSource {
  */
 function isStaleContinuationFailure(err: unknown, continuationKey: string | undefined): boolean {
   return continuationKey !== undefined && err instanceof SyncError && err.kind === "unknown";
+}
+
+/**
+ * Whether a failed request concerns only the account it was for: a bank-side
+ * error, a server error, or a client error about that account. Auth, rate
+ * limits and an unreachable network stop every request on the connection.
+ */
+function isAccountScopedFailure(err: unknown): err is SyncError {
+  return err instanceof SyncError && (err.kind === "transient" || err.kind === "unknown");
 }
 
 /** Incremental cursor with all transient in-tick/window state cleared. */

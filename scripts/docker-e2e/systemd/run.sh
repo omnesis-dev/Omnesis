@@ -13,7 +13,15 @@ MEMORY="${OMNESIS_E2E_MEMORY:-8g}"
 CPUS="${OMNESIS_E2E_CPUS:-4}"
 
 echo "==> building ${IMAGE} (from the current checkout)"
-docker build -q -f scripts/docker-e2e/systemd/Dockerfile -t "$IMAGE" . >/dev/null
+# The build log stays quiet on success; a failed step's own output (an apt
+# mirror error, a failed compile) is printed so the failure names its cause.
+BUILD_LOG="$(mktemp)"
+if ! docker build --progress=plain -f scripts/docker-e2e/systemd/Dockerfile -t "$IMAGE" . >"$BUILD_LOG" 2>&1; then
+  tail -n 80 "$BUILD_LOG" >&2
+  rm -f "$BUILD_LOG"
+  exit 1
+fi
+rm -f "$BUILD_LOG"
 
 cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
 trap cleanup EXIT

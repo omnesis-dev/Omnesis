@@ -327,23 +327,23 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var labDestinationView: some View {
-            #if DEBUG
-            if destinationMode == .preview {
-                LabView(snapshot: PreviewMocks.lab, preview: true)
-            } else {
-                LabView()
-            }
-            #else
+        #if DEBUG
+        if destinationMode == .preview {
+            LabView(snapshot: PreviewMocks.lab, preview: true)
+        } else {
             LabView()
-            #endif
+        }
+        #else
+        LabView()
+        #endif
     }
 
     private var notificationsDestinationView: some View {
-            Form { notificationsSection }
-                .scrollContentBackground(.hidden)
-                .background(Theme.bgPrimary)
-                .navigationTitle("Notifications")
-                .navigationBarTitleDisplayMode(.inline)
+        Form { notificationsSection }
+            .scrollContentBackground(.hidden)
+            .background(Theme.bgPrimary)
+            .navigationTitle("Notifications")
+            .navigationBarTitleDisplayMode(.inline)
     }
 
     @ViewBuilder

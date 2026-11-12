@@ -18,6 +18,7 @@ import {
   ContextualAssessmentError,
 } from "../../inference/contextual-entailment.js";
 import { raceAbort } from "../decision-call.js";
+import { VERIFIER_FOREGROUND_DEADLINE_MS } from "../../inference/verifier-limits.js";
 import { parseClaimReference } from "./references.js";
 import { assertWikiRepairAssessment } from "./wiki-factual-repair.js";
 import { KnowledgeVerificationTimeoutError, verificationFailure } from "./verification-failure.js";
@@ -553,7 +554,7 @@ export class KnowledgeService {
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new KnowledgeVerificationTimeoutError()),
-      45000,
+      VERIFIER_FOREGROUND_DEADLINE_MS,
     );
     try {
       return await raceAbort(run(controller.signal), controller.signal);

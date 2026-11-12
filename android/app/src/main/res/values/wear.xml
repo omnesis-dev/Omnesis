@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Capabilities this app advertises on the Wearable Data Layer. The watch app relays
+     to the node advertising omnesis_phone_relay (WearDataLayer.PHONE_CAPABILITY). -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@array/android_wear_capabilities">
+    <string-array name="android_wear_capabilities">
+        <item>omnesis_phone_relay</item>
+    </string-array>
+</resources>

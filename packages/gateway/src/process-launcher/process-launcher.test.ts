@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawnSync } from "node:child_process";
+import { fork, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,7 @@ import {
   STDERR_CAPTURE_CHARS,
   type ProcessLauncher,
 } from "./index.js";
+import type { LauncherRequest } from "../workers/process-launcher-host.js";
 
 const hosts: HostedProcessLauncher[] = [];
 afterEach(() => {
@@ -235,6 +237,48 @@ describe("hosted launcher", () => {
     // Disposed: later programs start from the caller, and no host is forked again.
     const after = await host.run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 });
     expect(Number(text(after.stdout))).toBe(process.pid);
+  });
+
+  it("kills a program it could not report because the caller had already disconnected", async () => {
+    const entry = resolveWorkerEntry(
+      "../workers/process-launcher-host.ts",
+      import.meta.url,
+      "../workers/register-tsx.mjs",
+    );
+    const child = fork(fileURLToPath(entry.url), [], {
+      execArgv: entry.execArgv,
+      serialization: "advanced",
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+    await new Promise<void>((resolve) => child.once("message", () => resolve()));
+    // The program is found by its name ($0), not by a pid it writes down: the
+    // host may kill it before it has run a single command.
+    const name = `omnesis-launcher-test-${randomUUID()}`;
+    const programs = (): number[] =>
+      spawnSync("pgrep", ["-f", name], { encoding: "utf8" })
+        .stdout.split("\n")
+        .filter(Boolean)
+        .map(Number)
+        .filter(running);
+    const run: LauncherRequest = {
+      type: "run",
+      id: 1,
+      command: "sh",
+      args: ["-c", "sleep 30", name],
+      opts: { timeoutMs: 30_000 },
+    };
+    // Disconnecting in the same tick closes the channel before the host can
+    // report the program it starts: its "started" reply meets a closed pipe.
+    child.send(run);
+    child.disconnect();
+    expect(await exited, stderr).toBe(0);
+    expect(
+      await eventually(() => programs().length === 0),
+      `programs still running: ${programs().join(", ")}`,
+    ).toBe(true);
   });
 
   it("starts programs from the caller while a failed host waits out its back-off", async () => {

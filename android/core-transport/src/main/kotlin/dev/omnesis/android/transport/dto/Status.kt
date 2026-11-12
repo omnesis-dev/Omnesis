@@ -186,4 +186,10 @@ data class WatchCaptureStatusDto(
     val supported: Boolean = false,
     val enabled: Boolean = false,
     val active: Boolean = false,
+    /**
+     * The gateway announces a recorded question's answer itself when the question is
+     * sent with `notifyAfterMs: 0`, and withdraws the announcement once told the
+     * answer was seen. Absent on a gateway that leaves the announcement to the phone.
+     */
+    val completionNotifications: Boolean = false,
 )

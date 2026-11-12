@@ -5,7 +5,7 @@ import { serve } from "@hono/node-server";
 import Database from "better-sqlite3";
 import { ProviderId, SourceId, SyncError } from "@omnesis/types";
 import { isAnalyticsLeaseRejection, type IngestAnalyticsResponse } from "@omnesis/source-sdk";
-import { AudioUnreadableError } from "@omnesis/core";
+import { AudioRejectedError, AudioUnreadableError } from "@omnesis/core";
 import { HttpGatewayClient, chunkDocuments } from "./http-gateway-client.js";
 import { DEFAULT_UPSERT_CHUNK, DEFAULT_UPSERT_CHUNK_BYTES } from "./tunables.js";
 import type { DocumentInput } from "@omnesis/types";
@@ -147,6 +147,18 @@ function createTestGateway(database: Db, apiKey: string) {
               ? Response.json({ error: "undecodable", code: "AUDIO_UNREADABLE" }, { status: 422 })
               : Response.json({ error: "failed", code: "SERVICE_UNAVAILABLE" }, { status: 503 });
           }
+          if (text === "TRIGGER_TOO_LARGE")
+            return Response.json(
+              { error: "Audio body too large (max 25 MB)", code: "PAYLOAD_TOO_LARGE" },
+              { status: 413 },
+            );
+          if (text === "TRIGGER_BAD_REQUEST")
+            return Response.json(
+              { error: "Invalid transcription context", code: "BAD_REQUEST" },
+              { status: 400 },
+            );
+          if (text === "TRIGGER_FORBIDDEN")
+            return Response.json({ error: "forbidden" }, { status: 403 });
           if (text === "TRIGGER_OTHER_422")
             return Response.json({ error: "other", code: "SOMETHING_ELSE" }, { status: 422 });
           if (text === "TRIGGER_RATELIMIT")
@@ -459,6 +471,32 @@ describe("HttpGatewayClient.transcribe", () => {
     const err = await client.transcribe(enc("TRIGGER_UNREADABLE"), "audio/ogg").catch((e) => e);
     expect(err).toBeInstanceOf(AudioUnreadableError);
     expect(err).toMatchObject({ kind: "unknown", scope: "item" });
+  });
+
+  test("audio over the gateway's size cap (413) is rejected for that item, not 'no transcriber'", async () => {
+    const err = await client.transcribe(enc("TRIGGER_TOO_LARGE"), "audio/ogg").catch((e) => e);
+    expect(err).toBeInstanceOf(AudioRejectedError);
+    expect(err).not.toBeInstanceOf(AudioUnreadableError);
+    expect(err).toMatchObject({ reason: "too-large", kind: "unknown", scope: "item" });
+  });
+
+  test("a request the gateway refused as malformed (400) is rejected with its reason", async () => {
+    const err = await client.transcribe(enc("TRIGGER_BAD_REQUEST"), "audio/ogg").catch((e) => e);
+    expect(err).toBeInstanceOf(AudioRejectedError);
+    expect(err).toMatchObject({ reason: "refused", kind: "unknown", scope: "item" });
+    expect(err.message).toContain("Invalid transcription context");
+  });
+
+  test("empty audio is rejected as empty without being sent", async () => {
+    const before = transcriptionContextHeaders.length;
+    const err = await client.transcribe(new Uint8Array(0), "audio/ogg").catch((e) => e);
+    expect(err).toBeInstanceOf(AudioRejectedError);
+    expect(err).toMatchObject({ reason: "empty", kind: "unknown", scope: "item" });
+    expect(transcriptionContextHeaders.length).toBe(before);
+  });
+
+  test("any other 4xx still reads as no transcript", async () => {
+    expect(await client.transcribe(enc("TRIGGER_FORBIDDEN"), "audio/ogg")).toBeNull();
   });
 
   test("a 422 without the unreadable-audio code stays a plain no-transcript", async () => {

@@ -22,6 +22,23 @@ The app uses the shared `omnesis://` URI scheme for some links. When two Omnesis
 
 See the [Notifications guide](https://omnesis.dev/docs/notifications#setup) for FCM setup, status and repair.
 
+## Wear OS app
+
+The `:wear` module is the watch app, and `:wear-core` its logic, a plain JVM
+library whose tests (`./gradlew :wear-core:test`) need no Android toolchain. The
+app relays through the phone app, so build and install both from the same
+checkout with the same package id and signing key; the watch app reads its
+package id and version from the phone app's build.
+
+```sh
+cd android
+./gradlew :wear:assembleDebug
+adb -s <watch-serial> install -r wear/build/outputs/apk/debug/wear-debug.apk
+```
+
+Open Omnesis from the watch's app list, or add the **Omnesis** tile or
+complication to open the recorder from the watch face.
+
 ## Task widgets
 
 Add **Omnesis → Tasks** from the launcher's widget picker, then resize it to fit.
@@ -40,3 +57,29 @@ inputs. A failed completion leaves the task open.
 
 `TaskWidgetScreenshotTest` renders the actual RemoteViews in compact, medium,
 large and tablet sizes, including light/dark and offline/empty/error states.
+
+## Wear OS watch relay
+
+A paired Wear OS watch running Omnesis holds no gateway credentials. It hands
+questions, notes and recordings to this phone app over the Wearable Data Layer,
+and the phone app asks the gateway with its own pairing. The contract both apps
+share (paths, messages and the policies each end applies) is the plain-JVM
+`:core-wear-protocol` module.
+
+`app/.../wear/` is the phone side. `WearRelayService` receives what the watch
+sends, with the app not running if need be, and hands it to `WearRelay`, which
+routes to one orchestrator per job: publishing the gate that tells the watch
+which buttons to show, answering a text question, saving a text note, acting on
+relays the watch queued, and turning a recording into a note or an answered
+question. A recording is copied into a no-backup inbox before the watch is told
+the phone has it, and stays there until it is processed. Relay work is held
+alive by expedited WorkManager work, since the listener service is bound only
+for its callbacks. Settings → Watch shows the watch's connection, the gateway's
+decision-gate setting and what on-device transcription needs.
+
+The relay needs Google Play services' Wearable API. Without it nothing is
+started and the Watch section is hidden.
+
+The phone app's unit tests include loopback tests (`app/src/test/.../wear/loopback/`)
+that run the watch's real logic against this relay over an in-memory Data Layer,
+so the two sides are tested against each other and not only against the contract.

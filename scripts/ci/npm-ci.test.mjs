@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -11,25 +22,38 @@ import { parse } from "yaml";
 const SCRIPT = join(import.meta.dirname, "npm-ci.sh");
 const dirs = [];
 
-/**
- * Run the wrapper in a scratch directory against a fake `npm`. Each entry of
- * `installs` scripts one `npm ci`: "ok" leaves ffmpeg-static in place, "dropped"
- * exits 0 without it, the way npm treats a failed optional install, and "fail"
- * exits 1.
- */
-function run({ installs, args = [], env = {}, lockfile = '{"node_modules/ffmpeg-static":{}}' }) {
+function scratch() {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-npm-ci-"));
   dirs.push(dir);
-  if (lockfile !== null) writeFileSync(join(dir, "package-lock.json"), lockfile);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * Run the wrapper in a scratch directory against a fake `npm`. Each entry of
+ * `installs` scripts one `npm ci`: "ok" installs cleanly, "dropped" exits 0
+ * but records two optional packages as failed in its debug log, the way npm
+ * treats an optional package it could not fetch or build, and "fail" exits 1.
+ */
+function run({ installs, args = [], env = {} }) {
+  const dir = scratch();
   writeFileSync(
     join(dir, "npm"),
     `#!/bin/sh
-echo "$*" >> calls
-n=$(wc -l < calls)
-rm -rf node_modules
+n=$(($(cat count 2>/dev/null || echo 0) + 1)); echo "$n" > count
+logs=; prev=
+for arg in "$@"; do [ "$prev" = --logs-dir ] && logs="$arg"; prev="$arg"; done
+[ -d "$logs" ] || { echo "no log directory: $*" >&2; exit 9; }
+echo "$*" | sed "s| --logs-dir $logs||" >> calls
+log="$logs/2026-01-01T00_00_00_000Z-debug-0.log"
+echo "1 verbose cli ci" > "$log"
 case "$(sed -n "\${n}p" script)" in
-  ok) mkdir -p node_modules/ffmpeg-static; echo '{}' > node_modules/ffmpeg-static/package.json ;;
-  dropped) mkdir -p node_modules ;;
+  dropped)
+    echo "2 verbose reify failed optional dependency $PWD/node_modules/@scope/binding-linux-x64" >> "$log"
+    echo "3 verbose reify failed optional dependency $PWD/node_modules/ffmpeg-static" >> "$log" ;;
   fail) exit 1 ;;
 esac
 `,
@@ -45,48 +69,48 @@ esac
   return { status: result.status, stderr: result.stderr, calls };
 }
 
-afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
-
 describe("npm-ci.sh", () => {
   test("a clean install runs once", () => {
-    const { status, calls, stderr } = run({ installs: ["ok"] });
+    const { status, calls, stderr } = run({ installs: ["ok"], args: ["--no-audit"] });
     expect(status).toBe(0);
-    expect(calls).toEqual(["ci"]);
+    expect(calls).toEqual(["ci --no-audit"]);
     expect(stderr).toBe("");
   });
 
-  test("installs again when ffmpeg-static was dropped, and stops once it is back", () => {
+  test("installs again when npm dropped optional packages, and stops once they are back", () => {
     const { status, calls, stderr } = run({ installs: ["dropped", "dropped", "ok"] });
     expect(status).toBe(0);
     expect(calls).toHaveLength(3);
-    expect(stderr).toContain("dropped ffmpeg-static");
+    expect(stderr).toContain(
+      "npm ci dropped optional packages that failed to install: @scope/binding-linux-x64 ffmpeg-static (attempt 1 of 3)",
+    );
     expect(stderr).not.toContain("::warning::");
   });
 
-  test("warns and carries on when ffmpeg-static stays dropped", () => {
+  test("warns and carries on when the packages stay dropped", () => {
     const { status, calls, stderr } = run({ installs: ["dropped", "dropped", "dropped"] });
     expect(status).toBe(0);
     expect(calls).toHaveLength(3);
-    expect(stderr).toContain("::warning::npm ci dropped ffmpeg-static");
+    expect(stderr).toContain("::warning::npm ci dropped optional packages");
+    expect(stderr).toContain("after 3 attempts; this tree lacks them");
   });
 
-  test("fails a build that requires ffmpeg-static when it stays dropped", () => {
+  test("fails a build that requires its optional packages when they stay dropped", () => {
     const { status, calls, stderr } = run({
       installs: ["dropped", "dropped", "dropped"],
-      env: { NPM_CI_REQUIRE_FFMPEG: "1" },
+      env: { NPM_CI_REQUIRE_OPTIONAL: "1" },
     });
     expect(status).toBe(1);
     expect(calls).toHaveLength(3);
-    expect(stderr).toContain("this build requires it");
+    expect(stderr).toContain("@scope/binding-linux-x64 ffmpeg-static, after 3 attempts");
+    expect(stderr).toContain("this build requires them");
     expect(stderr).not.toContain("::warning::");
   });
 
-  test("a build that requires ffmpeg-static passes once it is back", () => {
+  test("a build that requires its optional packages passes once they are back", () => {
     const { status, calls } = run({
       installs: ["dropped", "ok"],
-      env: { NPM_CI_REQUIRE_FFMPEG: "1" },
+      env: { NPM_CI_REQUIRE_OPTIONAL: "1" },
     });
     expect(status).toBe(0);
     expect(calls).toHaveLength(2);
@@ -104,46 +128,175 @@ describe("npm-ci.sh", () => {
     expect(status).toBe(0);
     expect(calls).toHaveLength(2);
   });
-
-  test.each([["--ignore-scripts"], ["--omit=optional"], ["--no-optional"]])(
-    "does not look for ffmpeg-static with %s, which leaves it out on purpose",
-    (flag) => {
-      const { status, calls, stderr } = run({ installs: ["dropped"], args: [flag] });
-      expect(status).toBe(0);
-      expect(calls).toEqual([`ci ${flag}`]);
-      expect(stderr).toBe("");
-    },
-  );
-
-  test("does not look for ffmpeg-static when the lockfile does not list it", () => {
-    for (const lockfile of ["{}", null]) {
-      const { status, calls } = run({ installs: ["dropped"], lockfile });
-      expect(status).toBe(0);
-      expect(calls).toEqual(["ci"]);
-    }
-  });
 });
 
-describe("published images", () => {
+/** A gzipped npm tarball holding only `package/package.json`. */
+function packTarball(dir, manifest) {
+  const source = join(dir, "src", manifest.name);
+  mkdirSync(join(source, "package"), { recursive: true });
+  writeFileSync(join(source, "package", "package.json"), JSON.stringify(manifest));
+  const file = join(dir, `${manifest.name}.tgz`);
+  const tar = spawnSync("tar", ["-czf", file, "-C", source, "package"], { encoding: "utf8" });
+  if (tar.status !== 0) throw new Error(`tar failed: ${tar.stderr}`);
+  return readFileSync(file);
+}
+
+/**
+ * A project whose lockfile resolves one required and one optional package
+ * from a local registry that answers 503 to the optional package's tarball
+ * for its first `failures` requests.
+ */
+async function projectWithFlakyOptional(failures) {
+  const dir = scratch();
+  const tarballs = new Map(
+    ["kept", "binding"].map((name) => [
+      `/${name}/-/${name}-1.0.0.tgz`,
+      packTarball(dir, { name, version: "1.0.0" }),
+    ]),
+  );
+  let remaining = failures;
+  const server = createServer((req, res) => {
+    const body = tarballs.get(req.url);
+    if (body && req.url.startsWith("/binding/") && remaining > 0) {
+      remaining -= 1;
+      res.writeHead(503).end();
+    } else if (body) {
+      res.writeHead(200, { "content-type": "application/octet-stream" }).end(body);
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const registry = `http://127.0.0.1:${server.address().port}`;
+  const entry = (name) => {
+    const url = `/${name}/-/${name}-1.0.0.tgz`;
+    const integrity = `sha512-${createHash("sha512").update(tarballs.get(url)).digest("base64")}`;
+    return { version: "1.0.0", resolved: `${registry}${url}`, integrity };
+  };
+  const project = join(dir, "project");
+  mkdirSync(project);
+  const root = {
+    name: "project",
+    version: "1.0.0",
+    dependencies: { kept: "1.0.0" },
+    optionalDependencies: { binding: "1.0.0" },
+  };
+  writeFileSync(join(project, "package.json"), JSON.stringify(root));
+  writeFileSync(
+    join(project, "package-lock.json"),
+    JSON.stringify({
+      name: "project",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": root,
+        "node_modules/binding": { ...entry("binding"), optional: true },
+        "node_modules/kept": entry("kept"),
+      },
+    }),
+  );
+  return { project, cache: join(dir, "cache"), registry, close: () => server.close() };
+}
+
+/** Run a command to completion without blocking the registry in this process. */
+async function exec(command, args, options) {
+  const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => (stderr += chunk));
+  child.stdout.resume();
+  const [status] = await once(child, "close");
+  return { status, stderr };
+}
+
+describe("npm-ci.sh against the real npm", () => {
+  const npmArgs = (fixture) => [
+    "--no-audit",
+    "--no-fund",
+    "--fetch-retries=0",
+    `--cache=${fixture.cache}`,
+    `--registry=${fixture.registry}/`,
+  ];
+  const env = {
+    ...process.env,
+    NPM_CI_RETRY_SECONDS: "0",
+    npm_config_update_notifier: "false",
+  };
+
+  test("npm ci exits 0 without an optional package whose tarball failed", async () => {
+    const fixture = await projectWithFlakyOptional(Infinity);
+    try {
+      const result = await exec("npm", ["ci", ...npmArgs(fixture)], { cwd: fixture.project, env });
+      expect(result.status).toBe(0);
+      expect(existsSync(join(fixture.project, "node_modules/kept/package.json"))).toBe(true);
+      expect(existsSync(join(fixture.project, "node_modules/binding"))).toBe(false);
+    } finally {
+      fixture.close();
+    }
+  }, 60_000);
+
+  test("the wrapper installs again and gets the optional package back", async () => {
+    const fixture = await projectWithFlakyOptional(1);
+    try {
+      const result = await exec("sh", [SCRIPT, ...npmArgs(fixture)], {
+        cwd: fixture.project,
+        env: { ...env, NPM_CI_REQUIRE_OPTIONAL: "1" },
+      });
+      expect(result.stderr).toContain(
+        "npm ci dropped optional packages that failed to install: binding (attempt 1 of 3)",
+      );
+      expect(result.status).toBe(0);
+      expect(existsSync(join(fixture.project, "node_modules/binding/package.json"))).toBe(true);
+    } finally {
+      fixture.close();
+    }
+  }, 60_000);
+
+  test("the wrapper fails a build that requires it when the package stays missing", async () => {
+    const fixture = await projectWithFlakyOptional(Infinity);
+    try {
+      const result = await exec("sh", [SCRIPT, ...npmArgs(fixture)], {
+        cwd: fixture.project,
+        env: { ...env, NPM_CI_ATTEMPTS: "2", NPM_CI_REQUIRE_OPTIONAL: "1" },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("binding, after 2 attempts, and this build requires them");
+    } finally {
+      fixture.close();
+    }
+  }, 60_000);
+});
+
+describe("images that require their optional packages", () => {
   const root = join(import.meta.dirname, "..", "..");
   const workflow = (name) =>
     parse(readFileSync(join(root, ".github", "workflows", name), "utf8")).jobs;
   const stepsOf = (jobs) => Object.values(jobs).flatMap((job) => job.steps ?? []);
 
-  test("the image's dependency stage reads the requirement", () => {
+  test("the published image's dependency stage reads the requirement", () => {
     const stage = readFileSync(join(root, "Dockerfile"), "utf8")
       .split(/^FROM /mu)
       .find((text) => text.startsWith("base AS runtime-dependencies"));
-    expect(stage).toMatch(/^ARG NPM_CI_REQUIRE_FFMPEG=0$/mu);
+    expect(stage).toMatch(/^ARG NPM_CI_REQUIRE_OPTIONAL=0$/mu);
     expect(stage).toMatch(/sh scripts\/ci\/npm-ci\.sh/u);
   });
 
-  test.each(["release.yml", "docker-publish.yml"])("%s requires ffmpeg-static", (name) => {
+  test.each(["release.yml", "docker-publish.yml"])("%s requires them", (name) => {
     const steps = stepsOf(workflow(name));
     const pushes = steps.filter((step) => /docker\/build-push-action/u.test(step.uses ?? ""));
     expect(pushes.length).toBeGreaterThan(0);
-    for (const step of pushes) expect(step.with["build-args"]).toBe("NPM_CI_REQUIRE_FFMPEG=1");
+    for (const step of pushes) expect(step.with["build-args"]).toBe("NPM_CI_REQUIRE_OPTIONAL=1");
     for (const step of steps.filter((s) => /docker buildx build/u.test(s.run ?? "")))
-      expect(step.run).toContain("--build-arg NPM_CI_REQUIRE_FFMPEG=1");
+      expect(step.run).toContain("--build-arg NPM_CI_REQUIRE_OPTIONAL=1");
   });
+
+  test.each(["scripts/docker-e2e/Dockerfile", "scripts/docker-e2e/systemd/Dockerfile"])(
+    "the %s test image installs through the wrapper and requires them",
+    (path) => {
+      const dockerfile = readFileSync(join(root, path), "utf8");
+      expect(dockerfile).toMatch(/NPM_CI_REQUIRE_OPTIONAL=1 sh scripts\/ci\/npm-ci\.sh/u);
+      expect(dockerfile).not.toMatch(/^\s*(RUN\s+|&&\s+)npm ci\b/mu);
+    },
+  );
 });
