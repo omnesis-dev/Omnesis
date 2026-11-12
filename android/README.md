@@ -22,6 +22,21 @@ The app uses the shared `omnesis://` URI scheme for some links. When two Omnesis
 
 See the [Notifications guide](https://omnesis.dev/docs/notifications#setup) for FCM setup, status and repair.
 
+## Wear OS app
+
+The `:wear` module is the watch app. It relays through the phone app, so build
+and install both from the same checkout with the same package id and signing
+key; the watch app reads its package id and version from the phone app's build.
+
+```sh
+cd android
+./gradlew :wear:assembleDebug
+adb -s <watch-serial> install -r wear/build/outputs/apk/debug/wear-debug.apk
+```
+
+Add the **Omnesis** tile or complication on the watch to open the recorder from
+the watch face.
+
 ## Task widgets
 
 Add **Omnesis → Tasks** from the launcher's widget picker, then resize it to fit.

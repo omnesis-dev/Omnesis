@@ -125,7 +125,7 @@ scripts/android-logic.sh --module :feature-health        # one module's testDebu
 scripts/android-logic.sh --tests dev.omnesis.android.transport.dto.DtoDecodeTest
 ```
 
-`scripts/android-logic.sh` mirrors `android-render.sh`'s bridge shape (env-host + path-guard + rsync-up) but runs `./gradlew <module>:testDebugUnitTest` — the plain-JVM unit lane, no AVD, no Robolectric Compose rasterisation. The default scopes to the modules whose tests are pure JVM logic (`:core-transport`, `:core-pairing`, `:core-designsystem`, `:core-setup`, `:core-wear-protocol`). A plain Kotlin/JVM module such as `:core-wear-protocol` has a single `test` task instead of `testDebugUnitTest`; the script picks the right one, and the CI `android-jvm` lane names each such module because the build-wide `testDebugUnitTest` does not reach it; the `:app` and `:feature-health` modules share a module with the slow Roborazzi screenshot tests, so narrow those with `--module` + `--tests` (e.g. `--module :feature-health --tests *HealthNormalizerTest`).
+`scripts/android-logic.sh` mirrors `android-render.sh`'s bridge shape (env-host + path-guard + rsync-up) but runs `./gradlew <module>:testDebugUnitTest` — the plain-JVM unit lane, no AVD, no Robolectric Compose rasterisation. The default scopes to the modules whose tests are pure JVM logic (`:core-transport`, `:core-pairing`, `:core-designsystem`, `:core-setup`, `:core-wear-protocol`) and to the Wear OS app's logic package (`dev.omnesis.android.wear.core`, filtered out of `:wear`'s screenshot tests). A plain Kotlin/JVM module such as `:core-wear-protocol` has a single `test` task instead of `testDebugUnitTest`; the script picks the right one, and the CI `android-jvm` lane names each such module because the build-wide `testDebugUnitTest` does not reach it; the `:app` and `:feature-health` modules share a module with the slow Roborazzi screenshot tests, so narrow those with `--module` + `--tests` (e.g. `--module :feature-health --tests *HealthNormalizerTest`). With `--module` on an application module, `--assemble` also packages its debug APK (`--module :wear --assemble`), which is the only local proof that the manifest merges and the code dexes.
 
 The scratch checkout is kept **warm**: the script rsyncs into a persistent dir (default `~/omnesis-android-logic` on the host, override with `OMNESIS_EPIC_MACOS_ANDROID_LOGIC_WORKTREE`) and **preserves the Gradle build cache** across runs (it excludes `.gradle` / `build` from the up-sync, so the host's caches survive) and opts into the **configuration cache** (`--configuration-cache`, a lane-local flag — `gradle.properties` keeps it off globally so the Roborazzi/CI lanes are unaffected). So a repeat run skips the configuration phase and most recompilation. Use this lane while iterating on logic; the Roborazzi lane to self-critique a UI change.
 
@@ -324,10 +324,46 @@ Modules: `:app` (Compose UI + ViewModels + Hilt root + nav), `:core-transport`
 `SourceCatalog`, atoms), `:core-wear-protocol` (the contract the Wear OS app
 and the phone app share for the watch relay: Data Layer paths, wire messages
 and the pure policies both ends apply; a plain Kotlin/JVM library with no
-Android dependency, ported from the iOS watch relay's shared files). MVVM + repository; Hilt DI; ViewModel + immutable
+Android dependency, ported from the iOS watch relay's shared files), `:wear`
+(the Wear OS app; see "Wear OS app" below). MVVM + repository; Hilt DI; ViewModel + immutable
 `StateFlow<UiState>`; OkHttp + Retrofit + kotlinx.serialization; Material 3 +
 `ModalNavigationDrawer`. A `SessionManager` (the iOS `AppStore` analogue) rebuilds
 the transport clients on pair/unpair/url-change.
+
+## Wear OS app (`:wear`)
+
+The port of the Apple Watch app (`ios/Sources/OmnesisWatch/`, the canonical
+reference). It holds no gateway credential and makes no gateway call: every
+question, note and recording is relayed through the phone app over the Wearable
+Data Layer, as `:core-wear-protocol` defines. It takes its application id and
+version from `:app`'s evaluated configuration, because the Data Layer only
+connects two apps with the same application id and signing key.
+
+- `core/` is the logic, with no Android import (a test enforces it): the ask
+  router, the unified recorder, the two note flows, the outbox and its store,
+  and `WatchCore`, which wires them and routes what the phone sends. It runs on
+  the interfaces in `Ports.kt`, so its tests are plain JVM tests on fakes with a
+  virtual clock.
+- `link/` is the Data Layer (`GmsPhoneLink`, and `PhoneListenerService`, which
+  the system starts for every message and DataItem, running or not). `device/`
+  is the microphone, the voice, haptics and the WorkManager retry.
+- `ui/` is Compose for Wear OS, stateless over `WatchUiState`; `WatchApp` binds
+  it to `WatchViewModel`. `surfaces/` is the tile and the complication.
+- Wear Compose **Material 2.x** (1.4), the line built on the Compose runtime
+  the BOM pins; Wear Material 3 needs a newer runtime than the rest of the build.
+
+```bash
+./gradlew :wear:assembleDebug            # -> wear/build/outputs/apk/debug/wear-debug.apk
+./gradlew :wear:testDebugUnitTest        # logic + manifest tests (screenshots are no-ops here)
+./gradlew :wear:recordRoborazziDebug     # -> wear/src/test/roborazzi/*.png (tracked goldens)
+```
+
+Every screen and state is captured on a small round, a large round and a square
+display by `captureOnEveryWatch` (`wear/src/test/.../screenshots/`). A round
+capture is a black disc on grey: anything outside the disc is cut off on a real
+watch. Wear OS offers a third-party watch app no voice-assistant entry point, so
+there is no counterpart to the Apple Watch app's Siri phrases; the tile, the
+complication and the launcher are the ways in.
 
 ## Conventions (carried from the repo)
 
