@@ -26,7 +26,7 @@ struct LabView: View {
             if let snapshot, snapshot.experimental {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        Text("Try what’s next")
+                        Text("Try experimental features")
                             .font(.largeTitle.bold())
                         Text(
                             "Explore features still taking shape. Enable each one separately. Your choices are shared across your devices."

@@ -19122,7 +19122,6 @@ summary.decision-card-head {
 /* Omnesis Lab — quiet, shared controls for the gateway's experiments. */
 .lab-view { max-width: 960px; padding: 20px 0 40px; }
 .lab-header { max-width: 660px; margin-bottom: 32px; }
-.lab-eyebrow { color: var(--accent); font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
 .lab-header h2 { margin: 12px 0; font-size: 32px; font-weight: 500; letter-spacing: -.035em; }
 .lab-header > p { color: var(--text-secondary); line-height: 1.75; font-size: 15px; }
 .lab-notice { margin-top: 20px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
@@ -19142,7 +19141,6 @@ summary.decision-card-head {
 .lab-switch:disabled { opacity: .5; cursor: wait; }
 .lab-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .lab-feature-state { color: var(--text-muted); font-size: 11px; }
-.lab-footnote { margin-top: 24px; color: var(--text-muted); font-size: 12px; line-height: 1.7; }
 .lab-error { padding: 12px; margin-bottom: 20px; color: var(--danger); border: 1px solid var(--danger); border-radius: 8px; }
 @media (max-width: 600px) { .lab-feature { grid-template-columns: 56px 1fr 50px; gap: 14px; padding: 20px 16px; align-items: start; } .lab-feature-icon { width: 56px; height: 56px; border-radius: 14px; } .lab-feature-icon img { width: 36px; height: 36px; } .lab-feature-copy h3 { font-size: 17px; } .lab-feature-control { padding-top: 3px; } }
 .settings-view > .config-tabs { overflow-x: auto; min-width: 0; }

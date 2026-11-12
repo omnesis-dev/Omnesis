@@ -10,7 +10,7 @@ export const LAB_FEATURES = [
     id: "brain",
     name: "Brain",
     description:
-      "Processes your data in the background to connect information, keep knowledge up to date, and surface useful insights. Chat and Tell Omnesis work independently.",
+      "Processes your data in the background to connect information, keep knowledge up to date, and surface useful insights.",
     iconSvg: icon(
       '<path d="M12 5a3 3 0 0 0-5.8-1A3.5 3.5 0 0 0 3 8a4 4 0 0 0-1 7 3.5 3.5 0 0 0 4 5 3 3 0 0 0 6-1V5Zm0 0a3 3 0 0 1 5.8-1A3.5 3.5 0 0 1 21 8a4 4 0 0 1 1 7 3.5 3.5 0 0 1-4 5 3 3 0 0 1-6-1"/><path d="M6 8c2 0 3 1 3 3m-6 4c2-1 4 0 4 2m11-9c-2 0-3 1-3 3m6 4c-2-1-4 0-4 2"/>',
     ),
@@ -28,7 +28,7 @@ export const LAB_FEATURES = [
     id: "watches",
     name: "Watches",
     description:
-      "Watch for changes in your data and receive a notification when your conditions are met. Watches run independently of the Brain.",
+      "Watch for changes in your data and receive a notification when your conditions are met.",
     iconSvg: icon(
       '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2"/>',
     ),

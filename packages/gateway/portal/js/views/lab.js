@@ -36,10 +36,9 @@ export function LabView({ onChange } = {}) {
 
   return html`<section class="lab-view" aria-labelledby="lab-heading">
     <header class="lab-header">
-      <span class="lab-eyebrow">A little ahead of the everyday</span>
       <h2 id="lab-heading">Omnesis Lab</h2>
-      <p>Explore what Omnesis is becoming. Turn on the experiments you want to try, and turn them off whenever you like.</p>
-      <div class="lab-notice">Experimental features may change. Your choices are shared across your connected apps.</div>
+      <p>Explore what Omnesis is becoming. Turn on experimental features, and turn them off whenever you like.</p>
+      <div class="lab-notice">These experimental features may change, have bugs, or be token expensive.</div>
     </header>
     ${error && html`<div class="lab-error" role="alert">${error} ${!features && html`<button class="btn-secondary" onClick=${() => setRetry((n) => n + 1)}>Try again</button>`}</div>`}
     ${!features && !error && html`<p role="status">Loading experiments…</p>`}
@@ -50,6 +49,5 @@ export function LabView({ onChange } = {}) {
         <div class="lab-feature-control"><button type="button" role="switch" class="lab-switch" aria-label=${`Enable ${feature.name}`} aria-checked=${feature.enabled} disabled=${saving !== null} onClick=${() => toggle(feature)}><span></span></button><span class="lab-feature-state">${saving === feature.id ? "Saving…" : feature.enabled ? "Enabled" : "Off"}</span></div>
       </article>`)}
     </div>
-    ${features && html`<p class="lab-footnote">Switching an experiment off pauses its features. Your existing data stays here for when you return.</p>`}
   </section>`;
 }

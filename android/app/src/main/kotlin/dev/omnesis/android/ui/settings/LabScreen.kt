@@ -130,7 +130,6 @@ fun LabContent(state: LabUiState, onBack: () -> Unit, onRetry: () -> Unit, onTog
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(OmSpacing.lg),
             verticalArrangement = Arrangement.spacedBy(OmSpacing.lg),
         ) {
-            Text("A little ahead of the everyday.", style = MaterialTheme.typography.headlineSmall, color = c.textPrimary)
             Text("Try features still taking shape. Enable only what you want to explore; you can turn them off at any time.", style = MaterialTheme.typography.bodyMedium, color = c.textSecondary)
             if (state.loading) OmSpinner(Modifier.size(24.dp))
             state.error?.let {
@@ -161,7 +160,7 @@ fun LabContent(state: LabUiState, onBack: () -> Unit, onRetry: () -> Unit, onTog
 /** Render the gateway's shared vector synchronously, including in screenshot tests. */
 @Composable
 private fun LabIcon(svg: String, modifier: Modifier) {
-    val color = "#%06X".format(Locale.ROOT, OmTheme.colors.accent.toArgb() and 0xFFFFFF)
+    val color = "#%06X".format(Locale.ROOT, OmTheme.colors.textPrimary.toArgb() and 0xFFFFFF)
     val picture = remember(svg, color) { runCatching { SVG.getFromString(svg.replace("currentColor", color)).renderToPicture() }.getOrNull() }
     Canvas(modifier) {
         if (picture != null) drawIntoCanvas { canvas ->
