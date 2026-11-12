@@ -30,9 +30,26 @@ data class CaptureZone(val id: String, val utcOffsetSeconds: Int) {
          */
         fun at(instant: Instant, zone: ZoneId): CaptureZone? {
             val id = zone.id
-            if (id != "UTC" && !id.contains('/')) return null
+            if (!accepted(id)) return null
             return CaptureZone(id, zone.rules.getOffset(instant).totalSeconds)
         }
+
+        /**
+         * The zone a relaying device captured in, as it reported it: its [id] and the
+         * offset it observed. Null under the rule [at] applies, and for an id this
+         * phone's zone database does not know or an offset no zone has; the capture
+         * then falls back to the phone's own zone.
+         */
+        fun relayed(id: String, utcOffsetSeconds: Int): CaptureZone? {
+            if (!accepted(id) || utcOffsetSeconds !in OFFSET_RANGE) return null
+            if (id !in ZoneId.getAvailableZoneIds()) return null
+            return CaptureZone(id, utcOffsetSeconds)
+        }
+
+        private fun accepted(id: String): Boolean = id == "UTC" || id.contains('/')
+
+        /** The widest offset from UTC the gateway accepts: eighteen hours either way. */
+        private val OFFSET_RANGE = -64_800..64_800
     }
 }
 

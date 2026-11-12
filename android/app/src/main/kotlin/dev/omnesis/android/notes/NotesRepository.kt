@@ -63,7 +63,14 @@ enum class DrainOutcome {
  * was captured there, and [noteId] (a UUID) is its idempotency key, so every copy of
  * the relay saves one note.
  */
-data class RelayedCapture(val noteId: String, val capturedAt: Instant)
+data class RelayedCapture(
+    val noteId: String,
+    val capturedAt: Instant,
+    /** The zone that device captured in; null when it reported none the gateway would accept. */
+    val zone: CaptureZone? = null,
+    /** The language tag that device recorded a voice note under; null when it named none. */
+    val language: String? = null,
+)
 
 /**
  * A voice note with no phone transcript that the gateway would not take with its audio:
@@ -127,8 +134,9 @@ class NotesRepository(
      * notes for delivery. Throws [VoiceNoteNotSavedException] when the gateway refuses
      * the audio and there is no transcript to fall back on.
      *
-     * [relayed] replaces the fresh idempotency key and capture time with the ones the
-     * note was given where it was captured.
+     * [relayed] replaces the fresh idempotency key, capture time, time zone and voice
+     * note language with the ones the note was given where it was captured. This phone's
+     * zone and language stand in for the two that device did not report.
      */
     suspend fun capture(
         text: String,
@@ -144,7 +152,7 @@ class NotesRepository(
         }
         val capturedInstant = relayed?.capturedAt ?: now()
         val capturedAt = capturedInstant.toString()
-        val capturedZone = CaptureZone.at(capturedInstant, timeZone())
+        val capturedZone = relayed?.zone ?: CaptureZone.at(capturedInstant, timeZone())
         val noteId = relayed?.noteId ?: UUID.randomUUID().toString()
         try {
             drain()
@@ -156,7 +164,7 @@ class NotesRepository(
         val ownedAudio = audio?.let {
             requireNotNull(audioFiles) { "voice notes need an audio folder" }.adopt(it, noteId)
         }
-        val noteLanguage = ownedAudio?.let { language() }
+        val noteLanguage = ownedAudio?.let { relayed?.language ?: language() }
         val g = gateway() ?: run {
             enqueue(
                 noteId,
