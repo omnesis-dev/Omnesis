@@ -286,3 +286,17 @@ export function notesRateLimiter(): IpRateLimiter {
     hourly: { capacity: 2_000, windowMs: 3_600_000 },
   });
 }
+
+/**
+ * Per-IP limiter for the recorded-conversation upload routes. A phone uploads
+ * about one chunk a minute while it records, and drains a backlog of a few
+ * hundred after a long stretch offline; the ceiling clears such a drain in a
+ * few minutes while still stopping a runaway client.
+ */
+export function recordingsRateLimiter(): IpRateLimiter {
+  return new IpRateLimiter({
+    surface: "/recordings",
+    burst: { capacity: 300, windowMs: 60_000 },
+    hourly: { capacity: 3_000, windowMs: 3_600_000 },
+  });
+}

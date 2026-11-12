@@ -7,6 +7,7 @@ import {
   encodeMultipart,
   encodeWav,
   parseTranscriptText,
+  parseVerboseSegments,
 } from "./http-transcriber.js";
 import { MAX_CHUNK_SAMPLES, chunkSamples, splitPcm } from "./chunks.js";
 import { computeTranscriptionTimeoutMs } from "./deadline.js";
@@ -331,6 +332,73 @@ describe("HttpTranscriber", () => {
     await expect(second).resolves.toMatchObject({ text: "second clip" });
     expect(calls).toBe(2);
   }, 20_000);
+});
+
+describe("HttpTranscriber segments", () => {
+  test("asks for verbose_json only when segments are wanted, and keeps their timings", async () => {
+    const { requests, fetchFn } = backend(() =>
+      Response.json({
+        text: "Hello there. Goodbye.",
+        segments: [
+          { start: 0, end: 1.5, text: " Hello there." },
+          { start: 1.5, end: 2.25, text: " Goodbye." },
+        ],
+      }),
+    );
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "whisper-large-v3-turbo",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+
+    const plain = await transcriber.transcribe(audio, "audio/ogg");
+    expect(plain.segments).toBeUndefined();
+    expect(requests[0]!.form.get("response_format")).toBe("json");
+
+    const timed = await transcriber.transcribe(audio, "audio/ogg", { segments: true });
+    expect(requests[1]!.form.get("response_format")).toBe("verbose_json");
+    expect(timed.segments).toEqual([
+      { startMs: 0, endMs: 1_500, text: "Hello there." },
+      { startMs: 1_500, endMs: 2_250, text: "Goodbye." },
+    ]);
+  });
+
+  test("a server that refuses verbose_json is asked for json, then and afterwards", async () => {
+    let n = 0;
+    const { requests, fetchFn } = backend(() => {
+      n += 1;
+      return n === 1
+        ? new Response("unknown format", { status: 400 })
+        : Response.json({ text: "hi" });
+    });
+    const transcriber = new HttpTranscriber({
+      url: "http://127.0.0.1:8003",
+      model: "qwen3-asr",
+      fetchFn,
+      decodeAudio: oneSecond,
+    });
+
+    expect(await transcriber.transcribe(audio, "audio/ogg", { segments: true })).toEqual({
+      text: "hi",
+      durationSec: 1,
+    });
+    await transcriber.transcribe(audio, "audio/ogg", { segments: true });
+    expect(requests.map((r) => r.form.get("response_format"))).toEqual([
+      "verbose_json",
+      "json",
+      "json",
+    ]);
+  });
+
+  test("parseVerboseSegments drops empty segments and rejects malformed ones", () => {
+    expect(parseVerboseSegments(undefined)).toBeUndefined();
+    expect(parseVerboseSegments([{ start: "0", end: 1, text: "x" }])).toBeUndefined();
+    expect(parseVerboseSegments([{ start: 0, end: 1, text: " " }])).toBeUndefined();
+    expect(parseVerboseSegments([{ start: 0.25, end: 1, text: " x " }])).toEqual([
+      { startMs: 250, endMs: 1_000, text: "x" },
+    ]);
+  });
 });
 
 describe("splitPcm with a short window", () => {

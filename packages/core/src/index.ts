@@ -1229,6 +1229,7 @@ export type {
   CompleteCapability,
   TranscribeCapability,
   TranscriptionResult,
+  TranscriptSegment,
   OcrCapability,
   EntailCapability,
   EntailVerdict,

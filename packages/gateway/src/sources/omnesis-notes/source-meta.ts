@@ -54,13 +54,21 @@ async function readBrandIconDataUri(): Promise<string | null> {
 }
 
 /**
+ * The Omnesis brand mark as a normalized source icon, for the sources the
+ * gateway owns; undefined when the PNG is missing.
+ */
+export async function omnesisBrandIcon(): Promise<string | undefined> {
+  const raw = await readBrandIconDataUri();
+  return raw ? ((await normalizeIcon(raw)) ?? undefined) : undefined;
+}
+
+/**
  * Idempotent boot-time seed. `setSourceMeta` COALESCEs each field, so
  * repeated calls never clobber state. Safe to invoke on every gateway
  * start.
  */
 export async function seedOmnesisNotesSourceMeta(writeGate: WriteGate): Promise<void> {
-  const raw = await readBrandIconDataUri();
-  const icon = raw ? ((await normalizeIcon(raw)) ?? undefined) : undefined;
+  const icon = await omnesisBrandIcon();
   await writeGate.setSourceMeta(OMNESIS_NOTES_SOURCE_ID, {
     icon,
     label: OMNESIS_NOTES_LABEL,

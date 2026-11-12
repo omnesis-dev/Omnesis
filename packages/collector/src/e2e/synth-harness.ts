@@ -1745,6 +1745,8 @@ export class SyntheticE2EHarness {
     const omnesisJson: Record<string, unknown> = { ...suppliedGatewayConfig };
     if (Object.keys(inferenceBackends).length || Object.keys(inferenceAssignments).length) {
       omnesisJson.inference = {
+        // Keep inference settings a suite supplied (e.g. `recordings`).
+        ...((suppliedGatewayConfig as { inference?: Record<string, unknown> }).inference ?? {}),
         ...(Object.keys(inferenceBackends).length ? { backends: inferenceBackends } : {}),
         ...(Object.keys(inferenceAssignments).length ? { assignments: inferenceAssignments } : {}),
         ...(this.extraInference?.allowRemoteInference !== undefined

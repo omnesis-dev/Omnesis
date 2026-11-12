@@ -754,6 +754,57 @@ describe("canonical_name placeholder self-heal", () => {
  * bucket person, which the auto-merge pass then collapses into whichever
  * real person matches one of the accreted name aliases.
  */
+describe("findOrCreatePerson with a pinned person id", () => {
+  test("resolves to that person, or the one it was merged into, without creating anyone", () => {
+    const maya = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Maya Reeves", emails: ["maya@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+    const jamie = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Jamie Lopez", emails: ["jamie@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+    const count = () => db.prepare<[], { c: number }>("SELECT COUNT(*) AS c FROM people").get()!.c;
+    const before = count();
+
+    expect(
+      findOrCreatePerson(
+        db,
+        { role: "participant", personId: maya },
+        "omnesis-recordings",
+        "2026-02-01",
+      ),
+    ).toBe(maya);
+
+    // Maya is merged into Jamie: the pinned id follows the merge.
+    mergePeople(db, jamie, maya);
+    expect(
+      findOrCreatePerson(
+        db,
+        { role: "participant", personId: maya },
+        "omnesis-recordings",
+        "2026-02-01",
+      ),
+    ).toBe(jamie);
+    expect(count()).toBe(before);
+  });
+
+  test("an id that names nobody falls back to the mention's other fields", () => {
+    expect(
+      findOrCreatePerson(
+        db,
+        { role: "participant", name: "Nobody", personId: "no-such-person" },
+        "omnesis-recordings",
+        "2026-02-01",
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("findOrCreatePerson treats no-reply emails as non-identifying", () => {
   test("mention with only a noreply email is dropped (name-only path)", () => {
     const id = findOrCreatePerson(

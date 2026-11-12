@@ -28,7 +28,6 @@ import {
   cancelNoteHandoff,
   type NoteHandoff,
 } from "../brain/note-agent/handoffs.js";
-import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
 import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
 import { clearMorningBriefMessageItems } from "../brain/storage/morning-brief-items.js";
 
@@ -86,6 +85,7 @@ function sliceDeadline(token: PreemptToken, sliceMs: number): () => boolean {
 const NEAR_DUP_APPLY_SLICE_MS = 100;
 
 import { type SourceSyncMeta, type SyncCursor } from "@omnesis/source-sdk";
+import { finalizeSubscriptionCompletionEgress } from "../subscriptions/store-completion-egress.js";
 import { recordLiveVoiceUsage, type LiveVoiceUsageSample } from "../realtime/live-voice-usage.js";
 import {
   applyBriefReaction,
@@ -515,6 +515,24 @@ import {
   type NewPendingVoiceNote,
 } from "../voice-notes/storage.js";
 import {
+  insertRecordingSession,
+  insertRecordingChunk,
+  finishRecordingSession,
+  abandonRecordingSession,
+  rescheduleRecordingChunk,
+  settleRecordingChunk,
+  markRecordingSessionProjected,
+  assignRecordingVoices,
+  setRecordingSpeaker,
+  type RecordingSpeakerMapping,
+  deleteRecordingSession,
+  type NewRecordingSession,
+  type NewRecordingChunk,
+  type InsertRecordingChunkOutcome,
+  type RecordingChunkSettlement,
+  type FinishRecordingOutcome,
+} from "../recordings/storage.js";
+import {
   insertAgentMessage,
   type AgentMessageRow,
 } from "../sources/agent-conversations/storage.js";
@@ -630,6 +648,7 @@ import {
 } from "../data/pairing-generation-fence.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
+import type { VoiceWindow } from "../recordings/voices/voices.js";
 import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
 import type {
@@ -2001,6 +2020,48 @@ export const writerHandlers = {
   "voiceNotes.reschedule": (db: Db, noteId: string, attempts: number, nextAttemptAt: string) =>
     reschedulePendingVoiceNote(db, noteId, attempts, nextAttemptAt),
   "voiceNotes.delete": (db: Db, noteId: string) => deletePendingVoiceNote(db, noteId),
+  // Recorded conversations: a phone's session and its uploaded chunks, and
+  // the transcription queue's bookkeeping over them.
+  "recordings.createSession": (db: Db, session: NewRecordingSession): boolean =>
+    insertRecordingSession(db, session),
+  "recordings.insertChunk": (db: Db, chunk: NewRecordingChunk): InsertRecordingChunkOutcome =>
+    insertRecordingChunk(db, chunk),
+  "recordings.finishSession": (
+    db: Db,
+    id: string,
+    chunkCount: number,
+    endedAt: string,
+    now: string,
+  ): FinishRecordingOutcome => finishRecordingSession(db, id, chunkCount, endedAt, now),
+  "recordings.abandonSession": (db: Db, id: string, now: string): boolean =>
+    abandonRecordingSession(db, id, now),
+  "recordings.rescheduleChunk": (
+    db: Db,
+    sessionId: string,
+    seq: number,
+    attempts: number,
+    nextAttemptAt: string,
+  ) => rescheduleRecordingChunk(db, sessionId, seq, attempts, nextAttemptAt),
+  "recordings.settleChunk": (
+    db: Db,
+    sessionId: string,
+    seq: number,
+    outcome: RecordingChunkSettlement,
+  ): boolean => settleRecordingChunk(db, sessionId, seq, outcome),
+  "recordings.markProjected": (db: Db, id: string, revision: number) =>
+    markRecordingSessionProjected(db, id, revision),
+  "recordings.assignVoices": (
+    db: Db,
+    sessionId: string,
+    chunks: Array<{ seq: number; windows: VoiceWindow[] }>,
+  ) => assignRecordingVoices(db, sessionId, chunks),
+  "recordings.setSpeaker": (
+    db: Db,
+    sessionId: string,
+    speaker: number,
+    mapping: RecordingSpeakerMapping,
+  ): boolean => setRecordingSpeaker(db, sessionId, speaker, mapping),
+  "recordings.deleteSession": (db: Db, id: string): boolean => deleteRecordingSession(db, id),
   "notes.applyTranscript": (db: Db, id: string, expected: string, text: string, nowIso: string) =>
     applyNoteEntryTranscript(db, id, expected, text, nowIso),
 

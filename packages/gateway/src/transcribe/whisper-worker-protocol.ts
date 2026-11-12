@@ -27,6 +27,8 @@
  */
 
 /** A transcription request: which clip (`id`), the PCM tail length, and opts. */
+import type { TranscriptSegment } from "@omnesis/core";
+
 export interface WhisperRequestHeader {
   type: "request";
   id: number;
@@ -50,6 +52,28 @@ export interface WhisperResultMessage {
   text: string;
   language?: string;
   durationSec?: number;
+  /** Timed segments, ms from the start of the clip. */
+  segments?: TranscriptSegment[];
+}
+
+/**
+ * The timed segments of a whisper.cpp "detail" result (`from`/`to` in ms),
+ * trimmed, without empty ones.
+ */
+export function timedSegments(
+  segments: readonly { text: string; from?: number; to?: number }[],
+): TranscriptSegment[] {
+  const out: TranscriptSegment[] = [];
+  for (const s of segments) {
+    const text = s.text.trim();
+    if (!text || typeof s.from !== "number" || typeof s.to !== "number") continue;
+    out.push({
+      startMs: Math.max(0, Math.round(s.from)),
+      endMs: Math.max(0, Math.round(s.to)),
+      text,
+    });
+  }
+  return out;
 }
 
 /** Worker → parent: a per-request failure (decode/inference error), not a crash. */

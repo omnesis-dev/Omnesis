@@ -81,6 +81,9 @@ import dev.omnesis.android.ui.privacy.PrivacyApprovalScreen
 import dev.omnesis.android.ui.privacy.PrivacyExchangeDetailScreen
 import dev.omnesis.android.ui.privacy.PoliciesListScreen
 import dev.omnesis.android.ui.privacy.PrivacyPolicyScreen
+import dev.omnesis.android.feature.recording.ui.RecordingScreen
+import dev.omnesis.android.feature.recording.ui.RecordingSpeakersScreen
+import dev.omnesis.android.feature.recording.ui.RecordingSpeakersViewModel
 import dev.omnesis.android.ui.watches.WatchDetailScreen
 import dev.omnesis.android.ui.watches.WatchesScreen
 import dev.omnesis.android.ui.privacy.PrivacyScreen
@@ -112,6 +115,7 @@ fun HomeScaffold(
     val agentState by vm.agentState.collectAsStateWithLifecycle()
     val modelHealth by vm.modelHealth.collectAsStateWithLifecycle()
     val experimental by vm.experimentalEnabled.collectAsStateWithLifecycle()
+    val recordingsVisible by vm.recordingsVisible.collectAsStateWithLifecycle()
     val tasksAvailable by vm.tasksAvailable.collectAsStateWithLifecycle()
     val noteAgent by vm.noteAgent.collectAsStateWithLifecycle()
     val tasksTodayCount by vm.tasksTodayCount.collectAsStateWithLifecycle()
@@ -543,6 +547,7 @@ fun HomeScaffold(
                 onRefreshConversations = { vm.refreshConversations() },
                 onLoadMoreConversations = { vm.loadMoreConversations() },
                 experimental = experimental,
+                recordingsVisible = recordingsVisible,
                 tasksAvailable = tasksAvailable,
                 tasksTodayCount = tasksTodayCount,
                 privacyPendingCount = privacyPending,
@@ -709,6 +714,28 @@ fun HomeScaffold(
                     },
                     experimental = experimental,
                 )
+            }
+            composable("recordings") {
+                RecordingScreen(
+                    onOpenMenu = { openDrawer() },
+                    onOpenSpeakers = { id, title ->
+                        nav.navigate("recordings/${Uri.encode(id)}/speakers?title=${Uri.encode(title)}")
+                    },
+                )
+            }
+            composable(
+                route = "recordings/{${RecordingSpeakersViewModel.ARG_RECORDING_ID}}/speakers" +
+                    "?title={${RecordingSpeakersViewModel.ARG_TITLE}}",
+                arguments = listOf(
+                    navArgument(RecordingSpeakersViewModel.ARG_RECORDING_ID) { type = NavType.StringType },
+                    navArgument(RecordingSpeakersViewModel.ARG_TITLE) {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                ),
+            ) {
+                RecordingSpeakersScreen(onBack = { nav.popBackStack() })
             }
             composable("watches") {
                 WatchesScreen(

@@ -57,6 +57,29 @@ describe("ingestDocumentsBody", () => {
     expect(result.success).toBe(true);
   });
 
+  it("never lets a document written from outside pin a person by id", () => {
+    const result = ingestDocumentsBody.safeParse({
+      documents: [
+        {
+          ...validDoc,
+          metadata: {
+            people: [
+              { role: "participant", name: "Maya", personId: "person-1" },
+              { role: "sender", emails: ["jamie@example.com"] },
+            ],
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.documents[0].metadata.people).toEqual([
+        { role: "participant", name: "Maya" },
+        { role: "sender", emails: ["jamie@example.com"] },
+      ]);
+    }
+  });
+
   it("accepts old browser payloads without retaining their retired producer detail", () => {
     const result = ingestDocumentsBody.safeParse({
       documents: [
