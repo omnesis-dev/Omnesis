@@ -37,7 +37,7 @@ import { KnowledgeService } from "../brain/knowledge/service.js";
 import { createKnowledgeTables } from "../brain/knowledge/storage.js";
 import { buildKnowledgeTools } from "../brain/knowledge/tools.js";
 import { directKnowledgeGate } from "../brain/knowledge/writer.js";
-import { AgentService, type InteractiveWriteProfile } from "./service.js";
+import { AgentService, type AgentServiceDeps, type InteractiveWriteProfile } from "./service.js";
 import { FsConversationStore } from "./conversation-store.js";
 import type { LabEnabled } from "./lab-tools.js";
 
@@ -53,9 +53,11 @@ class RecordingBackend implements ChatBackend {
   readonly name = "rec";
   readonly model = "rec";
   sawTools: string[] = [];
+  sawSystemPrompt = "";
   async *runTurn(input: TurnInput): AsyncIterable<AgentEvent> {
     const { sessionId, messageId } = input;
     this.sawTools = input.tools.map((t) => t.name);
+    this.sawSystemPrompt = input.systemPrompt;
     yield { type: "agent.message.start", payload: { sessionId, messageId, role: "assistant" } };
     yield { type: "agent.text.delta", payload: { sessionId, messageId, delta: "ok" } };
     yield { type: "agent.message.end", payload: { sessionId, messageId, stopReason: "end_turn" } };
@@ -85,6 +87,7 @@ function makeService(
   ports: Partial<ToolPorts> = {},
   knowledgeReads = true,
   labEnabled?: LabEnabled,
+  overrides: Partial<Pick<AgentServiceDeps, "systemPrompt" | "sessionIdGen">> = {},
 ) {
   const captured: WsEvent[] = [];
   const backend = new RecordingBackend();
@@ -97,6 +100,7 @@ function makeService(
     broadcastEvent: (e) => captured.push(e),
     sessionIdGen: () => "S_top",
     idleTimeoutMs: 60_000,
+    ...overrides,
   });
   return { service, backend };
 }
@@ -168,6 +172,112 @@ describe("interactive-agent substrate write access", () => {
     await settle();
     expect(backend.sawTools).not.toContain("task_list");
     await service.dispose();
+  });
+
+  function refreshFixture() {
+    const flags = { tasks: false };
+    let nextId = 0;
+    let pauseNext = false;
+    let release = () => {};
+    const fixture = makeService({}, true, (id) => id === "tasks" && flags.tasks, {
+      sessionIdGen: () => `S_refresh_${++nextId}`,
+      systemPrompt: async (profile) => {
+        const prompt = `${profile} tasks=${flags.tasks}`;
+        if (pauseNext) {
+          pauseNext = false;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return prompt;
+      },
+    });
+    fixture.service.setTaskToolsProvider(() => [
+      {
+        name: "task_list",
+        description: "tasks",
+        schema: {} as never,
+        invoke: async () => ({ kind: "structured", resultType: "tasks", data: { tasks: [] } }),
+      },
+    ]);
+    return {
+      ...fixture,
+      flags,
+      pause: () => {
+        pauseNext = true;
+      },
+      release: () => release(),
+    };
+  }
+
+  it("refreshes later conversations when the first is evicted during prompt loading", async () => {
+    const fixture = refreshFixture();
+    try {
+      await fixture.service.createSession("device:A");
+      const second = await fixture.service.createSession("device:B");
+      fixture.flags.tasks = true;
+      fixture.pause();
+      const refresh = fixture.service.refreshLabFeatures();
+      await settle();
+      fixture.service.evictForCaller("device:A");
+      fixture.release();
+      await refresh;
+      fixture.service.sendMessage("device:B", second.sessionId, "Show my tasks.");
+      await settle();
+      expect(fixture.backend.sawTools).toContain("task_list");
+      expect(fixture.backend.sawSystemPrompt).toContain("tasks=true");
+    } finally {
+      fixture.release();
+      await fixture.service.dispose();
+    }
+  });
+
+  it("keeps a profile selected while a Lab refresh is awaiting its prompt", async () => {
+    const fixture = refreshFixture();
+    try {
+      const session = await fixture.service.createSession("device:A");
+      fixture.flags.tasks = true;
+      fixture.pause();
+      const refresh = fixture.service.refreshLabFeatures();
+      await settle();
+      await fixture.service.createSession("device:A", {
+        resumeFromId: session.sessionId,
+        profile: "voice",
+      });
+      fixture.release();
+      await refresh;
+      fixture.service.sendMessage("device:A", session.sessionId, "Show my tasks.");
+      await settle();
+      expect(fixture.backend.sawSystemPrompt).toContain("voice tasks=true");
+      expect(fixture.backend.sawTools).toContain("task_list");
+    } finally {
+      fixture.release();
+      await fixture.service.dispose();
+    }
+  });
+
+  it("rebuilds an earlier profile request when a Lab toggle completes during its prompt load", async () => {
+    const fixture = refreshFixture();
+    try {
+      const session = await fixture.service.createSession("device:A");
+      fixture.pause();
+      const resume = fixture.service.createSession("device:A", {
+        resumeFromId: session.sessionId,
+        profile: "voice",
+      });
+      await settle();
+      fixture.flags.tasks = true;
+      await fixture.service.refreshLabFeatures();
+      fixture.release();
+      await resume;
+      fixture.service.sendMessage("device:A", session.sessionId, "Show my tasks.");
+      await settle();
+      expect(fixture.backend.sawSystemPrompt).toContain("voice tasks=true");
+      expect(fixture.backend.sawTools).toContain("task_list");
+    } finally {
+      fixture.release();
+      await fixture.service.dispose();
+    }
   });
 
   it("appends the profile's write tools to a top-level session, stamped interactive_<sessionId>", async () => {

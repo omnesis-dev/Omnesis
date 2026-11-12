@@ -1630,21 +1630,27 @@ export class AgentService {
   async refreshLabFeatures(): Promise<void> {
     const generation = ++this.labRefreshGeneration;
     for (const [sessionId, entry] of this.sessions) {
-      const profile = entry.pendingProfileSwap?.profile ?? entry.promptProfile;
-      const systemPrompt = await this.resolveChatPrompt(profile, {
-        timeZone: entry.session.timeZone,
-      });
-      if (generation !== this.labRefreshGeneration || this.sessions.get(sessionId) !== entry)
-        return;
-      if (
-        entry.session.busy ||
-        this.deepResearchActive.has(sessionId) ||
-        this.realtimeOwners.has(sessionId) ||
-        this.voiceOwners.has(sessionId)
-      ) {
-        entry.pendingProfileSwap = { profile, systemPrompt };
-      } else {
-        this.applyProfileSwap(sessionId, entry, profile, systemPrompt);
+      // A resume can select a different profile while its prompt is loading.
+      // Refresh that latest choice, rather than restoring the earlier one.
+      for (;;) {
+        const profile = entry.pendingProfileSwap?.profile ?? entry.promptProfile;
+        const systemPrompt = await this.resolveChatPrompt(profile, {
+          timeZone: entry.session.timeZone,
+        });
+        if (generation !== this.labRefreshGeneration) return;
+        if (this.sessions.get(sessionId) !== entry) break;
+        if ((entry.pendingProfileSwap?.profile ?? entry.promptProfile) !== profile) continue;
+        if (
+          entry.session.busy ||
+          this.deepResearchActive.has(sessionId) ||
+          this.realtimeOwners.has(sessionId) ||
+          this.voiceOwners.has(sessionId)
+        ) {
+          entry.pendingProfileSwap = { profile, systemPrompt };
+        } else {
+          this.applyProfileSwap(sessionId, entry, profile, systemPrompt);
+        }
+        break;
       }
     }
   }
@@ -1659,11 +1665,17 @@ export class AgentService {
     profile: "interactive" | "voice",
     context: AgentPromptContext,
   ): Promise<string> {
-    const base =
-      typeof this.systemPrompt === "function"
-        ? await this.systemPrompt(profile, context)
-        : this.systemPrompt;
-    return composeAgentPromptForProfile(base, profile);
+    for (;;) {
+      const generation = this.labRefreshGeneration;
+      const base =
+        typeof this.systemPrompt === "function"
+          ? await this.systemPrompt(profile, context)
+          : this.systemPrompt;
+      // A profile request may predate a concurrent Lab toggle. Never install
+      // the old product instructions after that toggle's refresh completed.
+      if (generation === this.labRefreshGeneration)
+        return composeAgentPromptForProfile(base, profile);
+    }
   }
 
   /**
