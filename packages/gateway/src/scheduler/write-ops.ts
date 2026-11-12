@@ -625,6 +625,22 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "voiceNotes.reschedule", priority: "background" },
   { name: "voiceNotes.delete", priority: "background" },
 
+  // ── recorded conversations (experimental) ─────────────────────────
+  // Session and chunk writes ride a phone's upload requests; a chunk carries
+  // up to a minute or two of compressed audio, so it gets the longer budget
+  // the voice-note enqueue has. The transcription queue's bookkeeping runs in
+  // the background.
+  { name: "recordings.createSession", priority: "user" },
+  { name: "recordings.insertChunk", priority: "user", latencyBudgetMs: 2_000 },
+  { name: "recordings.finishSession", priority: "user" },
+  { name: "recordings.abandonSession", priority: "background" },
+  // A delete cascades over every chunk of the session (at most the seq cap,
+  // most already without audio), so it gets the same longer budget.
+  { name: "recordings.deleteSession", priority: "user", latencyBudgetMs: 2_000 },
+  { name: "recordings.rescheduleChunk", priority: "background" },
+  { name: "recordings.settleChunk", priority: "background" },
+  { name: "recordings.markProjected", priority: "background" },
+
   // Pushed agent-conversation turns (experimental). Small single-row writes;
   // a plugin's live push must not sit behind a bulk backfill.
   { name: "agentMessages.appendMessage", priority: "user" },

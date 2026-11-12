@@ -120,6 +120,19 @@ const GENERAL_CAPABILITIES = {
 } as const;
 
 /**
+ * The general capabilities plus the experimental wire features an
+ * authenticated app decides about. `recordings`: the chunked
+ * conversation-recording routes, served in experimental mode where a
+ * transcriber is wired.
+ */
+function appCapabilities(transcriberWired: boolean): Record<string, { min: number; max: number }> {
+  return {
+    ...GENERAL_CAPABILITIES,
+    ...(experimentalEnabled() && transcriberWired ? { recordings: { min: 1, max: 1 } } : {}),
+  };
+}
+
+/**
  * Health/config/status/db-size routes. Mirrors the original blocks at
  * server.ts:702-1161 and 1275-1283 (excluding the Portal block in between).
  */
@@ -186,7 +199,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       experimental: experimentalVisible(),
       capabilities: {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
-        ...GENERAL_CAPABILITIES,
+        ...appCapabilities(getDictationStatus !== undefined),
         ...(experimentalEnabled()
           ? {
               browserFeatures: { min: 1, max: 1 },
@@ -596,7 +609,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       noteAgent,
       // The optional wire features an authenticated client decides about,
       // the same entries `/health` names.
-      capabilities: GENERAL_CAPABILITIES,
+      capabilities: appCapabilities(getDictationStatus !== undefined),
       transcriptionVocabulary: getTranscriptionVocabularyEnabled?.() ?? false,
       // How long the gateway believes a client's "I am showing this
       // conversation" mark without a refresh. Clients pace their own refresh

@@ -27,6 +27,7 @@ import { createTemporalAnnotationTables } from "../enrichment/temporal-annotatio
 import { createDocumentTemporalProjectionTables } from "../enrichment/temporal-projections/document-storage.js";
 import { createNoteEntriesTables } from "../sources/omnesis-notes/storage.js";
 import { createVoiceNoteTables } from "../voice-notes/storage.js";
+import { createRecordingTables } from "../recordings/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createAgentMessagesTables } from "../sources/agent-conversations/storage.js";
 import { createAccessTables } from "../access/store.js";
@@ -1497,6 +1498,9 @@ function runSchemaSetupInTxn(db: Db): void {
   // Voice notes waiting on the gateway's transcriber (after note_entries,
   // which their rows reference).
   createVoiceNoteTables(db);
+  // Recorded conversations (experimental): sessions a phone uploads in
+  // chunks, held until their chunks are transcribed.
+  createRecordingTables(db);
   createNoteAgentTables(db);
   // agent-conversations: the append-only ledger of turns a
   // harness plugin pushes, projected into per-day conversation documents.

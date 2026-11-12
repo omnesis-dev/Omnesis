@@ -26,3 +26,4 @@ export * from "./agent-briefs.js";
 export * from "./portal.js";
 export * from "./oauth-access.js";
 export * from "./web-capture-policy.js";
+export * from "./recordings.js";

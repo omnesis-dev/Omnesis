@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.WarningAmber
@@ -126,6 +127,8 @@ fun MainMenuDrawer(
     onRefreshConversations: () -> Unit = {},
     onLoadMoreConversations: () -> Unit = {},
     experimental: Boolean = false,
+    /** Whether the paired gateway takes conversations recorded on this phone (experimental). */
+    recordingsVisible: Boolean = false,
     /** Whether the paired gateway serves the Tasks journal. */
     tasksAvailable: Boolean = false,
     /** Today's open tasks, named on the Tasks row as "Tasks (n)". */
@@ -261,6 +264,17 @@ fun MainMenuDrawer(
                         active = currentRoute?.startsWith("watches") == true,
                         onClick = { onNavigate("watches") },
                     )
+                }
+                if (recordingsVisible) {
+                    item {
+                        MenuRow(
+                            id = "recordings",
+                            icon = Icons.Outlined.RecordVoiceOver,
+                            label = "Recordings",
+                            active = currentRoute == "recordings",
+                            onClick = { onNavigate("recordings") },
+                        )
+                    }
                 }
             }
 

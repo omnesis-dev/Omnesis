@@ -267,6 +267,24 @@ suspend inline fun <reified T> GatewayHttp.postBody(path: String, body: RequestB
     return decodeBody(execute(newRequest(urlFor(path)).post(body).build(), callClient))
 }
 
+/**
+ * PUT of a prebuilt body (a multipart upload) to dynamic raw path segments encoded
+ * exactly once, decoding the 2xx reply into [T]. [timeout] replaces the engine's
+ * call, read and write timeouts for this one call.
+ */
+suspend inline fun <reified T> GatewayHttp.putBodySegments(
+    segments: List<String>,
+    body: RequestBody,
+    timeout: Duration,
+): T {
+    val callClient = client.newBuilder()
+        .callTimeout(timeout)
+        .readTimeout(timeout)
+        .writeTimeout(timeout)
+        .build()
+    return decodeBody(execute(newRequest(urlForSegments(segments)).put(body).build(), callClient))
+}
+
 /** DELETE; discards the `{ok:true}` response. */
 suspend fun GatewayHttp.delete(path: String, query: Map<String, String> = emptyMap()) {
     execute(newRequest(urlFor(path, query)).delete().build())

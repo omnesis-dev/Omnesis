@@ -1989,6 +1989,7 @@ const sweepService = new SweepService({
 // flushAll() then dispose(), beside the omnesis-chat runtime's teardown.
 let omnesisNotesRuntime: import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
 let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
+let recordingService: import("./recordings/index.js").RecordingTranscriptionService | undefined;
 let agentConversationsRuntime:
   import("./sources/agent-conversations/index.js").AgentConversationsRuntime | undefined;
 // Held for the delivery loop below (policy review and operator-watch
@@ -2506,6 +2507,9 @@ const app = createServer(db, DB_PATH, {
   },
   onVoiceNoteService: (service) => {
     voiceNoteService = service;
+  },
+  onRecordingService: (service) => {
+    recordingService = service;
   },
   onOmnesisNotesRuntime: (runtime) => {
     omnesisNotesRuntime = runtime;
@@ -3755,6 +3759,7 @@ const doShutdown = async (): Promise<void> => {
   // Voice notes: stop picking up queued notes. One being transcribed right now
   // is not awaited — it stays queued and is transcribed again after restart.
   voiceNoteService?.dispose();
+  recordingService?.dispose();
   // omnesis-notes: flush pending day-doc upserts (a capture that landed
   // within the debounce window must still project), then drop timers.
   if (omnesisNotesRuntime) {
