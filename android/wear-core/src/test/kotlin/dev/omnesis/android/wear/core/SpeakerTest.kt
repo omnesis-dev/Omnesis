@@ -8,7 +8,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 
 class SpeakerTest {
     private val engine = FakeSpeech()
@@ -143,19 +142,5 @@ class SpeakerTest {
         assertEquals(0.32f, rising / 0.8f, 0.001f)
         assertEquals(0.14f, falling / 0.8f, 0.001f)
         assertEquals(0f, CaptureLevel.next(0f, -90f), 0f)
-    }
-
-    // The logic layer stays free of the platform.
-
-    @Test
-    fun the_logic_package_imports_nothing_from_android() {
-        val sources = File("src/main/kotlin/dev/omnesis/android/wear/core").listFiles().orEmpty()
-        assertTrue("the logic sources were found", sources.size >= 8)
-        for (source in sources) {
-            val platform = source.readLines().filter {
-                it.startsWith("import android.") || it.startsWith("import androidx.") || it.startsWith("import com.google.")
-            }
-            assertTrue("${source.name} imports $platform", platform.isEmpty())
-        }
     }
 }

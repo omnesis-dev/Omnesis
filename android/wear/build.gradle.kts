@@ -72,6 +72,7 @@ roborazzi {
 
 dependencies {
     implementation(project(":core-wear-protocol"))
+    implementation(project(":wear-core"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

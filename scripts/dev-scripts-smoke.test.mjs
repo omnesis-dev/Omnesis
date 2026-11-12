@@ -1684,6 +1684,7 @@ describe("android.yml CI workflow structure (C20)", () => {
     expect(runs).toContain(":app:testFullDebugUnitTest");
     // The plain Kotlin/JVM modules, which the build-wide testDebugUnitTest skips.
     expect(runs).toContain(":core-wear-protocol:test");
+    expect(runs).toContain(":wear-core:test");
     // Unit tests, goldens, APK and bundle of the watch app.
     expect(runs).toContain(":wear:testDebugUnitTest");
     expect(runs).toContain(":wear:verifyRoborazziDebug");
@@ -3788,13 +3789,30 @@ describe("scripts/android-logic.sh emulator-less JVM logic lane guards (C11)", (
     expect(src).toMatch(/--build-cache --configuration-cache/);
     // Default scopes to the pure-JVM logic modules (no :app screenshot module).
     expect(src).toMatch(/:core-transport:testDebugUnitTest/);
-    // A plain Kotlin/JVM module has no per-variant test task.
+    // A plain Kotlin/JVM module has no per-variant test task: the watch relay
+    // contract and the watch app's logic.
     expect(src).toMatch(/:core-wear-protocol:test(?!DebugUnitTest)/);
-    // Logic package of the watch app, without the screenshot tests beside it.
-    expect(src).toMatch(
-      /:wear:testDebugUnitTest --tests \\"dev\.omnesis\.android\.wear\.core\.\*\\"/,
-    );
+    expect(src).toMatch(/:wear-core:test(?!DebugUnitTest)/);
   });
+
+  it("takes an explicit task list as Gradle task paths only", async () => {
+    // The value is interpolated into the command the host runs.
+    for (const value of ["x; rm -rf ~", "--init-script", ":app:test $(id)", ""]) {
+      const { code, out } = await runAndroidLogic(["--task", value], {
+        extraEnv: { OMNESIS_EPIC_MACOS_HOST: "stub" },
+      });
+      expect(code, value).toBe(64);
+      expect(out).toContain("--task needs a Gradle task path");
+    }
+    const mixed = await runAndroidLogic(["--task", ":wear:bundleRelease", "--module", ":wear"], {
+      extraEnv: { OMNESIS_EPIC_MACOS_HOST: "stub" },
+    });
+    expect(mixed.code).toBe(64);
+    const alone = await runAndroidLogic(["--keep-going"], {
+      extraEnv: { OMNESIS_EPIC_MACOS_HOST: "stub" },
+    });
+    expect(alone.code).toBe(64);
+  }, 30000);
 
   it("commits no operator-private default (no host alias / operator-home absolute path)", () => {
     const src = readFileSync(androidLogic, "utf8");

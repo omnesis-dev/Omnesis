@@ -105,6 +105,7 @@ jobs:
             testDebugUnitTest \
             :wear:testDebugUnitTest \
             :core-wear-protocol:test \
+            :wear-core:test \
             -Pkotlin.daemon.jvmargs=-Xmx3g \
             --no-daemon --max-workers=2
 
