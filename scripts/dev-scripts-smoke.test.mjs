@@ -2597,7 +2597,8 @@ describe("full-validation workflow topology", () => {
       encoding: "utf8",
     });
     const [nodedir, npmConfigNodedir, args] = out.split("|");
-    expect(args).toBe("ci --no-audit");
+    // The wrapper points npm's debug log at its own directory.
+    expect(args).toMatch(/^ci --logs-dir \S+ --no-audit$/u);
     // npm 11 warns about `npm_config_nodedir`, which is not an npm option.
     expect(npmConfigNodedir).toBe("");
     expect(existsSync(join(nodedir, "include", "node", "common.gypi"))).toBe(true);

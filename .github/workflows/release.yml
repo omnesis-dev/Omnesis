@@ -416,7 +416,7 @@ jobs:
           IMAGE_ARCH: ${{ matrix.arch }}
         run: |
           docker buildx build --platform "linux/$IMAGE_ARCH" --load \
-            --build-arg NPM_CI_REQUIRE_FFMPEG=1 \
+            --build-arg NPM_CI_REQUIRE_OPTIONAL=1 \
             --target "$IMAGE_TARGET" --tag "omnesis-release-check:$IMAGE_ARCH" .
           scripts/docker/image-smoke.sh "omnesis-release-check:$IMAGE_ARCH" "$IMAGE_ROLE"
           # The export below reuses buildx's own layers; the loaded copy only
@@ -446,7 +446,7 @@ jobs:
           context: .
           target: ${{ env.IMAGE_TARGET }}
           platforms: linux/${{ matrix.arch }}
-          build-args: NPM_CI_REQUIRE_FFMPEG=1
+          build-args: NPM_CI_REQUIRE_OPTIONAL=1
           outputs: type=image,name=${{ env.IMAGE_REPOSITORY }},push-by-digest=true,name-canonical=true,push=${{ needs.verify.outputs.images_armed == 'true' }}
           provenance: mode=max
           sbom: true
