@@ -11,6 +11,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.omnesis.android.notes.NotesGateway
 import dev.omnesis.android.notes.NotesRepository
+import dev.omnesis.android.notes.PendingNotesDrainScheduler
 import dev.omnesis.android.notes.PendingNotesStore
 import dev.omnesis.android.notes.VoiceNoteFiles
 import java.io.File
@@ -36,6 +37,7 @@ object NotesModule {
         store = PendingNotesStore(context),
         gateway = { session.session?.let { NotesGateway(it.notes, it.pairing.deviceId) } },
         audioFiles = audioFiles,
+        requestBackgroundDrain = { PendingNotesDrainScheduler.schedule(context) },
     )
 
     /** Dictation audio, in no-backup storage: the person's voice never goes to a cloud backup. */

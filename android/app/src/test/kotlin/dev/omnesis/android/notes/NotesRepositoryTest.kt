@@ -5,10 +5,12 @@ package dev.omnesis.android.notes
 
 import androidx.test.core.app.ApplicationProvider
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.ui.capture.CaptureSurface
 import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.http.GatewayHttp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -29,7 +31,10 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.time.Instant
+import java.time.ZoneId
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Save/queue/drain behavior of the quick-capture repository: a real
@@ -447,5 +452,172 @@ class NotesRepositoryTest {
         drain.join()
         refresh.join()
         assertTrue(repo.pending.value.isEmpty())
+    }
+
+    private val capturedAt = Instant.parse("2026-07-13T09:00:00Z")
+
+    private fun sentBody() =
+        OmnesisJson.parseToJsonElement(server.takeRequest(1, TimeUnit.SECONDS)!!.body.readUtf8()).jsonObject
+
+    private fun zonedRepo(zone: String) = NotesRepository(
+        store = store,
+        gateway = { NotesGateway(NotesClient(GatewayHttp(OkHttpClient(), server.url("/").toString(), "tok")), "dev-1") },
+        now = { capturedAt },
+        timeZone = { ZoneId.of(zone) },
+    )
+
+    @Test
+    fun capture_sends_the_zone_and_offset_it_was_captured_in() = runTest {
+        server.enqueue(entryResponse())
+
+        zonedRepo("America/Halifax").capture("Call the plumber", CaptureSurface.APP)
+
+        val sent = sentBody()
+        assertEquals("America/Halifax", sent["capturedTimeZoneId"]?.jsonPrimitive?.content)
+        assertEquals("-10800", sent["capturedUtcOffsetSeconds"]?.jsonPrimitive?.content)
+        assertEquals("2026-07-13T09:00:00Z", sent["capturedAt"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun capture_in_a_zone_the_gateway_would_reject_sends_neither_field() = runTest {
+        server.enqueue(entryResponse())
+
+        zonedRepo("GMT+02:00").capture("Call the plumber", CaptureSurface.APP)
+
+        val sent = sentBody()
+        assertTrue("capturedTimeZoneId" !in sent)
+        assertTrue("capturedUtcOffsetSeconds" !in sent)
+    }
+
+    @Test
+    fun a_queued_note_is_delivered_with_the_zone_it_was_captured_in_not_the_current_one() = runTest {
+        NotesRepository(store = store, gateway = { null }, now = { capturedAt }, timeZone = { ZoneId.of("Asia/Tokyo") })
+            .capture("Buy a rail pass", CaptureSurface.TILE)
+        assertEquals(CaptureZone("Asia/Tokyo", 32400), store.readAll().single().zone)
+        server.enqueue(entryResponse())
+
+        // The phone has since travelled: the drain runs in another zone.
+        assertEquals(DrainOutcome.SETTLED, zonedRepo("America/Halifax").drain())
+
+        val sent = sentBody()
+        assertEquals("Asia/Tokyo", sent["capturedTimeZoneId"]?.jsonPrimitive?.content)
+        assertEquals("32400", sent["capturedUtcOffsetSeconds"]?.jsonPrimitive?.content)
+        assertTrue(store.readAll().isEmpty())
+    }
+
+    @Test
+    fun a_note_queued_without_a_zone_is_delivered_without_one() = runTest {
+        store.insert("key-old", "Queued before zones", "2026-07-13T08:00:00.000Z", "android-app")
+        server.enqueue(entryResponse())
+
+        zonedRepo("America/Halifax").drain()
+
+        val sent = sentBody()
+        assertTrue("capturedTimeZoneId" !in sent)
+        assertTrue("capturedUtcOffsetSeconds" !in sent)
+    }
+
+    private fun countingRepo(requests: AtomicInteger, paired: Boolean = true, url: String = server.url("/").toString()) =
+        NotesRepository(
+            store = store,
+            gateway = { if (paired) NotesGateway(NotesClient(GatewayHttp(OkHttpClient(), url, "tok")), "dev-1") else null },
+            requestBackgroundDrain = { requests.incrementAndGet() },
+        )
+
+    @Test
+    fun a_note_queued_because_the_gateway_is_unreachable_asks_for_a_background_drain() = runTest {
+        val requests = AtomicInteger()
+        val deadUrl = server.url("/").toString()
+        server.shutdown()
+
+        val outcome = countingRepo(requests, url = deadUrl).capture("Renew the passport", CaptureSurface.ASSISTANT)
+
+        assertEquals(CaptureOutcome.Queued(QueueReason.UNREACHABLE), outcome)
+        assertEquals(1, requests.get())
+    }
+
+    @Test
+    fun a_note_that_waits_on_the_user_asks_for_no_background_drain() = runTest {
+        val requests = AtomicInteger()
+        countingRepo(requests, paired = false).capture("Unpaired note", CaptureSurface.TILE)
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(MockResponse().setResponseCode(404))
+        countingRepo(requests).capture("Feature-off note", CaptureSurface.TILE)
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(401))
+        countingRepo(requests).capture("Unauthorized note", CaptureSurface.TILE)
+
+        assertEquals(3, store.readAll().size)
+        assertEquals(0, requests.get())
+    }
+
+    @Test
+    fun a_drain_stopped_by_a_transient_failure_reports_retry_later_and_asks_again() = runTest {
+        store.insert("key-a", "first", "2026-07-13T08:00:00.000Z", "android-app")
+        val requests = AtomicInteger()
+        server.enqueue(MockResponse().setResponseCode(503))
+
+        assertEquals(DrainOutcome.RETRY_LATER, countingRepo(requests).drain())
+        assertEquals(1, requests.get())
+
+        val deadUrl = server.url("/").toString()
+        server.shutdown()
+        assertEquals(DrainOutcome.RETRY_LATER, countingRepo(requests, url = deadUrl).drain())
+        assertEquals(2, requests.get())
+    }
+
+    @Test
+    fun a_drain_that_leaves_only_what_the_user_must_fix_is_settled() = runTest {
+        val requests = AtomicInteger()
+        assertEquals(DrainOutcome.SETTLED, countingRepo(requests).drain())
+
+        store.insert("key-a", "first", "2026-07-13T08:00:00.000Z", "android-app")
+        assertEquals(DrainOutcome.SETTLED, countingRepo(requests, paired = false).drain())
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertEquals(DrainOutcome.SETTLED, countingRepo(requests).drain())
+        server.enqueue(MockResponse().setResponseCode(401))
+        assertEquals(DrainOutcome.SETTLED, countingRepo(requests).drain())
+        server.enqueue(MockResponse().setResponseCode(400))
+        assertEquals(DrainOutcome.SETTLED, countingRepo(requests).drain())
+
+        assertEquals(1, store.readAll().size)
+        assertEquals(0, requests.get())
+    }
+
+    @Test
+    fun two_drains_racing_post_each_note_once_and_count_no_failure() = runTest {
+        // A background drain and a foreground one share the repository: the second waits
+        // for the mutex, then finds the queue already delivered.
+        store.insert("key-a", "first", "2026-07-13T08:00:00.000Z", "android-app")
+        store.insert("key-b", "second", "2026-07-13T08:01:00.000Z", "android-app")
+        server.enqueue(entryResponse("n1").setHeadersDelay(400, TimeUnit.MILLISECONDS))
+        server.enqueue(entryResponse("n2"))
+        val repo = reachableRepo()
+
+        val background = async(Dispatchers.IO) { repo.drain() }
+        val foreground = async(Dispatchers.IO) { repo.drain() }
+
+        assertEquals(DrainOutcome.SETTLED, background.await())
+        assertEquals(DrainOutcome.SETTLED, foreground.await())
+        assertEquals(2, server.requestCount)
+        assertTrue(store.readAll().isEmpty())
+        assertTrue(repo.pending.value.isEmpty())
+    }
+
+    @Test
+    fun two_drains_racing_a_failing_gateway_record_one_failure_each_not_two_per_attempt() = runTest {
+        store.insert("key-a", "first", "2026-07-13T08:00:00.000Z", "android-app")
+        server.enqueue(MockResponse().setResponseCode(503).setHeadersDelay(300, TimeUnit.MILLISECONDS))
+        server.enqueue(MockResponse().setResponseCode(503))
+        val repo = reachableRepo()
+
+        val first = async(Dispatchers.IO) { repo.drain() }
+        val second = async(Dispatchers.IO) { repo.drain() }
+        first.await()
+        second.await()
+
+        // One POST and one recorded failure per drain: neither ran inside the other.
+        assertEquals(2, server.requestCount)
+        assertEquals(2, store.readAll().single().retryCount)
     }
 }

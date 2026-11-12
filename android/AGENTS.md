@@ -59,7 +59,7 @@ scanner — Roborazzi here renders only the composables a test hands it. Each su
 has a `*ScreenshotTest.kt` under
 `app/src/test/kotlin/dev/omnesis/android/screenshots/` (and one in `:feature-health`)
 whose `@Test` methods call a local `capture(name, dark) { … }` helper wrapping
-`captureRoboImage(filePath = "build/outputs/roborazzi/$name.png") { … }`. **`@Preview`
+`captureRoboImage(filePath = "src/test/roborazzi/$name.png") { … }`. **`@Preview`
 annotations on the production composables are NOT what gets rendered** — adding a new
 `@Preview` produces no PNG. To cover a new state you add an explicit `captureRoboImage`
 case to the matching `*ScreenshotTest.kt` (cover each meaningful state **and light +
@@ -157,7 +157,9 @@ Android JVM CI failures retain XML and HTML reports as `android-jvm-failures`.
   `:feature-health`. `scripts/android-render.sh` bridges both forms to a macOS host.
 - **Live-gateway E2E** (the port of `ios/Tests/.../GatewayLiveE2ETests.swift`):
   `scripts/run-android-e2e.sh` boots a synth gateway on a high port and runs the real
-  transport clients against it via `10.0.2.2`. A green E2E is a **per-phase gate**.
+  transport clients against it on the **host JVM** (`:core-transport` unit tests, no
+  emulator), reaching it at `https://localhost:<port>` with the leaf certificate pinned.
+  A green E2E is a **per-phase gate**.
 
 ### Tier B — instrumented Health Connect round-trip
 
@@ -223,8 +225,8 @@ Things that have bitten agents working in this module. Read before testing.
   (`roborazzi.test.record=true`) truly renders. Always record + `Read` the PNGs.
 - **Infinite animations hang record mode** — see the boxed rule above. Symptom: a Gradle
   worker (`GradleWorkerMain` / `Gradle Test Executor`) pinned near 97% CPU for minutes
-  with **no new** files under `app/build/outputs/roborazzi/` (the run may write the first N
-  PNGs, then stall on test N+1). Fix: gate the animation on `LocalInspectionMode.current`.
+  with **no newly written** files under `app/src/test/roborazzi/` (the run may rewrite the
+  first N PNGs, then stall on test N+1). Fix: gate the animation on `LocalInspectionMode.current`.
 - **The subtle one: indeterminate progress spinners.** A raw indeterminate
   `CircularProgressIndicator` animates forever and hangs capture just like a
   `rememberInfiniteTransition` — but it's easy to miss because it looks static. **Always use

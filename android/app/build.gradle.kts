@@ -289,6 +289,8 @@ dependencies {
     testImplementation(libs.hilt.android.testing)
     kspTest(libs.hilt.compiler)
     testImplementation(libs.okhttp.tls)
+    // The background note drain is scheduled against WorkManager's synchronous test instance.
+    testImplementation(libs.androidx.work.testing)
 
     // UI journeys on an emulator against a synthetic gateway (scripts/run-mobile-journeys.sh).
     androidTestImplementation(platform(libs.androidx.compose.bom))

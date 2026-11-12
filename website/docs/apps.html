@@ -836,7 +836,11 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           requires an agent model assigned on the paired gateway. Capturing does not: notes go
           straight into the built-in Omnesis Notes source, where they join the searchable index. A
           capture made while the gateway is unreachable stays in the app's private on-device queue
-          and syncs later. The portal offers the same typed capture on its
+          and syncs later, keeping the time and time zone it was captured in. Both apps send the
+          queue when they are opened or the next note is captured; the Android app also retries in
+          the background once the phone has a network connection, backing off between attempts.
+          Notes waiting for the phone to be paired or paired again, or for a gateway update, sync
+          after you open the app. The portal offers the same typed capture on its
           <strong>Tell Omnesis</strong> page, which also lists every captured note newest-first so
           individual notes can be amended or deleted; see
           <a href="sources#omnesis-itself">Sources</a>.
@@ -995,9 +999,10 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           matching <strong>Ask Omnesis</strong> and <strong>Tell Omnesis</strong> shortcuts, or
           choose <strong>Omnesis</strong> for unified voice capture. Drag that shortcut to the home
           screen for one-tap access. In the expanded Quick Settings shade, choose Edit and add the
-          <strong>Omnesis</strong> tile for the same flow. Both start listening immediately and use
-          Send with a decision model, or Ask and Tell when routing is disabled or unavailable. They
-          share <code>inference.dictation.useDecisionGateForWatch</code> with the iPhone control. A
+          <strong>Omnesis</strong> tile for the same flow; on a phone that is not paired, the tile
+          says to open Omnesis to pair. Both start listening immediately and use Send with a
+          decision model, or Ask and Tell when routing is disabled or unavailable. They share
+          <code>inference.dictation.useDecisionGateForWatch</code> with the iPhone control. A
           phone's configurable hardware button or gesture can use the shortcut if its manufacturer
           supports app shortcuts; the available buttons and setup vary by device.
         </p>
@@ -1075,7 +1080,9 @@ Expires in 599s. Scopes: admin, read, push:claim, write:apple-health, write:acti
           off for the gateway and every paired app. The apps fetch hints in the background, keep
           them in memory for offline use for up to 24 hours, and refresh them opportunistically
           after 30 minutes when returning to the foreground or refreshing gateway status. Starting a
-          recording never waits for hints. See <a href="operating">Operating Omnesis</a> for
+          recording in the app never waits for hints. A voice request from Google Assistant that has
+          to start the Android app waits up to one second for the gateway's status and hints before
+          it listens, then listens without them. See <a href="operating">Operating Omnesis</a> for
           vocabulary behavior.
         </p>
         <p>

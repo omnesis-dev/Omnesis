@@ -15,12 +15,15 @@ import dev.omnesis.android.notes.QueueReason
 import dev.omnesis.android.ui.capture.CaptureSurface
 import dev.omnesis.android.ui.capture.SpeechTranscriber
 import dev.omnesis.android.voice.SilenceDetector
+import dev.omnesis.android.voice.SpeechReadiness
 import dev.omnesis.android.voice.VoiceNoteSession
 import dev.omnesis.android.voice.VoiceNoteSessions
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Owns exactly one foreground App Action request across Activity recreation.
@@ -31,6 +34,12 @@ import kotlinx.coroutines.launch
  * out of sight — its end of speech ends the capture and its words stand in if the
  * gateway cannot transcribe. When it cannot run on the recording, the
  * [SilenceDetector] ends the capture instead.
+ *
+ * The Assistant often starts the app cold, before the gateway has said whether it
+ * transcribes voice notes or offers a speech vocabulary. Listening therefore waits for
+ * [SpeechReadiness] and the recognizer's language check, for at most
+ * [SPEECH_WARM_UP_TIMEOUT_MS] from this model's creation; past that, the capture goes
+ * ahead as a phone-transcribed note without vocabulary hints.
  */
 @HiltViewModel
 class AssistantActionViewModel @Inject constructor(
@@ -39,6 +48,7 @@ class AssistantActionViewModel @Inject constructor(
     private val transcriber: SpeechTranscriber,
     private val voiceNotes: VoiceNoteSessions,
     private val savedState: SavedStateHandle,
+    private val speechReadiness: SpeechReadiness = SpeechReadiness {},
 ) : ViewModel() {
     private val _state = MutableStateFlow<AssistantActionUiState>(
         AssistantActionUiState.Listening(AssistantActionKind.ASK),
@@ -59,6 +69,17 @@ class AssistantActionViewModel @Inject constructor(
 
     /** Set while the capture is recorded with no recognizer; it decides when speech ended. */
     private var silenceDetector: SilenceDetector? = null
+
+    /** Started with the model, so the wait overlaps the Activity's own start-up. */
+    private val speechWarmUp: Job = viewModelScope.launch {
+        withTimeoutOrNull(SPEECH_WARM_UP_TIMEOUT_MS) {
+            speechReadiness.await()
+            transcriber.prepare()
+        }
+    }
+
+    /** A [startListening] held back until [speechWarmUp] ends. */
+    private var deferredListening: Job? = null
 
     fun handle(intent: Intent, freshDelivery: Boolean, trustedDelivery: Boolean = false) {
         if (!freshDelivery && savedState.get<Boolean>(KEY_HANDLED) == true) {
@@ -113,6 +134,15 @@ class AssistantActionViewModel @Inject constructor(
     fun startListening() {
         val listening = _state.value as? AssistantActionUiState.Listening ?: return
         if (request == null) return
+        if (speechWarmUp.isActive) {
+            if (deferredListening?.isActive == true) return
+            deferredListening = viewModelScope.launch {
+                speechWarmUp.join()
+                deferredListening = null
+                startListening()
+            }
+            return
+        }
         if (listening.kind == AssistantActionKind.CAPTURE && voiceNote == null) {
             voiceNote = voiceNotes.begin()?.also {
                 it.listener = voiceNoteListener(it)
@@ -251,6 +281,8 @@ class AssistantActionViewModel @Inject constructor(
     }
 
     private fun cancelRecognition() {
+        deferredListening?.cancel()
+        deferredListening = null
         recognitionGeneration++
         transcriber.cancel()
         silenceDetector = null
@@ -355,8 +387,11 @@ class AssistantActionViewModel @Inject constructor(
         }
     }
 
-    private companion object {
-        const val KEY_HANDLED = "assistant_action_handled"
+    internal companion object {
+        private const val KEY_HANDLED = "assistant_action_handled"
+
+        /** Long enough for a status read and a vocabulary fetch on a home network, short enough to wait through. */
+        const val SPEECH_WARM_UP_TIMEOUT_MS = 1_000L
     }
 }
 

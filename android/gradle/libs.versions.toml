@@ -35,7 +35,6 @@ exifinterface = "1.4.2"
 junit = "4.13.2"
 robolectric = "4.14.1"
 roborazzi = "1.40.1"
-composablePreviewScanner = "0.4.0"
 turbine = "1.2.0"
 # instrumented (androidTest)
 androidxTestRunner = "1.6.2"
@@ -104,8 +103,6 @@ robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectr
 roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
 roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
 roborazzi-junit-rule = { module = "io.github.takahirom.roborazzi:roborazzi-junit-rule", version.ref = "roborazzi" }
-roborazzi-compose-preview-scanner-support = { module = "io.github.takahirom.roborazzi:roborazzi-compose-preview-scanner-support", version.ref = "roborazzi" }
-composable-preview-scanner = { module = "io.github.sergio-sastre.ComposablePreviewScanner:android", version.ref = "composablePreviewScanner" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 # instrumented (androidTest)
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
