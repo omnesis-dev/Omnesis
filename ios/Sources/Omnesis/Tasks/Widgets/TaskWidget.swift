@@ -33,7 +33,8 @@ struct TaskWidgetEntry: TimelineEntry {
     }
 
     var tasks: [TaskWidgetTask] {
-        schedule.tasks(from: snapshot?.tasks ?? [])
+        guard status != .disabled else { return [] }
+        return schedule.tasks(from: snapshot?.tasks ?? [])
     }
 
     var listURL: URL {

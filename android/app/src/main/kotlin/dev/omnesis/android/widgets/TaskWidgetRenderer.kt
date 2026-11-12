@@ -47,8 +47,10 @@ object TaskWidgetRenderer {
         options: Bundle,
         today: LocalDate = LocalDate.now(),
     ): RemoteViews {
+        // A stale cache must not reveal task counts or pagination after Tasks is disabled.
+        val visibleSnapshot = snapshot.takeUnless { status == TaskWidgetStatus.DISABLED }
         fun layout(width: Int, height: Int): RemoteViews = renderAtSize(
-            context, widgetId, state, snapshot, status, authority,
+            context, widgetId, state, visibleSnapshot, status, authority,
             Size(width.coerceAtLeast(120), height.coerceAtLeast(120), context.resources.configuration.fontScale), today,
         )
         if (Build.VERSION.SDK_INT >= 31) {
