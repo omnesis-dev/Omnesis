@@ -21,6 +21,8 @@ interface KeyEnrollmentOptions {
   controlOrigin(): string;
   privateEnrollmentAllowed(): boolean;
   closeMigratedAccount(account: string): void;
+  /** Whether a Google-registered gateway may move to its owner key without an invitation. */
+  legacyTransfers?: boolean;
 }
 
 /** Fresh possession proofs and independent recovery authorization precede every durable routing mutation. */
@@ -48,8 +50,11 @@ export async function completeKeyEnrollment(input: unknown, options: KeyEnrollme
     ))
   )
     throw new RelayError(403, "Hostname ownership proof required");
-  let allowNew = options.privateEnrollmentAllowed();
-  if (receipt !== undefined) allowNew = true;
+  let allowNew =
+    options.privateEnrollmentAllowed() ||
+    receipt !== undefined ||
+    (options.legacyTransfers === true &&
+      options.accounts.legacyTransfer(session.accountId, completed.binding));
   if (!allowNew && !options.accounts.keyEnrollmentExempt(session.accountId, completed.binding)) {
     // A gateway nobody registered here gets its own answer, once both its keys are proven: one
     // whose Omnesis account was deleted learns from it that it is no longer connected.

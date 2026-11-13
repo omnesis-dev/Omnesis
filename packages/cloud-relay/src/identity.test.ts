@@ -279,11 +279,19 @@ describe("durable account bindings", () => {
       expect(accounts.bindGateway("second", gateway)).toBe(false);
       expect(accounts.bindGateway("missing", randomUUID())).toBe(false);
       expect(() => accounts.bindGateway("second", "bad")).toThrow();
+      accounts.registerBinding("first", {
+        gatewayId: gateway,
+        publicOrigin: "https://gateway.example.test",
+        certificate: "test-only-routing-metadata",
+        identityToken: "test-only-routing-metadata",
+      });
       accounts.close();
       accounts = new RelayAccounts(join(dir, "accounts.sqlite"));
       expect(accounts.bindGateway("first", gateway)).toBe(true);
       expect(accounts.bindGateway("first", randomUUID())).toBe(false);
-      expect(accounts.bindGateway("second", randomUUID())).toBe(true);
+      // A row no registration ever completed routes nothing; reopening returns its slot.
+      expect(accounts.bindGateway("second", randomUUID())).toBe(false);
+      expect(accounts.snapshot().accounts).toBe(1);
     } finally {
       accounts.close();
       rmSync(dir, { recursive: true, force: true });

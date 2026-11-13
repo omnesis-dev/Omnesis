@@ -78,6 +78,13 @@ export interface CloudRelayOptions {
    * Without it nothing here changes: no request header names a client.
    */
   cdn?: CdnFront;
+  /**
+   * The routes from before Omnesis accounts: a raw Google sign-in that returns a relay session,
+   * a gateway registered by a Google identity, and that gateway moving to an owner key without
+   * an invitation. Nothing current uses them and none passes the sign-up policy, so they answer
+   * 404 unless an operator who still serves Google-era clients turns them back on.
+   */
+  legacyRoutes?: boolean;
 }
 
 /** A gateway sends this when it can follow the tunnel to another origin. */
@@ -499,6 +506,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
               );
             },
             closeMigratedAccount: (account) => broker.closeAccount(account),
+            legacyTransfers: options.legacyRoutes === true,
           }).catch((error: unknown) => {
             // The response carries no reason, so this line is the operator's only clue.
             log.warn(`Gateway registration refused: ${String(error)}`);
@@ -508,7 +516,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
           res.end(JSON.stringify(session));
         }, req);
       }
-      if (req.url === "/_relay/v1/login" && req.method === "POST") {
+      if (options.legacyRoutes && req.url === "/_relay/v1/login" && req.method === "POST") {
         if (!options.identity) throw new RelayError(503, "Google sign-in is not configured");
         return loginAdmission.run(async () => {
           if (!req.headers["content-type"]?.startsWith("application/json"))
@@ -532,7 +540,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
           } catch {
             throw new RelayError(401, "Identity verification failed");
           }
-          options.accounts.registerAccount(session.accountId);
+          // A sign-in alone holds no gateway, so it takes no account slot: a registration does.
           res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
           res.end(JSON.stringify(session));
         }, req);
@@ -611,6 +619,8 @@ export function createCloudRelay(options: CloudRelayOptions): {
         return;
       }
       if (directoryUrl.pathname === "/_relay/v2/gateway") {
+        if (req.method === "POST" && !options.legacyRoutes)
+          throw new RelayError(404, "Gateways register with their owner key");
         const session = await authenticate(req, req.method === "GET");
         if (req.method === "GET") {
           const binding = directory.select(session.identityAccountId, directoryUrl.searchParams);

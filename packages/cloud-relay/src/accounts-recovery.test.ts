@@ -65,14 +65,14 @@ test("exact TLS-proven legacy transfer moves its receipt atomically and rolls ba
     raw.exec(
       "CREATE TRIGGER reject_receipt BEFORE INSERT ON relay_gateway_recovery BEGIN SELECT RAISE(ABORT, 'fixture refusal'); END;",
     );
-    expect(() => accounts!.registerKeyBinding(f.account, f.binding, false, f.receipt())).toThrow(
+    expect(() => accounts!.registerKeyBinding(f.account, f.binding, true, f.receipt())).toThrow(
       "fixture refusal",
     );
     expect(accounts.gatewayBinding(legacy)).toEqual(legacyBinding);
     expect(accounts.gatewayRecoveryReceipt(legacy)).toEqual(f.receipt());
     expect(accounts.gatewayBinding(f.account)).toBeUndefined();
     raw.exec("DROP TRIGGER reject_receipt");
-    expect(accounts.registerKeyBinding(f.account, f.binding, false, f.receipt())).toEqual({
+    expect(accounts.registerKeyBinding(f.account, f.binding, true, f.receipt())).toEqual({
       migratedAccountId: legacy,
     });
     expect(accounts.gatewayRecoveryReceipt(legacy)).toBeUndefined();

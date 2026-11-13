@@ -81,6 +81,11 @@ export class RelayAccounts {
       account_id TEXT PRIMARY KEY,
       receipt TEXT NOT NULL
     )`);
+    // Every registration writes its account row and its binding together. A row without a
+    // binding is one a bare Google sign-in left behind: it routes nothing, yet it would keep
+    // counting against capacity and could hold a gateway ID it never proved.
+    this.db.exec(`DELETE FROM relay_accounts
+      WHERE account_id NOT IN (SELECT account_id FROM relay_gateway_bindings)`);
   }
 
   registerAccount(id: string): void {
@@ -155,6 +160,7 @@ export class RelayAccounts {
         !this.hostnameAvailable(hostname, binding.gatewayId)
       )
         throw new RelayError(409, "Hostname already registered");
+      this.registerAccount(account);
       if (!this.bindGateway(account, binding.gatewayId))
         throw new RelayError(409, "Gateway binding conflict");
       if (hostname.startsWith(`${hostedGatewayLabel(binding.gatewayId)}.`))
@@ -326,13 +332,26 @@ export class RelayAccounts {
     );
   }
 
-  /** Only an existing owner or an exact TLS-proven legacy gateway bypasses first-enrollment invitations. */
+  /** Only the gateway's existing owner renews without an invitation. */
   keyEnrollmentExempt(account: string, binding: GatewayBinding): boolean {
-    const owner = this.ownerForGateway(binding.gatewayId);
-    return owner === account || (owner !== undefined && this.exactLegacyOwner(owner, binding));
+    return this.ownerForGateway(binding.gatewayId) === account;
   }
 
-  /** Account creation, binding replacement and one-time legacy transfer commit or roll back together. */
+  /**
+   * A Google-registered gateway proving its exact TLS key and certificate to move to an owner key.
+   * That binding never passed the sign-up policy, so the move needs an invitation like any first
+   * enrollment, unless the operator kept the pre-account routes.
+   */
+  legacyTransfer(account: string, binding: GatewayBinding): boolean {
+    const owner = this.ownerForGateway(binding.gatewayId);
+    return owner !== undefined && owner !== account && this.exactLegacyOwner(owner, binding);
+  }
+
+  /**
+   * Account creation, binding replacement and one-time legacy transfer commit or roll back
+   * together. `allowNew` says the registration passed the sign-up policy (an invitation, a
+   * recovery receipt or isolated enrollment), which a new gateway and a legacy transfer need.
+   */
   registerKeyBinding(
     account: string,
     binding: GatewayBinding,
@@ -346,10 +365,10 @@ export class RelayAccounts {
       if (owner !== undefined && owner !== account) {
         if (!this.exactLegacyOwner(owner, binding))
           throw new RelayError(409, "Gateway already has another owner identity");
+        if (!allowNew) throw new RelayError(403, "A gateway enrollment invitation is required");
         this.db.prepare("DELETE FROM relay_gateway_bindings WHERE account_id = ?").run(owner);
         this.db.prepare("DELETE FROM relay_accounts WHERE account_id = ?").run(owner);
         this.db.prepare("DELETE FROM relay_gateway_recovery WHERE account_id = ?").run(owner);
-        this.registerAccount(account);
         this.registerBinding(account, binding);
         if (receipt !== undefined) this.saveRecoveryReceipt(account, receipt);
         this.linkGoogleAccount(owner, account);
@@ -357,7 +376,6 @@ export class RelayAccounts {
       }
       if (owner === undefined && !allowNew)
         throw new RelayError(403, "A gateway enrollment invitation is required");
-      this.registerAccount(account);
       this.registerBinding(account, binding);
       if (receipt !== undefined) this.saveRecoveryReceipt(account, receipt);
       return {};
