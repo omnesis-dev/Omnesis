@@ -39,6 +39,7 @@ import {
   readDocumentFilterDetails,
   readFilterOptions,
   readFilterPreview,
+  savedFilterEntries,
   type FilterEditorResult,
   type FilterOptions,
   type FilterOptionsRequest,
@@ -55,6 +56,7 @@ import {
 import {
   ACCESS_AUDIT_ANSWER_NOTE,
   ACCESS_AUDIT_OWNER_NOTE,
+  DISCONNECTED_ACCOUNT_TEXT,
   PERSON_NOUN,
   accessReasonText,
   documentFilterStateText,
@@ -70,7 +72,10 @@ import type { Db } from "../data/types.js";
 
 /** A field's state as the editor shows it: the readiness state with its sentence. */
 export type FilterEditorFieldState =
-  { status: "ready" } | (Exclude<FilterFieldState, { status: "ready" }> & { text: string });
+  | { status: "ready" }
+  | (Exclude<FilterFieldState, { status: "ready" }> & { text: string })
+  /** The account is no longer connected; its saved entries are kept and named from what remains. */
+  | { status: "disconnected"; text: string };
 
 export interface FilterEditorField {
   field: string;
@@ -94,6 +99,12 @@ export interface SourceFilterEditorStructure {
   showDeviceLevel: boolean;
   profile: "declared" | "no-profile" | "collector-behind";
   profileText: string | null;
+  /**
+   * False for an account that is gone while a saved filter still names it:
+   * nothing can be added and nothing is counted, but the saved entries can
+   * still be named.
+   */
+  connected: boolean;
   /** Changes whenever a count of this account may have changed. */
   stamp: string;
   fields: FilterEditorField[];
@@ -156,7 +167,7 @@ export function readSourceFilterEditor(
 ): SourceFilterEditorStructure | null {
   return db.transaction((): SourceFilterEditorStructure | null => {
     const readiness = readSourceFilterReadiness(db, sourceId);
-    if (!readiness) return null;
+    if (!readiness) return disconnectedEditor(db, sourceId);
     const name = filterSourceName(db, sourceId, readiness.sourceType);
     const listedDevices = db.prepare<[string, string], { n: number }>(
       `SELECT count(DISTINCT device_id) AS n FROM source_filter_lists
@@ -189,10 +200,69 @@ export function readSourceFilterEditor(
       showDeviceLevel,
       profile: readiness.profile,
       profileText: filterProfileText(readiness.profile, readiness.devices),
+      connected: true,
       stamp: sourceFilterStamp(db, sourceId),
       fields,
     };
   })();
+}
+
+/** Whether any saved filter, of a level or of a connection, names the account. */
+function savedFilterNames(db: Db, sourceId: string): boolean {
+  return !!db
+    .prepare("SELECT 1 FROM access_scope_policy_sources WHERE source_id = ? LIMIT 1")
+    .get(sourceId);
+}
+
+/**
+ * The editor of an account that is gone while a saved filter still names it:
+ * the declared fields, so a client can name each saved entry's level, every
+ * one marked disconnected. `null` when nothing names the account.
+ */
+function disconnectedEditor(db: Db, sourceId: string): SourceFilterEditorStructure | null {
+  if (!savedFilterNames(db, sourceId)) return null;
+  const sourceType = sourceTypeOf(sourceId);
+  const declared = filterFieldsFor(db, sourceType);
+  const state = { status: "disconnected" as const, text: DISCONNECTED_ACCOUNT_TEXT };
+  const fields: FilterEditorField[] = [];
+  if (declared.state === "declared") {
+    for (const field of declared.fields) {
+      if (field.state !== "ready") continue;
+      const spec = field.filter;
+      fields.push({
+        field: field.path,
+        capability: spec.capability,
+        noun: spec.noun,
+        ...(spec.levels ? { levels: spec.levels } : {}),
+        ...(spec.inside ? { inside: spec.inside, insideText: filterInsideText(spec.inside) } : {}),
+        picker: spec.picker,
+        scope: spec.scope,
+        state,
+      });
+    }
+    if (declared.person?.state === "ready")
+      fields.push({
+        field: FILTER_PEOPLE_FIELD,
+        capability: "person",
+        noun: PERSON_NOUN,
+        picker: "search",
+        scope: "global",
+        identifiers: [...declared.person.filter.identifiers],
+        state,
+      });
+  }
+  return {
+    sourceId,
+    sourceType,
+    sourceName: filterSourceName(db, sourceId, sourceType),
+    devices: [],
+    showDeviceLevel: false,
+    profile: declared.state,
+    profileText: DISCONNECTED_ACCOUNT_TEXT,
+    connected: false,
+    stamp: "",
+    fields,
+  };
 }
 
 /**
@@ -239,6 +309,8 @@ export function readSourceFilterEntryCounts(db: Db, sourceId: string, refs: Filt
 }
 
 export type SourceFilterPreview = FilterPreview & {
+  /** False for an account that is gone; every count is then 0. */
+  connected: boolean;
   tooOldText: string | null;
   unmatchedText: string | null;
 };
@@ -249,6 +321,31 @@ export function readSourceFilterPreview(
   sourceId: string,
   filter: SourceFilter,
 ): FilterEditorResult<SourceFilterPreview> {
+  if (!db.prepare("SELECT 1 FROM sources WHERE id = ?").get(sourceId)) {
+    // A gone account: nothing to count, but the saved entries are named from
+    // whatever list rows remain.
+    if (!savedFilterNames(db, sourceId) || filter.sourceId !== sourceId)
+      return { ok: false, error: "source-not-found" };
+    const fields = filterFieldsFor(db, sourceTypeOf(sourceId));
+    return {
+      ok: true,
+      value: {
+        sourceId,
+        connected: false,
+        total: 0,
+        visible: 0,
+        hidden: 0,
+        tooOld: 0,
+        unmatched: 0,
+        tooOldText: null,
+        unmatchedText: null,
+        items: savedFilterEntries(db, sourceId, fields, filter.rules[0].match).map((entry) => ({
+          ...entry,
+          count: 0,
+        })),
+      },
+    };
+  }
   const preview = readFilterPreview(db, sourceId, filter);
   if (!preview.ok) return preview;
   const nouns = new Set(
@@ -265,6 +362,7 @@ export function readSourceFilterPreview(
     ok: true,
     value: {
       ...preview.value,
+      connected: true,
       tooOldText: preview.value.tooOld > 0 ? tooOldCountText(preview.value.tooOld) : null,
       unmatchedText:
         preview.value.unmatched > 0 ? unmatchedCountText(preview.value.unmatched, noun) : null,

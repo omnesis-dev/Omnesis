@@ -1502,8 +1502,10 @@ export function createServer(
     agentCertificateTrust: opts?.agentCertificateTrust,
   });
   mountSourceFilterRoutes(app, {
-    service: new SourceFilterService(opts?.readPorts, (sourceId) =>
-      accessService.hasSavedSourceFilters(sourceId),
+    service: new SourceFilterService(
+      opts?.readPorts,
+      (sourceId) => accessService.hasSavedSourceFilters(sourceId),
+      (sourceId) => opts?.syncStatus?.get(SourceId(sourceId))?.unitName,
     ),
     access: accessService,
   });

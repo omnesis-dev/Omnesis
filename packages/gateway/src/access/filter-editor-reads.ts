@@ -103,13 +103,68 @@ export interface FilterPreview {
   /** Hidden because a detail the filter uses is not known on them. */
   unmatched: number;
   /** The filter's entries, in order, with what each matches on its own. */
-  items: Array<{
-    ref: FilterRef;
-    label: string;
-    count: number;
-    /** The entry names something the account's list does not hold. */
-    missing?: boolean;
-  }>;
+  items: Array<SavedFilterEntry & { count: number }>;
+}
+
+/** A saved filter entry, named for display. */
+export interface SavedFilterEntry {
+  ref: FilterRef;
+  /** The full name: from the account's list, the saved entry, or the id when neither has one. */
+  label: string;
+  /**
+   * Tree fields: how many nodes sit above the entry in the account's list,
+   * which is the index of its noun in the field's `levels` (the last noun
+   * names every deeper level). Absent on an entry naming a whole device and
+   * on an entry the list does not hold.
+   */
+  depth?: number;
+  /** The entry names something the account's list does not hold. */
+  missing?: boolean;
+  /**
+   * Why the name may be missing: `not-in-list` when the list no longer holds
+   * the entry, `list-gone` when the account has no list for the field at all.
+   */
+  reason?: "not-in-list" | "list-gone";
+}
+
+/**
+ * Name each saved entry from what the gateway still holds: the account's
+ * list for a field entry, the device's name for a whole device, the saved
+ * name for a person. Reads only the list, so it works for an account that is
+ * no longer connected while its list rows remain.
+ */
+export function savedFilterEntries(
+  db: Db,
+  sourceId: string,
+  fields: SourceFilterFields,
+  refs: readonly FilterRef[],
+): SavedFilterEntry[] {
+  const listed = db.prepare<[string, string, string], { one: number }>(
+    `SELECT 1 AS one FROM source_filter_lists
+      WHERE source_id = ? AND field = ? AND device_id = ? AND generation > 0`,
+  );
+  return refs.map((ref): SavedFilterEntry => {
+    if (ref.capability === "person") return { ref, label: ref.label };
+    if (ref.id === "" && ref.device !== undefined) {
+      return { ref, label: deviceNames(db, [ref.device]).get(ref.device) ?? ref.device };
+    }
+    const key = { sourceId, field: ref.field, deviceId: ref.device ?? "" };
+    const entry = getFilterListItems(db, key, [ref.id]).get(ref.id);
+    if (!entry) {
+      const gone = !listed.get(sourceId, ref.field, ref.device ?? "");
+      return { ref, label: ref.id, missing: true, reason: gone ? "list-gone" : "not-in-list" };
+    }
+    const declared =
+      fields.state === "declared"
+        ? fields.fields.find((field) => field.path === ref.field)
+        : undefined;
+    const tree = declared?.state === "ready" && declared.filter.capability === "tree";
+    return {
+      ref,
+      label: entry.label.trim() !== "" ? entry.label : ref.id,
+      ...(tree ? { depth: getFilterListAncestors(db, key, ref.id).ids.length } : {}),
+    };
+  });
 }
 
 // ── Cursors ─────────────────────────────────────────────────────────────────
@@ -608,24 +663,10 @@ export function readFilterPreview(
       .get(...verdict.params, sourceId)!;
     const refs = filter.rules[0].match;
     const counts = countFilterEntries(db, sourceId, fields, refs);
-    const items = refs.map((ref, index): FilterPreview["items"][number] => {
-      if (ref.capability === "person") return { ref, label: ref.label, count: counts[index]! };
-      if (ref.id === "" && ref.device !== undefined) {
-        return {
-          ref,
-          label: deviceNames(db, [ref.device]).get(ref.device) ?? ref.device,
-          count: counts[index]!,
-        };
-      }
-      const key = { sourceId, field: ref.field, deviceId: ref.device ?? "" };
-      const entry = getFilterListItems(db, key, [ref.id]).get(ref.id);
-      return {
-        ref,
-        label: entry?.label ?? ref.id,
-        count: counts[index]!,
-        ...(entry ? {} : { missing: true }),
-      };
-    });
+    const items = savedFilterEntries(db, sourceId, fields, refs).map((entry, index) => ({
+      ...entry,
+      count: counts[index]!,
+    }));
     return {
       ok: true,
       value: {

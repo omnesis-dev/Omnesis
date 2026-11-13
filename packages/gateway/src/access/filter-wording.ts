@@ -97,6 +97,10 @@ export function unmatchedCountText(records: number, noun: FilterNoun): string {
     : `${count(records)} records can't be matched to ${withArticle(noun.one)} and stay hidden.`;
 }
 
+/** Why an account's filter can only be read, not changed. */
+export const DISCONNECTED_ACCOUNT_TEXT =
+  "This account is no longer connected. Its saved filter entries are kept until you remove them.";
+
 /** "Studio Mac", "Studio Mac and Travel Laptop", "A, B and C". */
 function nameList(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? "";
@@ -120,11 +124,7 @@ export function filterFieldStateText(
   const kind = `${capitalized(context.noun.one)} filters`;
   switch (state.status) {
     case "needs-resync":
-      return [
-        `${kind} need ${context.sourceName} to be resynced.`,
-        `${context.sourceName} stays searchable meanwhile.`,
-        ...(state.cost ? [state.cost] : []),
-      ].join(" ");
+      return needsResyncText(kind, context.sourceName, state.cost);
     case "resyncing":
       return `Resyncing ${context.sourceName}: ${count(state.processed)} of about ${count(state.total)}.`;
     case "collector-behind":
@@ -134,6 +134,51 @@ export function filterFieldStateText(
     case "list-pending":
       return `Waiting for ${context.sourceName} to send its list of ${context.noun.many}.`;
   }
+}
+
+/** "Label filters need Gmail to be resynced. Search keeps working meanwhile. This reads …" */
+function needsResyncText(
+  kind: string,
+  sourceName: string,
+  cost: string | null,
+  contentNoun?: string,
+): string {
+  return [
+    `${kind} need ${sourceName} to be resynced.`,
+    contentNoun
+      ? `Your ${contentNoun} stay searchable meanwhile.`
+      : "Search keeps working meanwhile.",
+    ...(cost ? [cost] : []),
+  ].join(" ");
+}
+
+/**
+ * The one sentence the editor shows for every field of an account that waits
+ * on a resync: the fields named in the order given (people last), then what
+ * stays available and what the resync costs. `contentNoun` is the source's
+ * own word for what it holds ("emails"); without it the sentence stays
+ * generic.
+ */
+export function accountResyncText(
+  input:
+    | {
+        status: "needs-resync";
+        sourceName: string;
+        fields: ReadonlyArray<{ noun: FilterNoun; person: boolean }>;
+        cost: string | null;
+        contentNoun?: string;
+      }
+    | { status: "resyncing"; sourceName: string; processed: number; total: number },
+): string {
+  if (input.status === "resyncing")
+    return `Resyncing ${input.sourceName}: ${count(input.processed)} of about ${count(input.total)}.`;
+  const names = input.fields.map((field) => (field.person ? field.noun.many : field.noun.one));
+  return needsResyncText(
+    `${capitalized(nameList(names))} filters`,
+    input.sourceName,
+    input.cost,
+    input.contentNoun,
+  );
 }
 
 /** Why an account offers no filter at all, or `null` when it does. */

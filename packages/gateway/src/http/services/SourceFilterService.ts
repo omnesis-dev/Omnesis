@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { createLogger, experimentalEnabled, readTypedFilterIdentifier } from "@omnesis/core";
+import { accountResyncText } from "../../access/filter-wording.js";
 import { runWithPriority } from "../../priority.js";
 import { BadRequestError, NotFoundError, ServiceUnavailableError } from "../errors.js";
 import type {
@@ -37,6 +38,14 @@ export interface SourceFilterEditorResponse {
   showDeviceLevel: boolean;
   profile: "declared" | "no-profile" | "collector-behind";
   profileText: string | null;
+  /** False for an account that is gone while a saved filter still names it. */
+  connected: boolean;
+  /**
+   * Present while fields of the account wait on a resync: every field in
+   * `needs-resync`, or, when every field that is not ready is being resynced,
+   * those. `text` is the one sentence to show for all of them.
+   */
+  resync?: SourceFilterResync;
   fields: Array<
     FilterEditorField & {
       counts: { status: "pending" } | ({ status: "ready" } & FilterFieldCounts);
@@ -60,6 +69,61 @@ export interface SourceFilterOptionsResponse {
   }>;
   nextCursor?: string;
   retryAfterMs?: number;
+}
+
+export interface SourceFilterResync {
+  state: "needs-resync" | "resyncing";
+  /** The fields it covers, in the editor's field order. */
+  fields: string[];
+  text: string;
+  processed?: number;
+  total?: number;
+}
+
+/**
+ * The account-level resync summary of an editor's fields; see
+ * {@link SourceFilterEditorResponse.resync}. Fields come in declaration
+ * order with people last, which is the order the sentence names them in.
+ */
+export function summarizeResync(
+  sourceName: string,
+  fields: readonly FilterEditorField[],
+  contentNoun?: string,
+): SourceFilterResync | undefined {
+  const needs = fields.filter((field) => field.state.status === "needs-resync");
+  if (needs.length > 0) {
+    const first = needs[0]!.state;
+    return {
+      state: "needs-resync",
+      fields: needs.map((field) => field.field),
+      text: accountResyncText({
+        status: "needs-resync",
+        sourceName,
+        fields: needs.map((field) => ({ noun: field.noun, person: field.capability === "person" })),
+        cost: first.status === "needs-resync" ? first.cost : null,
+        contentNoun,
+      }),
+    };
+  }
+  const waiting = fields.filter(
+    (field) => field.state.status !== "ready" && field.state.status !== "disconnected",
+  );
+  if (waiting.length === 0 || !waiting.every((field) => field.state.status === "resyncing"))
+    return undefined;
+  const first = waiting[0]!.state;
+  if (first.status !== "resyncing") return undefined;
+  return {
+    state: "resyncing",
+    fields: waiting.map((field) => field.field),
+    text: accountResyncText({
+      status: "resyncing",
+      sourceName,
+      processed: first.processed,
+      total: first.total,
+    }),
+    processed: first.processed,
+    total: first.total,
+  };
 }
 
 export type SourceFilterPreviewResponse =
@@ -138,6 +202,8 @@ export class SourceFilterService {
   constructor(
     private readonly reads: Partial<SourceFilterReads> | undefined,
     private readonly canInspectSavedSource: (sourceId: string) => boolean = () => false,
+    /** The source's own word for what an account holds ("emails"), when known. */
+    private readonly contentNoun: (sourceId: string) => string | undefined = () => undefined,
   ) {}
 
   private assertEditable(sourceId: string): void {
@@ -178,16 +244,19 @@ export class SourceFilterService {
     if (!structure) throw new NotFoundError("Source filter metadata was not found.");
     let pending = false;
     const fields = structure.fields.map((field) => {
-      const counts = this.passes.getOrStart(
-        digest(["field-counts", structure.stamp, field.field]),
-        async () =>
-          (await reads.sourceFilterFieldCounts(sourceId, field.field)) ?? {
-            tooOld: 0,
-            unmatched: 0,
-            tooOldText: null,
-            unmatchedText: null,
-          },
-      );
+      // A gone account has nothing to count.
+      const counts = !structure.connected
+        ? { tooOld: 0, unmatched: 0, tooOldText: null, unmatchedText: null }
+        : this.passes.getOrStart(
+            digest(["field-counts", structure.stamp, field.field]),
+            async () =>
+              (await reads.sourceFilterFieldCounts(sourceId, field.field)) ?? {
+                tooOld: 0,
+                unmatched: 0,
+                tooOldText: null,
+                unmatchedText: null,
+              },
+          );
       if (!counts) pending = true;
       return {
         ...field,
@@ -195,6 +264,11 @@ export class SourceFilterService {
       };
     });
     if (fields.some((field) => field.state.status === "resyncing")) pending = true;
+    const resync = summarizeResync(
+      structure.sourceName,
+      structure.fields,
+      this.contentNoun(sourceId),
+    );
     return {
       sourceId: structure.sourceId,
       sourceType: structure.sourceType,
@@ -202,6 +276,8 @@ export class SourceFilterService {
       showDeviceLevel: structure.showDeviceLevel,
       profile: structure.profile,
       profileText: structure.profileText,
+      connected: structure.connected,
+      ...(resync ? { resync } : {}),
       fields,
       ...(pending ? { retryAfterMs: FILTER_COUNTS_RETRY_MS } : {}),
     };
@@ -233,6 +309,12 @@ export class SourceFilterService {
     const reads = this.port();
     const structure = await this.interactive(() => reads.sourceFilterEditor(sourceId));
     if (!structure) throw new NotFoundError("Source filter metadata was not found.");
+    // A gone account is only named, never counted: answered at once.
+    if (!structure.connected)
+      return {
+        status: "ready",
+        ...unwrap(await this.interactive(() => reads.sourceFilterPreview(sourceId, filter))),
+      };
     const key = digest(["preview", structure.stamp, filter]);
     const cached = this.passes.get<FilterEditorResult<SourceFilterPreview>>(key);
     if (cached) return { status: "ready", ...unwrap(cached) };

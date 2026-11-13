@@ -284,8 +284,12 @@ function matchedItem(
   }
   if (detail.kind !== "field") return null;
   if (match.kind === "device") {
-    // The device is the top level of a tree whose ids belong to a device.
-    return { noun: detail.spec.levels?.[0]?.one ?? "device", label: match.device };
+    // A saved entry naming a whole device: the device is not one of the
+    // field's levels, so it is named as a device.
+    const name = db
+      .prepare<[string], { name: string }>("SELECT name FROM devices WHERE id = ?")
+      .get(match.device)?.name;
+    return { noun: "device", label: name ?? match.device };
   }
   const deviceId = detail.spec.scope === "device" ? streamId : "";
   const key = { sourceId: filter.sourceId, field: detail.path, deviceId };
@@ -297,7 +301,13 @@ function matchedItem(
   }
   if (id === undefined) return null;
   const label = getFilterListItems(db, key, [id]).get(id)?.label;
-  return { noun: detail.spec.noun.one, label: label && label.trim() !== "" ? label : id };
+  // In a tree the entry is named by its level ("owner", then "repository").
+  const levels = detail.spec.capability === "tree" ? detail.spec.levels : undefined;
+  const depth = levels?.length ? getFilterListAncestors(db, key, id).ids.length : 0;
+  const noun = levels?.length
+    ? levels[Math.min(depth, levels.length - 1)]!.one
+    : detail.spec.noun.one;
+  return { noun, label: label && label.trim() !== "" ? label : id };
 }
 
 /** Ids one statement of {@link filterReadableDocumentIds} checks. */
