@@ -64,7 +64,7 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then extension=dylib; fi
           echo "MULTILINGUAL_EXTENSION=$CARGO_TARGET_DIR/release/libomnesis_multilingual.$extension" >> "$GITHUB_ENV"
       - name: Compiled memory ranker regression tests
-        run: npm run test:unit:vitest -- packages/gateway/src/search/lexical-index-terms.test.ts packages/gateway/src/search/lexical-index.test.ts
+        run: exec node scripts/run-check.mjs unit packages/gateway/src/search/lexical-index-terms.test.ts packages/gateway/src/search/lexical-index.test.ts
       - name: Encrypted locale, phrase, restriction, worker and migration integration
         shell: bash
         run: |
