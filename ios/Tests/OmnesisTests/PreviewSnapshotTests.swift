@@ -1617,8 +1617,87 @@ final class PreviewSnapshotTests: XCTestCase {
     // MARK: - Onboarding + pairing
 
     func testOnboarding() {
-        let store = AppStore.preview()
-        snapshot(OnboardingView().environment(store), name: "06-onboarding")
+        for scheme in [ColorScheme.dark, .light] {
+            assertOnboardingCanvas(scheme: scheme)
+        }
+        snapshot(
+            OnboardingView().environment(AppStore.preview()).dynamicTypeSize(.accessibility3),
+            name: "06-onboarding-large-text"
+        )
+    }
+
+    private func assertOnboardingCanvas(scheme: ColorScheme) {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
+            return XCTFail("Onboarding needs a window scene to exercise safe areas")
+        }
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: OnboardingView()
+            .environment(AppStore.preview())
+            .environment(\.appearanceStore, AppearanceStore(mode: scheme == .dark ? .dark : .light))
+            .preferredColorScheme(scheme))
+        window.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        window.layoutIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+
+        func descendants(of view: UIView) -> [UIView] {
+            [view] + view.subviews.flatMap { descendants(of: $0) }
+        }
+        guard let scroll = descendants(of: host.view).compactMap({ $0 as? UIScrollView }).first else {
+            return XCTFail("Onboarding must remain scrollable")
+        }
+        let top = -scroll.adjustedContentInset.top
+        let bottom = max(top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+        for (state, offset) in [("top", top), ("scrolled", max(bottom, top + 120)), ("overscroll", top - 100)] {
+            scroll.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
+            window.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            let bars = descendants(of: host.view).compactMap { $0 as? UINavigationBar }
+            XCTAssertTrue(bars.allSatisfy { $0.isHidden || $0.alpha == 0 }, "No navigation title at \(state)")
+
+            let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+            let image = renderer.image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let appearance = scheme == .dark ? "dark" : "light"
+            let name = "06-onboarding-\(appearance)-\(state)"
+            do {
+                try writeSnapshotPNG(image, to: Self.outputDir.appendingPathComponent("\(name).png"))
+            } catch {
+                XCTFail("Cannot write \(name): \(error)")
+            }
+            assertOnboardingBackground(image, isDark: scheme == .dark, state: state)
+        }
+    }
+
+    private func assertOnboardingBackground(_ image: UIImage, isDark: Bool, state: String) {
+        guard let cgImage = image.cgImage else { return XCTFail("Missing onboarding image") }
+        // Convert to a known RGBA layout before checking the full-height margin,
+        // including both safe areas and the navigation bar's former region.
+        let width = cgImage.width
+        let height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = pixels.withUnsafeMutableBytes { bytes -> Bool in
+            guard let context = CGContext(
+                data: bytes.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        XCTAssertTrue(rendered)
+        let expected = isDark ? 0 : 255
+        let marginX = Int(2 * image.scale)
+        for y in stride(from: 0, to: height, by: 10) {
+            let offset = (y * width + marginX) * 4
+            for channel in 0 ..< 3 {
+                XCTAssertEqual(Int(pixels[offset + channel]), expected, accuracy: 1, "Uniform canvas at y=\(y), \(state)")
+            }
+        }
     }
 
     func testOnboardingLegacyPairingRecovery() {
