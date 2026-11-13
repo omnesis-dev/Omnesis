@@ -263,3 +263,31 @@ algorithm, and related Greek singular/plural forms need not produce identical
 stems. Neither result can be fixed merely by supplying an already-correct
 language hint. See the [Greek Snowball algorithm](https://snowballstem.org/algorithms/greek/stemmer.html)
 and [Charabia's pinned Korean segmenter](https://github.com/meilisearch/charabia/blob/v0.10.0/charabia/src/segmenter/korean.rs).
+
+## Korean compound-metadata challenger
+
+`omnesis-korean-compound-probe` is a separate experimental JSON-lines executable.
+Its [protocol](compound-policy.json) is declared independently of the frozen
+primary analyzer. It accepts the same requests with `folding:none`, retains
+precise exact-lane tokens, and expands proven Korean `Compound` dictionary
+metadata only in the stem lane. Its fingerprint includes its own source and
+protocol plus the frozen core fingerprint.
+
+The constituent surfaces must concatenate exactly to the normalized token, and
+every component boundary must map safely to original grapheme boundaries.
+Malformed, inflectional, non-concatenative, and unsupported normalization cases
+retain their original token. This is one flat constituent path with consecutive
+positions, not an original-plus-parts graph. The separate exact lane retains the
+precise stream. Decomposition is one level and does not guarantee that every
+related Korean form will converge.
+
+```sh
+cargo test --release --locked \
+  --manifest-path evals/multilingual-search/prototype/Cargo.toml \
+  --bin omnesis-korean-compound-probe
+```
+
+Use the applicable host admission mechanism for this build/test command. The
+standalone wrapper loads its own dictionary in addition to the frozen core's
+private dictionary instance. Its process memory is not a measurement of a final
+shared-dictionary integration.

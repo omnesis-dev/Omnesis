@@ -207,11 +207,11 @@ def main():
                   "errataSha256": sha256(HERE / "annotation-errata.json"),
                   "auditDriverSha256": sha256(Path(__file__)),
                   "fixtureCanonicalSha256": fingerprint(fixture)}
+    corrected_report = correction_report(original, fixture, corrected, overlay)
+    corrected_report["originalReportSha256"] = provenance["originalReportSha256"]
+    corrected_report["auditProvenance"] = provenance
     if args.corrected_output:
-        report = correction_report(original, fixture, corrected, overlay)
-        report["originalReportSha256"] = provenance["originalReportSha256"]
-        report["auditProvenance"] = provenance
-        write_report(args.corrected_output, report)
+        write_report(args.corrected_output, corrected_report)
         print("Wrote annotation-only report; original rankings and required-target metrics retained.", flush=True)
     if not args.fair_output:
         return

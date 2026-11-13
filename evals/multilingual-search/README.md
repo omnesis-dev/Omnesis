@@ -1,5 +1,13 @@
 # Multilingual lexical search investigation
 
+The expanded prototype and independent study are described in
+[PLAN.md](PLAN.md), [the combined integration](integration/README.md),
+[the native analysis core](prototype/README.md),
+[the independent public study](extended-public/README.md), and
+[the mixed-language audit](diagnostics/README-audit.md). The body below retains
+the initial smaller-corpus study; its measurements and implementation limits
+belong to that earlier experiment, not the expanded prototype.
+
 This research compares language analysis and full-text retrieval while retaining
 SQLite FTS5 as Omnesis's index. It does not change production search behavior.
 All gateway stores used by the probes are isolated and synthetic.

@@ -1,0 +1,13 @@
+{
+  "version": "omnesis-korean-compound-v1",
+  "status": "Separate exploratory challenger declared before inspecting its public retrieval scores; frozen primary analyzer and policies remain unchanged.",
+  "scope": "Korean Compound dictionary metadata only; existing core exact lane remains unchanged. Non-Korean tokens use existing core analysis.",
+  "expansion": "For each Korean stem-lane token, independently obtain a single whole-token Lindera Normal analysis. Expand only dictionary type Compound with at least two well-formed surface/POS/semantic components whose surfaces concatenate exactly to the original normalized token surface. One expansion level only, no recursive guessing, suffix stripping, or hardcoded vocabulary.",
+  "offsets": "Map normalized component boundaries through original grapheme-cluster NFKC boundaries. Require concatenated cluster normalization to equal the token surface; reject unsafe/interior-cluster boundaries. Preserve original token on every unsupported or unsafe case.",
+  "positions": "Emit one consecutive flat path of constituents in the stem lane; do not emit the original compound alongside constituents. No synonym graph or position-length equivalence is claimed. The separate precise exact lane retains the original core stream.",
+  "prefix": "Do not expand the final token when prefix=true.",
+  "normalization": "Existing core NFKC and locale casing with folding=none only; explicit lossy folding is rejected.",
+  "evaluation": "Reuse the frozen Korean public query sets, judgments and identical nested 10000/100000 pools, five native retrieval policies from the frozen nine-method study, and development-only acceptance calibration. Publish results separately with challenger fingerprints. No held-out parameter selection.",
+  "limitations": "One-level compound expansion is not lemmatization, complete Korean morphology, or a general token graph. Cross-grapheme compatibility composition and non-concatenative expressions fall back unchanged. The diagnostic wrapper loads a separate dictionary from the frozen core and does not establish final integrated RAM cost.",
+  "origin": "Exploratory follow-up motivated by an inspected frozen diagnostic held-out Korean compound miss. It is not an untouched prospective primary comparison; its own public retrieval scores were not inspected before this protocol and implementation."
+}

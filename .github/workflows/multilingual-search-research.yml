@@ -101,6 +101,7 @@ jobs:
             --adapter "$MULTILINGUAL_EXTENSION" \
             --output "$RUNNER_TEMP/multilingual-reports/footprint.json"
           node --test evals/multilingual-search/integration/jsonl.test.mjs
+          python3 -m unittest discover -s evals/multilingual-search/prototype -p test_footprint.py -v
       - name: Compare raw Snowball implementations on pinned upstream vocabularies
         if: runner.os == 'Linux'
         shell: bash
@@ -448,5 +449,65 @@ jobs:
           path: |
             ${{ runner.temp }}/multilingual-reference-reports/*.json
             ${{ runner.temp }}/multilingual-data/*/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  korean-compound-followup:
+    name: Korean dictionary compound follow-up · 10k / 100k
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:compound]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Prepare pinned tools
+        shell: bash
+        run: |
+          python3 -m pip install snowballstemmer==3.1.1
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-target" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-target
+          key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+      - name: Build and test the separately fingerprinted compound challenger
+        shell: bash
+        run: |
+          cargo test --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml --bin omnesis-korean-compound-probe
+          cargo build --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+      - name: Actual analyzer and SQLite compound controls
+        shell: bash
+        run: |
+          KOREAN_COMPOUND_CONTROLS="$RUNNER_TEMP/multilingual-compound-reports/controls.json" \
+          KOREAN_BASELINE_PROBE="$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+          KOREAN_COMPOUND_PROBE="$CARGO_TARGET_DIR/release/omnesis-korean-compound-probe" \
+          python3 -m unittest discover -s evals/multilingual-search/compound-public -p 'test_*.py'
+      - name: Download identical frozen Korean inputs
+        run: python3 evals/multilingual-search/extended-public/prepare.py --languages ko --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Compare all fixed matching policies on the same held-out queries
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/multilingual-compound-reports"
+          python3 evals/multilingual-search/compound-public/compare.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" --cache-dir "$RUNNER_TEMP/multilingual-compound-cache" \
+            --baseline "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --challenger "$CARGO_TARGET_DIR/release/omnesis-korean-compound-probe" \
+            --output "$RUNNER_TEMP/multilingual-compound-reports/compound.json"
+      - name: Preserve exploratory compound metrics and source identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-compound-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-compound-reports/*.json
+            ${{ runner.temp }}/multilingual-data/ko/manifest.json
           if-no-files-found: warn
           retention-days: 14

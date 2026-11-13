@@ -37,6 +37,13 @@ def measure(path):
     return {"bytes": size, "gzip6_bytes": compressed.bytes, "sha256": digest.hexdigest()}
 
 
+def totals(files, roles):
+    # A caller may supply a one-pass generator; both measurements need all roles.
+    selected = tuple(roles)
+    return {key: sum(files[role][key] for role in selected)
+            for key in ("bytes", "gzip6_bytes")}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for role in ("cli", "core", "adapter"):
@@ -53,13 +60,11 @@ def main():
         files["optional_language_model"] = measure(args.model)
     if args.detector:
         files["optional_language_detector"] = measure(args.detector)
-    totals = lambda roles: {key: sum(files[role][key] for role in roles)
-                           for key in ("bytes", "gzip6_bytes")}
     report = {"schema": 1, "platform": platform.system(), "architecture": platform.machine(),
-              "artifacts": files, "native_bundle": totals(("cli", "core", "adapter")),
-              "fts_extension_bundle": totals(("core", "adapter")),
-              "fts_extension_with_optional_detection": totals(role for role in files if role != "cli"),
-              "native_bundle_with_optional_model": totals(files),
+              "artifacts": files, "native_bundle": totals(files, ("cli", "core", "adapter")),
+              "fts_extension_bundle": totals(files, ("core", "adapter")),
+              "fts_extension_with_optional_detection": totals(files, (role for role in files if role != "cli")),
+              "native_bundle_with_optional_model": totals(files, files),
               "method": "Actual provided files; deterministic per-file gzip level6, mtime0. No stripping or modification.",
               "limitations": ["Disk/download sizes only; excludes resident memory, initialization and index/database storage.",
                               "CLI and core may duplicate embedded dictionaries; shipping both is counted explicitly.",

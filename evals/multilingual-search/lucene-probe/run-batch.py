@@ -74,7 +74,16 @@ def main():
         by_key = {(q['split'], q['subset'], q['id']): q for q in queries}
         if len(by_key) != len(queries):
             raise ValueError('Duplicate reference query key')
-        baseline = json.loads((args.baseline_dir / (language + '.json')).read_text()) if args.baseline_dir else None
+        baseline_path = args.baseline_dir / (language + '.json') if args.baseline_dir else None
+        baseline = json.loads(baseline_path.read_text()) if baseline_path else None
+        if baseline:
+            if (not baseline.get('complete') or baseline.get('policySHA256') != manifest['policySHA256']
+                    or baseline.get('amendmentSHA256') != manifest['amendmentSHA256']):
+                raise ValueError('Reference baseline is incomplete or uses a different frozen policy')
+            original = baseline['languages'][language]
+            if (original['dataManifest']['files'] != manifest['files']
+                    or original['dataManifest']['corpusLevels'] != manifest['corpusLevels']):
+                raise ValueError('Reference baseline uses different prepared pools')
         levels = {}
         for size in args.sizes:
             count = manifest['corpusLevels'][str(size)]['actual']
@@ -85,9 +94,13 @@ def main():
                                 'LuceneBatch', language, str(directory / 'documents.jsonl'), str(directory / 'queries.jsonl'),
                                 str(count), str(scratch / 'index'), str(raw)], check=True)
                 reference = json.loads(raw.read_text())
-            rows = []
+            rows, seen_keys = [], set()
             for row in reference.pop('rows'):
-                query = by_key[(row['split'], row['subset'], row['id'])]
+                query_key = (row['split'], row['subset'], row['id'])
+                if query_key not in by_key or query_key in seen_keys:
+                    raise ValueError('Duplicate or unknown Lucene query result')
+                seen_keys.add(query_key)
+                query = by_key[query_key]
                 ranking = row['ranking']
                 if len(ranking) != len(set(ranking)):
                     raise ValueError('Duplicate Lucene candidate')
@@ -98,13 +111,13 @@ def main():
                              'metrics': retrieval_metrics(ranking, query['judgments']),
                              'score': row['topScore'] if ranking else None, 'top1Judgment': status,
                              'returned': len(ranking)})
-            if len(rows) != len(queries):
+            if len(rows) != len(queries) or seen_keys != set(by_key):
                 raise ValueError('Missing Lucene query result')
             result = {**reference, **summarize(rows), 'perQuery': rows}
             if baseline:
                 source = baseline['languages'][language]
-                if source['dataManifest']['files'] != manifest['files']:
-                    raise ValueError('Reference and baseline used different text pools')
+                if source['levels'][str(size)]['corpus'] != manifest['corpusLevels'][str(size)]:
+                    raise ValueError('Reference and baseline used different corpus sizes or document IDs')
                 base = source['levels'][str(size)]['methods']['current-porter-or']['perQuery']
                 base = {q['id']: q['metrics'] for q in base if q['split'] == 'test' and q['subset'] == 'relevant'}
                 candidate = {q['id']: q['metrics'] for q in rows if q['split'] == 'test' and q['subset'] == 'relevant'}
@@ -113,15 +126,22 @@ def main():
         output = {'language': language, 'referencePolicySHA256': sha(HERE / 'reference-policy.json'),
                   'sourceSHA256': sha(Path(__file__)), 'javaSourceSHA256': sha(HERE / 'LuceneBatch.java'),
                   'primaryPolicySHA256': manifest['policySHA256'], 'amendmentSHA256': manifest['amendmentSHA256'],
-                  'dataFiles': manifest['files'], 'levels': levels}
+                  'dataFiles': manifest['files'], 'levels': levels,
+                  'prepareSourceSHA256': sha(HERE / 'prepare.py'),
+                  'prepareBatchSourceSHA256': sha(HERE / 'prepare-batch.py'),
+                  'scoringSourceSHA256': sha(PUBLIC / 'scoring.py'),
+                  'baselineSourceHashes': baseline['sourceHashes'] if baseline else None,
+                  'baselineInputSHA256': sha(baseline_path) if baseline_path else None}
         (args.output_dir / (language + '.json')).write_text(json.dumps(output, indent=2) + '\n')
         return language, output
 
     with ThreadPoolExecutor(max_workers=args.workers) as workers:
         reports = dict(workers.map(evaluate, languages))
+    if args.baseline_dir and len({json.dumps(report['baselineSourceHashes'], sort_keys=True) for report in reports.values()}) != 1:
+        raise ValueError('Reference baselines use different driver source revisions')
     summary = {'referencePolicy': json.loads((HERE / 'reference-policy.json').read_text()),
                'policySHA256': sha(HERE / 'reference-policy.json'), 'languages': sorted(reports),
-               'completePrimaryCoverage': set(reports) == set(expected), 'levels': {}}
+               'completePrimaryCoverage': set(reports) == set(expected) and set(args.sizes) == set(policy['corpusSizes']), 'levels': {}}
     for size in map(str, args.sizes):
         selected = {language: report['levels'][size] for language, report in reports.items()}
         macro = {metric: statistics.fmean(value['splits']['test']['relevant'][metric] for value in selected.values()) for metric in METRICS}
