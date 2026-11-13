@@ -1,0 +1,20 @@
+{
+  "name": "filter-lists",
+  "description": "Single-source universe for the lists a source publishes for its filterable fields. The filing twin has nothing real behind it: seven invented notes, each filed in folders that form a tree and shared with a group that has members. Its fixture cabinet.json seeds the folders and groups, which a test then renames, moves and deletes in memory between syncs; filter-lists.e2e.test.ts asserts the gateway's stored lists follow through ordinary syncs while no note is sent again.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "desk",
+      "name": "Riverside-Desk",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "filing",
+      "accountIds": ["northstar"],
+      "device": "desk"
+    }
+  ]
+}

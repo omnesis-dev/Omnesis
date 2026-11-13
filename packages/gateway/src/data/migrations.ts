@@ -152,6 +152,7 @@ import { addPersonAliasAssertions } from "./migration-173-alias-assertions.js";
 import { namespaceWhatsappLids } from "./migration-174-lid-namespace.js";
 import { addSourceFamilyMeta } from "./migration-175-source-family-meta.js";
 import { addSourceVersionDeclarations } from "./migration-216-source-version-declarations.js";
+import { addSourceFilterLists } from "./migration-217-source-filter-lists.js";
 import { addDocumentPartitionKey } from "./migration-176-document-partition-key.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
@@ -4999,6 +5000,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 216,
     description: "record the source version of each published profile and a source's resync cost",
     up: addSourceVersionDeclarations,
+  },
+  {
+    version: 217,
+    description: "store the lists collectors publish for a source's filterable fields",
+    up: addSourceFilterLists,
   },
 ];
 

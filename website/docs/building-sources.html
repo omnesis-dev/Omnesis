@@ -840,6 +840,67 @@ export default defineSource({
           and an optional <code>membersOf</code> naming a field declared with
           <code>listsMembers</code>.
         </p>
+        <p>
+          A record carries only the ID of what it belongs to. The names, the tree and the members
+          come from a list the source produces for each <code>filter</code> field: everything that
+          exists in the account for that field. Attach one producer per field to the instance
+          <code>create()</code> returns, keyed by the field's path:
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">packages/providers/fieldnotes/src/index.ts</span>
+          </div>
+          <div class="term-body">
+            <pre data-lang="ts">
+create: async ({ config }) =>
+  withFilterLists(
+    { sync: (cursor) => syncNotes(config.dataPath, cursor) },
+    {
+      "extra.notebookIds": async function* ({ signal }) {
+        for await (const notebook of listNotebooks(config.dataPath, { signal })) {
+          yield { id: notebook.id, label: notebook.name, parentId: notebook.parentId };
+        }
+      },
+    },
+  ),</pre>
+          </div>
+        </div>
+        <p>
+          Each item has an <code>id</code> (the value records carry), a <code>label</code> for
+          display, a <code>parentId</code> in a tree, and <code>members</code> (identifiers of type
+          <code>phone</code>, <code>email</code> or <code>domain</code>) when the field declares
+          <code>listsMembers</code>. The rules:
+        </p>
+        <ul>
+          <li>
+            Return the whole list or throw. An item missing from a published list reads as no longer
+            existing, so a producer that cannot finish (a failed page, a rate limit) throws. The
+            sync carries on and the gateway keeps the list it has.
+          </li>
+          <li>
+            List what exists, whether or not any record belongs to it. Say nothing about individual
+            records: the list's cost must grow with the number of labels or folders, never with the
+            number of records.
+          </li>
+          <li>
+            In a tree, every <code>parentId</code> names an item of the same list. An item whose
+            parent the source cannot see is a root: leave <code>parentId</code> out. IDs are unique
+            within a list. A list that breaks these rules is not published.
+          </li>
+          <li>
+            An item may carry up to 10,000 members. A list with a larger item is not published,
+            because dropping members would make the item match fewer people than it involves.
+          </li>
+        </ul>
+        <p>
+          The collector runs the producers once in every sync, after the sync's first page is
+          stored, and sends a list only when it differs from the one the gateway holds. The gateway
+          never asks for a list. It replaces a stored list in one step once it has received all of
+          the new one, and keeps one list per device for a field whose <code>scope</code> is
+          <code>device</code>. A list for a field the profile does not mark with
+          <code>filter</code> is ignored.
+        </p>
 
         <h3 id="analytics-rows">Analytics rows</h3>
         <p>

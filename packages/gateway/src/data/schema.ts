@@ -47,6 +47,7 @@ import { createCanonicalizationStateTable } from "./repositories/Canonicalizatio
 import { createReauthRemindersTable } from "./repositories/ReauthRemindersRepository.js";
 import { createMobilePermissionHealthTable } from "./repositories/MobilePermissionHealthRepository.js";
 import { createSourceDocumentProfilesTable } from "./repositories/SourceDocumentProfileRepository.js";
+import { createSourceFilterListTables } from "./repositories/SourceFilterListRepository.js";
 import { createSourceStreamCleanupTable } from "./repositories/SourceStreamCleanupRepository.js";
 import {
   createSourceModeTransitionIndexes,
@@ -1473,6 +1474,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // each source's documents can be asked about. Persisted so a restart before
   // the collector reconnects doesn't read as "the source was removed".
   createSourceDocumentProfilesTable(db);
+  createSourceFilterListTables(db);
 
   // Briefs / Brain storage (experimental): open loops, briefs,
   // the agent run queue, spend tracking, agent notes.

@@ -10,6 +10,8 @@ import type {
   SourceId,
   SourceType,
   ProviderId,
+  FilterListPublication,
+  FilterListReceipt,
 } from "@omnesis/types";
 import type { SourceWatermark, SyncCursor } from "./source.js";
 import type { PendingStructuredPage, PrepareStructuredPage } from "./pending-source-page.js";
@@ -325,6 +327,12 @@ export interface UpsertWithCursorResponse {
   holder?: string;
   /** True when durable source removal refused this page. */
   rejectedAsRemoved?: true;
+  /**
+   * What became of each list page the request carried, in the order sent.
+   * Absent when it carried none, when the page was refused, and on a gateway
+   * that does not store lists.
+   */
+  filterLists?: FilterListReceipt[];
   /** @deprecated Snapshot work is recorded in one bounded pass; retries are unnecessary. */
   retrySnapshot?: true;
 }
@@ -529,6 +537,14 @@ export interface GatewayClient {
    * armed across the wipe it was built for.
    */
   getWipeEpoch(sourceId: SourceId): Promise<number | undefined>;
+
+  /**
+   * The digest of each list the gateway holds for the source's filterable
+   * fields, keyed by field path, read from the source's sync state. A list
+   * the gateway has never been sent has no entry. `undefined` means the
+   * gateway does not store lists, and none should be sent.
+   */
+  getFilterListDigests?(sourceId: SourceId): Promise<Record<string, string> | undefined>;
 
   /**
    * Claim a new per-source write epoch. Optional for compatibility with older
@@ -757,6 +773,12 @@ export interface GatewayClient {
     consentExpiresAt?: string | null;
     watermark?: SourceWatermark;
     meta?: Omit<SourceSyncMeta, "contentRetention">;
+    /**
+     * Pages of the lists the source publishes for its filterable fields. The
+     * gateway stores them once the page is accepted and answers for each in
+     * the response's `filterLists`.
+     */
+    filterLists?: FilterListPublication[];
   }): Promise<UpsertWithCursorResponse>;
 
   /** List documents with filtering and pagination. The wire envelope is

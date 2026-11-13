@@ -85,6 +85,8 @@ const WOUND_BACK = [
   // 216 adds a profile's source version, dropped by windBack, and a family's
   // resync cost, on a table windBack drops whole.
   216,
+  // 217 creates the published filter lists; windBack drops them before replay.
+  217,
 ];
 
 let dir: string;
@@ -288,6 +290,9 @@ function undoDeviceEnrollment(db: Db): void {
 }
 
 function windBack(db: Db): void {
+  db.exec("DROP TABLE source_filter_item_members");
+  db.exec("DROP TABLE source_filter_items");
+  db.exec("DROP TABLE source_filter_lists");
   db.exec("ALTER TABLE source_document_profiles DROP COLUMN output_revision");
   db.exec("DROP TABLE lab_features");
   undoDeviceEnrollment(db);

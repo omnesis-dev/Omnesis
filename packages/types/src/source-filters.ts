@@ -142,6 +142,35 @@ export interface FilterListItem {
   members?: FilterIdentifier[];
 }
 
+/**
+ * Bounds on a published list, shared by the side that splits a list into
+ * pages and the side that checks what arrives.
+ */
+export const FILTER_LIST_LIMITS = {
+  /** List pages one sync page may carry. */
+  publicationsPerPage: 8,
+  /** Items in one page of a list. */
+  itemsPerPart: 2000,
+  /** Serialized size of one page of a list, and of the list pages on one sync page. */
+  partBytes: 1024 * 1024,
+  /** Pages one list may span. */
+  parts: 5000,
+  /** Length of an item id or parent id. */
+  idLength: 512,
+  /** Length of an item label. */
+  labelLength: 512,
+  /** Members one item may carry. */
+  membersPerItem: 10_000,
+  /**
+   * Members all the items of one page of a list may carry together. A page cut
+   * to `partBytes` stays far below it; it bounds what a gateway writes for a
+   * page that was not.
+   */
+  membersPerPart: 50_000,
+  /** Length of a member identifier value. */
+  identifierLength: 320,
+} as const;
+
 /** One page of the list of what exists in an account for a filterable field. */
 export interface FilterListPublication {
   /** Path of the filterable field the list belongs to. */
@@ -153,4 +182,35 @@ export interface FilterListPublication {
   /** Whether this page is the last of the list. */
   final: boolean;
   items: FilterListItem[];
+}
+
+/**
+ * What the gateway did with one page of a published list.
+ *
+ * - `staged` — stored; the list is not complete yet.
+ * - `published` — stored, and the list it completes is now the current one.
+ * - `current` — the gateway already holds the list with this digest.
+ * - `out-of-sequence` — not the page the gateway expected next; send the list
+ *   again from its first page.
+ * - `superseded` — another publication of the same list started meanwhile.
+ * - `undeclared` — the source's stored profile does not mark the field as one
+ *   this gateway can filter on.
+ * - `not-holder` — the list is shared by every device of the source and the
+ *   publishing device does not hold the source's sync lease.
+ */
+export type FilterListOutcome =
+  | "staged"
+  | "published"
+  | "current"
+  | "out-of-sequence"
+  | "superseded"
+  | "undeclared"
+  | "not-holder";
+
+/** The gateway's answer for one page of a published list. */
+export interface FilterListReceipt {
+  field: string;
+  digest: string;
+  part: number;
+  outcome: FilterListOutcome;
 }

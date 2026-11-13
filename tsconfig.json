@@ -82,6 +82,7 @@
     { "path": "packages/providers-synth/openclaw" },
     { "path": "packages/providers-synth/hermes" },
     { "path": "packages/providers-synth/photos" },
+    { "path": "packages/providers-synth/filing" },
     { "path": "packages/providers-synth/activity-segments" }
   ],
   "files": []

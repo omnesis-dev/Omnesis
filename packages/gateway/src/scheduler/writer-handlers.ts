@@ -77,6 +77,11 @@ const PEOPLE_BACKFILL_SLICE_MS = 50;
 // limit. The slice leaves room for one more unit inside the same bound.
 const PLANNER_STATISTICS_SLICE_MS = 50;
 
+// A page of a published filter list is written by the collector's own sync
+// request, at ingestion priority. A short slice keeps one large list from
+// holding back the pages of every other source.
+const FILTER_LIST_STAGE_SLICE_MS = 50;
+
 function sliceDeadline(token: PreemptToken, sliceMs: number): () => boolean {
   const deadline = performance.now() + sliceMs;
   return () => token.requested() || performance.now() >= deadline;
@@ -497,6 +502,13 @@ import {
   upsertSourceDocumentProfiles,
   type SourceDocumentProfileEntry,
 } from "../data/repositories/SourceDocumentProfileRepository.js";
+import {
+  deleteFilterLists,
+  stageFilterListPart,
+  sweepFilterListRows,
+  type FilterListKey,
+  type StageFilterListPartArgs,
+} from "../data/repositories/SourceFilterListRepository.js";
 import {
   upsertConversationCitations,
   type ConversationCitationInput,
@@ -1508,6 +1520,10 @@ export const writerHandlers = {
     entries: readonly SourceDocumentProfileEntry[],
     publishedAt: number,
   ) => upsertSourceDocumentProfiles(db, entries, publishedAt),
+  "filterLists.delete": (db: Db, sourceId: string, deviceId?: string) =>
+    deleteFilterLists(db, sourceId, deviceId),
+  "filterLists.sweep": (db: Db, cursor: FilterListKey | null, limit: number) =>
+    sweepFilterListRows(db, cursor, limit),
 
   // ── briefs (the Brain run queue) ─────────────────────────────
   "cognition.enqueue": (db: Db, input: EnqueueCognitionRunInput, now: number) =>
@@ -2064,6 +2080,25 @@ import type {
 } from "../transcribe/vocabulary/types.js";
 
 export const writerYieldableHandlers = {
+  /**
+   * One page of a published filter list, written in sub-batches. Gives the
+   * writer back once the slice is spent or a higher-priority write waits; the
+   * resumed call carries on from the row it stopped at.
+   */
+  "filterLists.stagePart": (
+    db: Db,
+    token: PreemptToken,
+    args: Omit<StageFilterListPartArgs, "resume">,
+    resume?: StageFilterListPartArgs["resume"],
+  ) => {
+    const result = stageFilterListPart(
+      db,
+      { ...args, resume },
+      { shouldYield: sliceDeadline(token, FILTER_LIST_STAGE_SLICE_MS) },
+    );
+    if (result.kind === "yield") return { kind: "yield" as const, resume: [args, result.resume] };
+    return result.outcome;
+  },
   /**
    * Bounded by its step limit, by the preempt token and by a time slice
    * between steps; the frontier is durable per step, so stopping early only

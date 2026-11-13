@@ -12862,6 +12862,21 @@
         "packages/gateway/portal/js/views/access/public-address.test.ts"
       ],
       "reason": "Product or interface text asserted by a test, not a person's name."
+    },
+    {
+      "value": "David Lin",
+      "paths": ["evals/universes/filter-lists/cast.json"],
+      "reason": "Invented cast of the filter-lists universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": ["evals/universes/filter-lists/cast.json"],
+      "reason": "Invented cast of the filter-lists universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": ["evals/universes/filter-lists/cast.json"],
+      "reason": "Invented cast of the filter-lists universe, taken from the AGENTS.md example names; never personal corpus data."
     }
   ],
   "secretFixtures": [

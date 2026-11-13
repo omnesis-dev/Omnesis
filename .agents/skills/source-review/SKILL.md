@@ -600,6 +600,15 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   it), and that change raises `outputRevision`; `scope: "device"` is used
   exactly when an id only means something on the device that produced it.
   A parity test proves the normalizer writes what is declared.
+- Every field marked `filter` has a list producer attached with
+  `withFilterLists`, keyed by the field's path. A producer lists everything
+  that exists in the account for the field (also what no record belongs to)
+  and nothing about individual records; it returns the whole list or throws,
+  never a part of it; ids are unique, every `parentId` names an item of the
+  same list, and an item whose parent the source cannot see is a root;
+  `members` appear only where the field declares `listsMembers`. Its cost
+  grows with the number of labels or folders, never with the number of
+  records. A test covers a rename, a move, a deletion and a failed listing.
 - `documentTemporalProjections` use only the closed field set
   (`$semanticTime`, `scheduledAt`, `dueAt`, `endsAt`, `timeZone`, `status`);
   `temporalProjection` on analytics tables anchors on `$semanticTime` and

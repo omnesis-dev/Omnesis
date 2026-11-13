@@ -60,6 +60,7 @@ import { SourceLifecycle } from "./source-lifecycle.js";
 import { ProgressTracker } from "./progress-tracker.js";
 import { FeedProcessSupervisor } from "./feed-process-supervisor.js";
 import { runWithSyncTimeout } from "./source-sync-attempt.js";
+import { FilterListPublisher } from "./filter-list-publisher.js";
 import type {
   DocumentIngestionContext,
   DocumentInput,
@@ -207,6 +208,8 @@ export class SourceSyncRunner {
   private readonly heldLeases = new Set<SourceId>();
   /** Renewal timers keeping a held lease alive through a long page fetch. */
   private readonly leaseHeartbeats = new Map<SourceId, ReturnType<typeof setInterval>>();
+  /** Publishes the lists a source produces for its filterable fields. */
+  private readonly filterLists: FilterListPublisher;
 
   constructor(
     private readonly gateway: GatewayClient,
@@ -214,7 +217,9 @@ export class SourceSyncRunner {
     private readonly syncTimeoutMs: number,
     private readonly feedProcess: FeedProcessSupervisor = new FeedProcessSupervisor(),
     private readonly ingestionContext?: DocumentIngestionContext,
-  ) {}
+  ) {
+    this.filterLists = new FilterListPublisher(gateway);
+  }
 
   /**
    * Give up every sync lease this collector holds — on shutdown, so a
@@ -702,6 +707,21 @@ export class SourceSyncRunner {
           }
         }
       }
+      // The source's lists are refreshed once per cycle, after its first page
+      // has committed: the gateway then knows the source, and a long first
+      // read does not keep the lists waiting for its last page.
+      let listsOffered = false;
+      const offerFilterLists = async (committed: { cursor: typeof cursor; hasMore: boolean }) => {
+        if (listsOffered || committed.cursor === null) return;
+        listsOffered = true;
+        await this.filterLists.publish(source, {
+          cursor: committed.cursor,
+          hasMore: committed.hasMore,
+          wipeEpoch,
+          signal,
+          holder: mode !== "replicated" || this.heldLeases.has(source.id),
+        });
+      };
       let hasMore = true;
       // TODO: End the tick with a log.error when a structured page carries no rows, deletes or
       // documents, leaves the cursor unchanged and still says hasMore; it is refetched at once
@@ -988,6 +1008,7 @@ export class SourceSyncRunner {
           reportSnapshotAbsence(source.id, writeResult.absence);
 
           cursor = result.cursor;
+          await offerFilterLists(result);
 
           if (result.progress) {
             // Per-cycle progress: `total` is the queue size for this sync
@@ -1073,6 +1094,7 @@ export class SourceSyncRunner {
           reportSnapshotAbsence(source.id, writeResult.absence);
 
           cursor = result.cursor;
+          await offerFilterLists(result);
 
           // Update progress — per-cycle accounting. `total` = items in this
           // cycle's queue (e.g. notes modified since last cursor); `processed`

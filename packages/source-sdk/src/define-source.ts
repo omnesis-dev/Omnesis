@@ -46,6 +46,7 @@ import {
 import { isDerivedFromSchema, toSourceParams } from "./config-schema.js";
 import { nodePathProbe } from "./path-probe-node.js";
 import { executionModeOf, type ExecutionMode } from "./execution-mode.js";
+import type { FilterListProducers } from "./filter-lists.js";
 import type { ConnectionState } from "./connection-state.js";
 import type { AccountDescriptor } from "./account-descriptor.js";
 import type { AuthResult, AuthSession } from "./auth-session.js";
@@ -296,6 +297,13 @@ export interface SourceInstance<TCursor extends SyncCursor = SyncCursor> {
    * undefined to use the definition-level name.
    */
   label?: string;
+
+  /**
+   * One producer per filterable field of the source's profile, each listing
+   * what exists in the account for that field. Set with `withFilterLists`;
+   * the host runs them and publishes the lists as part of an ordinary sync.
+   */
+  filterLists?: FilterListProducers;
 
   /** Clean up resources (close DB connections, etc.) */
   dispose?(): Promise<void>;

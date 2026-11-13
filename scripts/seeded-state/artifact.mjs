@@ -272,6 +272,11 @@ const SAFE_TABLES = new Set([
   "retired_loops",
   "schema_migrations",
   "source_document_profiles",
+  // Lists collectors published for filterable fields: names and trees of an
+  // account, kept with the corpus so saved filters keep resolving in a clone.
+  "source_filter_item_members",
+  "source_filter_items",
+  "source_filter_lists",
   "source_devices",
   "source_inventories",
   "source_inventory_documents",

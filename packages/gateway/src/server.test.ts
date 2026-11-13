@@ -48,6 +48,7 @@ import {
 } from "./data/repositories/DeviceRepository.js";
 import { initializeOrAssertSourceMemberConfigContract } from "./data/repositories/SourceMemberConfigContractRepository.js";
 import { createSession, createToken, lookupToken } from "./data/repositories/TokenRepository.js";
+import { upsertSourceDocumentProfiles } from "./data/repositories/SourceDocumentProfileRepository.js";
 import { directWriteGate, type WriteGate } from "./write-gate.js";
 import { DEFAULT_SEARCH_PARAMS, DEFAULT_SEARCH_BOOSTS } from "./search/search-config.js";
 import type { IComputeScheduler } from "./http/services/ports.js";
@@ -955,7 +956,12 @@ describe("auth middleware", () => {
     expect(cursorRes.status).toBe(403);
 
     const state = await (await req("/sync-state/google-calendar")).json();
-    expect(state).toEqual({ cursor: null, lastSyncedAt: null, wipeEpoch: 0 });
+    expect(state).toEqual({
+      cursor: null,
+      lastSyncedAt: null,
+      wipeEpoch: 0,
+      filterListDigests: {},
+    });
   });
 
   test("source-scoped write token cannot wipe another source or an entire provider", async () => {
@@ -5004,7 +5010,12 @@ describe("sync state endpoints", () => {
     const res = await req("/sync-state/unknown");
     expect(res.status).toBe(200);
     // wipeEpoch is 0 for a source that has never been wiped.
-    expect(await res.json()).toEqual({ cursor: null, lastSyncedAt: null, wipeEpoch: 0 });
+    expect(await res.json()).toEqual({
+      cursor: null,
+      lastSyncedAt: null,
+      wipeEpoch: 0,
+      filterListDigests: {},
+    });
   });
 
   test("stores and retrieves sync state", async () => {
@@ -7797,7 +7808,12 @@ describe("POST /documents/delete-all/source/:sourceId", () => {
     // rather than resurrecting the old cursor.
     const afterRes = await req("/sync-state/gmail");
     const afterData = await afterRes.json();
-    expect(afterData).toEqual({ cursor: null, lastSyncedAt: null, wipeEpoch: 1 });
+    expect(afterData).toEqual({
+      cursor: null,
+      lastSyncedAt: null,
+      wipeEpoch: 1,
+      filterListDigests: {},
+    });
 
     // Other sources' cursors must be untouched.
     await req("/sync-state/google-calendar", {
@@ -11997,5 +12013,154 @@ describe("POST /admin/sources/:id/resync", () => {
       body: JSON.stringify({}),
     });
     expect(noWs.status).toBe(503);
+  });
+});
+
+describe("filter lists on a sync page", () => {
+  const SOURCE = "ledger:northstar";
+  const digest = (name: string) => name.padEnd(64, "0").replace(/[^0-9a-f]/g, "a");
+  const page = (filterLists: unknown) => ({
+    providerId: "ledger",
+    sourceId: SOURCE,
+    documents: [],
+    hasMore: false,
+    cursor: { page: 1 },
+    filterLists,
+  });
+  const labels = (name: string, items: unknown[], part = 0, final = true) => ({
+    field: "extra.labelIds",
+    digest: digest(name),
+    part,
+    final,
+    items,
+  });
+  const post = (body: unknown) =>
+    req("/documents/with-cursor", { method: "POST", body: JSON.stringify(body) });
+  const digests = async () =>
+    (
+      (await (await req(`/sync-state/${encodeURIComponent(SOURCE)}`)).json()) as {
+        filterListDigests: Record<string, string>;
+      }
+    ).filterListDigests;
+  const storedLabels = () =>
+    db
+      .prepare<[string], { item_id: string; label: string }>(
+        `SELECT i.item_id, i.label FROM source_filter_lists l
+           JOIN source_filter_items i
+             ON i.source_id = l.source_id AND i.field = l.field
+            AND i.device_id = l.device_id AND i.generation = l.generation
+          WHERE l.source_id = ? ORDER BY i.item_id`,
+      )
+      .all(SOURCE);
+
+  beforeEach(() => {
+    upsertSourceDocumentProfiles(
+      db,
+      [
+        {
+          sourceType: "ledger",
+          outputRevision: 1,
+          profile: {
+            documentTypes: ["entry"],
+            personRoles: [],
+            metadataFields: [
+              {
+                path: "extra.labelIds",
+                type: "string-array",
+                description: "Label ids.",
+                filter: {
+                  capability: "membership",
+                  minVersion: 0,
+                  scope: "global",
+                  noun: { one: "label", many: "labels" },
+                  picker: "search",
+                },
+              },
+            ],
+          },
+        },
+      ],
+      1000,
+    );
+  });
+
+  test("a page's lists are stored, answered for, and reported back as digests", async () => {
+    expect(await digests()).toEqual({});
+    const res = await post(page([labels("v1", [{ id: "l-finance", label: "Finance" }])]));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { filterLists: unknown }).filterLists).toEqual([
+      { field: "extra.labelIds", digest: digest("v1"), part: 0, outcome: "published" },
+    ]);
+    expect(storedLabels()).toEqual([{ item_id: "l-finance", label: "Finance" }]);
+    expect(await digests()).toEqual({ "extra.labelIds": digest("v1") });
+
+    const again = await post(page([labels("v1", [{ id: "l-finance", label: "Finance" }])]));
+    expect(
+      ((await again.json()) as { filterLists: Array<{ outcome: string }> }).filterLists,
+    ).toEqual([expect.objectContaining({ outcome: "current" })]);
+  });
+
+  test("a page without lists answers without the key", async () => {
+    const res = await post({ ...page(undefined) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).not.toHaveProperty("filterLists");
+  });
+
+  test("a list for a field the profile does not declare is answered as undeclared and not stored", async () => {
+    const res = await post(page([{ ...labels("v1", []), field: "extra.unknown" }]));
+    expect(((await res.json()) as { filterLists: Array<{ outcome: string }> }).filterLists).toEqual(
+      [expect.objectContaining({ field: "extra.unknown", outcome: "undeclared" })],
+    );
+    expect(await digests()).toEqual({});
+  });
+
+  test.each([
+    ["a digest that is not a sha256", [{ ...labels("v1", []), digest: "abc" }]],
+    ["an item without an id", [labels("v1", [{ id: "", label: "Nameless" }])]],
+    [
+      "a member of an unknown kind",
+      [labels("v1", [{ id: "l-1", label: "L", members: [{ type: "handle", value: "maya" }] }])],
+    ],
+    ["a negative page number", [labels("v1", [], -1)]],
+    [
+      "more members than a list page may hold",
+      [
+        labels(
+          "v1",
+          Array.from({ length: 6 }, (_, i) => ({
+            id: `l-${i}`,
+            label: "L",
+            members: Array.from({ length: 10_000 }, (_, m) => ({
+              type: "email",
+              value: `m${i}-${m}@example.com`,
+            })),
+          })),
+        ),
+      ],
+    ],
+    ["more lists than a page may carry", Array.from({ length: 9 }, () => labels("v1", []))],
+    [
+      "more items than a list page may hold",
+      [
+        labels(
+          "v1",
+          Array.from({ length: 2001 }, (_, i) => ({ id: `l-${i}`, label: "L" })),
+        ),
+      ],
+    ],
+  ])("refuses %s before writing anything", async (_name, filterLists) => {
+    const res = await post(page(filterLists));
+    expect(res.status).toBe(400);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM source_filter_lists").get()).toEqual({ n: 0 });
+  });
+
+  test("starting the source over keeps its lists, which describe the account and not its records", async () => {
+    await post(page([labels("v1", [{ id: "l-finance", label: "Finance" }])]));
+    const wipe = await req(`/documents/delete-all/source/${encodeURIComponent(SOURCE)}`, {
+      method: "POST",
+    });
+    expect(wipe.status).toBe(200);
+    expect(storedLabels()).toEqual([{ item_id: "l-finance", label: "Finance" }]);
+    expect(await digests()).toEqual({ "extra.labelIds": digest("v1") });
   });
 });
