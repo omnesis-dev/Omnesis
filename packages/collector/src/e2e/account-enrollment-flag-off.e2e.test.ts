@@ -322,7 +322,7 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["cloud", "trusted-sign-ins"],
       ["cloud", "incidents", "list"],
       ["cloud", "incidents", "ack"],
-      ["cloud", "remove-sign-in", "fictional", "--revoke-devices"],
+      ["cloud", "remove-sign-in", "fictional"],
     ]) {
       const run = await cliRun(args, false);
       expect(run.code, args.join(" ")).not.toBe(0);
