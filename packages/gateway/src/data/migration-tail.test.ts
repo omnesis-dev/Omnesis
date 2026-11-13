@@ -82,6 +82,8 @@ const WOUND_BACK = [
   214,
   // 215 persists the Lab choices; windBack drops them before replay.
   215,
+  // 216 indexes documents by id and type; windBack drops the index.
+  216,
 ];
 
 let dir: string;
@@ -285,6 +287,7 @@ function undoDeviceEnrollment(db: Db): void {
 }
 
 function windBack(db: Db): void {
+  db.exec("DROP INDEX idx_documents_id_document_type");
   db.exec("DROP TABLE lab_features");
   undoDeviceEnrollment(db);
   db.exec("ALTER TABLE agent_messages DROP COLUMN author_json");

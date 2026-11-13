@@ -39,6 +39,7 @@ import { DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX } from "./migration-214-device-enrol
 import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
+import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
@@ -187,6 +188,8 @@ function runSchemaSetupInTxn(db: Db): void {
   );
   // Declared-edge endpoints resolve by source and external id.
   indexDocumentsBySourceExternalId(db);
+  // A document's type by id, read without the row (see the migration).
+  indexDocumentsByIdAndType(db);
 
   // Partial index supporting cross-source dedup — duplicate
   // -content detection between binary-extracted docs (attachments and
