@@ -169,6 +169,19 @@ class AccountPairingControllerTest {
         assertTrue(second.closed)
     }
 
+    @Test fun `a passkey the phone's provider cannot use says so instead of blaming the connection`() = runTest {
+        val attempt = Attempt(listOf(choice))
+        var state = AccountPairingState()
+        val failing = AccountPairingPorts({ _, _ -> error("Wrong provider") }, { _, _ -> throw AccountPasskeyUnavailable() }, { attempt }, {}, { currentTime })
+        val controller = AccountPairingController(this, failing) { state = it }
+        controller.start(context, AccountPairingController.Method.Passkey); runCurrent()
+        assertEquals(AccountPairingPhase.Failed, state.phase)
+        assertEquals("Couldn't use your passkey on this phone. Try Sign in with Google, or pair directly with a QR code.", state.error)
+        assertEquals(null, state.notice)
+        assertTrue(attempt.closed)
+        assertFalse("passkey" in attempt.calls)
+    }
+
     @Test fun `every failure reads as it does on the iPhone`() = runTest {
         for ((reason, text) in listOf(
             AccountPairingException.Reason.NO_GATEWAYS to "This Omnesis account has no gateway yet. Connect your gateway to it first, or pair directly with a QR code.",

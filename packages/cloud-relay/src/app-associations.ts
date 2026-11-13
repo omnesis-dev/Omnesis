@@ -36,6 +36,16 @@ const configuration = z
   })
   .strict();
 
+/**
+ * Google Play services validates a passkey's relying party ID against this statement. Its
+ * Credential Manager guide declares both relations; the apps declare no auto-verified App Links,
+ * so handle_all_urls opens no web URLs in them.
+ */
+const ANDROID_RELATIONS = [
+  "delegate_permission/common.handle_all_urls",
+  "delegate_permission/common.get_login_creds",
+];
+
 /** Platform associations authorize only configured applications and signing certificates to use account passkeys. */
 export class AppAssociations {
   private readonly apple: readonly string[];
@@ -82,7 +92,7 @@ export class AppAssociations {
       path === "/.well-known/apple-app-site-association"
         ? { webcredentials: { apps: this.apple } }
         : this.android.map((app) => ({
-            relation: ["delegate_permission/common.get_login_creds"],
+            relation: ANDROID_RELATIONS,
             target: {
               namespace: "android_app",
               package_name: app.packageName,
