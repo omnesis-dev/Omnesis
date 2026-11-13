@@ -1562,8 +1562,10 @@ test("linking the same account again keeps what was declined and withdrawn, and 
     ],
   });
   await f.manager.refresh();
-  // The owner declines Google here; the account withdraws the older passkey.
+  // The owner declines Google here, and in advance a passkey this gateway never trusted; the
+  // account withdraws the older passkey.
   await f.manager.removeTrustedSignIn(f.google);
+  await f.manager.removeTrustedSignIn(removed.id);
   f.credentials.mockResolvedValue({
     google: [f.google],
     passkeys: [f.countersigned(googleSignInOf(f.google), passkeySignInOf(older))],
@@ -1571,11 +1573,12 @@ test("linking the same account again keeps what was declined and withdrawn, and 
   await f.manager.refresh();
   const refusals = {
     declinedGoogle: [f.google],
+    declinedPasskeys: [removed.id],
     withdrawnSignIns: [signInDigest(passkeySignInOf(older))],
   };
   expect(await f.saved()).toMatchObject(refusals);
   // Linked to the same account again, with the same passkey or with another one.
-  for (const device of [f.passkey, removed]) {
+  for (const device of [f.passkey, await passkeyDevice()]) {
     const nonce = opaque();
     await f.manager.completeSignup({
       accountId: f.accountId,
@@ -1588,14 +1591,21 @@ test("linking the same account again keeps what was declined and withdrawn, and 
   }
   // Linking with a sign-in it had refused is the owner's choice, like approving it.
   const nonce = opaque();
-  await f.manager.completeSignup({
-    accountId: f.accountId,
-    nonce,
-    proof: assertionProof(older.authenticator, nonce),
-    credentialPublicKey: older.publicKey,
-    signal: new AbortController().signal,
+  for (const device of [older, removed]) {
+    const linking = opaque();
+    await f.manager.completeSignup({
+      accountId: f.accountId,
+      nonce: linking,
+      proof: assertionProof(device.authenticator, linking),
+      credentialPublicKey: device.publicKey,
+      signal: new AbortController().signal,
+    });
+  }
+  expect(await f.saved()).toMatchObject({
+    declinedGoogle: [f.google],
+    declinedPasskeys: [],
+    withdrawnSignIns: [],
   });
-  expect(await f.saved()).toMatchObject({ declinedGoogle: [f.google], withdrawnSignIns: [] });
   // Another account has none of this account's refusals.
   await f.manager.completeSignup({
     accountId: "c".repeat(64),

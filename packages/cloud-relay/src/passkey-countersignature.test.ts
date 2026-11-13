@@ -357,6 +357,11 @@ describe("a gateway checking what a passkey countersigned", () => {
     expect(
       verifier().endorsementSigner({ type: "google", idToken: `${header}.${body}.`, salt }),
     ).toMatchObject({ type: "google", id: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    // A token that names no subject claims no signer.
+    const unnamed = Buffer.from(JSON.stringify({ iss: "fictional" })).toString("base64url");
+    expect(
+      verifier().endorsementSigner({ type: "google", idToken: `${header}.${unnamed}.`, salt }),
+    ).toBeUndefined();
     for (const input of [undefined, { type: "google", idToken: "x", salt }, { type: "relay" }])
       expect(verifier().endorsementSigner(input)).toBeUndefined();
   });

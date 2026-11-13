@@ -5,6 +5,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   passkeyCountersignatureNonce,
   passkeyEndorsementNonce,
+  passkeySignInProofSchema,
   signInDigest,
   type PasskeyCountersignature,
 } from "./device-enrollment.js";
@@ -176,18 +177,12 @@ export class PasskeyEndorsements implements AccountOperationBroker {
   private countersignature(parked: Parked): PasskeyCountersignature | undefined {
     const { proof, signIns } = parked.countersignature;
     if (proof.needed()) return undefined;
-    const { signInProof } = proof.take();
-    if (signInProof.type !== "passkey") return undefined;
-    return {
-      // The key is the passkey's own, which every gateway that can use this has pinned.
-      proof: {
-        type: "passkey",
-        salt: signInProof.salt,
-        issuedAt: signInProof.issuedAt,
-        credential: signInProof.credential,
-      },
-      signIns: [...signIns],
-    };
+    // Recorded as a passkey assertion, so this parse only narrows it. The key it offers is the
+    // passkey's own, which every gateway that can use this has pinned, so it is left out.
+    const { credentialPublicKey: _key, ...signed } = passkeySignInProofSchema.parse(
+      proof.take().signInProof,
+    );
+    return { proof: signed, signIns: [...signIns] };
   }
 
   private current(id: string, cookieHeader: string): Parked {

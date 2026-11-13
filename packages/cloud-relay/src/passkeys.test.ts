@@ -256,6 +256,11 @@ test("the passkey being added countersigns the account's other sign-ins with its
     await refused("signature did not verify", (challenge) =>
       second.authenticator.authentication(challenge, handle, 1, origin, 0x19),
     );
+    // A signature by another key, presented under the new passkey's id.
+    await refused("signature did not verify", (challenge) => {
+      const forged = first.authenticator.authentication(challenge, handle, 1);
+      return { ...forged, id: second.authenticator.id, rawId: second.authenticator.id };
+    });
     // Another account's user handle.
     await refused("belongs to another Omnesis account", (challenge) =>
       second.authenticator.authentication(challenge, Buffer.alloc(32, 7).toString("base64url"), 1),
