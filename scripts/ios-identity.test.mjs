@@ -1052,3 +1052,118 @@ describe("iOS live gateway wrapper", () => {
     expect(upload.with["retention-days"]).toBe(7);
   });
 });
+
+/** Run the real wrapper through fixture setup, stopping at the mocked Xcode launch. */
+function bootstrap(failedFeature = "") {
+  const fixture = mkdtempSync(join(tmpdir(), "ios-lab-fixture-"));
+  try {
+    const scripts = join(fixture, "scripts");
+    const bin = join(fixture, "bin");
+    const calls = join(fixture, "calls");
+    const handoff = join(fixture, "simulator-handoff.json");
+    mkdirSync(join(scripts, "ci"), { recursive: true });
+    mkdirSync(join(fixture, "ios"));
+    mkdirSync(bin);
+    const wrapper = readFileSync(join(root, "scripts/run-ios-e2e.sh"), "utf8");
+    // Relocate the simulator's fixed handoff only in this stubbed copy, so
+    // parallel tests cannot touch a real native lane's /tmp configuration.
+    const fixedHandoff = "CONFIG_FILE=/tmp/omnesis-ios-e2e-config.json";
+    if (!wrapper.includes(fixedHandoff)) throw new Error("Update the fixture handoff isolation");
+    writeFileSync(
+      join(scripts, "run-ios-e2e.sh"),
+      wrapper.replace(fixedHandoff, 'CONFIG_FILE="$TEST_HANDOFF"'),
+    );
+    function executable(path, source) {
+      writeFileSync(path, `#!/usr/bin/env bash\nset -eu\n${source}`);
+      chmodSync(path, 0o755);
+    }
+    executable(join(bin, "node"), 'echo "discovery" >> "$TEST_CALLS"');
+    executable(join(bin, "xcodegen"), 'echo "project" >> "$TEST_CALLS"');
+    executable(join(scripts, "ci/resolve-ios-packages.sh"), 'echo "packages" >> "$TEST_CALLS"');
+    executable(
+      join(scripts, "synth-gateway.sh"),
+      `
+      if [[ "$1" == start ]]; then
+        echo "start:experimental=$OMNESIS_EXPERIMENTAL" >> "$TEST_CALLS"
+        mkdir -p "$OMNESIS_CONFIG_DIR/logs" "$OMNESIS_CONFIG_DIR/tls"
+        echo fixture-token > "$OMNESIS_CONFIG_DIR/token"
+        echo fixture-certificate > "$OMNESIS_CONFIG_DIR/tls/cert.pem"
+      else
+        echo stop >> "$TEST_CALLS"
+      fi
+    `,
+    );
+    executable(
+      join(bin, "curl"),
+      `
+      route=""
+      for argument in "$@"; do
+        if [[ "$argument" == https://localhost:17601/* ]]; then route="$argument"; fi
+      done
+      if [[ "$route" == */admin/lab/* ]]; then
+        feature="\${route##*/}"
+        [[ "$*" == *"--cacert $OMNESIS_CONFIG_DIR/tls/cert.pem"* ]]
+        [[ "$*" == *"Authorization: Bearer fixture-token"* ]]
+        [[ "$*" == *'-X PUT --data {"enabled":true}'* ]]
+        echo "lab:$feature" >> "$TEST_CALLS"
+        if [[ "$feature" == "$TEST_FAILED_FEATURE" ]]; then exit 22; fi
+        echo '{}'
+      elif [[ "$route" == */people/search* ]]; then
+        echo people >> "$TEST_CALLS"
+        echo '{"items":[{"id":"person_example"}]}'
+      else
+        echo unexpected-route >&2
+        exit 77
+      fi
+    `,
+    );
+    executable(join(bin, "xcodebuild"), 'echo xcodebuild >> "$TEST_CALLS"; exit 59');
+    const result = spawnSync("bash", [join(scripts, "run-ios-e2e.sh")], {
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        OMNESIS_CONFIG_DIR: join(fixture, "config"),
+        OMNESIS_GATEWAY_PORT: "17601",
+        OMNESIS_E2E_DEST: "platform=iOS Simulator,name=Fixture phone",
+        OMNESIS_EXPERIMENTAL: "0",
+        TEST_CALLS: calls,
+        TEST_HANDOFF: handoff,
+        TEST_FAILED_FEATURE: failedFeature,
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    return { ...result, calls: readFileSync(calls, "utf8").trim().split("\n") };
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
+describe("iOS live gateway Lab fixture", () => {
+  it("opts into Tasks and Watches before launching native tests, keeping Brain off", () => {
+    const result = bootstrap();
+    expect(result.status, result.stderr).toBe(59);
+    expect(result.calls).toEqual([
+      "project",
+      "packages",
+      "discovery",
+      "start:experimental=1",
+      "lab:tasks",
+      "lab:watches",
+      "people",
+      "xcodebuild",
+      "stop",
+    ]);
+  });
+
+  it.each(["tasks", "watches"])(
+    "fails before Xcode and cleans up when %s opt-in fails",
+    (feature) => {
+      const result = bootstrap(feature);
+      expect(result.status, result.stderr).toBe(22);
+      expect(result.calls).toContain(`lab:${feature}`);
+      expect(result.calls).not.toContain("xcodebuild");
+      expect(result.calls.at(-1)).toBe("stop");
+    },
+  );
+});

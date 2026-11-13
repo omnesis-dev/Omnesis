@@ -13,7 +13,7 @@
  * and the calendar, kept for audit). The judgement runs both ways: a change
  * that restores a broken quote heals the atom and resurrects a
  * churn-invalidated annotation, so the read guard also fires for documents
- * only such an entry cites. The same upsert wakes the Cognition Steward's
+ * only such an entry cites. The same upsert wakes the Brain's
  * data run, which re-files whatever the new content supports.
  * A document deletion is handled by the deleting write itself
  * (`source-deletion-review.ts`), not the bus.

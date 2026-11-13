@@ -31,7 +31,7 @@ type Db = Database.Database;
  * The kinds of entity a developer annotation can point at. Most are addressed
  * by a single opaque id; `route` and `agent_notes` carry no `targetId`
  * (`route` is a free-form note tagged with the screen it was filed from;
- * `agent_notes` targets the singleton steward notes blob, which has no row
+ * `agent_notes` targets the singleton Brain notes blob, which has no row
  * id).
  */
 export const DEV_ANNOTATION_TARGET_TYPES = [

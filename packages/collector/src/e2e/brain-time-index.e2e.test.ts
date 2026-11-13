@@ -4,12 +4,12 @@
 /**
  * Brain Bench area F — the time index.
  *
- * Everything here is written by the Cognition Steward through its OWN tools
+ * Everything here is written by the Brain through its OWN tools
  * (`temporal_annotation_add` / `_update` / `_delete`) on a real spawned
  * gateway, and read back through the two shipped read surfaces:
  * `/admin/brain/time-index` and the unified `/temporal/window`. The sibling suites `temporal-substrate` and
  * `temporal-calendar` cover the window routes over rows seeded directly into
- * SQLite; this file covers what happens when the STEWARD is the author —
+ * SQLite; this file covers what happens when the Brain is the author —
  * precision resolution, revisions, the two invalidation paths, the write
  * gates and the reconcile refusal.
  *
@@ -369,7 +369,7 @@ const SOURCE_INTERPRETATIONS: SourceInterpretation[] = [
           },
           loopIds: [ref("open_loop_create", "loop.id")],
         }),
-        // The loop→time backlink is exposed on the steward's own read tool.
+        // The loop→time backlink is exposed on the Brain's own read tool.
         call("open_loop_fetch", { id: ref("open_loop_create", "loop.id") }),
       ],
     }),
@@ -393,7 +393,7 @@ const SOURCE_INTERPRETATIONS: SourceInterpretation[] = [
   },
 ];
 
-describe("Brain Bench — steward-written temporal annotations", () => {
+describe("Brain Bench — Brain-written temporal annotations", () => {
   let bench: BrainBench;
   const docIds = new Map<string, string>();
 
@@ -620,7 +620,7 @@ describe("Brain Bench — steward-written temporal annotations", () => {
 
     expect(adds[0]!.result?.resultType).toBe("temporal_annotation.added");
 
-    // A refusal, not an error: the steward is handed what it collided with.
+    // A refusal, not an error: the Brain is handed what it collided with.
     const refusal = adds[1]!.result;
     expect(refusal?.kind).toBe("structured");
     expect(refusal?.resultType).toBe("temporal_annotation.overlap_candidates");
@@ -655,7 +655,7 @@ describe("Brain Bench — steward-written temporal annotations", () => {
       .get(entry.id, loopId);
     expect(join!.n).toBe(1);
 
-    // The reverse direction the steward reads: the loop carries its dates.
+    // The reverse direction the Brain reads: the loop carries its dates.
     const run = await bench.obs.interpretationForSource(docIds.get(LOOP_DOC.externalId)!);
     const steps = await bench.obs.executedTools(run.id);
     const fetched = steps.find((s) => s.tool === "open_loop_fetch");
@@ -666,9 +666,9 @@ describe("Brain Bench — steward-written temporal annotations", () => {
     expect(temporal.map((t) => t.id)).toContain(entry.id);
   }, 60_000);
 
-  test("the unified window federates steward annotations with source projections", async () => {
+  test("the unified window federates Brain annotations with source projections", async () => {
     // 2026-04 → 2027-04: the ambient calendar's two events sit at the start,
-    // the steward's day-precision entry at the end. Under the route's
+    // the Brain's day-precision entry at the end. Under the route's
     // 400-day span cap, this is the widest read that spans both producers.
     const from = Date.UTC(2026, 3, 1);
     const to = Date.UTC(2027, 3, 1);

@@ -12,7 +12,7 @@
  *
  * Deterministic by construction: two bounded SQL joins, the existing
  * bounded `expandOneHop` BFS (≤48 vertices, hub-avoidance inherited for
- * free), and a linear scoring pass. No model call — the Cognition Steward still
+ * free), and a linear scoring pass. No model call — the Brain still
  * judges the enriched candidates (over-matching is acceptable, exactly as
  * for the lexical overlay).
  *

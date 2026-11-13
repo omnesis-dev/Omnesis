@@ -30,7 +30,7 @@ struct TasksView: View {
         // rather than carrying rows read from another gateway.
         TasksScreen(
             model: TasksModel(service: store.tasks, onMutation: { TaskWidgetAppBridge.reload() }),
-            experimental: store.experimentalEnabled,
+            experimental: store.brainEnabled,
             offersTell: store.statusSnapshot?.capabilities.supportsTaskNoteCapture ?? false,
             menuOpen: $menuOpen,
             focus: focus,

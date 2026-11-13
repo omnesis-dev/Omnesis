@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * QoS contract: the background Cognition Steward's `lookup_people` must run at
+ * QoS contract: the background Brain's `lookup_people` must run at
  * BACKGROUND priority so it can never jump ahead of interactive person
  * lookups on the shared read-worker pool.
  *
@@ -17,12 +17,13 @@
  * still green.
  */
 
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
+import Database from "better-sqlite3";
+import { createLabTable, setLabFlag } from "../../lab/store.js";
 import { createGatewayPersonPort } from "../../agent/ports.js";
 import { getActivePriority, type Priority } from "../../priority.js";
 import { backgroundLookupGate } from "./runtime.js";
 import type { PersonLookupGate } from "../../domain/person-lookup.js";
-import type { Db } from "../../data/types.js";
 
 /**
  * A gate that records the ambient scheduler priority seen when its
@@ -42,7 +43,7 @@ function capturingGate(): { gate: PersonLookupGate; seen: () => Priority | null 
   };
 }
 
-describe("backgroundLookupGate — the Cognition Steward's lookup_people QoS contract", () => {
+describe("backgroundLookupGate — the Brain's lookup_people QoS contract", () => {
   test("runs the underlying gate inside a background-priority scope", async () => {
     const { gate, seen } = capturingGate();
     await backgroundLookupGate(gate).lookupPeople("Maya Reeves", 5, { experimental: false });
@@ -59,15 +60,23 @@ describe("backgroundLookupGate — the Cognition Steward's lookup_people QoS con
   });
 
   test("the person port wired with the wrapped gate invokes it at background priority", async () => {
-    // The exact composition the runtime wires for background runs:
-    // createGatewayPersonPort(db, { lookupGate: backgroundLookupGate(gate) }).
-    // A present gate short-circuits the port's own sync assembly before it
-    // touches the db, so a stub db is sufficient.
-    const { gate, seen } = capturingGate();
-    const port = createGatewayPersonPort({} as unknown as Db, {
-      lookupGate: backgroundLookupGate(gate),
-    });
-    await port.lookup({ query: "Maya Reeves", limit: 5 });
-    expect(seen()).toBe("background");
+    // The lookup assembly runs in the mocked gate. A lightweight real Lab
+    // table supplies the product flags that the port reads before dispatch.
+    const db = new Database(":memory:");
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+    try {
+      createLabTable(db);
+      setLabFlag(db, "brain", true);
+      setLabFlag(db, "tasks", true);
+      const { gate, seen } = capturingGate();
+      const port = createGatewayPersonPort(db, {
+        lookupGate: backgroundLookupGate(gate),
+      });
+      await port.lookup({ query: "Maya Reeves", limit: 5 });
+      expect(seen()).toBe("background");
+    } finally {
+      db.close();
+      vi.unstubAllEnvs();
+    }
   });
 });

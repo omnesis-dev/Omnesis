@@ -974,7 +974,7 @@ describe("renderPart — after-the-fact card affordances", () => {
     const loopAnchors = [...host!.querySelectorAll("a.agent-loop-row")].map((a) =>
       a.getAttribute("href"),
     );
-    expect(loopAnchors).toEqual(["/portal/debug/cognition/knowledge/loop-1?kind=loop"]);
+    expect(loopAnchors).toEqual(["/portal/debug/brain/knowledge/loop-1?kind=loop"]);
     expect(host!.querySelector("a.agent-loop-row .kn-link-icon--loop")).not.toBeNull();
     await renderStatic(
       toolPart("list_loops", { kind: "structured", resultType: "loops.listed", data: { loops } }),
@@ -986,7 +986,7 @@ describe("renderPart — after-the-fact card affordances", () => {
         loop: { loopId: "loop-1", title: "First loop", state: "open" },
       }),
     );
-    expect(resultLinks()).toEqual(["/portal/debug/cognition/knowledge/loop-1?kind=loop"]);
+    expect(resultLinks()).toEqual(["/portal/debug/brain/knowledge/loop-1?kind=loop"]);
   });
 
   it("prints SQL rows statically with a more-rows note", async () => {
@@ -1015,26 +1015,26 @@ describe("renderPart — after-the-fact card affordances", () => {
     expect(host!.textContent).toBe("");
   });
 
-  it("shows steward loop reads through the same loop cards", async () => {
+  it("shows brain loop reads through the same loop cards", async () => {
     await renderStatic(
       toolPart("open_loop_search", {
         kind: "structured",
         resultType: "open_loop.search_results",
-        data: { loops: [{ loopId: "loop-1", title: "Steward loop", state: "open" }], retired: 2 },
+        data: { loops: [{ loopId: "loop-1", title: "Brain loop", state: "open" }], retired: 2 },
       }),
     );
     expect(host!.querySelector("a.agent-loop-row")?.getAttribute("href")).toBe(
-      "/portal/debug/cognition/knowledge/loop-1?kind=loop",
+      "/portal/debug/brain/knowledge/loop-1?kind=loop",
     );
     expect(host!.querySelector(".agent-ephemeral-note")?.textContent).toBe("2 retired");
     await renderStatic(
       toolPart("open_loop_fetch", {
         kind: "structured",
         resultType: "open_loop.fetched",
-        data: { loopId: "loop-1", title: "Steward loop", state: "open" },
+        data: { loopId: "loop-1", title: "Brain loop", state: "open" },
       }),
     );
-    expect(resultLinks()).toEqual(["/portal/debug/cognition/knowledge/loop-1?kind=loop"]);
+    expect(resultLinks()).toEqual(["/portal/debug/brain/knowledge/loop-1?kind=loop"]);
   });
 
   it("lists entity neighborhoods", async () => {
@@ -1053,7 +1053,7 @@ describe("renderPart — after-the-fact card affordances", () => {
     expect(resultLinks()).toEqual([
       "/portal/doc/doc-1",
       "/portal/people/person-1",
-      "/portal/debug/cognition/knowledge/loop-1?kind=loop",
+      "/portal/debug/brain/knowledge/loop-1?kind=loop",
     ]);
     expect(host!.textContent).toContain("Near moment");
   });

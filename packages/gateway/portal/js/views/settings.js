@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Settings view — everything that configures this gateway, on one page with
-// tabs: the config file itself, the standing instructions its agent runs under,
+// tabs: the config file itself, Lab opt-ins, the standing instructions its agent runs under,
 // the models that power its capabilities, the scheduled sweeps it makes over
 // the corpus (experimental only), delegated agent access, the privacy policies
 // that access is reviewed under, and the devices allowed to operate it.
@@ -23,6 +23,7 @@ import {
   EXPERIMENTAL_SETTINGS_TABS,
 } from "../lib/settings-tabs.js";
 
+const LabView = lazy(() => import("./lab.js").then((m) => m.LabView));
 const ConfigView = lazy(() => import("./config.js").then((m) => m.ConfigView));
 const OmnesisMdView = lazy(() => import("./omnesis-md.js").then((m) => m.OmnesisMdView));
 const ModelsView = lazy(() => import("./models.js").then((m) => m.ModelsView));
@@ -40,6 +41,7 @@ export function SettingsView({
   modelsSection,
   modelHealth,
   onModelsRefresh,
+  onLabChange,
   accessAuthorizationId,
   accessLevelId,
   accessNewLevel,
@@ -49,6 +51,8 @@ export function SettingsView({
   policyId,
   completeAccessInPortal,
   experimental = false,
+  lab = { brain: experimental },
+  labAvailable = false,
   cloudRelay = false,
   theme = "dark",
   onThemeToggle,
@@ -61,7 +65,7 @@ export function SettingsView({
   const requested = SETTINGS_TAB_KEYS.includes(tab) ? tab : DEFAULT_SETTINGS_TAB;
   // A link into a disabled feature lands on the default tab.
   const activeTab =
-    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "account" && !cloudRelay)
+    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || (requested === "account" && !cloudRelay)
       ? DEFAULT_SETTINGS_TAB
       : requested;
 
@@ -122,9 +126,10 @@ export function SettingsView({
         style="margin-bottom:16px;"
         active=${activeTab}
         onSelect=${switchTab}
-        tabs=${settingsTabs({ experimental, cloudRelay }).map((item) => item.key === "models" && modelHealth?.warnings?.length
+        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay }).map((item) => item.key === "models" && modelHealth?.warnings?.length
           ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` } : item)}
       />
+      ${activeTab === "lab" && html`<${LabView} onChange=${onLabChange} />`}
       ${activeTab === "config" && html`<${ConfigView} />`}
       ${activeTab === "omnesis-md" && html`<${OmnesisMdView} />`}
       ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} onModelsRefresh=${onModelsRefresh} />`}

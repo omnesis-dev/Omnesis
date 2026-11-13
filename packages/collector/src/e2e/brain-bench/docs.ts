@@ -7,7 +7,7 @@
  * Universes carry only an ambient corpus — they have no timeline mechanism
  * — so anything that must ARRIVE during a test is pushed through the
  * harness. An **arc kit** keeps that stimulus together with the behavior
- * the puppet steward should enact for it, because the two only make sense
+ * the puppet Brain should enact for it, because the two only make sense
  * as a pair: a document that is never reacted to proves nothing, and a
  * behavior with no document to fire on never runs.
  *

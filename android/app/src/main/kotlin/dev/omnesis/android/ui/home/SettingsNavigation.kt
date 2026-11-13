@@ -14,6 +14,7 @@ import dev.omnesis.android.ui.phonesetup.PHONE_SETUP_ENTRY_ARGUMENT
 import dev.omnesis.android.ui.phonesetup.PHONE_SETUP_STEP_ARGUMENT
 
 internal const val SETTINGS_ROUTE = "settings"
+internal const val LAB_ROUTE = "lab"
 internal const val MODELS_ROUTE = "models"
 internal const val DEVICES_ROUTE = "devices"
 
@@ -69,7 +70,7 @@ internal const val ACCESS_AUTHORIZATION_ROUTE_PATTERN =
         "&device={device}&generation={generation}"
 
 private val settingsChildRoutes =
-    setOf(MODELS_ROUTE, DEVICES_ROUTE, POLICIES_ROUTE, ACCESS_AUTHORIZATION_ROUTE, OMNESIS_ACCOUNT_ROUTE)
+    setOf(LAB_ROUTE, MODELS_ROUTE, DEVICES_ROUTE, POLICIES_ROUTE, ACCESS_AUTHORIZATION_ROUTE, OMNESIS_ACCOUNT_ROUTE)
 
 /**
  * Opens a Settings child with exactly one Settings entry beneath it. Existing child state is

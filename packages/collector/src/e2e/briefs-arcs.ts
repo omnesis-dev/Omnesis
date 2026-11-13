@@ -7,7 +7,7 @@
  * over time.
  *
  * An **arc** is an ordered set of documents (steps) plus, per document,
- * the behavior a *correct* Cognition Steward takes when its data run processes
+ * the behavior a *correct* Brain takes when its data run processes
  * that document. The scripted fake model (`fake-loop-model.ts`) executes
  * those behaviors through the REAL tool layer; the reconcile e2e (and
  * later the scorecard) asserts the resulting loop/observation state against

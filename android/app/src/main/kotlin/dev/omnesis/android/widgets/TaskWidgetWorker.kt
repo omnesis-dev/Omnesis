@@ -36,7 +36,7 @@ class TaskWidgetWorker(context: Context, parameters: WorkerParameters) : Corouti
                 return@withContext Result.success()
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                if (repository.currentAuthority() == expected) store.status(TaskWidgetStatus.COMPLETION_FAILED)
+                if (repository.currentAuthority() == expected) store.status(if (error is WidgetTasksDisabled || error is dev.omnesis.android.transport.GatewayException.NotFound) TaskWidgetStatus.DISABLED else TaskWidgetStatus.COMPLETION_FAILED)
                 TaskWidgetUpdates.renderAll(context)
                 return@withContext Result.failure()
             }

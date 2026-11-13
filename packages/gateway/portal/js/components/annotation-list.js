@@ -22,8 +22,8 @@ export const OmnesisSparkle = html`
 export function dependentHref(dependent) {
   const id = encodeURIComponent(dependent.id);
   return dependent.kind === "observation"
-    ? `/portal/debug/cognition/observations/${id}`
-    : `/portal/debug/cognition/knowledge/${id}?kind=loop`;
+    ? `/portal/debug/brain/observations/${id}`
+    : `/portal/debug/brain/knowledge/${id}?kind=loop`;
 }
 
 // Consumption provenance for one annotation: the observations/loops the agent

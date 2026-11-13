@@ -43,13 +43,17 @@ conformanceDescribe("pinned external harness plugin conformance", () => {
     gateway = new MultiCollectorHarness({
       extraGatewayEnv: {
         // The inventory under test deliberately includes the two gated
-        // subscription tools, while synthetic mode stays off so it cannot
-        // turn them on by accident through the test harness's defaults.
+        // subscription tools. Experimental mode reveals the Lab; enable Watches
+        // below; synthetic mode stays off throughout this conformance test.
         OMNESIS_EXPERIMENTAL: "1",
         OMNESIS_SYNTHETIC: "0",
       },
     });
     await gateway.start();
+    await gateway.json("/admin/lab/watches", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true }),
+    });
   }, 120_000);
 
   afterAll(async () => {

@@ -13,8 +13,8 @@
  * suggestions; unrelated suggestions stay unchanged.
  *
  * The note agent is not part of the experimental Brain: it runs on any
- * install with a runnable Agent model, so this suite boots a
- * STABLE gateway. The model is the bench puppet, matched on the note text
+ * install with a runnable Agent model. This task-focused suite opts into Tasks
+ * in Lab while leaving Brain off. The model is the bench puppet, matched on the note text
  * (the turn has no cognition envelope; `readRunContext` reads its note
  * block). A second, model-less gateway proves the agent stays idle.
  */
@@ -117,7 +117,7 @@ async function receiptFor(
   );
 }
 
-describe("the note agent (stable install, Agent puppet, no Brain model)", () => {
+describe("the note agent (Tasks enabled, Brain off, Agent puppet, no Brain model)", () => {
   let bench: BrainBench;
   // A note's capture day comes from its `capturedAt`, so a run that crosses
   // midnight UTC compares against the day each note was captured on.
@@ -145,7 +145,8 @@ describe("the note agent (stable install, Agent puppet, no Brain model)", () => 
     nextMonth = monthAfter(isoDay(new Date()));
     friday = fridayAfter(isoDay(new Date()));
     bench = await BrainBench.start({
-      experimental: false,
+      experimental: true,
+      labFeatures: { tasks: true, brain: false, watches: false },
       agent: "puppet",
       brainAgent: false,
       syncSources: false,
@@ -362,10 +363,14 @@ describe("the note agent (stable install, Agent puppet, no Brain model)", () => 
     await bench?.destroy();
   }, 60_000);
 
-  test("the gateway is stable, and tasks report an active note agent", async () => {
+  test("Tasks report an active note agent while background Brain stays off", async () => {
     const status = await bench.obs.status();
-    expect(status.experimental).toBe(false);
+    expect(status.experimental).toBe(true);
     expect(status.tasks).toEqual({ available: true, noteAgent: true });
+    expect(await bench.harness.gatewayJson("/status")).toMatchObject({
+      lab: { tasks: true, brain: false, watches: false },
+      brain: { active: false },
+    });
   }, 60_000);
 
   test("a note asking for a task adds it, with the receipt under the note", async () => {
@@ -374,7 +379,7 @@ describe("the note agent (stable install, Agent puppet, no Brain model)", () => 
       brain: { active: boolean; modelAssigned: boolean };
       noteAgent: { active: boolean };
     }>("/status");
-    expect(status.experimental).toBe(false);
+    expect(status.experimental).toBe(true);
     expect(status.brain).toMatchObject({ active: false, modelAssigned: false });
     expect(status.noteAgent.active).toBe(true);
     const id = await capture(TASK_NOTE);
@@ -514,7 +519,7 @@ describe("the note agent (stable install, Agent puppet, no Brain model)", () => 
     } finally {
       proof.close();
     }
-    expect((await bench.obs.status()).experimental).toBe(false);
+    expect((await bench.obs.status()).experimental).toBe(true);
   }, 240_000);
 
   test("a note reporting progress completes the user's task", async () => {
@@ -840,7 +845,11 @@ describe("a Brain assignment does not substitute for an Agent model", () => {
   let bench: BrainBench;
 
   beforeAll(async () => {
-    bench = await BrainBench.start({ experimental: false, syncSources: false });
+    bench = await BrainBench.start({
+      experimental: true,
+      labFeatures: { tasks: true, brain: false, watches: false },
+      syncSources: false,
+    });
     harness = bench.harness;
   }, 240_000);
 
@@ -853,6 +862,10 @@ describe("a Brain assignment does not substitute for an Agent model", () => {
       "/status",
     );
     expect(status.tasks).toEqual({ available: true, noteAgent: false });
+    expect(await harness.gatewayJson("/status")).toMatchObject({
+      lab: { tasks: true, brain: false, watches: false },
+      brain: { active: false, modelAssigned: true },
+    });
 
     const id = randomUUID();
     const capturedAt = Date.now();

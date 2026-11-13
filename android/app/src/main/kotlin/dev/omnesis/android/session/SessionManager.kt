@@ -315,6 +315,12 @@ class SessionManager @Inject constructor(
     private val _modelHealth = MutableStateFlow(dev.omnesis.android.transport.dto.ModelHealth())
     val modelHealth = _modelHealth.asStateFlow()
 
+    private val _labAvailable = MutableStateFlow(false)
+    val labAvailable = _labAvailable.asStateFlow()
+
+    private val _lab = MutableStateFlow(dev.omnesis.android.transport.dto.LabFlags())
+    val lab = _lab.asStateFlow()
+
     private val _experimentalEnabled = MutableStateFlow(false)
     val experimentalEnabled: StateFlow<Boolean> = _experimentalEnabled.asStateFlow()
 
@@ -331,8 +337,7 @@ class SessionManager @Inject constructor(
     val developerEnabled: StateFlow<Boolean> = _developerEnabled.asStateFlow()
 
     /**
-     * Whether the gateway serves the Tasks journal, from the same `/status` probe. Never
-     * gated on experimental mode. Cleared on every rebuild for the same reason as
+     * Whether the gateway enables the Tasks journal, from the same `/status` probe. Cleared on every rebuild for the same reason as
      * [experimentalEnabled]: a stale value from a prior pairing must not surface Tasks
      * against a gateway that lacks it.
      */
@@ -548,6 +553,8 @@ class SessionManager @Inject constructor(
         // surface an experimental feature against a non-experimental gateway.
         _modelHealth.value = dev.omnesis.android.transport.dto.ModelHealth()
         _experimentalEnabled.value = false
+        _labAvailable.value = false
+        _lab.value = dev.omnesis.android.transport.dto.LabFlags()
         _developerEnabled.value = false
         _tasksAvailable.value = false
         _taskNoteCaptureAvailable.value = false
@@ -912,8 +919,13 @@ class SessionManager @Inject constructor(
         if (session !== current) return false
         _modelHealth.value = status.modelHealth
         _experimentalEnabled.value = status.experimental
+        _labAvailable.value = status.labAvailable
+        _lab.value = status.effectiveLabFlags
         _developerEnabled.value = status.developer
-        _tasksAvailable.value = status.tasks?.available == true
+        val tasksWereAvailable = _tasksAvailable.value
+        _tasksAvailable.value = status.tasksAvailable
+        if (!_tasksAvailable.value) TaskWidgetUpdates.tasksDisabled(applicationContext)
+        else if (!tasksWereAvailable) TaskWidgetUpdates.refresh(applicationContext)
         _taskNoteCaptureAvailable.value = status.taskNoteCapture
         _taskConversationsAvailable.value = status.taskConversations
         _dictation.value = status.dictation

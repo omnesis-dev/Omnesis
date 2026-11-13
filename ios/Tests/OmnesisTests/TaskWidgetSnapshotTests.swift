@@ -54,6 +54,22 @@ final class TaskWidgetSnapshotTests: XCTestCase {
         }
     }
 
+    func testDisabledTasksIgnorePopulatedSnapshot() throws {
+        var entry = TaskWidgetFixtures.entry()
+        XCTAssertFalse(try XCTUnwrap(entry.snapshot).tasks.isEmpty)
+        for period in TaskWidgetPeriod.allCases {
+            entry.configuration.period = period
+            entry.status = .ready
+            XCTAssertFalse(entry.tasks.isEmpty, "The cached fixture must contain tasks for \(period)")
+            entry.status = .disabled
+            XCTAssertTrue(entry.tasks.isEmpty, "Disabled Tasks must hide cached items and counts for \(period)")
+        }
+        entry.configuration.period = .day
+        try render(entry, family: .systemMedium, size: CGSize(width: 360, height: 170), name: "disabled-populated-cache")
+        try render(entry, family: .accessoryRectangular, size: CGSize(width: 160, height: 76), name: "disabled-populated-cache")
+        try render(entry, family: .accessoryCircular, size: CGSize(width: 76, height: 76), name: "disabled-populated-cache")
+    }
+
     func testTaskWidgetEmptyOfflineAndUnpaired() throws {
         for status in [TaskWidgetEntry.Status.ready, .offline, .unpaired, .completionFailed] {
             var entry = TaskWidgetFixtures.entry(empty: status == .ready)

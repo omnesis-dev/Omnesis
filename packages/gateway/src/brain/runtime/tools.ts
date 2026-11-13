@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Cognition Steward's own tools — the mutating surface over open loops and
+ * The Brain's own tools — the mutating surface over open loops and
  * observations, the agent-notes memory, and point-in-time scheduling. Built
  * fresh per claimed run so every handle carries the run's id: creates
  * stamp `created_by_run`, ledger appends stamp the run id, and a
  * re-claimed attempt can recognise its own partial work.
  *
- * Only the Cognition Steward gets these handles (only the agent mutates
+ * Only the Brain gets these handles (only the agent mutates
  * loops/observations in the background). Every mutating handle declares `mutates: true`, so a
  * delegated research sub-agent's tool selection (`selectSubagentTools`)
  * can never include them.
@@ -234,6 +234,7 @@ export type CognitionWriteOps = Pick<
 >;
 
 export interface CognitionToolDeps {
+  tasksEnabled?: () => boolean;
   personProfileReads?: PersonProfileReads;
   /** Source-owned speaker/provenance check in addition to document quote matching. */
   validateAnnotationEvidence?: (
@@ -358,7 +359,7 @@ export interface CognitionToolDeps {
   log: Logger;
 }
 
-/** Names of the Cognition Steward's mutating tools (the sub-agent split contract). */
+/** Names of the Brain's mutating tools (the sub-agent split contract). */
 export const COGNITION_MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
   "open_loop_create",
   "open_loop_update",
@@ -1620,7 +1621,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       const loop = persisted.value;
       await mirror.refresh(id);
       mutatedLoopIds.add(id);
-      log.info(`Cognition Steward run ${runId} created open loop ${id}: ${a.title}`);
+      log.info(`Brain run ${runId} created open loop ${id}: ${a.title}`);
       return ok("open_loop.created", {
         loop: loopToModelJson(db, loop, { ledger: false }),
         // Only an enforced verdict is the model's business: it says whether
@@ -1962,7 +1963,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         const dropped = await writeGate.dropObservationsForResolvedLoop(id, clock());
         if (dropped.length > 0) {
           log.info(
-            `Cognition Steward run ${runId} resolved loop ${id}: dropped ${dropped.length} observation(s)`,
+            `Brain run ${runId} resolved loop ${id}: dropped ${dropped.length} observation(s)`,
           );
         }
       }
@@ -2105,7 +2106,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       // `deleteOpenLoop` enforces the deletion invariant and deletes them.
       await writeGate.cancelScheduledRunsForLoop(id);
       log.info(
-        `Cognition Steward run ${runId} deleted open loop ${id} (+${result.deletedObservationIds.length} observation(s))`,
+        `Brain run ${runId} deleted open loop ${id} (+${result.deletedObservationIds.length} observation(s))`,
       );
       return ok("open_loop.deleted", {
         loopId: id,
@@ -2133,7 +2134,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         summary: o.summary,
         why: o.why,
         state: o.state,
-        relatedLoopIds: o.relatedLoopIds,
+        ...(deps.tasksEnabled?.() === false ? {} : { relatedLoopIds: o.relatedLoopIds }),
         citations: o.citations,
         windowStart: msToIso(o.windowStart),
         relevantUntil: msToIso(o.relevantUntil),
@@ -2141,9 +2142,15 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       });
       const since = clock() - 3 * 86_400_000;
       return ok("observation.list", {
-        observations: listOpenObservations(db).map(view),
+        observations: listOpenObservations(db)
+          .filter((o) => deps.tasksEnabled?.() !== false || o.relatedLoopIds.length === 0)
+          .map(view),
         recentlyShipped: listObservations(db, { states: ["shipped"], limit: 50 })
-          .filter((o) => (o.shippedAt ?? 0) >= since)
+          .filter(
+            (o) =>
+              (o.shippedAt ?? 0) >= since &&
+              (deps.tasksEnabled?.() !== false || o.relatedLoopIds.length === 0),
+          )
           .map(view),
       });
     },
@@ -3112,9 +3119,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         },
         clock(),
       );
-      log.info(
-        `Cognition Steward run ${runId} added temporal annotation ${id} (${interval.canonical})`,
-      );
+      log.info(`Brain run ${runId} added temporal annotation ${id} (${interval.canonical})`);
       return ok("temporal_annotation.added", {
         id: annotation.id,
         when: interval.canonical,
@@ -3303,7 +3308,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
       ctx.abortSignal?.throwIfAborted();
       const existed = await writeGate.updateTemporalAnnotation(a.annotationId, patch, clock());
       if (!existed) return notFound("temporal annotation", a.annotationId);
-      log.info(`Cognition Steward run ${runId} updated temporal annotation ${a.annotationId}`);
+      log.info(`Brain run ${runId} updated temporal annotation ${a.annotationId}`);
       return ok("temporal_annotation.updated", { annotationId: a.annotationId });
     },
   };
@@ -3331,9 +3336,7 @@ export function buildCognitionOwnTools(deps: CognitionToolDeps): ToolHandle[] {
         clock(),
       );
       if (!existed) return notFound("temporal annotation", parsed.data.annotationId);
-      log.info(
-        `Cognition Steward run ${runId} deleted temporal annotation ${parsed.data.annotationId}`,
-      );
+      log.info(`Brain run ${runId} deleted temporal annotation ${parsed.data.annotationId}`);
       return ok("temporal_annotation.deleted", {
         annotationId: parsed.data.annotationId,
       });
@@ -3763,12 +3766,12 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       }
       if (supersedeLost) {
         log.warn(
-          `Cognition Steward run ${runId} created annotation ${annotation.id} but lost the supersede of ${a.supersedes} to a concurrent write`,
+          `Brain run ${runId} created annotation ${annotation.id} but lost the supersede of ${a.supersedes} to a concurrent write`,
         );
       }
       deps.consumption?.note("doc", [annotation.id]);
       log.info(
-        `Cognition Steward run ${runId} annotated doc ${a.docId} (${a.claimType})` +
+        `Brain run ${runId} annotated doc ${a.docId} (${a.claimType})` +
           (a.supersedes !== undefined && !supersedeLost ? ` superseding ${a.supersedes}` : ""),
       );
       return ok("annotation.created", {
@@ -3927,7 +3930,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       if (clampedConfidence !== undefined) patch.confidence = clampedConfidence;
       const revised = await writeGate.updateDocAnnotation(a.id, patch, clock());
       if (revised === null) return notFound("annotation", a.id);
-      log.info(`Cognition Steward run ${runId} revised annotation ${a.id}`);
+      log.info(`Brain run ${runId} revised annotation ${a.id}`);
       return ok("annotation.revised", {
         id: revised.id,
         claimType: revised.claimType,
@@ -3956,7 +3959,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       if (!parsed.success) return invalidArgs(parsed.error);
       const removed = await writeGate.deleteDocAnnotation(parsed.data.id, clock());
       if (!removed) return notFound("annotation", parsed.data.id);
-      log.info(`Cognition Steward run ${runId} retracted annotation ${parsed.data.id}`);
+      log.info(`Brain run ${runId} retracted annotation ${parsed.data.id}`);
       return ok("annotation.retracted", { id: parsed.data.id });
     },
   };
@@ -4024,7 +4027,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       );
       if (!superseded) {
         log.warn(
-          `Cognition Steward run ${runId} lost the supersede of annotation ${a.id} to a concurrent write`,
+          `Brain run ${runId} lost the supersede of annotation ${a.id} to a concurrent write`,
         );
         return {
           kind: "error",
@@ -4032,7 +4035,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           message: SUPERSEDE_LOST_GUIDANCE,
         };
       }
-      log.info(`Cognition Steward run ${runId} superseded annotation ${a.id} → ${a.supersededBy}`);
+      log.info(`Brain run ${runId} superseded annotation ${a.id} → ${a.supersededBy}`);
       return ok("annotation.superseded", { id: a.id, supersededBy: a.supersededBy });
     },
   };
@@ -4465,12 +4468,12 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       }
       if (supersedeLost) {
         log.warn(
-          `Cognition Steward run ${runId} created person annotation ${annotation.id} but lost the supersede of ${a.supersedes} to a concurrent write`,
+          `Brain run ${runId} created person annotation ${annotation.id} but lost the supersede of ${a.supersedes} to a concurrent write`,
         );
       }
       deps.consumption?.note("person", [annotation.id]);
       log.info(
-        `Cognition Steward run ${runId} annotated person ${personId} (${a.claimType})` +
+        `Brain run ${runId} annotated person ${personId} (${a.claimType})` +
           (a.supersedes !== undefined && !supersedeLost ? ` superseding ${a.supersedes}` : ""),
       );
       return ok("person_annotation.created", {
@@ -4729,7 +4732,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       if (writing.refusal !== null) return writing.refusal;
       const revised = writing.value;
       if (!revised) return notFound("person annotation", id);
-      log.info(`Cognition Steward run ${runId} revised person annotation ${id}`);
+      log.info(`Brain run ${runId} revised person annotation ${id}`);
       // Echo the post-revise row (the store returns a boolean), mirroring
       // annotation.revised — after a basis downgrade the agent must see the
       // re-clamped confidence even when nothing was capped.
@@ -4780,7 +4783,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
         assessment.budget,
       );
       if (!removed) return notFound("person annotation", parsed.data.id);
-      log.info(`Cognition Steward run ${runId} retracted person annotation ${parsed.data.id}`);
+      log.info(`Brain run ${runId} retracted person annotation ${parsed.data.id}`);
       return ok("person_annotation.retracted", { id: parsed.data.id });
     },
   };
@@ -4857,7 +4860,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
       );
       if (!superseded) {
         log.warn(
-          `Cognition Steward run ${runId} lost the supersede of person annotation ${a.id} to a concurrent write`,
+          `Brain run ${runId} lost the supersede of person annotation ${a.id} to a concurrent write`,
         );
         return {
           kind: "error",
@@ -4865,9 +4868,7 @@ export function buildAnnotationTools(deps: AnnotationToolDeps): ToolHandle[] {
           message: SUPERSEDE_LOST_GUIDANCE,
         };
       }
-      log.info(
-        `Cognition Steward run ${runId} superseded person annotation ${a.id} → ${a.supersededBy}`,
-      );
+      log.info(`Brain run ${runId} superseded person annotation ${a.id} → ${a.supersededBy}`);
       return ok("person_annotation.superseded", { id: a.id, supersededBy: a.supersededBy });
     },
   };

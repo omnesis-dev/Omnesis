@@ -93,6 +93,7 @@ beforeEach(() => {
   settings = resolveBrainSettings({ bootstrap: { enabled: false } });
   writeGate = directKnowledgeGate(db);
   service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate,
     getSettings: () => settings,

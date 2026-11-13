@@ -80,6 +80,8 @@ const WOUND_BACK = [
   213,
   // 214 adds device enrollment columns and the key table, which undoDeviceEnrollment drops.
   214,
+  // 215 persists the Lab choices; windBack drops them before replay.
+  215,
 ];
 
 let dir: string;
@@ -283,6 +285,7 @@ function undoDeviceEnrollment(db: Db): void {
 }
 
 function windBack(db: Db): void {
+  db.exec("DROP TABLE lab_features");
   undoDeviceEnrollment(db);
   db.exec("ALTER TABLE agent_messages DROP COLUMN author_json");
   undoInterest(db);

@@ -27,7 +27,7 @@ function cleanupDb(path: string): void {
   }
 }
 
-describe("steward engine state", () => {
+describe("Brain engine state", () => {
   let path: string;
   let db: Db;
   beforeEach(() => {

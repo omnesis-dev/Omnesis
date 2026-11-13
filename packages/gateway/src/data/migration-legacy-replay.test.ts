@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Upgrading a real install that still has the pre-rename steward tables.
+ * Upgrading a real install that still has the pre-rename Brain tables.
  *
  * Migration 72 renamed those tables, and the migrations before it were
  * rewritten to the new names. `runSchemaSetup` runs the current DDL on every

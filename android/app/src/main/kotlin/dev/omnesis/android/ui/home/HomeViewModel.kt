@@ -93,6 +93,8 @@ class HomeViewModel @Inject constructor(
      */
     val modelHealth = session.modelHealth
     val experimentalEnabled: StateFlow<Boolean> = session.experimentalEnabled
+    val lab = session.lab
+    val labAvailable = session.labAvailable
 
     /**
      * Whether the gateway runs in developer mode — reveals the
@@ -274,7 +276,7 @@ class HomeViewModel @Inject constructor(
             val approvals = admin?.let { attempt { it.privacyApprovals(limit = 1) } }
             // Watch requests are resolved on an experimental surface, so they are counted
             // only where that surface is itself reachable.
-            val watchRequests = if (experimentalEnabled.value) {
+            val watchRequests = if (lab.value.watches) {
                 admin?.let { attempt { it.privacySubscriptionApprovals(limit = 1) } }
             } else {
                 null
@@ -295,7 +297,7 @@ class HomeViewModel @Inject constructor(
             _privacyPendingCount.value = privacyDecisionsWaiting(
                 heldAnswers = approvals?.totalCount,
                 watchRequests = watchRequests?.totalCount,
-                experimental = experimentalEnabled.value,
+                experimental = lab.value.watches,
             )
             if (approvalId != null) _pendingApprovalToPresent.value = approvalId
         }

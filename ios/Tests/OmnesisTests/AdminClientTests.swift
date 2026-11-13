@@ -29,6 +29,47 @@ final class AdminClientTests: XCTestCase {
         return (data, response)
     }
 
+    func testLabToggleUsesAdminEndpointAndConfirmsGatewayState() async throws {
+        let session = MockSession()
+        session.responder = { [weak self] request in
+            self!.makeResponse(
+                status: 200,
+                body: """
+                {"experimental":true,"features":[{"id":"tasks","name":"Tasks","description":"Plan your work.","enabled":true}]}
+                """,
+                url: request.url!
+            )
+        }
+        let client = AdminClient(baseURL: base, token: "omn_example", session: session)
+        let initial = try await client.getLab()
+        XCTAssertEqual(initial.features.first?.id, "tasks")
+        let updated = try await client.setLabFeature("tasks", enabled: true)
+        XCTAssertEqual(updated.features.first?.enabled, true)
+        XCTAssertEqual(session.requests[0].httpMethod, "GET")
+        XCTAssertEqual(session.requests[0].url?.path, "/admin/lab")
+        let request = session.requests[1]
+        XCTAssertEqual(request.httpMethod, "PUT")
+        XCTAssertEqual(request.url?.path, "/admin/lab/tasks")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer omn_example")
+        let body = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Bool]
+        XCTAssertEqual(body, ["enabled": true])
+    }
+
+    func testLabStatusDefaultsClosedForOlderGateway() throws {
+        let snapshot = try JSONDecoder().decode(StatusSnapshot.self, from: Data("{\"documents\":{\"total\":0,\"bySource\":{}}}".utf8))
+        XCTAssertNil(snapshot.lab)
+        XCTAssertFalse(snapshot.labAvailable)
+    }
+
+    func testLabStatusDecodesIndependentFlags() throws {
+        let snapshot = try JSONDecoder().decode(StatusSnapshot.self, from: Data("""
+        {"documents":{"total":0,"bySource":{}},"experimental":true,"lab":{"brain":false,"tasks":true,"watches":false}}
+        """.utf8))
+        XCTAssertEqual(snapshot.lab?.brain, false)
+        XCTAssertEqual(snapshot.lab?.tasks, true)
+        XCTAssertEqual(snapshot.lab?.watches, false)
+    }
+
     func testListSourcesSendsAuthorizationHeader() async throws {
         let session = MockSession()
         session.responder = { [weak self] req in

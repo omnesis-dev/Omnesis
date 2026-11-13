@@ -370,7 +370,7 @@ async function handleFakeRequest(
     const inputTokens =
       body.previous_response_id === "response_1" ||
       serialized.includes("first overflow") ||
-      serialized.includes("Background Cognition Steward run")
+      serialized.includes("Background Brain run")
         ? 900
         : 100;
     respondJson(response, 200, { input_tokens: inputTokens });

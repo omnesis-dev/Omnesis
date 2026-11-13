@@ -394,22 +394,28 @@ class GatewayLiveE2ETest {
     /** Widgets use these same journal reads and completion command, without model inference. */
     @Test
     fun widget_task_reads_and_completion_round_trip() = runBlocking {
-        val day = LocalDate.now().toString()
-        val created = http.postJson<JsonObject, TaskMutationDto>("tasks", buildJsonObject {
-            put("title", "Sketch a new trail map")
-            put("scheduledFor", day)
-        })
-        val id = requireNotNull(created.task).id
-        val tasks = TasksClient(http)
+        val previouslyEnabled = admin.lab().features.first { it.id == "tasks" }.enabled
+        admin.setLabFeature("tasks", true)
         try {
-            val owned = listOf(TaskView.TODAY, TaskView.MONTH, TaskView.FUTURE, TaskView.ANYTIME)
-                .flatMap { tasks.view(it, day).tasks }
-            assertTrue(owned.any { it.id == id && !it.isResolved })
-            tasks.act(id, TaskAction.Complete())
-            assertTrue(tasks.detail(id).task.isDone)
-            assertTrue(tasks.view(TaskView.TODAY, day).tasks.none { it.id == id && !it.isResolved })
+            val day = LocalDate.now().toString()
+            val created = http.postJson<JsonObject, TaskMutationDto>("tasks", buildJsonObject {
+                put("title", "Sketch a new trail map")
+                put("scheduledFor", day)
+            })
+            val id = requireNotNull(created.task).id
+            val tasks = TasksClient(http)
+            try {
+                val owned = listOf(TaskView.TODAY, TaskView.MONTH, TaskView.FUTURE, TaskView.ANYTIME)
+                    .flatMap { tasks.view(it, day).tasks }
+                assertTrue(owned.any { it.id == id && !it.isResolved })
+                tasks.act(id, TaskAction.Complete())
+                assertTrue(tasks.detail(id).task.isDone)
+                assertTrue(tasks.view(TaskView.TODAY, day).tasks.none { it.id == id && !it.isResolved })
+            } finally {
+                tasks.act(id, TaskAction.Delete)
+            }
         } finally {
-            tasks.act(id, TaskAction.Delete)
+            admin.setLabFeature("tasks", previouslyEnabled)
         }
     }
 

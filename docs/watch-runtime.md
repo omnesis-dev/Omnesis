@@ -174,7 +174,7 @@ compile — and a compile reads the corpus while it works, so which source it
 bound to and which threshold it chose came out of something it looked at.
 
 Every compile is one run in the cognition ledger, kind **Watch compile**, at
-`/portal/debug/cognition/runs`. Its transcript is the agent stream verbatim:
+`/portal/debug/brain/runs`. Its transcript is the agent stream verbatim:
 the tools it called with their arguments, what came back, the model's replies,
 and each repair turn where the validator handed its diagnostics back. Refusals
 and deadlines are recorded the same way — a compile that declined is the one

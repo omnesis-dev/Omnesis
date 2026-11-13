@@ -124,8 +124,8 @@ describe("AnnotationList", () => {
     const summary = nodes.find((n) => n.tag === "summary");
     expect(summary?.text.trim()).toBe("2 dependent outputs");
     const links = nodes.filter((n) => n.class === "meta-annotation-dependent");
-    expect(links[0].href).toBe("/portal/debug/cognition/observations/obs_1");
-    expect(links[1].href).toBe("/portal/debug/cognition/knowledge/loop_1?kind=loop");
+    expect(links[0].href).toBe("/portal/debug/brain/observations/obs_1");
+    expect(links[1].href).toBe("/portal/debug/brain/knowledge/loop_1?kind=loop");
     expect(nodes.some((n) => n.markup?.includes("kn-link-icon--observation"))).toBe(true);
     expect(nodes.some((n) => n.markup?.includes("kn-link-icon--loop"))).toBe(true);
     expect(links.map((l) => l.text.trim())).toEqual([

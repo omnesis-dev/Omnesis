@@ -170,7 +170,7 @@ function seedTranscript(
     attempt: 1,
     kind: "data",
     startedAt: over.finishedAt - 500,
-    prompt: "Background Cognition Steward run.",
+    prompt: "Background Brain run.",
     events: [],
     finalText: "Nothing to do.",
     outcome: "completed",

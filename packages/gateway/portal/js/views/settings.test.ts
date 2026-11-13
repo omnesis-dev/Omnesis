@@ -140,4 +140,33 @@ describe("Settings header actions", () => {
     await act(async () => { accessTab().click(); });
     expect(router.replaceRoute).not.toHaveBeenCalled();
   });
+  test("offers Lab after Config and withholds Sweeps when Brain is off", async () => {
+    await act(async () => {
+      render(h(SettingsView, { tab: "sweeps", experimental: true, labAvailable: true, lab: { brain: false } }), host);
+    });
+    const labels = [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
+    expect(labels.slice(0, 2)).toEqual(["Config", "Omnesis Lab"]);
+    expect(labels).not.toContain("Sweeps");
+    expect(host.querySelector('.config-tab.active')?.textContent).toBe("Config");
+    await act(async () => {
+      render(h(SettingsView, { tab: "lab", experimental: false, lab: { brain: false } }), host);
+    });
+    expect(host.textContent).not.toContain("Omnesis Lab");
+  });
+
+  test("cloud account access preserves Lab order and Brain-off deep-link fallback", async () => {
+    const flags = { experimental: true, cloudRelay: true, labAvailable: true, lab: { brain: false } };
+    await act(async () => { render(h(SettingsView, { tab: "account", ...flags }), host); });
+    const labels = [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
+    expect(labels.slice(0, 2)).toEqual(["Config", "Omnesis Lab"]);
+    expect(labels).not.toContain("Sweeps");
+    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Omnesis account");
+    for (const tab of ["sweeps", "lab", "account"]) {
+      await act(async () => {
+        render(h(SettingsView, { ...flags, tab, labAvailable: false, cloudRelay: false }), host);
+      });
+      expect(host.querySelector(".config-tab.active")?.textContent).toBe("Config");
+    }
+  });
+
 });

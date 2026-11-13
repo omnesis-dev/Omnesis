@@ -154,6 +154,7 @@ it("erases retained metadata context on deletion", () => {
 it("rejects a metadata edit during asynchronous verification at the final writer", async () => {
   const db = setup();
   const service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     clock: () => 10,

@@ -60,4 +60,44 @@ class TaskWidgetTransportTest {
         }
     }
 
+    @Test fun legacy_status_keeps_widget_tasks_and_explicit_lab_off_clears_its_cache() = runTest {
+        val certificate = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+        MockWebServer().use { server ->
+            server.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
+            server.enqueue(MockResponse().setBody("""{"experimental":false,"tasks":{"available":true}}"""))
+            repeat(4) { server.enqueue(MockResponse().setBody("""{"tasks":[{"id":"one","title":"Read a new chapter"}]}""")) }
+            server.enqueue(MockResponse().setBody("""{"experimental":true,"tasks":{"available":true},"lab":{"brain":false,"tasks":false,"watches":false}}"""))
+            server.enqueue(MockResponse().setBody("""{"experimental":true,"tasks":{"available":true},"lab":{"tasks":false}}"""))
+            server.start()
+            val paired = Pairing(url = server.url("/").toString(), token = "widget-test-token", pairingGeneration = "widget-generation",
+                deviceId = "widget-device", gatewayName = "Test gateway", tlsMode = PairingTlsMode.PINNED_LEAF,
+                fingerprint = LeafCertPinner.sha256Hex(certificate.certificate.encoded))
+            var saved: TaskWidgetSnapshot? = null
+            val cache = object : WidgetSnapshotStore {
+                override fun read(authority: String) = saved
+                override fun save(authority: String, snapshot: TaskWidgetSnapshot) { saved = snapshot }
+                override fun clear() { saved = null }
+            }
+            val repository = TaskWidgetRepository({ paired }, cache)
+            val legacy = repository.refresh()
+            assertEquals(TaskWidgetStatus.READY, legacy.status)
+            assertEquals(listOf("one"), legacy.snapshot!!.tasks.map { it.id })
+            repeat(5) { server.takeRequest() }
+
+            val disabled = repository.refresh()
+            assertEquals(TaskWidgetStatus.DISABLED, disabled.status)
+            assertNull(disabled.snapshot)
+            assertNull(saved)
+            assertEquals("/status", server.takeRequest().path)
+            try {
+                repository.complete("one", TaskWidgetRepository.authority(paired))
+                fail("Disabled Tasks accepted a widget completion")
+            } catch (_: WidgetTasksDisabled) { }
+            val denied = server.takeRequest()
+            assertEquals("/status", denied.path)
+            assertEquals("Bearer widget-test-token", denied.getHeader("Authorization"))
+            assertEquals(7, server.requestCount)
+        }
+    }
+
 }

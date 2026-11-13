@@ -38,6 +38,9 @@ fi
 export OMNESIS_CONFIG_DIR="${OMNESIS_CONFIG_DIR:-/tmp/omnesis-ios-e2e}"
 export OMNESIS_GATEWAY_PORT="${OMNESIS_GATEWAY_PORT:-17601}"
 export OMNESIS_SYNTH_UNIVERSE="${OMNESIS_SYNTH_UNIVERSE:-e2e-minimal}"
+# The live transport suite exercises the optional Tasks and Watches APIs.
+# Open the Lab explicitly; the synthetic-mode flag never opts into products.
+export OMNESIS_EXPERIMENTAL=1
 # Keep the gateway off the network, like every gateway the E2E suites spawn.
 # Synthetic sources inherit their real providers' hosted icons, and a descriptor
 # listing waits for each one, so third-party hosts would decide how long the
@@ -97,6 +100,14 @@ if [[ -z "$TOKEN" ]]; then
   exit 1
 fi
 echo "→ Gateway up. Token captured."
+
+# Opt into only the products this fixture exercises. Keep the Brain off so
+# autonomous background work cannot alter the live transport test's inputs.
+for feature in tasks watches; do
+  curl --fail --silent --show-error --cacert "$OMNESIS_CONFIG_DIR/tls/cert.pem" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -X PUT --data '{"enabled":true}' "${URL}/admin/lab/$feature" >/dev/null
+done
 
 # Poll until Jane Doe resolves in the people graph. `synth-gateway.sh
 # seed_sources` returns when /admin/sources/add POSTs land, but

@@ -169,6 +169,7 @@ describe("Conversation debounce without historical discovery", () => {
     const server = await startScriptedLoopModelServer({ behaviors: ARCS.behaviors });
     const harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "loops-test-life",
       embedderBackend: "fake",
       extraInference: {
@@ -272,6 +273,7 @@ describe("Brain reconcile quality on loops-test-life (scripted backend)", () => 
     });
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "loops-test-life",
       embedderBackend: "fake",
       extraInference: {

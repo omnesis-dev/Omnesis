@@ -24,6 +24,7 @@
 
 const TABS = [
   { key: "config", label: "Config" },
+  { key: "lab", label: "Omnesis Lab", experimental: true },
   // Keyed `omnesis-md` rather than `omnesis.md`: the router's tab segment
   // pattern accepts lower-case letters and hyphens only, so a dot in the key
   // would make the tab unreachable by URL.
@@ -49,8 +50,8 @@ export const SETTINGS_TABS_WITH_SECTION = TABS.filter((t) => t.ownsSection).map(
 export const EXPERIMENTAL_SETTINGS_TABS = TABS.filter((t) => t.experimental).map((t) => t.key);
 
 /** The tab set to render, in display order. */
-export function settingsTabs({ experimental = false, cloudRelay = false } = {}) {
-  return TABS.filter((t) => (experimental || !t.experimental) && (cloudRelay || !t.cloudRelay)).map(({ key, label }) => ({
+export function settingsTabs({ experimental = false, brain = experimental, labAvailable = false, cloudRelay = false } = {}) {
+  return TABS.filter((t) => (!t.experimental || experimental) && (t.key !== "sweeps" || brain) && (t.key !== "lab" || labAvailable) && (!t.cloudRelay || cloudRelay)).map(({ key, label }) => ({
     key,
     label,
   }));

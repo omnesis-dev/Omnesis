@@ -28,6 +28,7 @@ beforeEach(() => {
   );
   createKnowledgeTables(db);
   service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     clock: () => 10,

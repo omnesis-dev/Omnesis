@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The puppet steward — an OpenAI-compatible server assigned to the
+ * The puppet Brain — an OpenAI-compatible server assigned to the
  * `background-agent` role, standing in for the model in a cognition run
  * and in the note agent's turn on a quick-capture note.
  *

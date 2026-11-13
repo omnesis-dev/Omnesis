@@ -11256,7 +11256,7 @@ div.source-activity-popover-link:hover {
   filter: saturate(1.8) brightness(0.55) contrast(1.35);
 }
 
-/* ── Cognition (Cognition Steward debug inspector) ─────────────────────────── */
+/* ── Cognition (Brain debug inspector) ─────────────────────────── */
 
 /* Section rail beside the section content, echoing the app sidebar's
  * item pattern (tinted active background + accent bar). */
@@ -19118,6 +19118,33 @@ summary.decision-card-head {
   border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
   background: color-mix(in srgb, var(--warning) 7%, var(--bg-secondary));
 }
+
+/* Omnesis Lab — quiet, shared controls for the gateway's experiments. */
+.lab-view { max-width: 960px; padding: 20px 0 40px; }
+.lab-header { max-width: 660px; margin-bottom: 32px; }
+.lab-header h2 { margin: 12px 0; font-size: 32px; font-weight: 500; letter-spacing: -.035em; }
+.lab-header > p { color: var(--text-secondary); line-height: 1.75; font-size: 15px; }
+.lab-notice { margin-top: 20px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.lab-features { display: grid; gap: 14px; }
+.lab-feature { display: grid; grid-template-columns: 80px 1fr 80px; align-items: center; gap: 24px; padding: 28px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-secondary); transition: border-color .2s; }
+.lab-feature.is-enabled { border-color: var(--accent); }
+.lab-feature-icon { display: grid; place-items: center; width: 80px; height: 80px; border-radius: 20px; background: var(--bg-tertiary); }
+.lab-feature-icon img { opacity: .8; }
+:root:not([data-theme="light"]) .lab-feature-icon img { filter: invert(1); }
+.lab-feature-copy h3 { margin: 0 0 8px; font-size: 19px; font-weight: 500; letter-spacing: -.02em; }
+.lab-feature-copy p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.8; }
+.lab-feature-control { display: flex; flex-direction: column; align-items: center; gap: 9px; }
+.lab-switch { position: relative; width: 44px; height: 26px; padding: 3px; background: var(--border); border: 1px solid var(--border-light); border-radius: 20px; cursor: pointer; transition: background .2s; }
+.lab-switch span { display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--text-secondary); transition: transform .2s; }
+.lab-switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.lab-switch[aria-checked="true"] span { transform: translateX(18px); background: white; }
+.lab-switch:disabled { opacity: .5; cursor: wait; }
+.lab-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.lab-feature-state { color: var(--text-muted); font-size: 11px; }
+.lab-error { padding: 12px; margin-bottom: 20px; color: var(--danger); border: 1px solid var(--danger); border-radius: 8px; }
+@media (max-width: 600px) { .lab-feature { grid-template-columns: 56px 1fr 50px; gap: 14px; padding: 20px 16px; align-items: start; } .lab-feature-icon { width: 56px; height: 56px; border-radius: 14px; } .lab-feature-icon img { width: 36px; height: 36px; } .lab-feature-copy h3 { font-size: 17px; } .lab-feature-control { padding-top: 3px; } }
+.settings-view > .config-tabs { overflow-x: auto; min-width: 0; }
+.settings-view > .config-tabs .config-tab { flex-shrink: 0; white-space: nowrap; }
 
 /* cloud-relay:start
    Everything for the optional cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1)

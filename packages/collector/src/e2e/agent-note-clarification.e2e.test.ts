@@ -43,13 +43,14 @@ interface Conversation {
   messages: unknown[];
 }
 
-describe("owner-note clarification handoff on a stable gateway", () => {
+describe("owner-note clarification handoff with Tasks enabled and Brain off", () => {
   let bench: BrainBench;
   let phone: { token: string; authToken: string };
 
   beforeAll(async () => {
     bench = await BrainBench.start({
-      experimental: false,
+      experimental: true,
+      labFeatures: { tasks: true, brain: false, watches: false },
       universe: "e2e-minimal",
       brainAgent: false,
       syncSources: false,

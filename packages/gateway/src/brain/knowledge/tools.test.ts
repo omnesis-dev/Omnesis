@@ -15,7 +15,7 @@ import { createBriefsStorageTables } from "../storage/schema.js";
 import { createOpenLoop, getOpenLoop } from "../storage/open-loops.js";
 import { createDecisionPayloadTables } from "../decision-payload.js";
 import { resolveBrainSettings } from "../config.js";
-import { withGrantedMutationsOnly } from "../steward/runtime.js";
+import { withGrantedMutationsOnly } from "../runtime/runtime.js";
 import { makeOutcomeAssessment, persistOutcomeAssessment } from "./outcome-assessment.js";
 import { checkKnowledgeOutcome } from "./outcome-check.js";
 import { convertKnowledgeOwner } from "./owner-adapters.js";
@@ -40,6 +40,7 @@ beforeEach(() => {
   createBriefsStorageTables(db);
   createKnowledgeTables(db);
   service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     getSettings: () => resolveBrainSettings(),
@@ -976,6 +977,7 @@ it.each([false, true])(
       omittedDebug: "not returned",
     });
     const judged = new KnowledgeService({
+      tasksEnabled: () => true,
       ...service.deps,
       getEntailmentVerifier: async () => ({
         dispose: async () => {},

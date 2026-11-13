@@ -21,6 +21,7 @@ enum SettingsDestination: Hashable, Identifiable {
     )
     case models(initialRole: String?)
     case devices
+    case lab
     case notifications
     /// Every policy a grant can be judged against, listed. Sits beside
     /// Devices because both answer "what has this gateway agreed to".
@@ -39,6 +40,7 @@ enum SettingsDestination: Hashable, Identifiable {
         case .remotePermissions(let sourceId, let deviceId, _, _):
             "remote-permissions:\(sourceId):\(deviceId)"
         case .models(let initialRole): "models:\(initialRole ?? "all")"
+        case .lab: "lab"
         case .devices: "devices"
         case .notifications: "notifications"
         case .policies: "policies"
@@ -328,6 +330,43 @@ struct SettingsView: View {
     #endif
 
     @ViewBuilder
+    private var labDestinationView: some View {
+        #if DEBUG
+        if destinationMode == .preview {
+            LabView(snapshot: PreviewMocks.lab, preview: true)
+        } else {
+            LabView()
+        }
+        #else
+        LabView()
+        #endif
+    }
+
+    private var notificationsDestinationView: some View {
+        Form { notificationsSection }
+            .scrollContentBackground(.hidden)
+            .background(Theme.bgPrimary)
+            .navigationTitle("Notifications")
+            .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private var devicesDestinationView: some View {
+        #if DEBUG
+        if destinationMode == .preview {
+            DevicesView(
+                previewDevices: PreviewMocks.devices,
+                previewTokens: PreviewMocks.deviceTokens
+            )
+        } else {
+            DevicesView()
+        }
+        #else
+        DevicesView()
+        #endif
+    }
+
+    @ViewBuilder
     private func destinationView(_ destination: SettingsDestination) -> some View {
         switch destination {
         case .root: EmptyView()
@@ -355,24 +394,11 @@ struct SettingsView: View {
             ModelsView(initialPickerRole: initialRole)
             #endif
         case .devices:
-            #if DEBUG
-            if destinationMode == .preview {
-                DevicesView(
-                    previewDevices: PreviewMocks.devices,
-                    previewTokens: PreviewMocks.deviceTokens
-                )
-            } else {
-                DevicesView()
-            }
-            #else
-            DevicesView()
-            #endif
+            devicesDestinationView
+        case .lab:
+            labDestinationView
         case .notifications:
-            Form { notificationsSection }
-                .scrollContentBackground(.hidden)
-                .background(Theme.bgPrimary)
-                .navigationTitle("Notifications")
-                .navigationBarTitleDisplayMode(.inline)
+            notificationsDestinationView
         case .policies:
             #if DEBUG
             if destinationMode == .preview {
@@ -853,6 +879,11 @@ struct SettingsView: View {
 
             NavigationLink(value: SettingsDestination.models(initialRole: nil)) {
                 modelsSettingsLabel
+            }
+            if store.labAvailable {
+                NavigationLink(value: SettingsDestination.lab) {
+                    Label("Omnesis Lab", systemImage: "flask")
+                }
             }
             NavigationLink(value: SettingsDestination.devices) {
                 Label("Configure Devices", systemImage: "laptopcomputer.and.iphone")
@@ -1597,4 +1628,11 @@ struct SourceDepartureConfirmation: View {
 }
 
 #endif
+#endif
+
+#if DEBUG && canImport(SwiftUI) && canImport(UIKit)
+#Preview("Settings · Omnesis Lab") {
+    SettingsView(initialDestination: .lab, previewData: true)
+        .environment(AppStore.preview())
+}
 #endif

@@ -2,10 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * `omnesis brain` — the operator window into the Cognition Steward
+ * `omnesis brain` — the operator window into the Brain
  * engine (experimental). Read-only by contract: loops change through the
- * user's task commands and the Cognition Steward, observations through the
- * Steward alone; the agent-notes wipe (`notes --wipe`) is the one sanctioned
+ * user's task commands and the Brain, observations through the
+ * Brain alone; the agent-notes wipe (`notes --wipe`) is the one sanctioned
  * operator mutation here. The iOS Loops screen (over the gateway's
  * `/loops` routes) is the product read surface for open loops; this
  * command is the operator's, with the engine internals included.
@@ -287,7 +287,7 @@ export async function assertBrainVisible(): Promise<void> {
   const gate = await brainGate();
   if (gate?.visible === true) return;
   throw new CliError(
-    `${c.red}Omnesis Brain is experimental and currently hidden.${c.reset}\nStart the gateway with OMNESIS_EXPERIMENTAL=1 to enable it.`,
+    `${c.red}Omnesis Brain is experimental and currently hidden.${c.reset}\nStart the gateway with OMNESIS_EXPERIMENTAL=1 and enable Brain in Settings → Omnesis Lab.`,
     EXIT_USER_ERROR,
   );
 }
@@ -302,8 +302,8 @@ export async function assertBriefsActive(): Promise<void> {
   if (gate?.active === true) return;
   const hint =
     gate?.modelAssigned === true
-      ? "Start the gateway with OMNESIS_EXPERIMENTAL=1 to enable it."
-      : "Start the gateway with OMNESIS_EXPERIMENTAL=1 and assign a background-agent model.";
+      ? "Start the gateway with OMNESIS_EXPERIMENTAL=1 and enable Brain in Settings → Omnesis Lab."
+      : "Start the gateway with OMNESIS_EXPERIMENTAL=1, enable Brain in Settings → Omnesis Lab, and assign a background-agent model.";
   throw new CliError(
     `${c.red}Omnesis Brain is experimental and currently inactive.${c.reset}\n${hint}`,
     EXIT_USER_ERROR,
@@ -645,7 +645,7 @@ const loopShowCommand = defineCommand({
 });
 
 const runsCommand = defineCommand({
-  meta: { name: "runs", description: "List Cognition Steward queue runs (newest first)" },
+  meta: { name: "runs", description: "List Brain queue runs (newest first)" },
   args: {
     kind: {
       type: "string",
@@ -849,7 +849,7 @@ const decisionsCommand = defineCommand({
 const spendCommand = defineCommand({
   meta: {
     name: "spend",
-    description: "Daily Cognition Steward token spend (tracking only; no cap)",
+    description: "Daily Brain token spend (tracking only; no cap)",
   },
   args: {
     days: { type: "string", description: "How many days back to show (default 30)" },
@@ -1021,7 +1021,7 @@ export const brainCommand = defineCommand({
   meta: {
     name: "brain",
     description:
-      "Inspect the Cognition Steward: open loops, runs, transcripts, decisions, spend, calibration (operator, read-only)",
+      "Inspect the Brain: open loops, runs, transcripts, decisions, spend, calibration (operator, read-only)",
   },
   subCommands: {
     loops: gateVisible(loopsCommand),

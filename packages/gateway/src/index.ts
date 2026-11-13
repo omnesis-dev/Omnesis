@@ -30,7 +30,6 @@ import {
   ensurePrivateDirSync,
   experimentalEnabled,
   cloudRelayEnabled,
-  experimentalVisible,
   loadManifest,
   primeSecretFileKeyCache,
   resolveWorkerEntry,
@@ -54,6 +53,7 @@ import {
   openReadOnlyDatabase,
 } from "./db.js";
 import { createServer } from "./server.js";
+import { labFeatureEnabled } from "./lab/store.js";
 import { GATEWAY_VERSION } from "./version.js";
 import { ReleaseCheckService } from "./release-check/service.js";
 import { createReleaseCheckTask } from "./release-check/task.js";
@@ -80,7 +80,7 @@ import { InterestEngine } from "./brain/interest/engine.js";
 import { buildTaskTools } from "./brain/tasks/tools.js";
 import { renderTaskConversationContext } from "./brain/tasks/conversation-context.js";
 import { TaskService, type TaskEffects } from "./brain/tasks/service.js";
-import { createOpenLoopMirror } from "./brain/steward/mirror.js";
+import { createOpenLoopMirror } from "./brain/runtime/mirror.js";
 import { NoteAgent } from "./brain/note-agent/runner.js";
 import { redactTaintedMorningBriefs } from "./brain/observations/redaction.js";
 import { toCognitionRunUsage } from "./brain/run-driver.js";
@@ -649,6 +649,9 @@ const db = openReadOnlyDatabase(DB_PATH, {
 // Bootstrap device + admin token on first startup. Token is written to
 // <configDir>/token (mode 0600) so CLIs can pick it up, and is used to pair
 // real devices via POST /admin/devices/pair. Revoke after first pairing.
+await writeGate.initializeLabFlags({
+  brain: config.inference?.assignments?.["background-agent"] != null,
+});
 const bootstrapToken = await writeGate.ensureBootstrapToken(configDir);
 if (bootstrapToken) {
   log.info(
@@ -2065,7 +2068,7 @@ if (briefsVirtualClock) {
     "briefs VIRTUAL CLOCK enabled (OMNESIS_BRIEFS_VIRTUAL_CLOCK=1) — this gateway's briefs engine tells replay time, not wall time; never run a live instance this way",
   );
 }
-// Live-run registry shared between the Cognition Steward drainer (marks runs
+// Live-run registry shared between the Brain drainer (marks runs
 // around execution) and the /admin/brain runs surface (reads it) —
 // constructed here because the server mounts before bootBriefs runs.
 const cognitionActivity = new CognitionRunActivity();
@@ -2182,6 +2185,7 @@ function tryStart<T>(what: string, build: () => T): T | null {
 const watchV2 = journal.ok
   ? tryStart("the watch journal", () =>
       startWatchV2({
+        active: () => labFeatureEnabled(db, "watches"),
         journalPath: journal.path,
         db,
         indexDb,
@@ -2241,7 +2245,9 @@ if (watchV2 && watchStores?.ok) {
   // is how those two come to disagree.
   const watchFiringAgent = () => agentLifecycle.routeDeps.agentService ?? null;
   const firingThreadOpener = createWatchFiringThreadOpener({ getAgent: watchFiringAgent });
+  await writeGate.initializeLabFlags({ watches: watchStores.stores.definitions.hasAny() });
   const watchV2Engine = startWatchV2Engine({
+    enabled: () => labFeatureEnabled(db, "watches"),
     stores: watchStores.stores,
     journal: watchV2.store,
     journalHistories: (requests) => ioGate.watchDocumentHistories(requests),
@@ -2347,6 +2353,7 @@ if (watchV2 && watchStores?.ok) {
     log: log.child("watch-v2:compile-runs"),
   });
   const authoring: AuthorWatchDeps = {
+    enabled: () => labFeatureEnabled(db, "watches"),
     definitions: watchV2Engine.definitions,
     inFlight: compilesInFlight,
     journal: watchV2.store,
@@ -2416,6 +2423,7 @@ if (watchV2 && watchStores?.ok) {
   };
   watchAuthoring = authoring;
   watchV2RouteDeps = {
+    enabled: () => labFeatureEnabled(db, "watches"),
     definitions: watchV2Engine.definitions,
     compiles: compilesInFlight,
     traces: watchV2Engine.traces,
@@ -2565,7 +2573,8 @@ const interestEngine = new InterestEngine({
   // Only the Brain's gates read the ledger, and they exist in experimental
   // mode; a stable gateway records nothing.
   enabled: () =>
-    experimentalVisible() && resolveBrainSettings(configStore.get().brain).interest.enabled,
+    labFeatureEnabled(db, "brain") &&
+    resolveBrainSettings(configStore.get().brain).interest.enabled,
   lookupOptions: () => resolveBrainSettings(configStore.get().brain).interest.lookup,
   clock: briefsVirtualClock ?? Date.now,
   idGen: () => globalThis.crypto.randomUUID(),
@@ -2802,7 +2811,10 @@ const app = createServer(db, DB_PATH, {
   getConfigHealth: () => inferenceRegistry.configHealth(),
   getModelHealth: () => inferenceRegistry.modelHealth(),
   getReleaseCheck: () => releaseCheckService.snapshot(),
-  getBriefsStatus: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps),
+  getBriefsStatus: () =>
+    briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps, () =>
+      labFeatureEnabled(db, "brain"),
+    ),
   getNoteAgentStatus: () => noteAgent.status(),
   isNoteAgentEnabled: () => noteAgent.enabled(),
   getDictationStatus: () =>
@@ -3054,24 +3066,28 @@ scheduler.schedule({
   },
 });
 // A conversation about a task reads the task as it stands on every turn.
-agentLifecycle.setTaskContextProvider((origin) => renderTaskConversationContext(db, origin));
+agentLifecycle.setTaskContextProvider((origin) =>
+  labFeatureEnabled(db, "tasks") ? renderTaskConversationContext(db, origin) : "",
+);
 agentLifecycle.setTaskToolsProvider((conversationId, context) =>
-  buildTaskTools({
-    db,
-    tasks: taskService,
-    writeGate,
-    origin: {
-      surface: "conversation",
-      runId: `user:conversation:${conversationId}`,
-      conversationId,
-    },
-    observations: experimentalVisible(),
-    ...(context.creationReference ? { creationReference: context.creationReference } : {}),
-    // Only the Morning brief conversation records what the owner says they
-    // care about; elsewhere their words are not feedback on a brief.
-    ...(context.originKind === "daily_brief" ? { interest: interestEngine } : {}),
-    ...(briefsVirtualClock ? { clock: briefsVirtualClock } : {}),
-  }),
+  !labFeatureEnabled(db, "tasks")
+    ? []
+    : buildTaskTools({
+        db,
+        tasks: taskService,
+        writeGate,
+        origin: {
+          surface: "conversation",
+          runId: `user:conversation:${conversationId}`,
+          conversationId,
+        },
+        observations: labFeatureEnabled(db, "brain"),
+        ...(context.creationReference ? { creationReference: context.creationReference } : {}),
+        // Only the Morning brief conversation records what the owner says they
+        // care about; elsewhere their words are not feedback on a brief.
+        ...(context.originKind === "daily_brief" ? { interest: interestEngine } : {}),
+        ...(briefsVirtualClock ? { clock: briefsVirtualClock } : {}),
+      }),
 );
 // Thumbs on a shipped brief item: the reaction, its interest signal and, for
 // a factual correction, the Tell Omnesis note it becomes.
@@ -3122,6 +3138,7 @@ subscribeMemoryInvalidators({
 });
 
 await bootBriefs({
+  isEnabled: () => labFeatureEnabled(db, "brain"),
   registry: inferenceRegistry,
   readiness: chatRoleReadinessDeps,
   writeGate,
@@ -3144,14 +3161,14 @@ await bootBriefs({
     interest: interestEngine,
     getOperatorInstructions: () => operatorInstructions.promptText(),
     transcriptsDir: cognitionTranscriptsDir(configDir),
-    // Collaborators the Cognition Steward's toolset + prompts are assembled from
+    // Collaborators the Brain's toolset + prompts are assembled from
     // (lazy-loaded inside bootBriefs; nothing here is touched when inert).
     cognition: {
       searchPipeline,
       syncStatus,
       analyticsDb,
       indexDb,
-      // Read-worker gate for `lookup_people`; the steward wraps its calls at
+      // Read-worker gate for `lookup_people`; the Brain wraps its calls at
       // background priority so background runs never jump ahead of interactive.
       personLookupGate: ioGate,
       // The knowledge engine's per-tick ledger scans, off the main event loop.
@@ -3447,13 +3464,18 @@ const backfillBundle = createBackfillTasks(
     // gate before constructing a provider, so a hidden Brain assignment cannot
     // buy automatic completions while the Brain is off.
     getCompletionProvider: () => {
-      const provider = loadBrainCompletionProvider(inferenceRegistry, chatRoleReadinessDeps, {
-        health: inferenceRegistry.health,
-        configDir,
-        codexRuntimeService,
-        claudeCodeService,
-        getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
-      });
+      const provider = loadBrainCompletionProvider(
+        inferenceRegistry,
+        chatRoleReadinessDeps,
+        {
+          health: inferenceRegistry.health,
+          configDir,
+          codexRuntimeService,
+          claudeCodeService,
+          getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
+        },
+        () => labFeatureEnabled(db, "brain"),
+      );
       return provider ? withSpendRecording(provider, recordCompleterSpend("token-identity")) : null;
     },
     readDb: db,
@@ -3556,7 +3578,10 @@ const derivationSlaBundle = derivationSlaTasks(
     db,
     log: log.child("derivation-sla"),
     getBarrierMs: () => resolveBrainSettings(configStore.get().brain).derivationBarrierMs,
-    isBarrierActive: () => briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps).active,
+    isBarrierActive: () =>
+      briefsFeatureStatus(inferenceRegistry, chatRoleReadinessDeps, () =>
+        labFeatureEnabled(db, "brain"),
+      ).active,
   },
   scheduler,
 );
@@ -3707,7 +3732,7 @@ const subscriptionDeliveryService = new SubscriptionDeliveryService({
   getDevice: (deviceId) => getDevice(db, deviceId),
   policyStore: subscriptionsPolicyStore,
   log: log.child("subscriptions:delivery"),
-  isEnabled: experimentalVisible,
+  isEnabled: () => labFeatureEnabled(db, "watches"),
   reevaluatePendingWatchPolicies: () =>
     subscriptionService?.reevaluatePendingWatchPolicies() ?? Promise.resolve(0),
   reapplyOperatorApprovals: () =>

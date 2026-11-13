@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createLabTable } from "../lab/store.js";
+
 import { createKnowledgeTables } from "../brain/knowledge/schema.js";
 import { createKnowledgeDecisionTable } from "../brain/knowledge/decision-storage.js";
 import { installKnowledgeOwnerTriggers } from "../brain/knowledge/owner-triggers.js";
@@ -1471,7 +1473,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // the collector reconnects doesn't read as "the source was removed".
   createSourceDocumentProfilesTable(db);
 
-  // Briefs / Cognition Steward storage (experimental): open loops, briefs,
+  // Briefs / Brain storage (experimental): open loops, briefs,
   // the agent run queue, spend tracking, agent notes.
   createBriefsStorageTables(db);
   createSourceInventoryTables(db);
@@ -1493,6 +1495,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // Developer-annotations store (OMNESIS_DEV_MODE): the operator → engineer
   // data-quality feedback channel.
   createDevAnnotationsTables(db);
+  createLabTable(db);
   // Which agent conversations hold something the operator has not seen.
   createConversationReadStateTables(db);
 

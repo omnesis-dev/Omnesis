@@ -31,6 +31,7 @@ export interface SettleTaskProposalsDeps {
   writeGate: Pick<WriteGate, "autoApplyTaskChange" | "withdrawTaskProposal">;
   /** Config `brain.tasks.autoApply`. */
   autoApply: boolean;
+  isEnabled?: () => boolean;
   taskChecks?: TaskChecks;
   clock: () => number;
   log: Logger;
@@ -39,6 +40,7 @@ export interface SettleTaskProposalsDeps {
 export async function settleTaskProposals(
   deps: SettleTaskProposalsDeps,
 ): Promise<{ applied: number; withdrawn: number }> {
+  if (deps.isEnabled?.() === false) return { applied: 0, withdrawn: 0 };
   const ids = deps.db
     .prepare<[], { id: string }>(
       "SELECT id FROM open_loops WHERE proposed_change_json IS NOT NULL ORDER BY id",
@@ -48,6 +50,7 @@ export async function settleTaskProposals(
   let applied = 0;
   let withdrawn = 0;
   for (const id of ids) {
+    if (deps.isEnabled?.() === false) break;
     const loop = getOpenLoop(deps.db, id);
     const proposal = loop?.proposedChange;
     if (!loop || !proposal || !isOwnedTask(loop)) continue;
@@ -86,7 +89,7 @@ export async function settleTaskProposals(
         deps.log.info(`Task ${id} keeps its proposed new title waiting: task check ${same}`);
       }
     }
-    if (!decision.apply) continue;
+    if (!decision.apply || deps.isEnabled?.() === false) continue;
     const result = await deps.writeGate.autoApplyTaskChange(
       id,
       {

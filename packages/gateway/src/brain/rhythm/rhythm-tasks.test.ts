@@ -51,7 +51,7 @@ function cleanupDb(path: string): void {
   }
 }
 
-describe("steward rhythm tasks", () => {
+describe("Brain rhythm tasks", () => {
   let path: string;
   let db: Db;
 
@@ -64,7 +64,7 @@ describe("steward rhythm tasks", () => {
     cleanupDb(path);
   });
 
-  function makeBundle(opts: { enabled?: boolean } = {}) {
+  function makeBundle(opts: { enabled?: boolean; tasksEnabled?: boolean } = {}) {
     const writeGate = {
       enqueueCognitionRun: async (input: Parameters<typeof enqueueCognitionRun>[1], now: number) =>
         enqueueCognitionRun(db, input, now),
@@ -79,6 +79,7 @@ describe("steward rhythm tasks", () => {
         writeGate,
         log,
         isEnabled: () => opts.enabled ?? true,
+        tasksEnabled: () => opts.tasksEnabled ?? true,
         getDailyRunHour: () => 5,
         getDecayBackoff: () => ({ backoffBaseMs: 100, backoffCapMs: 800 }),
         clock: () => Date.now(),
@@ -100,6 +101,23 @@ describe("steward rhythm tasks", () => {
     expect(getCognitionEngineState(db, COGNITION_DAILY_LAST_RUN_DAY_KEY)).toBeNull();
     const runs = db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM cognition_runs").get();
     expect(runs?.n).toBe(0);
+  });
+
+  test("task opt-out quiesces decay while other Brain lanes keep running", async () => {
+    createOpenLoop(
+      db,
+      { id: "loop_example", createdByRun: "r", title: "Hidden task", confidence: 1, importance: 1 },
+      1000,
+    );
+    const switches = { tasksEnabled: false };
+    const bundle = makeBundle(switches);
+    const [daily, , decay] = bundle.tasks;
+    expect(await daily!.run(undefined, taskCtx)).toMatchObject({ value: { idle: false } });
+    expect(await decay!.run(undefined, taskCtx)).toMatchObject({ value: { idle: true } });
+    expect(listCognitionRuns(db, { kinds: ["time_based"] })).toHaveLength(0);
+    switches.tasksEnabled = true;
+    expect(await decay!.run(undefined, taskCtx)).toMatchObject({ value: { idle: false } });
+    expect(listCognitionRuns(db, { kinds: ["time_based"] })).toHaveLength(1);
   });
 
   test("enabled: the daily task fires the due-gate and the decay task schedules a check", async () => {

@@ -9,7 +9,7 @@ import { createAnnotationStorageTables, createDocAnnotation } from "../storage/a
 import { createConsumptionEdgesTables } from "../storage/consumption-edges.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { directWriteGate, writeGateFromCall, type WriterCallFn } from "../../write-gate.js";
-import { buildAnnotationTools, buildCognitionOwnTools } from "../steward/tools.js";
+import { buildAnnotationTools, buildCognitionOwnTools } from "../runtime/tools.js";
 
 import {
   createTemporalAnnotationTables,

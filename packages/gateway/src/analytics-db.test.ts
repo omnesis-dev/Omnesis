@@ -122,6 +122,31 @@ afterEach(async () => {
 });
 
 describe("the Watch analytics outbox", () => {
+  test("live admission captures only pages ingested while Watches is on", async () => {
+    let active = false;
+    db.enableWatchOutbox(
+      () => false,
+      () => active,
+    );
+    const ingest = (id: string) =>
+      db.ingestPage({
+        tableName: testSchema.tableName,
+        schema: testSchema,
+        sourceId: "synthetic:account",
+        streamId: "device-a",
+        records: [{ id, date: "2026-03-01", metric_type: "invented", value: 1, unit: null }],
+      });
+    await ingest("off-before");
+    expect((await db.readWatchOutbox({ pageSeq: 0, rowOffset: 0 }, 10)).rows).toEqual([]);
+    active = true;
+    await ingest("on");
+    active = false;
+    await ingest("off-after");
+    active = true;
+    const batch = await db.readWatchOutbox({ pageSeq: 0, rowOffset: 0 }, 10);
+    expect(batch.rows.map((entry) => entry.row.id)).toEqual(["on"]);
+  });
+
   test("commits the stored page and its Watch hand-off atomically", async () => {
     db.enableWatchOutbox(() => true);
     await db.ingestPage({

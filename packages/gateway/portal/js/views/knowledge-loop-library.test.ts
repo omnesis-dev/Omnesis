@@ -18,7 +18,7 @@ it("keeps canonical outcomes readable without a synthesis mirror", () => {
   expect(node.validity).toBeUndefined();
   expect(node.plainText).toBe("Materials are ready.");
   expect(loopLibraryPath(node.id)).toBe(
-    "/portal/debug/cognition/knowledge/outcome%2Fone?kind=loop",
+    "/portal/debug/brain/knowledge/outcome%2Fone?kind=loop",
   );
 });
 it("sorts loaded outcomes by meaningful dates or canonical importance without mutating cursor order", () => {

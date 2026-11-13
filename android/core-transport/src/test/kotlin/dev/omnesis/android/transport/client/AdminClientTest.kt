@@ -36,6 +36,25 @@ import org.junit.Test
 
 /** Route/shape contract for the mutating source actions (OkHttp MockWebServer). */
 class AdminClientTest {
+    @Test fun lab_load_and_toggle_use_authenticated_admin_routes() = runTest {
+        val response = """{"experimental":true,"features":[{"id":"brain","name":"Brain","description":"Background processing","enabled":true,"iconSvg":"<svg/>"}]}"""
+        server.enqueue(MockResponse().setBody(response))
+        val catalogue = client().lab()
+        assertEquals("<svg/>", catalogue.features.single().iconSvg)
+        server.takeRequest().also {
+            assertEquals("GET", it.method)
+            assertEquals("/admin/lab", it.path)
+            assertEquals("Bearer tok", it.getHeader("Authorization"))
+        }
+        server.enqueue(MockResponse().setBody(response))
+        assertTrue(client().setLabFeature("brain", true).features.single().enabled)
+        server.takeRequest().also {
+            assertEquals("PUT", it.method)
+            assertEquals("/admin/lab/brain", it.path)
+            assertEquals("{\"enabled\":true}", it.body.readUtf8())
+        }
+    }
+
 
     private lateinit var server: MockWebServer
 

@@ -67,6 +67,7 @@ beforeEach(async () => {
   ).run(WIKI_REPAIR_RUBRIC_VERSION);
   verdict = "unavailable";
   service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     getSettings: () => resolveBrainSettings(),

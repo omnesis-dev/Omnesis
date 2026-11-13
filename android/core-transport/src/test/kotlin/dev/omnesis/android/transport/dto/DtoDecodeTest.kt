@@ -15,6 +15,40 @@ import org.junit.Test
 
 /** Decode-time contract tests using invented (non-corpus) fixtures. */
 class DtoDecodeTest {
+    @Test fun missing_lab_preserves_legacy_status_discovery_without_revealing_the_lab_menu() {
+        val legacy = OmnesisJson.decodeFromString<StatusSnapshot>("""{
+            "documents":{"total":12,"bySource":{}},"experimental":true,
+            "tasks":{"available":true,"noteAgent":true},"brain":{"active":true}
+        }""")
+        assertNull(legacy.lab)
+        assertEquals(LabFlags(brain = true, tasks = true, watches = true), legacy.effectiveLabFlags)
+        assertTrue(legacy.tasksAvailable)
+        assertFalse(legacy.labAvailable)
+        val stable = OmnesisJson.decodeFromString<StatusSnapshot>("""{"tasks":{"available":true}}""")
+        assertEquals(LabFlags(tasks = true), stable.effectiveLabFlags)
+        assertTrue(stable.tasksAvailable)
+        assertEquals(LabFlags(), OmnesisJson.decodeFromString<StatusSnapshot>("{}").effectiveLabFlags)
+    }
+
+    @Test fun explicit_lab_switches_override_legacy_status_including_partial_and_all_false() {
+        for (lab in listOf("{}", "{\"brain\":false,\"tasks\":false,\"watches\":false}")) {
+            val status = OmnesisJson.decodeFromString<StatusSnapshot>("""{"experimental":true,"tasks":{"available":true},"lab":$lab}""")
+            assertEquals(LabFlags(), status.effectiveLabFlags)
+            assertFalse(status.tasksAvailable)
+        }
+        val selected = OmnesisJson.decodeFromString<StatusSnapshot>("""{"experimental":true,"tasks":{"available":true},"lab":{"tasks":true}}""")
+        assertEquals(LabFlags(tasks = true), selected.effectiveLabFlags)
+        assertTrue(selected.tasksAvailable)
+        assertFalse(selected.labAvailable)
+    }
+
+    @Test fun explicit_null_or_malformed_lab_disables_features_without_legacy_fallback() {
+        for (lab in listOf("null", "false", "[]", "\"invalid\"", "{\"tasks\":\"invalid\",\"watches\":true}")) {
+            val status = OmnesisJson.decodeFromString<StatusSnapshot>("""{"experimental":true,"tasks":{"available":true},"lab":$lab}""")
+            assertEquals(LabFlags(), status.effectiveLabFlags)
+            assertFalse(status.tasksAvailable)
+        }
+    }
 
     @Test
     fun graph_context_decodes_optional_fields_and_ignores_future_fields() {

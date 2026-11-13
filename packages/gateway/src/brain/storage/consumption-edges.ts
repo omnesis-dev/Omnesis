@@ -4,7 +4,7 @@
 /**
  * Consumption provenance — which observations/loops were built on which annotation
  * PRIORS. One `cognition_consumption_edges` row per (prior annotation →
- * dependent observation/loop) pair, recorded mechanically by the steward tool
+ * dependent observation/loop) pair, recorded mechanically by the Brain tool
  * layer: "consumed" means the model explicitly declared that the annotation
  * materially informed that particular observation/loop mutation. The declaration
  * is accepted only when the prior was actually surfaced earlier in the run

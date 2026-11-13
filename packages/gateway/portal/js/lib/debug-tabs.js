@@ -10,12 +10,9 @@
 // then how the process is behaving (Metrics, Background Jobs), then the
 // derived cognitive state and the health check.
 //
-// The Cognition tab (the read-only Cognition Steward cognitive-state
-// inspector) and the Watch tab (one watch's definition, drawn as the graph the
-// runtime evaluates) are EXPERIMENTAL — the tab bar offers them only when the
-// gateway advertises experimental mode via `GET /status`, exactly like the
-// Watches nav item. The router still resolves their paths in either mode, so a
-// deep link lands on the right tab the moment the flag arrives.
+// Brain and Watch require their own Lab opt-ins as well as experimental mode.
+// Paths still resolve while a feature is off, so saved links can fall back to
+// a stable tab without exposing the disabled inspector.
 
 const TABS = [
   { key: "data", label: "Data" },
@@ -24,8 +21,8 @@ const TABS = [
   { key: "metrics", label: "Metrics" },
   { key: "background-jobs", label: "Background Jobs" },
   { key: "calendar", label: "Calendar" },
-  { key: "cognition", label: "Cognition", experimental: true },
-  { key: "watch", label: "Watch", experimental: true },
+  { key: "brain", label: "Brain", feature: "brain", experimental: true },
+  { key: "watch", label: "Watch", feature: "watches", experimental: true },
   { key: "doctor", label: "Doctor" },
 ];
 
@@ -36,12 +33,10 @@ export const DEBUG_TAB_KEYS = TABS.map((t) => t.key);
 export const DEFAULT_DEBUG_TAB = TABS[0].key;
 
 /**
- * The tab set to render for the current experimental mode. Dropping the
- * experimental tabs keeps them off the tab bar for a stock install — the
- * single gate that mirrors the Watches nav item.
+ * The tab set to render for the gateway mode and independent Lab opt-ins.
  */
-export function debugTabs(experimental) {
-  return TABS.filter((t) => !t.experimental || experimental).map(({ key, label }) => ({
+export function debugTabs(experimental, lab = { brain: experimental, watches: experimental }) {
+  return TABS.filter((t) => !t.experimental || (experimental && lab[t.feature] === true)).map(({ key, label }) => ({
     key,
     label,
   }));

@@ -125,9 +125,9 @@ const NARROWED_AUTHORITY: Partial<Record<CognitiveWorkflowId, readonly Cognitive
   // its own tool. It reads evidence widely and writes nothing else.
   "identity-adjudication": ["merge-verdict"],
 
-  // Watch compilation runs outside the steward with the restricted retrieval
+  // Watch compilation runs outside the Brain with the restricted retrieval
   // profile from watch/compiler-session.ts (compilerTools), or a tool-less
-  // completion fallback. It has no authority over the steward's durable state.
+  // completion fallback. It has no authority over the Brain's durable state.
   "subscription-compile": [],
 
   // Composes and sends the day's one morning brief from observations the

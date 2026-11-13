@@ -104,6 +104,8 @@ class TaskWidgetRepositoryTest {
     }
 
     private class Gateway : WidgetTasksGateway {
+        var available = true
+        override suspend fun available() = available
         var failure: Exception? = null
         var readGate: CompletableDeferred<Unit>? = null
         var entered = CompletableDeferred<Unit>()
@@ -127,6 +129,32 @@ class TaskWidgetRepositoryTest {
         val repository = TaskWidgetRepository({ pairing }, cache, { gateway }, { 100 }, { today })
         assertEquals(listOf("one"), repository.refresh().snapshot?.tasks?.map { it.id })
         assertEquals(listOf(TaskView.TODAY, TaskView.MONTH, TaskView.FUTURE, TaskView.ANYTIME), gateway.requested)
+    }
+
+    @Test fun disabled_tasks_clear_cached_rows_and_do_not_read_or_complete() = runTest {
+        val cache = Cache()
+        val gateway = Gateway()
+        val repository = TaskWidgetRepository({ pairing }, cache, { gateway }, { 100 }, { today })
+        repository.refresh()
+        assertNotNull(cache.value)
+        gateway.available = false
+        gateway.requested.clear()
+        assertEquals(TaskWidgetStatus.DISABLED, repository.refresh().status)
+        assertNull(cache.value)
+        assertTrue(gateway.requested.isEmpty())
+        try { repository.complete("one", TaskWidgetRepository.authority(pairing)); fail("disabled tasks accepted a completion") }
+        catch (_: WidgetTasksDisabled) { }
+        assertTrue(gateway.completed.isEmpty())
+    }
+
+    @Test fun task_route_removed_clears_saved_widget_content() = runTest {
+        val cache = Cache()
+        val gateway = Gateway()
+        val repository = TaskWidgetRepository({ pairing }, cache, { gateway }, { 100 }, { today })
+        repository.refresh()
+        gateway.failure = GatewayException.NotFound()
+        assertEquals(TaskWidgetStatus.DISABLED, repository.refresh().status)
+        assertNull(cache.value)
     }
 
     @Test fun network_failure_preserves_cache_and_auth_failure_hides_it() = runTest {

@@ -20,8 +20,8 @@ import { withPersonProfileRead } from "../person-profile-test-tools.js";
 import { deleteDocumentsByIds } from "../../data/repositories/DocumentRepository.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
-import { createOpenLoopMirror } from "../steward/mirror.js";
-import { buildCognitionOwnTools, COGNITION_MUTATING_TOOL_NAMES } from "../steward/tools.js";
+import { createOpenLoopMirror } from "../runtime/mirror.js";
+import { buildCognitionOwnTools, COGNITION_MUTATING_TOOL_NAMES } from "../runtime/tools.js";
 import { subscribeAnnotationInvalidator } from "../annotation-invalidator.js";
 import { subscribePersonAnnotationInvalidator } from "../person-annotation-invalidator.js";
 import {

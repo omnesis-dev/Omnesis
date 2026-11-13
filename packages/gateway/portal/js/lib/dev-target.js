@@ -51,7 +51,7 @@ export function deriveDevTarget(route, pathname, activeConvoId = null) {
     case "debug":
       // The cognition inspector renders loops / runs in addressable
       // panes; a selected id maps to that entity.
-      if (route.tab === "cognition" && route.cognitionId) {
+      if (route.tab === "brain" && route.cognitionId) {
         const map = {
           loops: { type: "open_loop", noun: "Loop" },
           runs: { type: "agent_run", noun: "Run" },

@@ -424,6 +424,7 @@ describe("gateway restart durability", () => {
     gate = await startGatedReviewer();
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       // The only e2e universe carrying `agent-demos/`, which the replay agent
       // and the Answer boundary both route through.
       universe: "default",

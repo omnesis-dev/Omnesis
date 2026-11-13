@@ -21,13 +21,14 @@ export function renderMorningBriefItemLines(
   db: Database.Database,
   day: string,
   excludedSources: readonly string[] = [],
+  tasksEnabled = true,
 ): string[] {
   const titles = db.prepare<[string], { title: string }>(
     "SELECT title FROM documents WHERE id = ?",
   );
   return listMorningBriefItems(db, day).flatMap((item) => {
     const observation = getObservation(db, item.observationId);
-    if (!observation) return [];
+    if (!observation || (!tasksEnabled && observation.relatedLoopIds.length > 0)) return [];
     const excluded = excludedDocumentIds(db, excludedSources, observation.citations);
     const sources = observation.citations
       .filter((id) => !excluded.has(id))
@@ -114,15 +115,18 @@ export function readDigestInputs(
   cfg: ResolvedBrainSettings,
   horizon: DigestHorizon,
   day: string,
+  tasksEnabled = true,
 ) {
   const horizonLines = renderDigestHorizonLines(horizon);
-  const itemLines = renderMorningBriefItemLines(db, day, cfg.excludedSources);
-  const prime = readDueSoonDeltaPrime(db, { now, cfg });
+  const itemLines = renderMorningBriefItemLines(db, day, cfg.excludedSources, tasksEnabled);
+  const prime = tasksEnabled
+    ? readDueSoonDeltaPrime(db, { now, cfg })
+    : { text: "", dueLoopCount: 0 };
   return {
     horizonLines,
     itemLines,
     deltaPrime: prime.text,
-    autoAppliedLines: renderAutoAppliedTaskLines(db, now),
+    autoAppliedLines: tasksEnabled ? renderAutoAppliedTaskLines(db, now) : [],
     hasInputs: horizonLines.length > 0 || itemLines.length > 0 || prime.dueLoopCount > 0,
   };
 }

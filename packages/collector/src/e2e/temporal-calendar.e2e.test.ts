@@ -59,6 +59,7 @@ describe("unified temporal Calendar (scripted backend)", () => {
     server = await startScriptedLoopModelServer({ behaviors: new Map() });
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "loops-test-life",
       embedderBackend: "fake",
       extraInference: {

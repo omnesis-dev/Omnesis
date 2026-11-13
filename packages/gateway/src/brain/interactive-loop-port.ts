@@ -3,7 +3,7 @@
 
 /**
  * Gateway implementation of the interactive agent's READ-ONLY `LoopReadPort`
- * (experimental). Projects the Cognition Steward's `open_loops` into the compact
+ * (experimental). Projects the Brain's `open_loops` into the compact
  * `LoopSummary` / `LoopDetail` wire shapes — no mutation surface, so the chat
  * agent can find and read what the background agent tracks but never change it.
  * Lists/search show active loops; exact-ID reads also preserve terminal state.

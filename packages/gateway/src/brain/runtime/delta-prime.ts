@@ -4,7 +4,7 @@
 /**
  * Delta-priming — the compact, deterministic "your current model" block
  * injected into the low-frequency runs (per-source daily batches, the morning
- * digest, synthesis and sweeps), so the Cognition Steward reasons about what
+ * digest, synthesis and sweeps), so the Brain reasons about what
  * CHANGED since it last looked instead of rebuilding its whole picture from
  * scratch every time.
  *

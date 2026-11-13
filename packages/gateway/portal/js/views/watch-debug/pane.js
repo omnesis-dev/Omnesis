@@ -112,7 +112,7 @@ function WatchPane({ watch, dag, state, onSelectKey }) {
   const delivery = installedWatchDelivery(watch);
   const propositions = watchPropositions(definition);
   const compileRunHref = watch.compileRunId
-    ? `/portal/debug/cognition/runs/${encodeURIComponent(watch.compileRunId)}`
+    ? `/portal/debug/brain/runs/${encodeURIComponent(watch.compileRunId)}`
     : null;
   const constants = isPlainObject(definition?.constants) ? Object.entries(definition.constants) : [];
   // Fields the DSL carries are printed as written — an expiry instant and a

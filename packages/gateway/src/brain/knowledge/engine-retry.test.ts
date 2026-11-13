@@ -55,6 +55,7 @@ beforeEach(() => {
   inFlight.clear();
   const writeGate = directKnowledgeGate(db);
   service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate,
     getSettings: () => settings,

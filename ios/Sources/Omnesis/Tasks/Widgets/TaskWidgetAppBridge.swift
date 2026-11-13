@@ -39,6 +39,13 @@ public enum TaskWidgetAppBridge {
         reload()
     }
 
+    public static func clearSnapshot() {
+        guard Bundle.main.object(forInfoDictionaryKey: "OmnesisTaskWidgetAccessGroup") is String,
+              let credential = try? TaskWidgetStorage.credential() else { return }
+        try? TaskWidgetStorage.save(snapshot: TaskWidgetSnapshot(tasks: []), credential: credential)
+        reload()
+    }
+
     public static func reload() {
         WidgetCenter.shared.reloadTimelines(ofKind: TaskWidgetIdentity.kind)
     }

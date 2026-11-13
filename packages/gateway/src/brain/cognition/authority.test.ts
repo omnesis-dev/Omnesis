@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, it, expect } from "vitest";
-import { COGNITION_MUTATING_TOOL_NAMES } from "../steward/tools.js";
+import { COGNITION_MUTATING_TOOL_NAMES } from "../runtime/tools.js";
 import { KNOWLEDGE_MUTATING_TOOLS } from "../knowledge/tools.js";
 import {
   COGNITIVE_ARTIFACTS,
@@ -15,7 +15,7 @@ import {
 import { COGNITIVE_WORKFLOW_IDS, UNRECOGNIZED_WORKFLOW_ID } from "./workflows.js";
 
 describe("the artifact → tool map", () => {
-  it("covers every mutating tool the steward's own toolset builds", () => {
+  it("covers every mutating tool the Brain's own toolset builds", () => {
     // A verb missing here would be granted to nobody and silently disappear
     // from every workflow's toolset.
     const grantable = new Set(allGrantableMutatingTools());
@@ -82,7 +82,7 @@ describe("per-workflow authority", () => {
   it("declares an authority for every workflow, and grants the unknown one nothing", () => {
     // Three workflows write nothing, and for each an empty authority IS the
     // declaration rather than an omission: watch compilation is recorded inline
-    // outside the steward's mutation surface, and the two precision batches
+    // outside the Brain's mutation surface, and the two precision batches
     // are work nothing produces any more — their ids survive only because
     // spend and attribution rows are keyed on them.
     const WRITES_NOTHING = ["subscription-compile", "subscription-precision", "watch-precision"];

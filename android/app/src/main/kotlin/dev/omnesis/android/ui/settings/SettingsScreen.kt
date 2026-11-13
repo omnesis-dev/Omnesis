@@ -109,6 +109,7 @@ fun SettingsScreen(
     onUnpaired: () -> Unit,
     focusedSourceId: String? = null,
     onRepair: () -> Unit = {},
+    onOpenLab: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenDevices: () -> Unit = {},
     onOpenPolicies: () -> Unit = {},
@@ -118,6 +119,7 @@ fun SettingsScreen(
     onOpenPhoneSetupStep: (String) -> Unit = {},
     vm: SettingsViewModel = hiltViewModel(),
 ) {
+    val labAvailable by vm.labAvailable.collectAsStateWithLifecycle()
     val mode by vm.appearanceMode.collectAsStateWithLifecycle()
     val gateway by vm.gateway.collectAsStateWithLifecycle()
     val connection by vm.connection.collectAsStateWithLifecycle()
@@ -156,6 +158,8 @@ fun SettingsScreen(
             // repair() wipes the token and flips SessionManager to Unpaired; RootScreen then swaps
             // the pairing surface forward. onRepair lets the host dismiss any settings overlay.
             onRepair = { vm.repair(); onRepair() },
+            labAvailable = labAvailable,
+            onOpenLab = onOpenLab,
             onOpenModels = onOpenModels,
             modelsNeedAttention = modelHealth.needsAttention,
             onOpenDevices = onOpenDevices,
@@ -278,6 +282,8 @@ fun SettingsContent(
     onSaveUrl: (String) -> String?,
     onUnpair: () -> Unit,
     onRepair: () -> Unit = {},
+    labAvailable: Boolean = false,
+    onOpenLab: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     modelsNeedAttention: Boolean = false,
     onOpenDevices: () -> Unit = {},
@@ -381,6 +387,10 @@ fun SettingsContent(
                     Spacer(Modifier.height(OmSpacing.sm))
                     ConnectionRowLabel(connection, gateway?.usesDirectRouting == true, cloudFeatures)
                     RowDivider()
+                    if (labAvailable) {
+                        NavigationRow("Omnesis Lab", onOpenLab)
+                        HorizontalDivider(color = c.border)
+                    }
                     NavigationRow("Configure Models", onOpenModels, warning = modelsNeedAttention)
                     RowDivider()
                     NavigationRow("Configure Devices", onOpenDevices)

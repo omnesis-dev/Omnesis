@@ -26,6 +26,49 @@ import XCTest
 @MainActor
 // swiftlint:disable:next type_body_length
 final class PreviewSnapshotTests: XCTestCase {
+    func testOmnesisLab() {
+        snapshot(
+            SettingsView(initialDestination: .lab, previewData: true)
+                .environment(AppStore.preview()),
+            name: "omnesis-lab"
+        )
+        snapshot(
+            NavigationStack { LabView(snapshot: PreviewMocks.labFeatures(enabled: false), preview: true) }
+                .environment(AppStore.preview()),
+            name: "omnesis-lab-all-off"
+        )
+        snapshot(
+            NavigationStack { LabView(snapshot: PreviewMocks.labFeatures(enabled: true), preview: true) }
+                .environment(AppStore.preview()).preferredColorScheme(.dark),
+            name: "omnesis-lab-all-on-dark"
+        )
+        snapshot(
+            NavigationStack { LabView(snapshot: PreviewMocks.lab, preview: true) }
+                .environment(AppStore.preview()),
+            name: "omnesis-lab-full-content",
+            size: CGSize(width: 393, height: 1400)
+        )
+        snapshot(
+            NavigationStack { LabView(snapshot: PreviewMocks.labFeatures(enabled: true), preview: true) }
+                .environment(AppStore.preview()).preferredColorScheme(.dark),
+            name: "omnesis-lab-full-content-dark",
+            size: CGSize(
+                width: 393,
+                height: 1400
+            )
+        )
+        snapshot(
+            NavigationStack { LabView(error: URLError(.notConnectedToInternet), preview: true) }
+                .environment(AppStore.preview()),
+            name: "omnesis-lab-offline"
+        )
+        snapshot(
+            NavigationStack {
+                LabView(snapshot: PreviewMocks.lab, error: URLError(.notConnectedToInternet), failedFeature: "brain", preview: true)
+            }.environment(AppStore.preview()), name: "omnesis-lab-save-failed"
+        )
+    }
+
     func testAccountCloudPairingStates() {
         for (phase, name) in [
             (AccountCloudPairingCoordinator.Phase.idle, "idle"), (.connecting, "connecting"), (.signingIn, "signing-in"),

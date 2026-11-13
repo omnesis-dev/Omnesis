@@ -247,6 +247,7 @@ roborazzi {
 }
 
 dependencies {
+    implementation(libs.androidsvg)
     // Sign-in libraries add permissions, services and activities to the manifest, so only a
     // build with cloud connectivity packages them. Otherwise they are test-only.
     val signInLibraries = if (cloudRelayEnabled) "implementation" else "testImplementation"

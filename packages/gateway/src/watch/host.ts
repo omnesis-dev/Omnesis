@@ -70,6 +70,8 @@ export interface WatchV2HostOptions {
   readonly tunables?: WatchV2Tunables;
   /** Overridable so a test can drive the gate without setting an env var. */
   readonly enabled?: () => boolean;
+  /** Live Lab admission; the environment gate still constructs a host for hot opt-in. */
+  readonly active?: () => boolean;
 }
 
 export interface WatchV2Host {
@@ -96,6 +98,7 @@ export function startWatchV2(options: WatchV2HostOptions): WatchV2Host | null {
   const enabled = options.enabled ?? experimentalEnabled;
   if (!enabled()) return null;
 
+  const active = options.active ?? (() => true);
   const tunables = options.tunables ?? {};
   const store = WatchJournalStore.open(options.journalPath, options.storageKey);
   const queue = new MaterializerQueue(tunables.queueCapacity);
@@ -138,14 +141,37 @@ export function startWatchV2(options: WatchV2HostOptions): WatchV2Host | null {
   // them synchronously on the main thread right after the writer commits, so
   // every instruction here is on the ingest path.
   const unsubscribeDocuments = options.bus.on("document.upserted", (event) => {
+    if (!active()) {
+      queue.take();
+      return;
+    }
     queue.pushDocument(capture(event, Date.now()));
   });
-  options.analyticsDb?.enableWatchOutbox((sourceId) =>
-    isReplayingHistory(options.signals, sourceId),
+  options.analyticsDb?.enableWatchOutbox(
+    (sourceId) => isReplayingHistory(options.signals, sourceId),
+    active,
   );
 
   let reportedDrops = 0;
   let lastOutboxPrune = 0;
+  const idleResult = (): DrainResult => ({
+    documents: 0,
+    rows: 0,
+    indexed: 0,
+    recovered: 0,
+    deferred: 0,
+    pending: 0,
+    degraded: 0,
+    droppedRedeliveries: 0,
+    idle: true,
+  });
+  const pruneOutbox = async (): Promise<void> => {
+    if (options.analyticsDb && Date.now() - lastOutboxPrune >= OUTBOX_PRUNE_INTERVAL_MS) {
+      const cursor = materializer.outboxCursor();
+      await options.analyticsDb.pruneWatchOutbox(cursor.pageSeq, Date.now() - OUTBOX_RETENTION_MS);
+      lastOutboxPrune = Date.now();
+    }
+  };
   const task: PeriodicTask<unknown, DrainResult> = {
     name: "watchV2.materialize.tick",
     runner: "main",
@@ -158,6 +184,11 @@ export function startWatchV2(options: WatchV2HostOptions): WatchV2Host | null {
     async run(): Promise<TaskOutcome<unknown, DrainResult>> {
       const started = Date.now();
       try {
+        if (!active()) {
+          queue.take();
+          await pruneOutbox();
+          return { kind: "done", value: idleResult() };
+        }
         // DuckDB reads and JSON decoding do not need the Watch writer. Doing
         // them first keeps the single SQLite write turn short.
         const beforeOutboxCursor = materializer.outboxCursor();
@@ -165,7 +196,13 @@ export function startWatchV2(options: WatchV2HostOptions): WatchV2Host | null {
         // The runtime writes this file from its own task on the same thread.
         // Taking a turn means the one that arrives second awaits rather than
         // blocking the event loop inside SQLite's busy handler.
-        const result = await writes.run(() => materializer.drain(analyticsBatch));
+        const result = await writes.run(() => {
+          if (!active()) {
+            queue.take();
+            return Promise.resolve(idleResult());
+          }
+          return materializer.drain(analyticsBatch);
+        });
         const afterOutboxCursor = materializer.outboxCursor();
         if (
           options.analyticsDb &&
@@ -174,14 +211,7 @@ export function startWatchV2(options: WatchV2HostOptions): WatchV2Host | null {
         ) {
           await options.analyticsDb.acknowledgeWatchOutbox(afterOutboxCursor.pageSeq);
         }
-        if (options.analyticsDb && Date.now() - lastOutboxPrune >= OUTBOX_PRUNE_INTERVAL_MS) {
-          const cursor = materializer.outboxCursor();
-          await options.analyticsDb.pruneWatchOutbox(
-            cursor.pageSeq,
-            Date.now() - OUTBOX_RETENTION_MS,
-          );
-          lastOutboxPrune = Date.now();
-        }
+        await pruneOutbox();
         if (!result.idle) {
           log.debug(
             `materialized ${result.documents} doc, ${result.rows} row, ${result.indexed} indexed ` +
@@ -226,7 +256,7 @@ export function startWatchV2(options: WatchV2HostOptions): WatchV2Host | null {
     },
   };
 
-  log.info("watch journal active — recording events for the runtime to evaluate");
+  log.info("watch journal ready — recording while Watches is enabled in Omnesis Lab");
 
   return {
     store,

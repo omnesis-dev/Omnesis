@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Runtime resolution of the `brain` config block — the Cognition Steward's
+ * Runtime resolution of the `brain` config block — the Brain's
  * operator tunables. Mirrors the resolver convention the rest of the
  * gateway uses (`runtime-settings.ts`, `near-dupes/config.ts`): the zod
  * schema keeps every knob optional, and this module applies the effective

@@ -9,14 +9,14 @@
  * A transcript holds the verbatim agent event stream; this module folds
  * it down to the parts an operator tunes on: which datum the run was
  * about (from the persisted payload), which loop/brief mutations the
- * agent made (tool calls whose names are in the Cognition Steward's mutating
+ * agent made (tool calls whose names are in the Brain's mutating
  * set), how much non-mutating research it did, and the agent's own
  * closing text (the "why"). Pure functions — no I/O; callers load the
  * transcripts (see `transcripts.ts`).
  */
 
 import { KNOWLEDGE_MUTATING_TOOLS } from "./knowledge/tools.js";
-import { COGNITION_MUTATING_TOOL_NAMES } from "./steward/tools.js";
+import { COGNITION_MUTATING_TOOL_NAMES } from "./runtime/tools.js";
 import {
   parseCognitionDailyRunPayload,
   parseCognitionDataRunPayload,

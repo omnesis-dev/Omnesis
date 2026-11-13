@@ -113,6 +113,7 @@ export interface ProvenanceRecheckSweepWriteOps extends DailyEnqueuerWriteOps {
 }
 
 export interface ProvenanceRecheckSweepDeps {
+  tasksEnabled?: () => boolean;
   db: Db;
   writeGate: ProvenanceRecheckSweepWriteOps;
   clock: Clock;
@@ -207,6 +208,7 @@ export async function runProvenanceRecheckSweepPass(
     const stamp = deaths[i]!.invalidatedAt;
     for (; i < deaths.length && deaths[i]!.invalidatedAt === stamp; i += 1) {
       const death = deaths[i]!;
+      if (death.dependentKind === "loop" && deps.tasksEnabled?.() === false) continue;
       if (death.dependentKind === "observation") {
         // An observation is a short-lived note: a dead prior drops it rather
         // than buying a re-examination run.

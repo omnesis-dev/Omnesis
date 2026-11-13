@@ -49,7 +49,11 @@ const THE_DAY = "2026-05-15";
 let harness: SyntheticE2EHarness;
 
 beforeEach(async () => {
-  harness = new SyntheticE2EHarness({ gatewayMode: "experimental", universe: "e2e-minimal" });
+  harness = new SyntheticE2EHarness({
+    gatewayMode: "experimental",
+    labFeatures: { brain: true, tasks: true, watches: true },
+    universe: "e2e-minimal",
+  });
   await harness.start();
   // Sync once so the table and its catalog entry exist: a node's predicate is
   // type-cast against the declared columns, and a table the ontology cannot

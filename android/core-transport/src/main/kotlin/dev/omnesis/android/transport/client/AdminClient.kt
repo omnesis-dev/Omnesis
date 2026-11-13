@@ -97,6 +97,7 @@ import dev.omnesis.android.transport.dto.SystemInfo
 import dev.omnesis.android.transport.dto.TokenRecord
 import dev.omnesis.android.transport.dto.SubscriptionApprovalDecisionBody
 import dev.omnesis.android.transport.dto.VerifyBackendBody
+import dev.omnesis.android.transport.http.putJsonSegments
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.http.delete
 import dev.omnesis.android.transport.http.deleteJson
@@ -149,6 +150,11 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
 
     override suspend fun setCloudRelayEnrollmentPolicy(policy: String): CloudRelayStatus =
         http.putJson("admin/cloud-relay/enrollment", DeviceEnrollmentPolicyBody(policy))
+
+    suspend fun lab(): dev.omnesis.android.transport.dto.LabSnapshot = http.getJson("admin/lab")
+
+    suspend fun setLabFeature(id: String, enabled: Boolean): dev.omnesis.android.transport.dto.LabSnapshot =
+        http.putJsonSegments(listOf("admin", "lab", id), dev.omnesis.android.transport.dto.SetLabFeatureBody(enabled))
 
     /**
      * Resolve a pending MCP request only after the owner supplies its short code. The reply

@@ -15,7 +15,7 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
 
 import { EventBus } from "../events.js";
@@ -64,7 +64,7 @@ function upserted(overrides: Partial<DocumentUpsertedEvent> = {}): DocumentUpser
 
 function options(overrides: Partial<WatchV2HostOptions> = {}): WatchV2HostOptions {
   return {
-    configDir: dir,
+    journalPath: join(dir, "watch.db"),
     db,
     indexDb: null,
     analyticsDb: null,
@@ -249,5 +249,82 @@ describe("the queue between the handler and the drain", () => {
     queue.returnDocuments([capture(upserted(), 1)]);
     expect(queue.depth).toBe(2);
     expect(queue.dropped.documents).toBe(0);
+  });
+});
+
+describe("live Lab admission", () => {
+  it("captures only while active, discards pending documents on opt-out, and resumes without restart", async () => {
+    let active = false;
+    const host = startWatchV2(options({ active: () => active }))!;
+    const tick = () => host.task.run({} as never, undefined);
+    try {
+      for (let i = 0; i < 100; i++) bus.emit("document.upserted", upserted());
+      expect(host.queue.depth).toBe(0);
+      expect(await tick()).toMatchObject({ kind: "done", value: { idle: true, documents: 0 } });
+      expect(host.store.count()).toBe(0);
+      active = true;
+      const doc = projection();
+      db.prepare(
+        `INSERT INTO documents (id,provider_id,source_id,external_id,title,content,content_hash,metadata,source_created_at,source_updated_at,ingested_at,updated_at,people_resolved_at)
+        VALUES (?,?,?,?,?,'',?,'{}',?,?,?,?,?)`,
+      ).run(
+        doc.id,
+        doc.providerId,
+        doc.sourceId,
+        doc.externalId,
+        doc.title,
+        doc.contentHash,
+        doc.sourceCreatedAt,
+        doc.sourceCreatedAt,
+        doc.sourceCreatedAt,
+        doc.sourceCreatedAt,
+        doc.sourceCreatedAt,
+      );
+      bus.emit("document.upserted", upserted());
+      expect(host.queue.depth).toBe(1);
+      expect(await tick()).toMatchObject({ kind: "done", value: { documents: 1 } });
+      expect(host.store.count()).toBe(1);
+      bus.emit("document.upserted", upserted());
+      active = false;
+      expect(await tick()).toMatchObject({ kind: "done", value: { idle: true, documents: 0 } });
+      expect(host.queue.depth).toBe(0);
+      expect(host.store.count()).toBe(1);
+    } finally {
+      host.stop();
+    }
+  });
+
+  it("skips analytics reads while off, retains periodic cleanup, and rechecks after an async read", async () => {
+    let active = false;
+    let captureActive: (() => boolean) | undefined;
+    const read = vi.fn(async () => {
+      active = false;
+      return { rows: [], next: { pageSeq: 0, rowOffset: 0 }, pending: false };
+    });
+    const prune = vi.fn(async () => undefined);
+    const analytics = {
+      enableWatchOutbox: (_backfill: unknown, admission: () => boolean) => {
+        captureActive = admission;
+      },
+      disableWatchOutbox: vi.fn(),
+      readWatchOutbox: read,
+      pruneWatchOutbox: prune,
+    } as unknown as import("../analytics-db.js").AnalyticsDb;
+    const host = startWatchV2(options({ active: () => active, analyticsDb: analytics }))!;
+    try {
+      expect(captureActive?.()).toBe(false);
+      await host.task.run({} as never, undefined);
+      expect(read).not.toHaveBeenCalled();
+      expect(prune).toHaveBeenCalledTimes(1);
+      active = true;
+      expect(captureActive?.()).toBe(true);
+      bus.emit("document.upserted", upserted());
+      await host.task.run({} as never, undefined);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(host.queue.depth).toBe(0);
+      expect(host.store.count()).toBe(0);
+    } finally {
+      host.stop();
+    }
   });
 });

@@ -1020,7 +1020,7 @@ describe("temporal annotation evidence + surgical invalidation", () => {
       evidence: [{ docId: d1, quote: "scheduled for 2026-11-03" }],
     });
 
-    // The steward re-points the link set at d2 without re-grounding; the live
+    // The Brain re-points the link set at d2 without re-grounding; the live
     // atom's doc is re-unioned, so the entry stays keyed to d1.
     expect(updateTemporalAnnotation(db, "tix_repoint", { documentIds: [d2] }, 1_500)).toBe(true);
     expect(getTemporalAnnotationById(db, "tix_repoint")!.documentIds).toEqual([d1, d2].sort());

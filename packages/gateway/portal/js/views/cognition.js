@@ -82,10 +82,10 @@ export function resolveSection(subTab) {
 }
 
 export function cognitionPath(section, id) {
-  if (section === "loops") return `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop`;
+  if (section === "loops") return `/portal/debug/brain/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop`;
   return id
-    ? `/portal/debug/cognition/${section}/${encodeURIComponent(id)}`
-    : `/portal/debug/cognition/${section}`;
+    ? `/portal/debug/brain/${section}/${encodeURIComponent(id)}`
+    : `/portal/debug/brain/${section}`;
 }
 
 // ── Shared bits ──────────────────────────────────────────────────────
@@ -689,7 +689,7 @@ function RunHealthSummary({ pulse }) {
 
 function KnowledgeOwnerLink({ id }) {
   const page = useLoader(() => getKnowledgeNode(id), [id]);
-  return page.data && !page.error ? html`<p><a href=${`/portal/debug/cognition/knowledge/${encodeURIComponent(id)}`}><${KnowledgeIcon} kind=${page.data.kind} /> Read synthesis and claim evidence</a></p>` : null;
+  return page.data && !page.error ? html`<p><a href=${`/portal/debug/brain/knowledge/${encodeURIComponent(id)}`}><${KnowledgeIcon} kind=${page.data.kind} /> Read synthesis and claim evidence</a></p>` : null;
 }
 
 export function LoopDetail({ id, embedded = false, synthesisText = null }) {
@@ -1277,7 +1277,7 @@ function BehavioralNotesTab() {
           ${annotate({ targetType: "agent_notes", label: "Agent notes" })}
         </div>
         <p class="debug-sub" style="margin:0 0 10px;">
-          Standing preferences and lessons that guide how the agent works. Grounded subject knowledge belongs in the <a href="/portal/debug/cognition/knowledge">Library</a>.
+          Standing preferences and lessons that guide how the agent works. Grounded subject knowledge belongs in the <a href="/portal/debug/brain/knowledge">Library</a>.
         </p>
         <${LoadState} loading=${notes.loading} error=${notes.error} />
         ${!notes.loading && !notes.error && html`

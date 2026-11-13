@@ -14,7 +14,9 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { SCOPE_READ } from "@omnesis/types";
+import { experimentalEnabled } from "@omnesis/core";
 import { InferenceRegistry } from "../inference/registry.js";
+import { setLabFlag } from "../lab/store.js";
 import { createDatabase } from "../db.js";
 import { createServer } from "../server.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
@@ -23,8 +25,8 @@ import { directWriteGate } from "../write-gate.js";
 import { EventBus } from "../events.js";
 import { priorContentRequested } from "../data/document-prior-content.js";
 import {
-  briefsFeatureStatus,
-  bootBriefs,
+  briefsFeatureStatus as computeBriefsStatus,
+  bootBriefs as prepareBriefs,
   BACKGROUND_AGENT_ROLE,
   maintenanceContextBudget,
 } from "./feature-gate.js";
@@ -39,6 +41,7 @@ import {
 import { SweepService } from "./sweeps/service.js";
 import type { AgentEvent, Manifest, ResolvedAssignment } from "@omnesis/core";
 import type { ChatBackend, TurnInput } from "@omnesis/agent";
+import type { ChatRoleReadinessDeps } from "../models/chat-role-readiness.js";
 import type { WriteGate } from "../write-gate.js";
 import type { TaskContext, TaskOutcome } from "../scheduler/types.js";
 import type { BackgroundJob } from "../background-jobs/types.js";
@@ -58,6 +61,13 @@ afterEach(() => {
     else process.env[k] = savedEnv[k];
   }
 });
+
+const briefsFeatureStatus = (
+  registry: Parameters<typeof computeBriefsStatus>[0],
+  deps: Parameters<typeof computeBriefsStatus>[1],
+) => computeBriefsStatus(registry, deps, experimentalEnabled);
+const bootBriefs = (deps: Parameters<typeof prepareBriefs>[0]) =>
+  prepareBriefs({ ...deps, isEnabled: deps.isEnabled ?? experimentalEnabled });
 
 const assignedResolver = {
   resolve: (): ResolvedAssignment => ({
@@ -235,15 +245,15 @@ describe("briefsFeatureStatus — the criterion-1 gating matrix", () => {
     expect(s).toEqual({ visible: true, enabled: true, modelAssigned: true, active: true });
   });
 
-  it("synthetic mode makes the feature visible but never active", () => {
+  it("synthetic mode alone does not opt into the Brain", () => {
     process.env.OMNESIS_SYNTHETIC = "1";
     expect(briefsFeatureStatus(assignedResolver, READY_DEPS)).toEqual({
-      visible: true,
+      visible: false,
       enabled: false,
       modelAssigned: true,
       active: false,
     });
-    expect(briefsFeatureStatus(unassignedResolver, READY_DEPS).visible).toBe(true);
+    expect(briefsFeatureStatus(unassignedResolver, READY_DEPS).visible).toBe(false);
   });
 
   // `enabled` is what separates "this install asked for Briefs and its model is
@@ -376,6 +386,7 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
   beforeEach(() => {
     dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
     db = createDatabase(dbPath);
+    setLabFlag(db, "tasks", true);
     transcriptsDir = mkdtempSync(join(tmpdir(), "omnesis-briefs-boot-"));
   });
 
@@ -763,6 +774,7 @@ describe("GET /status advertises the brain gate", () => {
   beforeEach(() => {
     dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
     db = createDatabase(dbPath);
+    setLabFlag(db, "tasks", true);
     const dev = createDevice(db, { name: `briefs-gate-${randomUUID()}`, kind: "cli" });
     token = createToken(db, dev.id, [SCOPE_READ]).token;
     sourceRuntimes = [];
@@ -900,5 +912,14 @@ describe("maintenanceContextBudget", () => {
       { kind: "data" as const, payload: { docId: "doc_a" } },
     ])
       expect(maintenanceContextBudget(run, settings)).toBeNull();
+  });
+});
+
+it("a host that supplies no Lab opt-in cannot start Brain with the environment alone", () => {
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+  expect(computeBriefsStatus(assignedResolver, READY_DEPS)).toMatchObject({
+    enabled: false,
+    visible: false,
+    active: false,
   });
 });

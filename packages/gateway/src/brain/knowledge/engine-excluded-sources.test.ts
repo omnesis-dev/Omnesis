@@ -16,7 +16,7 @@ import {
   EXCLUDED_SOURCE_ERROR_CODE,
   existingPageCitations,
   fenceExcludedDocumentArguments,
-} from "../steward/source-fence.js";
+} from "../runtime/source-fence.js";
 import { createBriefsStorageTables } from "../storage/schema.js";
 import { createKnowledgeTables } from "./schema.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
@@ -81,6 +81,7 @@ beforeEach(() => {
   verified.length = 0;
   verifierDown = false;
   service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate,
     getSettings: () => settings,
@@ -338,7 +339,7 @@ describe("brain.excludedSources page citations", () => {
     verified.length = 0;
   });
 
-  /** The background run's knowledge tools, fenced as the steward fences them. */
+  /** The background run's knowledge tools, fenced as the Brain fences them. */
   async function fencedTools(pageId = "workshop") {
     const sourceFence = createBrainSourceFence(db, () => settings.excludedSources);
     const tools = fenceExcludedDocumentArguments(

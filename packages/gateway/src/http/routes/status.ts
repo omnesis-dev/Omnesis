@@ -55,6 +55,7 @@ type Db = Database.Database;
 const log = createLogger("gateway:http").child("routes:status");
 
 export interface StatusRoutesDeps {
+  getLabStatus?: () => { brain: boolean; tasks: boolean; watches: boolean };
   db: Db;
   dbPath?: string;
   config?: OmnesisConfig;
@@ -205,7 +206,8 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
         // integration — transcript ingestion and Answer through /mcp — is
         // generally available, so this is the seam that keeps a default
         // gateway's integration honest instead of half-installed.
-        subscriptions: experimentalVisible(),
+        subscriptions: (deps.getLabStatus?.() ?? { brain: false, tasks: false, watches: false })
+          .watches,
       },
       compat: {
         schema: GATEWAY_COMPAT.stores.mainDb.version,
@@ -526,10 +528,11 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       ? getConfigHealth()
       : { degradedRoles: [], lastConfigError: null };
 
+    const lab = deps.getLabStatus?.() ?? { brain: false, tasks: false, watches: false };
     const brainGate = getBriefsStatus
       ? getBriefsStatus()
       : {
-          visible: experimentalVisible(),
+          visible: lab.brain,
           enabled: false,
           modelAssigned: false,
           active: false,
@@ -593,9 +596,11 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
       // to `POST /notes/voice`. A client that finds no field, or finds it
       // inactive, saves the phone's own transcript as a plain note.
       dictation: getDictationStatus?.() ?? inactiveDictationStatus(),
-      // Tasks are available on every install; `noteAgent` says whether a Tell
+      // Tasks require their Lab opt-in; `noteAgent` says whether a Tell
       // Omnesis note is read by an agent that can add and change them.
-      tasks: { available: true, noteAgent: noteAgent.active },
+      labAvailable: experimentalEnabled(),
+      lab,
+      tasks: { available: lab.tasks, noteAgent: noteAgent.active && lab.tasks },
       // The note agent's setting beside that verdict: whether the owner leaves
       // it on, and whether a background-agent model can run.
       noteAgent,

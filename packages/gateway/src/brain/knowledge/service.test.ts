@@ -50,6 +50,7 @@ const proposal = (id: string, refs = "source:evidence"): KnowledgeProposal => ({
 });
 function service(verifier: EntailCapability | null = null) {
   return new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     getSettings: () => resolveBrainSettings(),
@@ -989,6 +990,7 @@ it("returns the evidence registration version without acknowledging a later sour
     },
   } satisfies typeof gate;
   const brain = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: guardedGate,
     getSettings: () => resolveBrainSettings(),
@@ -1043,6 +1045,7 @@ it.each([
     const log = createLogger("knowledge-test");
     const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
     const brain = new KnowledgeService({
+      tasksEnabled: () => true,
       db,
       writeGate: directKnowledgeGate(db),
       getSettings: () => resolveBrainSettings(),
@@ -1080,6 +1083,7 @@ it("correlates unavailable alternatives and proposal changes without exposing ta
     throw new Error("Untrusted provider detail");
   });
   const brain = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     getSettings: () => resolveBrainSettings(),
@@ -1312,6 +1316,7 @@ it.each(["resolution", "verification"] as const)(
       return { label: "entailment" as const, probability: 1 };
     });
     const brain = new KnowledgeService({
+      tasksEnabled: () => true,
       db,
       writeGate: directKnowledgeGate(db),
       getSettings: () => resolveBrainSettings(),

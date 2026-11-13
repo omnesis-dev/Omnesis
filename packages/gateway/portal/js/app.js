@@ -285,6 +285,8 @@ function App() {
   // flash in by default. The same lightweight poll also carries the passive
   // release result.
   const [experimental, setExperimental] = useState(false);
+  const [labAvailable, setLabAvailable] = useState(false);
+  const [lab, setLab] = useState({ brain: false, tasks: false, watches: false });
   const [cloudRelay, setCloudRelay] = useState(false);
 
   // Whether the gateway runs in developer mode (OMNESIS_DEV_MODE=1). Separate
@@ -318,7 +320,7 @@ function App() {
   async function refreshPendingDecisions() {
     const [answers, watches] = await Promise.allSettled([
       listPrivacyApprovals({ status: "pending", limit: 1 }),
-      experimental
+      lab.watches
         ? listSubscriptionApprovals({ status: "pending", limit: 1 })
         : Promise.resolve(null),
     ]);
@@ -334,7 +336,7 @@ function App() {
   // Count once on arrival — polling alone would leave a waiting decision
   // unbadged for a whole interval — and again when /status resolves, since
   // whether watch requests count at all depends on what it reports.
-  useEffect(() => { refreshPendingDecisions(); }, [experimental]);
+  useEffect(() => { refreshPendingDecisions(); }, [lab.watches]);
   useVisiblePoll(refreshPendingDecisions, PRIVACY_PENDING_POLL_MS);
 
   // Today's open tasks, shown on the Tasks nav item as "Tasks (n)". Read
@@ -375,11 +377,13 @@ function App() {
       if (generation !== statusRequestGeneration.current) return;
       setModelHealth(status?.modelHealth ?? { warnings: [] });
       setExperimental(status?.experimental === true);
+      setLabAvailable(status?.labAvailable === true);
+      setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
       setCloudRelay(status?.cloudRelay === true);
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
       setTestInstance(status?.testInstance ?? null);
-      setTasksAvailable(status?.tasks?.available === true);
+      setTasksAvailable(status?.lab?.tasks === true && status?.tasks?.available === true);
       setTaskConversations(supportsTaskConversations(status?.capabilities));
       const nextReleaseUpdate = releaseUpdateFromStatus(status);
       setReleaseUpdate((current) =>
@@ -646,7 +650,7 @@ function App() {
 
         <nav class="sidebar-nav" aria-label="Main navigation">
           ${NAV_ITEMS.filter(
-            (item) => (!item.experimental || experimental) && (!item.requiresTasks || tasksAvailable),
+            (item) => (!item.experimental || (item.view === "watches" ? lab.watches : experimental)) && (!item.requiresTasks || tasksAvailable),
           ).map((item) => {
             // "Ask" (the agent landing) is special: it navigates AND
             // dispatches the fresh-session event, so clicking it from
@@ -806,6 +810,7 @@ function App() {
               modelsSection=${route.modelsSection}
               modelHealth=${modelHealth}
               onModelsRefresh=${refreshGatewayStatus}
+              onLabChange=${refreshGatewayStatus}
               accessAuthorizationId=${route.accessAuthorizationId}
               accessLevelId=${route.accessLevelId}
               accessNewLevel=${route.accessNewLevel}
@@ -816,6 +821,8 @@ function App() {
               completeAccessInPortal=${route.completeAccessInPortal}
               cloudRelay=${cloudRelay}
               experimental=${experimental}
+              lab=${lab}
+              labAvailable=${labAvailable}
               theme=${theme}
               onThemeToggle=${handleThemeToggle}
               onLogout=${handleLogout}
@@ -824,8 +831,8 @@ function App() {
           ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} feature="find" />`
           : route.view === "browser-notes"
           ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} />`
-          : route.view === "tasks"
-          ? html`<${TasksView} taskView=${route.taskView} focusTaskId=${route.focusTaskId ?? null} experimental=${experimental} chatAvailable=${taskConversations} />`
+          : route.view === "tasks" && tasksAvailable
+          ? html`<${TasksView} taskView=${route.taskView} focusTaskId=${route.focusTaskId ?? null} experimental=${lab.brain} chatAvailable=${taskConversations} />`
           : route.view === "capture"
           ? html`<${CaptureView} day=${route.day ?? null} experimental=${experimental} />`
           : route.view === "privacy"
@@ -836,14 +843,14 @@ function App() {
               directTab=${route.directTab ?? false}
               directSessionId=${route.directSessionId ?? null}
             />`
-          : route.view === "watches" && experimental
+          : route.view === "watches" && lab.watches
           ? html`<${WatchesView}
               watchApprovalId=${route.watchApprovalId}
               watchId=${route.watchId}
               watchFiringId=${route.watchFiringId}
             />`
           : route.view === "debug"
-          ? html`<${DebugView} tab=${route.tab} graphParams=${route.graph} dataParams=${route.data} sqlParams=${route.sql} experimental=${experimental} developer=${developer} cognitionTab=${route.cognitionTab} cognitionId=${route.cognitionId} calendarId=${route.calendarId} watchDebugId=${route.watchDebugId} watchDebugSeq=${route.watchDebugSeq} />`
+          ? html`<${DebugView} tab=${route.tab} graphParams=${route.graph} dataParams=${route.data} sqlParams=${route.sql} experimental=${experimental} lab=${lab} developer=${developer} cognitionTab=${route.cognitionTab} cognitionId=${route.cognitionId} calendarId=${route.calendarId} watchDebugId=${route.watchDebugId} watchDebugSeq=${route.watchDebugSeq} />`
           : route.view === "agent"
           ? html`<${AgentView} convoId=${route.convoId} experimental=${experimental} developer=${developer} />`
           : html`<${SearchView} initialQuery=${route.query || ""} />`

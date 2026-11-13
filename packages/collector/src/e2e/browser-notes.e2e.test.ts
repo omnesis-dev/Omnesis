@@ -60,6 +60,7 @@ describe("Browser notes permissions and page attachment (spawned gateway)", () =
   beforeAll(async () => {
     harness = new SyntheticE2EHarness({
       gatewayMode: "synthetic-experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "e2e-minimal",
       extraGatewayConfig: {
         gateway: {

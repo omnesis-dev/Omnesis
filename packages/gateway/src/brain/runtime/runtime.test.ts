@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Integration tests for the assembled Cognition Steward, zero-token: runs are
+ * Integration tests for the assembled Brain, zero-token: runs are
  * driven through the REAL run driver with a scripted ChatBackend that
  * invokes the REAL tools (the fake-model-real-tools pattern) —
  * asserting a scripted `open_loop_create` lands a table row + mirror
@@ -12,7 +12,7 @@
  * Also pins the toolset composition contract: the background agent's
  * interactive tools are EXACTLY the allow-list (no annotation/citation,
  * trigger, or sub-agent tool leaks in even when every such port is
- * wired), the Cognition Steward's own tools are present, and a delegated
+ * wired), the Brain's own tools are present, and a delegated
  * sub-agent selection (`selectSubagentTools`) drops every mutating tool
  * while keeping the read tools.
  */
@@ -27,6 +27,7 @@ import { PlanStore, selectSubagentTools } from "@omnesis/agent";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
 import { getActivePriority, runWithPriority } from "../../priority.js";
+import { setLabFlag } from "../../lab/store.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { writeCognitionNotes } from "../storage/notes.js";
 import { createPersonAnnotation } from "../storage/person-annotations.js";
@@ -186,7 +187,7 @@ function structuredData(result: ToolResult): Record<string, unknown> {
   return result.data as Record<string, unknown>;
 }
 
-describe("assembled Cognition Steward through the real driver", () => {
+describe("assembled Brain through the real driver", () => {
   let path: string;
   let db: Db;
   let dir: string;
@@ -201,7 +202,9 @@ describe("assembled Cognition Steward through the real driver", () => {
 
   beforeEach(() => {
     path = testDbPath();
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
     db = createDatabase(path);
+    setLabFlag(db, "tasks", true);
     dir = mkdtempSync(join(tmpdir(), "omnesis-loop-agent-"));
     transcripts = new FsCognitionTranscriptStore(join(dir, "t"));
     const writeGate = directWriteGate(db);
@@ -224,6 +227,7 @@ describe("assembled Cognition Steward through the real driver", () => {
   afterEach(() => {
     db.close();
     cleanupDb(path);
+    vi.unstubAllEnvs();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -630,7 +634,7 @@ describe("assembled Cognition Steward through the real driver", () => {
     expect(nameSet).not.toContain("join_subagents");
     for (const name of names) expect(name.startsWith("trigger")).toBe(false);
 
-    // The interactive portion (everything that isn't a steward own
+    // The interactive portion (everything that isn't a Brain own
     // tool) is EXACTLY the allow-list — no extra interactive tool slipped
     // through. This is the drift guard: a future interactive-only tool
     // reddens this unless it is deliberately added to the allow-list.
@@ -638,7 +642,7 @@ describe("assembled Cognition Steward through the real driver", () => {
     const interactive = new Set(names.filter((n) => !ownNames.has(n)));
     expect(interactive).toEqual(new Set(COGNITION_INTERACTIVE_TOOLS));
 
-    // Every one of the Cognition Steward's own tools is present.
+    // Every one of the Brain's own tools is present.
     for (const own of COGNITION_OWN_TOOL_NAMES) {
       expect(nameSet, own).toContain(own);
     }
@@ -843,11 +847,14 @@ describe("createCognitionRuntime prompt wiring", () => {
 
   beforeEach(() => {
     path = testDbPath();
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
     db = createDatabase(path);
+    setLabFlag(db, "tasks", true);
   });
   afterEach(() => {
     db.close();
     cleanupDb(path);
+    vi.unstubAllEnvs();
   });
 
   /** A runtime over the test DB; the search, sync and analytics collaborators are never reached by these seams. */
@@ -864,6 +871,36 @@ describe("createCognitionRuntime prompt wiring", () => {
       log,
     });
   }
+
+  test("Brain stays useful without task tools, prompts, or pending checks", async () => {
+    setLabFlag(db, "tasks", false);
+    const brain = await runtime("");
+    const run = claimed({
+      kind: "daily",
+      payload: {
+        sourceId: "source_example",
+        dateFrom: "2026-07-01",
+        dateTo: "2026-07-02",
+      },
+    });
+    expect(brain.buildTools(run).map((tool) => tool.name)).not.toContain("open_loop_search");
+    expect(brain.buildTools(run).map((tool) => tool.name)).toContain("temporal_annotation_add");
+    expect(brain.systemPrompt(run)).not.toMatch(/open_loop|loop_synthesis|task_update/);
+    expect(await brain.promptBuilder(run)).not.toMatch(/open_loop|Tracked loops|task journal/i);
+    expect(
+      await brain.preflight!(
+        claimed({
+          kind: "time_based",
+          payload: {
+            prompt: "Revisit",
+            loopId: "loop_example",
+          },
+        }),
+      ),
+    ).toBe("defer");
+    setLabFlag(db, "tasks", true);
+    expect(brain.buildTools(run).map((tool) => tool.name)).toContain("open_loop_search");
+  });
 
   test("digest preflight settles empty input without inference and defers unavailable reads", async () => {
     const query = vi.spyOn(TemporalQueryService.prototype, "query").mockResolvedValue({

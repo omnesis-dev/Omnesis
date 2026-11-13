@@ -8,7 +8,7 @@ import { KnowledgeIcon } from "../lib/knowledge-link-icons.js";
 export function connectionHref(node) {
   return node.id.startsWith("source:")
     ? `/portal/doc/${encodeURIComponent(node.id.slice(7))}`
-    : `/portal/debug/cognition/knowledge/${encodeURIComponent(node.id)}`;
+    : `/portal/debug/brain/knowledge/${encodeURIComponent(node.id)}`;
 }
 export function groupConnectionEdges(edges) {
   const groups = new Map();

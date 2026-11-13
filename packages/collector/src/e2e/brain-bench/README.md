@@ -2,7 +2,7 @@
 
 # The Brain Bench
 
-The end-to-end correctness net for the Cognition Steward (the "brain").
+The end-to-end correctness net for the Brain (the "brain").
 
 A bench test boots a **real gateway** with the whole cognition engine live — waker,
 queue, rhythm enqueuers, drainer, run driver, tool layer, write gates, cascades — drives
@@ -12,13 +12,13 @@ production seam (the `background-agent` inference assignment).
 
 ## What the bench is for, and what it is not for
 
-It answers **"given a decision the steward made, did the machine do the right thing?"**
+It answers **"given a decision the Brain made, did the machine do the right thing?"**
 It never asks "was that a good decision". Quality belongs to the scorecard / eval lane,
 which is deliberately separate — so improving a prompt can never redden correctness CI.
 
 Concretely: assert that an `observation_note` call produced an observation row with its
 claims, citations, related loops and note-time scores wired up, and that the morning run
-shipped it into the Morning brief conversation. Do not assert that the steward _should_
+shipped it into the Morning brief conversation. Do not assert that the Brain _should_
 have noted that document.
 
 ## Anatomy of a test
@@ -239,7 +239,7 @@ one shared implementation in `@omnesis/core` (`cognition-envelope.ts`), so a run
 survives any prompt rewording.
 
 **The flavour does not.** It is matched from literal markers in the prompt BODY
-(`readRunContext` in `puppet-plan.ts`), so rewording a steward prompt silently drops that
+(`readRunContext` in `puppet-plan.ts`), so rewording a Brain prompt silently drops that
 lane's runs into the `unknown` arm — the puppet finishes with a no-op note and the suite
 sees no rows, which reads as a brain bug. Change a prompt marker and update
 `readRunContext` in the same commit. `malformed` and `unknown` are flavours too; a test
@@ -247,7 +247,7 @@ that sees no rows should check `bench.puppetCalls` for the flavour it actually g
 
 ## Tool cheat-sheet
 
-Every **steward-owned** tool's schema is **strict** — an unknown key is an `invalid_args`
+Every **Brain-owned** tool's schema is **strict** — an unknown key is an `invalid_args`
 error and the run continues without the write. The shared read tools (`fetch_many`,
 `search_many`, `lookup_people`) are not: zod silently STRIPS an unknown key there, so a
 typo'd arg surfaces as a wrong-looking result rather than an error.
@@ -274,7 +274,7 @@ observation_withdraw(id)                      -> {id}
 morning_brief_send(text, omittedObservationIds?, referenceDocumentIds?)  # the morning run only
                                               -> {conversationId, shippedObservations}
 
-# Conversations and the note agent (not the steward):
+# Conversations and the note agent (not the Brain):
 task_list(view? | query?)                     -> {today, tasks: [{id, title, state, yours, …}]}
 task_create(title, description?, scheduledFor?, deadline?)
                                               -> {receipt, undoSeq, task}
