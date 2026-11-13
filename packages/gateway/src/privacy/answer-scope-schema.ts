@@ -7,7 +7,8 @@ export function createAnswerScopeSchema(db: PrivacyDb): void {
   db.exec(`CREATE TABLE IF NOT EXISTS answer_task_scope (
     task_id TEXT PRIMARY KEY REFERENCES answer_tasks(id) ON DELETE CASCADE,
     authorization TEXT NOT NULL,
-    complete INTEGER NOT NULL DEFAULT 0 CHECK(complete IN (0,1))
+    -- NULL until the run's read set is saved; then whether it is complete.
+    complete INTEGER CHECK(complete IN (0,1))
   );
   CREATE TABLE IF NOT EXISTS answer_task_scope_documents (
     task_id TEXT NOT NULL REFERENCES answer_tasks(id) ON DELETE CASCADE,

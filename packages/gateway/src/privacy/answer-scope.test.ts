@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Database from "better-sqlite3";
-import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, test, vi } from "vitest";
 import { encodeStoredScopePolicies } from "../access/scope-policy-encoding.js";
 import { directWriteGate } from "../write-gate.js";
 import { runSchemaSetup } from "../data/schema.js";
@@ -193,12 +193,60 @@ test("hidden uncited snippets prevent candidate release and transcript pollution
   expect(db.prepare("SELECT * FROM answer_messages").all()).toEqual([]);
 });
 
-test("an incomplete read set is checked for every document it does name", () => {
+const INCOMPLETE = /could not confirm that everything this answer read is allowed/;
+
+test("an incomplete read set is never released under a filter, though every document it names is readable", () => {
   begin();
-  addDocument("unrelated");
-  expect(() => complete("task", false, ["input"])).not.toThrow();
-  facts("input", "hidden");
-  expect(() => assertAnswerTaskScopeCurrent(db, "task")).toThrow(/Source access changed/);
+  expect(() => complete("task", false, ["input"])).toThrow(INCOMPLETE);
+  expect(db.prepare("SELECT * FROM answer_releases").all()).toEqual([]);
+  expect(db.prepare("SELECT * FROM answer_messages").all()).toEqual([]);
+});
+
+describe("each way a read set ends incomplete is refused", () => {
+  test("reading past the bound", () => {
+    const observer = createAnswerScopeReadObserver();
+    observer.markComplete();
+    observer.recordDocuments(
+      Array.from({ length: MAX_ANSWER_SCOPE_DOCUMENTS + 1 }, (_, i) => `fictional-${i}`),
+    );
+    begin();
+    expect(() => complete("task", false, observer.snapshot().documentIds.slice(0, 1))).toThrow(
+      INCOMPLETE,
+    );
+    const capture = createScopeReleaseCapture(db, authorization);
+    capture.observer.markComplete();
+    capture.observer.recordDocuments(
+      Array.from({ length: MAX_ANSWER_SCOPE_DOCUMENTS + 1 }, () => "input"),
+    );
+    capture.observer.recordDocuments(
+      Array.from({ length: MAX_ANSWER_SCOPE_DOCUMENTS }, (_, i) => `fictional-${i}`),
+    );
+    expect(() => capture.assertCurrent()).toThrow(INCOMPLETE);
+  });
+
+  test("inheriting an incomplete turn", () => {
+    const capture = createScopeReleaseCapture(db, authorization);
+    capture.observer.inherit({ documentIds: ["input"], complete: false });
+    capture.observer.markComplete();
+    expect(capture.observer.snapshot().complete).toBe(false);
+    expect(() => capture.assertCurrent()).toThrow(INCOMPLETE);
+  });
+
+  test("a read set that was never closed", () => {
+    const capture = createScopeReleaseCapture(db, authorization);
+    capture.observer.recordDocuments(["input"]);
+    expect(() => capture.assertCurrent()).toThrow(INCOMPLETE);
+    capture.observer.markComplete();
+    expect(() => capture.assertCurrent()).not.toThrow();
+  });
+
+  test("a run still in flight is not refused before its read set is saved", () => {
+    begin();
+    expect(() => assertAnswerTaskScopeCurrent(db, "task")).not.toThrow();
+    expect(() =>
+      assertAnswerRunScopeCurrent(db, "task", { documentIds: ["input"], complete: false }),
+    ).not.toThrow();
+  });
 });
 
 test("held candidates cannot be approved after a fact change and free the conversation", () => {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createLogger } from "@omnesis/core";
 import {
   parseCorpusAuthorization,
   createCorpusAuthorization,
@@ -19,8 +20,15 @@ import {
 import { tokenAnswerOwnerId, tokenIdOfAnswerOwner } from "./token-answer-owner.js";
 import { AnswerStoreError, type PrivacyDb } from "./store-types.js";
 
+const log = createLogger("privacy:answer-scope");
+
 export const MAX_ANSWER_SCOPE_DOCUMENTS = 8192;
 
+/**
+ * What a run read. `complete` says every read went through the observed
+ * ports and none was dropped. Under a filter an incomplete read set is never
+ * released: what it does not name could not be checked again.
+ */
 export interface AnswerScopeReadSet {
   documentIds: string[];
   complete: boolean;
@@ -174,8 +182,8 @@ export interface ScopeReleaseCapture {
 
 /**
  * A final synchronous snapshot is the release decision after asynchronous
- * audit work settles: every document the run read must still be readable
- * under the authorization's filters.
+ * audit work settles: the read set is complete, and every document the run
+ * read is still readable under the authorization's filters.
  */
 export function createScopeReleaseCapture(
   db: PrivacyDb,
@@ -186,7 +194,14 @@ export function createScopeReleaseCapture(
     observer,
     assertCurrent() {
       db.transaction(() => {
-        assertScopeDocumentsCurrent(db, authorization, observer.snapshot().documentIds);
+        const reads = observer.snapshot();
+        if (!reads.complete) {
+          log.warn(
+            `Direct result for grant ${authorization.grantId} not released: its read set under a source filter is incomplete (${reads.documentIds.length} documents named)`,
+          );
+          throw readSetIncomplete();
+        }
+        assertScopeDocumentsCurrent(db, authorization, reads.documentIds);
       })();
     },
   };
@@ -194,7 +209,7 @@ export function createScopeReleaseCapture(
 
 export function answerTaskScopeReads(db: PrivacyDb, taskId: string): AnswerScopeReadSet | null {
   const state = db
-    .prepare<[string], { authorization: string; complete: number }>(
+    .prepare<[string], { authorization: string; complete: number | null }>(
       "SELECT * FROM answer_task_scope WHERE task_id=?",
     )
     .get(taskId);
@@ -209,6 +224,12 @@ export function answerTaskScopeReads(db: PrivacyDb, taskId: string): AnswerScope
     )
     .all(taskId)
     .map((r) => r.document_id);
+  if (state.complete === 0) {
+    log.warn(
+      `Answer task ${taskId} not released: its read set under a source filter is incomplete (${documentIds.length} documents named)`,
+    );
+    throw readSetIncomplete();
+  }
   assertScopeDocumentsCurrent(db, authorization, documentIds);
   return { documentIds, complete: state.complete === 1 };
 }
@@ -272,6 +293,19 @@ export function assertAnswerRunScopeCurrent(
     if (reads) assertScopeDocumentsCurrent(db, authorization, reads.documentIds);
     if (!reads?.complete) assertAnswerTaskScopeCurrent(db, taskId);
   })();
+}
+
+/**
+ * The refusal of a run whose reads under a source filter cannot all be
+ * accounted for: it read past the bound, inherited such a turn, or reached a
+ * document outside the observed ports. The same refusal as a changed
+ * authorization; only the sentence differs.
+ */
+export function readSetIncomplete(): AnswerStoreError {
+  return new AnswerStoreError(
+    "authority_changed",
+    "Omnesis could not confirm that everything this answer read is allowed for this access level, so it was not released. Ask again with a narrower question.",
+  );
 }
 
 export function scopeChanged(): AnswerStoreError {
