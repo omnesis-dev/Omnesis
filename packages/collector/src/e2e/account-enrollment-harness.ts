@@ -1118,14 +1118,11 @@ export async function launchedUrls(world: EnrollmentWorld): Promise<string[]> {
 }
 
 /**
- * Makes a passkey account on the relay and leaves it with no gateway: a
- * throwaway gateway identity starts a signup to create an account, the browser
- * creates it, and that gateway never finishes connecting. Returns the new account id.
+ * A gateway's signup request sent straight to the relay, as `omnesis cloud connect`
+ * sends it, from a throwaway gateway identity. Returns what the relay started and
+ * the secret only that gateway holds, to poll or cancel it.
  */
-export async function createUnlinkedAccount(
-  world: EnrollmentWorld,
-  session: PasskeySession,
-): Promise<string> {
+export async function startGatewaySignup(world: EnrollmentWorld, intent: "create" | "existing") {
   const { sign } = await import("node:crypto");
   const {
     GATEWAY_SIGNUP_PATH,
@@ -1156,21 +1153,41 @@ export async function createUnlinkedAccount(
         gatewaySignupTranscript(world.relayOrigin, unsigned),
         owner.privateKey,
       ).toString("base64url"),
-      // An account is created only when the gateway's owner asked to create one.
-      intent: "create",
+      intent,
     }),
   });
   if (!response.ok) throw new Error(`Signup start refused: ${response.status}`);
   const started = gatewaySignupStarted.parse(await response.json());
+  const call = (path: "poll" | "cancel") =>
+    fetch(`${world.relayOrigin}${GATEWAY_SIGNUP_PATH}/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operationId: started.operationId, redemptionSecret }),
+    });
+  return {
+    started,
+    /** What the gateway's own poll sees. */
+    poll: async () => (await call("poll")).json() as Promise<{ status: string; reason?: string }>,
+    cancel: () => call("cancel").then(() => undefined),
+  };
+}
+
+/**
+ * Makes a passkey account on the relay and leaves it with no gateway: a
+ * throwaway gateway identity starts a signup to create an account, the browser
+ * creates it, and that gateway never finishes connecting. Returns the new account id.
+ */
+export async function createUnlinkedAccount(
+  world: EnrollmentWorld,
+  session: PasskeySession,
+): Promise<string> {
+  // An account is created only when the gateway's owner asked to create one.
+  const { started, cancel } = await startGatewaySignup(world, "create");
   await enterConnectCode(session.page, started.connectUrl, started.code);
   await createAccountWithPasskey(session.page);
   // The page goes on by itself; the throwaway gateway never collects the result.
   await expectText(session.page, "You're all set");
-  await fetch(`${world.relayOrigin}${GATEWAY_SIGNUP_PATH}/cancel`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ operationId: started.operationId, redemptionSecret }),
-  }).catch(() => undefined);
+  await cancel().catch(() => undefined);
   return (await signedInAccount(world, session)).accountId;
 }
 

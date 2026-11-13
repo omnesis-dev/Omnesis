@@ -550,14 +550,32 @@ export function installAccountUI() {
       await ui.refresh();
     },
     denied(denied) {
-      root.append(
-        ui.node(
-          "p",
-          denied.reason === "capacity"
-            ? "This service has no room for more gateways right now."
-            : "This service isn't accepting your Omnesis account yet.",
-        ),
-      );
+      if (denied.inviteOnly) {
+        root.append(ui.node("p", "Omnesis accounts are invite-only for now."));
+        let join;
+        try {
+          join = denied.joinUrl && new URL(denied.joinUrl);
+        } catch {
+          join = undefined;
+        }
+        if (join && join.protocol === "https:") {
+          const line = ui.node("p", "Ask to join here: "),
+            link = ui.node("a", join.href);
+          link.href = join.href;
+          link.rel = "noopener noreferrer";
+          line.append(link);
+          root.append(line, ui.node("p", "Once you're in, start again from your gateway."));
+          return;
+        }
+      } else
+        root.append(
+          ui.node(
+            "p",
+            denied.reason === "capacity"
+              ? "This service has no room for more gateways right now."
+              : "This service isn't accepting your Omnesis account yet.",
+          ),
+        );
       const identifier = denied.googleSubject ?? denied.accountId;
       if (identifier) {
         root.append(ui.node("p", "To ask for access, send its operator this:"));
@@ -972,6 +990,9 @@ export function installAccountUI() {
     await ui.refresh();
     if (query.get("failed") === "google")
       alert.textContent = "Google sign-in did not complete. Try again or use a passkey.";
+    if (query.get("failed") === "invitation")
+      alert.textContent =
+        "We couldn't check your invitation right now. Try again in a few minutes.";
     if (query.get("failed") === "no-account")
       alert.textContent = current.pending?.intent
         ? `${noAccount} You can create one below.`

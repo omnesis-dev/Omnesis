@@ -5,12 +5,13 @@ import { accountId, type IdentityProvider, type RelaySessions } from "./identity
 import { bindingOrigin } from "./gateway-binding.js";
 import { RelayError } from "./tunnels.js";
 import { NoAccount, type AccountAdmission } from "./account-admission.js";
+import { verifiedGoogleEmail } from "./google-group.js";
+import type { GoogleSignupIdentity } from "./gateway-signup.js";
 import type { OmnesisAccounts } from "./omnesis-accounts.js";
 
 /** Decided after Google verifies the token, for callers whose policy depends on who signed in. */
 export type GoogleAdmission =
-  | AccountAdmission
-  | ((google: { subjectDigest: string; account?: string }) => Promise<AccountAdmission>);
+  AccountAdmission | ((google: GoogleSignupIdentity) => Promise<AccountAdmission>);
 
 /** Credential changes require a recent proof of account ownership. */
 export function accountCredentialsRequireSignIn(authTime: number): boolean {
@@ -102,7 +103,12 @@ export class AccountAuthentication {
       const existing = this.accounts.federatedAccount("google", digest);
       const decided =
         typeof admission === "function"
-          ? await admission({ subjectDigest: digest, account: existing })
+          ? await admission({
+              subjectDigest: digest,
+              account: existing,
+              // Read from the token just verified, and only if the policy asks for it.
+              email: () => verifiedGoogleEmail(token),
+            })
           : admission;
       this.assertOpen();
       if (existing) account = existing;

@@ -36,6 +36,7 @@ import { registerGatewayKey, prepareGatewayOwner } from "./gateway-key-client.js
 import { loadRelayRecoveryPolicy, runRelayRecoveryCommand } from "./relay-recovery-runtime.js";
 import { assertRelayDnsIsolation, startIndependentDnsDaemon } from "./dns-broker-runtime.js";
 import { googleBrowserConfiguration } from "./google-browser-runtime.js";
+import { googleFixture } from "./google-fixture.js";
 import { CloudRelayMetrics } from "./metrics.js";
 import { startRelayMetricsServer } from "./metrics-server.js";
 import { ProxyProtocolPeers } from "./proxy-protocol.js";
@@ -60,6 +61,8 @@ const envSchema = z.object({
   OMNESIS_CLOUD_RELAY_ACME_JOURNAL: z.string().min(1).optional(),
   /** Test-only loopback DNS API; see fixtureDnsApiUrl. */
   OMNESIS_CLOUD_RELAY_ACME_DNS_API_URL: z.string().min(1).optional(),
+  /** Test-only loopback stand-in for Google's endpoints; see googleFixture. */
+  OMNESIS_CLOUD_RELAY_GOOGLE_FIXTURE_URL: z.string().min(1).optional(),
   OMNESIS_CLOUD_RELAY_DB: z.string().min(1),
   OMNESIS_CLOUD_RELAY_KEY_FILE: z.string().min(1),
   OMNESIS_CLOUD_RELAY_GOOGLE_CLIENT_ID: z.string().min(1).optional(),
@@ -131,6 +134,11 @@ export async function startRelayDaemon(
     throw new Error("Non-loopback relay listeners require TLS");
   }
   const mockKey = config.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE;
+  const fixture = googleFixture(
+    config.OMNESIS_CLOUD_RELAY_GOOGLE_FIXTURE_URL,
+    config.OMNESIS_CLOUD_RELAY_BIND,
+    config.OMNESIS_SYNTHETIC === "1",
+  );
   const webClient = config.OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID;
   const gatewayClient = config.OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_CLIENT_ID;
   const gatewayWebClient = config.OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_WEB_CLIENT_ID;
@@ -177,7 +185,10 @@ export async function startRelayDaemon(
       clientId: webClient,
       clientSecret: secret,
       publicOrigin: bindingOrigin(config.OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN).origin,
-      identity: googleIdentityProvider(webClient),
+      identity: googleIdentityProvider(webClient, fixture?.keys),
+      ...(fixture
+        ? { fetch: fixture.fetch, authorizationEndpoint: fixture.authorizationEndpoint }
+        : {}),
     };
   }
   const audiences = [
@@ -190,7 +201,7 @@ export async function startRelayDaemon(
   const identity = mockKey
     ? localIdentityProvider(await readFile(mockKey), config.OMNESIS_CLOUD_RELAY_BIND)
     : audiences.length
-      ? googleIdentityProvider(audiences, undefined, {
+      ? googleIdentityProvider(audiences, fixture?.keys, {
           authorizedParties: [...new Set([...audiences, ...androidClients])],
         })
       : undefined;
@@ -270,10 +281,11 @@ export async function startRelayDaemon(
         env,
         database: config.OMNESIS_CLOUD_RELAY_DB,
         origin: config.OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN,
+        googleFetch: fixture?.fetch,
         nativeGoogleIdentity: mockKey
           ? identity
           : deviceAudiences.length
-            ? googleIdentityProvider(deviceAudiences, undefined, {
+            ? googleIdentityProvider(deviceAudiences, fixture?.keys, {
                 authorizedParties: [...new Set([...deviceAudiences, ...androidClients])],
               })
             : undefined,

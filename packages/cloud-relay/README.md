@@ -150,7 +150,8 @@ gateway's id: its label can be ground and paired devices still know the address,
 so no other gateway is given it, and the same gateway gets it back when it
 registers again. Operator files are not touched: remove the person from
 `OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE` yourself if they should not be able
-to create an account again. Request logs and metrics hold no account
+to create an account again, and remove them from the sign-up Google Group if
+the relay uses one. Request logs and metrics hold no account
 identifiers.
 
 Disconnecting one gateway from its settings removes that gateway's rows from the
@@ -355,6 +356,59 @@ creates the browser's device key, binds the sign-in to it
 the proof once (`POST /_relay/account/api/portal/handoff`) and passes it to the
 portal in the URL fragment. The gateway verifies that proof itself and applies
 its own enrollment policy. `docs/device-enrollment.md` describes the exchange.
+
+An `allowlist` relay can also accept invitations through a Google Group: a
+Google sign-in that creates an account is admitted when the allowlist does not
+name it but the email Google verified for it is a member of the group, directly
+or through a nested group. The allowlist is checked first, so its entries keep
+working without the group. The group is asked only when a Google sign-in would
+create an account; signing in to an existing account, and approving the sign-in
+that was just checked, never ask it. Passkey account creation still needs
+`open`. All three settings are optional, and with none of them set nothing
+changes:
+
+| Setting                                                    | Value                                                                                                                          |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP`                  | The group's email address, such as `testers@example.com`. Requires the `allowlist` policy, which then needs no allowlist file. |
+| `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE` | A Google service account's JSON key, mounted read-only (for example under `/run/secrets`). Required with the group.            |
+| `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL`         | Optional public `https` link where a refused person can ask to join, such as the group's page.                                 |
+
+The relay refuses to start when the group is set without a readable service
+account key (the file Google downloads: `type` `service_account`,
+`client_email`, `private_key`, and the other fields it carries), when the join
+link is not `https`, or when either file setting is present without the group.
+
+The relay mints its own OAuth token for the service account (a JWT bearer grant
+for the `cloud-identity.groups.readonly` scope, renewed a minute before it
+expires), resolves the group's resource name once with `groups:lookup`, then
+looks the address up with `memberships:lookup`. An address that is not a direct
+member is checked with `memberships:checkTransitiveMembership`; Google answers
+that method only for premium Cloud Identity and Workspace editions, so on
+Cloud Identity Free the relay logs once an hour that nested groups are not
+followed and admits direct members only. Every request has a ten-second timeout
+and a bounded response. When Google cannot answer (a network error, an error
+status or a credential Google refuses), the sign-up is refused with "We couldn't
+check your invitation right now. Try again in a few minutes.", nothing is
+recorded, and the same request can be retried. A person outside the group sees
+"Omnesis accounts are invite-only for now." with the join link; the gateway sees
+the ordinary `not-allowed` refusal.
+
+For this check only, the relay's Google sign-in asks for the `email` scope as
+well as `openid`, and only when the person chose to create an account on a relay
+with a group. The address is used only if the ID token says `email_verified`,
+compared lower-cased, and sent to Google once for the check. It is never stored,
+logged or returned, and accounts stay keyed by Google's subject.
+
+Setting it up on Google's side:
+
+1. Add Cloud Identity Free to the domain that owns the group, if it has neither
+   Cloud Identity nor Google Workspace.
+2. Create the group, allow members from outside the organization, and let people
+   ask to join (its page is the join link).
+3. In a Google Cloud project, enable the Cloud Identity API, create a service
+   account and download a JSON key for it.
+4. In the Admin console, assign that service account the Groups Reader admin
+   role. No domain-wide delegation is needed.
 
 Migrating an existing
 Google-only gateway requires proof of its exact current TLS key and certificate;
