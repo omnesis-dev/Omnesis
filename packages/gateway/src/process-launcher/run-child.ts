@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 
 /** How to run one short-lived external program and what to collect from it. */
 export interface RunProcessOptions {
@@ -47,6 +47,12 @@ export const STDERR_CAPTURE_CHARS = 4_000;
  * open.
  */
 export function killProcessGroup(pid: number): void {
+  if (process.platform === "win32") {
+    // Windows has no negative-PID process groups. Target this launcher's tree,
+    // including descendants holding its output pipes open.
+    execFile("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
+    return;
+  }
   try {
     process.kill(-pid, "SIGKILL");
   } catch {
@@ -82,7 +88,8 @@ export function runChild(
     let proc: ChildProcess;
     try {
       proc = spawn(command, [...args], {
-        detached: true,
+        detached: process.platform !== "win32",
+        windowsHide: true,
         stdio: [
           opts.input ? "pipe" : "ignore",
           opts.captureStdout === false ? "ignore" : "pipe",

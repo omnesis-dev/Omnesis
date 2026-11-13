@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -225,6 +225,84 @@ describe.skipIf(process.platform !== "linux")("Linux gateway lifetime lease", ()
     expect(readGatewayLockHolder(dir)?.leaseId).toBe("different-claim");
     const replacement = await acquireGatewayLock(dir, { waitMs: 0 });
     replacement.release();
+  });
+});
+
+describe("Windows process ownership records", () => {
+  it("keeps a same-process Windows claim live", () => {
+    writeFileSync(
+      join(dir, GATEWAY_LOCK_FILE),
+      JSON.stringify({
+        pid: process.pid,
+        processStart: null,
+        hostname: hostname(),
+        startedAt: new Date().toISOString(),
+        locking: "windows-process-v1",
+        leaseId: "current-claim",
+      }),
+    );
+    expect(liveGatewayHolder(dir)).toMatchObject({
+      pid: process.pid,
+      locking: "windows-process-v1",
+    });
+  });
+
+  it("rejects a same-process Windows claim with another start identity", () => {
+    writeFileSync(
+      join(dir, GATEWAY_LOCK_FILE),
+      JSON.stringify({
+        pid: process.pid,
+        processStart: "retired-process-start",
+        hostname: hostname(),
+        startedAt: new Date().toISOString(),
+        locking: "windows-process-v1",
+      }),
+    );
+    expect(liveGatewayHolder(dir)).toBeNull();
+  });
+});
+
+describe.skipIf(process.platform !== "win32")("Windows gateway claim guard", () => {
+  it("records a start identity and refuses a duplicate in the same process", async () => {
+    const lock = await acquireGatewayLock(dir, { waitMs: 0 });
+    try {
+      expect(readGatewayLockHolder(dir)).toMatchObject({
+        pid: process.pid,
+        processStart: expect.stringMatching(/^[0-9]+$/u),
+        locking: "windows-process-v1",
+        leaseId: expect.any(String),
+      });
+      await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toBeInstanceOf(
+        GatewayLockHeldError,
+      );
+    } finally {
+      lock.release();
+    }
+  });
+
+  it("accepts guard paths containing spaces and PowerShell metacharacters", async () => {
+    const nested = join(dir, "space ' quote $() ; bracket [name]");
+    mkdirSync(nested);
+    const lock = await acquireGatewayLock(nested, { waitMs: 0 });
+    expect(liveGatewayHolder(nested)?.pid).toBe(process.pid);
+    lock.release();
+    expect(liveGatewayHolder(nested)).toBeNull();
+  });
+
+  it("never releases a successor's claim with the same PID", async () => {
+    const previous = await acquireGatewayLock(dir, { waitMs: 0 });
+    const record = readGatewayLockHolder(dir)!;
+    writeFileSync(previous.path, JSON.stringify({ ...record, leaseId: "successor-claim" }));
+    previous.release();
+    expect(readGatewayLockHolder(dir)?.leaseId).toBe("successor-claim");
+  });
+
+  it("rejects an invalid guard path instead of retrying forever", async () => {
+    mkdirSync(join(dir, `${GATEWAY_LOCK_FILE}.guard`));
+    await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toThrow(
+      "exited before acquiring gateway guard",
+    );
+    expect(readGatewayLockHolder(dir)).toBeNull();
   });
 });
 

@@ -60,6 +60,7 @@ function processState(pid: number): string {
       return "";
     }
   }
+  if (process.platform === "win32") return "";
   const ps = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
   return ps.stdout.trim().slice(0, 1);
 }
@@ -80,8 +81,11 @@ const launchers: Array<[string, () => ProcessLauncher]> = [
 describe.each(launchers)("%s launcher", (_name, make) => {
   it("returns a program's exit code, stdout bytes and stderr", async () => {
     const run = await make().run(
-      "sh",
-      ["-c", "printf 'out\\001\\377'; printf 'warn' >&2; exit 3"],
+      process.execPath,
+      [
+        "-e",
+        "process.stdout.write(Buffer.from([111,117,116,1,255])); process.stderr.write('warn'); process.exitCode=3;",
+      ],
       { timeoutMs: 10_000 },
     );
     expect(run.exitCode).toBe(3);
@@ -92,13 +96,16 @@ describe.each(launchers)("%s launcher", (_name, make) => {
 
   it("feeds the input to stdin", async () => {
     const input = new Uint8Array(1024 * 1024).map((_, i) => i % 251);
-    const run = await make().run("cat", [], { input, timeoutMs: 10_000 });
+    const run = await make().run(process.execPath, ["-e", "process.stdin.pipe(process.stdout)"], {
+      input,
+      timeoutMs: 10_000,
+    });
     expect(run.exitCode).toBe(0);
     expect(Buffer.from(run.stdout).equals(Buffer.from(input))).toBe(true);
   });
 
   it("discards stdout when asked to", async () => {
-    const run = await make().run("sh", ["-c", "echo ignored"], {
+    const run = await make().run(process.execPath, ["-e", "process.stdout.write('ignored')"], {
       timeoutMs: 10_000,
       captureStdout: false,
     });
@@ -108,8 +115,8 @@ describe.each(launchers)("%s launcher", (_name, make) => {
 
   it("caps captured stderr", async () => {
     const run = await make().run(
-      "sh",
-      ["-c", `head -c ${STDERR_CAPTURE_CHARS * 3} /dev/zero >&2`],
+      process.execPath,
+      ["-e", `process.stderr.write(Buffer.alloc(${STDERR_CAPTURE_CHARS * 3}))`],
       { timeoutMs: 10_000 },
     );
     expect(run.stderr.length).toBe(STDERR_CAPTURE_CHARS);
@@ -123,18 +130,33 @@ describe.each(launchers)("%s launcher", (_name, make) => {
 
   it("kills a program and the processes it started when it outlives its timeout", async () => {
     const started = Date.now();
-    // The background sleep holds the same pipes; the run must not wait for it.
-    const run = await make().run("sh", ["-c", "sleep 30 & echo $!; sleep 30"], {
-      timeoutMs: 300,
-    });
-    expect(run).toMatchObject({ exitCode: null, signal: "SIGKILL", failure: "timeout" });
+    // The descendant holds the same pipes; the run must not wait for it.
+    const run = await make().run(
+      process.execPath,
+      [
+        "-e",
+        `
+      const {spawn}=require('node:child_process');
+      const child=spawn(process.execPath,['-e','setTimeout(()=>{},30000)'],{stdio:['ignore',1,2]});
+      console.log(child.pid);
+      setTimeout(()=>{},30000);
+    `,
+      ],
+      { timeoutMs: 1000 },
+    );
+    expect(run.failure).toBe("timeout");
+    if (process.platform !== "win32")
+      expect(run).toMatchObject({ exitCode: null, signal: "SIGKILL" });
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(await eventually(() => !alive(Number(text(run.stdout))))).toBe(true);
   });
 
   it("kills a program when the caller aborts", async () => {
     const abort = new AbortController();
-    const pending = make().run("sleep", ["30"], { timeoutMs: 30_000, signal: abort.signal });
+    const pending = make().run(process.execPath, ["-e", "setTimeout(()=>{},30000)"], {
+      timeoutMs: 30_000,
+      signal: abort.signal,
+    });
     setTimeout(() => abort.abort(), 200);
     expect(await pending).toMatchObject({ exitCode: null, failure: "aborted" });
   });
@@ -142,7 +164,7 @@ describe.each(launchers)("%s launcher", (_name, make) => {
   it("does not start a program for a caller that already stopped waiting", async () => {
     const abort = new AbortController();
     abort.abort();
-    const run = await make().run("sh", ["-c", "exit 0"], {
+    const run = await make().run(process.execPath, ["-e", "process.exit(0)"], {
       timeoutMs: 10_000,
       signal: abort.signal,
     });
@@ -152,13 +174,19 @@ describe.each(launchers)("%s launcher", (_name, make) => {
 
 describe("hosted launcher", () => {
   it("forks programs from the host process, not from the caller", async () => {
-    const run = await hosted().run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 });
+    const run = await hosted().run(process.execPath, ["-e", "console.log(process.ppid)"], {
+      timeoutMs: 10_000,
+    });
     const parent = Number(text(run.stdout));
     expect(parent).toBeGreaterThan(0);
     expect(parent).not.toBe(process.pid);
-    const direct = await directProcessLauncher.run("sh", ["-c", "echo $PPID"], {
-      timeoutMs: 10_000,
-    });
+    const direct = await directProcessLauncher.run(
+      process.execPath,
+      ["-e", "console.log(process.ppid)"],
+      {
+        timeoutMs: 10_000,
+      },
+    );
     expect(Number(text(direct.stdout))).toBe(process.pid);
   });
 
@@ -169,7 +197,9 @@ describe("hosted launcher", () => {
     // platform (BSD date on macOS has no %N) and by what the host inherits.
     const started = Date.now();
     await Promise.all(
-      [1, 2, 3].map(() => host.run("sh", ["-c", "sleep 2"], { timeoutMs: 10_000 })),
+      [1, 2, 3].map(() =>
+        host.run(process.execPath, ["-e", "setTimeout(()=>{},2000)"], { timeoutMs: 10_000 }),
+      ),
     );
     // One after another, the three would take six seconds.
     expect(Date.now() - started).toBeLessThan(5_000);
@@ -177,10 +207,20 @@ describe("hosted launcher", () => {
 
   it("kills a program in flight when its host dies, and starts a host for the next run", async () => {
     const host = hosted();
-    const first = await host.run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 });
+    const first = await host.run(process.execPath, ["-e", "console.log(process.ppid)"], {
+      timeoutMs: 10_000,
+    });
     const hostPid = Number(text(first.stdout));
     const marker = join(mkdtempSync(join(tmpdir(), "omnesis-launcher-")), "pid");
-    const pending = host.run("sh", ["-c", `echo $$ > ${marker}; sleep 30`], { timeoutMs: 30_000 });
+    const pending = host.run(
+      process.execPath,
+      [
+        "-e",
+        "require('node:fs').writeFileSync(process.argv[1],String(process.pid)); setTimeout(()=>{},30000)",
+        marker,
+      ],
+      { timeoutMs: 30_000 },
+    );
     expect(await eventually(() => readdirSync(join(marker, "..")).includes("pid"))).toBe(true);
     const programPid = Number(readFileSync(marker, "utf8").trim());
     process.kill(hostPid, "SIGKILL");
@@ -189,7 +229,9 @@ describe("hosted launcher", () => {
       failureMessage: "process launcher exited",
     });
     expect(await eventually(() => !alive(programPid))).toBe(true);
-    const next = await host.run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 });
+    const next = await host.run(process.execPath, ["-e", "console.log(process.ppid)"], {
+      timeoutMs: 10_000,
+    });
     expect(Number(text(next.stdout))).not.toBe(process.pid);
     expect(Number(text(next.stdout))).not.toBe(hostPid);
   });
@@ -197,7 +239,15 @@ describe("hosted launcher", () => {
   it("starts programs from the caller for a while once a second host dies soon after starting", async () => {
     const host = hosted();
     const hostPid = async () =>
-      Number(text((await host.run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 })).stdout));
+      Number(
+        text(
+          (
+            await host.run(process.execPath, ["-e", "console.log(process.ppid)"], {
+              timeoutMs: 10_000,
+            })
+          ).stdout,
+        ),
+      );
     const first = await hostPid();
     process.kill(first, "SIGKILL");
     expect(await eventually(() => !alive(first))).toBe(true);
@@ -209,21 +259,38 @@ describe("hosted launcher", () => {
     expect(await hostPid()).toBe(process.pid);
   });
 
-  it("keeps running programs through SIGTERM, which a service manager sends the whole group", async () => {
-    const host = hosted();
-    const first = await host.run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 });
-    const pending = host.run("sh", ["-c", "sleep 0.5; echo done"], { timeoutMs: 10_000 });
-    await sleep(100);
-    process.kill(Number(text(first.stdout)), "SIGTERM");
-    const run = await pending;
-    expect(run.exitCode).toBe(0);
-    expect(text(run.stdout)).toBe("done");
-  });
+  it.skipIf(process.platform === "win32")(
+    "keeps running programs through SIGTERM, which a service manager sends the whole group",
+    async () => {
+      const host = hosted();
+      const first = await host.run(process.execPath, ["-e", "console.log(process.ppid)"], {
+        timeoutMs: 10_000,
+      });
+      const pending = host.run(
+        process.execPath,
+        ["-e", "setTimeout(()=>console.log('done'),500)"],
+        { timeoutMs: 10_000 },
+      );
+      await sleep(100);
+      process.kill(Number(text(first.stdout)), "SIGTERM");
+      const run = await pending;
+      expect(run.exitCode).toBe(0);
+      expect(text(run.stdout)).toBe("done");
+    },
+  );
 
   it("stops the programs it is running when disposed", async () => {
     const host = hosted();
     const marker = join(mkdtempSync(join(tmpdir(), "omnesis-launcher-")), "pid");
-    const pending = host.run("sh", ["-c", `echo $$ > ${marker}; sleep 30`], { timeoutMs: 30_000 });
+    const pending = host.run(
+      process.execPath,
+      [
+        "-e",
+        "require('node:fs').writeFileSync(process.argv[1],String(process.pid)); setTimeout(()=>{},30000)",
+        marker,
+      ],
+      { timeoutMs: 30_000 },
+    );
     expect(await eventually(() => readdirSync(join(marker, "..")).includes("pid"))).toBe(true);
     const programPid = Number(readFileSync(marker, "utf8").trim());
     host.dispose();
@@ -233,7 +300,9 @@ describe("hosted launcher", () => {
       `program ${programPid} is still running (state ${processState(programPid) || "unknown"})`,
     ).toBe(true);
     // Disposed: later programs start from the caller, and no host is forked again.
-    const after = await host.run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 });
+    const after = await host.run(process.execPath, ["-e", "console.log(process.ppid)"], {
+      timeoutMs: 10_000,
+    });
     expect(Number(text(after.stdout))).toBe(process.pid);
   });
 
@@ -250,7 +319,9 @@ describe("hosted launcher", () => {
     const host = new HostedProcessLauncher(entry, () => now);
     hosts.push(host);
     expect(await host.start()).toBe(false);
-    const run = await host.run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 });
+    const run = await host.run(process.execPath, ["-e", "console.log(process.ppid)"], {
+      timeoutMs: 10_000,
+    });
     expect(Number(text(run.stdout))).toBe(process.pid);
     // A host that could start now is still not tried until the back-off ends.
     entry.modulePath = fileURLToPath(real.url);

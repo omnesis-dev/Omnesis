@@ -15,7 +15,7 @@
  * Linux holds a kernel advisory lease for the gateway's entire lifetime, so
  * containers sharing a directory do not mistake each other's PID namespaces
  * or hostnames for process liveness. The record holds the owner's identity
- * for diagnostics. macOS and legacy records use PID/start-time liveness.
+ * for diagnostics. Windows, macOS and legacy records use PID/start-time liveness.
  * A live holder is waited for
  * up to `waitMs`, which is how a replacement gateway rides out its
  * predecessor's shutdown under a supervisor that restarts on exit.
@@ -57,8 +57,8 @@ export interface GatewayLockHolder {
   processStart: string | null;
   hostname: string;
   startedAt: string;
-  /** Linux ownership is a kernel lease, independent of container PID/host names. */
-  locking?: "flock-v1";
+  /** Linux uses a kernel lease; Windows records the process identity. */
+  locking?: "flock-v1" | "windows-process-v1";
   leaseId?: string;
 }
 
@@ -190,18 +190,34 @@ export async function acquireGatewayLock(
  */
 async function withClaimGuard<T>(path: string, operation: () => T): Promise<T> {
   const command =
-    process.platform === "darwin" ? "lockf" : process.platform === "linux" ? "flock" : null;
+    process.platform === "win32"
+      ? "powershell.exe"
+      : process.platform === "darwin"
+        ? "lockf"
+        : process.platform === "linux"
+          ? "flock"
+          : null;
   if (!command) throw new Error(`Gateway locking is unsupported on ${process.platform}`);
   const args = process.platform === "linux" ? ["-x", `${path}.guard`] : [`${path}.guard`];
   const keeper = spawn(
     command,
-    [
-      ...args,
-      process.execPath,
-      "-e",
-      "process.stdout.write('ready\\n'); process.stdin.resume(); process.stdin.on('end', () => process.exit(0));",
-    ],
-    { stdio: ["pipe", "pipe", "pipe"] },
+    process.platform === "win32"
+      ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CLAIM_GUARD]
+      : [
+          ...args,
+          process.execPath,
+          "-e",
+          "process.stdout.write('ready\\n'); process.stdin.resume(); process.stdin.on('end', () => process.exit(0));",
+        ],
+    {
+      stdio: ["pipe", "pipe", "pipe"],
+      ...(process.platform === "win32"
+        ? {
+            windowsHide: true,
+            env: { ...process.env, OMNESIS_GATEWAY_GUARD_PATH: `${path}.guard` },
+          }
+        : {}),
+    },
   );
   let errorOutput = "";
   keeper.stderr!.on("data", (chunk: Buffer) => {
@@ -246,6 +262,34 @@ async function withClaimGuard<T>(path: string, operation: () => T): Promise<T> {
   return result as T;
 }
 
+/**
+ * FileShare.None serializes claims through a stable kernel-owned file handle.
+ * A crashed starter closes stdin; a crashed guard releases the handle. The path
+ * is passed through the environment so PowerShell never interprets its content.
+ */
+const WINDOWS_CLAIM_GUARD = `
+$ErrorActionPreference = 'Stop'
+$guard = $null
+try {
+  while ($null -eq $guard) {
+    try {
+      $guard = [System.IO.File]::Open($env:OMNESIS_GATEWAY_GUARD_PATH, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    } catch [System.IO.IOException] {
+      $cause = $_.Exception
+      while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+      $code = $cause.HResult -band 65535
+      if ($code -ne 32 -and $code -ne 33) { throw }
+      Start-Sleep -Milliseconds 50
+    }
+  }
+  [Console]::Out.Write("ready\`n")
+  [Console]::Out.Flush()
+  [Console]::In.ReadToEnd() | Out-Null
+} finally {
+  if ($null -ne $guard) { $guard.Dispose() }
+}
+`;
+
 /** Only call while holding the stable advisory sidecar guard. */
 function retire(path: string, pid: number): void {
   const parked = `${path}.stale-${pid}`;
@@ -289,6 +333,8 @@ export function holderIsAlive(holder: GatewayLockHolder): boolean {
     return true;
   }
   if (holder.pid === process.pid) {
+    if (holder.locking === "windows-process-v1")
+      return sameProcess(holder.pid, holder.processStart);
     // A same-host legacy record naming this process is from an earlier life
     // of this PID. Foreign-host records must stay conservative even when
     // their namespace happens to assign the same PID as ours.
@@ -310,6 +356,9 @@ function tryClaim(path: string, pid: number, now: () => Date, advisory = false):
     hostname: hostname(),
     startedAt: now().toISOString(),
     ...(advisory ? { locking: "flock-v1" as const, leaseId: randomUUID() } : {}),
+    ...(process.platform === "win32" && !advisory
+      ? { locking: "windows-process-v1" as const, leaseId: randomUUID() }
+      : {}),
   };
   const record = `${JSON.stringify(owner)}\n`;
   const draft = `${path}.${pid}.claim`;
@@ -371,6 +420,9 @@ function readHolder(path: string): GatewayLockHolder | null {
       hostname: typeof parsed.hostname === "string" ? parsed.hostname : "",
       startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : "",
       ...(parsed.locking === "flock-v1" ? { locking: "flock-v1" as const } : {}),
+      ...(parsed.locking === "windows-process-v1"
+        ? { locking: "windows-process-v1" as const }
+        : {}),
       ...(typeof parsed.leaseId === "string" ? { leaseId: parsed.leaseId } : {}),
     };
     holderPaths.set(holder, path);
@@ -416,9 +468,29 @@ function sameProcess(pid: number, expectedStart: string | null): boolean {
 /**
  * A stable identity for a running process beyond its reusable PID: the
  * kernel's start tick (plus the boot id, so a reboot never matches) on
- * Linux, `ps`'s start time on macOS.
+ * Linux, `ps`'s start time on macOS, UTC creation ticks on Windows.
  */
 function processStart(pid: number): string | null {
+  if (process.platform === "win32") {
+    if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+    try {
+      return (
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `$ErrorActionPreference = 'Stop'; [Console]::Out.Write((Get-Process -Id ${pid}).StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture))`,
+          ],
+          { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] },
+        ).trim() || null
+      );
+    } catch {
+      return null;
+    }
+  }
   if (process.platform === "darwin") {
     try {
       return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
