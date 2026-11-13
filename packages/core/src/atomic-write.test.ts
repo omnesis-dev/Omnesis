@@ -2,10 +2,17 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { atomicWriteFile, atomicWriteFileSync } from "./atomic-write.js";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { atomicWriteFile, atomicWriteFileSync, fsyncFileSync } from "./atomic-write.js";
+
+vi.mock("node:fs", async (actual) => ({ ...(await actual<typeof import("node:fs")>()) }));
+vi.mock("node:fs/promises", async (actual) => ({
+  ...(await actual<typeof import("node:fs/promises")>()),
+}));
 
 describe("atomic writes", () => {
   let dir: string;
@@ -17,6 +24,7 @@ describe("atomic writes", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -24,14 +32,29 @@ describe("atomic writes", () => {
     return readdirSync(dir).filter((name) => name !== "value.json");
   }
 
-  test("writes the payload and applies the requested mode", async () => {
+  test("writes the payload through both entrypoints", async () => {
     await atomicWriteFile(path, "async", { mode: 0o600 });
     expect(readFileSync(path, "utf8")).toBe("async");
-    expect(statSync(path).mode & 0o777).toBe(0o600);
 
     atomicWriteFileSync(path, "sync", { mode: 0o600 });
     expect(readFileSync(path, "utf8")).toBe("sync");
+  });
+
+  test.runIf(process.platform !== "win32")("applies the requested POSIX mode", async () => {
+    await atomicWriteFile(path, "async", { mode: 0o600 });
     expect(statSync(path).mode & 0o777).toBe(0o600);
+    atomicWriteFileSync(path, "sync", { mode: 0o600 });
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  test("flushes read-only payloads through their creation handles", async () => {
+    await atomicWriteFile(path, "async", { mode: 0o444 });
+    expect(readFileSync(path, "utf8")).toBe("async");
+    expect(statSync(path).mode & 0o200).toBe(0);
+    const syncPath = join(dir, "read-only.txt");
+    atomicWriteFileSync(syncPath, "sync", { mode: 0o444 });
+    expect(readFileSync(syncPath, "utf8")).toBe("sync");
+    expect(statSync(syncPath).mode & 0o200).toBe(0);
   });
 
   test("leaves no scratch file behind", async () => {
@@ -39,6 +62,36 @@ describe("atomic writes", () => {
     atomicWriteFileSync(path, "sync");
     expect(scratchFiles()).toEqual([]);
   });
+
+  test("flushes an existing writable file without replacing its content", () => {
+    fs.writeFileSync(path, "existing payload");
+    fsyncFileSync(path);
+    expect(readFileSync(path, "utf8")).toBe("existing payload");
+  });
+
+  test.each(["sync", "async"])(
+    "a %s scratch collision preserves the existing file",
+    async (kind) => {
+      let collision = "";
+      const error = Object.assign(new Error("EEXIST: scratch file already exists"), {
+        code: "EEXIST",
+      });
+      const collide = (scratch: fs.PathLike): never => {
+        collision = String(scratch);
+        fs.writeFileSync(collision, "another writer's payload");
+        throw error;
+      };
+      if (kind === "sync") {
+        vi.spyOn(fs, "openSync").mockImplementationOnce(collide);
+        expect(() => atomicWriteFileSync(path, "replacement")).toThrow(error);
+      } else {
+        vi.spyOn(fsp, "open").mockImplementationOnce(async (scratch) => collide(scratch));
+        await expect(atomicWriteFile(path, "replacement")).rejects.toBe(error);
+      }
+      expect(readFileSync(collision, "utf8")).toBe("another writer's payload");
+      expect(fs.existsSync(path)).toBe(false);
+    },
+  );
 
   test("writes binary payloads byte for byte", async () => {
     const bytes = new Uint8Array([0x00, 0xff, 0x0a, 0x7f, 0x00]);
@@ -73,7 +126,7 @@ describe("atomic writes", () => {
     // Last writer wins, but the committed file is always exactly one of
     // the payloads — never a torn or empty intermediate.
     expect(payloads).toContain(readFileSync(path, "utf8"));
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(scratchFiles()).toEqual([]);
   });
 
@@ -84,8 +137,10 @@ describe("atomic writes", () => {
     const blocked = join(dir, "blocked");
     await atomicWriteFile(join(blocked, "occupant"), "x", { ensureDir: true });
 
-    await expect(atomicWriteFile(blocked, "payload")).rejects.toThrow(/ENOTEMPTY|EISDIR|EEXIST/);
-    expect(() => atomicWriteFileSync(blocked, "payload")).toThrow(/ENOTEMPTY|EISDIR|EEXIST/);
+    await expect(atomicWriteFile(blocked, "payload")).rejects.toThrow(
+      /ENOTEMPTY|EISDIR|EEXIST|EPERM/,
+    );
+    expect(() => atomicWriteFileSync(blocked, "payload")).toThrow(/ENOTEMPTY|EISDIR|EEXIST|EPERM/);
 
     expect(readdirSync(dir).sort()).toEqual(["blocked"]);
     expect(readdirSync(blocked)).toEqual(["occupant"]);

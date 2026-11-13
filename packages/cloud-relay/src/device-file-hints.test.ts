@@ -28,7 +28,9 @@ test("refreshed home addresses replace the saved ones and nothing else, in a pri
   await writeFile(file, JSON.stringify(saved), { mode: 0o644 });
   await saveDirectCandidates(file, device, fresh);
   expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ ...saved, directCandidates: fresh });
-  expect((await stat(file)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+  }
 });
 
 test("a file that a newer pairing replaced is left alone, and a missing or damaged one is an error", async () => {

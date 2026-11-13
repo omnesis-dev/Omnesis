@@ -77,7 +77,7 @@ describe.skipIf(process.platform !== "win32")("Windows native job containment", 
           `
 const {spawn}=require('node:child_process');
 const fs=require('node:fs');
-const child=spawn(process.execPath,['-e','process.stdout.write("ready");setInterval(()=>{},1000)'],{stdio:'inherit'});
+const child=spawn(process.execPath,['-e','process.stdout.write("ready");setInterval(()=>{},1000)'],{detached:true,stdio:'inherit'});
 child.once('spawn',()=>{fs.writeFileSync(process.argv[1],String(child.pid));child.unref();process.exit(0)});
 `,
           pidPath,
@@ -185,7 +185,7 @@ child.once('spawn',()=>{fs.writeFileSync(process.argv[1],String(child.pid));chil
   it("owns an inherited-pipe descendant even when its root exits immediately", async () => {
     const program = `
       const {spawn}=require('node:child_process');
-      const child=spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{stdio:['ignore',1,2]});
+      const child=spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{detached:true,stdio:['ignore',1,2]});
       process.stdout.write(String(child.pid)); process.exit(7);
     `;
     const run = await runWindowsJob(process.execPath, ["-e", program], { timeoutMs: 5_000 });

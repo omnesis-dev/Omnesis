@@ -380,7 +380,9 @@ describe("local daemon and credential files", () => {
     const relay = await startRelayDaemon(env);
     try {
       expect(await (await fetch(`${relay.url}/healthz`)).json()).toEqual({ ok: true, protocol: 2 });
-      expect((await stat(env.OMNESIS_CLOUD_RELAY_DB!)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect((await stat(env.OMNESIS_CLOUD_RELAY_DB!)).mode & 0o777).toBe(0o600);
+      }
       const tokenFile = join(dir, "id-token");
       const sessionFile = join(dir, "client", "session.json");
       await writeFile(
@@ -388,7 +390,9 @@ describe("local daemon and credential files", () => {
         await localToken(await readFile(env.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE!)),
       );
       await loginRelay({ relayUrl: relay.url, idTokenFile: tokenFile, sessionFile });
-      expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
+      }
       const first = await readRelaySession(sessionFile);
       expect(first).toMatch(/^ey/);
       expect(

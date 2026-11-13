@@ -168,7 +168,9 @@ test("a verified account link persists privately across restart and unlink leave
   expect(await f.link()).toMatchObject({ redirectUrl: gatewayOrigin + "/portal/settings/account" });
   expect(f.manager.status()).toMatchObject({ linked: true, canLink: false, canUnlink: true });
   expect(f.manager.verifiedAccountId()).toBe(f.accountId);
-  expect((await stat(f.options.metadataFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(f.options.metadataFile)).mode & 0o777).toBe(0o600);
+  }
   const restored = new GatewayAccountLink(f.options);
   await restored.initialize();
   expect(restored.verifiedAccountId()).toBe(f.accountId);

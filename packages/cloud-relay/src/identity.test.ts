@@ -261,14 +261,18 @@ describe("durable account bindings", () => {
       const gateway = randomUUID();
       accounts.registerAccount("first");
       const databasePath = join(dir, "accounts.sqlite");
-      expect(statSync(databasePath).mode & 0o777).toBe(0o600);
-      expect(statSync(databasePath + "-wal").mode & 0o777).toBe(0o600);
-      expect(statSync(databasePath + "-shm").mode & 0o777).toBe(0o600);
-      chmodSync(databasePath + "-wal", 0o644);
-      chmodSync(databasePath + "-shm", 0o644);
+      if (process.platform !== "win32") {
+        expect(statSync(databasePath).mode & 0o777).toBe(0o600);
+        expect(statSync(databasePath + "-wal").mode & 0o777).toBe(0o600);
+        expect(statSync(databasePath + "-shm").mode & 0o777).toBe(0o600);
+        chmodSync(databasePath + "-wal", 0o644);
+        chmodSync(databasePath + "-shm", 0o644);
+      }
       const reopened = new RelayAccounts(databasePath);
-      expect(statSync(databasePath + "-wal").mode & 0o777).toBe(0o600);
-      expect(statSync(databasePath + "-shm").mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect(statSync(databasePath + "-wal").mode & 0o777).toBe(0o600);
+        expect(statSync(databasePath + "-shm").mode & 0o777).toBe(0o600);
+      }
       reopened.close();
       accounts.registerAccount("first");
       accounts.registerAccount("second");

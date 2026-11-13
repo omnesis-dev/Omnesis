@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { type SourceInstance } from "@omnesis/source-sdk";
 import { fakeSourceHost } from "@omnesis/source-sdk/testing";
@@ -48,7 +48,10 @@ describe("local-files sync", () => {
   beforeEach(() => {
     // The scanner keys its file map by real path, so resolve the temp root
     // once: on macOS the temp directory is reached through a symlink.
-    tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "local-files-test-")));
+    // Windows temp lives under protected AppData; use an owned temporary home child.
+    tmpDir = realpathSync(
+      mkdtempSync(join(process.platform === "win32" ? homedir() : tmpdir(), "local-files-test-")),
+    );
     root = join(tmpDir, "Docs");
     mkdirSync(root, { recursive: true });
   });

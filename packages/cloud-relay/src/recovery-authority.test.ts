@@ -359,14 +359,18 @@ describe("offline authority tool", () => {
     const created = await runRecoveryAuthorityTool("create", paths);
     expect(created.publicKey).toContain("BEGIN PUBLIC KEY");
     expect(JSON.stringify(created)).not.toContain("PRIVATE KEY");
-    expect((await stat(paths.privateKeyFile)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(paths.privateKeyFile)).mode & 0o777).toBe(0o600);
+    }
     await expect(runRecoveryAuthorityTool("create", paths)).rejects.toThrow();
     await writeFile(paths.inputFile, JSON.stringify(receipt));
     expect(await runRecoveryAuthorityTool("receipt", paths)).toEqual({});
     expect(
       recoveryReceiptSchema.parse(JSON.parse(await readFile(paths.outputFile, "utf8"))).payload,
     ).toEqual(receipt);
-    expect((await stat(paths.outputFile)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(paths.outputFile)).mode & 0o777).toBe(0o600);
+    }
     await writeFile(paths.inputFile, JSON.stringify(policy));
     const result = await runRecoveryAuthorityTool("policy", paths);
     expect(result.policySha256).toBe(

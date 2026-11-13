@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 
@@ -28,7 +28,10 @@ import type { LocalFileEntry, LocalFilesSyncCursor } from "./types.js";
 let directory: string;
 let root: string;
 beforeEach(() => {
-  directory = realpathSync(mkdtempSync(join(tmpdir(), "local-file-read-")));
+  // Windows temp lives under protected AppData; keep these invented roots outside it.
+  directory = realpathSync(
+    mkdtempSync(join(process.platform === "win32" ? homedir() : tmpdir(), "local-file-read-")),
+  );
   root = join(directory, "Docs");
   mkdirSync(root);
 });

@@ -102,9 +102,13 @@ test("a Google-free relay registers both key proofs, stores only public metadata
   const transport = vi.fn<typeof fetch>(async (url, init) => fetch(url, init));
   try {
     const session = await registerGatewayKey({ ...f.options, fetch: transport });
-    expect((await stat(f.options.sessionFile)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(f.options.sessionFile)).mode & 0o777).toBe(0o600);
+    }
     const ownerFile = `${f.options.sessionFile}.owner-key`;
-    expect((await stat(ownerFile)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(ownerFile)).mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(await readFile(f.options.sessionFile, "utf8"))).toMatchObject({
       authentication: "gateway-key-v2",
       accountId: session.accountId,

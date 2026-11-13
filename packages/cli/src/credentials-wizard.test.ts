@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { expandSpecTokens, type SerializedProviderCredentialsSpec } from "@omnesis/core";
 import {
@@ -146,7 +147,7 @@ describe("credentialsDestinationLines", () => {
       host: dockerHost(false),
     });
     expect(lines).toEqual([
-      "They'll be saved on this machine to /home/maya/.config/omnesis/example-credentials.json (mode 0600).",
+      `They'll be saved on this machine to ${join("/home/maya/.config/omnesis", "example-credentials.json")} (mode 0600).`,
       "Not encrypted at rest: this install has no keyring armed. Run `omnesis secure` to encrypt it, with every other secret file.",
     ]);
   });
@@ -169,7 +170,7 @@ describe("credentialsDestinationLines", () => {
       host: nativeHost(true),
     });
     expect(lines).toEqual([
-      "They'll be saved to /srv/omnesis/example-credentials.json (mode 0600).",
+      `They'll be saved to ${join("/srv/omnesis", "example-credentials.json")} (mode 0600).`,
       "Encrypted at rest with this install's keyring.",
     ]);
   });

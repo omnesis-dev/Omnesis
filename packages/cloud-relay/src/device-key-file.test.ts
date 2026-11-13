@@ -35,8 +35,10 @@ test("the first use creates one private P-256 key that later uses read back", as
   expect(parseDevicePublicKey(created.publicKey).asymmetricKeyDetails?.namedCurve).toBe(
     "prime256v1",
   );
-  expect((await stat(path)).mode & 0o777).toBe(0o600);
-  expect((await stat(join(directory, "nested"))).mode & 0o777).toBe(0o700);
+  if (process.platform !== "win32") {
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect((await stat(join(directory, "nested"))).mode & 0o777).toBe(0o700);
+  }
   const again = await readOrCreateDeviceKey(path);
   expect(again.publicKey).toBe(created.publicKey);
 });

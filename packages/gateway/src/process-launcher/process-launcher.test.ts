@@ -29,6 +29,19 @@ function hosted(): HostedProcessLauncher {
 
 const text = (bytes: Uint8Array): string => Buffer.from(bytes).toString().trim();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Never turn an empty/failed parent probe into kill(0) or signal the test worker. */
+function checkedHostPid(run: Awaited<ReturnType<ProcessLauncher["run"]>>): number {
+  expect(run.failure, run.failureMessage ?? run.stderr).toBeUndefined();
+  const pid = Number(text(run.stdout));
+  expect(
+    Number.isSafeInteger(pid) && pid > 0,
+    `Invalid launcher host PID: ${text(run.stdout)}`,
+  ).toBe(true);
+  expect(pid).not.toBe(process.pid);
+  return pid;
+}
+
 // Windows programs are contained by a native job owned by a helper process.
 // Query the helper's physical parent to verify the actual Node launcher host.
 const reportLauncherParent =
@@ -277,7 +290,7 @@ describe("hosted launcher", () => {
     const first = await host.run(process.execPath, ["-e", reportLauncherParent], {
       timeoutMs: 10_000,
     });
-    const hostPid = Number(text(first.stdout));
+    const hostPid = checkedHostPid(first);
     const marker = join(mkdtempSync(join(tmpdir(), "omnesis-launcher-")), "pid");
     const pending = host.run(
       process.execPath,
@@ -306,14 +319,10 @@ describe("hosted launcher", () => {
   it("starts programs from the caller for a while once a second host dies soon after starting", async () => {
     const host = hosted();
     const hostPid = async () =>
-      Number(
-        text(
-          (
-            await host.run(process.execPath, ["-e", reportLauncherParent], {
-              timeoutMs: 10_000,
-            })
-          ).stdout,
-        ),
+      checkedHostPid(
+        await host.run(process.execPath, ["-e", reportLauncherParent], {
+          timeoutMs: processBudget,
+        }),
       );
     const first = await hostPid();
     process.kill(first, "SIGKILL");
@@ -323,7 +332,11 @@ describe("hosted launcher", () => {
     process.kill(second, "SIGKILL");
     expect(await eventually(() => !alive(second))).toBe(true);
     await sleep(100);
-    expect(await hostPid()).toBe(process.pid);
+    const fallback = await host.run(process.execPath, ["-e", reportLauncherParent], {
+      timeoutMs: processBudget,
+    });
+    expect(fallback.failure, fallback.failureMessage ?? fallback.stderr).toBeUndefined();
+    expect(Number(text(fallback.stdout))).toBe(process.pid);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -339,7 +352,7 @@ describe("hosted launcher", () => {
         { timeoutMs: processBudget },
       );
       await sleep(100);
-      process.kill(Number(text(first.stdout)), "SIGTERM");
+      process.kill(checkedHostPid(first), "SIGTERM");
       const run = await pending;
       expect(run.exitCode).toBe(0);
       expect(text(run.stdout)).toBe("done");

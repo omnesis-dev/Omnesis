@@ -209,7 +209,7 @@ describe("Codex JavaScript executable portability", () => {
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 if (!process.argv.includes('--version')) writeFileSync(${JSON.stringify(wrapperPidPath)}, String(process.pid));
-const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...process.argv.slice(2)], { stdio: 'inherit' });
+const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...process.argv.slice(2)], { detached: ${wrapperExits}, stdio: 'inherit' });
 process.on('SIGTERM', () => child.kill('SIGTERM'));
 child.on('exit', (code) => process.exit(code ?? 1));
 if (${wrapperExits} && !process.argv.includes('--version')) child.once('spawn', () => { child.unref(); process.exit(0); });

@@ -46,11 +46,11 @@ import {
   closeSync,
   writeFileSync,
   renameSync,
-  chmodSync,
+  fchmodSync,
   mkdirSync,
   unlinkSync,
 } from "node:fs";
-import { open, writeFile, rename, chmod, mkdir, unlink } from "node:fs/promises";
+import { open, rename, mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface AtomicWriteOptions {
@@ -73,15 +73,6 @@ function scratchPath(path: string): string {
 }
 
 /**
- * `wx` fails rather than truncating if the scratch name is somehow
- * already taken, so a name collision surfaces as EEXIST instead of two
- * writes silently corrupting one another's payload.
- */
-function scratchWriteOptions(opts: AtomicWriteOptions): { flag: "wx"; mode?: number } {
-  return opts.mode != null ? { flag: "wx", mode: opts.mode } : { flag: "wx" };
-}
-
-/**
  * Sync version. Writes to a scratch file, fsyncs, renames, then fsyncs
  * the parent dir.
  */
@@ -94,19 +85,23 @@ export function atomicWriteFileSync(
   if (opts.ensureDir) {
     mkdirSync(dirname(path), { recursive: true });
   }
+  let created = false;
   try {
-    // writeFileSync handles open+write+close internally — but we then
-    // need to re-open to fsync. The double-open is unavoidable on the
-    // sync path without dropping to fs.openSync ourselves.
-    writeFileSync(tmp, data, scratchWriteOptions(opts));
-    if (opts.mode != null) {
-      // umask can mask the mode on some systems; force.
-      chmodSync(tmp, opts.mode);
+    // Windows FlushFileBuffers requires a writable handle. Keep the handle
+    // that created the scratch file through the flush on every platform.
+    // Exclusive creation never truncates another writer's scratch file.
+    const fd = openSync(tmp, "wx", opts.mode);
+    created = true;
+    try {
+      writeFileSync(fd, data);
+      if (opts.mode != null) fchmodSync(fd, opts.mode);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
     }
-    fsyncFileSync(tmp);
     renameSync(tmp, path);
   } catch (err) {
-    discardScratchSync(tmp);
+    if (created) discardScratchSync(tmp);
     throw err;
   }
   fsyncDirSync(dirname(path));
@@ -124,20 +119,20 @@ export async function atomicWriteFile(
   if (opts.ensureDir) {
     await mkdir(dirname(path), { recursive: true });
   }
+  let created = false;
   try {
-    await writeFile(tmp, data, scratchWriteOptions(opts));
-    if (opts.mode != null) {
-      await chmod(tmp, opts.mode);
-    }
-    const handle = await open(tmp, "r");
+    const handle = await open(tmp, "wx", opts.mode);
+    created = true;
     try {
+      await handle.writeFile(data);
+      if (opts.mode != null) await handle.chmod(opts.mode);
       await handle.sync();
     } finally {
       await handle.close();
     }
     await rename(tmp, path);
   } catch (err) {
-    await discardScratch(tmp);
+    if (created) await discardScratch(tmp);
     throw err;
   }
   await fsyncDir(dirname(path));
@@ -162,7 +157,7 @@ async function discardScratch(tmp: string): Promise<void> {
 
 /** Flush a file's contents to stable storage. Throws if the flush fails. */
 export function fsyncFileSync(path: string): void {
-  const fd = openSync(path, "r");
+  const fd = openSync(path, process.platform === "win32" ? "r+" : "r");
   try {
     fsyncSync(fd);
   } finally {

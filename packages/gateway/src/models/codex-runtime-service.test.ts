@@ -76,7 +76,7 @@ import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 if (args.includes("--device-auth")) writeFileSync(${JSON.stringify(wrapperPidPath)}, String(process.pid));
-const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...args], { stdio: 'inherit' });
+const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...args], { detached: ${wrapperExits}, stdio: 'inherit' });
 child.once('spawn', () => { if (args.includes('--device-auth')) writeFileSync(${JSON.stringify(pidPath)}, String(child.pid)); });
 process.on('SIGTERM', () => child.kill('SIGTERM'));
 child.on('exit', (code) => process.exit(code ?? 1));

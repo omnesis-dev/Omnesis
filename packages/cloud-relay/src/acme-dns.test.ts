@@ -45,7 +45,9 @@ test("only exact gateway TXT leases are durable, bounded, owner scoped and idemp
     await expect(service.create(owner, hostname, "invalid")).rejects.toThrow();
     const lease = await service.create(owner, hostname, value);
     expect(lease).toEqual({ id: expect.any(String), expiresAt: expect.any(Number) });
-    expect((await stat(f.options.file)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(f.options.file)).mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(await readFile(f.options.file, "utf8"))).toEqual([
       expect.objectContaining({ ...lease, accountId: owner, hostname, value }),
     ]);

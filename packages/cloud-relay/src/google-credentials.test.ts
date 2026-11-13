@@ -56,8 +56,10 @@ async function credentials(
 test("writes credentials atomically with private permissions and verifies cached identity locally", async () => {
   const first = await credentials();
   await saveGoogleCredentials(file, clientId, first);
-  expect((await stat(file)).mode & 0o777).toBe(0o600);
-  expect((await stat(join(dir, "private"))).mode & 0o777).toBe(0o700);
+  if (process.platform !== "win32") {
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(join(dir, "private"))).mode & 0o777).toBe(0o700);
+  }
   const fetch = vi.fn<typeof globalThis.fetch>();
   const source = googleRoutingTokenSource({ credentialsFile: file, clientId, identity, fetch });
   expect(await source()).toEqual({
@@ -207,7 +209,9 @@ test("relay exchange checks account, lifetime and response bounds and saves only
       fetch: transport,
     }),
   ).toEqual(session);
-  expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
+  }
   expect(JSON.parse(await readFile(sessionFile, "utf8"))).toEqual(session);
   for (const value of [
     { ...session, accountId: "a".repeat(64) },

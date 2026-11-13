@@ -112,7 +112,7 @@ describe("the obsidian vault setting", () => {
     // The failure this closes: the check expanded the tilde and the factory
     // did not, so a path the form accepted threw on the first sync.
     mkdirSync(join(dir, ".obsidian"));
-    vi.stubEnv("HOME", dir);
+    vi.stubEnv(process.platform === "win32" ? "USERPROFILE" : "HOME", dir);
     expect(issues({ vaultPath: "~" })).toBeNull();
 
     const parsed = schema.parse({ vaultPath: "~" });
