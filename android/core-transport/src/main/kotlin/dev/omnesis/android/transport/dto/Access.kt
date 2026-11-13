@@ -78,7 +78,7 @@ data class AccessGrantRule(
     val sources: AccessSourceBoundary,
     val release: AccessAnswerRelease? = null,
     val filterRevision: Int? = null,
-    val scopePolicies: List<ScopePolicy> = emptyList(),
+    val scopePolicies: List<SourceFilter> = emptyList(),
 ) {
     init {
         require(
@@ -105,7 +105,7 @@ private data class AccessGrantRuleWire(
     val sources: AccessSourceBoundary,
     val release: AccessAnswerRelease? = null,
     val filterRevision: Int? = null,
-    val scopePolicies: List<ScopePolicy> = emptyList(),
+    val scopePolicies: List<SourceFilter> = emptyList(),
     val scopeSources: AccessSourceBoundary? = null,
 )
 
@@ -132,8 +132,8 @@ data class AccessSourceInstance(
     val icon: String? = null,
     val available: Boolean = true,
     val sourceType: String? = null,
-    val scopes: SourceScopes? = null,
-    val scopeReadiness: List<ScopeKindReadiness>? = null,
+    /** Whether the account's source declares a field a filter can use; the filter editor says the rest. */
+    val filterable: Boolean = false,
 )
 
 @Serializable

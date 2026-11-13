@@ -7,8 +7,8 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AccessLevelDraftTest {
-    private val policy = ScopePolicy("scope-chat:one", ScopeAudience("level-example", "answer"),
-        listOf(ScopeRule(listOf(ScopeRef("participant", label = "Maya", identifiers = listOf(ScopeIdentifier("email", "maya@example.org")))), "hide")), "share")
+    private val policy = SourceFilter("scope-chat:one", FilterAudience("level-example", "answer"),
+        listOf(FilterRule(listOf(FilterRef.person("Maya", listOf(FilterIdentifier("email", "maya@example.org")))), "hide")), "share")
     private val overview = AccessOverview(emptyList(), listOf(AccessSourceInstance("scope-chat:one", "First account"), AccessSourceInstance("scope-chat:two", "Second account")))
     private fun level(rules: List<AccessGrantRule>) = AccessLevelSummary("level-example", "Research assistant", 7, rules, 2)
     @Test fun newFilteredRulesDeclareZeroRevision() {
@@ -35,8 +35,8 @@ class AccessLevelDraftTest {
     }
     @Test fun newDirectLinkMaterializesIndependentPolicyAudience() {
         val draft = AccessLevelDraft.opening(null, overview).enabled(AccessCapability.DIRECT, true, overview).setBoundary(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(policy.sourceId)), AccessCapability.ANSWER, true)
-            .setPolicy(policy.copy(audience = ScopeAudience("new", "answer")), policy.sourceId, AccessCapability.ANSWER)
-        assertEquals(ScopeAudience("new", "direct"), draft.serializedRules.first { it.capability == AccessCapability.DIRECT }.scopePolicies.single().audience)
+            .setPolicy(policy.copy(audience = FilterAudience("new", "answer")), policy.sourceId, AccessCapability.ANSWER)
+        assertEquals(FilterAudience("new", "direct"), draft.serializedRules.first { it.capability == AccessCapability.DIRECT }.scopePolicies.single().audience)
     }
     @Test fun aPermissionSwitchedOffAndBackOnKeepsItsBoundaryAndFilters() {
         val answer = AccessGrantRule.answer(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("scope-chat:one")), AccessAnswerRelease.unreviewed()).copy(filterRevision = 4, scopePolicies = listOf(policy))
@@ -73,7 +73,7 @@ class AccessLevelDraftTest {
         val boundary = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("scope-chat:one"))
         val answer = AccessGrantRule.answer(boundary, AccessAnswerRelease.unreviewed()).copy(scopePolicies = listOf(policy), filterRevision = 3)
         val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("scope-chat:one")))
-            .copy(scopePolicies = listOf(policy.copy(audience = ScopeAudience("level-example", "direct"))), filterRevision = 1)
+            .copy(scopePolicies = listOf(policy.copy(audience = FilterAudience("level-example", "direct"))), filterRevision = 1)
         val opened = AccessLevelDraft.opening(level(listOf(answer, direct)), overview)
         assertTrue(opened.directLinked)
         assertNull(opened.separateDirect)
@@ -81,7 +81,7 @@ class AccessLevelDraftTest {
         // Unlinking a level that opened linked starts Direct's own list from Answer's.
         val own = opened.withDirectSameAsAnswer(false)
         assertEquals(boundary, own.rule(AccessCapability.DIRECT)!!.sources)
-        assertEquals(ScopeAudience("level-example", "direct"), own.rule(AccessCapability.DIRECT)!!.scopePolicies.single().audience)
+        assertEquals(FilterAudience("level-example", "direct"), own.rule(AccessCapability.DIRECT)!!.scopePolicies.single().audience)
         // A different filter, a different account or a different choice about new sources keeps Direct's own list.
         listOf(
             direct.copy(scopePolicies = emptyList()),
@@ -125,12 +125,12 @@ class AccessLevelDraftTest {
         assertTrue(rules.first { it.capability == AccessCapability.DIRECT }.scopePolicies.isEmpty())
     }
 
-    @Test fun sourcePreparationBlocksEmptyListsButUnrelatedKindsDoNot() {
-        val empty = ScopePolicy.empty("scope-chat:one", "new", "answer")
-        assertFalse(empty.readyToSave(listOf(ScopeKindReadiness("participant", false, reason = "backfill"))))
-        assertTrue(empty.readyToSave(listOf(ScopeKindReadiness("folder", false, reason = "metadata-refresh"))))
-        assertTrue(policy.readyToSave(listOf(ScopeKindReadiness("participant", true), ScopeKindReadiness("folder", false))))
-        assertFalse(policy.readyToSave(listOf(ScopeKindReadiness("participant", false))))
+    @Test fun aFilterIsWithinLimitsUpTo256ValuesCountingEachCapturedAddress() {
+        val person = FilterRef.person("Maya", List(2) { FilterIdentifier("email", "maya$it@example.org") })
+        fun holding(vararg refs: FilterRef) = policy.copy(rules = listOf(FilterRule(refs.toList(), "hide")))
+        assertTrue(holding(*Array(254) { FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "label-$it") }, person).withinLimits)
+        assertFalse(holding(*Array(255) { FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "label-$it") }, person).withinLimits)
+        assertEquals("A filter can include at most 256 items.", FILTER_LIMIT_MESSAGE)
     }
 
     @Test fun missingPrivacyPolicyNeverDefaultsToUnreviewedRelease() {
@@ -163,7 +163,7 @@ class AccessLevelDraftTest {
 
     @Test fun explicitCopyCannotAddOrRemoveFiltersWhenAuthoringIsUnavailable() {
         val directPolicy = policy.copy(audience = policy.audience.copy(capability = "direct"))
-        data class Case(val answer: List<ScopePolicy>, val direct: List<ScopePolicy>, val enabled: Boolean, val permitted: Boolean)
+        data class Case(val answer: List<SourceFilter>, val direct: List<SourceFilter>, val enabled: Boolean, val permitted: Boolean)
         listOf(Case(listOf(policy), emptyList(), false, false), Case(emptyList(), listOf(directPolicy), false, false),
             Case(emptyList(), emptyList(), false, true), Case(listOf(policy), listOf(directPolicy), true, true)).forEach { case ->
             val answer = AccessGrantRule.answer(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(policy.sourceId)), AccessAnswerRelease.unreviewed()).copy(scopePolicies = case.answer)
@@ -235,7 +235,7 @@ class AccessLevelDraftTest {
         assertEquals(4, refiltered.serializedRules.first { it.capability == AccessCapability.ANSWER }.filterRevision)
         assertEquals(mapOf("answer" to 4), refiltered.expectedFilterRevisions)
         val direct = saved.enabled(AccessCapability.DIRECT, true, overview).setBoundary(all, AccessCapability.DIRECT, true)
-            .setPolicy(policy.copy(audience = ScopeAudience("level-example", "direct")), policy.sourceId, AccessCapability.DIRECT)
+            .setPolicy(policy.copy(audience = FilterAudience("level-example", "direct")), policy.sourceId, AccessCapability.DIRECT)
         assertEquals(0, direct.serializedRules.first { it.capability == AccessCapability.DIRECT }.filterRevision)
     }
 

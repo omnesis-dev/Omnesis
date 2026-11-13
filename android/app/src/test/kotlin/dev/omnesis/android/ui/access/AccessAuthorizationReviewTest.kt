@@ -48,12 +48,15 @@ class AccessAuthorizationReviewTest {
         compose.onAllNodes(pills).assertCountEquals(1)
     }
 
-    @Test fun anExistingLevelShowsItsPillsOnItsOwnRowAndNoDecisions() {
+    @Test fun anExistingLevelShowsItsPillsOnItsOwnRowAndItsDecisionsReadOnly() {
         val initial = AccessAuthorizationForm.initial(request, overview, proposal, nowMillis = 0)
         show(initial.copy(connection = initial.connection!!.copy(levelId = level.id)))
         compose.onNodeWithText("Research assistant").assertExists()
         compose.onAllNodes(pills).assertCountEquals(1)
         compose.onNodeWithText("Permissions").assertDoesNotExist()
-        compose.onNodeWithText("Answer release").assertDoesNotExist()
+        compose.onNodeWithText("Answer data").assertExists()
+        compose.onNodeWithText("Answer release").assertExists()
+        compose.onNodeWithText("No privacy review").assertExists()
+        compose.onNodeWithContentDescription("Change Answer data").assertDoesNotExist()
     }
 }

@@ -14,6 +14,10 @@ import com.github.takahirom.roborazzi.captureScreenRoboImage
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.*
 import dev.omnesis.android.ui.access.*
+import dev.omnesis.android.ui.common.Loadable
+import dev.omnesis.android.ui.document.DocumentAccessContent
+import dev.omnesis.android.ui.document.DocumentFixtures
+import dev.omnesis.android.ui.document.InspectorContent
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,6 +37,9 @@ class AccessGalleryScreenshotTest {
     @get:Rule val compose = createComposeRule()
     private val fixture = AccessLevelScreenshotTest
     private var dark = true
+
+    /** Document timestamps are shown in local time; every render draws them in UTC so they read the same on any host. */
+    @org.junit.Before fun utc() { java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC")) }
 
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
     fun accessHomeDark() = render("access_home", dark = true) { home() }
@@ -95,9 +102,25 @@ class AccessGalleryScreenshotTest {
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
     fun filterReviewLight() = render("filter_review", dark = false) { filterReview(fixture.gateway) }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
-    fun filterCountingDark() = render("filter_counting", dark = true) { filterReview(fixture.gatewayFor(counted = false)) }
+    fun filterReviewCountsDark() = render("filter_review_counts", dark = true) { filterReview(fixture.gateway, fixture.driveSource, fixture.drivePolicy) }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
-    fun filterCountingLight() = render("filter_counting", dark = false) { filterReview(fixture.gatewayFor(counted = false)) }
+    fun filterReviewCountsLight() = render("filter_review_counts", dark = false) { filterReview(fixture.gateway, fixture.driveSource, fixture.drivePolicy) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterNeedsResyncDark() = render("filter_needs_resync", dark = true) { stateOf(fixture.gmailSource, fixture.gmailNeedsResync) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterNeedsResyncLight() = render("filter_needs_resync", dark = false) { stateOf(fixture.gmailSource, fixture.gmailNeedsResync) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterResyncingDark() = render("filter_resyncing", dark = true) { stateOf(fixture.driveSource, mapOf(AccessLevelScreenshotTest.DRIVE_FOLDERS to fixture.driveResyncing)) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterResyncingLight() = render("filter_resyncing", dark = false) { stateOf(fixture.driveSource, mapOf(AccessLevelScreenshotTest.DRIVE_FOLDERS to fixture.driveResyncing)) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterCollectorBehindDark() = render("filter_collector_behind", dark = true) { treePicker(sessions, emptyList(), emptyList(), treeGatewayWith(collectorBehind)) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterCollectorBehindLight() = render("filter_collector_behind", dark = false) { treePicker(sessions, emptyList(), emptyList(), treeGatewayWith(collectorBehind)) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterPickerDevicesDark() = render("filter_picker_devices", dark = true) { treePicker(sessions, emptyList(), emptyList()) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterPickerDevicesLight() = render("filter_picker_devices", dark = false) { treePicker(sessions, emptyList(), emptyList()) }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
     fun filterAccountNotConnectedDark() = render("filter_account_not_connected", dark = true) { filter(disconnectedAccount(fixture.source.id, fixture.names), fixture.disconnectedGateway) }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
@@ -110,9 +133,9 @@ class AccessGalleryScreenshotTest {
     fun reviewChangedFilterDark() = render("review_changed_filter", dark = true) { reviewChangedFilter() }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h1040dp-xxhdpi")
     fun reviewChangedFilterLight() = render("review_changed_filter", dark = false) { reviewChangedFilter() }
-    @Test @Config(sdk = [34], qualifiers = "w393dp-h1400dp-xxhdpi")
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h1450dp-xxhdpi")
     fun reviewDirectRemovedDark() = render("review_direct_removed", dark = true) { reviewDirectRemoved() }
-    @Test @Config(sdk = [34], qualifiers = "w393dp-h1400dp-xxhdpi")
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h1450dp-xxhdpi")
     fun reviewDirectRemovedLight() = render("review_direct_removed", dark = false) { reviewDirectRemoved() }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
     fun reviewNewLevelDark() = render("review_new_level", dark = true) { newLevel(steps = 5) }
@@ -146,10 +169,26 @@ class AccessGalleryScreenshotTest {
     fun approvalReviewDark() = render("approval_review", dark = true) { approval(AccessAuthorizationStep.REVIEW) }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h950dp-xxhdpi")
     fun approvalReviewLight() = render("approval_review", dark = false) { approval(AccessAuthorizationStep.REVIEW) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h960dp-xxhdpi")
+    fun approvalReviewExistingDark() = render("approval_review_existing", dark = true) { approval(AccessAuthorizationStep.REVIEW, existing = true) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h960dp-xxhdpi")
+    fun approvalReviewExistingLight() = render("approval_review_existing", dark = false) { approval(AccessAuthorizationStep.REVIEW, existing = true) }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
-    fun filterPickerProjectFoldersDark() = render("filter_picker_project_folders", dark = true) { treePicker(sessions, listOf(home), listOf(work.ref)) }
+    fun documentDetailsDark() = render("document_details", dark = true) { documentDetails() }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
-    fun filterPickerProjectFoldersLight() = render("filter_picker_project_folders", dark = false) { treePicker(sessions, listOf(home), listOf(work.ref)) }
+    fun documentDetailsLight() = render("document_details", dark = false) { documentDetails() }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h1080dp-xxhdpi")
+    fun documentAccessDark() = render("document_access", dark = true) { documentAccess(Loadable.Content(DocumentFixtures.audit)) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h1080dp-xxhdpi")
+    fun documentAccessLight() = render("document_access", dark = false) { documentAccess(Loadable.Content(DocumentFixtures.audit)) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h600dp-xxhdpi")
+    fun documentAccessLoadingDark() = render("document_access_loading", dark = true) { documentAccess(Loadable.Loading) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h600dp-xxhdpi")
+    fun documentAccessLoadingLight() = render("document_access_loading", dark = false) { documentAccess(Loadable.Loading) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterPickerProjectFoldersDark() = render("filter_picker_project_folders", dark = true) { treePicker(sessions, listOf(studio, home), listOf(work.ref)) }
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
+    fun filterPickerProjectFoldersLight() = render("filter_picker_project_folders", dark = false) { treePicker(sessions, listOf(studio, home), listOf(work.ref)) }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
     fun filterReviewProjectFoldersDark() = render("filter_review_project_folders", dark = true) { treeReview(sessions, work.ref) }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
@@ -175,7 +214,7 @@ class AccessGalleryScreenshotTest {
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme(darkTheme = dark) { Surface(Modifier.fillMaxSize()) { content() } } } }
         compose.waitForIdle()
     }
-    private fun access(draft: AccessLevelDraft?, gateway: ScopeEditorGateway = fixture.gateway, conflict: Boolean = false, menuOpen: Boolean = false, overview: AccessOverview = fixture.overview) {
+    private fun access(draft: AccessLevelDraft?, gateway: FilterEditorGateway = fixture.gateway, conflict: Boolean = false, menuOpen: Boolean = false, overview: AccessOverview = fixture.overview) {
         var current by mutableStateOf(draft)
         show {
             AccessHomeContent(AccessManagementState(overview, current, error = "stale-revision".takeIf { conflict }, conflict = conflict), gateway, onClose = {},
@@ -197,7 +236,7 @@ class AccessGalleryScreenshotTest {
     }
     /** A new level that allows what the saved level's Answer allows, with Direct using Answer's sources, [steps] steps in. */
     private fun newLevel(steps: Int) {
-        val rules = fixture.level.rules.map { rule -> rule.copy(filterRevision = null, scopePolicies = rule.scopePolicies.map { it.copy(audience = ScopeAudience("new", rule.capability.name.lowercase())) }) }
+        val rules = fixture.level.rules.map { rule -> rule.copy(filterRevision = null, scopePolicies = rule.scopePolicies.map { it.copy(audience = FilterAudience("new", rule.capability.name.lowercase())) }) }
         access(AccessLevelDraft.opening(null, fixture.overview).copy(name = "Shared helper", rules = rules, requireAnswerPolicySelection = false))
         repeat(steps) { compose.onNodeWithText("Continue").performClick() }
     }
@@ -207,7 +246,7 @@ class AccessGalleryScreenshotTest {
     }
     /** The WhatsApp filter with the workshop conversation taken out and another person put in. */
     private fun reviewChangedFilter() {
-        val changed = fixture.policy.copy(rules = listOf(ScopeRule(listOf(fixture.maya, fixture.jamie), "hide")))
+        val changed = fixture.policy.copy(rules = listOf(FilterRule(listOf(fixture.maya, fixture.jamie), "hide")))
         access(saved().setPolicy(changed, fixture.source.id, AccessCapability.ANSWER))
         compose.onNodeWithText("Review changes").performClick()
     }
@@ -215,7 +254,7 @@ class AccessGalleryScreenshotTest {
     private fun reviewDirectRemoved() {
         val answer = fixture.level.rules.first { it.capability == AccessCapability.ANSWER }
         val direct = AccessGrantRule.direct(answer.sources).copy(filterRevision = answer.filterRevision,
-            scopePolicies = answer.scopePolicies.map { it.copy(audience = ScopeAudience(fixture.level.id, "direct")) })
+            scopePolicies = answer.scopePolicies.map { it.copy(audience = FilterAudience(fixture.level.id, "direct")) })
         val level = fixture.level.copy(rules = listOf(answer, direct))
         val overview = fixture.overview.copy(levels = listOf(level, fixture.notesLevel))
         access(AccessLevelDraft.opening(level, overview).enabled(AccessCapability.DIRECT, false, overview), overview = overview)
@@ -225,47 +264,64 @@ class AccessGalleryScreenshotTest {
         home()
         compose.onNode(hasText(level) and hasClickAction()).performTouchInput { longClick() }
     }
-    private fun filter(account: AccessSourceInstance = fixture.source, gateway: ScopeEditorGateway = fixture.gateway) = show {
-        SourceFilterEditor(account, fixture.level.id, "answer", fixture.policy, true, gateway, onClose = {}, icon = fixture.icons(account.id), nameFor = fixture.names) {}
+    private fun filter(account: AccessSourceInstance = fixture.source, gateway: FilterEditorGateway = fixture.gateway, policy: SourceFilter = fixture.policy) = show {
+        SourceFilterEditor(account, fixture.level.id, "answer", policy, true, gateway, onClose = {}, icon = fixture.icons(account.id), nameFor = fixture.names) {}
     }
-    private fun filterReview(gateway: ScopeEditorGateway) {
-        filter(gateway = gateway)
+    private fun filterReview(gateway: FilterEditorGateway, account: AccessSourceInstance = fixture.source, policy: SourceFilter = fixture.policy) {
+        filter(account, gateway, policy)
         compose.onNodeWithText("Continue").performClick()
         compose.onNodeWithText("Review filter").performClick()
     }
     private fun peoplePicker() = show {
-        SourceFilterPicker(fixture.source, fixture.gateway, onClose = {}, initialSelection = fixture.refs, state = remember { SourceFilterPickerState("participant", "phone") },
+        SourceFilterPicker(fixture.source, fixture.gateway, onClose = {}, initialSelection = fixture.refs, state = remember { SourceFilterPickerState(FilterRef.PEOPLE_FIELD, "phone") },
             icon = fixture.icons(fixture.source.id), nameFor = fixture.names) {}
     }
     /** The Drive filter's choices, inside the one folder it shares. */
     private fun folderPicker() = show {
         SourceFilterPicker(fixture.driveSource, fixture.gateway, onClose = {}, initialSelection = listOf(fixture.projects.ref),
-            state = remember { SourceFilterPickerState("folder", "").apply { open(fixture.projects) } }, icon = fixture.icons(fixture.driveSource.id), nameFor = fixture.names) {}
+            state = remember { SourceFilterPickerState(AccessLevelScreenshotTest.DRIVE_FOLDERS).apply { open(fixture.projects) } }, icon = fixture.icons(fixture.driveSource.id), nameFor = fixture.names) {}
+    }
+    /** An account's choices while its fields stand in [states] instead of being ready. */
+    private fun stateOf(account: AccessSourceInstance, states: Map<String, FilterFieldState>) = show {
+        SourceFilterPicker(account, fixture.gatewayFor(states = mapOf(account.id to states)), onClose = {}, state = remember { SourceFilterPickerState(states.keys.first()) },
+            icon = fixture.icons(account.id), nameFor = fixture.names) {}
     }
 
     /** A tree account's choices, opened at [trail], with [selected] ticked. */
-    private fun treePicker(account: AccessSourceInstance, trail: List<ScopeOption>, selected: List<ScopeRef>) = show {
-        SourceFilterPicker(account, treeGateway, onClose = {}, initialSelection = selected,
-            state = remember { SourceFilterPickerState("folder", "").apply { trail.forEach(::open) } }, icon = fixture.icons(account.id), nameFor = treeNames) {}
+    private fun treePicker(account: AccessSourceInstance, trail: List<FilterOption>, selected: List<FilterRef>, gateway: FilterEditorGateway = treeGateway) = show {
+        SourceFilterPicker(account, gateway, onClose = {}, initialSelection = selected,
+            state = remember { SourceFilterPickerState(treeFields.getValue(account).field).apply { trail.forEach(::open) } }, icon = fixture.icons(account.id), nameFor = treeNames) {}
     }
     /** A tree account's filter sharing only [shared], at its review. */
-    private fun treeReview(account: AccessSourceInstance, shared: ScopeRef) {
-        val policy = ScopePolicy(account.id, ScopeAudience(fixture.level.id, "answer"), listOf(ScopeRule(listOf(shared), "share")), "hide")
+    private fun treeReview(account: AccessSourceInstance, shared: FilterRef) {
+        val policy = SourceFilter(account.id, FilterAudience(fixture.level.id, "answer"), listOf(FilterRule(listOf(shared), "share")), "hide")
         show { SourceFilterEditor(account, fixture.level.id, "answer", policy, true, treeGateway, onClose = {}, icon = fixture.icons(account.id), nameFor = treeNames) {} }
         compose.onNodeWithText("Continue").performClick()
         compose.onNodeWithText("Review filter").performClick()
     }
 
+    /** The WhatsApp day's details, with its filter details and the way to who can read it. */
+    private fun documentDetails() = show {
+        InspectorContent(DocumentFixtures.bundle(fixture.icons(fixture.source.id)), onDone = {}, onOpenAccess = {})
+    }
+    /** "Who can read this?" for the WhatsApp day, in [state]. */
+    private fun documentAccess(state: Loadable<DocumentAccessAudit>) = show {
+        DocumentAccessContent(state, iconFor = fixture.icons, onBack = {}, onRetry = {})
+    }
+
     /** A request from an agent the gateway has not seen, asking for Answer and Direct, nine minutes before it expires. */
-    private fun approval(step: AccessAuthorizationStep) {
+    private fun approval(step: AccessAuthorizationStep, existing: Boolean = false) {
         val request = AccessAuthorizationRequest(
             id = "request_example", approvalId = "approval_example", status = "pending", clientId = "client_example", clientName = "Northstar Assistant",
             redirectOrigin = "http://127.0.0.1:10000", resource = "https://gateway.example.com/mcp", scope = "omnesis:access",
             expiresAt = REFERENCE_NOW + 540_000, requiresAnswer = false,
         )
-        val proposal = AccessConnectionProposal(defaultName = "Northstar Assistant", defaultLevelName = "Northstar Assistant")
+        val fresh = AccessConnectionProposal(defaultName = "Northstar Assistant", defaultLevelName = "Northstar Assistant")
+        // Picking "Research assistant" for the agent, as a proposal that matched it to that level suggests.
+        val proposal = if (!existing) fresh else fresh.copy(recommended = "existing-level", match = AccessConnectionMatch("principal-0", "Aurora Planner", "client",
+            fixture.level.id, fixture.overview.principals.first().grants.first()))
         val initial = AccessAuthorizationForm.initial(request, fixture.overview, proposal, nowMillis = REFERENCE_NOW)
-        val form = initial.editing { it.reading(AccessCapability.ANSWER, *fixture.overview.sources.map { account -> account.id }.toTypedArray()).enabled(AccessCapability.DIRECT, true, fixture.overview) }
+        val form = if (existing) initial else initial.editing { it.reading(AccessCapability.ANSWER, *fixture.overview.sources.map { account -> account.id }.toTypedArray()).enabled(AccessCapability.DIRECT, true, fixture.overview) }
         show {
             AccessAuthorizationContent(
                 state = AccessAuthorizationUiState(request = request, overview = fixture.overview, form = form, step = step),
@@ -278,44 +334,67 @@ class AccessGalleryScreenshotTest {
         /** The instant every approval render is drawn at, so its deadline reads the same on every recording. */
         const val REFERENCE_NOW = 1_782_000_000_000L
 
-        // The two tree accounts: a coding agent's sessions by project folder, and repositories under their owners.
-        // Contracts as their providers declare them; every folder, owner and repository is invented.
-        private val projectFolderContract = SourceScopes(listOf(SourceScopeItem("folder", "hierarchy", noun = SourceScopeNoun("project folder", "project folders"), picker = "tree")), revision = 1)
-        private val repositoryContract = SourceScopes(listOf(SourceScopeItem("folder", "hierarchy", noun = SourceScopeNoun("repository or owner", "repositories and owners"), picker = "tree",
-            levels = listOf(SourceScopeNoun("owner", "owners"), SourceScopeNoun("repository", "repositories")))), revision = 1)
-        private val treeReady = listOf(ScopeKindReadiness("folder", true))
-        val sessions = AccessSourceInstance("claude-code:studio-laptop", "Claude Code Sessions · studio-laptop", sourceType = "claude-code", scopes = projectFolderContract, scopeReadiness = treeReady)
-        val repositories = AccessSourceInstance("github:maya-reeves", "GitHub · maya-reeves", sourceType = "github", scopes = repositoryContract, scopeReadiness = treeReady)
-        private fun node(id: String, label: String, count: Long, parent: String? = null, children: Boolean = false, depth: Int? = null) =
-            ScopeOption(ScopeRef("folder", id), label, count, parentId = parent, hasChildren = children, depth = depth)
-        val home = node("dir:home", "~", 46, children = true)
-        val work = node("dir:work", "~/work", 31, parent = home.ref.id, children = true)
-        private val folderNodes = listOf(home, work, node("dir:personal", "~/personal", 15, parent = home.ref.id, children = true),
-            node("dir:atlas-api", "~/work/atlas-api", 19, parent = work.ref.id), node("dir:billing-service", "~/work/billing-service", 12, parent = work.ref.id),
-            node("dir:garden-notes", "~/personal/garden-notes", 15, parent = "dir:personal"))
-        val northstar = node("owner:4101", "northstar-labs", 34, children = true, depth = 0)
-        private val repositoryNodes = listOf(northstar, node("owner:4102", "maya-reeves", 8, children = true, depth = 0),
-            node("repo:5201", "northstar-labs/atlas-api", 19, parent = northstar.ref.id, depth = 1), node("repo:5202", "northstar-labs/atlas-api-docs", 6, parent = northstar.ref.id, depth = 1),
-            node("repo:5203", "northstar-labs/billing-service", 9, parent = northstar.ref.id, depth = 1), node("repo:5204", "maya-reeves/garden-notes", 8, parent = "owner:4102", depth = 1))
-        private val treeNodes = mapOf(sessions to folderNodes, repositories to repositoryNodes)
-        val treeNames: (String) -> String? = { id -> mapOf("claude-code" to "Claude Code Sessions", "github" to "GitHub")[id.substringBefore(':')] }
-        /** A gateway over the two tree accounts; a share filter shares what its one item holds. */
-        val treeGateway = object : ScopeEditorGateway {
-            private fun account(id: String) = treeNodes.keys.first { it.id == id }
-            override suspend fun preview(policy: ScopePolicy): ScopePreview {
-                assertProviderWirePolicy(policy)
-                val account = account(policy.sourceId)
-                val nodes = treeNodes.getValue(account)
-                val matched = policy.rules.flatMap { it.match }.map { ref -> nodes.first { it.ref == ref } }
-                val total = nodes.filter { it.parentId == null }.sumOf { it.count }
-                val shared = matched.sumOf { it.count }
-                return ScopePreview(account.id, total, shared, total - shared, 0, matched.map { ScopePreviewItem(it.ref, it.label, it.count, it.parentId, depth = it.depth) },
-                    listOf(ScopePreviewSample("visible", "Atlas API rate limits", true, false), ScopePreviewSample("hidden", "Garden notes layout", false, false)), treeReady)
-            }
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions {
-                val account = account(sourceId)
-                return assertProviderWireOptions(ScopeOptions(account.id, account.sourceType!!, account.scopes!!, treeReady, treeNodes.getValue(account).filter { it.parentId == parentId }), account, kind)
-            }
+        // The two tree accounts: a coding agent's sessions by project folder on two devices, and repositories under
+        // their owners. Fields as their providers declare them; every folder, owner and repository is invented.
+        private const val PROJECT_DIR = "extra.projectDir"
+        private const val REPOSITORY = "extra.repositoryId"
+        private val projectField = readyField(PROJECT_DIR, FilterRef.TREE, "project folder", "project folders", picker = "tree", scope = "device",
+            insideText = "Includes the project folders inside.")
+        private val repositoryField = readyField(REPOSITORY, FilterRef.TREE, "repository", "repositories", picker = "tree",
+            levels = listOf(FilterNoun("owner", "owners"), FilterNoun("repository", "repositories")), insideText = "Includes the repositories inside.")
+        val sessions = AccessSourceInstance("claude-code:sessions", "Claude Code · Studio Mac, Travel laptop", sourceType = "claude-code", filterable = true)
+        val repositories = AccessSourceInstance("github:maya-reeves", "GitHub · maya-reeves", sourceType = "github", filterable = true)
+        val treeFields = mapOf(sessions to projectField, repositories to repositoryField)
+        private val devices = listOf(FilterDevice("dev_studio", "Studio Mac"), FilterDevice("dev_travel", "Travel laptop"))
+        /** Project folders cannot be filtered until the travel laptop's Omnesis is updated. */
+        val collectorBehind = FilterFieldState(FilterFieldState.COLLECTOR_BEHIND, devices = devices.take(1), text = "Update Omnesis on Studio Mac to use these filters.")
+        private fun node(id: String, label: String, short: String, count: Long, parent: String? = null, children: Boolean = false, depth: Int? = null, device: String? = null, field: String = PROJECT_DIR) =
+            FilterOption(FilterRef.item(FilterRef.TREE, field, id, device), label, short, count, parentId = parent, hasChildren = children.takeIf { it }, depth = depth)
+        private fun folder(path: String, count: Long, parent: String?, children: Boolean = false) =
+            node(path, path, path.substringAfterLast('/'), count, parent, children, device = "dev_studio")
+        val studio = node("", "Studio Mac", "Studio Mac", 46, children = true, device = "dev_studio")
+        val home = folder("~", 46, null, children = true)
+        val work = folder("~/work", 31, home.ref.id, children = true)
+        private val sessionNodes = listOf(studio, node("", "Travel laptop", "Travel laptop", 12, children = true, device = "dev_travel"),
+            node("~", "~", "~", 12, device = "dev_travel"),
+            home, work, folder("~/personal", 15, home.ref.id, children = true), folder("~/scratch", 0, home.ref.id),
+            folder("~/work/atlas-api", 19, work.ref.id), folder("~/work/billing-service", 12, work.ref.id), folder("~/personal/garden-notes", 15, "~/personal"))
+        private fun repo(id: String, label: String, count: Long, parent: String? = null, children: Boolean = false, depth: Int) =
+            node(id, label, label.substringAfterLast('/'), count, parent, children, depth, field = REPOSITORY)
+        val northstar = repo("4101", "northstar-labs", 34, children = true, depth = 0)
+        private val repositoryNodes = listOf(northstar, repo("4102", "maya-reeves", 8, children = true, depth = 0),
+            repo("5201", "northstar-labs/atlas-api", 19, northstar.ref.id, depth = 1), repo("5202", "northstar-labs/atlas-api-docs", 6, northstar.ref.id, depth = 1),
+            repo("5203", "northstar-labs/billing-service", 9, northstar.ref.id, depth = 1), repo("5204", "maya-reeves/garden-notes", 8, "4102", depth = 1))
+        private val treeNodes = mapOf(sessions to sessionNodes, repositories to repositoryNodes)
+        val treeNames: (String) -> String? = { id -> mapOf("claude-code" to "Claude Code", "github" to "GitHub")[id.substringBefore(':')] }
+        /** The children of [parentId] in [device]'s tree; the devices themselves above a per-device tree. */
+        private fun childrenOf(account: AccessSourceInstance, parentId: String?, device: String?): List<FilterOption> = treeNodes.getValue(account).filter { node ->
+            if (node.ref.isDevice) parentId == null && device == null
+            else !node.ref.isDevice && node.parentId == parentId && (node.ref.device == null || (device != null && node.ref.device == device))
         }
+        /** A gateway over the two tree accounts, with the project folders in [state]; a share filter shares what its one item holds. */
+        fun treeGatewayWith(state: FilterFieldState = FilterFieldState(FilterFieldState.READY)) = object : FilterEditorGateway {
+            private fun account(id: String) = treeNodes.keys.first { it.id == id }
+            override suspend fun editor(sourceId: String): FilterEditor {
+                val account = account(sourceId)
+                val field = treeFields.getValue(account)
+                return if (account == sessions) FilterEditor(sourceId, "claude-code", devices, showDeviceLevel = true, fields = listOf(field.copy(state = state)))
+                    else FilterEditor(sourceId, "github", listOf(devices.first()), fields = listOf(field))
+            }
+            override suspend fun preview(policy: SourceFilter): FilterPreview {
+                assertProviderWirePolicy(policy)
+                val nodes = treeNodes.getValue(account(policy.sourceId))
+                val matched = policy.rules.flatMap { it.match }.map { ref -> nodes.first { filterRefKey(it.ref) == filterRefKey(ref) } }
+                val total = nodes.filter { it.parentId == null && (it.ref.isDevice || nodes.none { other -> other.ref.isDevice }) }.sumOf { it.count!! }
+                return readyPreview(policy.sourceId, total, matched.sumOf { it.count!! }, matched.map { FilterPreviewItem(it.ref, it.label, it.count!!, depth = it.depth) })
+            }
+            override suspend fun options(sourceId: String, field: String, query: String, parentId: String?, device: String?, cursor: String?): FilterOptions {
+                val account = account(sourceId)
+                return assertProviderWireOptions(FilterOptions(sourceId, field, childrenOf(account, parentId, device)), treeFields.getValue(account), sourceId)
+            }
+            override suspend fun identifier(type: String, value: String): FilterIdentifierCheck = error("Tree accounts take no typed addresses")
+            override suspend fun resync(sourceId: String) = Unit
+        }
+        val treeGateway = treeGatewayWith()
     }
 }

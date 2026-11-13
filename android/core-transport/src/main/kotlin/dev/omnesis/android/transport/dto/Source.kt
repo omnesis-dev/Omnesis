@@ -59,6 +59,19 @@ data class SourceInventory(
     val removedSourceIds: List<String> = emptyList(),
 )
 
+/** How a resync treats what the source already indexed. */
+enum class ResyncMode(val wire: String) {
+    /** Nothing is deleted: the source is read again and each item updates the record it already has. */
+    IN_PLACE("in-place"),
+
+    /** Everything the source indexed is deleted, then imported again. */
+    FROM_SCRATCH("from-scratch"),
+}
+
+/** Request body for `POST /admin/sources/:id/resync` — a [ResyncMode.wire] value. */
+@Serializable
+data class SourceResyncBody(val mode: String)
+
 /** Request body for `POST /admin/sources/:id/members` — the device joining the source. */
 @Serializable
 data class SourceMemberBody(val deviceId: String)

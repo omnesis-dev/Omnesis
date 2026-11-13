@@ -7,11 +7,11 @@ import androidx.compose.runtime.*
 import dev.omnesis.android.transport.dto.*
 
 /** Where the picker is and what it has listed. Navigation hints only: applying a filter still needs a fresh preview of that exact filter. */
-internal class SourceFilterPickerState(initialKind: String, initialIdentifier: String) {
-    internal data class Location(val kind: String, val query: String, val trail: List<String>)
+internal class SourceFilterPickerState(initialField: String = "", initialIdentifier: String = "") {
+    internal data class Location(val field: String, val query: String, val trail: List<String>)
     internal class Page {
         var cursor by mutableStateOf<String?>(null)
-        var options by mutableStateOf<ScopeOptions?>(null)
+        var options by mutableStateOf<FilterOptions?>(null)
         var error by mutableStateOf<String?>(null)
         var loading by mutableStateOf(false)
         var retry by mutableIntStateOf(0)
@@ -24,12 +24,12 @@ internal class SourceFilterPickerState(initialKind: String, initialIdentifier: S
         val listState = LazyListState()
     }
     private val pages = mutableMapOf<Location, Page>()
-    private val kindLocations = mutableMapOf<String, Pair<String, List<ScopeOption>>>()
+    private val fieldLocations = mutableMapOf<String, Pair<String, List<FilterOption>>>()
     private val trailQueries = mutableMapOf<Pair<String, List<String>>, String>()
-    var kind by mutableStateOf(initialKind)
+    var field by mutableStateOf(initialField)
     var query by mutableStateOf("")
-    var ancestors by mutableStateOf<List<ScopeOption>>(emptyList())
-    val location get() = Location(kind, query, ancestors.map { scopeRefKey(it.ref) })
+    var ancestors by mutableStateOf<List<FilterOption>>(emptyList())
+    val location get() = Location(field, query, ancestors.map { filterRefKey(it.ref) })
     val page get() = pages.getOrPut(location) { Page() }
     val options get() = page.options
     val error get() = page.error
@@ -38,33 +38,34 @@ internal class SourceFilterPickerState(initialKind: String, initialIdentifier: S
     var enteringIdentifier by mutableStateOf(false)
     var identifierType by mutableStateOf(initialIdentifier)
     var typed by mutableStateOf("")
-    val parent: String? get() = ancestors.lastOrNull()?.ref?.id
-    fun chooseKind(value: String) {
-        if (value == kind) return
-        kindLocations[kind] = query to ancestors
-        val target = kindLocations[value]
-        kind = value; query = target?.first.orEmpty(); ancestors = target?.second.orEmpty(); enteringIdentifier = false
+    /** What the gateway said of the address last typed, until the text changes. */
+    var identifierError by mutableStateOf<String?>(null)
+    /** The item whose children are listed; null at the top, and at a device of a per-device tree. */
+    val parent: String? get() = ancestors.lastOrNull()?.ref?.id?.takeIf { it.isNotEmpty() }
+    /** The device whose tree is listed, once one is opened. */
+    val device: String? get() = ancestors.firstNotNullOfOrNull { it.ref.device }
+    fun chooseField(value: String) {
+        if (value == field) return
+        fieldLocations[field] = query to ancestors
+        val target = fieldLocations[value]
+        field = value; query = target?.first.orEmpty(); ancestors = target?.second.orEmpty(); enteringIdentifier = false
     }
-    private fun moveTo(trail: List<ScopeOption>) {
-        trailQueries[kind to ancestors.map { scopeRefKey(it.ref) }] = query
+    /** Starts on the first of [fields], unless the picker already stands on one of them. */
+    fun settle(fields: List<FilterEditorField>) {
+        if (fields.none { it.field == field }) fields.firstOrNull()?.let { field = it.field; query = ""; ancestors = emptyList() }
+    }
+    private fun moveTo(trail: List<FilterOption>) {
+        trailQueries[field to ancestors.map { filterRefKey(it.ref) }] = query
         ancestors = trail
-        query = trailQueries[kind to trail.map { scopeRefKey(it.ref) }].orEmpty()
+        query = trailQueries[field to trail.map { filterRefKey(it.ref) }].orEmpty()
     }
-    fun open(folder: ScopeOption) = moveTo(ancestors + folder)
+    fun open(folder: FilterOption) = moveTo(ancestors + folder)
     fun goToAncestor(index: Int) = moveTo(ancestors.take(index + 1))
-
-    companion object {
-        /** The picker as an account's filter first opens it: on the first kind the account offers, typing its first kind of address. */
-        fun opening(source: AccessSourceInstance): SourceFilterPickerState {
-            val kinds = source.scopes?.items.orEmpty()
-            return SourceFilterPickerState(kinds.firstOrNull()?.kind ?: "participant", kinds.firstOrNull { it.kind == "participant" }?.identifiers?.firstOrNull().orEmpty())
-        }
-    }
 }
 
 /** The picker of each filter opened on one draft, so reopening an account's filter returns to where it was left. */
 internal class SourceFilterNavigation {
-    private val pickers = mutableMapOf<Triple<String, AccessCapability, Int?>, SourceFilterPickerState>()
+    private val pickers = mutableMapOf<Pair<String, AccessCapability>, SourceFilterPickerState>()
     fun of(source: AccessSourceInstance, capability: AccessCapability): SourceFilterPickerState =
-        pickers.getOrPut(Triple(source.id, capability, source.scopes?.revision)) { SourceFilterPickerState.opening(source) }
+        pickers.getOrPut(source.id to capability) { SourceFilterPickerState() }
 }

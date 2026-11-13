@@ -54,6 +54,11 @@ internal fun ReviewStep(
             AccessDecisionRow(title, value, action = "Change".takeIf { connection != null }, actionDescription = changeDescription(title),
                 capabilities = AccessCapabilityHoldings.of(review.rules).takeIf { title == "Access level" && !decides }) { connection?.let(change) }
         }
+        // An existing level is listed read-only under its row, decision by decision as the level page states them.
+        if (!decides && review.accessLevel != null && review.replaces == null) {
+            val decisions = levelDecisions("", review.rules, overview, directLinkedIn(review.rules)).filter { it.page != AccessLevelPage.NAME && it.page != AccessLevelPage.PERMISSIONS }
+            decisions.forEachIndexed { index, decision -> AccessDecisionRow(decision, last = index == decisions.lastIndex) }
+        }
         if (decides) AccessDecisionSummary(review.rules, overview, linked = review.linked, change = if (permissions == null) null else { page ->
             val target = if (page == AccessLevelPage.PERMISSIONS) permissions
                 else positions.firstOrNull { it.dataPage == page } ?: positions.firstOrNull { it.dataPage != null && it.dataPage.capability() == page.capability() }

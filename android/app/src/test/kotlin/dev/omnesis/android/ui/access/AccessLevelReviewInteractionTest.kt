@@ -21,16 +21,12 @@ import org.robolectric.annotation.Config
 class AccessLevelReviewInteractionTest {
     @get:Rule val compose = createComposeRule()
     private val chat = AccessSourceInstance("chat:+15550100123", "Chat · +1 (555) 010-0123")
-    private val workshop = ScopeRef("conversation", "conversation-workshop")
-    private val policy = ScopePolicy(chat.id, ScopeAudience("level-example", "direct"), listOf(ScopeRule(listOf(workshop), "hide")), "share")
+    private val workshop = FilterRef.item(FilterRef.MEMBERSHIP, "extra.chatId", "conversation-workshop")
+    private val policy = SourceFilter(chat.id, FilterAudience("level-example", "direct"), listOf(FilterRule(listOf(workshop), "hide")), "share")
     private val boundary = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(chat.id))
     private val notes = AccessGrantRule.notes()
     private val direct = AccessGrantRule.direct(boundary).copy(filterRevision = 1, scopePolicies = listOf(policy))
-    private val gateway = object : ScopeEditorGateway {
-        override suspend fun preview(policy: ScopePolicy) = ScopePreview(policy.sourceId, 120, 96, 24, 0,
-            listOf(ScopePreviewItem(workshop, "Workshop planning", 24)), emptyList(), listOf(ScopeKindReadiness("conversation", true)))
-        override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = error("No picker expected")
-    }
+    private val gateway = FakeFilterGateway(previewFor = { policy -> readyPreview(policy.sourceId, 120, 96, listOf(FilterPreviewItem(workshop, "Workshop planning", 24))) })
 
     private fun review(saved: List<AccessGrantRule>, edit: (AccessLevelDraft, AccessOverview) -> AccessLevelDraft) {
         val level = AccessLevelSummary("level-example", "Research assistant", 2, saved, 0)

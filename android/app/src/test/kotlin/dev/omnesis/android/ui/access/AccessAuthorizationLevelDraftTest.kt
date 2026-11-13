@@ -19,7 +19,7 @@ class AccessAuthorizationLevelDraftTest {
         id = "request_example", approvalId = "approval_example", status = "pending", clientId = "client_example", clientName = "Fictional assistant",
         redirectOrigin = "http://127.0.0.1:10000", resource = "https://gateway.example.com/mcp", scope = "omnesis:access", expiresAt = 2_000_000_000_000, requiresAnswer = requiresAnswer,
     )
-    private val filter = ScopePolicy(files.id, ScopeAudience("new", "answer"), listOf(ScopeRule(listOf(ScopeRef("folder", "folder-example")), "share")), "hide")
+    private val filter = SourceFilter(files.id, FilterAudience("new", "answer"), listOf(FilterRule(listOf(FilterRef.item(FilterRef.TREE, "extra.folderId", "folder-example")), "share")), "hide")
     private fun reconnect(vararg rules: AccessGrantRule) = AccessReconnectProposal("client", AccessReconnectPrincipal("principal_example", "Fictional assistant"),
         AccessGrantSummary(id = "grant_example", name = "Fictional assistant access", revision = 2, rules = rules.toList(), credentials = emptyList()))
     private fun fresh() = AccessAuthorizationForm.initial(request(), overview)
@@ -43,19 +43,19 @@ class AccessAuthorizationLevelDraftTest {
         assertTrue(sent(separate).all { it.filterRevision == null && it.scopePolicies.isEmpty() })
         val filtered = sent(linked).filter { it.capability != AccessCapability.NOTES }
         assertEquals(2, filtered.size)
-        assertTrue(filtered.all { it.filterRevision == 0 && it.scopePolicies.single().audience == ScopeAudience("new", it.capability.wire) })
+        assertTrue(filtered.all { it.filterRevision == 0 && it.scopePolicies.single().audience == FilterAudience("new", it.capability.wire) })
     }
 
     @Test fun aKnownClientsRulesStartTheDraftAddressedToTheNewLevel() {
-        val saved = filter.copy(audience = ScopeAudience("level-example", "answer"))
+        val saved = filter.copy(audience = FilterAudience("level-example", "answer"))
         val boundary = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(files.id))
         val form = AccessAuthorizationForm.initial(request(), overview, reconnect = reconnect(
             AccessGrantRule.answer(boundary, AccessAnswerRelease.reviewed(policyFamily.id)).copy(filterRevision = 6, scopePolicies = listOf(saved)),
-            AccessGrantRule.direct(boundary).copy(filterRevision = 3, scopePolicies = listOf(saved.copy(audience = ScopeAudience("level-example", "direct")))),
+            AccessGrantRule.direct(boundary).copy(filterRevision = 3, scopePolicies = listOf(saved.copy(audience = FilterAudience("level-example", "direct")))),
         ))
         // Direct reads exactly what Answer reads, filters included, so the draft opens with the two linked as the level editor opens them.
         assertTrue(form.level.directLinked)
-        assertTrue(sent(form).all { it.filterRevision == 0 && it.scopePolicies.single().audience == ScopeAudience("new", it.capability.wire) })
+        assertTrue(sent(form).all { it.filterRevision == 0 && it.scopePolicies.single().audience == FilterAudience("new", it.capability.wire) })
         assertEquals(filter.rules, sent(form).first().scopePolicies.single().rules)
     }
 

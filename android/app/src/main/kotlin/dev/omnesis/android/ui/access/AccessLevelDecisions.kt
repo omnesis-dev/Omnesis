@@ -59,7 +59,7 @@ private fun accountInventory(rule: AccessGrantRule, overview: AccessOverview, na
 
 /** The pill that states what one capability reads from an account. */
 @Composable
-private fun AccountStatus(allowed: Boolean, policy: ScopePolicy?) {
+private fun AccountStatus(allowed: Boolean, policy: SourceFilter?) {
     when {
         allowed -> AccessPill(scopePolicySummary(policy), scopePolicyTone(policy))
         policy != null -> AccessPill("$NOT_SHARED · saved filter kept", AccessPillTone.OUTLINE)
@@ -103,14 +103,14 @@ internal fun AccessDataQuestion(
                 }
             }
             AccessDivider()
-            if (visible.isEmpty()) Text("No sources match this search.", style = AccessType.Subtitle, color = colors.secondary, modifier = Modifier.padding(top = 14.dp))
+            if (visible.isEmpty()) Text("No accounts match this search.", style = AccessType.Subtitle, color = colors.secondary, modifier = Modifier.padding(top = 14.dp))
         }
         visible.forEachIndexed { index, source ->
             val allowed = selection.allows(source.id)
             val policy = rule.scopePolicies.firstOrNull { it.sourceId == source.id }
             val next = selection.setAllowed(source.id, !allowed)
             val name = source.accountName(nameFor)
-            val filterable = (allowed && authoring == true && source.scopes != null) || policy != null
+            val filterable = (allowed && authoring == true && source.filterable) || policy != null
             // An account that is no longer connected can be taken out of the level, but not put back in.
             AccessAccountRow(name, accessSourceIcon(source, iconFor), last = index == visible.lastIndex, checked = allowed,
                 enabled = editing && (source.available || allowed) && permitted(next), onToggle = { choose(next) },

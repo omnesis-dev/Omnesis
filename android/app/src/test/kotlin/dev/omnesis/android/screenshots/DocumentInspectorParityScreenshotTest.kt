@@ -58,6 +58,9 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 class DocumentInspectorParityScreenshotTest {
 
+    /** Document timestamps are shown in local time; every render draws them in UTC so they read the same on any host. */
+    @org.junit.Before fun utc() { java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC")) }
+
     private fun capture(name: String, dark: Boolean, content: @Composable () -> Unit) {
         captureRoboImage(filePath = "src/test/roborazzi/$name.png") {
             CompositionLocalProvider(LocalInspectionMode provides true) {
