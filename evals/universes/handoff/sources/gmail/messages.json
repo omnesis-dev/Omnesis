@@ -10,7 +10,8 @@
     "sentAt": "2025-08-29T17:30:00Z",
     "scheduledAt": "2025-09-01T17:00:00Z",
     "threadId": "t_q3_kickoff",
-    "labels": ["INBOX", "Work"]
+    "labels": ["INBOX", "Work"],
+    "labelIds": ["INBOX", "Label_synthetic_005"]
   },
   {
     "externalId": "synth-gmail-002",
@@ -23,7 +24,8 @@
     "sentAt": "2025-09-01T07:00:00Z",
     "dueAt": "2025-09-07T23:59:00Z",
     "threadId": "t_marathon_w6",
-    "labels": ["INBOX", "Personal", "Running"]
+    "labels": ["INBOX", "Personal", "Running"],
+    "labelIds": ["INBOX", "Label_synthetic_002", "Label_synthetic_003"]
   },
   {
     "externalId": "synth-gmail-003",
@@ -37,6 +39,7 @@
     "scheduledAt": "2025-09-03T18:00:00Z",
     "dueAt": "2025-09-05T17:00:00Z",
     "threadId": "t_vendor_eval_acme_personal",
-    "labels": ["SENT"]
+    "labels": ["SENT"],
+    "labelIds": ["SENT"]
   }
 ]
