@@ -266,18 +266,19 @@ export class GoogleGroupMembership implements GoogleGroupGate {
     } catch (error) {
       throw this.failed(step, error instanceof Error ? error.name : "a network error");
     }
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      return { status: response.status, body: undefined };
-    }
     const chunks: Uint8Array[] = [];
     let size = 0;
     try {
+      // An error status is all the answer there is; its body is not read.
+      if (!response.ok) {
+        await response.body?.cancel();
+        return { status: response.status, body: undefined };
+      }
       const reader = response.body?.getReader();
       for (let read = await reader?.read(); read && !read.done; read = await reader!.read()) {
         size += read.value.length;
         if (size > MAX_RESPONSE_BYTES) {
-          await reader!.cancel().catch(() => {});
+          await reader!.cancel();
           throw new Error("too large");
         }
         chunks.push(read.value);

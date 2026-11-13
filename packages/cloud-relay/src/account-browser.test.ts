@@ -341,7 +341,7 @@ test("a sign-up outside the invitation group is told accounts are invite-only an
   expect(f.document.querySelectorAll("button")).toHaveLength(0);
 
   // Without a usable link, the operator's value is shown as before.
-  for (const joinUrl of [undefined, "javascript:alert(1)"]) {
+  for (const joinUrl of [undefined, "javascript:alert(1)", "not a url"]) {
     const plain = setup();
     plain.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
     plain.session({

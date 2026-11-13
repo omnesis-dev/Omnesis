@@ -127,13 +127,12 @@ export class AccountWeb {
     const query = new URL(req.url!, this.origin).searchParams;
     if (query.getAll("link").length > 1 || (query.has("link") && query.get("link") !== "1"))
       throw new RelayError(400, "Invalid account linking request");
-    const target = this.target(req);
+    const target = this.target(req),
+      cookieHeader = req.headers.cookie ?? "";
     if (target && query.has("link")) throw new RelayError(400, "Finish this sign-in first");
-    const nonce =
-      target && this.broker(target.kind).googleProofNonce(target.id, req.headers.cookie ?? "");
+    const nonce = target && this.broker(target.kind).googleProofNonce(target.id, cookieHeader);
     // Only a sign-up whose invitation is a Google Group needs the address.
-    const email =
-      target?.kind === "signup" && this.signup().requestsEmail(target.id, req.headers.cookie ?? "");
+    const email = target?.kind === "signup" && this.signup().requestsEmail(target.id, cookieHeader);
     let linkSession: string | undefined;
     if (query.has("link")) {
       linkSession = cookie(req, sessionCookie);

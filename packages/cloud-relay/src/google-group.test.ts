@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UnsecuredJWT } from "jose";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { FakeGoogle } from "../test/fake-google.js";
 import { googleFixture } from "./google-fixture.js";
 import {
@@ -16,6 +16,7 @@ import {
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
+  vi.unstubAllGlobals();
   for (const close of cleanup.splice(0).reverse()) await close();
 });
 
@@ -155,6 +156,63 @@ test("an oversized or malformed answer is a failure, not a verdict", async () =>
     );
 });
 
+test("a nested check answering something else is a failure, not a verdict", async () => {
+  const f = await fixture({
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.includes("checkTransitiveMembership")) return Response.json({ hasMembership: "yes" });
+      return f.fetch(input, init);
+    },
+  });
+  await expect(f.membership.isMember("jamie.lopez@example.com")).rejects.toThrow(
+    "nested membership check failed with an unexpected response",
+  );
+});
+
+test("a failure that is not an error object still fails the check without naming anyone", async () => {
+  const f = await fixture({
+    fetch: () => Promise.reject("offline" as unknown as Error),
+  });
+  await expect(f.membership.isMember("maya.reeves@example.com")).rejects.toThrow(
+    "token request failed with a network error",
+  );
+});
+
+test("without a test transport the relay calls google's own endpoints", async () => {
+  const google = await FakeGoogle.start();
+  cleanup.push(() => google.close());
+  const directory = await mkdtemp(join(tmpdir(), "omnesis-google-group-"));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const credentialsFile = join(directory, "service-account.json");
+  await writeFile(credentialsFile, JSON.stringify(google.serviceAccountKey()));
+  const called: string[] = [];
+  vi.stubGlobal("fetch", async (input: string | URL) => {
+    called.push(String(input));
+    return new Response("", { status: 503 });
+  });
+  const membership = await loadGoogleGroupMembership({
+    group: "testers@example.com",
+    credentialsFile,
+  });
+  await expect(membership.isMember("maya.reeves@example.com")).rejects.toBeInstanceOf(
+    GoogleGroupUnavailable,
+  );
+  expect(called).toEqual(["https://oauth2.googleapis.com/token"]);
+});
+
+test("a key without a key id still signs its token request", async () => {
+  const f = await fixture();
+  const { private_key_id: _, ...key } = f.google.serviceAccountKey();
+  await writeFile(f.credentialsFile, JSON.stringify(key));
+  const membership = await loadGoogleGroupMembership({
+    group: "testers@example.com",
+    credentialsFile: f.credentialsFile,
+    fetch: f.fetch,
+  });
+  f.google.members.add("maya.reeves@example.com");
+  expect(await membership.isMember("maya.reeves@example.com")).toBe(true);
+});
+
 test("an address that is not one is not a member and asks Google nothing", async () => {
   const f = await fixture();
   for (const value of ["", "no-at-sign", "two words@example.com", "line\nbreak@example.com"])
@@ -229,4 +287,8 @@ test("the google fixture is only for a synthetic loopback relay and serves only 
   const fixture = googleFixture("http://127.0.0.1:9/", "::1", true)!;
   expect(fixture.authorizationEndpoint).toBe("http://127.0.0.1:9/o/oauth2/v2/auth");
   expect(() => fixture.fetch("https://example.com/token")).toThrow("serves only");
+  expect(() => fixture.fetch(new URL("https://example.com/token"))).toThrow("serves only");
+  expect(() => fixture.fetch(new Request("https://oauth2.googleapis.com/token"))).toThrow(
+    "takes a URL",
+  );
 });
