@@ -13,6 +13,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.runComposeUiTest
 import com.github.takahirom.roborazzi.captureRoboImage
 import dev.omnesis.android.wear.ui.OmnesisWearTheme
 import org.robolectric.RuntimeEnvironment
@@ -32,15 +35,23 @@ enum class WatchShape(val label: String, val qualifiers: String, val round: Bool
  * Capture [content] once per [WatchShape] as `<name>_<shape>.png`. A round
  * display is drawn as a black disc on grey, so anything a real round screen
  * would cut off is visibly outside the disc. Inspection mode holds every
- * endless animation still.
+ * endless animation still. The test clock stops one second after composition,
+ * before Wear's two-second scroll-indicator auto-hide, regardless of host speed.
  */
+@OptIn(ExperimentalTestApi::class)
 fun captureOnEveryWatch(name: String, content: @Composable () -> Unit) {
     for (shape in WatchShape.entries) {
         RuntimeEnvironment.setQualifiers(shape.qualifiers)
-        captureRoboImage(filePath = "src/test/roborazzi/${name}_${shape.label}.png") {
-            CompositionLocalProvider(LocalInspectionMode provides true) {
-                OmnesisWearTheme { WatchFrame(shape, content) }
+        runComposeUiTest {
+            mainClock.autoAdvance = false
+            setContent {
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    OmnesisWearTheme { WatchFrame(shape, content) }
+                }
             }
+            mainClock.advanceTimeBy(1_000)
+            waitForIdle()
+            onRoot().captureRoboImage(filePath = "src/test/roborazzi/${name}_${shape.label}.png")
         }
     }
 }
