@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@omnesis/config": "*",
+    "@omnesis/platform": "*",
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
     "bonjour-service": "^1.4.4",

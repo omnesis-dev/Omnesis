@@ -7,6 +7,7 @@
   },
   "workspaces": [
     "extension",
+    "packages/platform",
     "packages/types",
     "packages/config",
     "packages/source-sdk",

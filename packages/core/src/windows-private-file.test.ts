@@ -1,15 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { execWindowsJob } from "./windows-job-exec.js";
-import { createWindowsPrivateFile, readWindowsPrivateFile } from "./windows-private-file.js";
+import {
+  createWindowsPrivateFile,
+  readWindowsPrivateFile,
+  writeWindowsPrivateFileAtomic,
+} from "./windows-private-file.js";
 import { windowsPowerShellExecutable } from "./windows-process-tree.js";
 
 describe.skipIf(process.platform !== "win32")("Windows private file handle and ACL", () => {
+  it("supports long Windows paths through private create, read and atomic replacement", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "windows-private-long-"));
+    const parent = join(dir, ...Array.from({ length: 14 }, (_, i) => `fictional-segment-${i}`));
+    const path = join(parent, "key.json");
+    expect(path.length).toBeGreaterThan(260);
+    try {
+      await mkdir(parent, { recursive: true });
+      await createWindowsPrivateFile(path, Buffer.from("invented first material"));
+      expect((await readWindowsPrivateFile(path)).toString("utf8")).toBe("invented first material");
+      await writeWindowsPrivateFileAtomic(path, Buffer.from("invented replacement"));
+      expect((await readWindowsPrivateFile(path)).toString("utf8")).toBe("invented replacement");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("creates a private ACL before writing and accepts literal special-character paths", async () => {
     const dir = await mkdtemp(join(tmpdir(), "windows-private-file-"));
     const path = join(dir, "private & $() 雪.key");
@@ -68,9 +88,10 @@ $acl.AddAccessRule($rule);[System.IO.File]::SetAccessControl($path,$acl);
       await expect(readWindowsPrivateFile(dir)).rejects.toMatchObject({ code: "EPRIVATE" });
       await writeFile(path, Buffer.alloc(16_385));
       await expect(readWindowsPrivateFile(path)).rejects.toMatchObject({ code: "EPRIVATE" });
-      await expect(
-        createWindowsPrivateFile(join(dir, "oversized"), Buffer.alloc(16_385)),
-      ).rejects.toThrow("too large");
+      await createWindowsPrivateFile(join(dir, "oversized"), Buffer.alloc(16_385));
+      await expect(readWindowsPrivateFile(join(dir, "oversized"))).rejects.toMatchObject({
+        code: "EPRIVATE",
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

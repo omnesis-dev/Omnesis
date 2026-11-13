@@ -8,7 +8,7 @@
  * imported module that freezes an env value at import time see the merged
  * environment.
  */
-import { loadDotEnv } from "@omnesis/config";
+import { loadDotEnv } from "@omnesis/config/dotenv";
 
 /**
  * The keys `.env` supplied at boot. A later re-read of the file can then tell

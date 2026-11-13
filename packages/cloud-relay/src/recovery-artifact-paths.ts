@@ -10,10 +10,15 @@ function missing(error: unknown): boolean {
 
 function canonicalDirectory(path: string): string {
   try {
-    return realpathSync(path);
+    const resolved = realpathSync(path);
+    if (!statSync(resolved).isDirectory())
+      throw new Error("Recovery output ancestor is not a directory");
+    return resolved;
   } catch (error) {
     if (!missing(error)) throw error;
-    return join(canonicalDirectory(dirname(path)), basename(path));
+    const parent = dirname(path);
+    if (parent === path) throw error;
+    return join(canonicalDirectory(parent), basename(path));
   }
 }
 

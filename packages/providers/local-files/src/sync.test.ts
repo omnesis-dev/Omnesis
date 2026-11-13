@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import * as fs from "node:fs";
 import {
   chmodSync,
   linkSync,
@@ -14,14 +15,28 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { type SourceInstance } from "@omnesis/source-sdk";
 import { fakeSourceHost } from "@omnesis/source-sdk/testing";
 import { SourceId, ProviderId } from "@omnesis/types";
 import definition from "./index.js";
 import type { LocalFilesSyncCursor } from "./types.js";
+
+vi.mock("node:fs", async (original) => ({ ...(await original<typeof import("node:fs")>()) }));
+
+/** A portable permission failure; Windows chmod does not deny directory enumeration. */
+function denyDirectoryReads(path: string) {
+  const denied = fs.realpathSync.native(path);
+  const original = fs.readdirSync;
+  return vi.spyOn(fs, "readdirSync").mockImplementation(((...args) => {
+    if (relative(denied, fs.realpathSync.native(String(args[0]))) === "") {
+      throw Object.assign(new Error("Fictional directory access denied"), { code: "EACCES" });
+    }
+    return Reflect.apply(original, fs, args);
+  }) as typeof fs.readdirSync);
+}
 
 const sourceId = SourceId("local-files:host");
 const providerId = ProviderId("local-files:host");
@@ -57,6 +72,7 @@ describe("local-files sync", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -463,7 +479,7 @@ describe("local-files sync", () => {
     const cursor = first.cursor as LocalFilesSyncCursor;
 
     rmSync(join(root, "keep.txt"));
-    chmodSync(join(root, "blocked"), 0o000);
+    const denial = denyDirectoryReads(join(root, "blocked"));
     let blindCursor: LocalFilesSyncCursor;
     try {
       const second = await instance.sync(cursor);
@@ -472,7 +488,7 @@ describe("local-files sync", () => {
       blindCursor = second.cursor as LocalFilesSyncCursor;
       expect(Object.keys(blindCursor.fileMap)).toContain(join(root, "keep.txt"));
     } finally {
-      chmodSync(join(root, "blocked"), 0o755);
+      denial.mockRestore();
     }
     // Sight restored: the file that went missing while the source was blind
     // is left out of the snapshot it can finally publish.
@@ -503,7 +519,7 @@ describe("local-files sync", () => {
     const cursor = first.cursor as LocalFilesSyncCursor;
 
     rmSync(join(healthy, "gone.txt"));
-    chmodSync(join(root, "blocked"), 0o000);
+    const denial = denyDirectoryReads(join(root, "blocked"));
     try {
       const second = await instance.sync(cursor);
       // No whole-source snapshot — one folder is unreadable — but the folder
@@ -517,7 +533,7 @@ describe("local-files sync", () => {
         join(root, "blocked/inner.txt"),
       );
     } finally {
-      chmodSync(join(root, "blocked"), 0o755);
+      denial.mockRestore();
     }
   });
 

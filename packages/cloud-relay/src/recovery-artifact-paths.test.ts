@@ -294,3 +294,25 @@ test("case aliases of existing protected entries are refused without folding dis
   expect(() => assertRecoveryArtifactDestination(alias, [key])).toThrow("cannot replace");
   expect(await readFile(key, "utf8")).toBe("invented private material");
 });
+
+test("a missing filesystem root stops canonical resolution without revisiting it", async () => {
+  let rootLookups = 0;
+  const lookup = vi.mocked(fs.realpathSync).mockImplementation((path) => {
+    const value = String(path);
+    if (dirname(value) === value) {
+      rootLookups++;
+      if (rootLookups > 1) throw new Error("Repeated missing root lookup");
+    }
+    throw Object.assign(new Error("invented private path detail"), { code: "ENOENT" });
+  });
+  try {
+    expect(() =>
+      assertRecoveryArtifactDestination(join(directory, "nested", "out.json"), []),
+    ).toThrow("cannot replace");
+    expect(rootLookups).toBe(1);
+  } finally {
+    lookup.mockImplementation(
+      (await vi.importActual<typeof import("node:fs")>("node:fs")).realpathSync,
+    );
+  }
+});

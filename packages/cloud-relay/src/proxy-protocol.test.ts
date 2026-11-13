@@ -205,6 +205,11 @@ const FRONT = "::1";
 const servers: Server[] = [];
 const aliases: Awaited<ReturnType<typeof addIpv6Loopback>>[] = [];
 
+/** Refusal may close with a TCP reset; both outcomes must release the slot. */
+function socketClosed(socket: Socket): Promise<void> {
+  return new Promise((resolve) => socket.once("close", () => resolve()));
+}
+
 afterEach(async () => {
   for (const alias of aliases.splice(0)) await alias.close();
   for (const server of servers.splice(0)) server.close();
@@ -235,7 +240,7 @@ async function frontedServer(options: { timeoutMs?: number; maxPending?: number 
         client: connectionClientAddress(socket),
         data,
         endpoint: { localAddress, localPort, remoteAddress, remotePort },
-        closed: once(socket, "close"),
+        closed: socketClosed(socket),
       });
       socket.end("ok");
     });
@@ -265,7 +270,7 @@ async function exchange(
   socket.setNoDelay(true);
   const chunks: Buffer[] = [];
   socket.on("data", (chunk: Buffer) => chunks.push(chunk));
-  const closed = once(socket, "close");
+  const closed = socketClosed(socket);
   for (const part of parts) {
     socket.write(part);
     if (pauseMs) await delay(pauseMs);
@@ -373,7 +378,7 @@ describe("reading the header before any listener", () => {
 
     // A half header and then an end frees the slot.
     waiting.end(proxyV4("203.0.113.7").subarray(0, 10));
-    await once(waiting, "close");
+    await socketClosed(waiting);
     expect(await admitted("203.0.113.2")).toBe(true);
 
     // So does a reset.
@@ -384,7 +389,7 @@ describe("reading the header before any listener", () => {
 
     // Shutdown closes the connection still waiting for its header, long before its deadline.
     const held = await open();
-    const heldClosed = once(held, "close");
+    const heldClosed = socketClosed(held);
     await delay(20);
     const closing = Date.now();
     front.close();

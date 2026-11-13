@@ -4,13 +4,15 @@
 /**
  * Local filesystem security defaults for Omnesis-owned state.
  *
- * These helpers deliberately cover only the POSIX owner-only boundary:
- * directories at 0700, files at 0600, and daemon umask 077. They do not
+ * POSIX uses directories at 0700, files at 0600, and daemon umask 077.
+ * Windows uses protected access controls allowing the current account,
+ * SYSTEM, and local administrators. These helpers do not
  * claim to protect against same-user malware, root/admin, or plaintext
  * database reads while application-level encryption is still absent.
  */
 
 import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { secureWindowsPrivatePathSync } from "./windows-private-file.js";
 
 export const PRIVATE_DIR_MODE = 0o700;
 export const PRIVATE_FILE_MODE = 0o600;
@@ -59,20 +61,22 @@ export function secretPathExists(path: string): boolean {
 
 /** Set the process umask so newly-created files are owner-only by default. */
 export function applyPrivateUmask(): number | null {
-  if (typeof process.umask !== "function") return null;
+  if (process.platform === "win32" || typeof process.umask !== "function") return null;
   return process.umask(PRIVATE_UMASK);
 }
 
 /** Ensure an Omnesis-owned directory exists and is not group/world-readable. */
 export function ensurePrivateDirSync(path: string): void {
   mkdirSync(path, { recursive: true, mode: PRIVATE_DIR_MODE });
-  chmodSync(path, PRIVATE_DIR_MODE);
+  if (process.platform === "win32") secureWindowsPrivatePathSync(path, "directory");
+  else chmodSync(path, PRIVATE_DIR_MODE);
 }
 
 /** Tighten an existing Omnesis-owned file to owner read/write only. */
 export function ensurePrivateFileSync(path: string): void {
-  if (!existsSync(path)) return;
+  if (process.platform === "win32" ? !secretPathExists(path) : !existsSync(path)) return;
   const st = statSync(path);
   if (!st.isFile()) return;
-  chmodSync(path, PRIVATE_FILE_MODE);
+  if (process.platform === "win32") secureWindowsPrivatePathSync(path, "file");
+  else chmodSync(path, PRIVATE_FILE_MODE);
 }

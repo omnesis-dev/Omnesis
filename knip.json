@@ -171,6 +171,9 @@
         "src/chrome/content.ts",
         "src/**/*.test.ts"
       ]
+    },
+    "packages/platform": {
+      "entry": ["src/**/*.test.ts"]
     }
   },
   "ignore": [

@@ -91,6 +91,15 @@ describe("Windows CI coverage", () => {
     );
     expect(step.if).toBe("${{ matrix.lane == 'unit' }}");
     expect(step.run).toBe("node scripts/run-check.mjs types-tests");
+    expect(step).not.toHaveProperty("continue-on-error");
+    const dependencyStep = workflow().jobs.windows.steps.find(({ id }) => id === "dependencies");
+    expect(dependencyStep.name).toBe("Install dependencies");
+    const runtimeStep = workflow().jobs.windows.steps.find(
+      ({ name }) => name === "Full Windows unit and adapter tests",
+    );
+    expect(runtimeStep.if).toBe(
+      "${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' }}",
+    );
   });
 
   test("full units are discovered normally and exclude only explicitly documented installation tests", () => {

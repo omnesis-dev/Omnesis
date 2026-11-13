@@ -52,6 +52,10 @@ import {
 } from "node:fs";
 import { open, rename, mkdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  writeWindowsPrivateFileAtomic,
+  writeWindowsPrivateFileAtomicSync,
+} from "./windows-private-file.js";
 
 export interface AtomicWriteOptions {
   /** File mode to apply to the final file. */
@@ -81,10 +85,16 @@ export function atomicWriteFileSync(
   data: string | Uint8Array,
   opts: AtomicWriteOptions = {},
 ): void {
-  const tmp = scratchPath(path);
   if (opts.ensureDir) {
     mkdirSync(dirname(path), { recursive: true });
   }
+  if (process.platform === "win32" && opts.mode != null && (opts.mode & 0o077) === 0) {
+    writeWindowsPrivateFileAtomicSync(path, typeof data === "string" ? Buffer.from(data) : data, {
+      readOnly: (opts.mode & 0o200) === 0,
+    });
+    return;
+  }
+  const tmp = scratchPath(path);
   let created = false;
   try {
     // Windows FlushFileBuffers requires a writable handle. Keep the handle
@@ -115,10 +125,16 @@ export async function atomicWriteFile(
   data: string | Uint8Array,
   opts: AtomicWriteOptions = {},
 ): Promise<void> {
-  const tmp = scratchPath(path);
   if (opts.ensureDir) {
     await mkdir(dirname(path), { recursive: true });
   }
+  if (process.platform === "win32" && opts.mode != null && (opts.mode & 0o077) === 0) {
+    await writeWindowsPrivateFileAtomic(path, typeof data === "string" ? Buffer.from(data) : data, {
+      readOnly: (opts.mode & 0o200) === 0,
+    });
+    return;
+  }
+  const tmp = scratchPath(path);
   let created = false;
   try {
     const handle = await open(tmp, "wx", opts.mode);

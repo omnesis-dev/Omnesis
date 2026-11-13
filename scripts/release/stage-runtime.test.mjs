@@ -74,6 +74,7 @@ describe("runtime staging", () => {
 
     expect(names).toContain("@omnesis/gateway");
     expect(names).toContain("@omnesis/core");
+    expect(names).toContain("@omnesis/platform");
     expect(names).toContain("@omnesis/cloud-relay");
     expect(names).toContain("@omnesis/provider-web");
     expect(names).not.toContain("@omnesis/collector");

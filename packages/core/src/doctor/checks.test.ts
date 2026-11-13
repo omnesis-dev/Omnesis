@@ -1544,6 +1544,72 @@ describe("evaluateDoctor — graceful degradation when endpoints are missing", (
 });
 
 describe("evaluateDoctor — local security posture", () => {
+  test("Windows permissions need positive ACL evidence", () => {
+    const data = healthyData();
+    data.security = securityData({ permissionModel: "windows-acl", permissionEntries: [] });
+    const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toContain("could not be verified");
+  });
+
+  test("an empty Windows finding list passes only with positive native scan evidence", () => {
+    const data = healthyData();
+    data.security = securityData({
+      permissionModel: "windows-acl",
+      permissionEntries: [],
+      permissionScanCount: 3,
+    });
+    expect(findCheck(evaluateDoctor(data).checks, "security.permissions")?.status).toBe("pass");
+  });
+
+  test.each([false, true])(
+    "reports Windows ACL evidence without POSIX mode claims (fixed=%s)",
+    (fixed) => {
+      const data = healthyData();
+      data.security = securityData({
+        permissionModel: "windows-acl",
+        permissionEntries: [
+          {
+            path: "C:\\Example\\config",
+            relativePath: ".",
+            kind: "directory",
+            expectedMode: null,
+            actualMode: null,
+            ok: true,
+            fixed,
+          },
+        ],
+      });
+      const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+      expect(check?.status).toBe("pass");
+      expect(check?.message).toContain("private Windows access controls");
+      expect(check?.message).not.toMatch(/0700|0600|mode/);
+      if (fixed) expect(check?.message).toContain("repaired 1 ACL");
+    },
+  );
+
+  test("unverified Windows ACL stays a failure despite owner-only mode bits", () => {
+    const data = healthyData();
+    data.security = securityData({
+      permissionModel: "windows-acl",
+      permissionEntries: [
+        {
+          path: "C:\\Example\\config\\token",
+          relativePath: "token",
+          kind: "file",
+          expectedMode: 0o600,
+          actualMode: 0o600,
+          ok: false,
+          fixed: false,
+          error: "Access control inspection failed",
+        },
+      ],
+    });
+    const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toContain("Access control inspection failed");
+    expect(check?.message).not.toContain("missing");
+  });
   test("security-only data does not emit gateway/auth checks", () => {
     const data = healthyData();
     data.operationalChecks = false;

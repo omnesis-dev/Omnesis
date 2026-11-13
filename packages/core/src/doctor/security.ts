@@ -67,6 +67,7 @@ import {
   systemdEscapeArg,
   systemdUnitPath,
 } from "../service-paths.js";
+import { collectWindowsPermissionData } from "./windows-permissions.js";
 import type {
   SecurityData,
   SecurityDiskEncryptionStatus,
@@ -218,7 +219,13 @@ export async function collectSecurityData(opts: CollectSecurityOptions): Promise
   return {
     configDir: opts.configDir,
     fixPermissions: opts.fixPermissions,
-    ...collectPermissionData(opts.configDir, opts.fixPermissions),
+    ...(process.platform === "win32"
+      ? await collectWindowsPermissionData(
+          opts.configDir,
+          opts.fixPermissions,
+          MAX_PERMISSION_REPORT_ENTRIES,
+        )
+      : collectPermissionData(opts.configDir, opts.fixPermissions)),
     diskEncryption: inContainer
       ? await recordedHostDiskEncryption(platform, opts.configDir)
       : await collectDiskEncryptionStatus(platform, opts.configDir, runCommand),

@@ -30,17 +30,83 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 describe("release package selection", () => {
   test("publishes exactly the product packages and excludes synthetic providers", () => {
     const packages = listPublishablePackages();
-    expect(packages).toHaveLength(46);
+    expect(packages).toHaveLength(47);
     expect(packages.map(({ dir }) => dir)).not.toContainEqual(
       expect.stringMatching(/^packages\/providers-synth\//u),
     );
     expect(packages.map(({ pkg }) => pkg.name)).toContain("omnesis");
     expect(packages.map(({ pkg }) => pkg.name)).toContain("@omnesis/provider-local-files");
     expect(packages.map(({ pkg }) => pkg.name)).toContain("@omnesis/cloud-relay");
+    expect(packages.map(({ pkg }) => pkg.name)).toContain("@omnesis/platform");
   });
 });
 
 describe("release package runtime assets", () => {
+  test("ships platform primitives without workspace runtime dependencies", async () => {
+    const temp = mkdtempSync(join(tmpdir(), "omnesis-platform-stage-test-"));
+    try {
+      const entry = listPublishablePackages().find(({ pkg }) => pkg.name === "@omnesis/platform");
+      expect(entry).toBeDefined();
+      const staged = stagePackage(entry, join(temp, "staged"));
+      const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
+      expect(Object.keys(manifest.dependencies ?? {})).toEqual([]);
+      expect(manifest.exports["."]).toEqual({
+        types: "./dist/index.d.ts",
+        default: "./dist/index.js",
+      });
+      execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
+        const platform = await import(${JSON.stringify(pathToFileURL(join(staged, "dist/index.js")).href)});
+        for (const name of ['spawnWindowsJob', 'runWindowsJob', 'writeWindowsPrivateFileAtomicSync']) {
+          if (typeof platform[name] !== 'function') throw new Error('Missing platform export: ' + name);
+        }
+      `,
+        ],
+        { cwd: temp, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const npm = await resolveNpmInvocation(["pack", "--dry-run", "--json", "--ignore-scripts"]);
+      const pack = parsePackReport(
+        execFileSync(npm.command, npm.args, { cwd: staged, encoding: "utf8" }),
+      );
+      expect(pack.files.map(({ path }) => path)).toContain("dist/windows-private-file.js");
+      expect(pack.files.map(({ path }) => path)).toContain("dist/windows-job.js");
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  test("dotenv bootstrap subpath loads without the config writer or platform package", () => {
+    const temp = mkdtempSync(join(tmpdir(), "omnesis-dotenv-stage-test-"));
+    try {
+      const entry = listPublishablePackages().find(({ pkg }) => pkg.name === "@omnesis/config");
+      const staged = stagePackage(entry, join(temp, "staged"));
+      const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
+      expect(manifest.exports["./dotenv"]).toEqual({
+        types: "./dist/dotenv-reader.d.ts",
+        default: "./dist/dotenv-reader.js",
+      });
+      execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
+        const before = JSON.stringify(process.env);
+        const reader = await import(${JSON.stringify(pathToFileURL(join(staged, "dist/dotenv-reader.js")).href)});
+        if (JSON.stringify(process.env) !== before) throw new Error('Import modified environment');
+        if (reader.parseDotEnv('EXAMPLE=fictional-value').EXAMPLE !== 'fictional-value') throw new Error('Parser missing');
+      `,
+        ],
+        { cwd: temp, stdio: ["ignore", "pipe", "pipe"] },
+      );
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
   test("ships the native tunnel and relay runtime exports required by the gateway", async () => {
     const temp = mkdtempSync(join(tmpdir(), "omnesis-cloud-relay-stage-test-"));
     try {

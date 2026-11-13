@@ -79,6 +79,7 @@ jobs:
           }
 
       - name: Install dependencies
+        id: dependencies
         run: |
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             npm ci --no-audit --no-fund
@@ -111,7 +112,8 @@ jobs:
         run: node scripts/ci/windows-checks.mjs focused
 
       - name: Full Windows unit and adapter tests
-        if: ${{ matrix.lane == 'unit' }}
+        # Preserve a failing typecheck verdict while collecting runtime failures.
+        if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' }}
         run: node scripts/ci/windows-checks.mjs unit
 
       - name: Full Windows E2E shard with the real reference embedder

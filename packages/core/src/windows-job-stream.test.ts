@@ -3,11 +3,16 @@
 
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
-vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
-import { killWindowsJob, runWindowsJob, spawnWindowsJob } from "./windows-job.js";
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
+vi.mock("node:child_process", () => ({ spawn: mocks.spawn, spawnSync: mocks.spawnSync }));
+import {
+  killWindowsJob,
+  runWindowsJob,
+  runWindowsJobSync,
+  spawnWindowsJob,
+} from "./windows-job.js";
 import { execWindowsJob } from "./windows-job-exec.js";
 
 class Helper extends EventEmitter {
@@ -41,9 +46,12 @@ class Helper extends EventEmitter {
 
 let helper: Helper;
 beforeEach(() => {
+  vi.stubEnv("SystemRoot", "C:\\Windows");
   helper = new Helper();
   mocks.spawn.mockReset().mockReturnValue(helper);
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("Windows job stream protocol", () => {
   it("queues literal configuration before immediate binary RPC input and strips split status", async () => {
@@ -149,5 +157,59 @@ describe("Windows job exec capture", () => {
     signal.abort();
     await expect(run).rejects.toMatchObject({ code: "ABORT_ERR" });
     expect(helper.kill).toHaveBeenCalledOnce();
+  });
+});
+
+describe("synchronous Windows job framing", () => {
+  it("shares binary framing and preserves target exit 127", () => {
+    mocks.spawnSync.mockReturnValue({
+      status: 127,
+      signal: null,
+      stdout: Buffer.from([0, 255]),
+      stderr: Buffer.from("OMNESIS_JOB:0\nwarning"),
+    });
+    const run = runWindowsJobSync("literal fixture", ["& argument"], {
+      input: Buffer.from([255, 0]),
+      timeoutMs: 1000,
+    });
+    expect(run).toEqual({
+      exitCode: 127,
+      signal: null,
+      stdout: Buffer.from([0, 255]),
+      stderr: "warning",
+    });
+    const options = mocks.spawnSync.mock.calls.at(-1)![2] as {
+      input: Buffer;
+      timeout: number;
+      killSignal: string;
+    };
+    const length = options.input.readUInt32LE();
+    expect(JSON.parse(options.input.subarray(4, length + 4).toString("utf8"))).toMatchObject({
+      command: "literal fixture",
+      args: ["& argument"],
+    });
+    expect(options.input.subarray(length + 4)).toEqual(Buffer.from([255, 0]));
+    expect(options.killSignal).toBe("SIGKILL");
+    expect(options.timeout).toBe(1000);
+  });
+  it("classifies native creation failure and timeout separately", () => {
+    mocks.spawnSync.mockReturnValue({
+      status: 1,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("OMNESIS_JOB:2\n"),
+    });
+    expect(runWindowsJobSync("fixture", [])).toMatchObject({
+      failure: "spawn",
+      failureMessage: expect.stringContaining("ENOENT"),
+    });
+    mocks.spawnSync.mockReturnValue({
+      status: null,
+      signal: "SIGKILL",
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("OMNESIS_JOB:0\n"),
+      error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }),
+    });
+    expect(runWindowsJobSync("fixture", [])).toMatchObject({ failure: "timeout", exitCode: null });
   });
 });

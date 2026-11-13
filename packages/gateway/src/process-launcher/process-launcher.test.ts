@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveWorkerEntry } from "@omnesis/core";
 import {
   HostedProcessLauncher,
@@ -15,6 +15,23 @@ import {
   type ProcessLauncher,
 } from "./index.js";
 import type { LauncherRequest } from "../workers/process-launcher-host.js";
+
+vi.mock("node:child_process", async (original) => {
+  const native = await original<typeof import("node:child_process")>();
+  return { ...native, fork: vi.fn(native.fork) };
+});
+
+/** Wait for Node's exit event: Windows PID liveness changes before parent reaping. */
+async function stopObservedHost(pid: number): Promise<void> {
+  const created = vi
+    .mocked(fork)
+    .mock.results.find((result) => result.type === "return" && result.value.pid === pid);
+  const child = created?.type === "return" ? created.value : undefined;
+  expect(child, "Host must belong to this test's real fork").toBeDefined();
+  const exited = new Promise<void>((resolve) => child!.once("exit", () => resolve()));
+  child!.kill("SIGKILL");
+  await exited;
+}
 
 const hosts: HostedProcessLauncher[] = [];
 afterEach(() => {
@@ -325,13 +342,12 @@ describe("hosted launcher", () => {
         }),
       );
     const first = await hostPid();
-    process.kill(first, "SIGKILL");
+    await stopObservedHost(first);
     expect(await eventually(() => !alive(first))).toBe(true);
     const second = await hostPid();
     expect(second).not.toBe(process.pid);
-    process.kill(second, "SIGKILL");
+    await stopObservedHost(second);
     expect(await eventually(() => !alive(second))).toBe(true);
-    await sleep(100);
     const fallback = await host.run(process.execPath, ["-e", reportLauncherParent], {
       timeoutMs: processBudget,
     });

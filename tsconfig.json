@@ -2,6 +2,7 @@
   "references": [
     { "path": "evals/briefs" },
     { "path": "extension" },
+    { "path": "packages/platform" },
     { "path": "packages/types" },
     { "path": "packages/config" },
     { "path": "packages/source-sdk" },

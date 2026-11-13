@@ -4,6 +4,8 @@
 import { execFile, execFileSync } from "node:child_process";
 import { win32 } from "node:path";
 import { promisify } from "node:util";
+import { windowsPowerShellExecutable } from "@omnesis/platform/windows-powershell";
+export { windowsPowerShellExecutable } from "@omnesis/platform/windows-powershell";
 
 const execFileAsync = promisify(execFile);
 const PROCESS_QUERY = `
@@ -41,13 +43,6 @@ try {
 const KILL_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", KILL_OWNED_PROCESS];
 const COMMAND_TIMEOUT_MS = 10_000;
 let ownBirth: string | undefined;
-
-/** Host tools never resolve from an indexed folder or an update target's PATH. */
-export function windowsPowerShellExecutable(): string {
-  const root = process.env.SystemRoot ?? process.env.WINDIR;
-  if (!root || !win32.isAbsolute(root)) throw new Error("Windows system directory is unavailable");
-  return win32.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-}
 
 /** Exact UTC creation ticks for durable ownership records; only this process is cached. */
 export function windowsProcessStart(pid: number): string | null {

@@ -7,7 +7,7 @@
  * `./utils.js`, which freezes `GATEWAY_URL` from `process.env` at import — so
  * a `.env`-provided `OMNESIS_GATEWAY_URL` / `OMNESIS_TOKEN` is honoured.
  */
-import { loadDotEnv } from "@omnesis/config";
+import { loadDotEnv } from "@omnesis/config/dotenv";
 import { bootstrapCliGatewayTransport } from "./trust-preflight.js";
 
 loadDotEnv();

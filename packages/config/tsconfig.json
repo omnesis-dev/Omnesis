@@ -9,6 +9,9 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     {
+      "path": "../platform"
+    },
+    {
       "path": "../types"
     }
   ]

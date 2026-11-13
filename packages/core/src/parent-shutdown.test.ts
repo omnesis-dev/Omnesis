@@ -19,11 +19,14 @@ describe("inherited parent shutdown control", () => {
   it("ignores unknown or malformed control messages", () => {
     const parent = Object.assign(new EventEmitter(), {
       send: () => true,
-    }) as unknown as NodeJS.Process;
+    });
     let count = 0;
-    const stop = installParentShutdownHandler(() => {
-      count += 1;
-    }, parent);
+    const stop = installParentShutdownHandler(
+      () => {
+        count += 1;
+      },
+      parent as unknown as NodeJS.Process,
+    );
     for (const message of [
       null,
       [],

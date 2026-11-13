@@ -62,6 +62,7 @@ describe("Nx change selection", () => {
     ]);
     expect(behavioralBundles(["packages/gateway/src/search/hybrid.ts"])).toContain("search-graph");
     expect(behavioralBundles(["packages/config/src/config-schema.ts"])).toContain("gateway-core");
+    expect(behavioralBundles(["packages/platform/src/windows-job.ts"])).toContain("gateway-core");
     expect(behavioralBundles(["packages/gateway/portal/js/view.ts"])).toEqual(["portal"]);
     expect(behavioralBundles(["ios/Sources/Omnesis/App.swift"])).toEqual(["ios-logic"]);
     expect(behavioralBundles(["ios/Sources/Omnesis/UI/SettingsView.swift"])).toEqual([
