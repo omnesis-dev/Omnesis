@@ -39,7 +39,7 @@ afterEach(async () => {
 async function setup(
   policy?:
     false | ((fixture: Awaited<ReturnType<typeof recoveryFixture>>) => TrustedRecoveryPolicy),
-  extra: Pick<CloudRelayOptions, "hostnameProof"> = {},
+  extra: Pick<CloudRelayOptions, "hostnameProof" | "legacyRoutes"> = {},
 ) {
   const logicalOrigin = "http://127.0.0.1:31999",
     f = await recoveryFixture(directory, logicalOrigin),
@@ -60,6 +60,7 @@ async function setup(
     hostnameProof: extra.hostnameProof ?? (() => Promise.resolve(true)),
     recoveryPolicy: policy === false ? undefined : (policy?.(f) ?? f.policy()),
     gatewayIdentity,
+    legacyRoutes: extra.legacyRoutes,
   });
   expect(relay.metrics()).toContain("cloud_relay_recovery_policy_epoch ");
   const url = await listen(relay.server);
@@ -351,12 +352,17 @@ test("receipts are not silently ignored by an installation without independent r
   expect(f.accounts.gatewayBinding(f.account)).toBeUndefined();
 });
 test("recovery owner sessions cannot publish legacy Google-only replacement bindings", async () => {
-  const f = await setup(),
-    response = await f.complete(f.receipt());
-  expect(response.status).toBe(200);
-  const session = await response.json();
-  expect((await f.request("/_relay/v2/gateway", f.binding, session.token)).status).toBe(403);
-  expect(f.accounts.gatewayBinding(f.account)).toEqual(f.binding);
+  for (const [legacyRoutes, status] of [
+    [false, 404],
+    [true, 403],
+  ] as const) {
+    const f = await setup(undefined, { legacyRoutes }),
+      response = await f.complete(f.receipt());
+    expect(response.status).toBe(200);
+    const session = await response.json();
+    expect((await f.request("/_relay/v2/gateway", f.binding, session.token)).status).toBe(status);
+    expect(f.accounts.gatewayBinding(f.account)).toEqual(f.binding);
+  }
 });
 test("fresh Google aliases allow multiple gateways across independent owner sessions and unlink does not affect another owner", async () => {
   const f = await setup(),
@@ -426,7 +432,7 @@ test("fresh Google aliases allow multiple gateways across independent owner sess
     ).status,
   ).toBe(404);
   expect((await f.request("/_relay/v2/gateways", undefined, stranger.token)).status).toBe(200);
-  expect((await f.request("/_relay/v2/gateway", {}, googleSession.token)).status).toBe(403);
+  expect((await f.request("/_relay/v2/gateway", {}, googleSession.token)).status).toBe(404);
   const anotherGoogle = { ...f.google, subject: "second-fictional-google" };
   f.gatewayIdentity.verify.mockResolvedValue(anotherGoogle);
   expect((await link(first.token)).status).toBe(409);

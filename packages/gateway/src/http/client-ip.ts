@@ -112,6 +112,22 @@ export function clientAddress(header: HeaderReader, env: unknown): string {
 }
 
 /**
+ * Whether a request may have reached the gateway through its cloud relay,
+ * and so from the open internet: the tunnel recorded its client, the relay
+ * marked it, or the gateway was exposing itself when it arrived. Off without
+ * the cloud relay opt-in. Use it only to withhold something; a client can
+ * claim to be relayed but never claim not to be.
+ */
+export function isRelayedRequest(header: HeaderReader, env: unknown): boolean {
+  if (!cloudRelayEnabled()) return false;
+  return (
+    (typeof env === "object" && env !== null && exposedRequests.has(env)) ||
+    relayedClientBucket(env) !== undefined ||
+    header("x-omnesis-cloud-relay") === "1"
+  );
+}
+
+/**
  * Whether an address is loopback: IPv4 `127.0.0.0/8`, IPv6 `::1`, and the
  * IPv4-mapped `::ffff:127.x` forms.
  */

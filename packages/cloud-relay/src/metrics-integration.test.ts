@@ -12,7 +12,8 @@ test("real encrypted streams change aggregate tunnel, registration and traffic o
   const proxy = f.proxy(gateway);
   const origin = await listen(proxy.server);
   try {
-    expect(f.relay.metrics()).toContain("cloud_relay_registered_accounts 1\n");
+    // Signing in takes no account slot; registering the gateway does.
+    expect(f.relay.metrics()).toContain("cloud_relay_registered_accounts 0\n");
     expect(f.relay.metrics()).toContain("cloud_relay_online_gateways 0\n");
     await f.tunnel(gateway.url);
     const response = await fetch(origin + "/metrics-private-path-fixture", {
@@ -26,6 +27,7 @@ test("real encrypted streams change aggregate tunnel, registration and traffic o
     const body = f.relay.metrics();
     expect(body).toContain("cloud_relay_online_gateways 1\n");
     expect(body).toContain("cloud_relay_registered_gateways 1\n");
+    expect(body).toContain("cloud_relay_registered_accounts 1\n");
     expect(body).toMatch(/cloud_relay_data_ingress_bytes_total [1-9][0-9]*/);
     expect(body).toMatch(/cloud_relay_data_egress_bytes_total [1-9][0-9]*/);
     expect(body).toContain('cloud_relay_tunnel_events_total{event="connected"} 1');

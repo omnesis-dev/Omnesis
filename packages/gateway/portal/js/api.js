@@ -1129,19 +1129,22 @@ export const getSourceWatermark = (sourceId) =>
   request("GET", "/admin/watermarks", { query: { sourceId } });
 
 /**
- * Wipe a source's data and sync it again from scratch. Without `deviceId`
- * every document of the source goes; with one, only what that device holds —
- * its documents, analytics rows and cursor on a partitioned source, just its
- * cursor on a replicated one (siblings are untouched either way). Answers
- * `{ ok, scope: "source" | "stream" | "cursor", deviceIds }` — `scope` is what
- * was wiped, `deviceIds` the devices the sync command reached (empty when
- * none is online; the sync then waits for one). A refusal's `code` is
- * DEVICE_NOT_MEMBER or RESYNC_NOT_PER_DEVICE (a per-device resync on a
- * source whose mode has no per-device cursor).
+ * Resync a source. `mode` is "in-place" — nothing is deleted, the source is
+ * read again and each item updates the record it already has — or
+ * "from-scratch", which deletes what the source ingested first. With
+ * `deviceId`, only that device is resynced: its own stream on a partitioned
+ * source, its cursor on a replicated one (always in place — its records are
+ * shared; siblings are untouched either way). Answers
+ * `{ ok, mode, scope: "source" | "stream" | "cursor", deviceIds, … }` —
+ * `mode` is what was applied, `scope` the slice it applied to, `deviceIds`
+ * the devices the sync command reached (empty when none is online; the sync
+ * then waits for one). A refusal's `code` is DEVICE_NOT_MEMBER,
+ * RESYNC_NOT_PER_DEVICE (a per-device resync on a source whose mode has no
+ * per-device cursor) or RESYNC_PUSH_ONLY.
  */
-export const resyncSource = (sourceId, deviceId) =>
+export const resyncSource = (sourceId, { deviceId, mode }) =>
   request("POST", `/admin/sources/${encodeURIComponent(sourceId)}/resync`, {
-    body: deviceId ? { deviceId } : {},
+    body: deviceId ? { deviceId, mode } : { mode },
   });
 
 export const removeAdminSource = (sourceId) =>

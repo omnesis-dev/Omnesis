@@ -40,6 +40,7 @@ import {
   browserSuiteAvailable,
   clickFirst,
   connectGatewayBySignIn,
+  connectThisGateway,
   enterConnectCode,
   expectText,
   finishedConnect,
@@ -203,7 +204,7 @@ describe.skipIf(!browserReady)("a gateway trusts the sign-ins its passkey confir
     expect(started.connect?.state).toBe("waiting");
     await enterConnectCode(owner.page, started.connect!.connectUrl!, started.connect!.code!);
     await clickFirst(owner.page, ["Create with Google"]);
-    await expectText(owner.page, "You're all set");
+    await connectThisGateway(owner.page);
     const linked = await finishedConnect(home);
     expect(linked.connect?.state).toBe("done");
     expect(linked.account.linked).toBe(true);

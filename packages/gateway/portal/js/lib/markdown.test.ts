@@ -42,3 +42,20 @@ describe("Markdown copy payloads", () => {
     expect(renderCopyableMarkdown("```javascript\nconst n = 1;\n```").targets[0].plain).toBe(false);
   });
 });
+
+it("colors fenced, unlabelled and standalone JSON while preserving copy text", () => {
+  const json = '{\n  "count": 3, "ready": true\n}';
+  for (const input of [json, `\`\`\`json\n${json}\n\`\`\``, `\`\`\`\n${json}\n\`\`\``]) {
+    const result = renderCopyableMarkdown(input);
+    expect(result.html).toContain('class="cm-tok-property"');
+    expect(result.html).toContain('class="cm-tok-number"');
+    expect(result.targets[0].plain).toBe(false);
+    expect(result.targets[0].text).toBe(json + "\n");
+  }
+});
+
+it("leaves prose, explicit text fences and other languages unchanged", () => {
+  for (const input of ['```text\n{"a":1}\n```', '```js\nconst a = 1;\n```', 'A normal paragraph.']) {
+    expect(renderCopyableMarkdown(input).html).not.toContain("cm-tok-");
+  }
+});

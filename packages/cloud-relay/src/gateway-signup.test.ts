@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import { ConnectCodes } from "./connect-codes.js";
+import { signInProofNonce } from "./device-enrollment.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
 import {
   GATEWAY_SIGNUP_PROTOCOL,
@@ -197,7 +198,11 @@ test("a signed request gets one launch, one approval and one collection of the p
   f.signIn(op, "b".repeat(64));
   await expect(f.signup.confirm(op.id, op.cookie, f.actor)).rejects.toMatchObject({ status: 409 });
   f.signIn(op);
-  expect(f.signup.proofCommitment(op.id, op.cookie).nonce).toBe(op.unsigned.nonce);
+  // The sign-in commits to the gateway's nonce under the link purpose, never to the bare nonce.
+  expect(f.signup.proofCommitment(op.id, op.cookie).nonce).toBe(
+    signInProofNonce("gateway-link", op.unsigned.nonce),
+  );
+  expect(f.signup.proofCommitment(op.id, op.cookie).nonce).not.toBe(op.unsigned.nonce);
   const confirmed = await f.signup.confirm(op.id, op.cookie, f.actor);
   expect(confirmed.location).toBe(origin + "/_relay/v3/signup/complete");
   expect(confirmed.cookie).toContain("Max-Age=0");

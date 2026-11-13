@@ -348,8 +348,14 @@ test("browser Google sign-in uses a private state cookie and creates only an own
   const flow = await webBegin(server);
   expect(flow.url.origin).toBe("https://accounts.google.com");
   expect(flow.url.searchParams.get("code_challenge_method")).toBe("S256");
-  for (const flag of ["HttpOnly", "Secure", "SameSite=Lax", "Path=/devices/google", "Max-Age=300"])
-    expect(flow.response.headers.get("set-cookie")).toContain(flag);
+  // `__Host-` keeps a sibling under the same parent domain from planting the
+  // state: the browser accepts it only from this origin, at `Path=/`, with no
+  // `Domain`.
+  const setCookie = flow.response.headers.get("set-cookie")!;
+  expect(setCookie.startsWith("__Host-omnesis-google-login=")).toBe(true);
+  for (const flag of ["HttpOnly", "Secure", "SameSite=Lax", "Path=/;", "Max-Age=300"])
+    expect(setCookie).toContain(flag);
+  expect(setCookie.toLowerCase()).not.toContain("domain=");
   const transport = vi.fn<typeof fetch>().mockResolvedValue(
     new Response(
       JSON.stringify({
@@ -393,11 +399,14 @@ test("browser initiation and callbacks reject cross-site attempts, lost or ambig
   const flow = await webBegin(server);
   const transport = vi.fn<typeof fetch>();
   vi.stubGlobal("fetch", transport);
+  const state = flow.cookie.slice(flow.cookie.indexOf("=") + 1);
   for (const cookie of [
     undefined,
     `${flow.cookie}; ${flow.cookie}`,
     flow.cookie + "x",
     "unrelated=value",
+    // The old `__Secure-` name could be set by a sibling subdomain; it is not read.
+    `__Secure-omnesis-google-login=${state}`,
   ]) {
     const response = await server.request(flow.callback.href, {
       headers: cookie ? { cookie } : {},
@@ -426,6 +435,40 @@ test("browser initiation and callbacks reject cross-site attempts, lost or ambig
       })
     ).status,
   ).toBe(404);
+});
+
+test("attack: a sign-in state cookie planted by a sibling site cannot complete Google sign-in", async () => {
+  // The attacker starts a browser sign-in on the owner's gateway and keeps
+  // the state it was handed. A page on another gateway under the same parent
+  // domain then plants that state in the owner's browser as a parent-domain
+  // cookie (`__Secure-omnesis-google-login=<state>; Domain=relay.example.test`),
+  // which the browser then sends back without its Domain. Only a `__Host-`
+  // cookie, which no sibling can set, may bind the callback to a browser.
+  const server = webApp();
+  const before = db.prepare("SELECT count(*) AS n FROM devices").get();
+  const flow = await webBegin(server);
+  const state = flow.cookie.slice(flow.cookie.indexOf("=") + 1);
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        id_token: await webToken(flow.url.searchParams.get("nonce")!),
+        token_type: "Bearer",
+      }),
+    ),
+  );
+  vi.stubGlobal("fetch", transport);
+  const planted = await server.request(flow.callback.href, {
+    headers: { cookie: `__Secure-omnesis-google-login=${state}` },
+  });
+  expect(planted.status).toBe(302);
+  expect(planted.headers.get("location")).toBe("/portal/?googlePairing=failed");
+  expect(transport).not.toHaveBeenCalled();
+  expect(db.prepare("SELECT count(*) AS n FROM devices").get()).toEqual(before);
+  const poll = await post(server, "/devices/google/poll", {
+    requestId: flow.value.requestId,
+    secret: flow.value.secret,
+  });
+  expect(await poll.json()).not.toMatchObject({ status: "pending" });
 });
 
 test("request and polling burst limits are separate and apply before approval work", async () => {
@@ -680,7 +723,7 @@ test("managed browser origin changes invalidate old OAuth state and unavailable 
   origin = "https://second.example.test";
   expect((await (await server.request("/devices/google/config")).json()).webOrigin).toBe(origin);
   const callback = await server.request(`/devices/google/callback?state=${state}&code=unused`, {
-    headers: { cookie: `__Secure-omnesis-google-login=${state}` },
+    headers: { cookie: `__Host-omnesis-google-login=${state}` },
   });
   expect(callback.status).toBe(302);
   expect(callback.headers.get("location")).toContain("googlePairing=failed");
@@ -1057,6 +1100,7 @@ function enrollmentServer(options: { trusted: boolean; spki?: string | undefined
     type: "google",
     id: "fictional-sign-in",
     trusted: options.trusted,
+    channel: "web-google",
     pin: { id: "fictional-sign-in" } as VerifiedSignIn["pin"],
   };
   const enrollment: GatewayEnrollment = {

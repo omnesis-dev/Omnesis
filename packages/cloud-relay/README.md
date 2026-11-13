@@ -163,7 +163,8 @@ creates another.
 
 A removed gateway's session is refused with 401 and its next key registration
 gets `410`. Either way the gateway turns remote access off and drops its account
-link, session and invitation, and keeps its id, certificate and key, so its
+link, session and invitation, and keeps its id, certificate and key (and its
+owner's enrollment policy and refused sign-ins, for the next link), so its
 paired devices keep working on the home network and it can be connected again at
 the same address ([docs/device-enrollment.md](../../docs/device-enrollment.md)).
 
@@ -175,7 +176,10 @@ script computes the WebAuthn challenge and Google nonce, so a compromised relay
 could bind the owner's sign-in to a device key of its own, and at link time could
 have the gateway pin its own Google account or passkey and keep listing it.
 Sign-ins in the iOS and Android apps compute the nonce on the device from its own
-key and are not exposed to that. The gateway records each trusted sign-in's
+key and are not exposed to that. Each sign-in is bound to its purpose: one made
+to link a gateway (signup or the owner link) commits to the gateway's nonce under
+a link label, so the gateway never accepts it as a device's enrollment sign-in,
+nor an enrollment sign-in as a link. The gateway records each trusted sign-in's
 origin and its portal shows "Signed in on the Omnesis account page" or "Signed in in the
 app". A passkey's public key arrives with the request, so the gateway trusts a
 passkey on approval only when the relay's credential list for the linked account
@@ -424,9 +428,29 @@ Setting it up on Google's side:
 4. In the Admin console, assign that service account the Groups Reader admin
    role. No domain-wide delegation is needed.
 
-Migrating an existing
-Google-only gateway requires proof of its exact current TLS key and certificate;
-for a custom domain, first update its TXT value to the new owner account ID.
+Moving a gateway that a Google identity registered before Omnesis accounts to an
+owner key requires proof of its exact current TLS key and certificate and, like
+any first enrollment, an invitation: one from the relay operator, or the one the
+sign-up policy grants when its owner connects it to an account. For a custom
+domain, first update its TXT value to the new owner account ID.
+
+### Routes from before Omnesis accounts
+
+The relay first let a Google sign-in alone exchange an ID token for a relay
+session (`POST /_relay/v1/login`), register a gateway under that Google identity
+(`POST /_relay/v2/gateway`), and later move that gateway to an owner key without
+an invitation. None of these passes the sign-up policy, and the sign-in accepts
+any configured Google audience without a nonce the relay issued, so a relay
+answers them with 404. Current sign-up, account linking, owner-key enrollment and
+renewal, tunnels, discovery and ACME do not use them.
+
+`OMNESIS_CLOUD_RELAY_LEGACY_ROUTES=1` turns them back on for a relay that still
+serves Google-era clients: `omnesis cloud google-login` and `register-gateway`, a
+gateway that renews its routing session with Google credentials instead of an
+owner key, and Google-only device pairing from earlier releases, which current
+apps use only where account sign-in is not configured. Even then a sign-in takes no account slot; only
+registering a gateway does. Account rows that no registration completed are
+dropped whenever the relay opens its database, returning their capacity.
 
 To enable optional Google discovery, configure the dedicated gateway OAuth
 client, a private `OMNESIS_CLOUD_RELAY_GOOGLE_CREDENTIALS_FILE`, and the ordinary

@@ -76,6 +76,10 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
     /// `handoff`, `replicated`, `partitioned`. Nil on a gateway that
     /// predates multi-device modes.
     public let multiDeviceMode: String?
+    /// The modes a resync of the whole source offers (`in-place`,
+    /// `from-scratch`): empty for a source that cannot be resynced. Nil on a
+    /// gateway that predates resync modes, where a resync always wipes.
+    public let resyncModes: [String]?
 
     /// Whether `deviceId` contributes to this source, on gateways with and
     /// without membership.
@@ -103,7 +107,8 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
         createdAt: Int64 = 0,
         updatedAt: Int64 = 0,
         members: [String] = [],
-        multiDeviceMode: String? = nil
+        multiDeviceMode: String? = nil,
+        resyncModes: [String]? = nil
     ) {
         self.id = id
         self.type = type
@@ -115,11 +120,12 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
         self.updatedAt = updatedAt
         self.members = members
         self.multiDeviceMode = multiDeviceMode
+        self.resyncModes = resyncModes
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, type, accountId, deviceId, config, enabled, createdAt, updatedAt
-        case members, multiDeviceMode
+        case members, multiDeviceMode, resyncModes
     }
 
     public init(from decoder: Decoder) throws {
@@ -134,6 +140,7 @@ public struct SourceRecord: Decodable, Hashable, Sendable, Identifiable {
         updatedAt = try container.decode(Int64.self, forKey: .updatedAt)
         members = try container.decodeIfPresent([String].self, forKey: .members) ?? []
         multiDeviceMode = try container.decodeIfPresent(String.self, forKey: .multiDeviceMode)
+        resyncModes = try container.decodeIfPresent([String].self, forKey: .resyncModes)
     }
 }
 

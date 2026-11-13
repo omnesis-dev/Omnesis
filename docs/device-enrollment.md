@@ -85,6 +85,70 @@ that verifies. A passkey is offered for trust (`canTrustSignIn`) only when the
 relay's credential list for the linked account holds that credential id with
 that public key; if the list can't be read, it is not offered.
 
+### Each sign-in is for one purpose
+
+A sign-in on the relay's page is made for one thing, and the gateway accepts it
+only for that thing (`SignInPurpose` in `device-enrollment.ts`):
+
+- **Joining a device** commits to the enrollment nonce as it is, the value the
+  device computed from its own key. `/devices/account/request` checks only this.
+- **Linking a gateway**, by connecting a new one (`/_relay/v3/signup/start`) or
+  from its account page (the account browser's `owner-link`), commits to
+  `signInProofNonce("gateway-link", nonce)`: the gateway's nonce hashed under
+  its own label. The link callback and the signup's completion check only this.
+
+Whoever starts a link chooses its nonce, and anyone with an owner key can start a
+signup, so without the label a sign-in made to link a gateway could be accepted
+as a device's enrollment sign-in. With it, a link sign-in commits to a hash no
+enrollment nonce can equal, and an enrollment sign-in never pins a link. Endorsements and countersignatures commit to their own labelled
+nonces (`passkeyEndorsementNonce`, `passkeyCountersignatureNonce`) and are
+verified only as such. The native apps sign enrollment nonces only, so they are
+unaffected.
+
+### Passkeys on the gateway's own page
+
+A sign-in made on a relay page is only as trustworthy as the page: script the
+relay serves chooses the WebAuthn challenge (and the iOS app presents the same
+`https://relay…` origin). A `gateway-passkey` assertion is made on the gateway's
+own page instead, which the relay can't serve without a certificate for the
+gateway's name:
+
+```json
+{ "type": "gateway-passkey", "challenge": "…", "credential": { "…": "WebAuthn assertion" } }
+```
+
+- `challenge` is a one-use value the gateway issued (`GatewayPasskeyCeremonies`,
+  three minutes) and spends on first use. The proof carries no salt and no time.
+- The WebAuthn challenge is `gatewayPasskeyChallenge(purpose, origin, challenge,
+binding)`. Purposes: `device-enrollment` (the request's `/devices/account/challenge`
+  value, bound to its `enrollmentNonce`), `approve-request`
+  (`gatewayPasskeyApprovalBinding`), `pin-passkey` (`gatewayPasskeyPinBinding`) and
+  `step-up` (`gatewayPasskeyStepUpBinding`). The test file holds the vectors.
+- The RP ID is the relay's host, as for every account passkey. The expected
+  origin is the gateway's own: `https://` and its hosted name
+  (`hostedGatewayHostname(gatewayId, relay host)`), which the gateway derives
+  itself. If the public origin the gateway saved is anything else (a custom
+  domain, or a name the relay returned), the gateway has no origin to vouch for
+  and only the official Android app can make one. The Android app's
+  `android:apk-key-hash:` origins are compiled into the gateway
+  (`OFFICIAL_ANDROID_PASSKEY_ORIGINS`), like the Google clients.
+- A response made in a cross-site frame (`crossOrigin` or `topOrigin` in its
+  client data) is refused, for every passkey proof.
+- The public key is one the gateway chose: never one that arrives with the proof.
+  The signature counter is kept with the key and must move forward when it is
+  not zero.
+
+A sign-in the owner confirmed in such a ceremony is a confirmed sign-in
+(`confirmedSignIns` in `account-link.json`, `ConfirmedSignIn`), recorded with
+how it was confirmed (`via`). The field is top-level so that a gateway version
+that predates it drops it on save, which leaves nothing confirmed; an entry the
+running version can't read is dropped the same way. A new link starts with none.
+
+A Google token counts as made in an official app (`native-google`) only when an
+official native client presented it: the Android release or test client as
+`azp` of a token for the web client, or the iOS client as both `aud` and `azp`.
+A token without `azp`, or from a client of unknown type, never does.
+
 ## Comparison code
 
 A held request shows a code on the new device and on the device that approves
@@ -215,6 +279,13 @@ account settings in the portal or the iOS and Android apps, `PUT /admin/cloud-re
 `omnesis cloud connect --ask-first`), so the relay can neither set nor clear the policy. A gateway that
 is not linked joins nothing by sign-in, and a linked gateway with no trusted
 sign-ins still holds every request for approval.
+
+The policy and the owner's refusals (declined and withdrawn sign-ins) outlast the
+link. Linking again keeps the policy, for any account, and keeps the refusals
+when it is the same account. Disconnecting the gateway and a deleted account drop
+the link and its pins but leave these in the file, marked `dormant`, which reads
+as a gateway with no account until the next link. Nothing is kept when there is
+nothing to keep: then the file is removed.
 
 ### Passkeys added later
 
@@ -463,6 +534,13 @@ for the code shown on the approving device before it waits.
 The gateway registers with the invitation, then `POST /_relay/v3/signup/link`
 binds the account using its new owner session.
 
+On the relay's page, signing in (or creating the account) does not connect the
+gateway by itself, for a signup or an owner link alike: the page shows the
+gateway's name and code and connects it only when the person presses "Connect
+this gateway". Whoever started the request chose that name, so the press is the
+person's confirmation that it is theirs. Pairing a browser from a gateway's own
+portal still goes on by itself after sign-in.
+
 Under `allowlist`, the relay may also take invitations from a Google Group
 (`OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP`, its service account key in
 `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE`, and an optional
@@ -527,8 +605,9 @@ row, binding, recovery receipt and DNS challenge leases and closes its tunnel
 (`POST /_relay/v3/account-browser/unlink`, signed in as the gateway's owner key).
 The account stays, with its other gateways, even if it has none left.
 
-On the gateway, remote access goes off and the account link, enrollment policy,
-trusted sign-ins, relay session, invitation and recovery receipt are removed, so
+On the gateway, remote access goes off and the account link, trusted sign-ins,
+relay session, invitation and recovery receipt are removed (the enrollment policy
+and refused sign-ins stay for the next link, see Trusted sign-ins), so
 its status is that of a gateway with no account and no registration and the
 portal offers "Enroll this gateway in your Omnesis Account". What it keeps is its
 own: the gateway id, the owner key, the public certificate and that

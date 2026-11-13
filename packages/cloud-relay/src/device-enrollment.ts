@@ -47,6 +47,29 @@ export function enrollmentNonce(value: EnrollmentIdentity): string {
   ]);
 }
 
+/**
+ * What a sign-in made on the relay's account page is for. A gateway accepts a sign-in proof only
+ * for the purpose it is verifying, so one made for one purpose never stands in for another:
+ *
+ * - `device-enrollment`: a device joins a gateway (`/devices/account/request`). The nonce is the
+ *   device's own `enrollmentNonce` (or a pairing nonce), committed to as it is, which is what the
+ *   iOS and Android apps sign. Produced by the account browser's `device-enrollment` operations,
+ *   the desktop and portal sign-ins, and native-app sign-ins.
+ * - `gateway-link`: a gateway is linked to an account, by gateway sign-up or by the `owner-link`
+ *   operation from its account page. Whoever starts one picks its nonce, so the proof commits to
+ *   that nonce under this purpose's own label (`signInProofNonce`) and can never equal an
+ *   enrollment nonce.
+ *
+ * A passkey's endorsement and countersignature commit to `passkeyEndorsementNonce` and
+ * `passkeyCountersignatureNonce` and are verified only as such.
+ */
+export type SignInPurpose = "device-enrollment" | "gateway-link";
+
+/** The value a sign-in for `purpose` commits to, given the nonce of the operation it was made for. */
+export function signInProofNonce(purpose: SignInPurpose, nonce: string): string {
+  return purpose === "gateway-link" ? digestUrl(["omnesis-gateway-link-proof-v1", nonce]) : nonce;
+}
+
 /** Google's `nonce` claim. The salt keeps one enrollment nonce from reusing a token across operations. */
 export function googleProofNonce(salt: string, nonce: string): string {
   return digestUrl(["omnesis-google-proof-v3", salt, nonce]);
@@ -94,6 +117,87 @@ export function passkeyCountersignatureNonce(
   signIns: readonly string[],
 ): string {
   return digestUrl(["omnesis-passkey-countersignature-v2", accountId, ...[...signIns].sort()]);
+}
+
+/**
+ * What a passkey assertion made on a gateway's own page (`gateway-passkey`) is for. Unlike a
+ * sign-in made on the relay's account page, its challenge comes from a one-use value this gateway
+ * issued, and the browser can only have produced it on the gateway's own origin:
+ *
+ * - `device-enrollment`: a device joins. The gateway value is the `/devices/account/challenge`
+ *   the request answers; the binding is the device's `enrollmentNonce`.
+ * - `approve-request`: a person approves a held request (`gatewayPasskeyApprovalBinding`).
+ * - `pin-passkey`: the owner confirms that a passkey the account lists is theirs
+ *   (`gatewayPasskeyPinBinding`).
+ * - `step-up`: the owner confirms one administrative action (`gatewayPasskeyStepUpBinding`).
+ */
+export const gatewayPasskeyPurposeSchema = z.enum([
+  "device-enrollment",
+  "approve-request",
+  "pin-passkey",
+  "step-up",
+]);
+export type GatewayPasskeyPurpose = z.infer<typeof gatewayPasskeyPurposeSchema>;
+
+/**
+ * The WebAuthn challenge of a `gateway-passkey` assertion. It names the purpose, the gateway
+ * origin the browser was on, the gateway's one-use value and what the assertion approves, so an
+ * assertion made for one of these can never stand in for another.
+ */
+export function gatewayPasskeyChallenge(
+  purpose: GatewayPasskeyPurpose,
+  gatewayOrigin: string,
+  gatewayChallenge: string,
+  binding: string,
+): string {
+  return digestUrl([
+    "omnesis-gateway-passkey-v1",
+    gatewayPasskeyPurposeSchema.parse(purpose),
+    gatewayOrigin,
+    enrollmentOpaque.parse(gatewayChallenge),
+    binding,
+  ]);
+}
+
+/** What approving a held request commits to: that request, its device key and its code. */
+export function gatewayPasskeyApprovalBinding(input: {
+  requestId: string;
+  devicePublicKey?: string;
+  verificationCode: string;
+}): string {
+  return digestUrl([
+    "omnesis-gateway-approval-v1",
+    input.requestId,
+    input.devicePublicKey ? deviceKeyThumbprint(input.devicePublicKey) : "",
+    pairingCodeSchema.parse(input.verificationCode),
+  ]);
+}
+
+/** What confirming a passkey commits to: this gateway and the account it is linked to. */
+export function gatewayPasskeyPinBinding(input: { gatewayId: string; accountId: string }): string {
+  return digestUrl(["omnesis-gateway-pin-v1", input.gatewayId.toLowerCase(), input.accountId]);
+}
+
+/**
+ * What a step-up commits to: one request to the gateway, by the device making it. `bodySha256` is
+ * the lowercase hex SHA-256 of the exact request body ("" hashed for none).
+ */
+export function gatewayPasskeyStepUpBinding(input: {
+  method: string;
+  path: string;
+  bodySha256: string;
+  deviceId: string;
+}): string {
+  return digestUrl([
+    "omnesis-gateway-step-up-v1",
+    input.method.toUpperCase(),
+    input.path,
+    z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .parse(input.bodySha256),
+    input.deviceId,
+  ]);
 }
 
 /**
@@ -226,6 +330,23 @@ export const googleSignInProofSchema = z
   .strict();
 
 const encoded = z.string().min(1).max(65_536).regex(base64url);
+const passkeyAssertionSchema = z
+  .object({
+    id: encoded.max(2048),
+    rawId: encoded.max(2048),
+    type: z.literal("public-key"),
+    authenticatorAttachment: z.enum(["platform", "cross-platform"]).optional(),
+    clientExtensionResults: z.object({}).passthrough(),
+    response: z
+      .object({
+        clientDataJSON: encoded,
+        authenticatorData: encoded,
+        signature: encoded,
+        userHandle: encoded.max(128),
+      })
+      .strict(),
+  })
+  .strict();
 export const passkeySignInProofSchema = z
   .object({
     type: z.literal("passkey"),
@@ -233,25 +354,24 @@ export const passkeySignInProofSchema = z
     issuedAt: z.string().regex(/^[1-9][0-9]{9,10}$/),
     /** Offered by the relay. Only used when you choose to trust an unknown sign-in; pins take priority. */
     credentialPublicKey: encoded.optional(),
-    credential: z
-      .object({
-        id: encoded.max(2048),
-        rawId: encoded.max(2048),
-        type: z.literal("public-key"),
-        authenticatorAttachment: z.enum(["platform", "cross-platform"]).optional(),
-        clientExtensionResults: z.object({}).passthrough(),
-        response: z
-          .object({
-            clientDataJSON: encoded,
-            authenticatorData: encoded,
-            signature: encoded,
-            userHandle: encoded.max(128),
-          })
-          .strict(),
-      })
-      .strict(),
+    credential: passkeyAssertionSchema,
   })
   .strict();
+
+/**
+ * A passkey assertion made on the gateway's own page, over `gatewayPasskeyChallenge`. It carries
+ * no salt and no time: `challenge` is the one-use value the gateway issued, which the gateway
+ * spends when it checks the assertion, so the assertion can't be kept for later. The key it is
+ * checked against is one the owner confirmed on this gateway, never one that arrives with it.
+ */
+export const gatewayPasskeySignInProofSchema = z
+  .object({
+    type: z.literal("gateway-passkey"),
+    challenge: enrollmentOpaque,
+    credential: passkeyAssertionSchema,
+  })
+  .strict();
+export type GatewayPasskeySignInProof = z.infer<typeof gatewayPasskeySignInProofSchema>;
 
 export const passkeyRegistrationProofSchema = z
   .object({

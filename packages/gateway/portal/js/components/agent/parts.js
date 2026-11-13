@@ -12,6 +12,7 @@
  */
 
 import { html } from "htm/preact";
+import { JsonCode } from "../json-code.js";
 import { createAgentToolRenderer, documentRead, flattenTrailDocs, normaliseRow, formatSqlCell } from "../../shared/agent-ui/tools.js";
 import { EphemeralHeader, EPHEMERAL_HOLD_MS, EPHEMERAL_FADE_MS, EPHEMERAL_SEARCH_RESULTS_MAX, EPHEMERAL_SQL_ROWS_MAX } from "../../shared/agent-ui/lifecycle.js";
 import { SEARCH_GLYPH, DOC_GLYPH, SQL_GLYPH, TRAIL_GLYPH, BOLT_GLYPH, PEOPLE_GLYPH, LINK_GLYPH, LOOP_GLYPH, CLOCK_GLYPH } from "../../shared/agent-ui/glyphs.js";
@@ -1085,7 +1086,7 @@ function ToolCardTrailing({ timeText, rawTitle, rawPayload }) {
           onClose=${() => setRawOpen(false)}
           title=${rawTitle ?? "Raw tool payload"}
           size="lg"
-        ><pre class="agent-raw-json">${JSON.stringify(rawPayload, null, 2) ?? "null"}</pre><//>`
+        ><pre class="agent-raw-json"><${JsonCode} text=${JSON.stringify(rawPayload, null, 2) ?? "null"} /></pre><//>`
       : null}
   </span>`;
 }
@@ -1247,7 +1248,9 @@ function ToolCallChip({ call }) {
       <div class="agent-toolcall-header">
         <span class="agent-toolcall-tool">${prettyToolName(call.tool)}</span>
         ${call.argsSummary
-          ? html`<code class="agent-toolcall-args">${call.argsSummary}</code>`
+          ? html`<code class="agent-toolcall-args">${/^\s*[\[{]/.test(call.argsSummary)
+              ? html`<${JsonCode} text=${call.argsSummary} />`
+              : call.argsSummary}</code>`
           : null}
         ${call.result != null
           ? (call.durationMs != null

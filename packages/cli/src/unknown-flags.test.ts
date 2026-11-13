@@ -134,6 +134,7 @@ describe("what it must keep accepting", () => {
   it("leaves positionals alone, including a whole opaque tail", async () => {
     // Source patterns arrive as an untyped tail; none of them is a flag.
     await accepts(["sources", "resync", "gmail:", "apple:"]);
+    await accepts(["sources", "resync", "gmail:", "--from-scratch", "--yes"]);
     await accepts(["sql", "SELECT 1"]);
   });
 });

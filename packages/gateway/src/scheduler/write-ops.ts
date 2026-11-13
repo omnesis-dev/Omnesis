@@ -148,8 +148,9 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "db.acknowledgePendingSourcePage", priority: "realtime" },
   { name: "db.abandonPendingSourcePage", priority: "realtime" },
   { name: "db.revokeSyncAttempt", priority: "realtime" },
-  // A per-device resync: the operator waits on it, like the wipes above.
+  // A resync that deletes nothing: the operator waits on it, like the wipes above.
   { name: "db.resetMemberCursor", priority: "user" },
+  { name: "db.resetSourceCursors", priority: "user" },
   { name: "db.setSyncState", priority: "realtime" },
   { name: "db.setSourceMeta", priority: "realtime" },
   // Atomic per-page sync write — bundles up to upsertDocuments +

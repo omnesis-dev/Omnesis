@@ -365,6 +365,7 @@ import {
   beginSyncAttempt,
   revokeSyncAttempt,
   resetMemberCursor,
+  resetSourceCursors,
   reserveReauthReminder,
   releaseReauthReminder,
   type SourceStatsAggregation,
@@ -869,6 +870,9 @@ export const writerHandlers = {
     revokeSyncAttempt(db, sourceId, expectedEpoch, cursorRow ?? ""),
   "db.resetMemberCursor": (db: Db, sourceId: string, deviceId: string): void => {
     resetMemberCursor(db, sourceId, deviceId);
+  },
+  "db.resetSourceCursors": (db: Db, sourceId: string, memberRows: boolean): void => {
+    resetSourceCursors(db, sourceId, memberRows);
   },
 
   "db.setSyncState": (

@@ -33,6 +33,7 @@ import {
   browserSuiteAvailable,
   clickFirst,
   connectGatewayBySignIn,
+  connectThisGateway,
   createAccountWithPasskey,
   createUnlinkedAccount,
   enterConnectCode,
@@ -187,11 +188,11 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
         expect(hostname).toMatch(/^g-[a-z2-7]{8}\.relay\.example\.test$/);
 
         // A person types the code at the relay and lands on the page for creating an account,
-        // as chosen in the portal. Making the account is the decision: nothing else to press.
+        // as chosen in the portal, makes the account and presses to connect the gateway.
         const person = await browser.session();
         await enterConnectCode(person.page, waiting.connect!.connectUrl!, waiting.connect!.code!);
         await createAccountWithPasskey(person.page);
-        await expectText(person.page, "You're all set");
+        await connectThisGateway(person.page);
 
         // The gateway registers, obtains its certificate over DNS-01 through the
         // relay, brings its tunnel up and links the account.
@@ -386,7 +387,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       await page.getByRole("heading", { name: SIGN_IN_HEADING, exact: true }).waitFor();
       await clickFirst(page, ["Create an account instead"]);
       await createAccountWithPasskey(page);
-      await expectText(page, "You're all set");
+      await connectThisGateway(page);
 
       const done = await finishedConnect(gateway);
       expect(done.connect).toMatchObject({ state: "done" });
@@ -481,12 +482,12 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
     const run = cloudConnect(gateway, ["--ask-first"]);
     const printed = await printedGatewayCode(run);
     await enterConnectCode(allowed.session.page, printed.connectUrl, printed.code);
-    // The CLI connects to an account the person already has; signing in is all it takes.
+    // The CLI connects to an account the person already has: sign in, then connect.
     await allowed.session.page
       .getByRole("heading", { name: SIGN_IN_HEADING, exact: true })
       .waitFor();
     await clickFirst(allowed.session.page, ["Sign in with Passkey"]);
-    await expectText(allowed.session.page, "You're all set");
+    await connectThisGateway(allowed.session.page);
     expect(await run.exit).toBe(0);
     expect(run.stdout()).toContain("Connected to your Omnesis account.");
     expect(run.stdout()).toContain("New devices will wait for your approval.");

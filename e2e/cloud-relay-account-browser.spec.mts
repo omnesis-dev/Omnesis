@@ -27,7 +27,7 @@ import {
 } from "@omnesis/cloud-relay";
 import type { AddressInfo } from "node:net";
 
-test("an owner-signed gateway request creates an account only on the person's explicit choice, and that sign-in links the gateway with no second confirmation", async ({
+test("an owner-signed gateway request creates an account only on the person's explicit choice, and the gateway is linked only when the person presses to connect it", async ({
   playwright,
 }) => {
   const directory = await mkdtemp(join(tmpdir(), "omnesis-account-browser-")),
@@ -218,8 +218,12 @@ test("an owner-signed gateway request creates an account only on the person's ex
     ).toBeVisible();
     await page.getByRole("button", { name: "Create an account instead", exact: true }).click();
     expect(accounts.identities.gatewayAccount(owner.ownerAccountId)).toBeUndefined();
-    // Making the account is the decision: the gateway is linked without another press.
+    // Making the account does not link the gateway: the person presses to connect it.
     await page.getByRole("button", { name: "Create with a passkey", exact: true }).click();
+    const connect = page.getByRole("button", { name: "Connect this gateway", exact: true });
+    await expect(connect).toBeVisible();
+    expect(accounts.identities.gatewayAccount(owner.ownerAccountId)).toBeUndefined();
+    await connect.click();
     await expect(page).toHaveURL(
       /https:\/\/gateway\.example\.test\/admin\/cloud-relay\/account\/callback\?/,
     );

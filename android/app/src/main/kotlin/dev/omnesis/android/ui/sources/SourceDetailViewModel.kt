@@ -13,10 +13,14 @@ import dev.omnesis.android.designsystem.components.SourceIconModel
 import dev.omnesis.android.setup.notices.toNoticeUi
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.sources.SourceCatalog
+import dev.omnesis.android.transport.ResyncOffer
 import dev.omnesis.android.transport.dto.IndexStats
 import dev.omnesis.android.transport.dto.InternalSource
+import dev.omnesis.android.transport.dto.ResyncMode
 import dev.omnesis.android.transport.dto.SourceRecord
 import dev.omnesis.android.transport.dto.SourceSyncStatus
+import dev.omnesis.android.transport.resyncOffer
+import dev.omnesis.android.transport.resyncSteps
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
 import dev.omnesis.android.transport.ws.DeviceSocket.WsEvent
 import dev.omnesis.android.ui.common.Loadable
@@ -34,7 +38,8 @@ import javax.inject.Inject
  *
  * The mutating actions hit the gateway admin surface (mirroring the iOS `AdminCoordinator`):
  * sync now (`POST /admin/sources/:id/sync`), pause/resume (`PATCH /admin/sources/:id`),
- * resync (delete-all then sync), remove (`DELETE /admin/sources/:id`), and the debug fetch
+ * resync (`POST /admin/sources/:id/resync`, or delete-all then sync on a gateway that predates
+ * resync modes), remove (`DELETE /admin/sources/:id`), and the debug fetch
  * (`GET /admin/sources/:id/debug`). Each reloads the detail on success.
  */
 data class SourceDetailUi(
@@ -63,6 +68,10 @@ data class SourceDetailUi(
      * on a device the record does not list. Shown beside the STATUS pill.
      */
     val notices: List<NoticeUi> = emptyList(),
+    /** What Resync can do for this source on the paired gateway. */
+    val resync: ResyncOffer = ResyncOffer.Choice(ResyncMode.entries),
+    /** Whether a resync from scratch says what it does to what the Brain built. */
+    val resyncBrainNote: Boolean = false,
 )
 
 data class SourceHostDeviceUi(
@@ -206,6 +215,8 @@ class SourceDetailViewModel @Inject constructor(
             debug = current?.debug,
             isInternal = snap.isInternal,
             notices = attributed.unattributed.toNoticeUi(),
+            resync = resyncOfferFor(snap),
+            resyncBrainNote = resyncBrainNote(session.experimentalEnabled.value, session.lab.value),
         )
     }
 
@@ -323,12 +334,15 @@ class SourceDetailViewModel @Inject constructor(
         session.requireSession().admin.patchSource(sourceId, enabled = paused)
     }
 
-    /** Wipe every doc + analytics row for the source, then trigger a fresh sync. */
-    fun resync() = runAction {
-        val admin = session.requireSession().admin
-        admin.deleteAllForSource(sourceId)
-        admin.syncSource(sourceId)
+    /** Resync the source in [mode], through the requests its gateway understands ([resyncSteps]). */
+    fun resync(mode: ResyncMode) = runAction {
+        val offer = snapshot?.let(::resyncOfferFor) ?: ResyncOffer.Unavailable
+        session.requireSession().admin.runResync(sourceId, resyncSteps(offer, mode))
     }
+
+    /** A gateway-internal source has nothing to read again. */
+    private fun resyncOfferFor(snap: Snapshot): ResyncOffer =
+        if (snap.isInternal) ResyncOffer.Unavailable else resyncOffer(snap.record.resyncModes)
 
     fun remove() = runAction(onSuccess = ::markRemoved, reloadAfter = false) {
         session.requireSession().admin.removeSource(sourceId)

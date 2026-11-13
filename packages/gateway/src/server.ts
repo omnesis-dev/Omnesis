@@ -81,7 +81,8 @@ import { mountTranscriptionVocabularyRoutes } from "./http/routes/transcription-
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
 import { VoiceNoteService, pendingVoiceNoteIds } from "./voice-notes/index.js";
 import { mountOcrRoutes } from "./http/routes/ocr.js";
-import { HttpError, errorResponse } from "./http/errors.js";
+import { ForbiddenError, HttpError, errorResponse } from "./http/errors.js";
+import { credentialedCorsOrigins, portalSessionMayAct } from "./http/session-origin.js";
 import { requestIdMiddleware } from "./http/middleware/request-id.js";
 import { requestContextMiddleware } from "./http/middleware/request-context.js";
 import { corsMiddleware } from "./http/middleware/cors.js";
@@ -1108,13 +1109,26 @@ export function createServer(
       if (sessionId) {
         const { info: session, expired } = lookupSession(db, sessionId);
         if (session) {
+          const csrfToken = portalCsrfToken(sessionId);
+          // A cookie alone does not show the portal sent a state-changing
+          // request: a page on a sibling site can make the browser attach it.
+          // See `http/session-origin.ts`.
+          if (
+            !portalSessionMayAct(
+              { method: c.req.method, header: (name) => c.req.header(name) },
+              csrfToken,
+              credentialedCorsOrigins(opts?.configStore?.get().gateway?.cors),
+            )
+          ) {
+            throw new ForbiddenError("Forbidden: cross-site request refused");
+          }
           auth = {
             authMethod: "portal-session",
             deviceId: null,
             credentialDeviceId: session.credentialDeviceId,
             tokenId: session.tokenId,
             scopes: session.scopes,
-            csrfToken: portalCsrfToken(sessionId),
+            csrfToken,
           };
           // A paired Portal has its own device and its cookie traffic is useful
           // activity evidence for that row. A raw-token login instead borrows a

@@ -113,7 +113,7 @@ function setup(
     challenges,
     verifyProof: async (proof, nonce, key) => {
       options.onVerify?.();
-      return verifier.verify(proof, nonce, key);
+      return verifier.verify(proof, "device-enrollment", nonce, key);
     },
     // As GatewayAccountLink decides it: Google by its signature, a passkey only as the relay lists it.
     canTrust: async (signIn) =>
@@ -614,19 +614,19 @@ describe("Google proofs", () => {
       issuedAt: Math.floor(Date.now() / 1000) - SIGN_IN_PROOF_MAX_AGE_SECONDS - 5,
     });
     expect(
-      await verifier().verify({ type: "google", salt, idToken: stale }, nonce),
+      await verifier().verify({ type: "google", salt, idToken: stale }, "device-enrollment", nonce),
     ).toBeUndefined();
   });
   test("another audience is refused", async () => {
     const token = await googleToken(googleProofNonce(salt, nonce), { audience: "other" });
     expect(
-      await verifier().verify({ type: "google", salt, idToken: token }, nonce),
+      await verifier().verify({ type: "google", salt, idToken: token }, "device-enrollment", nonce),
     ).toBeUndefined();
   });
   test("another nonce is refused", async () => {
     const token = await googleToken(googleProofNonce(salt, "x".repeat(43)));
     expect(
-      await verifier().verify({ type: "google", salt, idToken: token }, nonce),
+      await verifier().verify({ type: "google", salt, idToken: token }, "device-enrollment", nonce),
     ).toBeUndefined();
   });
   test("no configured audience means no Google proof can verify", async () => {
@@ -637,19 +637,25 @@ describe("Google proofs", () => {
       trusted: () => [],
     });
     const token = await googleToken(googleProofNonce(salt, nonce));
-    expect(await none.verify({ type: "google", salt, idToken: token }, nonce)).toBeUndefined();
+    expect(
+      await none.verify({ type: "google", salt, idToken: token }, "device-enrollment", nonce),
+    ).toBeUndefined();
   });
   test("only a pinned subject is trusted", async () => {
     const token = await googleToken(googleProofNonce(salt, nonce));
-    const unknown = await verifier().verify({ type: "google", salt, idToken: token }, nonce);
+    const unknown = await verifier().verify(
+      { type: "google", salt, idToken: token },
+      "device-enrollment",
+      nonce,
+    );
     expect(unknown).toMatchObject({ trusted: false, id: SIGN_IN_DIGEST });
     const known = await verifier([
       { type: "google", id: SIGN_IN_DIGEST, addedAt: 1, source: "link-page" },
-    ]).verify({ type: "google", salt, idToken: token }, nonce);
+    ]).verify({ type: "google", salt, idToken: token }, "device-enrollment", nonce);
     expect(known?.trusted).toBe(true);
   });
   test("a malformed proof is unverifiable, not an error", async () => {
-    expect(await verifier().verify({ type: "relay" }, nonce)).toBeUndefined();
+    expect(await verifier().verify({ type: "relay" }, "device-enrollment", nonce)).toBeUndefined();
   });
 });
 
@@ -808,6 +814,7 @@ describe("passkey proofs", () => {
         issuedAt,
         credential: assertion(key, passkeyProofChallenge(salt, issuedAt, nonce)),
       },
+      "device-enrollment",
       nonce,
     );
     expect(result).toMatchObject({ type: "passkey", trusted: true });
@@ -825,6 +832,7 @@ describe("passkey proofs", () => {
         credentialPublicKey: fake.publicKey,
         credential: assertion(fake, passkeyProofChallenge(salt, issuedAt, nonce)),
       },
+      "device-enrollment",
       nonce,
       fake.publicKey,
     );
@@ -842,6 +850,7 @@ describe("passkey proofs", () => {
         credentialPublicKey: key.publicKey,
         credential: assertion(key, passkeyProofChallenge(salt, issuedAt, nonce)),
       },
+      "device-enrollment",
       nonce,
     );
     expect(result).toMatchObject({ trusted: false });
@@ -861,6 +870,7 @@ describe("passkey proofs", () => {
       : passkeyProofChallenge(salt, issuedAt, nonce);
     const result = await verifier([pinFor(key)]).verify(
       { type: "passkey", salt, issuedAt, credential: assertion(key, challenge, options) },
+      "device-enrollment",
       nonce,
     );
     expect(result).toBeUndefined();
@@ -877,6 +887,7 @@ describe("passkey proofs", () => {
           issuedAt: stale,
           credential: assertion(key, passkeyProofChallenge(salt, stale, nonce)),
         },
+        "device-enrollment",
         nonce,
       ),
     ).toBeUndefined();
@@ -889,6 +900,7 @@ describe("passkey proofs", () => {
           issuedAt: future,
           credential: assertion(key, passkeyProofChallenge(salt, future, nonce)),
         },
+        "device-enrollment",
         nonce,
       ),
     ).toBeUndefined();
@@ -901,6 +913,7 @@ describe("passkey proofs", () => {
           issuedAt,
           credential: assertion(key, passkeyProofChallenge(salt, issuedAt, nonce)),
         },
+        "device-enrollment",
         nonce,
       ),
     ).toBeUndefined();
@@ -919,7 +932,7 @@ describe("passkey proofs", () => {
       issuedAt: at,
       credential: device.registration(challenge, RELAY, 0x5d, format),
     });
-    const result = await verifier([]).verify(registration(issuedAt), nonce);
+    const result = await verifier([]).verify(registration(issuedAt), "device-enrollment", nonce);
     expect(result).toMatchObject({
       type: "passkey",
       id: device.id,
@@ -930,22 +943,27 @@ describe("passkey proofs", () => {
     expect(
       await verifier([{ ...result!.pin, source: "link-page" }]).verify(
         registration(issuedAt),
+        "device-enrollment",
         nonce,
       ),
     ).toMatchObject({
       trusted: false,
     });
     const stale = String(Math.floor(Date.now() / 1000) - SIGN_IN_PROOF_MAX_AGE_SECONDS - 5);
-    expect(await verifier([]).verify(registration(stale), nonce)).toBeUndefined();
+    expect(
+      await verifier([]).verify(registration(stale), "device-enrollment", nonce),
+    ).toBeUndefined();
     expect(
       await verifier([]).verify(
         registration(issuedAt, passkeyProofChallenge(salt, issuedAt, "z".repeat(43))),
+        "device-enrollment",
         nonce,
       ),
     ).toBeUndefined();
     expect(
       await verifier([]).verify(
         registration(issuedAt, passkeyProofChallenge(salt, issuedAt, nonce), "invalid-self"),
+        "device-enrollment",
         nonce,
       ),
     ).toBeUndefined();

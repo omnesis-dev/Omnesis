@@ -21,19 +21,43 @@ import { CloudRelayManagementFailure } from "./management.js";
 import { EnrollmentChallenges } from "./enrollment-challenges.js";
 import {
   GatewaySignInVerifier,
+  confirmedSignInSchema,
   trustedSignInSchema,
+  type ConfirmedSignIn,
   type SignInPin,
   type TrustedSignIn,
   type TrustedSignInSource,
   type VerifiedSignIn,
 } from "./gateway-sign-in-proof.js";
-import { googleBrowserTrust, type GoogleBrowserTrust } from "./google-browser-trust.js";
+import {
+  googleBrowserTrust,
+  OFFICIAL_ANDROID_PASSKEY_ORIGINS,
+  type GoogleBrowserTrust,
+} from "./google-browser-trust.js";
+import { hostedGatewayOrigin } from "./hosted-name.js";
 import { signInDigest, type SignInProof } from "./device-enrollment.js";
 import type { EnrollmentPolicy, GatewayEnrollment } from "./google-pairing.js";
 import type { GatewayBrowserCallbackOrigins } from "./gateway-browser-callback.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const MAX_TRUSTED_SIGN_INS = 32;
+const MAX_CONFIRMED_SIGN_INS = 32;
+/**
+ * Sign-ins the owner confirmed on this gateway (`ConfirmedSignIn`). A top-level field on purpose:
+ * a version that predates it drops it when it saves, so going back a version fails closed to
+ * "nothing confirmed" instead of refusing the whole link, and an entry this version can't read
+ * (a later version's) is dropped the same way.
+ */
+const confirmedSignInsSchema = z
+  .array(z.unknown())
+  .max(MAX_CONFIRMED_SIGN_INS)
+  .default([])
+  .transform((entries) =>
+    entries.flatMap((entry) => {
+      const parsed = confirmedSignInSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
 const MAX_DECLINED_PASSKEYS = 256;
 const MAX_WITHDRAWN_SIGN_INS = 256;
 /** A sign-in that arrives untrusted fetches the account's evidence at most this often. */
@@ -42,6 +66,35 @@ const bindingSchema = z
   .object({ relayOrigin: z.string().url(), gatewayId: z.string().uuid(), ownerAccountId: digest })
   .strict();
 type Binding = z.infer<typeof bindingSchema>;
+/**
+ * The owner's local choices about sign-ins. Only local owner actions and this gateway's own
+ * checks write them; the relay never can. Unlinking or losing the account drops the link and its
+ * pins but keeps these, so linking again can't quietly undo them.
+ */
+const choices = {
+  /** Absent means automatic. It belongs to the gateway, so it applies to any account linked next. */
+  enrollmentPolicy: z.enum(["automatic", "ask"]).optional(),
+  /**
+   * Passkey pins the owner removed on this gateway. A vouching sign-in never pins these
+   * again; only approving a device with that passkey does.
+   */
+  declinedPasskeys: z.array(z.string().max(2048)).max(MAX_DECLINED_PASSKEYS).default([]),
+  /**
+   * Google pins the owner removed on this gateway. A passkey's countersignature never pins
+   * these again; only approving a device that signed in with that Google account does.
+   */
+  declinedGoogle: z.array(digest).max(MAX_DECLINED_PASSKEYS).default([]),
+  /**
+   * `signInDigest`s of sign-ins the account withdrew: pinned here, or named by a verified
+   * countersignature, and then missing from the account's listing. No endorsement or
+   * countersignature pins one again, whatever a relay lists later; only approving a device
+   * that signed in with it does.
+   */
+  withdrawnSignIns: z
+    .array(z.string().regex(/^[A-Za-z0-9_-]{43}$/))
+    .max(MAX_WITHDRAWN_SIGN_INS)
+    .default([]),
+};
 /**
  * Not strict: fields a later version adds are dropped, so going back a version keeps the link.
  * Each pin is still strict, and a value this version can't read refuses the whole record.
@@ -52,37 +105,26 @@ const recordSchema = z.discriminatedUnion("linked", [
     linked: z.literal(true),
     binding: bindingSchema,
     accountId: digest,
-    /** Absent means automatic. Only local owner actions write it; the relay never can. */
-    enrollmentPolicy: z.enum(["automatic", "ask"]).optional(),
     trustedSignIns: z.array(trustedSignInSchema).max(MAX_TRUSTED_SIGN_INS).default([]),
-    /**
-     * Passkey pins the owner removed on this gateway. A vouching sign-in never pins these
-     * again; only approving a device with that passkey does.
-     */
-    declinedPasskeys: z.array(z.string().max(2048)).max(MAX_DECLINED_PASSKEYS).default([]),
-    /**
-     * Google pins the owner removed on this gateway. A passkey's countersignature never pins
-     * these again; only approving a device that signed in with that Google account does.
-     */
-    declinedGoogle: z.array(digest).max(MAX_DECLINED_PASSKEYS).default([]),
-    /**
-     * `signInDigest`s of sign-ins the account withdrew: pinned here, or named by a verified
-     * countersignature, and then missing from the account's listing. No endorsement or
-     * countersignature pins one again, whatever a relay lists later; only approving a device
-     * that signed in with it does.
-     */
-    withdrawnSignIns: z
-      .array(z.string().regex(/^[A-Za-z0-9_-]{43}$/))
-      .max(MAX_WITHDRAWN_SIGN_INS)
-      .default([]),
+    confirmedSignIns: confirmedSignInsSchema,
+    ...choices,
   }),
   z.object({
     version: z.literal(1),
     linked: z.literal(false),
     pendingUnlink: bindingSchema.optional(),
+    /** The account the kept refusals name: only linking that account again restores them. */
+    accountId: digest.optional(),
+    /**
+     * The account is gone and only the owner's choices are left: account mode is off, as on a
+     * gateway that never had an account, until the gateway links again.
+     */
+    dormant: z.literal(true).optional(),
+    ...choices,
   }),
 ]);
 type Record = z.infer<typeof recordSchema>;
+type Unlinked = Extract<Record, { linked: false }>;
 const cookieName = "__Host-omnesis-gateway-account";
 const clearCookie = `${cookieName}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`;
 const callbackSchema = z
@@ -127,12 +169,17 @@ export class GatewayAccountLink {
     this.verifier = new GatewaySignInVerifier({
       google: () => (options.google ?? (() => this.googleIdentity()))(),
       relayOrigin: () => bindingOrigin(installationRelayUrl(options.env())!).origin,
-      passkeyOrigins: () =>
-        (options.env().OMNESIS_CLOUD_RELAY_PASSKEY_ANDROID_ORIGINS ?? "")
-          .split(",")
-          .map((value) => value.trim())
-          .filter((value) => /^android:apk-key-hash:[A-Za-z0-9_-]{43}$/.test(value)),
+      passkeyOrigins: () => [
+        ...new Set([
+          ...OFFICIAL_ANDROID_PASSKEY_ORIGINS,
+          ...(options.env().OMNESIS_CLOUD_RELAY_PASSKEY_ANDROID_ORIGINS ?? "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter((value) => /^android:apk-key-hash:[A-Za-z0-9_-]{43}$/.test(value)),
+        ]),
+      ],
       trusted: () => (this.record?.linked ? this.record.trustedSignIns : []),
+      nativeGoogleClients: () => googleBrowserTrust(this.options.googleTrust?.()).nativeClients!,
     });
   }
   private readonly verifier: GatewaySignInVerifier;
@@ -176,6 +223,7 @@ export class GatewayAccountLink {
       const value = await readPrivateJson(this.options.metadataFile);
       this.activated = true;
       this.record = recordSchema.parse(value);
+      if (!this.record.linked && this.record.dormant) this.activated = false;
       this.bound =
         this.record.linked && this.sameBinding(this.record.binding, await this.binding());
     } catch (error) {
@@ -188,6 +236,26 @@ export class GatewayAccountLink {
   }
   accountModeActivated(): boolean {
     return this.activated;
+  }
+  /**
+   * This gateway's own origin under the relay's domain, derived from its id and the relay it was
+   * installed with, never from what the relay said. Undefined when the saved public origin is
+   * anything else (a custom domain, or a name the relay chose): then no passkey of the account
+   * can be confirmed or used on the gateway's page.
+   */
+  gatewayOrigin(): string | undefined {
+    const env = this.options.env();
+    return hostedGatewayOrigin({
+      relayOrigin: installationRelayUrl(env),
+      gatewayId: env.OMNESIS_CLOUD_RELAY_GATEWAY_ID,
+      publicOrigin: env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN ?? env.OMNESIS_PUBLIC_BASE_URL,
+    });
+  }
+  /** Sign-ins the owner confirmed on this gateway, for the linked account only. */
+  confirmedSignIns(): readonly ConfirmedSignIn[] {
+    return this.record?.linked && this.verifiedAccountId() !== undefined
+      ? this.record.confirmedSignIns
+      : [];
   }
   verifiedAccountId(): string | undefined {
     return this.bound &&
@@ -232,13 +300,13 @@ export class GatewayAccountLink {
    * countersigned by it. Either way the evidence is fetched and checked before the answer.
    */
   private async verifyProof(proof: SignInProof, nonce: string, key: string | undefined) {
-    const verified = await this.verifier.verify(proof, nonce, key);
+    const verified = await this.verifier.verify(proof, "device-enrollment", nonce, key);
     if (!verified || verified.trusted) return verified;
     await this.sync(
       this.abort.signal,
       this.options.signInSyncIntervalMs ?? SIGN_IN_SYNC_INTERVAL_MS,
     ).catch(() => undefined);
-    return this.verifier.verify(proof, nonce, key);
+    return this.verifier.verify(proof, "device-enrollment", nonce, key);
   }
   private syncing?: Promise<void>;
   private lastSyncAt = 0;
@@ -325,6 +393,7 @@ export class GatewayAccountLink {
       {
         ...record,
         trustedSignIns: record.trustedSignIns.filter((value) => value.id !== id),
+        confirmedSignIns: record.confirmedSignIns.filter((value) => value.id !== id),
         declinedPasskeys: decline(record.declinedPasskeys, passkey),
         declinedGoogle: decline(record.declinedGoogle, google),
       },
@@ -337,30 +406,48 @@ export class GatewayAccountLink {
       throw new CloudRelayManagementFailure(409, "configuration-invalid");
     return this.record;
   }
+  /** The sign-in a link was made with, pinned only when it was made for linking this gateway. */
   private async pinFromLink(
     proof: SignInProof | undefined,
     nonce: string,
     credentialPublicKey: string | undefined,
   ): Promise<TrustedSignIn[]> {
-    const verified = proof && (await this.verifier.verify(proof, nonce, credentialPublicKey));
+    const verified =
+      proof && (await this.verifier.verify(proof, "gateway-link", nonce, credentialPublicKey));
     return verified ? [{ ...verified.pin, source: "link-page" }] : [];
   }
   /**
-   * A link's account, pins and remembered refusals. Linking the same account again keeps what the
-   * owner declined and what the account withdrew, except the sign-in the owner just linked with,
-   * as approving it would; another account starts with none.
+   * A link's account, pins and remembered choices, whether the gateway is linked now or was
+   * unlinked, or lost its account, since. The enrollment policy is the gateway's and carries over
+   * to any account. Linking the same account again keeps what the owner declined and what the
+   * account withdrew, except the sign-in the owner just linked with, as approving it would;
+   * another account starts with none.
    */
   private relinked(accountId: string, trustedSignIns: TrustedSignIn[]) {
-    const previous =
-      this.record?.linked && this.record.accountId === accountId ? this.record : undefined;
+    const kept = this.kept(),
+      same = kept.accountId === accountId;
     const ids = new Set(trustedSignIns.map((value) => value.id)),
       names = new Set(trustedSignIns.map((value) => signInDigest(value)));
     return {
       accountId,
       trustedSignIns,
-      declinedPasskeys: (previous?.declinedPasskeys ?? []).filter((id) => !ids.has(id)),
-      declinedGoogle: (previous?.declinedGoogle ?? []).filter((id) => !ids.has(id)),
-      withdrawnSignIns: (previous?.withdrawnSignIns ?? []).filter((name) => !names.has(name)),
+      // A new link is confirmed afresh on this gateway's page, whichever account it names.
+      confirmedSignIns: [],
+      ...(kept.enrollmentPolicy ? { enrollmentPolicy: kept.enrollmentPolicy } : {}),
+      declinedPasskeys: same ? kept.declinedPasskeys.filter((id) => !ids.has(id)) : [],
+      declinedGoogle: same ? kept.declinedGoogle.filter((id) => !ids.has(id)) : [],
+      withdrawnSignIns: same ? kept.withdrawnSignIns.filter((name) => !names.has(name)) : [],
+    };
+  }
+  /** What an unlinked record keeps of the current one: the owner's choices, never the pins. */
+  private kept(): Omit<Unlinked, "version" | "linked" | "pendingUnlink" | "dormant"> {
+    const record = this.record;
+    return {
+      ...(record?.accountId ? { accountId: record.accountId } : {}),
+      ...(record?.enrollmentPolicy ? { enrollmentPolicy: record.enrollmentPolicy } : {}),
+      declinedPasskeys: record?.declinedPasskeys ?? [],
+      declinedGoogle: record?.declinedGoogle ?? [],
+      withdrawnSignIns: record?.withdrawnSignIns ?? [],
     };
   }
   /** Finishes a sign-in-first connection: the account proof arrived before the gateway registered. */
@@ -653,7 +740,7 @@ export class GatewayAccountLink {
       const pendingUnlink = this.record?.linked ? this.record.binding : this.record?.pendingUnlink;
       // Save local opt-out before contacting the service, including during outages.
       await this.save(
-        { version: 1, linked: false, ...(pendingUnlink ? { pendingUnlink } : {}) },
+        { version: 1, linked: false, ...(pendingUnlink ? { pendingUnlink } : {}), ...this.kept() },
         signal,
       );
       saved = true;
@@ -675,13 +762,23 @@ export class GatewayAccountLink {
     this.bound = false;
   }
   /**
-   * The account no longer exists, so nothing is left to unlink on the relay: the link, its policy
-   * and its trusted sign-ins go, as on a gateway that never had an account.
+   * The account no longer exists, so nothing is left to unlink on the relay: the link and its
+   * trusted sign-ins go, as on a gateway that never had an account. The owner's choices stay
+   * (`choices`): the gateway only has the relay's word that the account is gone, and linking
+   * again must not quietly turn "ask" back into automatic or forget a refused sign-in.
    */
   async forget(): Promise<void> {
     this.cancel();
-    await rm(this.options.metadataFile, { force: true });
-    this.record = undefined;
+    const kept = this.kept();
+    if (
+      kept.enrollmentPolicy ||
+      kept.declinedPasskeys.length + kept.declinedGoogle.length + kept.withdrawnSignIns.length > 0
+    )
+      await this.save({ version: 1, linked: false, dormant: true, ...kept }, this.abort.signal);
+    else {
+      await rm(this.options.metadataFile, { force: true });
+      this.record = undefined;
+    }
     this.activated = false;
     this.lastError = undefined;
   }
@@ -694,7 +791,7 @@ export class GatewayAccountLink {
     await this.browser.unlink(signal);
     signal.throwIfAborted();
     if (this.record !== record) throw new Error("Account operation changed");
-    await this.save({ version: 1, linked: false }, signal, record);
+    await this.save({ version: 1, linked: false, ...this.kept() }, signal, record);
   }
   private async save(record: Record, signal: AbortSignal, expected?: Record): Promise<void> {
     await mkdir(dirname(this.options.metadataFile), { recursive: true, mode: 0o700 });

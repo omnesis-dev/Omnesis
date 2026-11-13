@@ -26,8 +26,12 @@ export function passkeyAuthenticator(rpID = "relay.example.test") {
     suffix.writeUInt32BE(counter, 1);
     return Buffer.concat([createHash("sha256").update(rpID).digest(), suffix]);
   };
-  const clientData = (type: string, challenge: string, origin: string) =>
-    Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false }));
+  const clientData = (
+    type: string,
+    challenge: string,
+    origin: string,
+    extra: Record<string, unknown> = {},
+  ) => Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false, ...extra }));
   return {
     id,
     /** The COSE public key, base64url, as a relay registers it and a gateway pins it. */
@@ -80,8 +84,10 @@ export function passkeyAuthenticator(rpID = "relay.example.test") {
       counter = 0,
       origin = `https://${rpID}`,
       flags = 0x1d,
+      /** Fields a browser adds to the client data, e.g. inside a cross-site frame. */
+      extraClientData: Record<string, unknown> = {},
     ): AuthenticationResponseJSON {
-      const client = clientData("webauthn.get", challenge, origin);
+      const client = clientData("webauthn.get", challenge, origin, extraClientData);
       const authenticator = authData(flags, counter);
       const signature = sign(
         "sha256",

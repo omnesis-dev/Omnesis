@@ -7,7 +7,7 @@ import { once } from "node:events";
 import { PassThrough, type Duplex } from "node:stream";
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { fixture, listen, localToken } from "../test/support.js";
+import { fixture, listen } from "../test/support.js";
 import { createRelayClientProxy } from "./client-proxy.js";
 import { SESSION_HEADER } from "./network.js";
 import * as network from "./network.js";
@@ -145,19 +145,16 @@ test("upgrade authentication is safe when a socket resets during identity verifi
 test("unexpected service failures return sanitized status and preserve already-written headers", async () => {
   const f = await fixture();
   try {
-    vi.spyOn(f.accounts, "registerAccount").mockImplementation(() => {
+    const directory = vi.spyOn(f.accounts, "gatewayAccounts").mockImplementation(() => {
       throw new Error("private database detail");
     });
-    const input = {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ idToken: await localToken(f.key) }),
-    };
-    const error = await fetch(`${f.url}/_relay/v1/login`, input);
+    const input = { headers: { [SESSION_HEADER]: f.session.token } };
+    const error = await fetch(`${f.url}/_relay/v2/gateways`, input);
     expect(error.status).toBe(500);
     expect(await error.text()).toBe("");
     f.relay.server.prependOnceListener("request", (_req, res) => res.writeHead(202));
-    expect((await fetch(`${f.url}/_relay/v1/login`, input)).status).toBe(202);
+    expect((await fetch(`${f.url}/_relay/v2/gateways`, input)).status).toBe(202);
+    directory.mockRestore();
     vi.spyOn(f.accounts, "bindGateway").mockImplementation(() => {
       throw new Error("private routing detail");
     });

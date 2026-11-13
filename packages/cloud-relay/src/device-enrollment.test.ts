@@ -16,6 +16,7 @@ import {
   passkeyEndorsementNonce,
   passkeyProofChallenge,
   signDeviceTranscript,
+  signInProofNonce,
   signInProofSchema,
   tokenRotationTranscript,
   verifyDeviceSignature,
@@ -271,5 +272,25 @@ describe("passkey endorsement", () => {
       passkeyProofChallenge(id, "1794240000", publicKey),
     ];
     expect(new Set([passkeyEndorsementNonce(id, publicKey), ...others]).size).toBe(7);
+  });
+});
+
+describe("sign-in purposes", () => {
+  const nonce = enrollmentNonce(VECTOR);
+  test("an enrollment sign-in commits to the device's own nonce, which the native apps compute", () => {
+    expect(signInProofNonce("device-enrollment", nonce)).toBe(nonce);
+  });
+  test("a link sign-in commits to the gateway's nonce under its own label, never to an enrollment nonce", () => {
+    const linked = signInProofNonce("gateway-link", nonce);
+    expect(linked).toBe(
+      createHash("sha256")
+        .update(JSON.stringify(["omnesis-gateway-link-proof-v1", nonce]))
+        .digest("base64url"),
+    );
+    expect(linked).not.toBe(nonce);
+    expect(googleProofNonce(VECTOR.salt, linked)).not.toBe(googleProofNonce(VECTOR.salt, nonce));
+    expect(passkeyProofChallenge(VECTOR.salt, VECTOR.issuedAt, linked)).not.toBe(
+      passkeyProofChallenge(VECTOR.salt, VECTOR.issuedAt, nonce),
+    );
   });
 });

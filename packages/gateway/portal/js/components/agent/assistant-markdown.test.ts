@@ -85,4 +85,17 @@ describe("completed answer rendering", () => {
     expect(host.querySelector("pre code")).not.toBeNull();
     expect(host.querySelectorAll(".agent-value-copy-btn")).toHaveLength(0);
   });
+  it("colors a truncated JSON tool summary without changing the visible text", async () => {
+    const argsSummary = '{"definition":{"name":"evening-reminder","pending":';
+    await mount(MessageBubble, {
+      turn: { role: "assistant", done: true, parts: [{
+        kind: "tool", tool: "validate_watch", toolCallId: "validate-example", args: {}, argsSummary,
+        result: { kind: "unknown", text: "Accepted" },
+      }] },
+      citations: [], dispatch: () => {},
+    });
+    expect(host.querySelector(".agent-toolcall-args").textContent).toBe(argsSummary);
+    expect(host.querySelector(".agent-toolcall-args .cm-tok-property").textContent).toBe('"definition"');
+  });
+
 });

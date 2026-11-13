@@ -538,14 +538,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           Widening the window, or setting it to <code>unlimited</code>, admits older items from then
           on, but a source that has finished its first sync reads only what changes, so it does not
           go back for the older history by itself. To fetch it, run
-          <code>omnesis sources resync &lt;id&gt;</code> after widening: resync first deletes
-          everything the source has indexed, then syncs it again from scratch under the new window.
-          Narrowing the window keeps older items out from then on and deletes nothing already
-          stored. <code>activityRetention.maxAge</code> is separate: it removes expired operational
-          history and unpinned agent conversations in small background batches, never data ingested
-          from sources, and never pinned, running or pending work. Without it, activity is kept
-          forever. Deleted data frees space inside the databases for reuse, but a database file may
-          not shrink on disk.
+          <code>omnesis sources resync &lt;id&gt;</code> after widening: the source is read again
+          from the start under the new window, and nothing already indexed is deleted. Narrowing the
+          window keeps older items out from then on and deletes nothing already stored.
+          <code>activityRetention.maxAge</code> is separate: it removes expired operational history
+          and unpinned agent conversations in small background batches, never data ingested from
+          sources, and never pinned, running or pending work. Without it, activity is kept forever.
+          Deleted data frees space inside the databases for reuse, but a database file may not
+          shrink on disk.
         </p>
         <p>
           <code>gateway.snapshotAbsence</code> controls how cautiously Omnesis deletes items that a
@@ -1481,8 +1481,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           authentication, permission and collector problems.
           <code>omnesis sources debug &lt;id&gt;</code> shows a source's sync position and counts,
           <code>omnesis sources reauth &lt;provider&gt;:&lt;account&gt;</code> signs an account in
-          again, and <code>omnesis sources resync &lt;id&gt;</code> rebuilds a source's data from
-          the start; use resync only when that is needed.
+          again, and <code>omnesis sources resync &lt;id&gt;</code> reads a source again from the
+          start: in place by default, which deletes nothing, or with <code>--from-scratch</code>,
+          which deletes the source's data first.
           <code>omnesis sources legacy-rows &lt;id&gt;</code> lists, claims or drops the rows of a
           shared analytics table that no account has claimed. Pages captured by the browser
           extension cannot be resynced, because nothing holds their past copies to fetch again. See

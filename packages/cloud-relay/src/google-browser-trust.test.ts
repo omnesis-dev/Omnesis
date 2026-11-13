@@ -46,6 +46,15 @@ test("the official google clients are compiled in and trusted without any config
       official("3lnneuvft93ud5ssdppe19tc7fol4aku"),
       official("sb5de515284geor9ui6vg7hsl4qsrg53"),
     ],
+    // Only the iOS app and the Android release and test builds count as native. The two clients
+    // of unknown type, and the web clients, never do.
+    nativeClients: {
+      ios: [official("071jh21ngi85ne01k4oe5krfng2frmhr")],
+      android: [
+        official("3lnneuvft93ud5ssdppe19tc7fol4aku"),
+        official("sb5de515284geor9ui6vg7hsl4qsrg53"),
+      ],
+    },
   });
   expect(trust.deviceClientIds).not.toContain(trust.ownerLinkClientId);
   expect(trust.deviceAuthorizedParties).not.toContain(trust.ownerLinkClientId);
@@ -70,6 +79,7 @@ test("a registry is normalized so purposes stay separated and the result is immu
       "device-browser",
       "android-presenter",
     ],
+    nativeClients: { ios: [], android: [] },
   });
   expect(Object.isFrozen(trust)).toBe(true);
   expect(Object.isFrozen(trust.deviceClientIds)).toBe(true);
@@ -83,7 +93,33 @@ test("a registry is normalized so purposes stay separated and the result is immu
   ).toMatchObject({ ownerLinkClientId: "owner-only", deviceClientIds: [] });
   expect(
     googleBrowserTrust({ deviceClientIds: ["native-only"], deviceAuthorizedParties: [] }),
-  ).toEqual({ deviceClientIds: ["native-only"], deviceAuthorizedParties: ["native-only"] });
+  ).toEqual({
+    deviceClientIds: ["native-only"],
+    deviceAuthorizedParties: ["native-only"],
+    nativeClients: { ios: [], android: [] },
+  });
+});
+
+test("native clients must be ones the registry already accepts, in the role their platform uses", () => {
+  expect(
+    googleBrowserTrust({
+      ...registry,
+      nativeClients: { ios: ["ios-native", "ios-native"], android: ["android-presenter"] },
+    }).nativeClients,
+  ).toEqual({ ios: ["ios-native"], android: ["android-presenter"] });
+  for (const nativeClients of [
+    // An iOS client is the audience of its own tokens; an unknown one is not trusted at all.
+    { ios: ["android-presenter"], android: [] },
+    { ios: ["unlisted"], android: [] },
+    { ios: [], android: ["unlisted"] },
+    // A web client's tokens can be requested by any page, so it is never native.
+    { ios: ["device-browser"], android: [] },
+    { ios: [], android: ["device-browser"] },
+    { ios: [], android: ["bad/value"] },
+  ])
+    expect(() => googleBrowserTrust({ ...registry, nativeClients })).toThrow(
+      "audience trust configuration is invalid",
+    );
 });
 
 test("role overlap, malformed and oversized registries fail without exposing supplied values", () => {

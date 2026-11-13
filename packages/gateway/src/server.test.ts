@@ -63,6 +63,7 @@ import {
   resetConnectedCollectorDeclarations,
 } from "./collector-declaration-roster.js";
 import { ConfigStore } from "./config-store.js";
+import { portalCsrfToken } from "./http/cookies.js";
 import { authorizeInteractiveAccess } from "./access/test-utils.js";
 import { MCP_ACCESS_SCOPE } from "./access/types.js";
 import { STALE_DEVICE_REVOCATION_IMPACT_ERROR } from "./access/agent-device-authorization.js";
@@ -5051,6 +5052,45 @@ describe("sync state endpoints", () => {
     expect(meta["example-browser"].icon).not.toBe(meta["example-browser:one"].icon);
   });
 
+  test("attack: a relayed caller that has not signed in cannot read account ids from the public source map", async () => {
+    await req("/sync-state/example-browser:maya@example.com", {
+      method: "POST",
+      body: JSON.stringify({
+        cursor: { phase: "done" },
+        label: "Maya's browser",
+        family: { label: "Browsers" },
+      }),
+    });
+    const full = await (await req("/portal/source-meta.json")).json();
+    expect(full["example-browser:maya@example.com"]).toMatchObject({ label: "Maya's browser" });
+
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    try {
+      const relayed = { "x-omnesis-cloud-relay": "1" };
+      for (const path of ["/portal/source-meta.json", "/portal/icons.json"]) {
+        const res = await app.request(path, { headers: relayed });
+        expect(res.status).toBe(200);
+        const text = await res.text();
+        expect(JSON.parse(text)).toEqual({ "example-browser": { label: "Browsers" } });
+        expect(text).not.toContain("maya@example.com");
+        expect(text).not.toContain("Maya's browser");
+      }
+      // Signed in through the relay, or on the local network: exactly as before.
+      expect(await (await req("/portal/source-meta.json", { headers: relayed })).json()).toEqual(
+        full,
+      );
+      expect(await (await app.request("/portal/source-meta.json")).json()).toEqual(full);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    // Without the cloud relay opt-in a relay header changes nothing.
+    expect(
+      await (
+        await app.request("/portal/source-meta.json", { headers: { "x-omnesis-cloud-relay": "1" } })
+      ).json(),
+    ).toEqual(full);
+  });
+
   test("legacy cursor writes cannot regress a claimed source", async () => {
     await req("/sync-state/gmail", {
       method: "POST",
@@ -7892,6 +7932,130 @@ describe("POST /documents/delete-all/provider/:providerId", () => {
     const countRes = await req("/documents/count/whatsapp-messages");
     const countData = await countRes.json();
     expect(countData.count).toBe(1);
+  });
+});
+
+describe("portal session cookies and cross-site writes", () => {
+  const seed = () =>
+    req("/documents", {
+      method: "POST",
+      body: JSON.stringify({ documents: [makeDocPayload("msg-1")] }),
+    });
+  const remaining = async () =>
+    ((await (await req("/documents/count/gmail")).json()) as { count: number }).count;
+  const adminSession = () => {
+    const dev = createDevice(db, { name: `portal-${randomUUID()}`, kind: "portal" });
+    const { id: tokenId } = createToken(db, dev.id, [SCOPE_ADMIN, SCOPE_READ]);
+    const sessionId = createSession(db, tokenId, [SCOPE_ADMIN, SCOPE_READ]);
+    return { cookie: `__omnesis_session=${sessionId}`, csrf: portalCsrfToken(sessionId) };
+  };
+  const wipe = (headers: Record<string, string>) =>
+    app.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: { Host: "gateway.example.test", ...headers },
+    });
+
+  test("attack: a page on a sibling gateway cannot make the owner's signed-in browser wipe a provider", async () => {
+    // The owner is signed in to their gateway's portal. They open a page on
+    // another gateway served under the same parent domain, which runs
+    //   fetch("https://g-owner.relay.example.test/documents/delete-all/provider/google",
+    //         { method: "POST", mode: "no-cors", credentials: "include" })
+    // `SameSite=Lax` does not stop it (same site), and a no-cors request needs
+    // no preflight. These are the headers the browser sends with it.
+    await seed();
+    const { cookie } = adminSession();
+    const res = await app.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Host: "g-owner.relay.example.test",
+        Cookie: cookie,
+        Origin: "https://g-attacker.relay.example.test",
+        "Sec-Fetch-Site": "same-site",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Dest": "empty",
+        "Content-Length": "0",
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(await remaining()).toBe(1);
+  });
+
+  test("a body-less request another page makes with the session cookie is refused and deletes nothing", async () => {
+    await seed();
+    const { cookie } = adminSession();
+    for (const headers of [
+      // A sibling gateway under the same parent domain: same site, other origin.
+      { "Sec-Fetch-Site": "same-site", Origin: "https://g-other.relay.example.test" },
+      { "Sec-Fetch-Site": "cross-site", Origin: "https://attacker.example.test" },
+      // A browser that sends no fetch metadata still names the page's origin.
+      { Origin: "https://g-other.relay.example.test" },
+      { Origin: "null" },
+      // No proof of origin at all.
+      {},
+      // Neither a stale nor a guessed synchronizer token proves anything.
+      { "X-Omnesis-CSRF": "0".repeat(64), "Sec-Fetch-Site": "same-site" },
+    ]) {
+      const res = await wipe({ Cookie: cookie, ...headers });
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { code: string }).code).toBe("FORBIDDEN");
+    }
+    expect(await remaining()).toBe(1);
+  });
+
+  test("the portal's own writes pass: synchronizer token, same-origin fetch metadata, or its own Origin", async () => {
+    const { cookie, csrf } = adminSession();
+    for (const headers of [
+      { "X-Omnesis-CSRF": csrf },
+      { "Sec-Fetch-Site": "same-origin" },
+      { "Sec-Fetch-Site": "none" },
+      { Origin: "https://gateway.example.test" },
+      { Origin: "https://gateway.example.test", Host: "gateway.example.test:443" },
+    ]) {
+      await seed();
+      const res = await wipe({ Cookie: cookie, ...headers });
+      expect(res.status).toBe(200);
+      expect(await remaining()).toBe(0);
+    }
+  });
+
+  test("reads with the session cookie and bearer-token writes are unaffected", async () => {
+    await seed();
+    const { cookie } = adminSession();
+    const read = await app.request("/portal/api/session", {
+      headers: { Cookie: cookie, "Sec-Fetch-Site": "same-site" },
+    });
+    expect(((await read.json()) as { authenticated: boolean }).authenticated).toBe(true);
+    // A bearer token is never attached by the browser on another page's behalf.
+    const bearer = await req("/documents/delete-all/provider/google", { method: "POST" });
+    expect(bearer.status).toBe(200);
+    expect(await remaining()).toBe(0);
+  });
+
+  test("an origin the operator allowed for credentialed CORS may write with the cookie", async () => {
+    const cors = { allowedOrigins: ["https://app.example.test"], allowCredentials: true };
+    const corsApp = createServer(db, undefined, {
+      configStore: { get: () => ({ gateway: { cors } }) } as unknown as ConfigStore,
+    });
+    await seed();
+    const { cookie } = adminSession();
+    const allowed = await corsApp.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        "Sec-Fetch-Site": "same-site",
+        Origin: "https://app.example.test",
+      },
+    });
+    expect(allowed.status).toBe(200);
+    const other = await corsApp.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        "Sec-Fetch-Site": "same-site",
+        Origin: "https://other.example.test",
+      },
+    });
+    expect(other.status).toBe(403);
   });
 });
 
@@ -11866,9 +12030,44 @@ describe("POST /admin/sources/:id/resync", () => {
       });
       return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     };
+    /** Every document of a source as `external id @ stream → record id`. */
+    const recordIds = (sourceId: string): Record<string, string> =>
+      Object.fromEntries(
+        db
+          .prepare<[string], { id: string; external_id: string; stream_id: string }>(
+            "SELECT id, external_id, stream_id FROM documents WHERE source_id = ?",
+          )
+          .all(sourceId)
+          .map((row) => [`${row.external_id}@${row.stream_id}`, row.id]),
+      );
+    /** Claim a sync attempt on the caller's cursor row, the way a collector's tick does. */
+    const begin = async (as: typeof asAlpha, sourceId: string): Promise<number> =>
+      (
+        (await (
+          await as(`/sync-state/${encodeURIComponent(sourceId)}/begin`, {
+            method: "POST",
+            body: "{}",
+          })
+        ).json()) as { wipeEpoch: number }
+      ).wipeEpoch;
+    /** One page of a fresh sync attempt: claim the row, then push under that claim. */
+    const push = async (as: typeof asAlpha, sourceId: string, externalIds: string[]) =>
+      (await (
+        await as("/documents", {
+          method: "POST",
+          body: JSON.stringify({
+            documents: externalIds.map((id) => makeDocPayload(id, "synth", sourceId)),
+            writeEpochs: { [sourceId]: await begin(as, sourceId) },
+          }),
+        })
+      ).json()) as { ingested: number; suppressed?: string[] };
     return {
       alpha,
       beta,
+      admin,
+      recordIds,
+      begin,
+      push,
       online,
       sendCommand,
       asAlpha,
@@ -11895,6 +12094,7 @@ describe("POST /admin/sources/:id/resync", () => {
     expect(status).toBe(200);
     expect(body).toEqual({
       ok: true,
+      mode: "from-scratch",
       scope: "stream",
       deviceIds: [f.beta.id],
       restarting: [],
@@ -11921,7 +12121,15 @@ describe("POST /admin/sources/:id/resync", () => {
     const offline = await f.resync(source.id, { deviceId: f.alpha.id });
     expect(offline).toEqual({
       status: 200,
-      body: { ok: true, scope: "stream", deviceIds: [], restarting: [], skipped: [], disabled: [] },
+      body: {
+        ok: true,
+        mode: "from-scratch",
+        scope: "stream",
+        deviceIds: [],
+        restarting: [],
+        skipped: [],
+        disabled: [],
+      },
     });
     expect(f.sendCommand).not.toHaveBeenCalled();
     expect(await f.count(source.id)).toBe(0);
@@ -11938,8 +12146,11 @@ describe("POST /admin/sources/:id/resync", () => {
     const { status, body } = await f.resync(source.id, { deviceId: f.beta.id });
 
     expect(status).toBe(200);
+    // A caller that names no mode asks for a wipe; a replicated member has
+    // nothing of its own to wipe, so the answer says what was done instead.
     expect(body).toEqual({
       ok: true,
+      mode: "in-place",
       scope: "cursor",
       deviceIds: [f.beta.id],
       restarting: [],
@@ -11962,7 +12173,7 @@ describe("POST /admin/sources/:id/resync", () => {
     const { status, body } = await f.resync(source.id, {});
 
     expect(status).toBe(200);
-    expect(body).toMatchObject({ ok: true, scope: "source" });
+    expect(body).toMatchObject({ ok: true, mode: "from-scratch", scope: "source" });
     expect([...(body.deviceIds as string[])].sort()).toEqual([f.alpha.id, f.beta.id].sort());
     expect(await f.count(source.id)).toBe(0);
     expect((await f.syncState(f.asAlpha, source.id)).cursor).toBeNull();
@@ -12001,5 +12212,217 @@ describe("POST /admin/sources/:id/resync", () => {
       body: JSON.stringify({}),
     });
     expect(noWs.status).toBe(503);
+  });
+
+  test("a token without the admin scope cannot resync in either mode, and nothing is reset", async () => {
+    const f = await fixture();
+    const source = f.seed(EXCLUSIVE, false);
+    expect(await f.push(f.asAlpha, source.id, ["day-1"])).toMatchObject({ ingested: 1 });
+    const cursorPath = `/sync-state/${encodeURIComponent(source.id)}`;
+    await f.asAlpha(cursorPath, { method: "POST", body: JSON.stringify({ cursor: { page: 1 } }) });
+    const before = await f.syncState(f.asAlpha, source.id);
+
+    for (const mode of ["in-place", "from-scratch"]) {
+      const res = await f.asAlpha(`/admin/sources/${encodeURIComponent(source.id)}/resync`, {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+      });
+      expect(res.status, mode).toBe(403);
+    }
+
+    expect(f.sendCommand).not.toHaveBeenCalled();
+    expect(await f.syncState(f.asAlpha, source.id)).toEqual(before);
+    expect(await f.count(source.id)).toBe(1);
+  });
+
+  test("in place, no device, one host: nothing is deleted, the cursor starts over, ids and the owner's deletions hold", async () => {
+    const f = await fixture();
+    const source = f.seed(EXCLUSIVE, false);
+    expect(await f.push(f.asAlpha, source.id, ["day-1", "day-2", "day-3"])).toMatchObject({
+      ingested: 3,
+    });
+    const cursorPath = `/sync-state/${encodeURIComponent(source.id)}`;
+    const begun = { wipeEpoch: await f.begin(f.asAlpha, source.id) };
+    expect(
+      await (
+        await f.asAlpha(cursorPath, {
+          method: "POST",
+          body: JSON.stringify({ cursor: { page: 1 }, writeEpoch: begun.wipeEpoch }),
+        })
+      ).json(),
+    ).toEqual({ ok: true });
+    // The owner deletes one item for good.
+    const doomed = f.recordIds(source.id)["day-2@"]!;
+    expect((await f.admin(`/documents/${doomed}`, { method: "DELETE" })).status).toBe(200);
+    const before = f.recordIds(source.id);
+    expect(Object.keys(before).sort()).toEqual(["day-1@", "day-3@"]);
+
+    const { status, body } = await f.resync(source.id, { mode: "in-place" });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      mode: "in-place",
+      scope: "source",
+      deviceIds: [f.alpha.id],
+      restarting: [],
+      skipped: [],
+      disabled: [],
+    });
+    expect(f.sendCommand).toHaveBeenCalledWith(f.alpha.id, "source.sync", {
+      sourceId: source.id,
+      restart: true,
+    });
+    // Before anything is read again: every record is still there, unchanged.
+    expect(f.recordIds(source.id)).toEqual(before);
+    const after = await f.syncState(f.asAlpha, source.id);
+    expect(after.cursor).toBeNull();
+    expect(after.wipeEpoch).toBeGreaterThan(begun.wipeEpoch);
+    expect(f.rowOf(source.id, "")).toEqual({ cursor: "{}", last_synced_at: null });
+    // The sync that was in flight cannot write its cursor back.
+    expect(
+      await (
+        await f.asAlpha(cursorPath, {
+          method: "POST",
+          body: JSON.stringify({ cursor: { page: 2 }, writeEpoch: begun.wipeEpoch }),
+        })
+      ).json(),
+    ).toEqual({ ok: false, rejected: true });
+
+    // The source is read again from the start: every item lands on the
+    // record it had, and the one the owner deleted is refused.
+    expect(await f.push(f.asAlpha, source.id, ["day-1", "day-2", "day-3"])).toEqual({
+      ingested: 2,
+      suppressed: ["day-2"],
+    });
+    expect(f.recordIds(source.id)).toEqual(before);
+  });
+
+  test("in place, no device, members on their own cursors: every member starts over and every stream stays", async () => {
+    const f = await fixture();
+    for (const type of [PARTITIONED, REPLICATED]) {
+      const source = f.seed(type);
+      await f.populate(source.id);
+      const before = f.recordIds(source.id);
+      const epochs = {
+        alpha: (await f.syncState(f.asAlpha, source.id)).wipeEpoch,
+        beta: (await f.syncState(f.asBeta, source.id)).wipeEpoch,
+      };
+
+      const { status, body } = await f.resync(source.id, { mode: "in-place" });
+
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ ok: true, mode: "in-place", scope: "source" });
+      expect([...(body.deviceIds as string[])].sort()).toEqual([f.alpha.id, f.beta.id].sort());
+      expect(f.recordIds(source.id)).toEqual(before);
+      const alphaAfter = await f.syncState(f.asAlpha, source.id);
+      const betaAfter = await f.syncState(f.asBeta, source.id);
+      expect(alphaAfter.cursor).toBeNull();
+      expect(betaAfter.cursor).toBeNull();
+      expect(alphaAfter.wipeEpoch).toBeGreaterThan(epochs.alpha);
+      expect(betaAfter.wipeEpoch).toBeGreaterThan(epochs.beta);
+      // Each member re-reads its own slice onto the records it already has.
+      for (const member of [f.asAlpha, f.asBeta]) {
+        expect(await f.push(member, source.id, ["day-1", "day-2"])).toMatchObject({ ingested: 2 });
+      }
+      expect(f.recordIds(source.id)).toEqual(before);
+    }
+  });
+
+  test("in place, a device on a partitioned source: its cursor alone is reset and its stream stays", async () => {
+    const f = await fixture();
+    const source = f.seed(PARTITIONED);
+    await f.populate(source.id);
+    const before = f.recordIds(source.id);
+    expect(Object.keys(before)).toHaveLength(4);
+
+    const { status, body } = await f.resync(source.id, {
+      deviceId: f.beta.id,
+      mode: "in-place",
+    });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      mode: "in-place",
+      scope: "stream",
+      deviceIds: [f.beta.id],
+      restarting: [],
+      skipped: [],
+      disabled: [],
+    });
+    expect(f.recordIds(source.id)).toEqual(before);
+    expect((await f.syncState(f.asBeta, source.id)).cursor).toBeNull();
+    expect((await f.syncState(f.asAlpha, source.id)).cursor).toEqual({ page: 1 });
+  });
+
+  test("from scratch, named: the wipe a caller without a mode gets, and the owner's deletions are forgotten", async () => {
+    const f = await fixture();
+    const source = f.seed(EXCLUSIVE, false);
+    await f.push(f.asAlpha, source.id, ["day-1", "day-2"]);
+    const before = f.recordIds(source.id);
+    expect((await f.admin(`/documents/${before["day-2@"]}`, { method: "DELETE" })).status).toBe(
+      200,
+    );
+
+    const { status, body } = await f.resync(source.id, { mode: "from-scratch" });
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: true, mode: "from-scratch", scope: "source" });
+    expect(await f.count(source.id)).toBe(0);
+    // Everything comes back, the deleted item included, under new record ids.
+    expect(await f.push(f.asAlpha, source.id, ["day-1", "day-2"])).toMatchObject({ ingested: 2 });
+    const after = f.recordIds(source.id);
+    expect(Object.keys(after).sort()).toEqual(["day-1@", "day-2@"]);
+    expect(after["day-1@"]).not.toBe(before["day-1@"]);
+  });
+
+  test("a replicated member is resynced in place whichever mode is asked for; an unknown mode is refused", async () => {
+    const f = await fixture();
+    const source = f.seed(REPLICATED);
+    await f.populate(source.id);
+    const before = f.recordIds(source.id);
+
+    for (const mode of ["in-place", "from-scratch"]) {
+      const { status, body } = await f.resync(source.id, { deviceId: f.beta.id, mode });
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ ok: true, mode: "in-place", scope: "cursor" });
+      expect(f.recordIds(source.id)).toEqual(before);
+    }
+
+    f.sendCommand.mockClear();
+    const refused = await f.resync(source.id, { mode: "sideways" });
+    expect(refused.status).toBe(400);
+    expect(f.sendCommand).not.toHaveBeenCalled();
+    expect(f.recordIds(source.id)).toEqual(before);
+  });
+
+  test("the source listing names the modes a resync offers, and none for a source that is only pushed to", async () => {
+    const f = await fixture();
+    const pulled = f.seed(EXCLUSIVE, false);
+    const { createSource } = await import("./data/repositories/SourceRepository.js");
+    const browser = createDevice(db, { name: `browser-${randomUUID()}`, kind: "browser" });
+    const pushed = createSource(db, {
+      type: SourceType("web"),
+      accountId: AccountId("local"),
+      deviceId: browser.id,
+    });
+
+    for (const mode of ["in-place", "from-scratch"]) {
+      expect(await f.resync(pushed.id, { mode })).toMatchObject({
+        status: 400,
+        body: { code: "RESYNC_PUSH_ONLY" },
+      });
+    }
+    // A resync that went through refreshes the listing's snapshot of sources.
+    expect((await f.resync(pulled.id, { mode: "in-place" })).status).toBe(200);
+    await vi.waitFor(async () => {
+      const listing = (await (await f.admin("/admin/sources")).json()) as {
+        items: Array<{ id: string; resyncModes: string[] }>;
+      };
+      const modesOf = (id: string) => listing.items.find((s) => s.id === id)?.resyncModes;
+      expect(modesOf(pulled.id)).toEqual(["in-place", "from-scratch"]);
+      expect(modesOf(pushed.id)).toEqual([]);
+    });
   });
 });

@@ -13,6 +13,7 @@ import {
   type ProofEvidence,
 } from "./operation-proof.js";
 import { RelayError } from "./tunnels.js";
+import { signInProofNonce } from "./device-enrollment.js";
 import { CONNECT_PAGE_PATH, type ConnectCodes } from "./connect-codes.js";
 import {
   GATEWAY_SIGNUP_PATH,
@@ -209,7 +210,8 @@ export class GatewaySignup implements AccountOperationBroker {
       request,
       gatewayId,
       ownerAccountId,
-      proof: new OperationProof(request.nonce),
+      // Whoever starts a sign-up picks its nonce, so its sign-in can only ever link a gateway.
+      proof: new OperationProof(signInProofNonce("gateway-link", request.nonce)),
       ticketHash: digest(ticket),
       code,
       expiresAt: request.expiresAt,

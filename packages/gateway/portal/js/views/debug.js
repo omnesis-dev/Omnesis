@@ -40,14 +40,14 @@ import { GraphView } from "./graph.js";
 import { CognitionView } from "./cognition.js";
 import { CalendarTab } from "./calendar.js";
 import { DoctorTab } from "./doctor.js";
-import { WatchDebugTab } from "./watch-debug.js";
 
-// The two table/query tabs load on first open rather than with the page. Both
-// reach the SQL editor module and its CodeMirror dependency (~480 KB of vendor
-// JS), and the SQL tab additionally pulls sql-formatter (~290 KB) — none of
-// which a visit to Metrics or Doctor has any use for.
+// SQL-capable tabs load on first open rather than with the page. They reach
+// the SQL editor module and its CodeMirror dependency (~480 KB of vendor JS),
+// and SQL and Watch also pull sql-formatter (~290 KB) — none of which a visit
+// to Metrics or Doctor has any use for.
 const DataView = lazy(() => import("./data.js").then((m) => m.DataView));
 const SqlView = lazy(() => import("./sql.js").then((m) => m.SqlView));
+const WatchDebugTab = lazy(() => import("./watch-debug.js").then((m) => m.WatchDebugTab));
 
 const WINDOW_OPTIONS = [
   { label: "1 min", seconds: 60 },

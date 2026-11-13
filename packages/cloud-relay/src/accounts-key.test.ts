@@ -77,12 +77,21 @@ test("an exact legacy TLS binding migrates atomically at capacity and remains di
       gatewayId: a.binding.gatewayId.toUpperCase(),
       identityToken: "legacy-google-jwt",
     };
-    accounts.registerAccount("google");
     accounts.registerBinding("google", legacy);
-    expect(accounts.keyEnrollmentExempt(a.account, a.binding)).toBe(true);
-    expect(accounts.registerKeyBinding(a.account, a.binding, false)).toEqual({
+    // A Google-registered binding never passed the sign-up policy: only an invitation moves it.
+    expect(accounts.keyEnrollmentExempt(a.account, a.binding)).toBe(false);
+    expect(accounts.legacyTransfer(a.account, a.binding)).toBe(true);
+    expect(accounts.legacyTransfer("google", a.binding)).toBe(false);
+    expect(accounts.legacyTransfer(a.account, { ...a.binding, gatewayId: randomUUID() })).toBe(
+      false,
+    );
+    expect(() => accounts.registerKeyBinding(a.account, a.binding, false)).toThrow("invitation");
+    expect(accounts.accountForHostname("gateway.example.test")).toBe("google");
+    expect(accounts.registerKeyBinding(a.account, a.binding, true)).toEqual({
       migratedAccountId: "google",
     });
+    expect(accounts.keyEnrollmentExempt(a.account, a.binding)).toBe(true);
+    expect(accounts.legacyTransfer(a.account, a.binding)).toBe(false);
     expect(accounts.resolveAccount("google")).toBe(a.account);
     expect(accounts.accountForHostname("gateway.example.test")).toBe(a.account);
     expect(accounts.gatewayBinding("google")).toBeUndefined();
@@ -94,6 +103,27 @@ test("an exact legacy TLS binding migrates atomically at capacity and remains di
     expect(() => accounts.registerKeyBinding(thief.account, thief.binding, true)).toThrow(
       "another owner",
     );
+    expect(accounts.gatewayBinding(a.account)).toEqual(a.binding);
+  } finally {
+    accounts.close();
+  }
+});
+
+test("rows a bare sign-in left behind are dropped on open and give their slot back", () => {
+  const path = join(directory, "leftover.sqlite");
+  const a = owner();
+  let accounts = new RelayAccounts(path, 1);
+  try {
+    accounts.registerAccount("google-sign-in-only");
+    accounts.bindGateway("google-sign-in-only", a.binding.gatewayId);
+    expect(() => accounts.registerKeyBinding(a.account, a.binding, true)).toThrow("another owner");
+    accounts.close();
+    accounts = new RelayAccounts(path, 1);
+    expect(accounts.snapshot().accounts).toBe(0);
+    expect(accounts.ownerForGateway(a.binding.gatewayId)).toBeUndefined();
+    expect(accounts.registerKeyBinding(a.account, a.binding, true)).toEqual({});
+    accounts.close();
+    accounts = new RelayAccounts(path, 1);
     expect(accounts.gatewayBinding(a.account)).toEqual(a.binding);
   } finally {
     accounts.close();

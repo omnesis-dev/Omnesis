@@ -28,14 +28,12 @@ export function installAccountUI() {
       signIn: "Sign in to connect this gateway to your account.",
       ready: "This adds the gateway to your Omnesis account so your devices can find it.",
       action: "Connect this gateway",
-      automatic: true,
     },
     "owner-link": {
       title: "Sign in to your Omnesis account",
       signIn: "Sign in with the Omnesis account you want to connect this gateway to.",
       ready: "This adds the gateway to your Omnesis account so your devices can find it.",
       action: "Connect this gateway",
-      automatic: true,
     },
     "device-enrollment": {
       title: "Pair this browser",
@@ -643,7 +641,9 @@ export function installAccountUI() {
         ui.node("p", pending.approvalRequired && copy.approval ? copy.approval : copy.ready),
       );
       ui.button(copy.action, ui.continueOperation);
-      // Signing in was the decision, so these go on without another press. A failure leaves the button.
+      // Pairing this browser goes on without another press: signing in here was the decision. A
+      // gateway is connected only by the press, after the person has compared its name and code,
+      // since whoever started that request chose them. A failure leaves the button.
       if (copy.automatic && !continued) {
         continued = true;
         setTimeout(() => ui.run(ui.continueOperation), 0);

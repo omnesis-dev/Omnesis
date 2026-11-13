@@ -5,7 +5,7 @@ export { createCloudRelay } from "./server.js";
 export { googleIdentityProvider, localIdentityProvider, RelaySessions } from "./identity.js";
 export type { Identity, IdentityProvider } from "./identity.js";
 export { RelayAccounts } from "./accounts.js";
-export { hostedGatewayLabel, hostedGatewayHostname } from "./hosted-name.js";
+export { hostedGatewayLabel, hostedGatewayHostname, hostedGatewayOrigin } from "./hosted-name.js";
 export { GatewayTunnel } from "./tunnel-client.js";
 export { relayedClientAddress } from "./relay-client-address.js";
 export { createRelayClientProxy } from "./client-proxy.js";
@@ -146,8 +146,23 @@ export {
 } from "./account-desktop-client.js";
 export * from "./device-enrollment.js";
 export { EnrollmentChallenges } from "./enrollment-challenges.js";
-export { GatewaySignInVerifier, trustedSignInSchema } from "./gateway-sign-in-proof.js";
-export type { TrustedSignIn, VerifiedSignIn } from "./gateway-sign-in-proof.js";
+export {
+  GatewayPasskeyCeremonies,
+  GATEWAY_PASSKEY_CHALLENGE_TTL_MS,
+} from "./gateway-passkey-ceremonies.js";
+export {
+  confirmedSignInSchema,
+  GatewaySignInVerifier,
+  trustedSignInSchema,
+} from "./gateway-sign-in-proof.js";
+export type {
+  ConfirmedSignIn,
+  ConfirmedSignInVia,
+  SignInChannel,
+  TrustedSignIn,
+  VerifiedGatewayPasskey,
+  VerifiedSignIn,
+} from "./gateway-sign-in-proof.js";
 export type { EnrollmentPolicy, GatewayEnrollment, PairingEnrollment } from "./google-pairing.js";
 export {
   GATEWAY_SIGNUP_PATH,

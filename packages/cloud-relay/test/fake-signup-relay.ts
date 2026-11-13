@@ -3,7 +3,7 @@
 
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { AccountEnrollmentAuthority } from "../src/account-enrollment-proof.js";
-import { passkeyProofChallenge } from "../src/device-enrollment.js";
+import { passkeyProofChallenge, signInProofNonce } from "../src/device-enrollment.js";
 import { gatewayKeyAccount } from "../src/gateway-key-auth.js";
 import { passkeyAuthenticator } from "./passkey-authenticator.js";
 
@@ -77,7 +77,11 @@ export function fakeSignupRelay(
             salt,
             issuedAt,
             credential: authenticator.registration(
-              passkeyProofChallenge(salt, issuedAt, String(started!.nonce)),
+              passkeyProofChallenge(
+                salt,
+                issuedAt,
+                signInProofNonce("gateway-link", String(started!.nonce)),
+              ),
             ),
           },
           ...(next.credentialPublicKey ? { credentialPublicKey: next.credentialPublicKey } : {}),

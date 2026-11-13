@@ -294,6 +294,7 @@ describe("a gateway checking what a passkey countersigned", () => {
     expect(
       await verifier().verify(
         genuine.proof,
+        "device-enrollment",
         passkeyCountersignatureNonce(accountA, genuine.signIns),
       ),
     ).toBeUndefined();

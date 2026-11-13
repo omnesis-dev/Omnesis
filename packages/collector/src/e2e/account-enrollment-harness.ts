@@ -1234,8 +1234,18 @@ export async function createAccountWithPasskey(page: Page): Promise<void> {
 }
 
 /**
- * Gateway shows a code; the person types it at the relay and creates an account
- * or signs in. Signing in is the decision: the connection goes on by itself.
+ * Signed in on the page for connecting a gateway, the person compares the name
+ * and code and presses to connect it; the page then says it is done. The page
+ * never connects a gateway without that press.
+ */
+export async function connectThisGateway(page: Page): Promise<void> {
+  await clickFirst(page, ["Connect this gateway"]);
+  await expectText(page, "You're all set");
+}
+
+/**
+ * Gateway shows a code; the person types it at the relay, creates an account or
+ * signs in, and presses to connect the gateway.
  */
 export async function connectGatewayBySignIn(
   gateway: EnrollmentGateway,
@@ -1248,7 +1258,7 @@ export async function connectGatewayBySignIn(
   await enterConnectCode(session.page, started.connect.connectUrl!, started.connect.code!);
   if (account === "create") await createAccountWithPasskey(session.page);
   else await clickFirst(session.page, ["Sign in with Passkey"]);
-  await expectText(session.page, "You're all set");
+  await connectThisGateway(session.page);
   return finishedConnect(gateway);
 }
 
@@ -1369,8 +1379,8 @@ export async function createUnlinkedAccount(
   const { started, cancel } = await startGatewaySignup(world, "create");
   await enterConnectCode(session.page, started.connectUrl, started.code);
   await createAccountWithPasskey(session.page);
-  // The page goes on by itself; the throwaway gateway never collects the result.
-  await expectText(session.page, "You're all set");
+  // The throwaway gateway never collects the result.
+  await connectThisGateway(session.page);
   await cancel().catch(() => undefined);
   return (await signedInAccount(world, session)).accountId;
 }
