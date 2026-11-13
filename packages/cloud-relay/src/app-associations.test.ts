@@ -37,7 +37,10 @@ test("configured app identities and SHA-256 signing keys drive both platform ass
     expect(await response.json()).toEqual({ webcredentials: { apps: [apple] } });
     expect(await (await fetch(url + "/.well-known/assetlinks.json")).json()).toEqual([
       {
-        relation: ["delegate_permission/common.get_login_creds"],
+        relation: [
+          "delegate_permission/common.handle_all_urls",
+          "delegate_permission/common.get_login_creds",
+        ],
         target: {
           namespace: "android_app",
           package_name: "dev.example.reader",

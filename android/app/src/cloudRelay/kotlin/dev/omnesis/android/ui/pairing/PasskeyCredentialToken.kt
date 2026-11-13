@@ -5,12 +5,15 @@ package dev.omnesis.android.ui.pairing
 
 import android.content.Context
 import android.content.MutableContextWrapper
+import android.util.Log
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
+import androidx.credentials.exceptions.publickeycredential.GetPublicKeyCredentialDomException
 import org.json.JSONObject
 
 /** Android chooses the passkey provider; the relay verifies the resulting WebAuthn assertion. */
@@ -30,10 +33,25 @@ internal object PasskeyCredentialToken {
             throw AccountNoPasskey()
         } catch (_: GetCredentialCancellationException) {
             throw AccountNoPasskey()
+        } catch (error: GetCredentialException) {
+            Log.w(TAG, describe(error))
+            throw AccountPasskeyUnavailable()
         }
         require(credential is PublicKeyCredential)
         return credential.authenticationResponseJson.also {
             require(it.isNotBlank() && it.toByteArray(Charsets.UTF_8).size <= 65_536)
         }
     }
+
+    /**
+     * Names the provider's failure, such as Google Play services refusing the relying party ID,
+     * for logcat. Android's messages describe the failure only; no request or credential data is included.
+     */
+    private fun describe(error: GetCredentialException): String {
+        val dom = (error as? GetPublicKeyCredentialDomException)?.domError?.type
+        return "Passkey request failed: ${error.javaClass.simpleName} type=${error.type}" +
+            (if (dom != null) " domError=$dom" else "") + " message=${error.errorMessage}"
+    }
+
+    private const val TAG = "Omnesis:passkey"
 }

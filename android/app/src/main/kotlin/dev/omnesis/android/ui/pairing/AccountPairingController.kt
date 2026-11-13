@@ -38,6 +38,15 @@ internal class AccountSignInDismissed : Exception("sign-in dismissed")
  */
 internal class AccountNoPasskey : Exception("no passkey used")
 
+/**
+ * The phone's passkey provider refused or failed the request after it started, for example when
+ * Google Play services cannot validate the relay as the passkey's site. The network was not involved.
+ */
+internal class AccountPasskeyUnavailable : Exception("passkey provider failed")
+
+internal const val ACCOUNT_PAIRING_PASSKEY_UNAVAILABLE_MESSAGE =
+    "Couldn't use your passkey on this phone. Try Sign in with Google, or pair directly with a QR code."
+
 internal const val ACCOUNT_PAIRING_NO_PASSKEY_NOTICE =
     "No passkey was used. If this phone has no passkey for your Omnesis account, sign in with Google, " +
         "or add a passkey to your Omnesis account first."
@@ -206,7 +215,8 @@ internal class AccountPairingController(
             client?.close(); client = null
             return publish(AccountPairingState(AccountPairingPhase.Failed, notice = ACCOUNT_PAIRING_NO_PASSKEY_NOTICE))
         }
-        val message = when ((error as? AccountPairingException)?.reason) {
+        val message = if (error is AccountPasskeyUnavailable) ACCOUNT_PAIRING_PASSKEY_UNAVAILABLE_MESSAGE
+        else when ((error as? AccountPairingException)?.reason) {
             AccountPairingException.Reason.NO_ACCOUNT -> ACCOUNT_PAIRING_NO_ACCOUNT_MESSAGE
             AccountPairingException.Reason.NO_GATEWAYS -> ACCOUNT_PAIRING_NO_GATEWAYS_MESSAGE
             AccountPairingException.Reason.NOT_YOUR_GATEWAY -> ACCOUNT_PAIRING_NOT_YOUR_GATEWAY_MESSAGE
