@@ -36,9 +36,11 @@ const bearer: AuthContext = {
   scopes: [SCOPE_ADMIN],
 };
 let service: CloudRelayManagement;
-let devices: { revokeJoinedWith: ReturnType<typeof vi.fn> } | undefined;
+let devices:
+  | { revokeJoinedWith: ReturnType<typeof vi.fn<(signInId: string) => Promise<string[]>>> }
+  | undefined;
 beforeEach(() => {
-  devices = { revokeJoinedWith: vi.fn().mockResolvedValue([]) };
+  devices = { revokeJoinedWith: vi.fn(async (_signInId: string): Promise<string[]> => []) };
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   service = {

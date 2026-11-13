@@ -193,7 +193,9 @@ test("flag on: ticking the box stops trusting that sign-in after the device is r
   const dialog = await openRevokeDialog(true);
   const box = dialog.querySelector('input[type="checkbox"]') as HTMLInputElement;
   box.checked = true;
-  await act(async () => box.dispatchEvent(new window.Event("change")));
+  await act(async () => {
+    box.dispatchEvent(new window.Event("change"));
+  });
   await confirm(dialog);
   await vi.waitFor(() => expect(order).toEqual(["revoke", `stop ${device.enrollment.signInId}`]));
 });
@@ -203,7 +205,9 @@ test("flag on: a sign-in that cannot be removed says the device was still revoke
   const dialog = await openRevokeDialog(true);
   const box = dialog.querySelector('input[type="checkbox"]') as HTMLInputElement;
   box.checked = true;
-  await act(async () => box.dispatchEvent(new window.Event("change")));
+  await act(async () => {
+    box.dispatchEvent(new window.Event("change"));
+  });
   await confirm(dialog);
   await vi.waitFor(() =>
     expect(host.textContent).toContain(
