@@ -127,7 +127,9 @@ Sign-in enrollment (`docs/device-enrollment.md`) also lets a trusted sign-in joi
 device without the comparison, when the gateway's own setting allows it. On first
 contact the app checks that the proposed certificate is publicly trusted and logged;
 a certificate that isn't asks the gateway to hold the request for approval. Set
-`OMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0` to skip that check for a test gateway.
+`OMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0` to skip that check for a test gateway in a
+debug build; a release build always checks, and `:app:verifyPlayReleasePolicy` fails if
+it would not.
 Without `OMNESIS_CLOUD_RELAY_ENABLED=1` none of this exists in the build: no key,
 settings, device details, notifications or token rotation.
 The same value decides whether the sign-in libraries are packaged: the code that
