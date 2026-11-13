@@ -791,9 +791,10 @@ export default defineSource({
         </p>
         <ul>
           <li>
-            <code>membership</code>: a record belongs to one or more named things. Use a
-            <code>string-array</code> field, where an empty array means "none" and an absent field
-            means "not known".
+            <code>membership</code>: a record belongs to one or more named things. On a
+            <code>string-array</code> field an empty array means "none" and an absent field means
+            "not known". A <code>string</code> field cannot say "none", so use one only where every
+            record has a value.
           </li>
           <li>
             <code>tree</code>: a record sits somewhere in a tree, and matching a node covers what is
