@@ -47,8 +47,8 @@ export function openWriteConn(
     // mode it uses truncates or resizes `-shm`. NEVER use a TRUNCATE
     // checkpoint here — that's the SIGBUS-prone op.
     db.exec("PRAGMA wal_autocheckpoint = 0");
-    // No limit: SQLite would cut a rewound WAL back in the first commit after
-    // the rewind, charging that write for freeing every block past the limit.
+    // No limit: SQLite would cut the file back in the commit that starts the
+    // WAL over, charging that write for freeing every block past the limit.
     // The checkpointer cuts it between ops, a slice at a time.
     db.exec("PRAGMA journal_size_limit = -1");
     // On macOS a plain fsync leaves writes in the drive's cache. A rewind lets

@@ -274,6 +274,37 @@ describe("WalCheckpointer", () => {
     expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
   });
 
+  it("cuts the file back after a WAL that starts over by itself, with no rewind", () => {
+    const db = writer();
+    const slice = 16 * MIB;
+    const checkpointer = new WalCheckpointer(db, {
+      ...POLICY,
+      pendingFrames: 1_000_000,
+      restartFrames: 1_000_000,
+      cutSliceBytes: slice,
+    });
+    write(db, 10);
+    expect(checkpointer.maintain(1)).toMatchObject({ outcome: "copied" });
+    expect(checkpointer.maintain(1)).toBeNull();
+
+    writeBytes(db, WAL_SIZE_LIMIT_BYTES + 2 * slice);
+    const longest = walBytes();
+    expect(longest).toBeGreaterThan(WAL_SIZE_LIMIT_BYTES + slice);
+    expect(checkpointer.maintain(1)).toMatchObject({ mode: "PASSIVE", outcome: "copied" });
+    write(db, 1);
+    expect(wal(db).log).toBeLessThan(10);
+    expect(walBytes()).toBe(longest);
+
+    let cut = 0;
+    for (let run = checkpointer.maintain(); run; run = checkpointer.maintain()) {
+      expect(run).toMatchObject({ mode: "CUT", outcome: "cut" });
+      cut += run.cutBytes!;
+    }
+    expect(cut).toBe(longest - WAL_SIZE_LIMIT_BYTES);
+    expect(walBytes()).toBe(WAL_SIZE_LIMIT_BYTES);
+    expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
+  });
+
   it.each([
     ["a plaintext", undefined],
     ["an encrypted", randomBytes(32)],

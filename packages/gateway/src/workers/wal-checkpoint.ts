@@ -31,13 +31,16 @@
  * A checkpoint that throws (an I/O error, a full disk) backs off the same way
  * instead of retrying after every op.
  *
- * A rewind leaves the file at its largest size, which after a long reader can
- * be hundreds of MiB. SQLite's `journal_size_limit` cuts the file back in the
- * first commit after a rewind, as one `ftruncate` that frees every block past
- * the limit: hundreds of milliseconds for a few hundred MiB, charged to
- * whichever write comes next, a user's included. So the writer's connection
- * sets no limit, and the checkpointer cuts the file itself between ops, at
- * most `cutSliceBytes` per step, until it is back to `sizeLimitBytes`. A cut
+ * A WAL that starts over keeps the file at its largest size, which after a
+ * long reader can be hundreds of MiB. It starts over after a rewind, and also
+ * by itself, at the first commit after a copy that caught up while no reader
+ * was on the WAL. SQLite's `journal_size_limit` cuts the file back in that
+ * commit, as one `ftruncate` that frees every block past the limit: hundreds
+ * of milliseconds for a few hundred MiB, charged to whichever write comes
+ * next, a user's included. So the writer's connection sets no limit, and the
+ * checkpointer, which sees the WAL start over as fewer frames than at its
+ * previous probe, cuts the file itself between ops, at most `cutSliceBytes`
+ * per step, until it is back to `sizeLimitBytes`. A cut
  * never reaches the frames the WAL holds: only frames up to its last one are
  * ever read, which is the same bound SQLite's own cut keeps, and between ops
  * no commit is appending one.
@@ -66,13 +69,13 @@ export interface WalCheckpointPolicy {
   restartRetryMaxMs: number;
   /** The connection's `busy_timeout` outside a rewind, ms. */
   busyTimeoutMs: number;
-  /** WAL file size a rewound WAL is cut back to, bytes. */
+  /** WAL file size a WAL that started over is cut back to, bytes. */
   sizeLimitBytes: number;
   /** The most one step cuts from the end of the WAL file, bytes. */
   cutSliceBytes: number;
 }
 
-/** Bytes the WAL file is cut back to after a rewind. */
+/** Bytes the WAL file is cut back to once the WAL starts over. */
 export const WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
 
 /**
@@ -131,8 +134,13 @@ export class WalCheckpointer {
   private readonly sleepCell = new Int32Array(new SharedArrayBuffer(4));
   private readonly walPath: string;
   private readonly frameBytes: number;
-  /** Set until the file is back to its size limit; a WAL may start long. */
+  /**
+   * Set until the file is back to its size limit: from the start, since a WAL
+   * may start long, and again whenever the WAL starts over.
+   */
   private cutPending = true;
+  /** Frames the WAL held at the previous probe. */
+  private lastLog = 0;
   private nextRestartMs = Number.NEGATIVE_INFINITY;
   private restartRetryMs = 0;
   private nextAttemptMs = Number.NEGATIVE_INFINITY;
@@ -152,8 +160,8 @@ export class WalCheckpointer {
 
   /**
    * Between ops, one of: rewind once the WAL is long, copy once `minPending`
-   * frames wait (the policy's `pendingFrames` by default), or else cut a
-   * rewound WAL's file back toward its size limit. Returns what ran, or null
+   * frames wait (the policy's `pendingFrames` by default), or else cut the
+   * file of a WAL that started over back toward its size limit. Returns what ran, or null
    * when nothing did. A database not in WAL mode reports no frames and has no
    * WAL file, so nothing runs. After a throw, calls return null until the
    * backoff has passed.
@@ -174,13 +182,17 @@ export class WalCheckpointer {
 
   private runOnce(minPending: number, startedMs: number): WalCheckpointRun | null {
     const state = this.probe.get()!;
+    // Fewer frames than last time means the WAL started over. A rewind is not
+    // the only way: once a copy has caught up and no reader is on the WAL, the
+    // next commit starts it over by itself, at whatever size the file has.
+    if (state.log < this.lastLog) this.cutPending = true;
+    this.lastLog = state.log;
     if (state.log >= this.policy.restartFrames && startedMs >= this.nextRestartMs) {
       let run: WalCheckpointRun | undefined;
       try {
         run = this.rewind(startedMs);
         return run;
       } finally {
-        if (run?.outcome === "rewound") this.cutPending = true;
         if (run?.outcome !== "copied") {
           this.restartRetryMs = run?.outcome === "rewound" ? 0 : this.backoff(this.restartRetryMs);
           this.nextRestartMs = this.now() + this.restartRetryMs;
