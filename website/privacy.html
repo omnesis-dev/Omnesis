@@ -176,7 +176,7 @@
     <div class="wrap">
       <main id="main">
         <h1>Privacy Policy</h1>
-        <p class="updated">Last updated: October 2026</p>
+        <p class="updated">Last updated: November 2026</p>
         <p class="lede">
           Omnesis is built so your data stays under your control. This policy explains, in plain
           language, what we collect today (very little) and how the Omnesis app handles your data
@@ -197,7 +197,9 @@
             <a href="#source-icons">Source icons</a>).
           </li>
           <li>
-            No account is required to use Omnesis, and it sends no usage telemetry by default.
+            No account is required to use Omnesis, and it sends no usage telemetry by default. Some
+            builds offer an optional Omnesis account for reaching your gateway through the Omnesis
+            relay; see <a href="#omnesis-account">Optional Omnesis account</a>.
           </li>
         </ul>
 
@@ -247,6 +249,24 @@
           device permissions the apps use, and the
           <a href="/browser-extension-privacy-policy">Omnesis browser extension privacy policy</a>
           for the browser data the extension reads.
+        </p>
+
+        <h2 id="omnesis-account">Optional Omnesis account</h2>
+        <p>
+          Some builds of the gateway and apps offer an optional Omnesis account. It lets you reach
+          your gateway from outside your own network through the Omnesis relay at
+          <code>relay.omnesis.app</code>, and add a device to your gateway by signing in. You sign
+          in with Google or with a passkey. The relay stores a random account identifier, your
+          passkeys' public keys and labels, a one-way digest of your Google account's identifier,
+          and the names of the gateways you connect. It does not store your email address; when
+          sign-up is by invitation only, it uses the Google account's email address once, to ask
+          Google whether it belongs to the invitation group. Traffic to your gateway stays encrypted
+          end to end, so the relay never receives your indexed data. Like any relay, it sees
+          connection metadata such as IP addresses, timing, and sizes.
+          <code>relay.omnesis.app</code> is served through Cloudflare. You can delete the account
+          yourself from its account page. The
+          <a href="/mobile-privacy-policy#omnesis-account">mobile app privacy policy</a> describes
+          all of this in full.
         </p>
 
         <h2>This website</h2>

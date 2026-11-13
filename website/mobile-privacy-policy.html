@@ -116,7 +116,7 @@
       <main id="main" class="docs-content">
         <p class="docs-kicker">Legal</p>
         <h1>Omnesis Mobile App Privacy Policy</h1>
-        <p class="docs-lead"><strong>Last updated:</strong> 2026-10-28</p>
+        <p class="docs-lead"><strong>Last updated:</strong> 2026-11-13</p>
 
         <h2 id="summary">Summary</h2>
         <p>
@@ -131,8 +131,10 @@
           data described below under Apple or Google's terms. Omnesis operates a small push relay
           that can wake an official mobile app, but it never receives notification titles, bodies,
           kinds, queries, indexed content, or an application-level gateway identifier. It receives
-          the carrier token and public app identity described below. There is no Omnesis account,
-          advertising SDK or advertising identifier, and nothing is reported to Omnesis. On Android,
+          the carrier token and public app identity described below. Some builds offer an optional
+          Omnesis account, which you do not need to use the apps; it is described in
+          <a href="#omnesis-account">Optional Omnesis account</a>. There is no advertising SDK or
+          advertising identifier, and no usage or analytics data is reported to Omnesis. On Android,
           Google's ML Kit library sends Google its own limited diagnostic data, described below.
         </p>
         <p>
@@ -156,8 +158,9 @@
           backend required for every user: users ordinarily run their own gateway on their own
           hardware, though a gateway can be supplied by another person or organization. That party
           is the operator of the gateway and controls the data sent to it. Omnesis operates the
-          limited notification relay described below. In this policy, “we” refers to Adrien Conrath
-          as the developer of Omnesis.
+          limited notification relay described below and, for the optional Omnesis account, the
+          relay described in <a href="#omnesis-account">Optional Omnesis account</a>. In this
+          policy, “we” refers to Adrien Conrath as the developer of Omnesis.
         </p>
 
         <h2 id="what-the-apps-access">What the apps access, and how it is used</h2>
@@ -268,7 +271,8 @@
             To enable notifications for a self-hosted gateway, the app may enrol with an
             Omnesis-operated push relay. During enrolment the relay receives the platform, carrier
             token, public app identity, and, on iOS, the sandbox or production environment. It does
-            not receive an Omnesis account, gateway identity, or notification content.
+            not receive your Omnesis account, if you have one, gateway identity, or notification
+            content.
           </li>
           <li>
             After enrolment, the gateway sends the relay an authenticated request with an empty
@@ -296,6 +300,56 @@
             The relay application does not put source IP addresses in its notification database.
           </li>
           <li>There is no third-party analytics or cross-device data sync through our relay.</li>
+        </ul>
+
+        <h2 id="omnesis-account">Optional Omnesis account</h2>
+        <p>
+          Some builds of the apps and the gateway offer an optional Omnesis account. It lets you
+          reach your gateway from outside your own network through the Omnesis relay at
+          <code>relay.omnesis.app</code>, and add a device to your gateway by signing in. You do not
+          need an account to use Omnesis, and none of this section applies if you never create one.
+          You sign in with Google or with a passkey.
+        </p>
+        <ul>
+          <li>
+            <strong>What the relay stores.</strong> A random account identifier; for each passkey,
+            its public key, the label shown for it, and when it was added and last used (the
+            passkey's private key never leaves your device or password manager); for a Google
+            sign-in, a one-way digest of your Google account's identifier, not your name, email
+            address, or profile; the names of the gateways you connect and the relay address of
+            each; the version of the terms you accepted and when; and your sign-in sessions until
+            they expire.
+          </li>
+          <li>
+            <strong>Email.</strong> The relay does not store your email address. When sign-up is by
+            invitation only, the relay asks Google for the email address of the Google account you
+            sign up with and uses it once, to ask Google whether it belongs to the invitation group.
+            It is not kept.
+          </li>
+          <li>
+            <strong>Your gateway's content.</strong> The relay never receives your indexed data,
+            notes, searches, or answers. Connections to your gateway through the relay stay
+            encrypted end to end between your device and your gateway; the relay forwards encrypted
+            traffic it cannot read.
+          </li>
+          <li>
+            <strong>Connection metadata.</strong> Like any relay, it sees the network (IP) addresses
+            of your devices and gateway, when they connect, how long a connection lasts, and how
+            much data it carries.
+          </li>
+          <li>
+            <strong>Cloudflare.</strong> <code>relay.omnesis.app</code> is served through
+            Cloudflare, which processes requests to it, including the account pages you sign in on,
+            under Cloudflare's privacy policy. Google processes a Google sign-in under Google's
+            terms.
+          </li>
+          <li>
+            <strong>Deleting your account.</strong> The account page has a
+            <strong>Delete account</strong> option. After a fresh sign-in, it deletes the account,
+            its sign-in methods and sessions, and the registration of every gateway connected to it.
+            Each gateway's relay address stays reserved for that gateway, recorded only by a one-way
+            digest of its identifier, so it is never given to anyone else.
+          </li>
         </ul>
 
         <h2 id="cloud-is-your-choice">Cloud models are your choice</h2>
@@ -443,6 +497,10 @@
             <strong>Unpair</strong> — removes the pairing credentials. Some device preferences,
             local indexes, or queued data can remain; use the app's available queue controls or
             operating-system app-data controls if you also want to remove those items.
+          </li>
+          <li>
+            <strong>Delete your Omnesis account</strong>, if you created one, from the account page
+            (see <a href="#omnesis-account">Optional Omnesis account</a>).
           </li>
           <li>
             <strong>Delete the app</strong> — removes its ordinary local app data. Android cloud
