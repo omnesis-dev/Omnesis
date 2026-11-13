@@ -105,7 +105,7 @@ extension PreviewSnapshotTests {
                 doc: doc, people: [], refs: nil, attachments: [], previewFilterDetails: PreviewMocks.accessDocumentFilterDetails
             )
         }
-        accessTreeGallery("document-access", height: 1240, icons: PreviewMocks.accessGalleryIcons) {
+        accessTreeGallery("document-access", height: 1080, icons: PreviewMocks.accessGalleryIcons) {
             DocumentAccessView(documentId: doc.id, previewAudit: PreviewMocks.accessDocumentAudit)
         }
         accessTreeGallery("document-access-loading", icons: PreviewMocks.accessGalleryIcons) {

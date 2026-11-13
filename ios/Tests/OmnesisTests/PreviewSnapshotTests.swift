@@ -9268,7 +9268,11 @@ final class PreviewSnapshotTests: XCTestCase {
                 XCTAssertEqual(Set(object.keys), ["capability", "label", "identifiers"])
                 XCTAssertFalse((ref.label ?? "").isEmpty)
                 XCTAssertFalse((ref.identifiers ?? []).isEmpty)
-                XCTAssertTrue(ref.identifiers?.allSatisfy { declared.identifiers?.contains($0.type) == true } == true)
+                let types = Set((ref.identifiers ?? []).map(\.type))
+                XCTAssertTrue(
+                    fields.contains { $0.field == ref.editorField && types.isSubset(of: $0.identifiers ?? []) },
+                    "No account takes \(types.sorted()) for a person"
+                )
             } else {
                 XCTAssertEqual(
                     Set(object.keys),
