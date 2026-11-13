@@ -276,6 +276,7 @@ describe.skipIf(!browserReady)(
       const command = [cli.command, ...cli.args, "cloud", "pair", "--kind", "cli", "--name", name]
         .map(shellQuote)
         .join(" ");
+      const launchesBefore = (await launchedUrls(world)).length;
       // `script` gives the CLI a terminal, as an SSH session does; no desktop browser opens.
       const proc = spawn("script", ["-qfec", command, "/dev/null"], {
         cwd: REPO_ROOT,
@@ -316,8 +317,14 @@ describe.skipIf(!browserReady)(
         expect(output).toContain(
           "Signing in on another device needs your approval on your phone or another paired device",
         );
-        // The CLI also tried to open its launch URL; nothing opened it here.
-        expect((await launchedUrls(world)).length).toBeGreaterThan(0);
+        // Printing the connect code precedes the asynchronous browser launch.
+        // Wait for this CLI's launcher write, independently of its terminal output.
+        const launch = await waitFor(
+          async () => (await launchedUrls(world))[launchesBefore],
+          "the SSH CLI's browser-launch attempt after printing its connect code",
+        );
+        expect(new URL(launch).origin).toBe(world.relayOrigin);
+        expect(new URL(launch).pathname).toBe("/_relay/v3/desktop/begin");
         await signInForDevice(owner, printed);
         const held = await heldRequest(name);
         const shown = await waitFor(
