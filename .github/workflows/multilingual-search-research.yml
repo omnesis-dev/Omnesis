@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: multilingual-search-research-${{ github.sha }}
@@ -509,5 +510,122 @@ jobs:
           path: |
             ${{ runner.temp }}/multilingual-compound-reports/*.json
             ${{ runner.temp }}/multilingual-data/ko/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  exposure-and-reference-audit:
+    name: Unseen-query sensitivity and matched report audits
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:audit]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: multilingual-public-79034fc908babbb734c660692c5598a06881ad3a
+          run-id: 43491515066
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/primary-input
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: multilingual-supplement-55ea48108be7443d96cee809322b69955bb27357
+          run-id: 43497176797
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/supplement-input
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: multilingual-reference-446c90f0d161ca39b53a4824be00b846454b1d67
+          run-id: 43501297183
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/reference-input
+      - name: Verify identical native baselines and audit every unseen-query comparison
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/multilingual-audit-reports"
+          cp evals/multilingual-search/exposure-audit/cohort.json "$RUNNER_TEMP/exposure-cohort.json"
+          python3 -m unittest discover -s evals/multilingual-search/exposure-audit -p 'test_*.py'
+          python3 evals/multilingual-search/extended-public/verify-baseline.py \
+            --primary-dir "$RUNNER_TEMP/primary-input/multilingual-public-reports" \
+            --supplemental-dir "$RUNNER_TEMP/supplement-input/multilingual-supplement-reports" \
+            --output "$RUNNER_TEMP/multilingual-audit-reports/baseline-identity.json"
+          python3 evals/multilingual-search/exposure-audit/sensitivity.py \
+            --audit "$RUNNER_TEMP/exposure-cohort.json" \
+            --reports-dir "$RUNNER_TEMP/primary-input/multilingual-public-reports" \
+            --output "$RUNNER_TEMP/multilingual-audit-reports/unseen-query-sensitivity.json"
+          python3 evals/multilingual-search/postprocess/join-reference.py \
+            --primary-dir "$RUNNER_TEMP/primary-input/multilingual-public-reports" \
+            --reference-dir "$RUNNER_TEMP/reference-input/multilingual-reference-reports" \
+            --output "$RUNNER_TEMP/multilingual-audit-reports/reference-paired.json"
+      - name: Preserve audited postprocessing outputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-postprocessing-${{ github.sha }}
+          path: ${{ runner.temp }}/multilingual-audit-reports/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  language-profile-followup:
+    name: French and Persian boundary / normalization ablations
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:profiles]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Prepare pinned tools
+        shell: bash
+        run: |
+          python3 -m pip install snowballstemmer==3.1.1
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-target" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-target
+          key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+      - name: Compile and check independent profile controls
+        shell: bash
+        run: |
+          cargo test --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml \
+            --bin omnesis-boundary-profile-probe --bin omnesis-language-norm-probe
+          cargo build --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+          mkdir -p "$RUNNER_TEMP/multilingual-profile-reports"
+          python3 evals/multilingual-search/prototype/normalization-controls.py \
+            --baseline "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --boundary "$CARGO_TARGET_DIR/release/omnesis-boundary-profile-probe" \
+            --language-norm "$CARGO_TARGET_DIR/release/omnesis-language-norm-probe" \
+            --output "$RUNNER_TEMP/multilingual-profile-reports/controls.json"
+      - name: Prepare identical frozen French and Persian pools
+        run: python3 evals/multilingual-search/extended-public/prepare.py --languages fr fa --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Compare unchanged exact evidence and fixed broad matching policies
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/profile-public/compare.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" --cache-dir "$RUNNER_TEMP/multilingual-profile-cache" \
+            --baseline "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --boundary "$CARGO_TARGET_DIR/release/omnesis-boundary-profile-probe" \
+            --normalization "$CARGO_TARGET_DIR/release/omnesis-language-norm-probe" \
+            --output "$RUNNER_TEMP/multilingual-profile-reports/profiles.json"
+      - name: Preserve exploratory profile outputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-profiles-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-profile-reports/*.json
+            ${{ runner.temp }}/multilingual-data/*/manifest.json
           if-no-files-found: warn
           retention-days: 14

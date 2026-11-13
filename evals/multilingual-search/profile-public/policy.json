@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "date": "2026-11-13",
+  "status": "Exploratory post-aggregate causal follow-up selected because French/Persian regressions were observed. Protocol fixed before any profile retrieval scores; not independent confirmation or a new primary17 macro.",
+  "data": {
+    "basePolicySHA256": "241976bc687be9716539efff7fa22666ad4f4cfeb46c8457ad84f1b1edac6589",
+    "amendmentSHA256": "66764acbc9f07e7dd77a40103fee9296b508fbd412c6840b8151da835ee48667",
+    "languages": ["fr", "fa"],
+    "sizes": [10000, 100000],
+    "queries": "Identical frozen selected development/test queries and all0/1judgments; no resampling, filters or parameter tuning. Known split language remains an oracle."
+  },
+  "variants": ["original-native", "boundary-only", "language-normalization"],
+  "scope": "STEM only and only configured French Latin spans or configured Persian Arabic spans. Use original core normalized SURFACE, never an already stemmed term. Exact tokens and all other script/language spans remain the frozen core.",
+  "boundaryOnly": "Apply compatible Charabia finer token boundaries, then NFKC and locale casing before the same Frostem algorithm. No Charabia lossy normalization. Unsafe offset mapping falls back to the entire original token.",
+  "languageNormalization": "Same finer boundaries, plus explicit compatible Charabia language normalization BEFORE Frostem. Scoped lossy normalization is recorded; no global mark stripping. Unsafe offset mapping falls back to the entire original token.",
+  "methodsPerVariant": ["stem-or", "stem-and", "stem-msm60", "exact-stem-rrf", "exact-tier"],
+  "ranking": "Same encoded-token SQLiteFTS5 content/title weights1/2 and document-hash tie order. OR unique stem terms; AND all; MSMceil60percent. Whole-input quotes remain phrases. FixedRRF k60 input1000 output100, and original deterministic exact-phrase/all-original-terms/stem tiers. Never add raw scores.",
+  "preflight": "Require all original/profile exact-lane document/query token streams equal before ranking, and distinct stable stem semantic fingerprints. Original baseline must reproduce original primary French/Persian profiles and per-query results when interpreted.",
+  "analysis": "Per-language and equal-weight two-language macro nDCG10/Recall100/MRR10, each profile paired versus corresponding original method;1000 query-bootstrap replicates,95percent unadjusted conditional intervals. Same fullDEV-only balanced-accuracy calibration; separate no-known-positive acceptance/status/score distributions. Original and every gain/regression shown; no winning policy selected on these scores.",
+  "controls": "ActualCLItoken/FTS controls record French elision/curly apostrophe/ligature/accent contrasts and Persian halfspace/marks/digit contrasts with inventedtext, including broader-match negatives. In particular, do not claim semantic negation detection: Persian negative and positive forms may share an OR token. Exact-mode and original offsets are checked independently.",
+  "privacy": "Public corpus/query text and caches stay outsideGit. Reports contain only publicIDs, metrics, hashes, configuration and counts. Fresh synthetic control traces are explicitly labelled invented data. No frozen core, primary driver, corpus or production default changes."
+}

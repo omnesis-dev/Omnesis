@@ -116,6 +116,19 @@ async function run(extension, output) {
       assert.deepEqual(ids(result), ["adjacent"]);
       assert.equal(result.path, "fts5");
     });
+    check("ordinary queries deduplicate terms while quoted repetitions retain positions", () => {
+      const single = compileQuery(db, "quartz harbor", "en");
+      const repeated = compileQuery(db, "quartz quartz harbor", "en");
+      assert.deepEqual(repeated.terms, single.terms);
+      for (const options of [{}, { memory }])
+        assert.deepEqual(
+          searchCompiled(db, repeated, options),
+          searchCompiled(db, single, options),
+        );
+      const phrase = compileQuery(db, '"quartz quartz harbor"', "en");
+      assert.deepEqual(phrase.terms, ["quartz", "quartz", "harbor"]);
+      assert.deepEqual(ids(searchCompiled(db, phrase, { memory })), []);
+    });
     check("memory and SQLite scores agree on the same analyzed snapshot", () => {
       for (const [query, language] of [
         ["recette", "fr"],

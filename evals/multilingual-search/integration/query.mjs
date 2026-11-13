@@ -41,8 +41,9 @@ export function compileQuery(db, text, language = "und", { maxTerms = 128 } = {}
   const phrase = trimmed.length > 1 && trimmed.startsWith('"') && trimmed.endsWith('"');
   const source = phrase ? trimmed.slice(1, -1).replaceAll('""', '"') : trimmed;
   const analyzed = analyze(db, source, language, snapshot.active_mode);
-  const terms = analyzed.tokens.map((token) => token.text);
-  if (terms.length > maxTerms) throw new Error("Query has too many analyzed terms");
+  const analyzedTerms = analyzed.tokens.map((token) => token.text);
+  if (analyzedTerms.length > maxTerms) throw new Error("Query has too many analyzed terms");
+  const terms = phrase ? analyzedTerms : [...new Set(analyzedTerms)];
   const quote = (term) => `"${term.replaceAll('"', '""')}"`;
   return {
     terms,

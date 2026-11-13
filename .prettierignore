@@ -62,3 +62,5 @@ evals/multilingual-search/extended-public/supplemental-policy.json
 evals/multilingual-search/lucene-probe/reference-policy.json
 evals/multilingual-search/diagnostics/amendment.json
 evals/multilingual-search/diagnostics/annotation-errata.json
+evals/multilingual-search/exposure-audit/policy.json
+evals/multilingual-search/exposure-audit/cohort.json

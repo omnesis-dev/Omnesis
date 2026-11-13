@@ -291,3 +291,59 @@ Use the applicable host admission mechanism for this build/test command. The
 standalone wrapper loads its own dictionary in addition to the frozen core's
 private dictionary instance. Its process memory is not a measurement of a final
 shared-dictionary integration.
+
+## French/Persian preprocessing ablations
+
+Two separate JSON-lines executables implement the independently declared
+[normalization protocol](normalization-policy.json):
+`omnesis-boundary-profile-probe` and `omnesis-language-norm-probe`. Both retain
+frozen exact-lane tokens. Only stem-lane French Latin and Persian Arabic spans
+receive the selected preprocessing; other languages/scripts remain unchanged.
+
+Both start from the frozen normalized `surface`, split it with Charabia, and
+stem the resulting words once. Boundary-only retains NFKC/locale casing without
+Charabia normalizers. Language-norm explicitly applies compatible Charabia
+normalization before Frostem, including selected accent/ligature/optional-mark
+and numeral folding. Neither enables global broad folding. Each response
+includes a distinct profile fingerprint and normalization metadata.
+
+French accent folding can merge different words, and splitting Persian
+halfspaces can expose a shared verb term in positive and negated expressions.
+These are explicit broad-lane precision risks; normalization is not universally
+safe. Common Arabic/Persian kaf and yeh variants are already normalized by the
+Persian Snowball algorithm, so those variants alone do not explain the observed
+aggregate regression. Sources: [French Snowball](https://snowballstem.org/algorithms/french/stemmer.html),
+[Persian Snowball](https://snowballstem.org/algorithms/persian/stemmer.html), and
+[Charabia's Persian normalizer](https://github.com/meilisearch/charabia/blob/v0.10.0/charabia/src/normalizer/persian.rs).
+
+Offsets map directly for identity spans, including halfspaces, or through
+checked original grapheme normalization/casing boundaries. Unsafe mappings
+retain the entire frozen token. Positions remain consecutive, no stopwords are
+removed, and prefix queries leave the final resulting token unstemmed while
+still applying the selected profile's normalization.
+
+```sh
+cargo test --release --locked \
+  --manifest-path evals/multilingual-search/prototype/Cargo.toml \
+  --bin omnesis-boundary-profile-probe --bin omnesis-language-norm-probe
+```
+
+Use host admission for heavy commands. These are exploratory follow-ups to
+inspected aggregate regressions, not untouched prospective primary methods;
+separate retrieval reports must retain that qualification.
+
+The bounded control helper records original/profile exact and stem streams,
+original UTF-8 offsets, stable configuration fingerprints, and actual encoded
+FTS OR/AND/phrase results for invented positive/negative cases:
+
+```sh
+python3 evals/multilingual-search/prototype/normalization-controls.py \
+  --baseline "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+  --boundary "$CARGO_TARGET_DIR/release/omnesis-boundary-profile-probe" \
+  --language-norm "$CARGO_TARGET_DIR/release/omnesis-language-norm-probe" \
+  --output /path/outside-checkout/normalization-controls.json
+```
+
+It explicitly checks and records the accent/negation precision risks. This
+encoded-FTS control does not claim to exercise a native profile tokenizer
+callback or measure public retrieval quality.
