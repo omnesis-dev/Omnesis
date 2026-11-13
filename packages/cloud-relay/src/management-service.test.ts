@@ -1965,3 +1965,16 @@ test("signup access is not asked for or shown without a usable relay service or 
   expect(signupAccess).toHaveBeenCalledTimes(1);
   expect(await manager.status()).not.toHaveProperty("signup");
 });
+
+test("by default the gateway asks its relay's public signup path through its own fetch", async () => {
+  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
+  const fetch = vi.fn<typeof globalThis.fetch>(async (url) =>
+    String(url) === "https://relay.example.test/_relay/v3/signup/access"
+      ? Response.json({ signup: { inviteOnly: true, requestAccessUrl } })
+      : new Response(null, { status: 404 }),
+  );
+  manager = await GatewayCloudRelayManagement.open(fixture({ fetch }).options);
+  await manager.refreshSignupAccess();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect((await manager.status()).signup).toEqual({ inviteOnly: true, requestAccessUrl });
+});
