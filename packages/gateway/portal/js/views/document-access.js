@@ -38,6 +38,11 @@ function Agent({ agent }) {
   </li>`;
 }
 
+/**
+ * One level's card. A capability's pill is coloured when the level grants it
+ * and muted when it does not, as everywhere else; whether this document is
+ * readable is said by the mark and its words beside it.
+ */
 function LevelVerdicts({ level }) {
   const headingId = `doc-access-level-${level.id}`;
   return html`<section class="doc-access-level" aria-labelledby=${headingId}>
@@ -53,7 +58,12 @@ function LevelVerdicts({ level }) {
       ${VERDICTS.map((capability) => {
         const verdict = level[capability] ?? { readable: false, text: "" };
         return html`<div class="doc-access-verdict" key=${capability}>
-          <dt><${CapabilityPill} capability=${capability} off=${!verdict.readable} /></dt>
+          <dt>
+            <${CapabilityPill}
+              capability=${capability}
+              off=${verdict.code === "permission-not-granted"}
+            />
+          </dt>
           <dd>
             <${VerdictMark} readable=${verdict.readable} />
             ${verdict.text ? html`<p>${verdict.text}</p>` : null}

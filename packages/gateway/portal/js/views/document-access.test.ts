@@ -82,7 +82,7 @@ describe("Who can read this?", () => {
       "Aurora Planner",
       "Kitchen speakerIntegration",
     ]);
-    // Readable is said in words and marked, never by colour alone.
+    // Readable is said in words and marked; a pill is muted only when the level does not grant it.
     const verdicts = (level: Element) =>
       [...level.querySelectorAll(".doc-access-verdict")].map((row) => [
         row.querySelector(".capability-pill")?.className,
@@ -94,8 +94,9 @@ describe("Who can read this?", () => {
       ["capability-pill capability-pill-direct is-off", "Can’t read", "Direct is not granted on this level"],
     ]);
     expect(verdicts(research!)).toEqual([
-      ["capability-pill capability-pill-answer is-off", "Can’t read", "Hidden by: chat Workshop planning"],
-      ["capability-pill capability-pill-direct is-off", "Can’t read", "This account is not shared"],
+      // Both are granted on this level: coloured pills, unreadable by the mark and its words.
+      ["capability-pill capability-pill-answer", "Can’t read", "Hidden by: chat Workshop planning"],
+      ["capability-pill capability-pill-direct", "Can’t read", "This account is not shared"],
     ]);
   });
 

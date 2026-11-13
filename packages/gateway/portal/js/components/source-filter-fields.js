@@ -217,18 +217,67 @@ function ResyncProgress({ processed, total, label }) {
   return html`<progress class="source-filter-progress" max=${max} value=${value} aria-label=${label}></progress>`;
 }
 
+/** States that belong to the whole account, so the fields in them share one block. */
+const ACCOUNT_STATES = new Set(["needs-resync", "resyncing"]);
+
+/** "Labels", "Labels and people", "Labels, folders and people". */
+function joinedNames(names) {
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
+}
+
 /**
- * Why a field cannot take new entries yet, in the gateway's words, with the
+ * The fields that cannot take new entries yet, as the blocks that explain
+ * why, in field order. Fields waiting for the same resync of the account —
+ * or the same resync in progress — share one block; each other field has
+ * its own.
+ */
+export function waitingFieldGroups(fields = []) {
+  const groups = [];
+  for (const field of fields) {
+    if (fieldReady(field)) continue;
+    const status = field.state?.status;
+    const shared = ACCOUNT_STATES.has(status)
+      ? groups.find((group) => group.status === status && ACCOUNT_STATES.has(group.status))
+      : null;
+    if (shared) shared.fields.push(field);
+    else groups.push({ status, fields: [field] });
+  }
+  return groups.map((group) => ({
+    ...group,
+    key: group.fields.map((field) => field.field).join("\n"),
+    name: capitalized(joinedNames(group.fields.map((field) => fieldNoun(field, true)))),
+  }));
+}
+
+/**
+ * The gateway's sentence for fields that share a resync. Each field's
+ * sentence starts "<Noun> filters need …"; the shared one names every
+ * field in that opening and keeps the rest of the first field's sentence.
+ * Sentences that do not open that way are shown one after another.
+ */
+export function sharedResyncText(fields) {
+  if (fields.length === 1) return fields[0].state.text;
+  const opening = /^(.+?) filters (need .*)$/su;
+  const parts = fields.map((field) => opening.exec(field.state.text ?? ""));
+  if (parts.some((part) => !part)) return fields.map((field) => field.state.text).join(" ");
+  const names = parts.map(([, noun], index) =>
+    index === 0 ? noun : noun.charAt(0).toLocaleLowerCase() + noun.slice(1),
+  );
+  return `${joinedNames(names)} filters ${parts[0][2]}`;
+}
+
+/**
+ * Why fields cannot take new entries yet, in the gateway's words, with the
  * one action the owner can take: resync the account when its records are
- * too old for the field. `starting` is set once the owner has asked for that
+ * too old for them. `starting` is set once the owner has asked for that
  * resync and the gateway has not reported it running yet.
  */
-export function FilterFieldState({ source, field, starting = false, error = "", onResync }) {
-  const state = field.state ?? {};
+export function FilterFieldState({ source, fields, starting = false, error = "", onResync }) {
+  const state = fields[0].state ?? {};
   const name = sourceLabel(source);
   if (state.status === "needs-resync" && !starting)
     return html`<div class="source-filter-state" role="status">
-      <p>${state.text}</p>
+      <p>${sharedResyncText(fields)}</p>
       ${error ? html`<p class="access-field-error" role="alert">${error}</p>` : null}
       <button type="button" class="btn-secondary" onClick=${onResync}>Resync ${name}</button>
     </div>`;

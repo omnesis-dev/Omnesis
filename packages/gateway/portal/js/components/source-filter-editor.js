@@ -13,12 +13,11 @@ import { FilterPreview, RETRY_COUNTS_LABEL, useSourceFilterPreview } from "./sou
 import { rememberScopeLabels, useScopeLabelGeneration } from "./source-filter-labels.js";
 import {
   FilterFieldState,
-  capitalized,
-  fieldNoun,
   fieldReady,
   filterApiError,
   resyncForFilters,
   useSourceFilterEditor,
+  waitingFieldGroups,
 } from "./source-filter-fields.js";
 import {
   cloneFilter,
@@ -202,13 +201,13 @@ export function SourceFilterEditor({
                           : null
                       }
                       ${identifiers.length ? html`<${ExactIdentifierInput} types=${identifiers} selected=${selected} onToggle=${toggle} />` : null}
-                      ${waiting.map(
-                        (field) =>
-                          html`<section class="source-filter-field-state" key=${field.field} aria-label=${capitalized(fieldNoun(field, true))}>
-                            <strong>${capitalized(fieldNoun(field, true))}</strong>
+                      ${waitingFieldGroups(editor?.fields).map(
+                        (group) =>
+                          html`<section class="source-filter-field-state" key=${group.key} aria-label=${group.name}>
+                            <strong>${group.name}</strong>
                             <${FilterFieldState}
                               source=${source}
-                              field=${field}
+                              fields=${group.fields}
                               starting=${resync.starting}
                               error=${resync.error}
                               onResync=${startResync}
@@ -226,7 +225,7 @@ export function SourceFilterEditor({
                   pending=${preview.pending}
                   onRemove=${readOnly ? undefined : (ref) => toggle(ref)}
                 />
-                ${!selected.length ? html`<p class="filter-selection-empty">Search above to choose matching content.</p>` : null}
+                ${!selected.length && ready.length ? html`<p class="filter-selection-empty">Search above to choose matching content.</p>` : null}
                 ${selected.length && connected ? html`<${FilterPreview} preview=${preview} />` : null}
                 ${!readOnly && connected && error && selected.length ? html`<p class="access-field-error" role="alert">${error}</p>` : null}
               </div>`
