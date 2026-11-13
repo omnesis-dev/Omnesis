@@ -1175,7 +1175,8 @@ export async function assertionOn(
   challenge: string,
   rpId = RELAY_HOST,
 ): Promise<Record<string, unknown>> {
-  const page = await session.context.newPage();
+  // The profile's virtual authenticator is attached to its own page, so the prompt runs there.
+  const page = session.page;
   const url = `${origin}/__fixture-passkey-page`;
   await page.route(url, (route) =>
     route.fulfill({
@@ -1223,7 +1224,7 @@ export async function assertionOn(
       { challenge, rpId },
     );
   } finally {
-    await page.close();
+    await page.unroute(url);
   }
 }
 
