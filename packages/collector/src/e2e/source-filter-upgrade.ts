@@ -2,247 +2,189 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Source filters switched on over an install that already holds records.
+ * Filters on an account whose records were written before its source wrote
+ * what the filter matches on, through a real collector, a spawned gateway
+ * and agents connected over MCP.
  *
- * A universe is synced by its collector against a gateway where source filters
- * are not in use, so the gateway keeps no filter state and the collector sends
- * none. The collector then goes offline, the gateway is restarted with filters
- * in use — the way an owner switches them on — and the collector comes back.
- * Nothing in the suite triggers a sync after that: the collector notices on
- * reconnecting that the gateway now takes filter facts and reports its stored
- * records' labels, folders and repositories by itself, without sending a
- * record again.
+ * The universe's accounts are first read by hosts that send no source
+ * version, so every record is stored at version 0, below the field's
+ * minimum. The suite then asserts, per account:
  *
- * What is pinned, for Direct and for Answer:
- *  - while the collector has not reported, no filter that needs its facts can
- *    be saved, an unfiltered connection reads everything as before, and a
- *    filter the gateway can settle from what it stores works already;
- *  - from the first moment a filter is accepted, at whatever point of the
- *    collector's report, nothing the settled filter withholds ever shows;
- *  - once the source is ready each filter leaves exactly its records, and the
- *    editor lists what can be picked with the records each choice governs.
+ *  - the editor says the host must be updated; once it is, and an ordinary
+ *    sync has run, the field reads `needs-resync` with the source's own
+ *    resync cost, every record is counted too old, no filter on the field
+ *    can be saved for Direct or Answer, and the review of a draft filter
+ *    says it would leave nothing;
+ *  - where the source can be made to miss records (`unreadable`), a resync
+ *    in place that cannot reach them makes the field `ready`; a saved filter
+ *    then hides exactly the records still too old, the editor counts them,
+ *    the review agrees with what Direct and Answer read, and the rest are
+ *    filtered as they should be;
+ *  - a resync in place that reads everything makes the field `ready` (the
+ *    editor may show `resyncing` while it runs), every record carries the
+ *    new version, each filter leaves exactly its records for Direct and
+ *    Answer, and no record changed id at any point.
+ *
+ * Every read is started by the suite: the harness's collectors sync only
+ * when asked, so a resync's own command to the collector is stood in for by
+ * the sync the suite then starts, from the cursor the resync emptied.
  */
 
-import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { portalJson } from "./mcp-oauth-helper.js";
-import { startScopeScriptedAgent, type ScopeScriptedAgent } from "./scope-scripted-agent.js";
 import {
-  closeFilterContext,
-  expectAnswerBoundary,
-  expectDirectBoundary,
-  expectNoDirectLeak,
-  filterPolicy,
-  openFilterContext,
+  answerReadable,
+  closeAgents,
+  connectAgent,
+  declaredVersion,
+  editorField,
+  expectDirectReads,
+  fieldCounts,
+  grantRule,
+  identities,
+  ownerPortal,
+  pickEntry,
+  previewFilter,
+  readRecords,
+  refusedSave,
+  resyncAndWatch,
+  resyncCost,
   saveFilters,
-  type FilterAccount,
-  type FilterAction,
-  type FilterCapability,
-  type FilterContext,
-  type FilterCorpus,
-} from "./source-filter-corpus.js";
-import { SyntheticE2EHarness } from "./synth-harness.js";
-import type { AuthorizedMcpClient } from "./mcp-oauth-helper.js";
-import type { ScopeRef, SourceScopeOptions } from "@omnesis/types";
+  sourceFilter,
+  versionsOf,
+  type ObservedState,
+  type RecordSet,
+} from "./filter-e2e-reads.js";
+import { startScopeScriptedAgent, type ScopeScriptedAgent } from "./scope-scripted-agent.js";
+import { SyntheticE2EHarness, type HarnessDevice } from "./synth-harness.js";
+import type { AuthorizedMcpClient, PortalSession } from "./mcp-oauth-helper.js";
+import type { FilterRef } from "@omnesis/types";
 
-/** A choice named outright, or the editor's entry whose label ends with a path. */
-type Choice = ScopeRef | { labelEndsWith: string };
+/** The word every record of the filter universes carries. */
+const QUERY = "zqfilter";
+
+/** An entry named outright, or the picker's entry whose label ends with a path (on a device). */
+export type UpgradeChoice =
+  | { id: string }
+  | { labelEndsWith: string; device?: (harness: SyntheticE2EHarness) => HarnessDevice };
 
 export interface UpgradeSource {
   sourceId: string;
-  /** The kind of choice the collector reports for this source. */
-  kind: "folder" | "label";
-  /** The prefixes of the two texts only one record holds: its title and its body. */
-  markers: { title: string; body: string };
-  /** Every record the collector indexed, by marker. */
+  /** The filterable field the filters use. */
+  field: string;
+  /** Names each stored record of the account; see `readRecords`. */
+  key: Parameters<typeof readRecords>[2];
+  /** Every record the account holds, by key. */
   records: string[];
-  /** A share-only filter and the records it leaves. */
-  share: { choice: Choice; leaves: string[] };
-  /** A hide filter and the records it leaves. */
-  hide: { choice: Choice; leaves: string[] };
+  /** A share-only filter and the records it leaves once every record is new enough. */
+  share: { choice: UpgradeChoice; leaves: string[] };
+  /** A hide filter and the records it leaves once every record is new enough. */
+  hide: { choice: UpgradeChoice; leaves: string[] };
+  /** Makes the account's host write records as the build before the field did, or not. */
+  oldBuild?: (harness: SyntheticE2EHarness, old: boolean) => Promise<void>;
   /**
-   * A share-only filter the gateway settles from the records it stores, with
-   * no report from a collector.
+   * Makes the next reads of the account miss some of its records, as items
+   * the source can no longer supply would be, or stops doing so. Neither
+   * starts a sync.
    */
-  storedFacts?: { choice: ScopeRef; leaves: string[] };
+  unreadable?: (missing: boolean) => void;
+  /** Whether Answer is checked too; off for an account with several streams. */
+  answer: boolean;
 }
+
 export interface FilterUpgrade {
   universe: string;
   sources: UpgradeSource[];
 }
 
-/** Tables that hold what filters derive from documents and from what collectors report. */
-const FACT_TABLES = [
-  "document_scope_facts",
-  "document_scope_completeness",
-  "scope_document_hierarchy",
-  "scope_hierarchy_nodes",
-  "scope_entities",
-  "scope_fact_backfill",
-  "source_scope_kind_readiness",
-  "source_scope_refresh_requirements",
-];
+const without = (keys: readonly string[], gone: ReadonlySet<string>) =>
+  keys.filter((key) => !gone.has(key));
 
-const isRef = (choice: Choice): choice is ScopeRef => "kind" in choice;
-const refused = (error: unknown): boolean =>
-  error instanceof Error && error.message.includes("HTTP 409");
+/** The editor's states seen during a resync: from `needs-resync` or `ready`, ending `ready`. */
+function expectResyncedToReady(states: ObservedState[], from: "needs-resync" | "ready"): void {
+  expect(states[0]?.status, JSON.stringify(states)).toBe(from);
+  expect(states.at(-1)?.status, JSON.stringify(states)).toBe("ready");
+  for (const state of states)
+    expect(["needs-resync", "resyncing", "ready"], JSON.stringify(states)).toContain(state.status);
+}
 
 export function describeFilterUpgrade({ universe, sources }: FilterUpgrade): void {
-  describe(`source filters switched on over records already indexed: ${universe}`, () => {
+  describe(`filters over records written before their field: ${universe}`, () => {
     let harness: SyntheticE2EHarness;
     let model: ScopeScriptedAgent;
-    let context: FilterContext;
-    const held = new Map<string, { account: FilterAccount; corpus: FilterCorpus }>();
-    const before = { advertised: true, factRows: -1, cursors: "", stored: "" };
-    const after = { advertised: false };
+    let direct: AuthorizedMcpClient;
+    let answer: AuthorizedMcpClient;
+    let portal: PortalSession;
+    const records = new Map<string, RecordSet>();
+    const original = new Map<string, Record<string, string>>();
+    const versions = new Map<string, number>();
+    /** Records each account's first resync could not reach. */
+    const missed = new Map<string, Set<string>>();
 
-    const of = (source: UpgradeSource) => held.get(source.sourceId)!;
-    const keys = (source: UpgradeSource, markers: readonly string[]) =>
-      [...of(source).corpus.keys()].filter((key) => markers.includes(key));
+    const of = (source: UpgradeSource) => records.get(source.sourceId)!;
+    const sourceType = (source: UpgradeSource) =>
+      source.sourceId.slice(0, source.sourceId.indexOf(":"));
 
-    function read<T>(query: (reader: Database.Database) => T): T {
-      const reader = new Database(harness.getDbPath(), { readonly: true });
-      try {
-        return query(reader);
-      } finally {
-        reader.close();
-      }
+    async function refOf(source: UpgradeSource, choice: UpgradeChoice): Promise<FilterRef> {
+      if ("id" in choice) return { capability: "tree", field: source.field, id: choice.id };
+      return (
+        await pickEntry(
+          harness,
+          source.sourceId,
+          source.field,
+          choice.labelEndsWith,
+          choice.device?.(harness),
+        )
+      ).ref;
     }
 
-    /** Every record of a source as the collector indexed it, keyed by the marker in its text. */
-    function readCorpus(source: UpgradeSource): { account: FilterAccount; corpus: FilterCorpus } {
-      const rows = read((reader) =>
-        reader
-          .prepare<
-            [string],
-            {
-              id: string;
-              external_id: string;
-              provider_id: string;
-              content: string;
-              url: string | null;
-            }
-          >(
-            `SELECT id, external_id, provider_id, content,
-                    json_extract(metadata, '$.sourceUrl') AS url
-             FROM documents WHERE source_id=? ORDER BY external_id`,
-          )
-          .all(source.sourceId),
-      );
-      const corpus: FilterCorpus = new Map();
-      for (const row of rows) {
-        const marker = new RegExp(`${source.markers.body}_([A-Z_]+)`).exec(row.content)?.[1];
-        if (!marker) throw new Error(`A ${source.sourceId} record carries no marker`);
-        const key = marker.toLowerCase().replaceAll("_", "-");
-        if (corpus.has(key)) throw new Error(`Two ${source.sourceId} records carry ${marker}`);
-        corpus.set(key, {
-          key,
-          id: row.id,
-          externalId: row.external_id,
-          title: `${source.markers.title}_${marker}`,
-          body: `${source.markers.body}_${marker}`,
-          ...(row.url ? { url: row.url } : {}),
-        });
-      }
-      if (rows.length === 0) throw new Error(`${source.sourceId} indexed nothing`);
+    /**
+     * An entry on the field as the owner would draft one while the picker
+     * cannot be used yet: the entry named outright, or for a per-device
+     * field the whole device that hosts the account.
+     */
+    function draftRef(source: UpgradeSource): FilterRef {
+      const choice = source.share.choice;
+      if ("id" in choice) return { capability: "tree", field: source.field, id: choice.id };
+      const device = choice.device?.(harness) ?? harness.deviceForSource(source.sourceId);
+      return { capability: "tree", field: source.field, id: "", device: device.deviceId };
+    }
+
+    async function filtersOf(source: UpgradeSource) {
       return {
-        account: {
-          type: source.sourceId.slice(0, source.sourceId.indexOf(":")),
-          sourceId: source.sourceId,
-          providerId: rows[0]!.provider_id,
-        },
-        corpus,
+        share: sourceFilter(source.sourceId, "share", [await refOf(source, source.share.choice)]),
+        hide: sourceFilter(source.sourceId, "hide", [await refOf(source, source.hide.choice)]),
       };
     }
 
-    /** Each stored record's identity, content and the moment it was last written. */
-    const storedRecords = (): string =>
-      read((reader) =>
-        JSON.stringify(
-          reader
-            .prepare(
-              `SELECT id, source_id, external_id, content_hash, ingested_at FROM documents
-               WHERE source_id IN (${sources.map(() => "?").join(",")}) ORDER BY id`,
-            )
-            .all(...sources.map((source) => source.sourceId)),
-        ),
-      );
-
-    async function advertisesFilters(): Promise<boolean> {
-      const health = await harness.gatewayJson<{ compat?: { sourceScopes?: unknown } }>("/health");
-      return health.compat?.sourceScopes !== undefined;
-    }
-
-    const factRows = (): number =>
-      read((reader) => {
-        let rows = 0;
-        for (const table of FACT_TABLES) {
-          if (!reader.prepare("SELECT 1 FROM sqlite_master WHERE name=?").get(table)) continue;
-          rows += reader.prepare<[], { n: number }>(`SELECT count(*) AS n FROM ${table}`).get()!.n;
-        }
-        return rows;
-      });
-
-    /** The editor's list for a source: what it offers, and whether the kind can be picked from. */
-    const options = (source: UpgradeSource, query = "") =>
-      portalJson<SourceScopeOptions>(
-        harness.gatewayUrl,
-        context.answer.portal,
-        `/admin/access/source-filters/${encodeURIComponent(source.sourceId)}/options?kind=${source.kind}${query}`,
-      );
-    const ready = async (source: UpgradeSource): Promise<boolean> =>
-      (await options(source)).readiness.find((item) => item.kind === source.kind)?.ready === true;
-
-    /** The gateway's own pass over the records it stores has reached the end of every source. */
-    const storedPassDone = (): boolean =>
-      read(
-        (reader) =>
-          !reader.prepare("SELECT 1 FROM scope_hierarchy_dirty LIMIT 1").get() &&
-          sources.every(
-            (source) =>
-              !!reader
-                .prepare("SELECT 1 FROM scope_fact_backfill WHERE source_id=? AND ready=1")
-                .get(source.sourceId),
-          ),
-      );
-
     /**
-     * Run the gateway's filter upkeep, which it otherwise runs on its own
-     * schedule, until `done`. Never syncs a source.
+     * Save each filter for Direct and Answer and compare what the agents read
+     * with what the editor's review of the filter says.
      */
-    async function upkeepUntil(done: () => boolean | Promise<boolean>): Promise<boolean> {
-      for (let tick = 0; tick < 240; tick++) {
-        if (await done()) return true;
-        await harness.gatewayJson("/admin/background/run/backfill.scopeFacts", { method: "POST" });
-        await new Promise((resolve) => setTimeout(resolve, 100));
+    async function expectFiltered(source: UpgradeSource, gone: ReadonlySet<string>) {
+      const filters = await filtersOf(source);
+      for (const action of ["share", "hide"] as const) {
+        const leaves = without(source[action].leaves, gone);
+        await saveFilters(harness, direct, { direct: [filters[action]] });
+        await expectDirectReads(harness, direct, of(source), leaves, QUERY);
+        const review = await previewFilter(harness, portal, filters[action]);
+        expect(review, `${source.sourceId} ${action} review`).toMatchObject({
+          total: source.records.length,
+          visible: leaves.length,
+          hidden: source.records.length - leaves.length,
+          tooOld: gone.size,
+        });
+        if (!source.answer) continue;
+        await saveFilters(harness, answer, { answer: [filters[action]] });
+        expect(await answerReadable(model, answer, of(source), QUERY), `Answer ${action}`).toEqual(
+          [...leaves].sort(),
+        );
       }
-      return done();
     }
-
-    async function refOf(source: UpgradeSource, choice: Choice): Promise<ScopeRef> {
-      if (isRef(choice)) return choice;
-      const wanted = choice.labelEndsWith;
-      const found = (await options(source, `&q=${encodeURIComponent(wanted.slice(1))}`)).items;
-      const item = found.find((candidate) => candidate.label.endsWith(wanted));
-      if (!item) throw new Error(`${source.sourceId} offers no ${wanted}`);
-      return item.ref;
-    }
-
-    const save = (
-      client: AuthorizedMcpClient,
-      capability: FilterCapability,
-      source: UpgradeSource,
-      action: FilterAction,
-      ref: ScopeRef,
-    ) =>
-      saveFilters(harness, client, [
-        { capability, policies: [filterPolicy(of(source).account, capability, action, [ref])] },
-      ]);
 
     beforeAll(async () => {
       model = await startScopeScriptedAgent();
       harness = new SyntheticE2EHarness({
-        gatewayMode: "synthetic",
+        gatewayMode: "synthetic-experimental",
         universe,
         extraInference: {
           backends: { filterUpgrade: { type: "http", url: model.url } },
@@ -253,182 +195,167 @@ export function describeFilterUpgrade({ universe, sources }: FilterUpgrade): voi
         },
       });
       await harness.start();
+      for (const source of sources) {
+        versions.set(source.sourceId, declaredVersion(harness, source.sourceId));
+        // A build that predates versions sends none: its records are stored at 0.
+        harness.setSourceVersion(source.sourceId, undefined);
+        await source.oldBuild?.(harness, true);
+      }
       // Twice, as a collector that has been running for a while: the second
-      // sync finds nothing new and leaves each source's cursor at rest.
+      // sync finds nothing new and leaves each cursor at rest.
       for (let pass = 0; pass < 2; pass++)
         for (const source of sources) await harness.triggerSyncAndWait(source.sourceId, 120_000);
-      for (const source of sources) held.set(source.sourceId, readCorpus(source));
-      before.advertised = await advertisesFilters();
-      before.factRows = factRows();
-      before.stored = storedRecords();
-      before.cursors = JSON.stringify(
-        await Promise.all(sources.map((source) => harness.getSyncState(source.sourceId))),
-      );
-
-      await harness.disconnectCollectors();
-      await harness.restartGateway({ gatewayMode: "synthetic-experimental" });
-      after.advertised = await advertisesFilters();
+      for (const source of sources) {
+        const read = readRecords(harness, [source.sourceId], source.key);
+        records.set(source.sourceId, read);
+        original.set(source.sourceId, identities(read));
+      }
       await harness.reindexMissing();
       await harness.refreshSearchSnapshot();
-      context = await openFilterContext(harness, model);
+      direct = await connectAgent(harness, "Invented filtered reader", [grantRule("direct")]);
+      answer = await connectAgent(harness, "Invented filtered asker", [grantRule("answer")]);
+      portal = await ownerPortal(harness);
     }, 300_000);
 
     afterAll(async () => {
-      await closeFilterContext(context);
+      await closeAgents([direct, answer]);
       await harness?.destroy();
       await model?.close();
     }, 30_000);
 
-    test("the collector indexed every record while the gateway took no filter facts and kept no filter state", () => {
-      for (const source of sources)
-        expect([...of(source).corpus.keys()].sort(), source.sourceId).toEqual(
-          [...source.records].sort(),
+    test("every record was written at version 0, below the field's minimum", () => {
+      for (const source of sources) {
+        expect([...of(source).keys()].sort(), source.sourceId).toEqual([...source.records].sort());
+        expect(new Set(versionsOf(harness, of(source)).values()), source.sourceId).toEqual(
+          new Set([0]),
         );
-      expect(before.advertised).toBe(false);
-      expect(before.factRows).toBe(0);
-      expect(after.advertised).toBe(true);
+        expect(versions.get(source.sourceId), source.sourceId).toBeGreaterThan(0);
+      }
     });
 
-    test("until the collector reports, no filter on what it reports can be saved, an unfiltered connection reads everything, and what the gateway stores already filters", async () => {
-      const [filtered, unfiltered] = context.direct;
-      // The gateway's own pass over stored records ends without any collector.
-      expect(await upkeepUntil(storedPassDone), "the gateway's pass over stored records").toBe(
-        true,
-      );
-      await harness.reindexMissing();
-      await harness.refreshSearchSnapshot();
+    test("once the host is updated the field needs a resync: nothing can be saved, and every record is counted too old", async () => {
       for (const source of sources) {
-        const { account, corpus } = of(source);
-        expect(await ready(source), `${source.sourceId} ready`).toBe(false);
-        expect((await options(source)).items).toEqual([]);
-        const named = isRef(source.share.choice)
-          ? source.share.choice
-          : ({ kind: source.kind, id: "never" } as ScopeRef);
-        for (const action of ["share", "hide"] as const) {
-          await expect(save(filtered!, "direct", source, action, named)).rejects.toSatisfy(refused);
-          await expect(save(context.answer, "answer", source, action, named)).rejects.toSatisfy(
-            refused,
-          );
-        }
-        await saveFilters(harness, unfiltered!, []);
-        await expectDirectBoundary(harness, unfiltered!, account, corpus, [...corpus.keys()]);
-        if (!source.storedFacts) continue;
-        const { choice, leaves } = source.storedFacts;
-        await save(filtered!, "direct", source, "share", choice);
-        await expectDirectBoundary(harness, filtered!, account, corpus, keys(source, leaves));
-        await save(context.answer, "answer", source, "share", choice);
-        await expectAnswerBoundary(model, context.answer, account, corpus, keys(source, leaves));
-        await saveFilters(harness, filtered!, []);
-        await saveFilters(harness, context.answer, []);
-      }
-    }, 420_000);
+        const behind = await editorField(harness, source.sourceId, source.field);
+        expect(behind.state.status, source.sourceId).toBe("collector-behind");
+        expect("text" in behind.state && behind.state.text).toMatch(/^Update Omnesis on /);
 
-    test("the returning collector reports by itself; from the first filter the gateway accepts nothing withheld shows, and each filter then leaves exactly its records", async () => {
-      // One connection keeps asking for a share-only filter on every source
-      // whose choice can be named before the source has reported, the way an
-      // owner would save one at the earliest moment the editor allows.
-      const watcher = context.direct[2]!;
-      const watched = sources.filter((source) => isRef(source.share.choice));
-      const policies = watched.map((source) =>
-        filterPolicy(of(source).account, "direct", "share", [source.share.choice as ScopeRef]),
-      );
-      const seen = { refusals: 0, accepted: false, looks: 0 };
-      let reporting = true;
-      const look = async (): Promise<void> => {
-        if (!seen.accepted) {
-          try {
-            await saveFilters(harness, watcher, [{ capability: "direct", policies }]);
-            seen.accepted = true;
-          } catch (error) {
-            if (!refused(error)) throw error;
-            seen.refusals++;
-            return;
-          }
-        }
-        for (const source of watched) {
-          const { account, corpus } = of(source);
-          await expectNoDirectLeak(watcher, account, corpus, keys(source, source.share.leaves));
-        }
-        seen.looks++;
-      };
-      await look();
-      expect(seen, "a filter saved before the collector is back").toMatchObject({
-        accepted: false,
-        refusals: 1,
-      });
-      const watch = (async () => {
-        while (reporting) {
-          await look();
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-      })();
-      let settled: boolean;
-      try {
-        await harness.reconnectCollectors();
-        settled = await upkeepUntil(async () => {
-          if (!storedPassDone()) return false;
-          for (const source of sources) if (!(await ready(source))) return false;
-          return true;
-        });
-      } finally {
-        reporting = false;
-        await watch;
-      }
-      // No sync was asked for: the collector's own report on reconnecting is
-      // the whole upgrade.
-      expect(settled, "every source ready without a sync being triggered").toBe(true);
-      await look();
-      expect(seen.accepted, "the filter is accepted once the source is ready").toBe(true);
-      await harness.reindexMissing();
-      await harness.refreshSearchSnapshot();
-
-      const [direct] = context.direct;
-      for (const source of sources) {
-        const { account, corpus } = of(source);
-        const boundaries: Array<[FilterAction, ScopeRef, string[]]> = [
-          ["share", await refOf(source, source.share.choice), source.share.leaves],
-          ["hide", await refOf(source, source.hide.choice), source.hide.leaves],
-        ];
-        for (const [action, ref, leaves] of boundaries) {
-          await save(direct!, "direct", source, action, ref);
-          await expectDirectBoundary(harness, direct!, account, corpus, keys(source, leaves));
-          await save(context.answer, "answer", source, action, ref);
-          await expectAnswerBoundary(model, context.answer, account, corpus, keys(source, leaves));
-        }
-      }
-      // The watcher's filter, accepted while the report was arriving, governs like any other.
-      for (const source of watched) {
-        const { account, corpus } = of(source);
-        await expectDirectBoundary(
-          harness,
-          watcher,
-          account,
-          corpus,
-          keys(source, source.share.leaves),
+        // The host is updated; an ordinary sync finds nothing changed.
+        harness.setSourceVersion(source.sourceId, versions.get(source.sourceId));
+        await source.oldBuild?.(harness, false);
+        await harness.triggerSyncAndWait(source.sourceId, 120_000);
+        expect(new Set(versionsOf(harness, of(source)).values()), source.sourceId).toEqual(
+          new Set([0]),
         );
+
+        const { state } = await editorField(harness, source.sourceId, source.field);
+        const cost = resyncCost(harness, sourceType(source));
+        expect(cost, `${source.sourceId} declares what a resync costs`).toBeTruthy();
+        expect(state, source.sourceId).toMatchObject({ status: "needs-resync", cost });
+        const text = (state as { text: string }).text;
+        expect(text).toMatch(/^[A-Z][a-z ]+ filters need .+ to be resynced\. /);
+        expect(text.endsWith(cost!)).toBe(true);
+        expect(await fieldCounts(harness, source.sourceId, source.field)).toMatchObject({
+          tooOld: source.records.length,
+          tooOldText: `${source.records.length} older items could not be resynced and stay hidden from agents using this filter.`,
+        });
+
+        const draft = draftRef(source);
+        const filters = {
+          share: sourceFilter(source.sourceId, "share", [draft]),
+          hide: sourceFilter(source.sourceId, "hide", [draft]),
+        };
+        for (const filter of [filters.share, filters.hide]) {
+          for (const [agent, capability] of [
+            [direct, "direct"],
+            [answer, "answer"],
+          ] as const) {
+            expect(
+              await refusedSave(harness, agent, { [capability]: [filter] }),
+              `${source.sourceId} ${capability}`,
+            ).toEqual({ status: 409, error: "invalid-selection", message: text });
+          }
+          // What such a filter would leave: nothing, every record being too old.
+          expect(await previewFilter(harness, portal, filter)).toMatchObject({
+            total: source.records.length,
+            visible: 0,
+            tooOld: source.records.length,
+          });
+        }
+        // An agent with no filter reads the account as before.
+        await saveFilters(harness, direct, {});
+        await expectDirectReads(harness, direct, of(source), source.records, QUERY);
+      }
+    }, 600_000);
+
+    test("a resync in place that cannot reach every record makes the field ready; the records it missed stay hidden and are counted", async ({
+      annotate,
+    }) => {
+      for (const source of sources) {
+        if (!source.unreadable) continue;
+        source.unreadable(true);
+        let states: ObservedState[];
+        try {
+          states = await resyncAndWatch(harness, source.sourceId, source.field, { pageSize: 2 });
+        } finally {
+          source.unreadable(false);
+        }
+        await annotate(`${source.sourceId}: ${JSON.stringify(states)}`, "editor states");
+        expectResyncedToReady(states, "needs-resync");
+        expect(states.map((state) => state.status)).toContain("resyncing");
+
+        const stamped = versionsOf(harness, of(source));
+        const gone = new Set([...stamped].filter(([, v]) => v === 0).map(([key]) => key));
+        expect(gone.size, `${source.sourceId}: some records out of reach`).toBeGreaterThan(0);
+        expect(gone.size).toBeLessThan(source.records.length);
+        for (const [key, version] of stamped)
+          if (!gone.has(key)) expect(version, key).toBe(versions.get(source.sourceId));
+        expect(identities(of(source))).toEqual(original.get(source.sourceId));
+        expect(identities(readRecords(harness, [source.sourceId], source.key))).toEqual(
+          original.get(source.sourceId),
+        );
+        missed.set(source.sourceId, gone);
+
+        expect(await fieldCounts(harness, source.sourceId, source.field)).toMatchObject({
+          tooOld: gone.size,
+          tooOldText: `${gone.size} older ${gone.size === 1 ? "item" : "items"} could not be resynced and ${gone.size === 1 ? "stays" : "stay"} hidden from agents using this filter.`,
+        });
+        await expectFiltered(source, gone);
       }
     }, 900_000);
 
-    test("the editor lists what the collector reported, each choice with the records it governs, and no record was sent again", async () => {
+    test("a resync in place that reads everything leaves every record at the new version, each filter leaving exactly its records, with no record changing id", async ({
+      annotate,
+    }) => {
       for (const source of sources) {
-        expect(await ready(source), `${source.sourceId} ready`).toBe(true);
-        const ref = await refOf(source, source.share.choice);
-        const id = (ref as { id: string }).id;
-        // The top of the list, then every entry at any depth.
-        const listed = [
-          ...(await options(source)).items,
-          ...(await options(source, "&q=a")).items,
-          ...(await options(source, "&q=o")).items,
-        ];
-        const item = listed.find((candidate) => (candidate.ref as { id?: string }).id === id);
-        expect(item, `${source.sourceId} offers its shared choice`).toBeDefined();
-        expect(item!.count, `${source.sourceId} records under its shared choice`).toBe(
-          source.share.leaves.length,
+        const states = await resyncAndWatch(harness, source.sourceId, source.field, {
+          pageSize: 2,
+        });
+        await annotate(`${source.sourceId}: ${JSON.stringify(states)}`, "editor states");
+        expectResyncedToReady(states, missed.has(source.sourceId) ? "ready" : "needs-resync");
+
+        expect(new Set(versionsOf(harness, of(source)).values()), source.sourceId).toEqual(
+          new Set([versions.get(source.sourceId)]),
         );
+        expect(identities(readRecords(harness, [source.sourceId], source.key))).toEqual(
+          original.get(source.sourceId),
+        );
+        expect(await fieldCounts(harness, source.sourceId, source.field)).toMatchObject({
+          tooOld: 0,
+          tooOldText: null,
+        });
+        await expectFiltered(source, new Set());
+        // The picker counts what its entry would share.
+        if (!("id" in source.share.choice)) {
+          const entry = await pickEntry(
+            harness,
+            source.sourceId,
+            source.field,
+            source.share.choice.labelEndsWith,
+            source.share.choice.device?.(harness),
+          );
+          expect(entry.count, `${source.sourceId} picker count`).toBe(source.share.leaves.length);
+        }
       }
-      // The same rows, with the content and the ingestion time they had: the
-      // facts were attached to the stored records.
-      expect(storedRecords()).toBe(before.stored);
-    }, 120_000);
+    }, 900_000);
   });
 }

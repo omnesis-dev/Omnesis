@@ -50,7 +50,8 @@
         "packages/providers/whatsapp/src/document-event-profile.test.ts",
         "packages/providers/whatsapp/src/import/chatstorage-parser.test.ts",
         "packages/providers/whatsapp/src/import/decrypt-parse.test.ts",
-        "packages/providers/whatsapp/src/import/msgstore-parser.test.ts"
+        "packages/providers/whatsapp/src/import/msgstore-parser.test.ts",
+        "packages/collector/src/e2e/filter-people-old-records.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -1819,7 +1820,8 @@
       "paths": [
         "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
         "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
-        "packages/providers/whatsapp/src/chat-list.test.ts"
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/collector/src/e2e/filter-people-old-records.e2e.test.ts"
       ],
       "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
     },
@@ -1838,7 +1840,8 @@
         "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
         "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
         "packages/providers/whatsapp/src/chat-list.test.ts",
-        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts",
+        "packages/collector/src/e2e/filter-people-old-records.e2e.test.ts"
       ],
       "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
     },
@@ -3177,7 +3180,9 @@
         "packages/providers/immich/src/source.test.ts",
         "packages/gateway/src/access/filter-editor-reads.test.ts",
         "packages/gateway/src/access/filter-sql.test.ts",
-        "packages/collector/src/e2e/mcp-source-filter-answer.e2e.test.ts"
+        "packages/collector/src/e2e/mcp-source-filter-answer.e2e.test.ts",
+        "packages/collector/src/e2e/filter-people-mail-cap.e2e.test.ts",
+        "packages/collector/src/e2e/filter-people-old-records.e2e.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -3303,7 +3308,8 @@
         "packages/gateway/src/access/filter-editor-reads.test.ts",
         "packages/gateway/src/access/filter-people.test.ts",
         "packages/gateway/src/access/filter-sql.test.ts",
-        "packages/gateway/src/indexer/filter-copy.test.ts"
+        "packages/gateway/src/indexer/filter-copy.test.ts",
+        "packages/collector/src/e2e/filter-people-old-records.e2e.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -3760,7 +3766,9 @@
         "evals/universes/immich-sync/cast.json",
         "evals/universes/immich-sync/sources/immich/fake-corpus.json",
         "packages/providers/immich/src/normalizer.test.ts",
-        "packages/providers/immich/src/provider.test.ts"
+        "packages/providers/immich/src/provider.test.ts",
+        "packages/collector/src/e2e/filter-people-mail-cap.e2e.test.ts",
+        "packages/collector/src/e2e/filter-people-old-records.e2e.test.ts"
       ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
@@ -4182,7 +4190,8 @@
       "value": "Studio Northstar",
       "paths": [
         "evals/universes/sacha-bellamy/_build/media_test.py",
-        "packages/providers/notion/src/broker.test.ts"
+        "packages/providers/notion/src/broker.test.ts",
+        "packages/collector/src/e2e/filter-people-old-records.e2e.test.ts"
       ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
@@ -11526,7 +11535,10 @@
     },
     {
       "value": "The Direct",
-      "paths": ["packages/gateway/src/agent/direct-mcp.test.ts"],
+      "paths": [
+        "packages/gateway/src/agent/direct-mcp.test.ts",
+        "packages/collector/src/e2e/filter-access-audit.e2e.test.ts"
+      ],
       "reason": "reviewed test description fragment"
     },
     {
@@ -13263,13 +13275,29 @@
     },
     {
       "value": "The Gmail",
-      "paths": ["packages/collector/src/e2e/mcp-source-filter-answer.e2e.test.ts"],
+      "paths": [
+        "packages/collector/src/e2e/mcp-source-filter-answer.e2e.test.ts",
+        "packages/collector/src/e2e/mcp-source-filter-upgrade-labels.e2e.test.ts"
+      ],
       "reason": "Prose in an invented test fixture, not a person."
     },
     {
       "value": "Update Omnesis",
-      "paths": ["packages/collector/src/e2e/mcp-source-filter-editor.e2e.test.ts"],
+      "paths": [
+        "packages/collector/src/e2e/mcp-source-filter-editor.e2e.test.ts",
+        "packages/collector/src/e2e/filter-resync-ready.e2e.test.ts"
+      ],
       "reason": "Product sentence the gateway writes, not a person."
+    },
+    {
+      "value": "Accounts Direct",
+      "paths": ["packages/collector/src/e2e/filter-access-audit.e2e.test.ts"],
+      "reason": "Invented test data or a product sentence in a filter test, never corpus data."
+    },
+    {
+      "value": "For Answer",
+      "paths": ["packages/collector/src/e2e/filter-access-audit.e2e.test.ts"],
+      "reason": "Invented test data or a product sentence in a filter test, never corpus data."
     }
   ],
   "secretFixtures": [
