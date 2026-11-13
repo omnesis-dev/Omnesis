@@ -1094,7 +1094,11 @@ test("verified enrollment delivers a private reminder only to an updated adminis
   expect(await stillPending.json()).toMatchObject({ status: "pending" });
 });
 
-function enrollmentServer(options: { trusted: boolean; spki?: string | undefined }) {
+function enrollmentServer(options: {
+  trusted: boolean;
+  spki?: string | undefined;
+  gatewayPasskey?: { rpId: string; origin: string };
+}) {
   const spki = "spki" in options ? options.spki : "c".repeat(64);
   const signIn: VerifiedSignIn = {
     type: "google",
@@ -1110,6 +1114,8 @@ function enrollmentServer(options: { trusted: boolean; spki?: string | undefined
     verifyProof: vi.fn(async () => signIn),
     canTrust: vi.fn(async (value: VerifiedSignIn) => !value.trusted),
     trustSignIn: vi.fn(async () => {}),
+    verifyGatewayPasskey: vi.fn(async () => signIn),
+    gatewayPasskey: () => options.gatewayPasskey,
   };
   const unused = () => Promise.reject(new Error("Unused management operation"));
   const server = createServer(db, path, {
@@ -1192,6 +1198,47 @@ test("account config advertises automatic enrollment with the gateway SPKI only 
   expect(config).toMatchObject({ accountSignIn: true });
   expect(config).not.toHaveProperty("automaticEnrollment");
   expect(config).not.toHaveProperty("gatewaySpkiFingerprint");
+});
+
+test("a gateway with an origin of its own advertises passkey sign-in there and hands out its ceremony", async () => {
+  const where = { rpId: "relay.example.test", origin: "https://g-abcdefgh.relay.example.test" };
+  const { server, spki } = enrollmentServer({ trusted: true, gatewayPasskey: where });
+  expect(await (await server.request("/devices/account/config")).json()).toMatchObject({
+    gatewayPasskey: where,
+  });
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const fields = {
+    requestId: randomUUID(),
+    kind: "portal",
+    name: "Fictional browser",
+    secret: randomBytes(32).toString("hex"),
+    devicePublicKey: publicKey.export({ type: "spki", format: "der" }).toString("base64url"),
+  };
+  const options = await post(server, "/devices/account/passkey/options", fields);
+  expect(options.status).toBe(200);
+  expect(options.headers.get("cache-control")).toBe("no-store");
+  const ceremony = await options.json();
+  expect(ceremony).toMatchObject({
+    purpose: "device-enrollment",
+    ...where,
+    challenge: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    binding: enrollmentNonce(fields as Parameters<typeof enrollmentNonce>[0]),
+  });
+  for (const body of [{}, { ...fields, extra: true }, { ...fields, devicePublicKey: "short" }])
+    expect((await post(server, "/devices/account/passkey/options", body)).status).toBe(400);
+  // Google-only pairing routes have no such ceremony.
+  expect((await post(server, "/devices/google/passkey/options", fields)).status).toBe(404);
+  // It spends the same allowance as the gateway's other pairing calls.
+  for (let index = 1; index < 10; index++)
+    expect((await post(server, "/devices/account/passkey/options", fields)).status).toBe(200);
+  expect((await post(server, "/devices/account/passkey/options", fields)).status).toBe(429);
+  // Without an origin of its own, none is offered.
+  const plain = enrollmentServer({ trusted: true }).server;
+  expect(await (await plain.request("/devices/account/config")).json()).not.toHaveProperty(
+    "gatewayPasskey",
+  );
+  expect((await post(plain, "/devices/account/passkey/options", fields)).status).toBe(404);
+  void spki;
 });
 
 test("a trusted sign-in with a signed device key joins at once; the challenge is one-use", async () => {

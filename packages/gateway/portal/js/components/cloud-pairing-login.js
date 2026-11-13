@@ -20,6 +20,11 @@ import {
 import { adoptDeviceKey, loadDeviceKey } from "../lib/device-key-store.js";
 import { parseAccountSignIn, takeAccountSignIn } from "../lib/cloud-pairing-handoff.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
+import {
+  gatewayPasskeyProof,
+  onGatewayOrigin,
+  passkeysSupported,
+} from "../lib/gateway-passkey.js";
 
 /** Whether this gateway lets a browser with a device key join by sign-in alone. */
 const automaticEnrollment = (config) =>
@@ -29,11 +34,35 @@ const automaticEnrollment = (config) =>
     /^[a-f0-9]{64}$/.test(config.gatewaySpkiFingerprint ?? ""),
   );
 
+/**
+ * Whether this page can sign in with a passkey on the gateway's own origin: the gateway has one,
+ * this page is on it, and the browser can keep a device key and make a passkey assertion.
+ */
+const gatewayPasskeyHere = (config) =>
+  automaticEnrollment(config) &&
+  onGatewayOrigin(config.gatewayPasskey?.origin) &&
+  passkeysSupported();
+
+const NOT_RECOGNISED =
+  "Your gateway didn't recognise that passkey. Use the passkey of the Omnesis account it's linked to, or sign in on the Omnesis account page.";
 const CHANGED = "The gateway or pairing request changed. Start again.";
 const TOO_MANY_WAITING =
   "Too many devices are waiting for approval. Answer one on a device you already use, then try again.";
 function changed() {
   return Object.assign(new Error(CHANGED), { changed: true });
+}
+
+/** A one-use gateway challenge for this browser's request. */
+async function requestChallenge(signal) {
+  const response = await fetch("/devices/account/challenge", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+    signal,
+  });
+  if (!response.ok) throw new Error("Couldn't finish signing in. Start again.");
+  return response.json();
 }
 
 export function CloudPairingLogin() {
@@ -120,7 +149,7 @@ export function CloudPairingLogin() {
    * usual held request with a comparison code. A sign-in handed over by the
    * account page brings its own key, attestation and proof.
    */
-  async function join(pending, current, handed) {
+  async function join(pending, current, handed, passkey) {
     setJoining(true);
     setError(null);
     const signal = () => AbortSignal.any([current.controller.signal, AbortSignal.timeout(15_000)]);
@@ -131,15 +160,8 @@ export function CloudPairingLogin() {
         : await loadDeviceKey();
       if (!key || key.publicKey !== pending.devicePublicKey)
         throw new Error("This browser's sign-in key changed. Start again.");
-      const challengeResponse = await fetch("/devices/account/challenge", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-        signal: signal(),
-      });
-      if (!challengeResponse.ok) throw new Error("Couldn't finish signing in. Start again.");
-      const { challenge } = await challengeResponse.json();
+      // A passkey sign-in on this page already holds the challenge its assertion answers.
+      const { challenge } = passkey ?? (await requestChallenge(signal()));
       if (typeof challenge !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(challenge))
         throw new Error("Couldn't finish signing in. Start again.");
       const transcript = await enrollmentSignatureTranscript({
@@ -162,10 +184,12 @@ export function CloudPairingLogin() {
           secret: pending.secret,
           deviceKey: { publicKey: pending.devicePublicKey, challenge, signature },
           ...(handed ? { identityToken: handed.identityToken, proof: handed.proof } : {}),
+          ...(passkey ? { proof: passkey.proof } : {}),
         }),
         signal: signal(),
       });
       if (response.status === 429) throw new Error(TOO_MANY_WAITING);
+      if (passkey && response.status === 401) throw new Error(NOT_RECOGNISED);
       if (!response.ok) throw new Error("Couldn't finish signing in. Start again.");
       const value = await response.json();
       if (current !== attempt.current) return;
@@ -213,6 +237,50 @@ export function CloudPairingLogin() {
       sessionStorage.removeItem(GOOGLE_PAIRING_STORAGE_KEY);
       setJoining(false);
       setError(failure.message);
+    }
+  }
+
+  /**
+   * Signs in with a passkey here, on the gateway's own page: the gateway issues the challenge for
+   * this browser's request, and the assertion goes back with the request itself. The relay takes
+   * no part in it.
+   */
+  async function passkeySignIn() {
+    if (busy) return;
+    invalidate();
+    const current = attempt.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const key = await loadDeviceKey();
+      const pending = newCloudPairing(portalDeviceName(), config.gatewayFingerprint, {
+        devicePublicKey: key.publicKey,
+        gatewaySpkiFingerprint: config.gatewaySpkiFingerprint,
+      });
+      const response = await fetch("/devices/account/passkey/options", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: pending.requestId,
+          kind: "portal",
+          name: pending.name,
+          secret: pending.secret,
+          devicePublicKey: pending.devicePublicKey,
+        }),
+        signal: AbortSignal.any([current.controller.signal, AbortSignal.timeout(15_000)]),
+      });
+      if (!response.ok) throw new Error("Couldn't start sign-in. Please try again.");
+      const ceremony = await response.json();
+      const proof = await gatewayPasskeyProof(ceremony, { signal: current.controller.signal });
+      if (current !== attempt.current) return;
+      setBusy(false);
+      await join(pending, current, undefined, { challenge: ceremony.challenge, proof });
+    } catch (failure) {
+      if (current === attempt.current) {
+        setError(failure.message);
+        setBusy(false);
+      }
     }
   }
 
@@ -386,7 +454,13 @@ export function CloudPairingLogin() {
       !request
         ? html`
             ${config.accountSignIn && html`<h2>Sign in with your Omnesis account</h2>`}
-            ${config.accountSignIn && html`<button type="button" class="login-button" disabled=${busy} onClick=${start}>${busy ? "Opening sign-in…" : "Sign in with Passkey"}</button>`}
+            ${
+              gatewayPasskeyHere(config)
+                ? html`<button type="button" class="login-button" disabled=${busy} onClick=${passkeySignIn}>${busy ? "Waiting for your passkey…" : "Sign in with Passkey"}</button>
+                    <button type="button" class="btn-secondary" disabled=${busy} onClick=${start}>Sign in on the Omnesis account page</button>`
+                : config.accountSignIn &&
+                  html`<button type="button" class="login-button" disabled=${busy} onClick=${start}>${busy ? "Opening sign-in…" : "Sign in with Passkey"}</button>`
+            }
             <button
               type="button"
               class="login-button google-sign-in-button"

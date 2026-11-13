@@ -4,19 +4,23 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
+  devicePublicKeySchema,
   deviceKeyEvidenceSchema,
   enrollmentNonce,
   enrollmentOpaque,
+  enrollmentProofSchema,
   enrollmentSignatureTranscript,
+  gatewayPasskeyChallenge,
   pairingComparisonCode,
-  signInProofSchema,
   verifyDeviceSignature,
+  type GatewayPasskeySignInProof,
   type SignInProof,
 } from "./device-enrollment.js";
 import { accountId, type IdentityProvider } from "./identity.js";
 import { RelayError } from "./tunnels.js";
 import { EnrollmentChallenges } from "./enrollment-challenges.js";
 import type { TrustedSignInSource, VerifiedSignIn } from "./gateway-sign-in-proof.js";
+import type { GatewayPasskeyCeremony } from "./gateway-account-link.js";
 
 export const googlePairingRequestSchema = z
   .object({
@@ -28,7 +32,7 @@ export const googlePairingRequestSchema = z
     /** The gateway challenge this request answers, when it carries no device key to name it. */
     challenge: enrollmentOpaque.optional(),
     deviceKey: deviceKeyEvidenceSchema.optional(),
-    proof: signInProofSchema.optional(),
+    proof: enrollmentProofSchema.optional(),
     requireApproval: z.boolean().optional(),
   })
   .strict()
@@ -58,7 +62,32 @@ export interface GatewayEnrollment {
   /** Whether approving may pin this sign-in. False whenever that can't be checked. */
   canTrust(signIn: VerifiedSignIn): Promise<boolean>;
   trustSignIn(signIn: VerifiedSignIn, source: TrustedSignInSource): Promise<void>;
+  /**
+   * A passkey assertion made on the gateway's own page for `device-enrollment`, over the request's
+   * own gateway challenge and its enrollment nonce. Undefined when it does not verify.
+   */
+  verifyGatewayPasskey?(
+    proof: GatewayPasskeySignInProof,
+    challenge: string,
+    nonce: string,
+  ): Promise<VerifiedSignIn | undefined>;
+  /**
+   * Where a page runs a passkey ceremony on this gateway: the relay's host as RP ID and the
+   * gateway's own origin. Undefined when the gateway has no origin of its own to vouch for.
+   */
+  gatewayPasskey?(): { rpId: string; origin: string } | undefined;
 }
+
+/** What a device sends to start a passkey sign-in on the gateway's own page. */
+export const gatewayPasskeyOptionsSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    kind: z.enum(["ios", "android", "collector", "cli", "portal"]),
+    name: z.string().trim().min(1).max(80),
+    secret: z.string().regex(/^[a-f0-9]{64}$/),
+    devicePublicKey: devicePublicKeySchema,
+  })
+  .strict();
 const digest = (value: string): Buffer => createHash("sha256").update(value).digest();
 
 /** A stolen routing ID token cannot be replayed without the client's private random secret. */
@@ -169,6 +198,37 @@ export class GooglePairingRequests {
     return this.challenges.issue();
   }
 
+  /**
+   * Starts a passkey sign-in on the gateway's own page for a request the device is about to send:
+   * the request's one-use challenge, with the WebAuthn challenge bound to its enrollment nonce.
+   * The device signs for the same challenge and sends the assertion with its request.
+   */
+  passkeyCeremony(input: unknown): GatewayPasskeyCeremony {
+    const value = gatewayPasskeyOptionsSchema.parse(input);
+    const where = this.gatewayPasskey();
+    if (!where) throw new RelayError(404, "Passkey sign-in on this gateway is unavailable");
+    const binding = enrollmentNonce(value);
+    const issued = this.challenges.issue();
+    return {
+      purpose: "device-enrollment",
+      ...where,
+      challenge: issued.challenge,
+      binding,
+      webauthnChallenge: gatewayPasskeyChallenge(
+        "device-enrollment",
+        where.origin,
+        issued.challenge,
+        binding,
+      ),
+      expiresAt: issued.expiresAt,
+    };
+  }
+
+  /** The origin and RP ID a page uses for a passkey sign-in on this gateway, when it has one. */
+  gatewayPasskey(): { rpId: string; origin: string } | undefined {
+    return this.options.enrollment?.gatewayPasskey?.();
+  }
+
   /** A request a device sends. Its code nonce is the one the answered challenge committed to. */
   async start(input: unknown): Promise<ReturnType<GooglePairingRequests["poll"]>> {
     return this.begin(googlePairingRequestSchema.parse(input), false);
@@ -207,6 +267,13 @@ export class GooglePairingRequests {
     this.held.delete(value.requestId);
     const identityToken = value.identityToken ?? held?.identityToken;
     const proof = value.proof ?? held?.proof;
+    // A passkey assertion made on the gateway's page answers this request's own challenge.
+    const gatewayPasskey = proof?.type === "gateway-passkey" ? proof : undefined;
+    if (
+      gatewayPasskey &&
+      (!devicePublicKey || gatewayPasskey.challenge !== value.deviceKey!.challenge)
+    )
+      throw new RelayError(403, "A gateway passkey sign-in answers its own request's challenge");
     const fingerprint = this.options.gatewayFingerprint();
     const request: Pending = {
       requestId: value.requestId,
@@ -231,9 +298,19 @@ export class GooglePairingRequests {
       const nonce = devicePublicKey
         ? enrollmentNonce({ ...value, devicePublicKey })
         : googlePairingNonce(value);
-      if (devicePublicKey && proof)
+      if (gatewayPasskey) {
+        request.signIn = await this.options.enrollment!.verifyGatewayPasskey?.(
+          gatewayPasskey,
+          gatewayPasskey.challenge,
+          nonce,
+        );
+        // It was made on this gateway's own page with a key the gateway chose, so nothing else
+        // can stand in for it: a passkey assertion that does not verify is refused outright.
+        if (!request.signIn) throw new RelayError(401, "Sign-in could not be verified");
+      } else if (devicePublicKey && proof)
+        // Not a gateway passkey here, so a relay-page or app sign-in.
         request.signIn = await this.options.enrollment!.verifyProof(
-          proof,
+          proof as SignInProof,
           nonce,
           held?.credentialPublicKey,
         );
@@ -255,7 +332,9 @@ export class GooglePairingRequests {
         await this.approve(request);
         return this.poll(value.requestId, value.secret);
       }
-      await this.admit(identityToken, nonce);
+      // A verified assertion on the gateway's own page, against a key the account lists, says at
+      // least as much as the relay's attestation; anything else needs the relay's word.
+      if (!gatewayPasskey) await this.admit(identityToken, nonce);
       if (request.signIn)
         request.trustable = await this.options
           .enrollment!.canTrust(request.signIn)

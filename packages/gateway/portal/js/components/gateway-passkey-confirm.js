@@ -68,7 +68,7 @@ export function GatewayPasskeyConfirm({
     ${
       !here
         ? html`<p class="relay-hint">
-            Open this page at
+            Open this page at${" "}
             <a href=${`${origin}/portal/settings/account`}>${new URL(origin).host}</a> to confirm.
           </p>`
         : !supported
