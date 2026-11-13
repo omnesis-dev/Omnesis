@@ -10,8 +10,11 @@ import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
-import { GatewaySignInVerifier } from "./gateway-sign-in-proof.js";
-import { OFFICIAL_ANDROID_PASSKEY_ORIGINS } from "./google-browser-trust.js";
+import { GatewaySignInVerifier, type TrustedSignIn } from "./gateway-sign-in-proof.js";
+import {
+  OFFICIAL_ANDROID_PASSKEY_ORIGINS,
+  OFFICIAL_GOOGLE_BROWSER_TRUST,
+} from "./google-browser-trust.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { accountId as identityDigest, googleIdentityProvider } from "./identity.js";
 import {
@@ -479,6 +482,8 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
   );
   expect(f.manager.enrollmentStatus()).toEqual({
     policy: "automatic",
+    // The link page's pin is the relay's word; nothing joins until the owner confirms one here.
+    confirmationNeeded: true,
     trustedSignIns: [
       {
         type: "passkey",
@@ -494,10 +499,16 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
   expect(enrollment.policy()).toBe("automatic");
   expect(enrollment.spkiFingerprint()).toBeUndefined();
   expect(enrollment.challenges.consume(enrollment.challenges.issue().challenge)).toBe(true);
-  // The pinned key verifies the same passkey's later sign-in; the relay offers no key.
+  // TM-01: the pinned key verifies the same passkey's later sign-in on a relay page, but a relay
+  // page could have chosen its challenge, so it is not trusted.
   const nonce = opaque();
   const verified = await enrollment.verifyProof(assertionProof(device, nonce), nonce);
-  expect(verified).toMatchObject({ type: "passkey", id: device.id, trusted: true });
+  expect(verified).toMatchObject({
+    type: "passkey",
+    id: device.id,
+    trusted: false,
+    channel: "relay-page",
+  });
   // The default survives a restart, and so does each explicit choice.
   const restored = async () => {
     const manager = new GatewayAccountLink(f.options);
@@ -513,22 +524,31 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
   expect(enrollment.policy()).toBe("automatic");
   expect(f.manager.enrollmentStatus()).toMatchObject({ policy: "automatic" });
   expect(await restored()).toBe("automatic");
-  // A sign-in that is already trusted has nothing to add.
+  // A relay page could have made it, so approving it confirms nothing.
   expect(await enrollment.canTrust(verified!)).toBe(false);
-  await expect(enrollment.trustSignIn(verified!, "approval")).rejects.toMatchObject({
-    status: 409,
-  });
+  await expect(enrollment.trustSignIn(verified!)).rejects.toMatchObject({ status: 409 });
+  const credentials = vi.fn<NonNullable<AccountBrowserPort["credentials"]>>();
+  (f.browser as AccountBrowserPort).credentials = credentials;
+  // A Google token an official app presented can be confirmed, when the account lists it.
   const google = {
     type: "google" as const,
     id: "b".repeat(64),
     trusted: false,
-    channel: "web-google" as const,
+    channel: "native-google" as const,
     pin: { type: "google" as const, id: "b".repeat(64), addedAt: 1 },
   };
+  credentials.mockResolvedValue({ google: [], passkeys: [] });
+  expect(await enrollment.canTrust(google)).toBe(false);
+  credentials.mockResolvedValue({ accountId: "c".repeat(64), google: [google.id], passkeys: [] });
+  expect(await enrollment.canTrust(google)).toBe(false);
+  credentials.mockResolvedValue({ accountId: f.accountId, google: [google.id], passkeys: [] });
+  expect(await enrollment.canTrust({ ...google, channel: "web-google" })).toBe(false);
+  expect(await enrollment.canTrust({ ...google, trusted: true })).toBe(false);
   expect(await enrollment.canTrust(google)).toBe(true);
-  await f.manager.trustSignIn(google, "native-app");
-  // A second passkey verifies under the key its request offers, which anyone could have made:
-  // it is trusted only as the relay lists it for this account.
+  await f.manager.trustSignIn(google);
+  // A passkey from the Android app verifies under the key its request offers, which anyone could
+  // have made: it can be confirmed only as the relay lists it for this account.
+  const android = OFFICIAL_ANDROID_PASSKEY_ORIGINS[0]!;
   const second = passkeyAuthenticator();
   const registered = opaque();
   const { publicKey } = (await enrollment.verifyProof(
@@ -537,14 +557,17 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
   ))!.pin as { publicKey: string };
   const signed = opaque();
   const offered = (await enrollment.verifyProof(
-    assertionProof(second, signed),
+    assertionProof(second, signed, android),
     signed,
     publicKey,
   ))!;
-  expect(offered).toMatchObject({ type: "passkey", id: second.id, trusted: false });
+  expect(offered).toMatchObject({
+    type: "passkey",
+    id: second.id,
+    trusted: false,
+    channel: "android-app",
+  });
   expect(await enrollment.canTrust(offered)).toBe(false);
-  const credentials = vi.fn<NonNullable<AccountBrowserPort["credentials"]>>();
-  (f.browser as AccountBrowserPort).credentials = credentials;
   credentials.mockResolvedValueOnce({
     google: [],
     passkeys: [{ id: second.id, publicKey: "other" }],
@@ -552,36 +575,35 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
   expect(await enrollment.canTrust(offered)).toBe(false);
   credentials.mockRejectedValueOnce(new Error("relay unavailable"));
   expect(await enrollment.canTrust(offered)).toBe(false);
-  // Removed from the account between the hold and the approval: nothing is pinned.
+  // Removed from the account between the hold and the approval: nothing is confirmed.
   credentials.mockResolvedValueOnce({ google: [], passkeys: [] });
-  await expect(enrollment.trustSignIn(offered, "approval")).rejects.toMatchObject({ status: 409 });
-  credentials.mockResolvedValue({ google: [], passkeys: [{ id: second.id, publicKey }] });
-  await enrollment.trustSignIn(offered, "approval");
-  delete (f.browser as AccountBrowserPort).credentials;
-  expect(f.manager.enrollmentStatus().trustedSignIns).toEqual([
-    {
-      type: "passkey",
-      id: device.id,
-      addedAt: expect.any(Number),
-      source: "link-page",
-      confirmed: false,
-    },
-    { type: "google", id: google.id, addedAt: 1, source: "native-app", confirmed: false },
+  await expect(enrollment.trustSignIn(offered)).rejects.toMatchObject({ status: 409 });
+  credentials.mockResolvedValue({ google: [google.id], passkeys: [{ id: second.id, publicKey }] });
+  await enrollment.trustSignIn(offered);
+  expect(f.manager.confirmedSignIns()).toEqual([
+    { type: "google", id: google.id, at: expect.any(Number), via: "native-google-approval" },
     {
       type: "passkey",
       id: second.id,
-      addedAt: expect.any(Number),
-      source: "approval",
-      confirmed: false,
+      publicKey,
+      counter: 0,
+      at: expect.any(Number),
+      via: "android-app",
     },
   ]);
-  // Trusting the same sign-in again replaces its pin rather than adding one.
-  await f.manager.trustSignIn(google, "approval");
-  expect(f.manager.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([
-    device.id,
-    second.id,
-    google.id,
-  ]);
+  expect(f.manager.enrollmentStatus()).toMatchObject({ confirmationNeeded: false });
+  // Confirmed, its next sign-in in the app joins; the same passkey on a relay page still does not.
+  const again = opaque();
+  expect(await enrollment.verifyProof(assertionProof(second, again, android), again)).toMatchObject(
+    { trusted: true, channel: "android-app" },
+  );
+  expect(await enrollment.verifyProof(assertionProof(second, again), again)).toMatchObject({
+    trusted: false,
+  });
+  // Confirming the same sign-in again replaces its confirmation rather than adding one.
+  await f.manager.trustSignIn(google);
+  expect(f.manager.confirmedSignIns().map(({ id }) => id)).toEqual([second.id, google.id]);
+  delete (f.browser as AccountBrowserPort).credentials;
   await f.manager.removeTrustedSignIn(second.id);
   // An id this gateway never pinned is declined in advance; one that is no id at all is refused.
   await f.manager.removeTrustedSignIn("c".repeat(64));
@@ -589,10 +611,12 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
     status: 400,
   });
   await f.manager.removeTrustedSignIn(device.id);
-  expect(f.manager.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([google.id]);
+  expect(f.manager.enrollmentStatus().trustedSignIns).toEqual([]);
+  expect(f.manager.confirmedSignIns().map(({ id }) => id)).toEqual([google.id]);
   await f.manager.unlink();
   expect(f.manager.enrollmentStatus()).toEqual({
     policy: "ask",
+    confirmationNeeded: false,
     trustedSignIns: [],
     confirmedSignIns: [],
   });
@@ -623,9 +647,10 @@ test("sign-in checks use this installation's relay, Android origins and Google a
     undefined,
   );
   f.env.OMNESIS_CLOUD_RELAY_PASSKEY_ANDROID_ORIGINS = ` ${android}, https://phish.example.test `;
+  // Made in the app, but with a passkey only the link page pinned: verified, not yet trusted.
   expect(
     await enrollment()!.verifyProof(assertionProof(device, fromApp, android), fromApp),
-  ).toMatchObject({ trusted: true });
+  ).toMatchObject({ trusted: false, channel: "android-app" });
   // The same pinned passkey's sign-in, made on a link operation whose nonce is this enrollment's,
   // is no enrollment proof: whoever started that operation chose the nonce.
   expect(
@@ -689,16 +714,12 @@ test("refresh drops pins the account no longer lists and never adds one", async 
   await f.link();
   await f.manager.refresh();
   const google = "b".repeat(64);
-  await f.manager.trustSignIn(
-    {
-      type: "google",
-      id: google,
-      trusted: false,
-      channel: "web-google" as const,
-      pin: { type: "google", id: google, addedAt: 1 },
-    },
-    "approval",
-  );
+  await pinInRecord(f.manager, f.options.metadataFile, {
+    type: "google",
+    id: google,
+    addedAt: 1,
+    source: "approval",
+  });
   const { publicKey } = JSON.parse(await readFile(f.options.metadataFile, "utf8"))
     .trustedSignIns[0] as { publicKey: string };
   const credentials = vi.fn<NonNullable<AccountBrowserPort["credentials"]>>();
@@ -738,6 +759,8 @@ test("refresh drops pins the account no longer lists and never adds one", async 
 });
 
 const AUDIENCE = "client.example.apps.googleusercontent.com";
+/** The official Android app's client, which presents its tokens for the web client. */
+const ANDROID_APP = OFFICIAL_GOOGLE_BROWSER_TRUST.nativeClients!.android[0]!;
 const SUBJECT = "fictional-google-subject";
 const googleDigest = (subject = SUBJECT) =>
   identityDigest({ issuer: "https://accounts.google.com", subject, expiresAt: 1 });
@@ -791,7 +814,6 @@ async function endorsing() {
     ...f.options,
     browser: { ...f.browser, credentials },
     google: () => googleIdentityProvider(AUDIENCE, googleKeys, { authorizedParties: [AUDIENCE] }),
-    signInSyncIntervalMs: 0,
   };
   const manager = new GatewayAccountLink(options);
   await manager.initialize();
@@ -800,17 +822,17 @@ async function endorsing() {
     nonce: opaque(),
     signal: new AbortController().signal,
   });
+  // Linked with Google: the link page pinned that Google account.
   const google = googleDigest();
-  await manager.trustSignIn(
-    {
-      type: "google",
-      id: google,
-      trusted: false,
-      channel: "web-google" as const,
-      pin: { type: "google", id: google, addedAt: 1 },
-    },
-    "link-page",
+  await writeFile(
+    options.metadataFile,
+    JSON.stringify({
+      ...JSON.parse(await readFile(options.metadataFile, "utf8")),
+      trustedSignIns: [{ type: "google", id: google, addedAt: 1, source: "link-page" }],
+    }) + "\n",
+    { mode: 0o600 },
   );
+  await manager.initialize();
   return {
     ...f,
     options,
@@ -857,12 +879,13 @@ test("a listed passkey is pinned once a sign-in pinned here vouched for it, and 
   });
   // Pinning on a vouching sign-in is not the owner declining anything.
   expect((await f.saved()).declinedPasskeys).toEqual([]);
-  // The pinned key is what later verifies that passkey's sign-ins, with no key offered.
+  // TM-02: the pinned key verifies that passkey's sign-ins with no key offered, but the relay's
+  // evidence is only a suggestion: they are not trusted.
   const enrollment = f.manager.pairingIdentity()!.enrollment,
     nonce = opaque();
   expect(
     await enrollment.verifyProof(assertionProof(second.authenticator, nonce), nonce),
-  ).toMatchObject({ type: "passkey", id: second.id, trusted: true });
+  ).toMatchObject({ type: "passkey", id: second.id, trusted: false });
   // Another refresh has nothing to add, and the pins survive a restart.
   await f.manager.refresh();
   expect(f.pins()).toHaveLength(3);
@@ -961,23 +984,34 @@ test("a passkey pin the owner removed is not pinned again by a refresh, a restar
   expect(verified).toMatchObject({ type: "passkey", id: added.id, trusted: false });
   expect(restored.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([f.google]);
 
-  // Approving a device that signed in with it is the owner's own decision: it pins the passkey
-  // and the decline is forgotten.
-  await restored.trustSignIn(verified!, "approval");
+  // Approving a device that signed in with it in the Android app is the owner's own decision: it
+  // confirms the passkey and the decline is forgotten. A relay page's sign-in confirms nothing.
+  expect(await restored.canTrust(verified!)).toBe(false);
+  const fromApp = opaque();
+  const inApp = await restored
+    .pairingIdentity()!
+    .enrollment.verifyProof(
+      assertionProof(added.authenticator, fromApp, OFFICIAL_ANDROID_PASSKEY_ORIGINS[0]),
+      fromApp,
+      added.publicKey,
+    );
+  await restored.trustSignIn(inApp!);
   expect(await f.saved()).toMatchObject({
     declinedPasskeys: [],
-    trustedSignIns: [{ id: f.google }, { id: added.id, source: "approval" }],
+    trustedSignIns: [{ id: f.google }],
+    confirmedSignIns: [{ id: added.id, via: "android-app" }],
   });
   // Once the account stops listing it, it is withdrawn instead: listed again, it stays out.
   f.list();
   await restored.refresh();
-  expect(restored.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([f.google]);
+  expect(restored.confirmedSignIns()).toEqual([]);
   f.list(listed);
   await restored.refresh();
   expect(await f.saved()).toMatchObject({
     declinedPasskeys: [],
     withdrawnSignIns: [signInDigest({ type: "passkey", id: added.id, publicKey: added.publicKey })],
     trustedSignIns: [{ id: f.google }],
+    confirmedSignIns: [],
   });
 });
 
@@ -991,27 +1025,20 @@ test("removing a pin declines it whatever pinned it, a passkey and a Google acco
     endorsement: await googleVouch(approved),
   };
   f.credentials.mockResolvedValue({ google: [f.google, other], passkeys: [listed] });
-  await f.manager.trustSignIn(
-    {
-      type: "google",
-      id: other,
-      trusted: false,
-      channel: "web-google" as const,
-      pin: { type: "google", id: other, addedAt: 1 },
-    },
-    "approval",
-  );
+  await pinInRecord(f.manager, f.options.metadataFile, {
+    type: "google",
+    id: other,
+    addedAt: 1,
+    source: "approval",
+  });
   // Pinned by approving a device, before any refresh could have pinned it on the vouching.
-  await f.manager.trustSignIn(
-    {
-      type: "passkey",
-      id: approved.id,
-      trusted: false,
-      channel: "relay-page" as const,
-      pin: { type: "passkey", id: approved.id, publicKey: approved.publicKey, addedAt: 1 },
-    },
-    "approval",
-  );
+  await pinInRecord(f.manager, f.options.metadataFile, {
+    type: "passkey",
+    id: approved.id,
+    publicKey: approved.publicKey,
+    addedAt: 1,
+    source: "approval",
+  });
   expect(f.pins()).toEqual([
     [f.google, "link-page"],
     [other, "approval"],
@@ -1031,18 +1058,14 @@ test("removing a pin declines it whatever pinned it, a passkey and a Google acco
   await f.manager.refresh();
   expect(f.manager.status().lastError).toBeUndefined();
   expect(f.pins()).toEqual([[f.google, "link-page"]]);
-  // Removing it twice over time keeps one decline per removal, newest last.
-  await f.manager.trustSignIn(
-    {
-      type: "passkey",
-      id: approved.id,
-      trusted: false,
-      channel: "relay-page" as const,
-      pin: { type: "passkey", id: approved.id, publicKey: approved.publicKey, addedAt: 1 },
-    },
-    "approval",
-  );
-  expect((await f.saved()).declinedPasskeys).toEqual([]);
+  // Removing it again after it came back keeps one decline, not two.
+  await pinInRecord(f.manager, f.options.metadataFile, {
+    type: "passkey",
+    id: approved.id,
+    publicKey: approved.publicKey,
+    addedAt: 1,
+    source: "approval",
+  });
   await f.manager.removeTrustedSignIn(approved.id);
   expect((await f.saved()).declinedPasskeys).toEqual([approved.id]);
 });
@@ -1075,16 +1098,22 @@ test("a pin the account stops listing is withdrawn: listed again, the same evide
   await restored.refresh();
   expect(restored.status().lastError).toBeUndefined();
   expect((await f.saved()).trustedSignIns.map(({ id }) => id)).toEqual([f.google]);
-  // A device that signs in with it is held, and approving it is what brings it back.
+  // A device that signs in with it in the Android app is held, and approving it is what brings it
+  // back, as a confirmation.
   const nonce = opaque();
   const verified = await restored
     .pairingIdentity()!
-    .enrollment.verifyProof(assertionProof(added.authenticator, nonce), nonce, added.publicKey);
+    .enrollment.verifyProof(
+      assertionProof(added.authenticator, nonce, OFFICIAL_ANDROID_PASSKEY_ORIGINS[0]),
+      nonce,
+      added.publicKey,
+    );
   expect(verified).toMatchObject({ id: added.id, trusted: false });
-  await restored.trustSignIn(verified!, "approval");
+  await restored.trustSignIn(verified!);
   expect(await f.saved()).toMatchObject({
     withdrawnSignIns: [],
-    trustedSignIns: [{ id: f.google }, { id: added.id, source: "approval" }],
+    trustedSignIns: [{ id: f.google }],
+    confirmedSignIns: [{ id: added.id }],
   });
   // Withdrawals are kept to 256, the oldest forgotten first.
   const many = Array.from({ length: 300 }, () => opaque());
@@ -1173,16 +1202,12 @@ test("endorsed passkeys never take a gateway past 32 pinned sign-ins", async () 
   const f = await endorsing();
   const others = Array.from({ length: 31 }, (_, index) => index.toString(16).padStart(64, "0"));
   for (const id of others)
-    await f.manager.trustSignIn(
-      {
-        type: "google",
-        id,
-        trusted: false,
-        channel: "web-google" as const,
-        pin: { type: "google", id, addedAt: 1 },
-      },
-      "approval",
-    );
+    await pinInRecord(f.manager, f.options.metadataFile, {
+      type: "google",
+      id: id,
+      addedAt: 1,
+      source: "approval",
+    });
   expect(f.pins()).toHaveLength(32);
   const first = await passkeyDevice(),
     second = await passkeyDevice();
@@ -1204,57 +1229,39 @@ test("endorsed passkeys never take a gateway past 32 pinned sign-ins", async () 
   expect((await f.saved()).declinedPasskeys).toEqual([]);
 });
 
-test("a sign-in with a passkey added moments ago fetches its vouching first, and a failed fetch leaves it untrusted", async () => {
+test("TM-02: a passkey the relay lists with an endorsement is a suggestion; its sign-ins fetch nothing and are never trusted", async () => {
   const f = await endorsing();
   const added = await passkeyDevice(),
     unvouched = await passkeyDevice();
   const enrollment = f.manager.pairingIdentity()!.enrollment;
-  const signIn = async (device: PasskeyDevice) => {
+  const signIn = async (device: PasskeyDevice, from?: string) => {
     const nonce = opaque();
     return enrollment.verifyProof(
-      assertionProof(device.authenticator, nonce),
+      assertionProof(device.authenticator, nonce, from),
       nonce,
       device.publicKey,
     );
   };
-  const listed = [
+  // An endorsement made on a relay page, which a compromised relay can mint or keep.
+  f.list(
     { id: added.id, publicKey: added.publicKey, endorsement: await googleVouch(added) },
     { id: unvouched.id, publicKey: unvouched.publicKey },
-  ];
-  // The relay can't be reached: the sign-in still verifies, and is held for a person.
-  f.credentials.mockRejectedValueOnce(new Error("relay unavailable"));
+  );
   expect(await signIn(added)).toMatchObject({ id: added.id, trusted: false });
-  expect(f.credentials).toHaveBeenCalledOnce();
-  expect(f.pins()).toHaveLength(1);
-  // Reachable: the vouching is fetched, checked and pinned before the answer.
-  f.list(...listed);
-  expect(await signIn(added)).toMatchObject({ id: added.id, trusted: true });
-  expect(f.credentials).toHaveBeenCalledTimes(2);
+  expect(f.credentials).not.toHaveBeenCalled();
+  await f.manager.refresh();
   expect(f.pins()).toEqual([
     [f.google, "link-page"],
     [added.id, "endorsed"],
   ]);
-  // Once pinned it needs no fetch.
-  expect(await signIn(added)).toMatchObject({ trusted: true });
-  expect(f.credentials).toHaveBeenCalledTimes(2);
-  // A listed passkey nobody vouched for stays untrusted after the fetch.
-  expect(await signIn(unvouched)).toMatchObject({ id: unvouched.id, trusted: false });
-  expect(f.credentials).toHaveBeenCalledTimes(3);
-  // Nothing is fetched for a proof that does not verify.
-  const nonce = opaque();
-  expect(
-    await enrollment.verifyProof(assertionProof(added.authenticator, opaque()), nonce),
-  ).toBeUndefined();
-  expect(f.credentials).toHaveBeenCalledTimes(3);
-  // A Google account this gateway has not pinned is looked up too, and stays untrusted when
-  // no pinned passkey countersigned it.
-  const stranger = await googleVouch(listed[0]!, "fictional-other-subject");
-  expect(await enrollment.verifyProof(stranger, vouchedNonce(listed[0]!))).toMatchObject({
-    type: "google",
+  // Pinned on that evidence, it is still no confirmation, on a relay page or in the app.
+  expect(await signIn(added)).toMatchObject({ trusted: false });
+  expect(await signIn(added, OFFICIAL_ANDROID_PASSKEY_ORIGINS[0])).toMatchObject({
     trusted: false,
-    channel: "web-google" as const,
+    channel: "android-app",
   });
-  expect(f.credentials).toHaveBeenCalledTimes(4);
+  expect(await signIn(unvouched)).toMatchObject({ id: unvouched.id, trusted: false });
+  expect(f.manager.enrollmentStatus()).toMatchObject({ confirmationNeeded: true });
 });
 
 /** A passkey's own signature over the sign-ins its account had when it was added. */
@@ -1276,10 +1283,13 @@ const passkeySignInOf = (device: { id: string; publicKey: string }): AccountSign
   publicKey: device.publicKey,
 });
 /** A Google sign-in for an enrollment, as a device would send it. */
-async function googleSignIn(subject: string, nonce: string): Promise<SignInProof> {
+async function googleSignIn(subject: string, nonce: string, azp?: string): Promise<SignInProof> {
   const salt = opaque(),
     issuedAt = Math.floor(Date.now() / 1000);
-  const idToken = await new SignJWT({ nonce: googleProofNonce(salt, nonce) })
+  const idToken = await new SignJWT({
+    nonce: googleProofNonce(salt, nonce),
+    ...(azp ? { azp } : {}),
+  })
     .setProtectedHeader({ alg: "RS256", kid: "1" })
     .setIssuer("https://accounts.google.com")
     .setAudience(AUDIENCE)
@@ -1294,14 +1304,14 @@ async function googleSignIn(subject: string, nonce: string): Promise<SignInProof
  * A gateway linked by signing in with a passkey: the account was created with Google and the
  * passkey added later, so the passkey is the only sign-in this gateway saw for itself.
  */
-async function passkeyLinked(signInSyncIntervalMs = 0) {
+async function passkeyLinked() {
   const f = await fixture();
   const credentials = vi.fn<NonNullable<AccountBrowserPort["credentials"]>>();
   const options = {
     ...f.options,
     browser: { ...f.browser, credentials },
-    google: () => googleIdentityProvider(AUDIENCE, googleKeys, { authorizedParties: [AUDIENCE] }),
-    signInSyncIntervalMs,
+    google: () =>
+      googleIdentityProvider(AUDIENCE, googleKeys, { authorizedParties: [AUDIENCE, ANDROID_APP] }),
   };
   const manager = new GatewayAccountLink(options);
   await manager.initialize();
@@ -1338,22 +1348,28 @@ async function passkeyLinked(signInSyncIntervalMs = 0) {
         withdrawnSignIns: string[];
         trustedSignIns: { id: string; source: string }[];
       },
-    /** A device's Google sign-in, checked as the enrollment routes check it. */
-    googleSignIn: async (subject = SUBJECT) => {
+    /**
+     * A device's Google sign-in, checked as the enrollment routes check it: on a web page, or in
+     * the official Android app, whose client presents the token.
+     */
+    googleSignIn: async (subject = SUBJECT, from: "web" | "app" = "web") => {
       const nonce = opaque();
-      return enrollment.verifyProof(await googleSignIn(subject, nonce), nonce, undefined);
+      return enrollment.verifyProof(
+        await googleSignIn(subject, nonce, from === "app" ? ANDROID_APP : undefined),
+        nonce,
+        undefined,
+      );
     },
   };
 }
 
-test("a gateway linked with a passkey trusts the Google account and passkeys that passkey countersigned, when the account still lists them", async () => {
+test("TM-02: a gateway linked with a passkey suggests the sign-ins that passkey countersigned, and trusts none of them", async () => {
   const f = await passkeyLinked();
   expect(f.pins()).toEqual([[f.passkey.id, "link-page"]]);
   const older = await passkeyDevice(),
     unsigned = await passkeyDevice();
   const stranger = googleDigest("fictional-other-subject");
   const olderListed = { id: older.id, publicKey: older.publicKey };
-  // Before anything is fetched, a Google sign-in is checked against what the relay lists now.
   f.credentials.mockResolvedValue({
     google: [f.google, stranger],
     passkeys: [
@@ -1362,20 +1378,22 @@ test("a gateway linked with a passkey trusts the Google account and passkeys tha
       { id: unsigned.id, publicKey: unsigned.publicKey },
     ],
   });
-  expect(await f.googleSignIn()).toMatchObject({ type: "google", id: f.google, trusted: true });
-  expect(f.credentials).toHaveBeenCalledOnce();
+  await f.manager.refresh();
   expect(f.pins()).toEqual([
     [f.passkey.id, "link-page"],
     [f.google, "countersigned"],
     [older.id, "countersigned"],
   ]);
-  // The other passkey's sign-ins are trusted with the key the countersignature named.
+  // The relay keeps the countersignature, so it could have made one: what it names is only a
+  // suggestion. Neither the Google account nor the other passkey joins anything on it.
+  expect(await f.googleSignIn()).toMatchObject({ type: "google", id: f.google, trusted: false });
+  expect(await f.googleSignIn(SUBJECT, "app")).toMatchObject({ trusted: false });
   const nonce = opaque();
   expect(
     await f.manager
       .pairingIdentity()!
       .enrollment.verifyProof(assertionProof(older.authenticator, nonce), nonce),
-  ).toMatchObject({ id: older.id, trusted: true });
+  ).toMatchObject({ id: older.id, trusted: false });
   // Listed is not countersigned: the other Google account and the other passkey stay untrusted.
   expect(await f.googleSignIn("fictional-other-subject")).toMatchObject({ trusted: false });
   expect(f.pins()).toHaveLength(3);
@@ -1420,12 +1438,14 @@ test("a sign-in removed from the account stays out when a later compromised rela
   });
   await restored.refresh();
   expect(restored.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([f.passkey.id]);
-  // Only the owner approving a device that signed in with it brings it back.
-  const verified = await f.googleSignIn();
-  await f.manager.trustSignIn(verified!, "approval");
+  // Only the owner approving a device that signed in with it in an app brings it back.
+  const verified = await f.googleSignIn(SUBJECT, "app");
+  expect(verified).toMatchObject({ channel: "native-google", trusted: false });
+  await f.manager.trustSignIn(verified!);
   expect(await f.saved()).toMatchObject({
     withdrawnSignIns: [],
-    trustedSignIns: [{ id: f.passkey.id }, { id: f.google, source: "approval" }],
+    trustedSignIns: [{ id: f.passkey.id }],
+    confirmedSignIns: [{ id: f.google, via: "native-google-approval" }],
   });
 });
 
@@ -1576,12 +1596,14 @@ test("the reverse of an endorsement, the relay's list, or a countersignature it 
   // Nothing in all that withdrew anything: no countersignature this gateway could check named a
   // sign-in the account didn't list.
   expect((await f.saved()).withdrawnSignIns).toEqual([]);
-  // The same listing with the genuine countersignature pins the Google account it names.
+  // The same listing with the genuine countersignature suggests the Google account it names,
+  // which still joins nothing until the owner confirms it.
   f.credentials.mockResolvedValue({
     google: [f.google, stranger],
     passkeys: [{ ...f.listedPasskey, countersignature: genuine }],
   });
-  expect(await f.googleSignIn()).toMatchObject({ trusted: true });
+  await f.manager.refresh();
+  expect(await f.googleSignIn()).toMatchObject({ trusted: false });
   expect(f.pins()).toEqual([
     [f.passkey.id, "link-page"],
     [f.google, "countersigned"],
@@ -1615,14 +1637,15 @@ test("a Google account or passkey the owner removed here is not pinned again by 
   await restored.initialize();
   await restored.refresh();
   expect(restored.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([f.passkey.id]);
-  const verified = await f.googleSignIn();
+  const verified = await f.googleSignIn(SUBJECT, "app");
   expect(verified).toMatchObject({ type: "google", id: f.google, trusted: false });
   // Approving a device that signed in with it is the owner's decision, and lifts the decline.
-  await f.manager.trustSignIn(verified!, "approval");
+  await f.manager.trustSignIn(verified!);
   expect(await f.saved()).toMatchObject({
     declinedGoogle: [],
     declinedPasskeys: [older.id],
-    trustedSignIns: [{ id: f.passkey.id }, { id: f.google, source: "approval" }],
+    trustedSignIns: [{ id: f.passkey.id }],
+    confirmedSignIns: [{ id: f.google }],
   });
 });
 
@@ -1734,6 +1757,7 @@ test("ask and the owner's refusals survive linking again, unlinking and a lost a
   expect(restarted.status()).toMatchObject({ activated: false, linked: false });
   expect(restarted.enrollmentStatus()).toEqual({
     policy: "ask",
+    confirmationNeeded: false,
     trustedSignIns: [],
     confirmedSignIns: [],
   });
@@ -1827,26 +1851,28 @@ test("two listing entries under one passkey id are checked each on its own", asy
     await f.manager
       .pairingIdentity()!
       .enrollment.verifyProof(assertionProof(added.authenticator, nonce), nonce),
-  ).toMatchObject({ id: added.id, trusted: true });
+  ).toMatchObject({ id: added.id, pin: { publicKey: added.publicKey } });
 });
 
-test("sign-ins fetch evidence one at a time and no more often than the interval, and each proof is verified once per fetch", async () => {
-  const f = await passkeyLinked(60_000);
+test("a sign-in asks the relay nothing, refreshes fetch one at a time, and each proof is verified once per fetch", async () => {
+  const f = await passkeyLinked();
+  f.credentials.mockResolvedValue({ google: [f.google], passkeys: [f.listedPasskey] });
+  // Evidence never makes a sign-in trusted, so a sign-in has no reason to fetch it: untrusted
+  // requests can't make the gateway call the relay.
+  for (const result of await Promise.all([f.googleSignIn(), f.googleSignIn()]))
+    expect(result).toMatchObject({ trusted: false });
+  expect(f.credentials).not.toHaveBeenCalled();
+  // Refreshes that overlap share one fetch.
   let release!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
-  f.credentials.mockImplementation(async () => {
+  f.credentials.mockImplementationOnce(async () => {
     await held;
     return { google: [f.google], passkeys: [f.listedPasskey] };
   });
-  // Several untrusted sign-ins at once share one fetch.
-  const signIns = Promise.all([f.googleSignIn(), f.googleSignIn(), f.googleSignIn()]);
+  const both = Promise.all([f.manager.refresh(), f.manager.refresh()]);
   await vi.waitFor(() => expect(f.credentials).toHaveBeenCalledOnce());
   release();
-  for (const result of await signIns) expect(result).toMatchObject({ trusted: false });
-  expect(f.credentials).toHaveBeenCalledOnce();
-  // Within the interval a sign-in fetches nothing; a refresh, which the owner or the hourly
-  // timer starts, always does.
-  expect(await f.googleSignIn()).toMatchObject({ trusted: false });
+  await both;
   expect(f.credentials).toHaveBeenCalledOnce();
   await f.manager.refresh();
   expect(f.credentials).toHaveBeenCalledTimes(2);
@@ -1978,6 +2004,7 @@ test("forgetting a deleted account leaves the gateway as if it never had one, wi
   expect(f.manager.pairingIdentity()).toBeUndefined();
   expect(f.manager.enrollmentStatus()).toEqual({
     policy: "ask",
+    confirmationNeeded: false,
     trustedSignIns: [],
     confirmedSignIns: [],
   });
@@ -2110,9 +2137,10 @@ test("the official Android app's passkey origins are compiled in", async () => {
   const enrollment = f.manager.pairingIdentity()!.enrollment;
   for (const app of OFFICIAL_ANDROID_PASSKEY_ORIGINS) {
     const nonce = opaque();
+    // Verified as made in the app; trusted only once the owner confirms that passkey.
     expect(await enrollment.verifyProof(assertionProof(device, nonce, app), nonce)).toMatchObject({
       id: device.id,
-      trusted: true,
+      trusted: false,
       channel: "android-app",
     });
   }
@@ -2296,6 +2324,32 @@ test("an acknowledgement that can't be saved leaves the hold on", async () => {
   };
   expect(saved.acknowledgedIncidents).toEqual(many.slice(-64));
 });
+
+/**
+ * Pins sign-ins as an earlier version's approval did, straight into the saved record. Approving
+ * now confirms instead; these pins are what an upgraded gateway still holds as suggestions.
+ */
+async function pinInRecord(
+  manager: GatewayAccountLink,
+  metadataFile: string,
+  ...pins: TrustedSignIn[]
+): Promise<void> {
+  const saved = JSON.parse(await readFile(metadataFile, "utf8")) as {
+    trustedSignIns: TrustedSignIn[];
+  };
+  await writeFile(
+    metadataFile,
+    JSON.stringify({
+      ...saved,
+      trustedSignIns: [
+        ...saved.trustedSignIns.filter((value) => !pins.some((pin) => pin.id === value.id)),
+        ...pins,
+      ],
+    }) + "\n",
+    { mode: 0o600 },
+  );
+  await manager.initialize();
+}
 
 /** A linked gateway whose saved public origin is its own hosted name, with a readable listing. */
 async function confirming() {
@@ -2508,7 +2562,7 @@ test("TM-01 (certificate incident): while a rogue certificate may exist for the 
   expect(f.manager.confirmedSignIns()).toHaveLength(1);
 });
 
-test("a device's passkey sign-in on the gateway's page uses the confirmed, pinned or listed key, and only the first two trust it", async () => {
+test("a device's passkey sign-in on the gateway's page uses the confirmed, pinned or listed key, and only a confirmed one is trusted", async () => {
   const f = await confirming();
   const enrollment = f.manager.pairingIdentity()!.enrollment;
   expect(enrollment.gatewayPasskey!()).toEqual({ rpId: "relay.example.test", origin: f.own });
@@ -2564,7 +2618,7 @@ test("a device's passkey sign-in on the gateway's page uses the confirmed, pinne
   await f.manager.removeTrustedSignIn(listed.id);
   // Listed only: verified, so it can be held for the owner, but not trusted.
   expect(await signIn(listed)).toMatchObject({ id: listed.id, trusted: false });
-  // Pinned but not confirmed: trusted as a pin is today.
+  // Pinned but not confirmed: verified with the pinned key, and held like a listed one.
   const pinnedOnly = await passkeyDevice();
   await writeFile(
     f.options.metadataFile,
@@ -2583,7 +2637,7 @@ test("a device's passkey sign-in on the gateway's page uses the confirmed, pinne
     { mode: 0o600 },
   );
   await f.manager.initialize();
-  expect(await signIn(pinnedOnly)).toMatchObject({ id: pinnedOnly.id, trusted: true });
+  expect(await signIn(pinnedOnly)).toMatchObject({ id: pinnedOnly.id, trusted: false });
   // Not listed, made on the relay's page, or listed for another account: nothing.
   expect(await signIn(stranger)).toBeUndefined();
   expect(await signIn(listed, { from: origin })).toBeUndefined();
@@ -2723,4 +2777,65 @@ test("TM-01 (certificate incident, approval): while a rogue certificate may exis
       binding,
     ),
   ).toBe(false);
+});
+
+test("a Google account confirmed by approving an app's sign-in joins from the app afterwards, never from a web page", async () => {
+  const f = await passkeyLinked();
+  f.credentials.mockResolvedValue({
+    accountId: f.accountId,
+    google: [f.google],
+    passkeys: [f.listedPasskey],
+  });
+  const fromApp = await f.googleSignIn(SUBJECT, "app");
+  expect(fromApp).toMatchObject({ channel: "native-google", trusted: false });
+  await f.manager.trustSignIn(fromApp!);
+  expect(await f.googleSignIn(SUBJECT, "app")).toMatchObject({ trusted: true });
+  // The same Google account on a web page (the relay's, or any other) is still only held.
+  expect(await f.googleSignIn()).toMatchObject({ channel: "web-google", trusted: false });
+  // A different account from the app is not this confirmation.
+  expect(await f.googleSignIn("fictional-other-subject", "app")).toMatchObject({ trusted: false });
+});
+
+test("TM-07: a listing for another account changes nothing on a refresh", async () => {
+  const f = await passkeyLinked();
+  const older = await passkeyDevice();
+  f.credentials.mockResolvedValue({
+    accountId: "b".repeat(64),
+    google: [f.google],
+    passkeys: [f.countersigned(googleSignInOf(f.google), passkeySignInOf(older))],
+  });
+  await f.manager.refresh();
+  expect(f.manager.status().lastError).toBeUndefined();
+  // Not even a withdrawal: the link's own passkey, missing from that listing, stays.
+  expect(f.pins()).toEqual([[f.passkey.id, "link-page"]]);
+  expect((await f.saved()).withdrawnSignIns).toEqual([]);
+});
+
+test("approving a held sign-in made on the gateway's own page confirms that passkey there", async () => {
+  const f = await confirming();
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  const listed = await passkeyDevice();
+  f.list({ id: listed.id, publicKey: listed.publicKey });
+  const challenge = opaque(),
+    nonce = opaque();
+  const held = await enrollment.verifyGatewayPasskey!(
+    {
+      type: "gateway-passkey",
+      challenge,
+      credential: listed.authenticator.authentication(
+        gatewayPasskeyChallenge("device-enrollment", f.own, challenge, nonce),
+        "dXNlcg",
+        0,
+        f.own,
+      ) as never,
+    },
+    challenge,
+    nonce,
+  );
+  expect(held).toMatchObject({ trusted: false, channel: "gateway-origin" });
+  expect(await enrollment.canTrust(held!)).toBe(true);
+  await enrollment.trustSignIn(held!);
+  expect(f.manager.confirmedSignIns()).toEqual([
+    expect.objectContaining({ id: listed.id, via: "gateway-origin", counter: 0 }),
+  ]);
 });

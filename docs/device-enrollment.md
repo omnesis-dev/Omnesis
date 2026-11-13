@@ -6,17 +6,28 @@ is the wire contract and its test file holds the cross-platform vectors.
 
 Rules that must survive every change:
 
-- The relay can make a gateway stricter, never looser. Nothing the relay says can
-  add a trusted sign-in, change the enrollment policy or approve a device. A
-  trusted sign-in added at link time is the one accepted trust-on-first-use window.
-  Any other sign-in of the account is trusted only on a signature the gateway
-  verifies itself against one it already trusts: a passkey added later, on the
-  sign-in that vouched for it; a sign-in the account had before, on the
-  countersignature of a passkey added later (see Passkeys added later).
-- A linked gateway joins trusted sign-ins automatically unless its owner switched
+- A compromised relay must not be able to connect a device of its own. Nothing the
+  relay serves, lists, signs or relays can make a sign-in trusted, change the
+  enrollment policy or approve a device. The relay can make a gateway stricter,
+  never looser.
+- Only a sign-in the owner **confirmed on this gateway** (`confirmedSignIns`) joins
+  without a person, and only when it was made where no relay page could have made
+  it: a `gateway-passkey` assertion on the gateway's own origin, a passkey assertion
+  from the official Android app (its compiled `android:apk-key-hash:` origin), or a
+  Google token an official app client presented (`azp`). A confirmation comes only
+  from such a ceremony: confirming a passkey on the gateway's page, or a person
+  approving a held request made that way.
+- Every sign-in made on a page the relay serves (the account page, the desktop and
+  CLI sign-in, the portal handoff, linking and signup), and every Google token a web
+  client requested, is held for a person with a comparison code, whoever's sign-in
+  it is and whatever pins the gateway holds. Approving it confirms nothing.
+- What the relay's evidence pins (`trustedSignIns`: the link page's sign-in,
+  endorsed and countersigned sign-ins) is only a suggestion the owner sees; it never
+  makes a sign-in trusted.
+- A linked gateway joins confirmed sign-ins automatically unless its owner switched
   to `ask`. Only a local owner action writes that choice.
-- Anything unverifiable falls back to today's held request with a comparison
-  code. It never dead-ends.
+- Anything unverifiable falls back to a held request with a comparison code. It
+  never dead-ends.
 - A relay-signed attestation (`account-enrollment-proof.ts`) can only admit a held
   request. It can never join a device.
 
@@ -74,16 +85,18 @@ request joins only when all of these hold:
 
 - `proof` verifies: Google signature, issuer, audience from the gateway's own registry (the official relay's public Google client IDs, compiled into the gateway, never taken from the relay or the environment), expiry and nonce; or the passkey signature against the pinned public key with this `nonce`-bound challenge, the relay's RP ID and a trusted origin.
 - The proof is at most 10 minutes old.
-- The Google subject digest or passkey credential is in Trusted sign-ins.
+- The sign-in is confirmed on this gateway and was made where no relay page could
+  make it (see the rules above): a confirmed passkey's `gateway-passkey` assertion or
+  Android-app assertion, or an official app's Google token for a confirmed Google
+  account.
 - Policy is `automatic` (the default once linked) and `requireApproval` is not set.
 
 If not, a valid attestation holds the request for approval. Approving a held
-request with a verified proof can add that sign-in to Trusted sign-ins, but only
-when the gateway can check it: a Google subject is named by Google's signature,
-while a passkey's public key travels with the request, so anyone can make one
-that verifies. A passkey is offered for trust (`canTrustSignIn`) only when the
-relay's credential list for the linked account holds that credential id with
-that public key; if the list can't be read, it is not offered.
+request can also confirm its sign-in (`canTrustSignIn`), but only one made where no
+relay page could have made it (a passkey on the gateway's page or in the Android
+app, or an official app's Google token), and only when the relay's credential
+list for the linked account names it: that Google account, or that credential id
+with that public key. If the list can't be read, nothing is offered.
 
 ### Each sign-in is for one purpose
 
@@ -352,7 +365,8 @@ trusting that sign-in as well, unticked by default.
 ## Trusted sign-ins
 
 `<config>/cloud-relay/account-link.json` holds the link, `enrollmentPolicy`
-(`automatic`, `ask`; absent means `automatic`) and `trustedSignIns`. Link and signup
+(`automatic`, `ask`; absent means `automatic`), `confirmedSignIns` (what joins
+without a person) and `trustedSignIns` (suggestions, below). Link and signup
 flows deliver one proof, verified and pinned locally. Gateways poll
 `GET /_relay/v3/account-browser/credentials`, which lists Google subject digests
 and passkeys as `{id, publicKey, endorsement?}`; a pin missing from that list, or a
@@ -360,7 +374,13 @@ passkey pin whose key differs from the listed one, is dropped.
 
 A link with no stored policy behaves as `automatic`: linking is the owner's
 consent, and there is no separate first choice. Only an explicit `ask` holds
-every request. The file is written only by local owner actions (the Omnesis
+every request. Until the owner confirms a sign-in on the gateway, the status says
+`confirmationNeeded` and every request is held anyway: linking pins the link page's
+sign-in only as a suggestion, and the portal's account page asks the owner to
+confirm their passkey on the gateway's own page right after linking. A gateway
+upgraded from a version without confirmations starts the same way: its pins become
+suggestions, its policy and refusals are kept, and devices that already joined stay
+(they are marked "Joined with Omnesis account" in Devices, for review). The file is written only by local owner actions (the Omnesis
 account settings in the portal or the iOS and Android apps, `PUT /admin/cloud-relay/enrollment`,
 `omnesis cloud connect --ask-first`), so the relay can neither set nor clear the policy. A gateway that
 is not linked joins nothing by sign-in, and a linked gateway with no trusted
@@ -493,7 +513,9 @@ recorded, so remove them again.
 ### When a sign-in still waits for approval
 
 Under `automatic`, a verified sign-in is held for approval with a comparison code
-when the gateway can't tie it to a sign-in it already trusts:
+whenever it is not a confirmed sign-in made where no relay page could make it.
+Before confirmations existed, the cases below were the only ones held; they still
+are, and are now joined by every relay-page sign-in:
 
 1. The gateway's owner chose `ask`, the request set `requireApproval`, or the
    gateway is on a certificate incident hold (below).
@@ -518,11 +540,13 @@ Each pin records its `source`: `link-page` (the relay's link or signup page),
 (a sign-in the account already had, which a pinned passkey signed for on the account
 page) or
 `native-app` (approving a request signed in in the iOS or Android app).
-`omnesis cloud trusted-sign-ins` lists each pin with its source, and
-`omnesis cloud remove-sign-in <id>` drops and declines one, or declines in advance
-one the gateway does not trust, and with `--revoke-devices` revokes the devices that
-joined with it; the portal does not list them. See
-Limits of automatic mode for why the source matters.
+`omnesis cloud trusted-sign-ins`, `GET /admin/cloud-relay/trusted-sign-ins` and
+the portal's New devices section list each pin with its source and whether it is
+confirmed, and `omnesis cloud remove-sign-in <id>` drops and declines one (and its
+confirmation), or declines in advance one the gateway does not trust, and with
+`--revoke-devices` revokes the devices that joined with it. Since only
+confirmations make a sign-in trusted, the sections on pinning (Passkeys added
+later, Removal is durable) describe how suggestions are kept, not what joins.
 
 ### Certificate incident hold
 
@@ -576,7 +600,9 @@ that shows the sign-in finished on its own machine (RFC 8252 §7.3):
 
 A phished link sends the owner's browser to the owner's own loopback, so the
 attacker never learns `completion`. Without a proof the gateway holds the request
-for approval with a comparison code, as for any unverified sign-in.
+for approval with a comparison code, as for any unverified sign-in. With one, it
+holds the request too: the sign-in was made on a relay page (see the rules at the
+top), so the loopback only keeps a phished link from producing a proof at all.
 
 ## The account page hands its sign-in to the portal
 
@@ -607,8 +633,10 @@ page the sign-in itself is made for the portal, the way a native app makes it:
    non-extractable device key (replacing any earlier one), and continues at
    Enrollment step 4 with `identityToken` and `proof` inline.
 
-From there the gateway decides as for any request: a trusted sign-in joins under
-`automatic`, anything else is held with a comparison code. If any step is
+From there the gateway decides as for any request. The sign-in was made on the
+relay's page, so it is held with a comparison code; on the gateway's own origin
+the portal's held screen offers "Approve with your passkey", which approves this
+browser's request with a passkey confirmed on the gateway. If any step is
 unavailable (no WebCrypto, blocked storage, a refused start or handoff, a gateway
 without automatic enrollment), the portal asks for its own sign-in as before.
 
@@ -783,41 +811,59 @@ one. The relay logs the reason for each refused registration.
 
 ## Limits of automatic mode
 
-Automatic is the default: a gateway linked to an account joins trusted sign-ins
-without asking until its owner switches to `ask`. A device that joins this way has the
-same access as one paired by hand, from the first moment: there is no waiting
-period. Whoever takes over a trusted sign-in can therefore join and act as the
-owner until removed; the join notification sent to the owner's other devices is
-what brings it to their attention.
+Automatic is the default: a gateway linked to an account joins confirmed sign-ins
+without asking until its owner switches to `ask`. A device that joins this way has
+the same access as one paired by hand, from the first moment: there is no waiting
+period. Whoever takes over a confirmed sign-in (the owner's passkey, or the Google
+account in an official app) can therefore join and act as the owner until removed;
+the join notification sent to the owner's other devices is what brings it to their
+attention.
 
-A sign-in on a page the relay hosts is only as trustworthy as the relay. That
-covers portal enrollment, desktop sign-in, the owner link, signup and the account
-page. The page's script computes the WebAuthn challenge and the Google nonce, so
-a compromised relay can serve a page that binds the owner's sign-in to a device
-key of its choosing; that request then joins automatically wherever the sign-in
-is trusted. At link and signup time it can also hand the gateway a proof for its
-own Google account or passkey, which the gateway pins as the one trust-on-first-use
-window, and keep that pin alive by listing it at
-`GET /_relay/v3/account-browser/credentials`. The confirmation that vouches for an
-added passkey is made on the account page too, so a compromised relay can bind it to
-a passkey of its own; it cannot produce one without the owner confirming. Likewise
-the new passkey's countersignature: the page computes its list, so a relay serving
-a hostile page while the owner adds a passkey can have that passkey sign for a
-Google account or passkey of the relay's choosing, which then joins wherever the
-new passkey is trusted. It needs the owner's own passkey ceremony to do it; a
-listing, a stored proof it alters, or a signature by any key it holds is refused.
-The `source` of each pin shows which pins came from such a page.
+What a compromised relay can no longer do:
 
-A sign-in in the iOS or Android app is not exposed to this: the app computes the
-nonce itself from its own device key, so the relay can't redirect that proof to
-another key.
+- Steer an owner's sign-in on a page it serves (account page, desktop or portal
+  handoff, link, signup) to a device key of its choosing and have it join: such a
+  sign-in is held, even for a confirmed passkey and under `automatic`.
+- Pin its own sign-in at link time, or have a hostile page mint an endorsement or a
+  countersignature: those become suggestions, never trusted. Confirming a passkey
+  checks the assertion against the key the relay lists, so a substituted key only
+  makes confirmation fail.
+- Choose the gateway's origin: the gateway derives its hosted name from its id and
+  the relay host, and refuses `gateway-passkey` trust when the saved public origin
+  is anything else.
+- Stockpile assertions: a `gateway-passkey` challenge is one-use, issued by the
+  gateway, and lives three minutes; the confirmed passkey's signature counter is
+  kept.
 
-A compromised relay can also show one brand-new device a fake gateway. That fake
-cannot reach the real gateway; first contact requires a publicly trusted, logged
-certificate, which the gateway's certificate monitor reports when it is for the
-gateway's own name (and holds new devices, above); and `ask` mode blocks it.
+What remains:
 
-Operators who do not trust the relay with joining devices switch to `ask`, in
-the Omnesis account settings of the portal or the iOS and Android apps, or with
-`omnesis cloud policy ask` (or `omnesis cloud connect --ask-first`). Until
-they do, the limits above apply from the moment the gateway is linked.
+- The gateway's own page is only as trustworthy as its certificate. While only the
+  gateway can obtain a certificate for its hosted name, the relay cannot serve that
+  page. Whoever can get one (a party that can write the DNS zone or pass another
+  validation method for the name) can impersonate it. When the certificate monitor
+  sees such a certificate, the incident hold also refuses every assertion made on
+  the gateway's page (no confirmation, join or approval there) until the owner
+  acknowledges it; certificate isolation addresses the rest separately.
+- Any script running on the gateway's origin (for example a third-party widget
+  origin the portal allows) can ask the owner's passkey for an assertion.
+- A link to the public approval page can be sent by anyone who holds a request,
+  including a relay: it shows the request's code and time and asks the owner to
+  approve only what they started. A portal's request also needs that browser's own
+  device key, so a link cannot get another browser's request approved there.
+- A gateway on a custom domain has no shared passkey origin (the RP ID is the
+  relay's host): only Android-app passkeys and an official app's Google sign-ins
+  can be confirmed there, by approving a held request.
+- An owner with several gateways confirms once on each.
+- The relay can deny service, for example by refusing to list a passkey, which
+  only makes confirmation or approval fail.
+
+A sign-in in the iOS app presents the relay's own origin, so it is held like a
+relay page's until the app approves through the gateway's page. A compromised relay
+can also show one brand-new device a fake gateway. That fake cannot reach the real
+gateway; first contact requires a publicly trusted, logged certificate, which the
+gateway's certificate monitor reports when it is for the gateway's own name (and
+holds new devices, above); and `ask` mode blocks it.
+
+Operators who want a person to approve every device switch to `ask`, in the
+Omnesis account settings of the portal or the iOS and Android apps, or with
+`omnesis cloud policy ask` (or `omnesis cloud connect --ask-first`).

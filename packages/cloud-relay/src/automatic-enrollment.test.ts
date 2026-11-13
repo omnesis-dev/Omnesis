@@ -127,8 +127,8 @@ function setup(
             listed.publicKey === signIn.pin.publicKey,
         ) ??
           false)),
-    trustSignIn: async (signIn, source) => {
-      pins.push({ ...signIn.pin, source });
+    trustSignIn: async (signIn) => {
+      pins.push({ ...signIn.pin, source: "approval" });
     },
   };
   const createPairing = vi.fn(async (request: { expiresAt: number }) => ({
@@ -517,8 +517,8 @@ describe("falling back to a person", () => {
     expect(result.status).toBe("pending");
     expect(requests.list()[0]).toMatchObject({ signIn: "google", canTrustSignIn: true });
     await requests.decide(request.value.requestId, true, { trustSignIn: true });
-    // An iPhone's sign-in happened in the app, which computed its own nonce.
-    expect(pins).toMatchObject([{ type: "google", id: SIGN_IN_DIGEST, source: "native-app" }]);
+    // The gateway decides what to confirm from the proof it checked, not from the request's kind.
+    expect(pins).toMatchObject([{ type: "google", id: SIGN_IN_DIGEST }]);
     expect(createPairing.mock.calls[0]![0]).toMatchObject({ enrollment: { method: "approved" } });
     expect(requests.poll(request.value.requestId, request.value.secret).status).toBe("approved");
   });
@@ -865,7 +865,6 @@ describe("passkey proofs", () => {
       const listed = await held(key, [{ id, publicKey: key.publicKey }]);
       expect(listed.requests.list()[0]).toMatchObject({ canTrustSignIn: true });
       await listed.requests.decide(listed.request.value.requestId, true, { trustSignIn: true });
-      // A collector's sign-in happened on a relay page.
       expect(listed.pins).toEqual([
         {
           type: "passkey",

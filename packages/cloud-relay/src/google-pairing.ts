@@ -23,7 +23,7 @@ import {
 import { accountId, type IdentityProvider } from "./identity.js";
 import { RelayError } from "./tunnels.js";
 import { EnrollmentChallenges } from "./enrollment-challenges.js";
-import type { TrustedSignInSource, VerifiedSignIn } from "./gateway-sign-in-proof.js";
+import type { VerifiedSignIn } from "./gateway-sign-in-proof.js";
 import type { GatewayPasskeyCeremony } from "./gateway-account-link.js";
 
 export const googlePairingRequestSchema = z
@@ -63,9 +63,10 @@ export interface GatewayEnrollment {
     nonce: string,
     credentialPublicKey?: string,
   ): Promise<VerifiedSignIn | undefined>;
-  /** Whether approving may pin this sign-in. False whenever that can't be checked. */
+  /** Whether approving may also confirm this sign-in. False whenever that can't be checked. */
   canTrust(signIn: VerifiedSignIn): Promise<boolean>;
-  trustSignIn(signIn: VerifiedSignIn, source: TrustedSignInSource): Promise<void>;
+  /** Confirms the sign-in of a request a person approved. */
+  trustSignIn(signIn: VerifiedSignIn): Promise<void>;
   /**
    * A passkey assertion made on the gateway's own page for `device-enrollment`, over the request's
    * own gateway challenge and its enrollment nonce. Undefined when it does not verify.
@@ -584,12 +585,10 @@ export class GooglePairingRequests {
     }
     row.approvedByPerson = true;
     row.decision = this.approve(row).then(async () => {
+      // Where the sign-in was made comes from the proof the gateway checked, never from the
+      // kind of device the request says it is.
       if (choices.trustSignIn && row.signIn && row.trustable)
-        // A sign-in made in a native app committed to a nonce the device computed itself.
-        await this.options.enrollment!.trustSignIn(
-          row.signIn,
-          row.kind === "ios" || row.kind === "android" ? "native-app" : "approval",
-        );
+        await this.options.enrollment!.trustSignIn(row.signIn);
     });
     return row.decision;
   }

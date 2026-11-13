@@ -184,8 +184,8 @@ describe.skipIf(!browserReady)(
       const linked = await connectGatewayBySignIn(gateway, owner, "create");
       if (linked.connect?.state !== "done" || !linked.account.linked)
         throw new Error(`Gateway did not link: ${JSON.stringify(linked.connect)}`);
-      // Every hold below is caused by where the sign-in finished, not by the owner's setting:
-      // nothing is chosen here, and a linked gateway joins trusted sign-ins by default.
+      // Nothing is chosen here: the policy is the automatic default throughout. A sign-in made on
+      // the relay's page is held whatever the setting; each test checks what else holds.
       if (linked.deviceEnrollment.policy !== "automatic")
         throw new Error(`Expected the automatic default: ${linked.deviceEnrollment.policy}`);
     }, gatewayBootBudgetMs() + 120_000);
@@ -204,18 +204,25 @@ describe.skipIf(!browserReady)(
       }
     }, 60_000);
 
-    test("on the machine where the sign-in finished, the browser hands the CLI its completion over loopback and it joins at once", async () => {
-      // The link pinned the owner's passkey from the relay's page, and says so.
+    test("TM-01: on the machine where the sign-in finished, the browser hands the CLI its completion over loopback, but a sign-in made on the relay's page is held, never joined on its own", async () => {
+      // The link pinned the owner's passkey from the relay's page, and says so: a suggestion.
       expect((await gateway.status()).deviceEnrollment.trustedSignIns).toEqual([
-        expect.objectContaining({ type: "passkey", source: "link-page" }),
+        expect.objectContaining({ type: "passkey", source: "link-page", confirmed: false }),
       ]);
-      const pairing = await startPairing({ name: "Fictional local CLI" });
+      const name = "Fictional local CLI";
+      const pairing = await startPairing({ name });
       await signInOnThisMachine(owner, await pairing.launchUrl);
       expect(owner.page.url()).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/omnesis\/callback\?/);
+      // The completion released the proof, so the request names the passkey sign-in...
+      const held = await heldRequest(name);
+      expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
+      await waitFor(() => pairing.comparisons.length === 1, "the comparison code");
+      expect(pairing.comparisons).toEqual([held.verificationCode]);
+      // ...and only the owner's approval lets it in.
+      await gateway.decide(held.requestId, true);
       const joined = await pairing.result;
-      expect(pairing.comparisons).toEqual([]);
       expect((await joinedRow(joined.deviceId))?.enrollment).toMatchObject({
-        method: "automatic",
+        method: "approved",
         signIn: "passkey",
       });
     }, 180_000);
@@ -409,9 +416,10 @@ describe.skipIf(!browserReady)(
       expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
       const pinned = (await gateway.status()).deviceEnrollment.trustedSignIns;
       await gateway.decide(held.requestId, true, true);
-      const after = (await gateway.status()).deviceEnrollment.trustedSignIns;
-      expect(after).toEqual(pinned);
-      expect(after.some((pin) => pin.id === forged.id)).toBe(false);
+      const after = (await gateway.status()).deviceEnrollment;
+      expect(after.trustedSignIns).toEqual(pinned);
+      expect(after.trustedSignIns.some((pin) => pin.id === forged.id)).toBe(false);
+      expect(after.confirmedSignIns).toEqual([]);
     }, 120_000);
   },
 );

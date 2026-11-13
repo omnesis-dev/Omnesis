@@ -354,3 +354,34 @@ test("approving here needs this browser's own key, and a refusal is said in plac
   expect(api.approve).toHaveBeenCalledTimes(2);
   await act(async () => release());
 });
+
+test("leaving the page while the gateway's answer is being checked ends the attempt quietly", async () => {
+  api.loadDeviceKey.mockResolvedValue(await deviceKey());
+  await show();
+  let left = false;
+  transport.mockImplementation(async (path) => {
+    if (path === "/devices/account/passkey/options")
+      return new Response(JSON.stringify({ origin: ORIGIN, challenge: CHALLENGE }));
+    const value = {
+      status: "approved",
+      verificationCode: "",
+      expiresAt: Date.now() + 60_000,
+      pairingCode: "SYNTHETIC-CODE",
+      // The page is left just as the browser starts checking the gateway's nonce.
+      get codeNonce() {
+        if (!left) {
+          left = true;
+          render(null, host);
+        }
+        return NONCE;
+      },
+    };
+    return { ok: true, status: 200, json: async () => value } as unknown as Response;
+  });
+  await act(async () => button("Sign in with Passkey")!.click());
+  await vi.waitFor(() => expect(left).toBe(true));
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  expect(transport).toHaveBeenCalledTimes(2);
+  expect(api.login).not.toHaveBeenCalled();
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+});

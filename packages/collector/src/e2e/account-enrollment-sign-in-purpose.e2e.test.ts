@@ -9,9 +9,9 @@
  * Google (`FakeGoogle`).
  *
  * The owner's account was created with Google on "home" and later got a
- * passkey, which home trusts as endorsed. Home joins trusted sign-ins
- * automatically, so a device bringing a proof from either sign-in would join
- * with no approval. The outsider has no account. It makes its own device key,
+ * passkey, which home has on record as endorsed, and home is set to join
+ * automatically. The gateway refuses the proof below before it would ever be
+ * held, whatever home trusts. The outsider has no account. It makes its own device key,
  * computes that device's enrollment nonce, and starts an operation that links
  * a gateway with that nonce: a gateway sign-up on the relay, or an owner-link
  * from a gateway of its own that it registered with the relay. The owner signs
@@ -178,7 +178,7 @@ describe.skipIf(!browserReady)("a sign-in made to link a gateway never enrolls a
   let world: EnrollmentWorld;
   let browser: PasskeyBrowser;
   let owner: PasskeySession;
-  /** The account's first gateway: Google and the passkey pinned, joining automatically. */
+  /** The account's first gateway: Google and the passkey pinned, set to join automatically. */
   let home: EnrollmentGateway;
   /** The account's second gateway, linked with the passkey. */
   let cabin: EnrollmentGateway;
@@ -375,7 +375,7 @@ describe.skipIf(!browserReady)("a sign-in made to link a gateway never enrolls a
     }
   }, 60_000);
 
-  test("home trusts both of the owner's sign-ins and joins them automatically", async () => {
+  test("home has both of the owner's sign-ins on record and is set to join automatically", async () => {
     expect(await pins(home)).toEqual([
       { type: "google", id: FakeGoogle.digest(OWNER_GOOGLE), source: "link-page" },
       { type: "passkey", id: passkey, source: "endorsed" },
@@ -561,6 +561,7 @@ describe.skipIf(!browserReady)("a sign-in made to link a gateway never enrolls a
     // With no account it joins nothing automatically, and the owner's choices are on record.
     expect(after.deviceEnrollment).toEqual({
       policy: "ask",
+      confirmationNeeded: false,
       trustedSignIns: [],
       confirmedSignIns: [],
     });
