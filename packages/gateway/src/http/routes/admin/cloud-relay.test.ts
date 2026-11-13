@@ -396,3 +396,30 @@ test("sign-in connection controls are explicitly unavailable when the service ha
     });
   }
 });
+test("reading the status lets the service ask its relay about signup first, and no operation does", async () => {
+  const order: string[] = [];
+  const signup = {
+    inviteOnly: true as const,
+    requestAccessUrl: "https://groups.example.com/g/fictional-testers",
+  };
+  service.refreshSignupAccess = vi.fn(async () => {
+    order.push("refresh");
+  });
+  service.status = vi.fn(async () => {
+    order.push("status");
+    return { ...status, signup };
+  });
+  const router = app();
+  expect(await (await router.request("/admin/cloud-relay")).json()).toMatchObject({ signup });
+  expect(order).toEqual(["refresh", "status"]);
+  await router.request("/admin/cloud-relay/disable", post());
+  expect(service.refreshSignupAccess).toHaveBeenCalledTimes(1);
+  // A service without it (an older implementation) still answers.
+  delete service.refreshSignupAccess;
+  expect((await app().request("/admin/cloud-relay")).status).toBe(200);
+  // Without the flag nothing is read.
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
+  service.refreshSignupAccess = vi.fn(async () => {});
+  expect((await app().request("/admin/cloud-relay")).status).toBe(404);
+  expect(service.refreshSignupAccess).not.toHaveBeenCalled();
+});

@@ -62,6 +62,7 @@ const ROUTES = new Map([
   ["/_relay/v3/signup/link", "signup_link"],
   ["/_relay/v3/signup/cancel", "signup_cancel"],
   ["/_relay/v3/signup/complete", "signup_complete"],
+  ["/_relay/v3/signup/access", "signup_access"],
   ["/_relay/web", "web_discovery"],
   ["/_relay/web/start", "web_start"],
   ["/_relay/web/callback", "web_callback"],

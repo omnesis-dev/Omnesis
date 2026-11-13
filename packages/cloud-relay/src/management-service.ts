@@ -12,7 +12,11 @@ import { gatewayRecoveryReceiptStatus } from "./gateway-recovery-status.js";
 import { probePublicMcp as defaultPublicProbe } from "./management-probe.js";
 import { GatewayGoogleWeb } from "./google-gateway-web.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
-import { GatewaySignupClient, type GatewaySignupPending } from "./gateway-signup-client.js";
+import {
+  GatewaySignupClient,
+  relaySignupAccess,
+  type GatewaySignupPending,
+} from "./gateway-signup-client.js";
 import {
   publicGatewayCertificateFile,
   publicGatewayPrivateKeyFile,
@@ -44,10 +48,16 @@ import {
   type CloudRelayNetworkIdentity,
   type CloudRelayManagementError,
 } from "./management.js";
+import type { GatewaySignupAccess } from "./gateway-signup-contract.js";
 
 const log = createLogger("cloud-relay:management");
 
 const PROBE_RETRIES = 20;
+/** How long the relay's answer about who may sign up is kept, and how soon a failed read is retried. */
+const SIGNUP_ACCESS_TTL_MS = 10 * 60_000;
+const SIGNUP_ACCESS_RETRY_MS = 60_000;
+/** A status read waits this long at most for the relay's signup answer; a later read has it. */
+const SIGNUP_ACCESS_WAIT_MS = 1500;
 
 const settingsSchema = z
   .object({
@@ -87,6 +97,7 @@ export interface CloudRelayManagerOptions {
   register?: typeof registerGatewayKey;
   prepare?: typeof prepareGatewayOwner;
   discover?: typeof relayPublicConfiguration;
+  signupAccess?: typeof relaySignupAccess;
   probe?(origin: string, signal: AbortSignal): Promise<boolean>;
   /** How long to wait before checking the public address again after a failed check. */
   probeRetryMs?: number;
@@ -122,6 +133,9 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private releasing: Promise<void> | undefined;
   private releaseTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
+  private signupAccess:
+    { relayUrl: string; value: GatewaySignupAccess | undefined; until: number } | undefined;
+  private signupAccessRead: Promise<void> | undefined;
   private readonly monitor: Pick<GatewayCertificateMonitor, "start" | "status" | "close">;
   private readonly directory: string;
   private readonly file: string;
@@ -729,9 +743,55 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       this.launch(true);
     });
   }
+  /** The relay a person who is not connected yet would sign up with, when that is settled. */
+  private signupRelayUrl(): string | undefined {
+    if (this.account!.status().linked || this.serviceError()) return undefined;
+    return installationRelayUrl(this.options.env, this.settings?.relayUrl);
+  }
+  /**
+   * Asks the relay whether its accounts need approval, so the page can say where to ask before
+   * anyone tries. Public metadata, read only for a gateway that is not linked to an account, at
+   * most every ten minutes. Never throws: a relay that does not answer keeps the last answer.
+   */
+  async refreshSignupAccess(): Promise<void> {
+    const relayUrl = this.signupRelayUrl();
+    if (this.closed || !relayUrl) return;
+    const known = this.signupAccess?.relayUrl === relayUrl ? this.signupAccess : undefined;
+    if (known && known.until > Date.now()) return;
+    this.signupAccessRead ??= (this.options.signupAccess ?? relaySignupAccess)(
+      relayUrl,
+      AbortSignal.timeout(5000),
+      this.options.fetch,
+    )
+      .then(
+        (value) => ({ value, until: Date.now() + SIGNUP_ACCESS_TTL_MS }),
+        (error: unknown) => {
+          log.debug(`Reading the relay's signup access failed: ${String(error)}`);
+          return { value: known?.value, until: Date.now() + SIGNUP_ACCESS_RETRY_MS };
+        },
+      )
+      .then((answer) => {
+        this.signupAccess = { relayUrl, ...answer };
+      })
+      .finally(() => (this.signupAccessRead = undefined));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      this.signupAccessRead,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SIGNUP_ACCESS_WAIT_MS);
+        timer.unref();
+      }),
+    ]);
+    clearTimeout(timer);
+  }
   async status(): Promise<CloudRelayManagementStatus> {
     const s = this.settings,
       direct = this.options.directIdentity();
+    const signupRelayUrl = this.signupRelayUrl();
+    const signup =
+      signupRelayUrl && this.signupAccess?.relayUrl === signupRelayUrl
+        ? this.signupAccess.value
+        : undefined;
     let certificate: CloudRelayManagementStatus["certificate"] = { state: "unconfigured" };
     if (s) {
       try {
@@ -836,6 +896,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       ...(this.connection.state === "idle" ? {} : { connect: { ...this.connection } }),
       deviceEnrollment: this.account!.enrollmentStatus(),
       ...(this.notice ? { notice: this.notice } : {}),
+      ...(signup ? { signup: { ...signup } } : {}),
       can: {
         configure: !this.serviceError() && !this.busy && !s?.enabled,
         enable: Boolean(s && !s.enabled),

@@ -14,7 +14,12 @@ import { CopyIconButton } from "../components/copy-button.js";
 import { useState } from "preact/hooks";
 import { RelayProblems, relayProblems, relayDiagnostics } from "../components/relay-problems.js";
 import { useRelayManagement } from "../lib/use-relay-management.js";
-import { relayError, relayClock, relayHttpsUrl } from "../lib/cloud-relay-api.js";
+import {
+  relayError,
+  relayClock,
+  relayHttpsUrl,
+  relaySignupAccess,
+} from "../lib/cloud-relay-api.js";
 
 /**
  * The one state the page is in, from the gateway's status. Order matters: an
@@ -78,10 +83,24 @@ function TipButton({ id, tip, children, ...button }) {
   </span>`;
 }
 
+/** Accounts need approval: where to ask, with the link's host in plain sight. */
+function RequestAccess({ access }) {
+  return html`<p class="relay-invite">
+    Omnesis accounts are invite-only for now.${" "}
+    <a href=${access.url} target="_blank" rel="noopener noreferrer">Request access</a>
+    ${" "}<span class="relay-invite-host">(${access.host})</span> — you can create your account
+    once it's approved.
+  </p>`;
+}
+
 function Hero({ status, phase, busy, run }) {
   const disabled = Boolean(busy) && busy !== "refresh";
   const hostname = status?.hostname;
   const connectError = status?.connect?.error ?? status?.enrollment?.error;
+  const access = relaySignupAccess(status);
+  // Said before anyone tries, and again when a sign-in was refused for not being approved.
+  const invite =
+    access && (phase === "not-connected" || (phase === "failed" && connectError === "not-allowed"));
   // Creating an account is always the person's explicit choice, here and on the sign-in page.
   const connect = (intent) => run("connect", { termsAccepted: true, intent });
   const copy = {
@@ -177,6 +196,7 @@ function Hero({ status, phase, busy, run }) {
     <div class="relay-hero-text">
       <h2 class="relay-headline">${copy.title}</h2>
       <p class="relay-lede">${copy.lede}</p>
+      ${invite && html`<${RequestAccess} access=${access} />`}
       ${copy.action && html`<div class="relay-actions relay-hero-action">${copy.action}</div>`}
       ${phase === "waiting" && html`<${Waiting} connect=${status.connect} busy=${busy} run=${run} />`}
     </div>

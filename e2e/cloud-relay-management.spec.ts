@@ -359,6 +359,8 @@ test("creating an account and using one are two explicit choices, and each tells
   page,
 }) => {
   const { calls } = await management(page);
+  // A relay that is not invite-only adds nothing to the two choices.
+  await expect(page.locator(".relay-invite")).toHaveCount(0);
   // One "Connect" that might create an account as a side effect is gone.
   await expect(page.getByRole("button", { name: "Connect", exact: true })).toHaveCount(0);
   const create = page.getByRole("button", { name: "Create an Omnesis account", exact: true });
@@ -381,6 +383,43 @@ test("creating an account and using one are two explicit choices, and each tells
     path: test.info().outputPath("account-choices-mobile.png"),
     fullPage: true,
   });
+});
+
+test("an invite-only relay says so above the two choices, with where to request access and its host", async ({
+  page,
+}) => {
+  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
+  const { calls } = await management(
+    page,
+    { configured: false },
+    { signup: { inviteOnly: true, requestAccessUrl } },
+  );
+  const notice = page.locator(".relay-hero .relay-invite");
+  await expect(notice).toHaveText(
+    "Omnesis accounts are invite-only for now. Request access (groups.example.com) — you can create your account once it's approved.",
+  );
+  const request = notice.getByRole("link", { name: "Request access", exact: true });
+  await expect(request).toHaveAttribute("href", requestAccessUrl);
+  await expect(request).toHaveAttribute("target", "_blank");
+  await expect(request).toHaveAttribute("rel", "noopener noreferrer");
+  const create = page.getByRole("button", { name: "Create an Omnesis account", exact: true });
+  await expect(create).toBeEnabled();
+  await expect(page.getByRole("button", { name: "I already have one", exact: true })).toBeEnabled();
+  // The notice sits above the choices.
+  const noticeBox = (await notice.boundingBox())!;
+  expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual((await create.boundingBox())!.y);
+  await page.screenshot({
+    path: test.info().outputPath("account-invite-only.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(request).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("account-invite-only-mobile.png"),
+    fullPage: true,
+  });
+  expect(calls).toEqual([]);
 });
 
 test("Google management navigates only to the real authorization endpoint, then unlinks without changing relay enrollment", async ({

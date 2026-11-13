@@ -26,7 +26,7 @@ import { googleProofNonce, passkeyProofChallenge, type SignInProof } from "./dev
 import { gatewayKeyAccount, gatewayKeyIdentity, KEY_BINDING_PREFIX } from "./gateway-key-auth.js";
 import { GatewaySignInVerifier } from "./gateway-sign-in-proof.js";
 import { GATEWAY_SIGNUP_PROTOCOL, gatewaySignupTranscript } from "./gateway-signup-contract.js";
-import { GatewaySignupClient } from "./gateway-signup-client.js";
+import { GatewaySignupClient, relaySignupAccess } from "./gateway-signup-client.js";
 import { readOrCreateGatewayOwnerKey, type registerGatewayKey } from "./gateway-key-client.js";
 import { accountId, RelaySessions } from "./identity.js";
 import { ACCOUNT_TERMS_VERSION } from "./omnesis-accounts.js";
@@ -931,6 +931,7 @@ test("without the cloud opt-in none of these surfaces exist", async () => {
     "/_relay/v3/connect/claim",
     "/_relay/v3/signup/start",
     "/_relay/v3/signup/complete",
+    "/_relay/v3/signup/access",
     "/_relay/v3/desktop/start",
     "/_relay/v3/native/start",
     "/_relay/v3/account-browser/credentials",
@@ -1217,4 +1218,47 @@ test("when google cannot answer, the sign-up is refused for now and the same req
   const retried = await f.google(op);
   expect(retried.cookie).not.toBe("");
   expect((await f.api("continue", op.query, `${op.cookie}; ${retried.cookie}`)).status).toBe(200);
+});
+
+test("an invite-only relay publishes where to ask for access, and every other policy says nothing", async () => {
+  const access = async (url: string, init?: RequestInit) =>
+    fetch(`${url}/_relay/v3/signup/access`, init);
+  const inviteOnly = await fixture({ policy: "allowlist", googleGroup: group() });
+  const response = await access(inviteOnly.url);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual({
+    signup: { inviteOnly: true, requestAccessUrl: joinUrl },
+  });
+  // The gateway reads it as the relay serves it, and nothing about the gateway is sent.
+  expect(await relaySignupAccess(inviteOnly.url, AbortSignal.timeout(5000))).toEqual({
+    inviteOnly: true,
+    requestAccessUrl: joinUrl,
+  });
+  expect((await access(inviteOnly.url, { method: "POST" })).status).toBe(405);
+  expect((await fetch(`${inviteOnly.url}/_relay/v3/signup/access?gatewayId=x`)).status).toBe(400);
+  const { joinUrl: _, ...withoutLink } = group();
+  for (const signup of [
+    { policy: "allowlist" as const, googleGroup: withoutLink },
+    { policy: "open" as const },
+    { policy: "invitation" as const },
+    undefined,
+  ]) {
+    const f = await fixture(signup);
+    const reply = await access(f.url);
+    expect(reply.status).toBe(200);
+    expect(await reply.json()).toEqual({});
+    expect(await relaySignupAccess(f.url, AbortSignal.timeout(5000))).toBeUndefined();
+  }
+  // The routing configuration older gateways read strictly is unchanged.
+  const config = await fetch(
+    `${inviteOnly.url}/_relay/v2/config?gatewayId=${inviteOnly.gatewayId}`,
+  );
+  expect(Object.keys(await config.json()).sort()).toEqual([
+    "dnsChallenges",
+    "gatewayId",
+    "invitationRequired",
+    "protocol",
+    "signup",
+  ]);
 });

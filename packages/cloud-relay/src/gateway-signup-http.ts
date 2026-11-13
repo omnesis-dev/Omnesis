@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
-import { GATEWAY_SIGNUP_PATH } from "./gateway-signup-contract.js";
+import { GATEWAY_SIGNUP_ACCESS_PATH, GATEWAY_SIGNUP_PATH } from "./gateway-signup-contract.js";
 import { readJsonBody } from "./relay-json-body.js";
 import { RelayError } from "./tunnels.js";
 import { brand } from "./relay-page.js";
@@ -40,6 +40,15 @@ export class GatewaySignupHttp {
       "content-security-policy",
       "default-src 'none'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     );
+    if (url.pathname === GATEWAY_SIGNUP_ACCESS_PATH) {
+      // Public: whether accounts need approval and where to ask, so a gateway can say so up front.
+      if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
+      if (url.search) throw new RelayError(400, "Invalid signup access request");
+      const access = this.options.signup.access();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(access ? { signup: access } : {}));
+      return true;
+    }
     if (!this.options.signup.enabled()) {
       req.resume();
       res.writeHead(403, { "content-type": "application/json" });
