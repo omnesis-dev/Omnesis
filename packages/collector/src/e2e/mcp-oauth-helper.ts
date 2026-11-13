@@ -15,7 +15,7 @@ import {
   type StoredOAuthTokens,
 } from "@modelcontextprotocol/client";
 
-import type { ScopePolicy } from "@omnesis/types";
+import type { SourceFilter } from "@omnesis/types";
 
 export type TestGrantCapability = "direct" | "answer" | "notes";
 export type TestGrantRule =
@@ -26,7 +26,7 @@ export type TestGrantRule =
   | {
       capability: "direct";
       filterRevision?: number;
-      scopePolicies?: ScopePolicy[];
+      scopePolicies?: SourceFilter[];
       sources: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
       /** Responses only: the real boundary of a rule with filters. */
       scopeSources?: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
@@ -34,7 +34,7 @@ export type TestGrantRule =
   | {
       capability: "answer";
       filterRevision?: number;
-      scopePolicies?: ScopePolicy[];
+      scopePolicies?: SourceFilter[];
       sources: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
       /** Responses only: the real boundary of a rule with filters. */
       scopeSources?: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };

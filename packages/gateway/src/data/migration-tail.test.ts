@@ -115,21 +115,20 @@ interface ScopeTailObject {
 /** These namespaces are introduced by the source-scope migration tail. */
 function sourceScopeObjects(db: Db): ScopeTailObject[] {
   const tables = (column: string) =>
-    ["scope_*", "source_scope_*", "document_scope_*", "access_scope_*", "answer_task_scope*"]
+    ["scope_policy_*", "access_scope_*", "answer_task_scope*"]
       .map((pattern) => `${column} GLOB '${pattern}'`)
       .join(" OR ");
   return db
     .prepare<[], ScopeTailObject>(
       `SELECT type,name FROM sqlite_master
     WHERE (type IN ('table','index') AND (${tables("tbl_name")}))
-      OR (type='trigger' AND (${tables("name")} OR name GLOB 'native_witness_*'
-        OR name GLOB 'native_document_*' OR name GLOB 'native_reprojection_*'))
+      OR (type='trigger' AND (name GLOB 'scope_*' OR name GLOB 'access_scope_*'))
     ORDER BY type,name`,
     )
     .all();
 }
 
-/** Remove every added table (and its columns/indexes), plus triggers on older tables. */
+/** Undo migration 220: its tables, and the triggers it put on the access tables. */
 function undoSourceScopes(db: Db): void {
   const objects = sourceScopeObjects(db);
   const foreignKeys = db.pragma("foreign_keys", { simple: true });
@@ -718,19 +717,18 @@ describe("an install several versions behind, upgrading", () => {
     expect(WOUND_BACK).toEqual(TAIL_VERSIONS);
   });
 
-  test("source scope migrations recreate their entire schema instead of replaying over it", () => {
+  test("the source filter migration recreates its entire schema instead of replaying over it", () => {
     const head = createDatabase(dbPath) as unknown as Db;
     const expected = sourceScopeObjects(head);
     try {
       expect(expected).toEqual(
         expect.arrayContaining([
           { type: "table", name: "access_scope_capabilities" },
-          { type: "table", name: "source_scope_descriptor_conflicts" },
-          { type: "table", name: "scope_fact_rebuilds" },
-          { type: "table", name: "answer_task_scope" },
-          { type: "table", name: "scope_hierarchy_dependencies" },
-          { type: "table", name: "scope_native_desired_witnesses" },
           { type: "table", name: "access_scope_policy_sources" },
+          { type: "table", name: "access_scope_legacy_denials" },
+          { type: "table", name: "scope_policy_mutation_context" },
+          { type: "table", name: "answer_task_scope" },
+          { type: "table", name: "answer_task_scope_documents" },
           { type: "trigger", name: "scope_legacy_level_insert" },
         ]),
       );
@@ -743,19 +741,8 @@ describe("an install several versions behind, upgrading", () => {
     try {
       expect(sourceScopeObjects(upgraded)).toEqual(expected);
       expect(
-        upgraded
-          .prepare("SELECT name FROM pragma_table_info('source_scope_refresh_requirements')")
-          .all(),
-      ).toEqual(expect.arrayContaining([{ name: "epoch" }, { name: "request_id" }]));
-      expect(
-        upgraded.prepare("SELECT name FROM pragma_table_info('scope_conversations')").all(),
-      ).toEqual(
-        expect.arrayContaining([
-          { name: "authority_id" },
-          { name: "revision_epoch" },
-          { name: "revision_sequence" },
-        ]),
-      );
+        upgraded.prepare("SELECT name FROM pragma_table_info('answer_task_scope')").all(),
+      ).toEqual([{ name: "task_id" }, { name: "authorization" }, { name: "complete" }]);
     } finally {
       (upgraded as unknown as Database.Database).close();
     }
