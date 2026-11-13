@@ -121,8 +121,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # The public-certificate check is switched off here on purpose: a release build must ignore
+      # that switch, and the policy check fails if the generated release BuildConfig honoured it.
       - name: lane [android-policy]
-        run: ./gradlew :app:verifyPlayReleasePolicy --no-daemon --max-workers=2
+        run: ./gradlew :app:verifyPlayReleasePolicy -POMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0 --no-daemon --max-workers=2
 
       - name: lane [android-build]
         # Each flavor gets a fresh bounded Gradle process so release dexing

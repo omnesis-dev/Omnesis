@@ -1866,6 +1866,11 @@ describe("android.yml CI workflow structure (C20)", () => {
     expect(runs).toContain(":wear:assembleDebug");
     expect(runs).toContain(":wear:bundleRelease");
     expect(runs).toContain(":app:verifyPlayReleasePolicy");
+    // The release policy is checked with the public-certificate check switched off, which a
+    // release build must ignore.
+    expect(runs).toMatch(
+      /:app:verifyPlayReleasePolicy -POMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0\b/,
+    );
   });
 
   it("fails loud (never skips) when the Android toolchain is unreachable", () => {
