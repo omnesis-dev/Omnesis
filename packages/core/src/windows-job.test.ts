@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { killWindowsJob, runWindowsJob } from "./windows-job.js";
+import { killWindowsJob, runWindowsJob, spawnWindowsJob } from "./windows-job.js";
+import { execWindowsJob } from "./windows-job-exec.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function alive(pid: number): boolean {
@@ -37,6 +38,63 @@ setTimeout(()=>{},60000);
 `;
 
 describe.skipIf(process.platform !== "win32")("Windows native job containment", () => {
+  it("preserves immediate streaming input and filters only the helper status", async () => {
+    const proc = spawnWindowsJob(process.execPath, [
+      "-e",
+      "process.stderr.write('target warning\\n');process.stdin.pipe(process.stdout)",
+    ]);
+    const chunks: Buffer[] = [];
+    let stderr = "";
+    proc.stdout.on("data", (bytes: Buffer) => chunks.push(bytes));
+    proc.stderr.on("data", (bytes: Buffer) => {
+      stderr += bytes.toString("utf8");
+    });
+    const closed = new Promise<number | null>((resolve) => proc.once("close", resolve));
+    const bytes = Buffer.from([0, 255, 1, 128, 10]);
+    const timer = setTimeout(() => proc.kill("SIGKILL"), 20_000);
+    try {
+      proc.stdin.end(bytes);
+      await proc.jobReady;
+      expect(await closed).toBe(0);
+      expect(Buffer.concat(chunks)).toEqual(bytes);
+      expect(stderr).toBe("target warning\n");
+    } finally {
+      clearTimeout(timer);
+      if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+      await closed;
+    }
+  });
+
+  it("bounds a probe whose exited wrapper leaves inherited pipes in a child", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-job-probe-orphan-"));
+    const pidPath = join(dir, "child.pid");
+    let pid: number | undefined;
+    try {
+      const probe = execWindowsJob(
+        process.execPath,
+        [
+          "-e",
+          `
+const {spawn}=require('node:child_process');
+const fs=require('node:fs');
+const child=spawn(process.execPath,['-e','process.stdout.write("ready");setInterval(()=>{},1000)'],{stdio:'inherit'});
+child.once('spawn',()=>{fs.writeFileSync(process.argv[1],String(child.pid));child.unref();process.exit(0)});
+`,
+          pidPath,
+        ],
+        { timeout: 15_000 },
+      );
+      const rejected = expect(probe).rejects.toMatchObject({ code: "ETIMEDOUT" });
+      expect(await eventually(() => existsSync(pidPath))).toBe(true);
+      pid = Number(readFileSync(pidPath, "utf8"));
+      await rejected;
+      expect(await eventually(() => !alive(pid!))).toBe(true);
+    } finally {
+      if (pid !== undefined && alive(pid)) process.kill(pid, "SIGKILL");
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("uses the system helper even when the target cwd contains a conflicting executable", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-job-cwd-"));
     try {

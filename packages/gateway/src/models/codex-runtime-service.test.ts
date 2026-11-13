@@ -62,51 +62,61 @@ describe("Codex JavaScript command lifecycle", () => {
     },
   );
 
-  it("starts and cancels device login through a JavaScript wrapper", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-js-login-"));
-    const command = join(dir, "codex command & $().mjs");
-    const pidPath = join(dir, "child.pid");
-    await writeFile(
-      command,
-      `#!/usr/bin/env node
+  it.each(process.platform === "win32" ? [false, true] : [false])(
+    "starts and cancels device login through a JavaScript wrapper (wrapperExits=%s)",
+    async (wrapperExits) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-js-login-"));
+      const command = join(dir, "codex command & $().mjs");
+      const pidPath = join(dir, "child.pid");
+      const wrapperPidPath = join(dir, "wrapper.pid");
+      await writeFile(
+        command,
+        `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
+if (args.includes("--device-auth")) writeFileSync(${JSON.stringify(wrapperPidPath)}, String(process.pid));
 const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...args], { stdio: 'inherit' });
 child.once('spawn', () => { if (args.includes('--device-auth')) writeFileSync(${JSON.stringify(pidPath)}, String(child.pid)); });
 process.on('SIGTERM', () => child.kill('SIGTERM'));
 child.on('exit', (code) => process.exit(code ?? 1));
+if (${wrapperExits} && args.includes('--device-auth')) child.once('spawn', () => { child.unref(); process.exit(0); });
 `,
-      { mode: 0o700 },
-    );
-    const service = new CodexRuntimeService({
-      configDir: dir,
-      command,
-      interactivePoolSize: 0,
-      backgroundPoolSize: 1,
-      inferencePoolSize: 1,
-    });
-    let childPid: number | undefined;
-    try {
-      const flow = await service.startDeviceLogin();
-      expect(flow.status).toBe("pending");
-      expect(flow.userCode).toBe("ABCD-12345");
-      childPid = Number(await readFile(pidPath, "utf8"));
-      expect(service.cancelLogin().canceled).toBe(true);
-      await service.dispose();
-      expect(() => process.kill(childPid!, 0)).toThrow();
-    } finally {
-      await service.dispose();
-      if (childPid !== undefined) {
-        try {
-          process.kill(childPid, "SIGKILL");
-        } catch {
-          /* already exited */
+        { mode: 0o700 },
+      );
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command,
+        interactivePoolSize: 0,
+        backgroundPoolSize: 1,
+        inferencePoolSize: 1,
+      });
+      let childPid: number | undefined;
+      try {
+        const flow = await service.startDeviceLogin();
+        expect(flow.status).toBe("pending");
+        expect(flow.userCode).toBe("ABCD-12345");
+        childPid = Number(await readFile(pidPath, "utf8"));
+        if (wrapperExits) {
+          const wrapperPid = Number(await readFile(wrapperPidPath, "utf8"));
+          await vi.waitFor(() => expect(() => process.kill(wrapperPid, 0)).toThrow());
         }
+        expect(service.cancelLogin().canceled).toBe(true);
+        await service.dispose();
+        expect(() => process.kill(childPid!, 0)).toThrow();
+      } finally {
+        await service.dispose();
+        if (childPid !== undefined) {
+          try {
+            process.kill(childPid, "SIGKILL");
+          } catch {
+            /* already exited */
+          }
+        }
+        await rm(dir, { recursive: true, force: true });
       }
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 });
 
 describe("CodexRuntimeService parsers", () => {

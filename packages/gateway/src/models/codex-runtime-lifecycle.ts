@@ -12,6 +12,8 @@ import {
   createLogger,
   nodeCommandInvocation,
   terminateChildProcess,
+  spawnWindowsJob,
+  execWindowsJob,
   type CodexBackendStatus,
   type CodexLoginFlow,
   type CodexRuntimeStatus,
@@ -162,11 +164,18 @@ export class CodexRuntimeLifecycle {
         "login",
         "--device-auth",
       ]);
-      const proc = spawn(invocation.command, invocation.args, {
-        env: childEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
+      const job =
+        process.platform === "win32"
+          ? spawnWindowsJob(invocation.command, invocation.args, { env: childEnv })
+          : null;
+      const proc =
+        job ??
+        spawn(invocation.command, invocation.args, {
+          env: childEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+      job?.stdin.end();
       const closed = new Promise<void>((resolve) => {
         proc.once("close", () => resolve());
         proc.once("error", () => resolve());
@@ -242,6 +251,16 @@ export class CodexRuntimeLifecycle {
           if (this.activeLogin?.flow.id === id) {
             this.activeLogin.running = false;
             clearTimeout(this.activeLogin.timer);
+            this.activeLogin.flow = {
+              ...this.activeLogin.flow,
+              status: "failed",
+              reason: conciseError(err),
+            };
+          }
+          failStart(reject, conciseError(err));
+        });
+        void job?.jobReady.catch((err: unknown) => {
+          if (this.activeLogin?.flow.id === id) {
             this.activeLogin.flow = {
               ...this.activeLogin.flow,
               status: "failed",
@@ -343,11 +362,15 @@ export class CodexRuntimeLifecycle {
           ...this.opts.cliArgsPrefix,
           "logout",
         ]);
-        await execFileAsync(invocation.command, invocation.args, {
-          env: childEnv,
-          timeout: this.opts.refreshTimeoutMs,
-          windowsHide: true,
-        });
+        await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+          invocation.command,
+          invocation.args,
+          {
+            env: childEnv,
+            timeout: this.opts.refreshTimeoutMs,
+            windowsHide: true,
+          },
+        );
       } catch (err) {
         log.warn(`Codex logout command failed; removing local auth file: ${conciseError(err)}`);
       }
@@ -373,7 +396,14 @@ export class CodexRuntimeLifecycle {
 
   private stopLogin(active: ActiveLogin, signal: NodeJS.Signals): Promise<void> {
     if (process.platform === "win32" && active.termination) return active.termination;
-    const stopping = terminateChildProcess(active.proc, signal);
+    const stopping =
+      process.platform === "win32"
+        ? (async () => {
+            if (active.proc.exitCode === null && active.proc.signalCode === null)
+              active.proc.kill("SIGKILL");
+            await active.closed;
+          })()
+        : terminateChildProcess(active.proc, signal);
     active.termination = stopping;
     void stopping.then(
       () => {

@@ -26,7 +26,8 @@ import { promisify } from "node:util";
 import {
   createLogger,
   nodeCommandInvocation,
-  terminateChildProcess,
+  spawnWindowsJob,
+  execWindowsJob,
   readPackageVersion,
   type AgentContextAssessment,
   type AgentEvent,
@@ -1244,11 +1245,15 @@ export async function assertSupportedCodexRuntime(opts: {
   let stdout: string;
   try {
     const invocation = nodeCommandInvocation(opts.command, opts.args ?? DEFAULT_CODEX_VERSION_ARGS);
-    const result = await execFileAsync(invocation.command, invocation.args, {
-      env: opts.env,
-      timeout: opts.timeoutMs ?? 10_000,
-      windowsHide: true,
-    });
+    const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+      invocation.command,
+      invocation.args,
+      {
+        env: opts.env,
+        timeout: opts.timeoutMs ?? 10_000,
+        windowsHide: true,
+      },
+    );
     stdout = `${result.stdout}${result.stderr}`;
   } catch (err) {
     const permissionFailure = codexSpawnPermissionFailure(err);
@@ -1358,12 +1363,21 @@ class CodexJsonRpcClient {
   start(): void {
     if (this.proc) return;
     const invocation = nodeCommandInvocation(this.opts.command, this.opts.args);
-    this.proc = spawn(invocation.command, invocation.args, {
-      cwd: this.opts.cwd,
-      env: this.opts.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const job =
+      process.platform === "win32"
+        ? spawnWindowsJob(invocation.command, invocation.args, {
+            cwd: this.opts.cwd,
+            env: this.opts.env,
+          })
+        : null;
+    this.proc =
+      job ??
+      spawn(invocation.command, invocation.args, {
+        cwd: this.opts.cwd,
+        env: this.opts.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
 
     readJsonRpcLines(this.proc.stdout, (line) =>
       markActivity("agent.codex.message", () => this.handleLine(line)),
@@ -1374,17 +1388,23 @@ class CodexJsonRpcClient {
       if (trimmed) this.opts.log.warn(`Codex app-server wrote stderr (${trimmed.length} chars)`);
     });
 
-    this.proc.once("error", (err) => {
+    const startFailed = (err: Error): void => {
+      if (this.exited || this.disposed) return;
       this.exited = true;
       this.rejectAll(
         codexSpawnPermissionFailure(err) ??
           new Error(`Codex app-server failed to start: ${err.message}`),
       );
       this.opts.onExit(null, null);
-    });
+    };
+    this.proc.once("error", startFailed);
+    void job?.jobReady.catch((err: unknown) =>
+      startFailed(err instanceof Error ? err : new Error(String(err))),
+    );
     this.proc.once("exit", (code, sig) => {
+      const alreadyExited = this.exited;
       this.exited = true;
-      if (!this.disposed) {
+      if (!this.disposed && !alreadyExited) {
         this.rejectAll(new Error(`Codex app-server exited (${sig ?? code ?? "unknown"})`));
         this.opts.onExit(code, sig);
       }
@@ -1433,7 +1453,7 @@ class CodexJsonRpcClient {
     if (process.platform === "win32") {
       // The Node CLI wrapper may own a native Codex child holding these pipes.
       const closed = new Promise<void>((resolve) => proc.once("close", () => resolve()));
-      await terminateChildProcess(proc);
+      proc.kill("SIGKILL");
       await closed;
       return;
     }

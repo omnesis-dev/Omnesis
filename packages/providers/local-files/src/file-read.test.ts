@@ -94,7 +94,7 @@ describe("Windows guarded local file reads", () => {
     const originalFstat = fs.fstatSync;
     vi.spyOn(fs, "lstatSync").mockImplementation(((path, opts) => {
       const result = originalLstat(path, opts);
-      if (String(path) !== file.absolutePath) return result;
+      if (result === undefined || String(path) !== file.absolutePath) return result;
       const big = typeof result.ino === "bigint";
       return Object.assign(Object.create(Object.getPrototypeOf(result)), result, {
         dev: big ? 42n : 42,
@@ -340,7 +340,8 @@ test("Windows exact identities distinguish rounded IDs and upgrade legacy cursor
   const originalFstat = fs.fstatSync;
   const originalOpen = fs.openSync;
   const descriptors = new Map<number, string>();
-  const withIdentity = (result: fs.Stats | fs.BigIntStats, path: string) => {
+  const withIdentity = (result: fs.Stats | fs.BigIntStats | undefined, path: string) => {
+    if (result === undefined) return result;
     const ino = identities.get(path);
     if (ino === undefined) return result;
     const big = typeof result.ino === "bigint";

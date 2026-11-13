@@ -35,7 +35,12 @@ import {
   parseCodexCliVersion,
   type CodexRuntimeCommandInfo,
 } from "@omnesis/agent";
-import { codexPaths, nodeCommandInvocation, resolveNpmInvocation } from "@omnesis/core";
+import {
+  codexPaths,
+  execWindowsJob,
+  nodeCommandInvocation,
+  resolveNpmInvocation,
+} from "@omnesis/core";
 import { CODEX_RUNTIME_LOCK } from "./codex-runtime-lock.js";
 import { buildNpmEnv } from "./codex-npm.js";
 
@@ -556,14 +561,18 @@ async function runCommand(
   opts: { cwd?: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal },
 ): Promise<CodexInstallCommandResult> {
   const invocation = nodeCommandInvocation(command, args);
-  const result = await execFileAsync(invocation.command, invocation.args, {
-    cwd: opts.cwd,
-    env: opts.env,
-    timeout: opts.timeoutMs,
-    maxBuffer: MAX_COMMAND_OUTPUT,
-    windowsHide: true,
-    signal: opts.signal,
-  });
+  const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+    invocation.command,
+    invocation.args,
+    {
+      cwd: opts.cwd,
+      env: opts.env,
+      timeout: opts.timeoutMs,
+      maxBuffer: MAX_COMMAND_OUTPUT,
+      windowsHide: true,
+      signal: opts.signal,
+    },
+  );
   return { stdout: String(result.stdout), stderr: String(result.stderr) };
 }
 

@@ -196,43 +196,54 @@ describe("fake Codex log framing", () => {
 });
 
 describe("Codex JavaScript executable portability", () => {
-  it("disposes the app-server behind a JavaScript wrapper before returning", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-wrapper-"));
-    const command = join(dir, "codex wrapper.mjs");
-    const logPath = join(dir, "events.jsonl");
-    writeFileSync(
-      command,
-      `#!/usr/bin/env node
+  it.each(process.platform === "win32" ? [false, true] : [false])(
+    "disposes the app-server behind a JavaScript wrapper (wrapperExits=%s)",
+    async (wrapperExits) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-wrapper-"));
+      const command = join(dir, "codex wrapper.mjs");
+      const logPath = join(dir, "events.jsonl");
+      const wrapperPidPath = join(dir, "wrapper.pid");
+      writeFileSync(
+        command,
+        `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+if (!process.argv.includes('--version')) writeFileSync(${JSON.stringify(wrapperPidPath)}, String(process.pid));
 const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...process.argv.slice(2)], { stdio: 'inherit' });
 process.on('SIGTERM', () => child.kill('SIGTERM'));
 child.on('exit', (code) => process.exit(code ?? 1));
+if (${wrapperExits} && !process.argv.includes('--version')) child.once('spawn', () => { child.unref(); process.exit(0); });
 `,
-      { mode: 0o700 },
-    );
-    const runtime = new CodexAppServerRuntime({
-      command,
-      codexHome: join(dir, "home"),
-      env: { ...process.env, OMNESIS_FAKE_CODEX_LOG: logPath },
-    });
-    let childPid: number | undefined;
-    try {
-      await runtime.listModels();
-      childPid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
-      await runtime.dispose();
-      expect(() => process.kill(childPid!, 0)).toThrow();
-    } finally {
-      await runtime.dispose();
-      if (childPid !== undefined) {
-        try {
-          process.kill(childPid, "SIGKILL");
-        } catch {
-          /* already exited */
+        { mode: 0o700 },
+      );
+      const runtime = new CodexAppServerRuntime({
+        command,
+        codexHome: join(dir, "home"),
+        env: { ...process.env, OMNESIS_FAKE_CODEX_LOG: logPath },
+      });
+      let childPid: number | undefined;
+      try {
+        await runtime.listModels();
+        childPid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+        if (wrapperExits) {
+          const wrapperPid = Number(readFileSync(wrapperPidPath, "utf8"));
+          await vi.waitFor(() => expect(() => process.kill(wrapperPid, 0)).toThrow());
         }
+        await runtime.dispose();
+        expect(() => process.kill(childPid!, 0)).toThrow();
+      } finally {
+        await runtime.dispose();
+        if (childPid !== undefined) {
+          try {
+            process.kill(childPid, "SIGKILL");
+          } catch {
+            /* already exited */
+          }
+        }
+        rmSync(dir, { recursive: true, force: true });
       }
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("probes and starts a JavaScript app-server entry without a shell wrapper", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-js-"));

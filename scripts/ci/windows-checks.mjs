@@ -27,6 +27,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/core/src/node-command.test.ts",
   "packages/core/src/npm-command.test.ts",
   "packages/core/src/windows-job.test.ts",
+  "packages/core/src/windows-job-stream.test.ts",
   "packages/core/src/parent-shutdown.test.ts",
   "packages/core/src/windows-process-tree.test.ts",
   "packages/core/src/child-termination.test.ts",

@@ -1217,14 +1217,23 @@ resolves npm's JavaScript CLI beside Node or a PATH installation without
 executing a Windows batch shim. Pass argument arrays throughout; do not enable
 a shell to make a CLI entry executable.
 
-An owned Windows wrapper can start native descendants. Explicit shutdown uses
-`terminateChildProcess` and awaits its process closure; stopping only the wrapper
-leaves descendants running. `killWindowsProcessTree` owns the bounded `taskkill`
-command through completion and must run while the root is alive. It cannot
-recover a tree after the root has already exited and is not crash containment.
+An owned Windows wrapper can exit while native descendants retain its pipes.
+Long-lived CLI streams use `spawnWindowsJob`: the kernel assigns the target to a
+kill-on-close job during creation, and its retained helper stays alive until all
+members exit. Configuration precedes raw stdin, and `jobReady` distinguishes
+native creation errors from target exit codes. Bounded probes use `execWindowsJob`
+so timeouts, cancellation and output limits stop the entire job and await closure.
+`runWindowsJob` adds buffered output and a publication gate before target start.
+POSIX paths preserve their native process behavior.
+
+`terminateChildProcess` remains available for an already-running Windows root;
+its `taskkill` tree request requires that root to remain alive and provides no
+crash containment. New owned executable launches use kernel jobs instead.
 
 - CLI invocation: `packages/core/src/node-command.ts`
-- Explicit child shutdown: `packages/core/src/child-termination.ts`
+- Kernel ownership and binary streams: `packages/core/src/windows-job.ts`
+- Bounded probes: `packages/core/src/windows-job-exec.ts`
+- Existing-child shutdown: `packages/core/src/child-termination.ts`
 
 Spawned gateways accept graceful shutdown through an inherited Node parent IPC
 channel, using the same coordinator as SIGINT/SIGTERM. Standalone processes add
