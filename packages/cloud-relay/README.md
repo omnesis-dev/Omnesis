@@ -428,9 +428,29 @@ Setting it up on Google's side:
 4. In the Admin console, assign that service account the Groups Reader admin
    role. No domain-wide delegation is needed.
 
-Migrating an existing
-Google-only gateway requires proof of its exact current TLS key and certificate;
-for a custom domain, first update its TXT value to the new owner account ID.
+Moving a gateway that a Google identity registered before Omnesis accounts to an
+owner key requires proof of its exact current TLS key and certificate and, like
+any first enrollment, an invitation: one from the relay operator, or the one the
+sign-up policy grants when its owner connects it to an account. For a custom
+domain, first update its TXT value to the new owner account ID.
+
+### Routes from before Omnesis accounts
+
+The relay first let a Google sign-in alone exchange an ID token for a relay
+session (`POST /_relay/v1/login`), register a gateway under that Google identity
+(`POST /_relay/v2/gateway`), and later move that gateway to an owner key without
+an invitation. None of these passes the sign-up policy, and the sign-in accepts
+any configured Google audience without a nonce the relay issued, so a relay
+answers them with 404. Current sign-up, account linking, owner-key enrollment and
+renewal, tunnels, discovery and ACME do not use them.
+
+`OMNESIS_CLOUD_RELAY_LEGACY_ROUTES=1` turns them back on for a relay that still
+serves Google-era clients: `omnesis cloud google-login` and `register-gateway`, a
+gateway that renews its routing session with Google credentials instead of an
+owner key, and Google-only device pairing from earlier releases, which current
+apps use only where account sign-in is not configured. Even then a sign-in takes no account slot; only
+registering a gateway does. Account rows that no registration completed are
+dropped whenever the relay opens its database, returning their capacity.
 
 To enable optional Google discovery, configure the dedicated gateway OAuth
 client, a private `OMNESIS_CLOUD_RELAY_GOOGLE_CREDENTIALS_FILE`, and the ordinary

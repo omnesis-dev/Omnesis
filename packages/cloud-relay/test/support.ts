@@ -56,6 +56,8 @@ export async function fixture(extra: Partial<CloudRelayOptions> = {}) {
     sessions,
     identity: localIdentityProvider(key, "127.0.0.1"),
     gatewayIdentity: localIdentityProvider(key, "127.0.0.1"),
+    // `login` signs in through the pre-account route; a test of current flows turns it off.
+    legacyRoutes: true,
     ...extra,
   });
   const url = await listen(relay.server);

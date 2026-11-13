@@ -81,7 +81,11 @@ describe("local daemon and credential files", () => {
       },
     ]) {
       const { accepted, ...settings } = configuration;
-      const daemon = await startRelayDaemon({ ...env, ...settings });
+      const daemon = await startRelayDaemon({
+        ...env,
+        ...settings,
+        OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: "1",
+      });
       try {
         for (const audience of [...accepted, "fictional-untrusted-client"]) {
           const response = await fetch(`${daemon.url}/_relay/v1/login`, {
@@ -369,7 +373,10 @@ describe("local daemon and credential files", () => {
     }
   });
   test("runs a loopback daemon, exchanges signed mock identity, and saves private credentials atomically", async () => {
-    const env = await daemonEnv();
+    const env: NodeJS.ProcessEnv = {
+      ...(await daemonEnv()),
+      OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: "1",
+    };
     const relay = await startRelayDaemon(env);
     try {
       expect(await (await fetch(`${relay.url}/healthz`)).json()).toEqual({ ok: true, protocol: 2 });
@@ -468,20 +475,32 @@ describe("local daemon and credential files", () => {
     ).rejects.toThrow("never both");
     const withoutMock = { ...env };
     delete withoutMock.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE;
-    const keyOnly = await startRelayDaemon(withoutMock);
-    try {
-      expect(
-        (
-          await fetch(`${keyOnly.url}/_relay/v1/login`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: "{}",
-          })
-        ).status,
-      ).toBe(503);
-    } finally {
-      await keyOnly.close();
+    for (const [legacy, status] of [
+      [undefined, 404],
+      ["0", 404],
+      ["1", 503],
+    ] as const) {
+      const keyOnly = await startRelayDaemon({
+        ...withoutMock,
+        OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: legacy,
+      });
+      try {
+        expect(
+          (
+            await fetch(`${keyOnly.url}/_relay/v1/login`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: "{}",
+            })
+          ).status,
+        ).toBe(status);
+      } finally {
+        await keyOnly.close();
+      }
     }
+    await expect(
+      startRelayDaemon({ ...withoutMock, OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: "yes" }),
+    ).rejects.toThrow();
     const google = await runRelayCommand("serve", {
       ...withoutMock,
       OMNESIS_CLOUD_RELAY_GOOGLE_CLIENT_ID: "fictional-client",

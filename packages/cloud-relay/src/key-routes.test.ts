@@ -150,7 +150,7 @@ const googleIdentity = {
 };
 test("optional Google aliases discover the same key-owned gateway but never authorize owner metadata, tunnel control or data", async () => {
   const verify = vi.fn(async () => googleIdentity);
-  const f = await setup({ identity: { verify }, gatewayIdentity: { verify } });
+  const f = await setup({ identity: { verify }, gatewayIdentity: { verify }, legacyRoutes: true });
   try {
     await f.invite();
     const owner = await registerGatewayKey(f.options);
@@ -283,46 +283,100 @@ test("Google-link handles disabled providers, strict bodies and stale gateway id
   }
 });
 
-test("exact legacy TLS ownership migrates once, closes the legacy control and cannot be reclaimed with that TLS key", async () => {
-  const f = await setup();
-  const legacy = await f.sessions.issue(googleIdentity);
-  const certificate = await readFile(f.options.certificateFile, "utf8");
-  try {
-    f.accounts.registerAccount(legacy.accountId);
-    f.accounts.registerBinding(legacy.accountId, {
-      gatewayId: f.options.gatewayId.toUpperCase(),
-      publicOrigin: f.options.publicOrigin,
-      certificate,
-      identityToken: "old-Google-proof",
-    });
-    const socket = new WebSocket(f.url.replace("http:", "ws:") + "/_relay/v1/tunnel", {
-      headers: {
-        authorization: `Bearer ${legacy.token}`,
-        "x-omnesis-tunnel-protocol": "2",
-        "x-omnesis-gateway-id": f.options.gatewayId.toUpperCase(),
-      },
-    });
-    await new Promise<void>((resolve, reject) => {
-      socket.once("message", () => resolve());
-      socket.once("error", reject);
-    });
-    const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
-    const owner = await registerGatewayKey(f.options);
-    await closed;
-    expect(f.accounts.resolveAccount(legacy.accountId)).toBe(owner.accountId);
-    expect((await f.request("/_relay/v2/gateway", "GET", legacy.token)).status).toBe(200);
-    await expect(
-      registerGatewayKey({ ...f.options, sessionFile: join(directory, "attacker.json") }),
-    ).rejects.toThrow("refused");
-    expect(f.accounts.gatewayBinding(owner.accountId)).toMatchObject({ certificate });
-    const { TunnelBroker } = await import("./tunnels.js");
-    const broker = new TunnelBroker();
-    broker.closeAccount("not-connected");
-    broker.close();
-  } finally {
-    await f.close();
-  }
-});
+for (const legacyRoutes of [false, true])
+  test(`pre-account routes are ${legacyRoutes ? "kept on request" : "off by default"}, and a bare Google sign-in takes no account slot or gateway ID`, async () => {
+    const verify = vi.fn(async (token: string) => ({ ...googleIdentity, subject: token }));
+    const f = await setup({ identity: { verify }, gatewayIdentity: { verify }, legacyRoutes });
+    const upgrade = (token: string) =>
+      new Promise<number>((resolve, reject) => {
+        const socket = new WebSocket(f.url.replace("http:", "ws:") + "/_relay/v1/tunnel", {
+          headers: {
+            authorization: `Bearer ${token}`,
+            "x-omnesis-tunnel-protocol": "2",
+            "x-omnesis-gateway-id": f.options.gatewayId,
+          },
+        });
+        socket.once("unexpected-response", (_req, response) => {
+          resolve(response.statusCode!);
+          response.resume();
+          socket.terminate();
+        });
+        socket.once("open", () => {
+          socket.close();
+          reject(new Error("A bare sign-in opened a gateway tunnel"));
+        });
+        socket.once("error", () => {});
+      });
+    try {
+      // The relay's single slot outlasts any number of sign-ins.
+      for (const subject of ["fictional-first", "fictional-second", "fictional-third"])
+        expect(
+          (await f.request("/_relay/v1/login", "POST", undefined, { idToken: subject })).status,
+        ).toBe(legacyRoutes ? 200 : 404);
+      expect(f.accounts.snapshot().accounts).toBe(0);
+      const signedIn = await f.sessions.issue(googleIdentity);
+      expect((await f.request("/_relay/v2/gateway", "POST", signedIn.token, {})).status).toBe(
+        legacyRoutes ? 400 : 404,
+      );
+      // Nor can it claim the ID a real gateway will register under.
+      expect(await upgrade(signedIn.token)).toBe(401);
+      expect(f.accounts.ownerForGateway(f.options.gatewayId)).toBeUndefined();
+      expect(f.accounts.snapshot().accounts).toBe(0);
+      await f.invite();
+      const owner = await registerGatewayKey(f.options);
+      expect(f.accounts.snapshot().accounts).toBe(1);
+      expect((await f.request("/_relay/v2/gateway", "GET", owner.token)).status).toBe(200);
+    } finally {
+      await f.close();
+    }
+  });
+
+for (const legacyRoutes of [false, true])
+  test(`exact legacy TLS ownership migrates once ${legacyRoutes ? "without" : "only with"} an invitation, closes the legacy control and cannot be reclaimed with that TLS key`, async () => {
+    const f = await setup({ legacyRoutes });
+    const legacy = await f.sessions.issue(googleIdentity);
+    const certificate = await readFile(f.options.certificateFile, "utf8");
+    try {
+      f.accounts.registerBinding(legacy.accountId, {
+        gatewayId: f.options.gatewayId.toUpperCase(),
+        publicOrigin: f.options.publicOrigin,
+        certificate,
+        identityToken: "old-Google-proof",
+      });
+      const socket = new WebSocket(f.url.replace("http:", "ws:") + "/_relay/v1/tunnel", {
+        headers: {
+          authorization: `Bearer ${legacy.token}`,
+          "x-omnesis-tunnel-protocol": "2",
+          "x-omnesis-gateway-id": f.options.gatewayId.toUpperCase(),
+        },
+      });
+      await new Promise<void>((resolve, reject) => {
+        socket.once("message", () => resolve());
+        socket.once("error", reject);
+      });
+      const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+      if (!legacyRoutes) {
+        // A Google-registered binding never passed the sign-up policy; its TLS key alone is not one.
+        await expect(registerGatewayKey(f.options)).rejects.toThrow("refused");
+        expect(f.accounts.accountForHostname("gateway.example.test")).toBe(legacy.accountId);
+        await f.invite();
+      }
+      const owner = await registerGatewayKey(f.options);
+      await closed;
+      expect(f.accounts.resolveAccount(legacy.accountId)).toBe(owner.accountId);
+      expect((await f.request("/_relay/v2/gateway", "GET", legacy.token)).status).toBe(200);
+      await expect(
+        registerGatewayKey({ ...f.options, sessionFile: join(directory, "attacker.json") }),
+      ).rejects.toThrow("refused");
+      expect(f.accounts.gatewayBinding(owner.accountId)).toMatchObject({ certificate });
+      const { TunnelBroker } = await import("./tunnels.js");
+      const broker = new TunnelBroker();
+      broker.closeAccount("not-connected");
+      broker.close();
+    } finally {
+      await f.close();
+    }
+  });
 
 test("synthetic recipient derivation rejects unbound, Unix and public listeners and canonicalizes IPv6", async () => {
   const f = await setup({ controlOrigin: undefined, allowLoopbackEnrollment: true });

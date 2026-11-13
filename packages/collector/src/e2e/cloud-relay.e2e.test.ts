@@ -181,7 +181,7 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
           body: "{}",
         })
       ).status,
-    ).toBe(503);
+    ).toBe(404);
     adapter = createRelayClientProxy({
       gatewayUrl: publicOrigin,
       gatewayCa: gatewayCertificate,

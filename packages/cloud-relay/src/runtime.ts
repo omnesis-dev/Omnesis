@@ -107,6 +107,8 @@ const envSchema = z.object({
   OMNESIS_CLOUD_RELAY_TUNNEL_ORIGIN: z.string().min(1).optional(),
   /** `tunnel`: connections that bypass the proxy get the gateway tunnel and nothing else. */
   OMNESIS_CLOUD_RELAY_DIRECT_ROUTES: z.enum(["all", "tunnel"]).optional(),
+  /** `1` keeps the routes from before Omnesis accounts for Google-era clients; see the README. */
+  OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: z.enum(["0", "1"]).optional(),
 });
 
 export async function startRelayDaemon(
@@ -296,6 +298,7 @@ export async function startRelayDaemon(
       publicDataPort: config.OMNESIS_CLOUD_RELAY_PUBLIC_DATA_PORT,
       proxyProtocolPeers,
       cdn,
+      legacyRoutes: config.OMNESIS_CLOUD_RELAY_LEGACY_ROUTES === "1",
       loginLimits: {
         maxConcurrent: config.OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_LOGINS,
         maxPerMinute: config.OMNESIS_CLOUD_RELAY_MAX_LOGINS_PER_MINUTE,

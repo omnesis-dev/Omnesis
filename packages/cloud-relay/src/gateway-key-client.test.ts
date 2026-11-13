@@ -124,7 +124,7 @@ test("a Google-free relay registers both key proofs, stores only public metadata
           body: "{}",
         })
       ).status,
-    ).toBe(503);
+    ).toBe(404);
     const directory = await fetch(`${f.options.relayUrl}/_relay/v2/gateway`, {
       headers: { authorization: `Bearer ${session.token}` },
     });

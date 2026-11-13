@@ -329,7 +329,7 @@ describe("gateway directory boundary", () => {
         expect(await rawStatus(route, headers)).toBe(401);
       const ws = await openWs(`${f.url}/_relay/v1/tunnel`, {
         authorization: `Bearer ${f.session.token}`,
-        "x-omnesis-gateway-id": randomUUID(),
+        "x-omnesis-gateway-id": f.register(),
         "x-omnesis-tunnel-protocol": "2",
       });
       ws.terminate();
