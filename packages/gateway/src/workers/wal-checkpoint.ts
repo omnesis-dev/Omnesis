@@ -28,14 +28,25 @@
  * longer one makes the attempt give up, and the next waits a backoff that
  * doubles while readers keep it off, so a scan of a minute costs the writer a
  * few percent of its time, and a rewind follows soon after the scan ends.
- * `journal_size_limit` (set on the connection) then truncates the rewound
- * file. A checkpoint that throws (an I/O error, a full disk) backs off the
- * same way instead of retrying after every op.
+ * A checkpoint that throws (an I/O error, a full disk) backs off the same way
+ * instead of retrying after every op.
  *
- * Every mode used here copies frames and rewrites the wal-index header in
- * place. None truncates or resizes `-shm`, and none is TRUNCATE.
+ * A rewind leaves the file at its largest size, which after a long reader can
+ * be hundreds of MiB. SQLite's `journal_size_limit` cuts the file back in the
+ * first commit after a rewind, as one `ftruncate` that frees every block past
+ * the limit: hundreds of milliseconds for a few hundred MiB, charged to
+ * whichever write comes next, a user's included. So the writer's connection
+ * sets no limit, and the checkpointer cuts the file itself between ops, at
+ * most `cutSliceBytes` per step, until it is back to `sizeLimitBytes`. A cut
+ * never reaches the frames the WAL holds: only frames up to its last one are
+ * ever read, which is the same bound SQLite's own cut keeps, and between ops
+ * no commit is appending one.
+ *
+ * Every checkpoint mode used here copies frames and rewrites the wal-index
+ * header in place. None truncates or resizes `-shm`, and none is TRUNCATE.
  */
 
+import { statSync, truncateSync } from "node:fs";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 
@@ -55,12 +66,19 @@ export interface WalCheckpointPolicy {
   restartRetryMaxMs: number;
   /** The connection's `busy_timeout` outside a rewind, ms. */
   busyTimeoutMs: number;
+  /** WAL file size a rewound WAL is cut back to, bytes. */
+  sizeLimitBytes: number;
+  /** The most one step cuts from the end of the WAL file, bytes. */
+  cutSliceBytes: number;
 }
+
+/** Bytes the WAL file is cut back to after a rewind. */
+export const WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
 
 /**
  * About 8 MiB of 4 KiB pages per checkpoint, tens of milliseconds encrypted;
- * a rewind once the WAL holds about 64 MiB, the size `journal_size_limit`
- * truncates it back to.
+ * a rewind once the WAL holds about 64 MiB, the size it is then cut back to,
+ * 16 MiB per step.
  */
 export const DEFAULT_WAL_CHECKPOINT_POLICY: WalCheckpointPolicy = {
   pendingFrames: 2_000,
@@ -69,25 +87,28 @@ export const DEFAULT_WAL_CHECKPOINT_POLICY: WalCheckpointPolicy = {
   restartRetryMinMs: 250,
   restartRetryMaxMs: 5_000,
   busyTimeoutMs: 5_000,
+  sizeLimitBytes: WAL_SIZE_LIMIT_BYTES,
+  cutSliceBytes: 16 * 1024 * 1024,
 };
 
-/** Bytes the WAL file is truncated to after a rewind. */
-export const WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
-
 export interface WalCheckpointRun {
-  mode: "PASSIVE" | "RESTART";
+  /** The checkpoint mode run, or `CUT` for a step that shortened the file. */
+  mode: "PASSIVE" | "RESTART" | "CUT";
   /**
    * `copied`: frames were copied and the WAL was not rewound, including a
    * rewind whose own copy spent its whole wait. `rewound`: the next commit
-   * starts the WAL over. `deferred`: readers kept the rewind off.
+   * starts the WAL over. `deferred`: readers kept the rewind off. `cut`: the
+   * file was shortened by `cutBytes`.
    */
-  outcome: "copied" | "rewound" | "deferred";
+  outcome: "copied" | "rewound" | "deferred" | "cut";
   /** Frames in the WAL when the run ended; 0 once rewound. */
   log: number;
   /** Frames copied into the database when the run ended; 0 once rewound. */
   checkpointed: number;
   /** Frames a rewind let go of. */
   rewoundFrames?: number;
+  /** Bytes a cut removed from the end of the WAL file. */
+  cutBytes?: number;
   ms: number;
 }
 
@@ -98,12 +119,20 @@ interface CheckpointRow {
 }
 
 const RESTART_POLL_MS = 2;
+/** The WAL file's header, before its first frame. */
+const WAL_HEADER_BYTES = 32;
+/** Each frame's header, before its page. */
+const WAL_FRAME_HEADER_BYTES = 24;
 
 export class WalCheckpointer {
   private readonly probe: Database.Statement<[], CheckpointRow>;
   private readonly passive: Database.Statement<[], CheckpointRow>;
   private readonly restart: Database.Statement<[], CheckpointRow>;
   private readonly sleepCell = new Int32Array(new SharedArrayBuffer(4));
+  private readonly walPath: string;
+  private readonly frameBytes: number;
+  /** Set until the file is back to its size limit; a WAL may start long. */
+  private cutPending = true;
   private nextRestartMs = Number.NEGATIVE_INFINITY;
   private restartRetryMs = 0;
   private nextAttemptMs = Number.NEGATIVE_INFINITY;
@@ -117,13 +146,16 @@ export class WalCheckpointer {
     this.probe = db.prepare("PRAGMA wal_checkpoint(NOOP)");
     this.passive = db.prepare("PRAGMA wal_checkpoint(PASSIVE)");
     this.restart = db.prepare("PRAGMA wal_checkpoint(RESTART)");
+    this.walPath = `${db.name}-wal`;
+    this.frameBytes = (db.pragma("page_size", { simple: true }) as number) + WAL_FRAME_HEADER_BYTES;
   }
 
   /**
-   * Between ops: copy once `minPending` frames wait (the policy's
-   * `pendingFrames` by default), rewind once the WAL is long. Returns what
-   * ran, or null when nothing did. A database not in WAL mode reports no
-   * frames, so nothing runs. After a throw, calls return null until the
+   * Between ops, one of: rewind once the WAL is long, copy once `minPending`
+   * frames wait (the policy's `pendingFrames` by default), or else cut a
+   * rewound WAL's file back toward its size limit. Returns what ran, or null
+   * when nothing did. A database not in WAL mode reports no frames and has no
+   * WAL file, so nothing runs. After a throw, calls return null until the
    * backoff has passed.
    */
   maintain(minPending = this.policy.pendingFrames): WalCheckpointRun | null {
@@ -142,22 +174,55 @@ export class WalCheckpointer {
 
   private runOnce(minPending: number, startedMs: number): WalCheckpointRun | null {
     const state = this.probe.get()!;
-    if (state.log <= 0) return null;
     if (state.log >= this.policy.restartFrames && startedMs >= this.nextRestartMs) {
       let run: WalCheckpointRun | undefined;
       try {
         run = this.rewind(startedMs);
         return run;
       } finally {
+        if (run?.outcome === "rewound") this.cutPending = true;
         if (run?.outcome !== "copied") {
           this.restartRetryMs = run?.outcome === "rewound" ? 0 : this.backoff(this.restartRetryMs);
           this.nextRestartMs = this.now() + this.restartRetryMs;
         }
       }
     }
-    if (state.log - state.checkpointed < Math.max(1, minPending)) return null;
-    const row = this.passive.get()!;
-    return this.result("PASSIVE", "copied", row, startedMs);
+    if (state.log > 0 && state.log - state.checkpointed >= Math.max(1, minPending)) {
+      const row = this.passive.get()!;
+      return this.result("PASSIVE", "copied", row, startedMs);
+    }
+    return this.cutPending ? this.cut(state, startedMs) : null;
+  }
+
+  /**
+   * Shorten the WAL file by at most `cutSliceBytes`, never below the size
+   * limit or the end of the last frame the WAL holds. Until the commit after
+   * a rewind starts the WAL over, that last frame is still the old one, so
+   * nothing is cut.
+   */
+  private cut(state: CheckpointRow, startedMs: number): WalCheckpointRun | null {
+    let size: number;
+    try {
+      size = statSync(this.walPath).size;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      size = 0;
+    }
+    if (size <= this.policy.sizeLimitBytes) {
+      this.cutPending = false;
+      return null;
+    }
+    const floor = Math.max(
+      this.policy.sizeLimitBytes,
+      WAL_HEADER_BYTES + Math.max(0, state.log) * this.frameBytes,
+    );
+    if (size <= floor) return null;
+    const target = Math.max(floor, size - this.policy.cutSliceBytes);
+    truncateSync(this.walPath, target);
+    return {
+      ...this.result("CUT", "cut", state, startedMs),
+      cutBytes: size - target,
+    };
   }
 
   private backoff(previousMs: number): number {

@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
-import { DEFAULT_WAL_CHECKPOINT_POLICY, WAL_SIZE_LIMIT_BYTES } from "./wal-checkpoint.js";
+import { DEFAULT_WAL_CHECKPOINT_POLICY } from "./wal-checkpoint.js";
 import { openWriteConn } from "./writer-connection.js";
 
 const opened: Database.Database[] = [];
@@ -94,7 +94,7 @@ describe("openWriteConn", () => {
     const pragma = (name: string) => writer.pragma(name, { simple: true });
     expect(pragma("journal_mode")).toBe("wal");
     expect(pragma("wal_autocheckpoint")).toBe(0);
-    expect(pragma("journal_size_limit")).toBe(WAL_SIZE_LIMIT_BYTES);
+    expect(pragma("journal_size_limit")).toBe(-1);
     expect(pragma("checkpoint_fullfsync")).toBe(1);
     expect(pragma("synchronous")).toBe(2);
     expect(pragma("mmap_size")).toBe(0);

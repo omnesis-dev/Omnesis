@@ -122,6 +122,9 @@ export interface WalCheckpointMetrics {
   /** Rewind attempts that gave up because readers stayed on the WAL. */
   deferredRewinds: number;
   maxDeferredStreak: number;
+  /** Steps that cut the WAL file back after a rewind, and the bytes they cut. */
+  cuts: number;
+  cutBytes: number;
   /** WAL frames after the latest checkpoint, null before the first. */
   lastLogFrames: number | null;
   /** Of those, frames copied into the database. */
@@ -134,6 +137,8 @@ export interface WalCheckpointMetrics {
     rewinds: number;
     deferredRewinds: number;
     maxDeferredStreak: number;
+    cuts: number;
+    cutBytes: number;
   };
 }
 
