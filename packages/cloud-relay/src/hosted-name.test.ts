@@ -12,7 +12,7 @@ import { RelayAccounts } from "./accounts.js";
 import { AcmeDnsChallenges } from "./acme-dns.js";
 import { gatewayKeyAccount, KEY_BINDING_PREFIX } from "./gateway-key-auth.js";
 import { registerGatewayKey } from "./gateway-key-client.js";
-import { hostedGatewayHostname, hostedGatewayLabel } from "./hosted-name.js";
+import { hostedGatewayHostname, hostedGatewayLabel, hostedGatewayOrigin } from "./hosted-name.js";
 import { verifyRoutingHostname } from "./hostname-proof.js";
 import { RelaySessions } from "./identity.js";
 import { createCloudRelay } from "./server.js";
@@ -265,4 +265,37 @@ test("the relay refuses a colliding gateway its name, a session, a certificate c
     await relay.close();
     accounts.close();
   }
+});
+
+test("a gateway vouches for its own origin only when the saved one is its hosted name", () => {
+  const gatewayId = randomUUID(),
+    relayOrigin = `https://${DOMAIN}`,
+    own = `https://${hostedGatewayHostname(gatewayId, DOMAIN)}`;
+  expect(hostedGatewayOrigin({ relayOrigin, gatewayId, publicOrigin: own })).toBe(own);
+  // The port follows the saved origin, and the relay's own port is not part of its domain.
+  expect(
+    hostedGatewayOrigin({
+      relayOrigin: `https://${DOMAIN}:8443`,
+      gatewayId: gatewayId.toUpperCase(),
+      publicOrigin: `${own}:9443`,
+    }),
+  ).toBe(`${own}:9443`);
+  // A name the relay chose instead is never this gateway's origin: its own host, another
+  // gateway's name, a name outside its domain, plain HTTP, or a custom domain.
+  for (const publicOrigin of [
+    relayOrigin,
+    `https://${hostedGatewayHostname(randomUUID(), DOMAIN)}`,
+    `https://${hostedGatewayHostname(gatewayId, "relay.other.test")}`,
+    own.replace("https:", "http:"),
+    `${own}/portal`,
+    "https://gateway.example.test",
+    undefined,
+  ])
+    expect(hostedGatewayOrigin({ relayOrigin, gatewayId, publicOrigin })).toBeUndefined();
+  expect(hostedGatewayOrigin({ relayOrigin: undefined, gatewayId, publicOrigin: own })).toBe(
+    undefined,
+  );
+  expect(
+    hostedGatewayOrigin({ relayOrigin, gatewayId: "not-a-uuid", publicOrigin: own }),
+  ).toBeUndefined();
 });

@@ -21,19 +21,43 @@ import { CloudRelayManagementFailure } from "./management.js";
 import { EnrollmentChallenges } from "./enrollment-challenges.js";
 import {
   GatewaySignInVerifier,
+  confirmedSignInSchema,
   trustedSignInSchema,
+  type ConfirmedSignIn,
   type SignInPin,
   type TrustedSignIn,
   type TrustedSignInSource,
   type VerifiedSignIn,
 } from "./gateway-sign-in-proof.js";
-import { googleBrowserTrust, type GoogleBrowserTrust } from "./google-browser-trust.js";
+import {
+  googleBrowserTrust,
+  OFFICIAL_ANDROID_PASSKEY_ORIGINS,
+  type GoogleBrowserTrust,
+} from "./google-browser-trust.js";
+import { hostedGatewayOrigin } from "./hosted-name.js";
 import { signInDigest, type SignInProof } from "./device-enrollment.js";
 import type { EnrollmentPolicy, GatewayEnrollment } from "./google-pairing.js";
 import type { GatewayBrowserCallbackOrigins } from "./gateway-browser-callback.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const MAX_TRUSTED_SIGN_INS = 32;
+const MAX_CONFIRMED_SIGN_INS = 32;
+/**
+ * Sign-ins the owner confirmed on this gateway (`ConfirmedSignIn`). A top-level field on purpose:
+ * a version that predates it drops it when it saves, so going back a version fails closed to
+ * "nothing confirmed" instead of refusing the whole link, and an entry this version can't read
+ * (a later version's) is dropped the same way.
+ */
+const confirmedSignInsSchema = z
+  .array(z.unknown())
+  .max(MAX_CONFIRMED_SIGN_INS)
+  .default([])
+  .transform((entries) =>
+    entries.flatMap((entry) => {
+      const parsed = confirmedSignInSchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  );
 const MAX_DECLINED_PASSKEYS = 256;
 const MAX_WITHDRAWN_SIGN_INS = 256;
 /** A sign-in that arrives untrusted fetches the account's evidence at most this often. */
@@ -82,6 +106,7 @@ const recordSchema = z.discriminatedUnion("linked", [
     binding: bindingSchema,
     accountId: digest,
     trustedSignIns: z.array(trustedSignInSchema).max(MAX_TRUSTED_SIGN_INS).default([]),
+    confirmedSignIns: confirmedSignInsSchema,
     ...choices,
   }),
   z.object({
@@ -144,12 +169,17 @@ export class GatewayAccountLink {
     this.verifier = new GatewaySignInVerifier({
       google: () => (options.google ?? (() => this.googleIdentity()))(),
       relayOrigin: () => bindingOrigin(installationRelayUrl(options.env())!).origin,
-      passkeyOrigins: () =>
-        (options.env().OMNESIS_CLOUD_RELAY_PASSKEY_ANDROID_ORIGINS ?? "")
-          .split(",")
-          .map((value) => value.trim())
-          .filter((value) => /^android:apk-key-hash:[A-Za-z0-9_-]{43}$/.test(value)),
+      passkeyOrigins: () => [
+        ...new Set([
+          ...OFFICIAL_ANDROID_PASSKEY_ORIGINS,
+          ...(options.env().OMNESIS_CLOUD_RELAY_PASSKEY_ANDROID_ORIGINS ?? "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter((value) => /^android:apk-key-hash:[A-Za-z0-9_-]{43}$/.test(value)),
+        ]),
+      ],
       trusted: () => (this.record?.linked ? this.record.trustedSignIns : []),
+      nativeGoogleClients: () => googleBrowserTrust(this.options.googleTrust?.()).nativeClients!,
     });
   }
   private readonly verifier: GatewaySignInVerifier;
@@ -206,6 +236,26 @@ export class GatewayAccountLink {
   }
   accountModeActivated(): boolean {
     return this.activated;
+  }
+  /**
+   * This gateway's own origin under the relay's domain, derived from its id and the relay it was
+   * installed with, never from what the relay said. Undefined when the saved public origin is
+   * anything else (a custom domain, or a name the relay chose): then no passkey of the account
+   * can be confirmed or used on the gateway's page.
+   */
+  gatewayOrigin(): string | undefined {
+    const env = this.options.env();
+    return hostedGatewayOrigin({
+      relayOrigin: installationRelayUrl(env),
+      gatewayId: env.OMNESIS_CLOUD_RELAY_GATEWAY_ID,
+      publicOrigin: env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN ?? env.OMNESIS_PUBLIC_BASE_URL,
+    });
+  }
+  /** Sign-ins the owner confirmed on this gateway, for the linked account only. */
+  confirmedSignIns(): readonly ConfirmedSignIn[] {
+    return this.record?.linked && this.verifiedAccountId() !== undefined
+      ? this.record.confirmedSignIns
+      : [];
   }
   verifiedAccountId(): string | undefined {
     return this.bound &&
@@ -343,6 +393,7 @@ export class GatewayAccountLink {
       {
         ...record,
         trustedSignIns: record.trustedSignIns.filter((value) => value.id !== id),
+        confirmedSignIns: record.confirmedSignIns.filter((value) => value.id !== id),
         declinedPasskeys: decline(record.declinedPasskeys, passkey),
         declinedGoogle: decline(record.declinedGoogle, google),
       },
@@ -380,6 +431,8 @@ export class GatewayAccountLink {
     return {
       accountId,
       trustedSignIns,
+      // A new link is confirmed afresh on this gateway's page, whichever account it names.
+      confirmedSignIns: [],
       ...(kept.enrollmentPolicy ? { enrollmentPolicy: kept.enrollmentPolicy } : {}),
       declinedPasskeys: same ? kept.declinedPasskeys.filter((id) => !ids.has(id)) : [],
       declinedGoogle: same ? kept.declinedGoogle.filter((id) => !ids.has(id)) : [],

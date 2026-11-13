@@ -105,6 +105,50 @@ nonces (`passkeyEndorsementNonce`, `passkeyCountersignatureNonce`) and are
 verified only as such. The native apps sign enrollment nonces only, so they are
 unaffected.
 
+### Passkeys on the gateway's own page
+
+A sign-in made on a relay page is only as trustworthy as the page: script the
+relay serves chooses the WebAuthn challenge (and the iOS app presents the same
+`https://relay…` origin). A `gateway-passkey` assertion is made on the gateway's
+own page instead, which the relay can't serve without a certificate for the
+gateway's name:
+
+```json
+{ "type": "gateway-passkey", "challenge": "…", "credential": { "…": "WebAuthn assertion" } }
+```
+
+- `challenge` is a one-use value the gateway issued (`GatewayPasskeyCeremonies`,
+  three minutes) and spends on first use. The proof carries no salt and no time.
+- The WebAuthn challenge is `gatewayPasskeyChallenge(purpose, origin, challenge,
+binding)`. Purposes: `device-enrollment` (the request's `/devices/account/challenge`
+  value, bound to its `enrollmentNonce`), `approve-request`
+  (`gatewayPasskeyApprovalBinding`), `pin-passkey` (`gatewayPasskeyPinBinding`) and
+  `step-up` (`gatewayPasskeyStepUpBinding`). The test file holds the vectors.
+- The RP ID is the relay's host, as for every account passkey. The expected
+  origin is the gateway's own: `https://` and its hosted name
+  (`hostedGatewayHostname(gatewayId, relay host)`), which the gateway derives
+  itself. If the public origin the gateway saved is anything else (a custom
+  domain, or a name the relay returned), the gateway has no origin to vouch for
+  and only the official Android app can make one. The Android app's
+  `android:apk-key-hash:` origins are compiled into the gateway
+  (`OFFICIAL_ANDROID_PASSKEY_ORIGINS`), like the Google clients.
+- A response made in a cross-site frame (`crossOrigin` or `topOrigin` in its
+  client data) is refused, for every passkey proof.
+- The public key is one the gateway chose: never one that arrives with the proof.
+  The signature counter is kept with the key and must move forward when it is
+  not zero.
+
+A sign-in the owner confirmed in such a ceremony is a confirmed sign-in
+(`confirmedSignIns` in `account-link.json`, `ConfirmedSignIn`), recorded with
+how it was confirmed (`via`). The field is top-level so that a gateway version
+that predates it drops it on save, which leaves nothing confirmed; an entry the
+running version can't read is dropped the same way. A new link starts with none.
+
+A Google token counts as made in an official app (`native-google`) only when an
+official native client presented it: the Android release or test client as
+`azp` of a token for the web client, or the iOS client as both `aud` and `azp`.
+A token without `azp`, or from a client of unknown type, never does.
+
 ## Comparison code
 
 A held request shows a code on the new device and on the device that approves
