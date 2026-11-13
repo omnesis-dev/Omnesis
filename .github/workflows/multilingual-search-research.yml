@@ -1,0 +1,631 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+
+name: multilingual-search-research
+run-name: "Multilingual lexical research · ${{ github.sha }}"
+
+on:
+  push:
+    branches: [multilingual-full-text-search]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: multilingual-search-research-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  CARGO_BUILD_JOBS: "2"
+
+jobs:
+  native:
+    name: Native tokenizer · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install workspace dependencies
+        run: scripts/ci/npm-ci.sh
+      - name: Select pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-target" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cargo-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-target
+          key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+      - name: Rust analysis and FFI contract tests
+        run: cargo test --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+      - name: Build supported FTS5 extension
+        shell: bash
+        run: |
+          sh evals/multilingual-search/prototype/build-native.sh node_modules/better-sqlite3/deps/sqlite3
+          extension=so
+          if [ "$RUNNER_OS" = macOS ]; then extension=dylib; fi
+          echo "MULTILINGUAL_EXTENSION=$CARGO_TARGET_DIR/release/libomnesis_multilingual.$extension" >> "$GITHUB_ENV"
+      - name: Compiled memory ranker regression tests
+        run: exec node scripts/run-check.mjs unit packages/gateway/src/search/lexical-index-terms.test.ts packages/gateway/src/search/lexical-index.test.ts
+      - name: Encrypted locale, phrase, restriction, worker and migration integration
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/multilingual-reports"
+          node --import tsx evals/multilingual-search/integration/verify.mjs \
+            "$MULTILINGUAL_EXTENSION" "$RUNNER_TEMP/multilingual-reports/native.json"
+      - name: Thirty-language token, original-offset and query roundtrip parity
+        shell: bash
+        run: |
+          node --import tsx evals/multilingual-search/integration/parity.mjs \
+            "$MULTILINGUAL_EXTENSION" "$RUNNER_TEMP/multilingual-reports/parity.json"
+      - name: Concurrent read, update, activation and rollback snapshots
+        shell: bash
+        run: |
+          node --import tsx evals/multilingual-search/integration/concurrency.mjs \
+            "$MULTILINGUAL_EXTENSION" "$RUNNER_TEMP/multilingual-reports/concurrency.json"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Bounded Unicode stress, word-pair trace and shipping footprint
+        shell: bash
+        run: |
+          extension=so
+          if [ "$RUNNER_OS" = macOS ]; then extension=dylib; fi
+          python3 evals/multilingual-search/prototype/robust-input.py \
+            --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --output "$RUNNER_TEMP/multilingual-reports/robust-input.json"
+          python3 evals/multilingual-search/prototype/lexical-trace.py \
+            --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --korean-probe "$CARGO_TARGET_DIR/release/omnesis-korean-mode-probe" \
+            --output "$RUNNER_TEMP/multilingual-reports/lexical-trace.json"
+          python3 evals/multilingual-search/prototype/footprint.py \
+            --cli "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --core "$CARGO_TARGET_DIR/release/libomnesis_multilingual_core.$extension" \
+            --adapter "$MULTILINGUAL_EXTENSION" \
+            --output "$RUNNER_TEMP/multilingual-reports/footprint.json"
+          node --test evals/multilingual-search/integration/jsonl.test.mjs
+          python3 -m unittest discover -s evals/multilingual-search/prototype -p test_footprint.py -v
+      - name: Compare raw Snowball implementations on pinned upstream vocabularies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 -m pip install snowballstemmer==3.1.1
+          python3 evals/multilingual-search/prototype/snowball-parity.py \
+            --probe "$CARGO_TARGET_DIR/release/omnesis-snowball-probe" \
+            --cache "$RUNNER_TEMP/snowball-vocab" \
+            --data-commit 019921c3a41c2b70063ee3feb215a00c8e594597 \
+            --output "$RUNNER_TEMP/multilingual-reports/snowball-parity.json"
+      - name: Preserve measured results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-native-${{ runner.os }}-${{ github.sha }}
+          path: ${{ runner.temp }}/multilingual-reports/*.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve Cargo work after diagnostic failures
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-target
+          key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+
+  public-retrieval:
+    name: Independent held-out retrieval · 17 languages
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:public]')
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/free-runner-disk
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Select pinned tools
+        shell: bash
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          python3 -m pip install snowballstemmer==3.1.1
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-public-target" >> "$GITHUB_ENV"
+          echo "MULTILINGUAL_TOOLS_DIR=$RUNNER_TEMP/multilingual-tools" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: public-cargo-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-public-target
+          key: multilingual-public-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/**/Cargo.lock') }}
+      - name: Benchmark metric and matching contract tests
+        run: python3 -m unittest discover -s evals/multilingual-search/extended-public -p 'test_*.py'
+      - name: Build one fixed set of analyzer binaries
+        run: sh evals/multilingual-search/integration/build-probes.sh
+      - name: Download and audit frozen public inputs
+        run: python3 evals/multilingual-search/extended-public/prepare.py --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Run the frozen matrix and strict aggregate
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/extended-public/run-matrix.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" \
+            --cache-dir "$RUNNER_TEMP/multilingual-cache" \
+            --output-dir "$RUNNER_TEMP/multilingual-public-reports" \
+            --icu4x "$MULTILINGUAL_TOOLS_DIR/icu4x" \
+            --charabia-full "$MULTILINGUAL_TOOLS_DIR/charabia-full" \
+            --charabia-lean "$MULTILINGUAL_TOOLS_DIR/charabia-lean" \
+            --prototype "$MULTILINGUAL_TOOLS_DIR/prototype" --workers 3 --prune-successful-cache
+      - name: Preserve metrics and audit manifests
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-public-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-public-reports/*.json
+            ${{ runner.temp }}/multilingual-public-reports/*.log
+            ${{ runner.temp }}/multilingual-data/*/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve expensive analyzer builds
+        if: always() && steps.public-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-public-target
+          key: multilingual-public-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/**/Cargo.lock') }}
+
+  mixed-language-diagnostics:
+    name: Personal-document precision and language routing
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Select pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-diagnostic-target" >> "$GITHUB_ENV"
+      - name: Frozen-fixture and routing-contract tests
+        run: |
+          python3 evals/multilingual-search/diagnostics/run.py --validate-only
+          python3 -m unittest discover -s evals/multilingual-search/diagnostics -p 'test_*.py'
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: diagnostic-cargo-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-diagnostic-target
+          key: multilingual-diagnostics-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock', 'evals/multilingual-search/fasttext-probe/Cargo.lock') }}
+      - name: Build analyzer and detector
+        run: |
+          cargo build --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+          cargo build --release --locked --manifest-path evals/multilingual-search/fasttext-probe/Cargo.toml
+      - name: Prepare checksum-pinned model and official detector reference
+        run: python3 evals/multilingual-search/integration/prepare-detector.py --output-dir "$RUNNER_TEMP/multilingual-detector"
+      - name: Run all predefined development and held-out policies
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/multilingual-diagnostic-reports"
+          python3 evals/multilingual-search/diagnostics/run.py \
+            --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --detector "$CARGO_TARGET_DIR/release/omnesis-fasttext-probe" \
+            --detector-model "$RUNNER_TEMP/multilingual-detector/lid.176.ftz" \
+            --official-detector "$RUNNER_TEMP/multilingual-detector/fastText-0.9.2/fasttext" \
+            --cache-dir "$RUNNER_TEMP/multilingual-diagnostic-cache" \
+            --split all --output "$RUNNER_TEMP/multilingual-diagnostic-reports/diagnostics.json"
+      - name: Annotation-only audit and candidate-universe controlled language lanes
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/diagnostics/audit.py \
+            --input "$RUNNER_TEMP/multilingual-diagnostic-reports/diagnostics.json" \
+            --corrected-output "$RUNNER_TEMP/multilingual-diagnostic-reports/annotation-audit.json" \
+            --fair-output "$RUNNER_TEMP/multilingual-diagnostic-reports/fair-lanes.json" \
+            --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --detector "$CARGO_TARGET_DIR/release/omnesis-fasttext-probe" \
+            --detector-model "$RUNNER_TEMP/multilingual-detector/lid.176.ftz" \
+            --official-detector "$RUNNER_TEMP/multilingual-detector/fastText-0.9.2/fasttext" \
+            --cache-dir "$RUNNER_TEMP/multilingual-diagnostic-cache"
+      - name: Preserve aggregate metrics and detector provenance
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-diagnostic-reports/*.json
+            ${{ runner.temp }}/multilingual-detector/provenance.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve analyzer build work
+        if: always() && steps.diagnostic-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-diagnostic-target
+          key: multilingual-diagnostics-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock', 'evals/multilingual-search/fasttext-probe/Cargo.lock') }}
+
+  operational-scale:
+    name: Mixed-language encrypted operations · 10k / 100k / 250k
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:operations]')
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/free-runner-disk
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Prepare pinned tools
+        shell: bash
+        run: |
+          scripts/ci/npm-ci.sh
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-operational-target" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: operational-cargo-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-operational-target
+          key: multilingual-operations-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+      - name: Build native FTS5 adapter
+        run: sh evals/multilingual-search/prototype/build-native.sh node_modules/better-sqlite3/deps/sqlite3
+      - name: Audit and prepare source pools
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/extended-public/prepare.py --data-dir "$RUNNER_TEMP/multilingual-data"
+          python3 evals/multilingual-search/integration/prepare-scale.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" \
+            --output-dir "$RUNNER_TEMP/multilingual-workload" --count 250000
+      - name: Measure isolated processes, cold reopen, memory, writes and restrictions
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/multilingual-operational-reports"
+          node --import tsx evals/multilingual-search/integration/scale.mjs \
+            --corpus "$RUNNER_TEMP/multilingual-workload/documents.jsonl" \
+            --queries "$RUNNER_TEMP/multilingual-workload/queries.json" \
+            --extension "$CARGO_TARGET_DIR/release/libomnesis_multilingual.so" \
+            --counts 10000,100000,250000 --repeats 7 \
+            --output "$RUNNER_TEMP/multilingual-operational-reports/scale.json"
+      - name: Preserve resource measurements and source identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-operations-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-operational-reports/*.json
+            ${{ runner.temp }}/multilingual-workload/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve analyzer build work
+        if: always() && steps.operational-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-operational-target
+          key: multilingual-operations-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+
+  supplemental-retrieval:
+    name: Frozen supplements · stopwords and dictionary word forms
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:supplemental]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/free-runner-disk
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Prepare pinned tools
+        shell: bash
+        run: |
+          python3 -m pip install snowballstemmer==3.1.1 simplemma==2.0.0
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-target" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-target
+          key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+      - name: Build fixed analyzer and default Lucene stopword export
+        shell: bash
+        run: |
+          cargo build --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+          python3 evals/multilingual-search/lucene-probe/run-batch.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" --cache-dir "$RUNNER_TEMP/lucene-cache" \
+            --output-dir "$RUNNER_TEMP/lucene-export-reports" \
+            --export-stopwords "$RUNNER_TEMP/default-stopwords.json" --stopwords-only
+          python3 -m unittest discover -s evals/multilingual-search/extended-public -p 'test_*.py'
+      - name: Download and audit identical frozen public inputs
+        run: python3 evals/multilingual-search/extended-public/prepare.py --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Run separately frozen supplemental protocols
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/extended-public/run-matrix.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" \
+            --cache-dir "$RUNNER_TEMP/multilingual-cache" \
+            --output-dir "$RUNNER_TEMP/multilingual-supplement-reports" \
+            --prototype "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --workers 3 --supplemental-only --stopwords "$RUNNER_TEMP/default-stopwords.json" \
+            --simplemma --prune-successful-cache
+      - name: Preserve supplemental metrics and manifests
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-supplement-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-supplement-reports/*.json
+            ${{ runner.temp }}/multilingual-supplement-reports/*.log
+            ${{ runner.temp }}/multilingual-data/*/manifest.json
+            ${{ runner.temp }}/default-stopwords.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  lucene-reference:
+    name: Mature Lucene reference · identical 17-language pools
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:reference]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/free-runner-disk
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Compile and test the actual graph-aware reference
+        shell: bash
+        run: |
+          classpath=$(python3 evals/multilingual-search/lucene-probe/prepare-batch.py --cache-dir "$RUNNER_TEMP/lucene-cache/jars")
+          LUCENE_TEST_CLASSPATH="$classpath" python3 -m unittest discover -s evals/multilingual-search/lucene-probe -p 'test_batch.py'
+      - name: Download and audit identical frozen public inputs
+        run: python3 evals/multilingual-search/extended-public/prepare.py --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Run default language analyzers and BM25 reference
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/lucene-probe/run-batch.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" --cache-dir "$RUNNER_TEMP/lucene-cache" \
+            --output-dir "$RUNNER_TEMP/multilingual-reference-reports" --workers 2
+      - name: Preserve reference metrics and manifests
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-reference-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-reference-reports/*.json
+            ${{ runner.temp }}/multilingual-data/*/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  korean-compound-followup:
+    name: Korean dictionary compound follow-up · 10k / 100k
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:compound]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Prepare pinned tools
+        shell: bash
+        run: |
+          python3 -m pip install snowballstemmer==3.1.1
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-target" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-target
+          key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+      - name: Build and test the separately fingerprinted compound challenger
+        shell: bash
+        run: |
+          cargo test --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml --bin omnesis-korean-compound-probe
+          cargo build --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+      - name: Actual analyzer and SQLite compound controls
+        shell: bash
+        run: |
+          KOREAN_COMPOUND_CONTROLS="$RUNNER_TEMP/multilingual-compound-reports/controls.json" \
+          KOREAN_BASELINE_PROBE="$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+          KOREAN_COMPOUND_PROBE="$CARGO_TARGET_DIR/release/omnesis-korean-compound-probe" \
+          python3 -m unittest discover -s evals/multilingual-search/compound-public -p 'test_*.py'
+      - name: Download identical frozen Korean inputs
+        run: python3 evals/multilingual-search/extended-public/prepare.py --languages ko --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Compare all fixed matching policies on the same held-out queries
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/multilingual-compound-reports"
+          python3 evals/multilingual-search/compound-public/compare.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" --cache-dir "$RUNNER_TEMP/multilingual-compound-cache" \
+            --baseline "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --challenger "$CARGO_TARGET_DIR/release/omnesis-korean-compound-probe" \
+            --output "$RUNNER_TEMP/multilingual-compound-reports/compound.json"
+      - name: Preserve exploratory compound metrics and source identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-compound-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-compound-reports/*.json
+            ${{ runner.temp }}/multilingual-data/ko/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  exposure-and-reference-audit:
+    name: Unseen-query sensitivity and matched report audits
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:audit]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: multilingual-public-79034fc908babbb734c660692c5598a06881ad3a
+          run-id: 43491515066
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/primary-input
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: multilingual-supplement-55ea48108be7443d96cee809322b69955bb27357
+          run-id: 43497176797
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/supplement-input
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: multilingual-reference-446c90f0d161ca39b53a4824be00b846454b1d67
+          run-id: 43501297183
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/reference-input
+      - name: Verify identical native baselines and audit every unseen-query comparison
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/multilingual-audit-reports"
+          cp evals/multilingual-search/exposure-audit/cohort.json "$RUNNER_TEMP/exposure-cohort.json"
+          python3 -m unittest discover -s evals/multilingual-search/exposure-audit -p 'test_*.py'
+          python3 evals/multilingual-search/extended-public/verify-baseline.py \
+            --primary-dir "$RUNNER_TEMP/primary-input/multilingual-public-reports" \
+            --supplemental-dir "$RUNNER_TEMP/supplement-input/multilingual-supplement-reports" \
+            --output "$RUNNER_TEMP/multilingual-audit-reports/baseline-identity.json"
+          python3 evals/multilingual-search/exposure-audit/sensitivity.py \
+            --audit "$RUNNER_TEMP/exposure-cohort.json" \
+            --reports-dir "$RUNNER_TEMP/primary-input/multilingual-public-reports" \
+            --output "$RUNNER_TEMP/multilingual-audit-reports/unseen-query-sensitivity.json"
+          python3 evals/multilingual-search/postprocess/join-reference.py \
+            --primary-dir "$RUNNER_TEMP/primary-input/multilingual-public-reports" \
+            --reference-dir "$RUNNER_TEMP/reference-input/multilingual-reference-reports" \
+            --output "$RUNNER_TEMP/multilingual-audit-reports/reference-paired.json"
+      - name: Preserve audited postprocessing outputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-postprocessing-${{ github.sha }}
+          path: ${{ runner.temp }}/multilingual-audit-reports/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  language-profile-followup:
+    name: French and Persian boundary / normalization ablations
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:profiles]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Prepare pinned tools
+        shell: bash
+        run: |
+          python3 -m pip install snowballstemmer==3.1.1
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-target" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-target
+          key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+      - name: Compile and check independent profile controls
+        shell: bash
+        run: |
+          cargo test --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml \
+            --bin omnesis-boundary-profile-probe --bin omnesis-language-norm-probe
+          cargo build --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+          mkdir -p "$RUNNER_TEMP/multilingual-profile-reports"
+          python3 evals/multilingual-search/prototype/normalization-controls.py \
+            --baseline "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --boundary "$CARGO_TARGET_DIR/release/omnesis-boundary-profile-probe" \
+            --language-norm "$CARGO_TARGET_DIR/release/omnesis-language-norm-probe" \
+            --output "$RUNNER_TEMP/multilingual-profile-reports/controls.json"
+      - name: Prepare identical frozen French and Persian pools
+        run: python3 evals/multilingual-search/extended-public/prepare.py --languages fr fa --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Compare unchanged exact evidence and fixed broad matching policies
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/profile-public/compare.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" --cache-dir "$RUNNER_TEMP/multilingual-profile-cache" \
+            --baseline "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --boundary "$CARGO_TARGET_DIR/release/omnesis-boundary-profile-probe" \
+            --normalization "$CARGO_TARGET_DIR/release/omnesis-language-norm-probe" \
+            --output "$RUNNER_TEMP/multilingual-profile-reports/profiles.json"
+      - name: Preserve exploratory profile outputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-profiles-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-profile-reports/*.json
+            ${{ runner.temp }}/multilingual-data/*/manifest.json
+          if-no-files-found: warn
+          retention-days: 14

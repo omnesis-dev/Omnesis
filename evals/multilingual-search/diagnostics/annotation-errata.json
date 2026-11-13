@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "scope": "Post-result annotation errata; original frozen fixtures and ranked IDs remain unchanged.",
+  "fixtureCanonicalSha256": "88c87f0555f91d5a40acf3d57e50921224dd9ce2e836b1afbca1d1012be6cbae",
+  "changes": [
+    {
+      "split": "heldout",
+      "queryId": "ho-distinctive-tone",
+      "addCompatible": ["ho-vi-garden", "ho-vi-garden-copy"],
+      "evidence": "Các chậu dễ vỡ được đặt dưới bàn.",
+      "rationale": "The query bàn means table. Both garden records explicitly place pots under the table, so these literal table mentions cannot be treated as spelling-collision negatives. They are compatible alternatives; the required target and its grade are retained."
+    },
+    {
+      "split": "development",
+      "queryId": "dv-mixed-es-minority",
+      "addCompatible": ["dv-potato"],
+      "evidence": "La papa se guarda en un cajón fresco.",
+      "rationale": "The query cajón identifies a drawer/storage detail. The potato record explicitly mentions the same storage word, so it is a compatible lexical alternative rather than a confirmed negative. The required mixed-language target and its grade are retained."
+    }
+  ],
+  "unresolvedAmbiguity": "The generic verb revisar can reasonably retrieve other Spanish records that explicitly mention reviewing something. Authored target recall remains useful, but the original negative judgments for this generic query are uncertain. No automatic relabeling is applied."
+}

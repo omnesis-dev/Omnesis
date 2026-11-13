@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+
+[package]
+name = "omnesis-charabia-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "omnesis_charabia"
+crate-type = ["cdylib"]
+
+[features]
+default = ["full"]
+full = ["charabia/default"]
+lean = [
+    "charabia/korean",
+    "charabia/hebrew",
+    "charabia/thai",
+    "charabia/greek",
+    "charabia/khmer",
+    "charabia/vietnamese",
+    "charabia/swedish-recomposition",
+    "charabia/turkish",
+    "charabia/german-segmentation",
+    "charabia/chinese-normalization",
+]
+
+[dependencies]
+charabia = { version = "=0.10.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+whatlang = "=0.18.0"
+
+[workspace]

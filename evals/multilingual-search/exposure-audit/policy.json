@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "status": "Predeclared exposure-integrity audit before inspecting original primary17 retrieval outputs. Supplemental/reference aggregate outcomes have already been observed; the exclusion rule uses only prior query identity/text, never retrieval outcomes.",
+  "priorDataset": {"id": "hotchpotch/NanoMIRACL", "revision": "6e98c995a5be54ef41d3a016a2f30314dd625619", "scope": "All 3403 initially evaluated queries across18 languages, not only individually inspected failures."},
+  "newCohort": "All frozen selected NoMIRACL development/test relevant and no-known-positive queries in17 eligible languages; original query lists and full experiment remain unchanged.",
+  "identity": "Query IDs are namespaced by language; different-language numeric IDs are not assumed to identify the same query.",
+  "normalization": "UnicodeNFKC, Unicodecasefold, collapse Unicodewhitespace, trim. Also report punctuation-insensitive NFKC/casefold letter/digit/mark streams with punctuation/symbols mapped to spaces.",
+  "sensitivityExclusion": "If any exposure exists, separately exclude every new query matching ANY prior NanoMIRACL query by same-language ID OR globally equal normalized text OR globally equal punctuation-insensitive normalized text. This metadata-only rule is identical across every method, corpus size and outcome. Do not resample or modify original corpora/queries.",
+  "report": "Per-language, split and relevance-subset counts; exact-ID/literal/normalized/punctuation-insensitive overlap IDs and source/text hashes only, never query strings. Hash every source query file and new manifest.",
+  "sensitivityMetrics": "Report each method on exactly the remaining unseen TEST cohort, both per-language and an equal-language macro with each remaining count shown; paired1000-replicate bootstrap conditional on those queries and fixed pools. Languages with zero unseen positive TEST queries have no ranking estimate and are explicitly excluded from the matched-language macro, never assigned zero.",
+  "calibration": "For the unseen-TEST sensitivity, retain original full-DEV fitted thresholds and explicitly label their DEV exposure. Training/development exposure does not turn an unseen TEST query into a seen query. Optional refitting using only unseenDEV is separately labelled and unavailable where a DEV class is empty; never fit or select a threshold on TEST.",
+  "qualification": "This is an exposure sensitivity analysis, not a replacement of the original frozen experiment or proof against semantic paraphrase overlap. Public encyclopedia document overlap is expected and is not query leakage. Report original and sensitivity results together."
+}

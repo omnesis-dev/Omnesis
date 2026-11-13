@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "date": "2026-11-13",
+  "frozenPolicySHA256": "241976bc687be9716539efff7fa22666ad4f4cfeb46c8457ad84f1b1edac6589",
+  "timing": "Dataset-integrity corrections frozen before any extended-public retrieval scores were computed.",
+  "excludedPrimaryLanguages": {
+    "yo": {
+      "reason": "NoMIRACL relevant judgments contain foreign/mismatched document IDs and conflicting extra labels even where IDs collide with genuine Yoruba passages. Filling text or dropping missing IDs cannot safely repair judgments.",
+      "audit": {
+        "officialDevelopmentQueries": 119,
+        "officialDevelopmentJudgments": 1188,
+        "noMiraclDevelopmentRelevantQueries": 283,
+        "noMiraclDevelopmentRelevantJudgments": 4908,
+        "originalDevelopmentQueriesWithIdenticalRawJudgments": 86,
+        "originalDevelopmentQueriesMatchingAfterCorpusIdFiltering": 102,
+        "selectedDevelopmentMissingJudgments": 657,
+        "selectedTestMissingJudgments": 1610,
+        "examplePublicQueryId": "15131#0",
+        "exampleOfficialJudgments": 10,
+        "exampleNoMiraclJudgments": 26
+      },
+      "impact": "Exclude Yoruba from the primary independent held-out macro. Do not infer quality for Yoruba. Official TEST-B qrels are not publicly released separately, and initial NoMIRACL history contains the same defect. No replacement split is silently substituted."
+    }
+  },
+  "canonicalDocumentIds": {
+    "zh": {
+      "rawPattern": "^([0-9]+)#([0-9]+)#01$",
+      "canonicalForm": "article + '#' + decimal integer passage number",
+      "validation": "After this mapping, all 393 NoMIRACL relevant-development query judgment dictionaries equal the pinned official MIRACL development dictionaries exactly. Reject conflicting canonical-ID labels and unknown missing-ID forms.",
+      "affectedAllPublishedJudgments": 95,
+      "uniqueLegacyIds": 85,
+      "textRecovery": "Retain existing judged corpus text when present. Recover missing canonical passage IDs from the pinned official MIRACL corpus docs-0 shard, recording its upstream checksum and individual selected raw/canonical IDs. Preserve every label."
+    }
+  },
+  "officialValidationDataset": {
+    "id": "miracl/miracl",
+    "revision": "5be20db9509754dadad47689368639fcec739c00"
+  },
+  "sources": [
+    "https://huggingface.co/datasets/miracl/nomiracl/tree/ecd08778d0426a5ca28ac99763b0c9ddc2c78e68",
+    "https://huggingface.co/datasets/miracl/miracl/tree/5be20db9509754dadad47689368639fcec739c00",
+    "https://ir-datasets.com/miracl.html#miracl/yo/test-b"
+  ],
+  "developmentCrosscheck": {
+    "scope": "Every NoMIRACL relevant development query in all 17 eligible languages compared against pinned official MIRACL development judgments, before retrieval scores.",
+    "completeEqualityExcept": [
+      {
+        "language": "id",
+        "queryId": "1731",
+        "difference": "One extra explicit-negative NoMIRACL document ID 0; query is not selected by frozen sampling, so no benchmark effect."
+      }
+    ],
+    "strictRule": "Every selected development query must equal official labels. Entire published development dictionaries must match except this single unselected, precisely checked extra-negative entry. Chinese canonicalization applies first."
+  }
+}

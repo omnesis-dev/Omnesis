@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "date": "2026-11-13",
+  "status": "Post-diagnostic exploratory Korean compound hypothesis, frozen before any challenger retrieval scores. Separate from the independent primary17 study; do not merge it into the original nine-method macro.",
+  "hypothesis": "KoDic Compound metadata can expose useful constituent words omitted by the frozen flat stem analysis, while an unchanged exact lane preserves whole-word precision evidence.",
+  "data": {
+    "basePolicySHA256": "241976bc687be9716539efff7fa22666ad4f4cfeb46c8457ad84f1b1edac6589",
+    "amendmentSHA256": "66764acbc9f07e7dd77a40103fee9296b508fbd412c6840b8151da835ee48667",
+    "language": "ko",
+    "sizes": [10000, 100000],
+    "queries": "All identical frozen Korean selected development/test queries and 0/1 judgments. No resampling, exclusions or tuning on these scores. Known Korean language is an oracle hint."
+  },
+  "variants": ["original-native", "compound-metadata"],
+  "compoundRule": "STEM only: expand KoDic Compound entries only when component surfaces concatenate exactly to the original token surface and safe original offsets exist. Emit one flat component sequence; no recursive expansion or arbitrary substring splitting. EXACT remains the frozen precise whole-word analysis. Distinct version/fingerprint and binary/source hashes required.",
+  "methodsPerVariant": ["stem-or", "stem-and", "stem-msm60", "exact-stem-rrf", "exact-tier"],
+  "ranking": {
+    "engine": "Same SQLite FTS5 encoded-token proxy and content/title BM25 weights1/2 as primary",
+    "order": "Score descending then identical deterministic document hash rowid",
+    "or": "Unique analyzed stem tokens are OR clauses; explicitly quoted full input remains a phrase",
+    "and": "Require every unique analyzed stem token; quoted full input remains a phrase",
+    "msm60": "Require ceil(0.6 * unique analyzed stem terms), counted inside the matching cursor before top-k; quoted phrases unchanged",
+    "rrf": "Fuse exact OR and stem OR ranks, k60, input depth1000/lane, output100; never add raw BM25 scores",
+    "exactTier": "Bounded union of exact phrase, exact AND, stem OR candidates; phrase then all-original-terms then remaining stems, with stem rank/document hash ties",
+    "metricsDepth": 100
+  },
+  "checks": "Assert all document/query exact-lane token sequences match between variants before ranking; require distinct stem semantic fingerprints. Fresh synthetic retrieval controls cover issue902 vocabulary, whole 승차권 versus unrelated 승차 and 권 contexts, quoted/nonadjacent phrase negatives, and intact exact-lane whole words. Controls are not additional held-out human judgments.",
+  "analysis": {
+    "metrics": ["nDCG@10", "Recall@100", "MRR@10"],
+    "comparisons": "Each challenger method versus its corresponding original-native method, query paired; no cherry-picked language/query cohorts",
+    "uncertainty": "1000 paired query bootstrap replicates, fixed base-policy seed plus compound/size/method; 95% unadjusted intervals conditional on this sampled Korean corpus",
+    "calibration": "Shared development-only per-method/per-size balanced-accuracy threshold; report separate no-known-positive acceptance, explicit-negative/unjudged top1 and score distributions",
+    "interpretation": "Korean-only post-diagnostic exploratory evidence, not independent confirmation of a globally selected default. Preserve whole-word exact evidence; report gains and regressions together."
+  },
+  "privacy": "Only public query IDs, metrics, hashes, counts and timing metadata in reports. Public corpus/query strings and analysis caches stay outside Git. No changes to original primary drivers, engine defaults or live stores."
+}

@@ -52,7 +52,7 @@ import {
   K1,
   type LexicalIndexData,
 } from "./lexical-index-data.js";
-import { fts5Tokenizer } from "./lexical-tokenizer.js";
+import { fts5Tokenizer, type Fts5Tokenizer } from "./lexical-tokenizer.js";
 
 /**
  * A type-ahead prefix expands to at most this many concrete terms, the most
@@ -84,6 +84,7 @@ export class LexicalIndex implements LexicalRanker {
   constructor(
     readonly data: LexicalIndexData,
     limits: LexicalIndexLimits = {},
+    private readonly tokenizer: (db: Db) => Fts5Tokenizer = fts5Tokenizer,
   ) {
     this.limits = {
       changesBatch: limits.changesBatch ?? CHANGES_BATCH,
@@ -151,8 +152,11 @@ export class LexicalIndex implements LexicalRanker {
   }
 
   /** Build in-process; see {@link buildLexicalIndexData}. */
-  static build(db: Db, opts: { shared?: boolean } = {}): LexicalIndex {
-    return new LexicalIndex(buildLexicalIndexData(db, opts));
+  static build(
+    db: Db,
+    opts: { shared?: boolean; tokenizer?: (db: Db) => Fts5Tokenizer } = {},
+  ): LexicalIndex {
+    return new LexicalIndex(buildLexicalIndexData(db, opts), {}, opts.tokenizer);
   }
 
   rank(
@@ -168,7 +172,7 @@ export class LexicalIndex implements LexicalRanker {
     }
     const words = queryWords(trimmed, opts?.prefixLastToken);
     if (words.length === 0) return [];
-    const tokens = fts5Tokenizer(db).words(words);
+    const tokens = this.tokenizer(db).words(words);
     const prefixWord = opts?.prefixLastToken ? words.length - 1 : -1;
     const phrases: string[] = [];
     for (let i = 0; i < words.length; i++) {
@@ -180,7 +184,7 @@ export class LexicalIndex implements LexicalRanker {
     }
     let prefix = "";
     if (prefixWord >= 0) {
-      prefix = fts5Tokenizer(db).fold(words[prefixWord]);
+      prefix = this.tokenizer(db).fold(words[prefixWord]);
       if (tokens[prefixWord].length > 1) return null;
       // A finished word ("meetings") is indexed under its stem ("meet"), which
       // no completion of the unstemmed text reaches; score the stem as well.
@@ -189,6 +193,18 @@ export class LexicalIndex implements LexicalRanker {
     }
     if (!this.syncChanges(db)) return null;
     return this.score(phrases, prefix, k);
+  }
+
+  /**
+   * Rank an OR of already-analyzed index terms without tokenizing them again.
+   * The caller must use the index's analysis configuration and keep explicit
+   * phrases on a position-aware path. Repeated terms contribute repeatedly,
+   * matching a SQLite OR query containing the same phrases in the same order.
+   * The tokenizer supplied at construction also analyzes change-log deltas.
+   */
+  rankTerms(db: Db, terms: readonly string[], k: number): RankedChunk[] | null {
+    if (!this.syncChanges(db)) return null;
+    return this.score(terms, "", k);
   }
 
   private score(phrases: readonly string[], prefix: string, k: number): RankedChunk[] {
@@ -309,7 +325,7 @@ export class LexicalIndex implements LexicalRanker {
       const rowids = [...new Set(changes.map((c) => c.chunk_rowid))];
       for (const rowid of rowids) this.forget(rowid);
       const rows = fetch.all(JSON.stringify(rowids));
-      for (const chunk of fts5Tokenizer(db).chunks(rows)) this.addToDelta(chunk);
+      for (const chunk of this.tokenizer(db).chunks(rows)) this.addToDelta(chunk);
       live.lastSeq = changes[changes.length - 1].seq;
       const delta = live.delta;
       if (delta.livePostings > maxDeltaPostings) {

@@ -1,0 +1,17 @@
+{
+  "version": "omnesis-language-profiles-v1",
+  "status": "Exploratory follow-up motivated by inspected aggregate French/Persian primary regressions; profile retrieval scores remain uninspected. Outside frozen primary comparison.",
+  "profiles": {
+    "boundary-only": "Within selected frozen-core word spans, use Charabia segmentation followed by NFKC/locale lowercase and Frostem, with no Charabia normalizers.",
+    "language-norm": "Same boundaries, then language-hinted compatible Charabia normalization with lossy=true before Frostem. Lossy normalization is explicitly limited to selected French Latin and Persian Arabic spans."
+  },
+  "selection": "Configured language fr with effective language fr and Latin script, or configured fa with effective fa and Arabic script. Every other token retains its frozen analysis. Original normalized surface, never an already-stemmed text field, is the preprocessing input.",
+  "exact": "Exact-lane tokens remain identical to frozen core in both profiles; each wrapper has a distinct version/fingerprint.",
+  "offsets": "Charabia boundaries refer to the frozen normalized surface. Identity spans map codepoint boundaries directly; changed spans require exact NFKC/locale-case grapheme concatenation and boundary mappings to original UTF8 bytes. Any unsafe or unsupported mapping retains the entire original core token.",
+  "positions": "No stopword removal, colocated alternatives, or deletion of empty stems. Consecutive flat positions; no original-plus-parts graph claim.",
+  "prefix": "Preserve frozen prefix behavior by skipping Frostem on the final resulting token when prefix=true; profile normalization still applies.",
+  "folding": "Request folding must be none; profile language-norm explicitly describes its own selected lossy behavior without enabling global broad folding.",
+  "controls": "French straight/curly apostrophe elision, oe/oe-ligature, NFC/NFD accents, and cote/circumflex contrast; Persian common Arabic/Persian kaf/yeh parity controls, halfspace/spaced/joined forms, optional marks, negation, Persian/Arabic/ASCII digits; unchanged exact lane and unrelated scripts/languages.",
+  "evaluation": "Compare frozen original and both profiles on unchanged French/Persian nested 10000/100000 public pools and existing retrieval policies, with development-only calibration and separate exploratory reports. No query-specific repairs or held-out parameter selection.",
+  "risks": "French accent folding can merge distinct words. Persian halfspace splitting can separate negation and alter phrase/OR precision. Common Arabic kaf/yeh are already normalized by Snowball, so that alone does not explain aggregate regression. These controls establish mechanisms, not attribution of full metric differences."
+}

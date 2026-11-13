@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "status": "Supplemental reference frozen before inspecting extended held-out retrieval scores; separate from the nine primary SQLite policies.",
+  "engine": "Lucene 9.12.3 on Java 17 or newer",
+  "data": "Identical prepared NoMIRACL query sets, integrity amendment, and nested 10000/100000 document pools used by the primary study.",
+  "analysis": "Default language analyzers, including their native stopwords and token graphs; Swahili uses StandardAnalyzer. Configured split languages are oracle hints.",
+  "query": "QueryBuilder SHOULD term queries in body and title, title boost 2; explicitly quoted complete inputs use phrase queries. No tuning on held-out results.",
+  "ranking": "BM25Similarity k1=1.2 b=0.75, default per-field collection statistics and compressed norms; score descending then deterministic document hash order.",
+  "metrics": "Shared judgment-aware nDCG@10, Recall@100, MRR@10 and development-only no-known-positive acceptance calibration. Conditional paired intervals versus the same baseline query IDs.",
+  "qualification": "Default Lucene analyzer plus ranker reference, not a controlled isolated tokenizer comparison or raw-score parity with SQLite. Title boost multiplies a per-field score instead of a column-weighted term frequency; repeated terms follow Lucene QueryBuilder semantics rather than the primary unique-term OR policy.",
+  "stopwordExport": "Read default lexical stopword sets through getDefaultStopSet where available; missing lexical-set APIs are explicitly unsupported, not inferred from POS filters. Exported data stays outside Git."
+}

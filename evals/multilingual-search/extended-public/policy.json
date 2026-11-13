@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "seed": "omnesis-lexical-heldout-v1-2026-11-13",
+  "datasets": {
+    "judgments": {"id": "miracl/nomiracl", "revision": "ecd08778d0426a5ca28ac99763b0c9ddc2c78e68"},
+    "background": {"id": "miracl/miracl-corpus", "revision": "d921ec7e349ce0d28daf30b2da9da5ee698bef0d"}
+  },
+  "languages": ["ar", "bn", "de", "en", "es", "fa", "fi", "fr", "hi", "id", "ja", "ko", "ru", "sw", "te", "th", "yo", "zh"],
+  "samplesPerLanguageAndSubset": {"dev": 100, "test": 250},
+  "subsets": ["relevant", "non_relevant"],
+  "querySelection": "Smallest SHA256(seed|language|split|subset|qid), capped by availability; official dev/test splits remain intact.",
+  "corpusSizes": [10000, 100000],
+  "corpusSelection": "All judged documents for selected dev/test queries, including explicit negatives, plus smallest SHA256(seed|language|docid) background IDs from deterministic hash-ordered official corpus shards; read enough whole shards to cover the largest requested size. Judged passage versions win ID conflicts. Nested backgrounds, identical corpora across methods. This is judgment-augmented bounded-shard sampling, not an official full-corpus MIRACL score.",
+  "methods": ["current-porter-or", "icu-snowball-or", "charabia-full-snowball-or", "lean-icu-snowball-or", "prototype-stem-or", "prototype-stem-and", "prototype-stem-msm60", "prototype-exact-stem-rrf", "prototype-exact-tier"],
+  "analysisLanguage": "Known monolingual benchmark split language for every candidate; this tests lexical analysis, not detection or mixed-language routing.",
+  "ranking": {"engine": "SQLite FTS5 BM25", "titleWeight": 2, "contentWeight": 1, "tieBreak": "document SHA256 ordering via deterministic rowid", "outputDepth": 100, "fusionInputDepth": 1000, "rrfK": 60, "minimumMatchFraction": 0.6},
+  "querySemantics": "Unquoted analyzed terms are unique OR clauses; AND requires all unique clauses; MSM60 requires ceil(0.6 * unique clauses). Quoted full inputs use one phrase. No stopword filtering. Current baseline keeps existing mark-dropping sanitizer. Original lane uses the prototype's segmented NFKC/lowercase surfaces.",
+  "exactTier": "Full original analyzed phrase, then all original terms, then remaining stem-OR; within each tier stem-OR rank then document hash. Union phrase/AND/stem candidates, each at fusion input depth.",
+  "metrics": ["nDCG@10", "Recall@100", "MRR@10"],
+  "primaryComparison": "Each OR candidate versus current-porter-or on relevant test queries, macro averaged across 18 languages; also report each language and query-paired bootstrap intervals. Other modes are predefined secondary comparisons.",
+  "uncertainty": {"pairedBootstrapReplicates": 1000, "confidence": 0.95, "unit": "query within each language; equal-weight language macro; resampling seed is policy seed + metric + comparison + size"},
+  "abstention": {"calibrationSplit": "dev only", "scope": "language, method, and corpus size independently", "objective": "balanced accuracy for relevant versus no-known-positive query subsets", "tieBreak": "lower no-known-positive acceptance, then higher threshold", "score": "top result's negated BM25, RRF score, or lexicographic exact tier plus reciprocal stem rank", "caveat": "No-known-positive queries have no relevant passage among their original judged candidates; added background is unjudged and may contain relevant passages. Apparent false acceptance is not a universal irrelevance claim."},
+  "reportPrivacy": "Commit aggregate metrics, public query IDs, hashes, configuration and timings only. No query or corpus text, local paths, secrets, or machine details.",
+  "freeze": "Written before any extended-public retrieval scores were computed. No parameter selection on held-out test results. Corrections require an explicit policy version and disclosure."
+}
