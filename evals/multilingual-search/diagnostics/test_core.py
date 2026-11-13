@@ -8,7 +8,7 @@ import unittest
 
 from core import (
     Index, document_units, expression, field_texts, pick_language, protected_atom,
-    query_kind, query_languages, rrf, score, script_spans, surface_priority,
+    query_body, query_kind, query_languages, rrf, score, script_spans, surface_priority,
     surface_tokens, surface_words, validate,
     validate_analyzer_response,
 )
@@ -150,6 +150,21 @@ class MetricAndStatisticsTests(unittest.TestCase):
 
 
 class FixtureContractTests(unittest.TestCase):
+    def test_structural_identifier_and_quote_judgments_are_exhaustive(self):
+        fixture = json.loads(Path(__file__).with_name("fixtures.json").read_text())
+        for split in fixture["splits"].values():
+            documents = split["documents"]
+            index = Index(documents, {row["id"]: {key: surface_tokens(value)
+                for key, value in field_texts(row).items()} for row in documents})
+            try:
+                for query in split["queries"]:
+                    if query_kind(query["text"]) in {"literal", "quoted"}:
+                        with self.subTest(query=query["id"]):
+                            matches = index.rank(expression(surface_tokens(query_body(query["text"])), phrase=True), len(documents))
+                            self.assertEqual(set(matches), set(query["relevance"]))
+            finally:
+                index.close()
+
     def test_split_labels_and_references_are_valid(self):
         fixture = json.loads(Path(__file__).with_name("fixtures.json").read_text())
         summary = validate(fixture)

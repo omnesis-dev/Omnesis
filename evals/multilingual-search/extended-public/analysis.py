@@ -98,7 +98,7 @@ def analyze(args, language, family, documents, queries, manifest, policy_hash):
         for line in stream:
             record = json.loads(line)
             if count == 0:
-                engine_metadata = {key: record[key] for key in ('engine', 'version', 'normalization', 'algorithm', 'dependencies', 'fingerprint', 'snowball_commit', 'korean_dictionary_sha256', 'mode', 'segmenter') if key in record}
+                engine_metadata = {key: record[key] for key in ('engine', 'version', 'normalization', 'algorithm', 'dependencies', 'fingerprint', 'snowball_commit', 'korean_dictionary_sha256', 'mode', 'segmenter', 'folding') if key in record}
             elif record.get('fingerprint') != engine_metadata.get('fingerprint'):
                 raise ValueError('Analyzer fingerprint changed within one configured language/lane')
             if 'error' in record:
