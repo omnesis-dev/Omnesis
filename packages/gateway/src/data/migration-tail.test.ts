@@ -82,6 +82,9 @@ const WOUND_BACK = [
   214,
   // 215 persists the Lab choices; windBack drops them before replay.
   215,
+  // 216 adds a profile's source version, dropped by windBack, and a family's
+  // resync cost, on a table windBack drops whole.
+  216,
 ];
 
 let dir: string;
@@ -285,6 +288,7 @@ function undoDeviceEnrollment(db: Db): void {
 }
 
 function windBack(db: Db): void {
+  db.exec("ALTER TABLE source_document_profiles DROP COLUMN output_revision");
   db.exec("DROP TABLE lab_features");
   undoDeviceEnrollment(db);
   db.exec("ALTER TABLE agent_messages DROP COLUMN author_json");
@@ -999,6 +1003,35 @@ describe("an install several versions behind, upgrading", () => {
       expect(
         db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM source_family_meta").get()!.n,
       ).toBe(0);
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+
+  test("a stored profile counts as published without a source version, so any collector replaces it", () => {
+    seedOlderInstall((old) => {
+      old
+        .prepare(
+          "INSERT INTO source_document_profiles (source_type, profile_json, published_at) VALUES (?, ?, ?)",
+        )
+        .run("example-source", JSON.stringify({ documentTypes: ["note"] }), 1000);
+    });
+    const db = upgrade();
+    try {
+      expect(db.prepare("SELECT * FROM source_document_profiles").all()).toEqual([
+        {
+          source_type: "example-source",
+          profile_json: JSON.stringify({ documentTypes: ["note"] }),
+          output_revision: 0,
+          published_at: 1000,
+        },
+      ]);
+      expect(
+        db
+          .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('source_family_meta')")
+          .all()
+          .map((row) => row.name),
+      ).toContain("resync_cost");
     } finally {
       (db as unknown as Database.Database).close();
     }

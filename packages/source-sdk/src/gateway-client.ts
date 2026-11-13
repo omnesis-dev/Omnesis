@@ -179,12 +179,28 @@ export interface SourceSyncMeta {
   family?: SourceFamilyMeta;
 }
 
+/**
+ * One source type's document-event profile as a collector publishes it.
+ *
+ * `outputRevision` is the source version the profile describes. The gateway
+ * keeps the profile of the highest revision it has been sent, so a collector
+ * on an older build cannot replace a newer description with its own. A
+ * publication without one counts as revision 0.
+ */
+export interface DocumentEventProfilePublication {
+  sourceType: string;
+  outputRevision?: number;
+  profile: DocumentEventProfile;
+}
+
 /** See {@link SourceSyncMeta.family}. */
 export interface SourceFamilyMeta {
   icon?: string;
   label?: string;
   bgColor?: string;
   accentColor?: string;
+  /** The definition's `resyncCost` sentence. See `SourceDefinition.resyncCost`. */
+  resyncCost?: string;
 }
 
 /** Generic initial enumeration identity, resumed independently of provider cursor contents. */
@@ -658,9 +674,7 @@ export interface GatewayClient {
    * without the compiler holding any source-specific knowledge. Replaces
    * whatever was previously stored.
    */
-  setDocumentEventProfiles(
-    entries: Array<{ sourceType: string; profile: DocumentEventProfile }>,
-  ): Promise<void>;
+  setDocumentEventProfiles(entries: DocumentEventProfilePublication[]): Promise<void>;
 
   /**
    * Push the union of external widget-vendor origins declared by every KNOWN

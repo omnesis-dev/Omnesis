@@ -151,6 +151,7 @@ import { addSourceAccountDescriptor } from "./migration-172-source-account.js";
 import { addPersonAliasAssertions } from "./migration-173-alias-assertions.js";
 import { namespaceWhatsappLids } from "./migration-174-lid-namespace.js";
 import { addSourceFamilyMeta } from "./migration-175-source-family-meta.js";
+import { addSourceVersionDeclarations } from "./migration-216-source-version-declarations.js";
 import { addDocumentPartitionKey } from "./migration-176-document-partition-key.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
@@ -4993,6 +4994,11 @@ export const MIGRATIONS: readonly Migration[] = [
       db.exec(`INSERT OR IGNORE INTO lab_features (id, enabled)
         VALUES ('tasks', EXISTS(SELECT 1 FROM open_loops UNION ALL SELECT 1 FROM open_loop_ledger LIMIT 1));`);
     },
+  },
+  {
+    version: 216,
+    description: "record the source version of each published profile and a source's resync cost",
+    up: addSourceVersionDeclarations,
   },
 ];
 

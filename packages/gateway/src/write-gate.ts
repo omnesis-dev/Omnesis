@@ -1668,7 +1668,7 @@ export interface WriteGate extends KnowledgeWriteGate {
   upsertSourceDocumentProfiles(
     entries: readonly SourceDocumentProfileEntry[],
     publishedAt: number,
-  ): Promise<{ stored: number }>;
+  ): Promise<{ stored: number; skipped: number }>;
 
   // ── briefs (the Brain run queue) ─────────────────────────────
   /** Enqueue one Brain run (or fold into a pending row by dedupe key). */

@@ -22,7 +22,11 @@ import {
   TEMPORAL_MODALITIES,
   TEMPORAL_STATUSES,
 } from "@omnesis/core";
-import { DOCUMENT_PROJECTION_FIELDS, type DocumentProjectionField } from "@omnesis/source-sdk";
+import {
+  DOCUMENT_PROJECTION_FIELDS,
+  RESYNC_COST_MAX_LENGTH,
+  type DocumentProjectionField,
+} from "@omnesis/source-sdk";
 import { z } from "zod";
 import { SOURCE_ICON_MAX_INPUT_CHARS } from "../../icon-limits.js";
 import { nonEmptyString, urlPatternSpecSchema } from "./common.js";
@@ -297,6 +301,7 @@ const sourceFamilyMetaSchema = z.object({
   label: z.string().optional(),
   bgColor: z.string().optional(),
   accentColor: z.string().optional(),
+  resyncCost: z.string().max(RESYNC_COST_MAX_LENGTH).optional(),
 });
 
 // POST /sync-state/:sourceId

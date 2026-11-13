@@ -161,6 +161,14 @@ export function mergeContractDeclarations(
   };
 }
 
+/**
+ * The source version a declaration resolves to: its `outputRevision`, or 1
+ * when it declares none.
+ */
+export function resolvedOutputRevision(declaration: SourceContractDeclaration | undefined): number {
+  return declaration?.outputRevision ?? 1;
+}
+
 /** Why a host refused to load a source package. */
 export interface ContractIncompatibility {
   kind: "api-too-new" | "api-too-old" | "missing-capability";

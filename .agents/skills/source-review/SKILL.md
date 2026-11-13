@@ -591,6 +591,15 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   agent's `count_messages` counts each document as one message.
 - Two sources must be distinguishable by profile alone (the catalog hides
   source names).
+- A field marked `filter`, and a `personFilter`, are optional. When declared:
+  the field holds the source's own ids, never display names; a
+  `string-array` field writes `[]` for "none" and omits the field for "not
+  known", and a `string` field is used only where every record has a value;
+  `minVersion` is the `outputRevision` of the change that started writing
+  the field (0 only if records stored before versions were recorded carry
+  it), and that change raises `outputRevision`; `scope: "device"` is used
+  exactly when an id only means something on the device that produced it.
+  A parity test proves the normalizer writes what is declared.
 - `documentTemporalProjections` use only the closed field set
   (`$semanticTime`, `scheduledAt`, `dueAt`, `endsAt`, `timeZone`, `status`);
   `temporalProjection` on analytics tables anchors on `$semanticTime` and

@@ -293,6 +293,13 @@
           growing a separate descriptor per variant. See the WhatsApp provider's iPhone/Android
           backup-import fields for a worked example.
         </p>
+        <p>
+          A source whose full re-read is expensive may declare <code>resyncCost</code>: one plain
+          sentence, at most 200 characters, saying what reading the source again from the start
+          costs, such as "This reads about 95,000 messages a day." Only the source knows its rate
+          limits and volumes, so the sentence is its own. It travels to the gateway with the
+          source's name and icon.
+        </p>
 
         <h3 id="accounts-and-discovery">Accounts and discovery</h3>
         <p>
@@ -689,11 +696,13 @@ export default defineSource({
           decode. Test both document and structured sync paths.
         </p>
         <p>
-          <code>outputRevision</code> describes changed output meaning, not cursor shape. It does
-          not trigger reprocessing or a backfill: implement and test any required re-emission
-          separately. Provider contracts contribute their API generation and required capabilities;
-          each child declares its own state. Never migrate one sibling's bookmark using another's
-          decoder.
+          <code>outputRevision</code> describes changed output meaning, not cursor shape. It is the
+          source's own version: an integer that starts at 1, only goes up, and is unrelated to the
+          Omnesis release. Raise it in the change that makes the source write something new on its
+          records. It does not trigger reprocessing or a backfill: implement and test any required
+          re-emission separately. Provider contracts contribute their API generation and required
+          capabilities; each child declares its own state. Never migrate one sibling's bookmark
+          using another's decoder.
         </p>
 
         <h3 id="authentication">Authentication sessions</h3>
@@ -761,6 +770,74 @@ export default defineSource({
           A phone opens <code>appUrl</code> when an installed app handles it and otherwise falls
           back to <code>sourceUrl</code>, so a deep link that works on only one phone platform is
           fine. Both are optional; omit them when no reliable destination exists.
+        </p>
+
+        <h3 id="describing-records">Describing your records</h3>
+        <p>
+          A source may describe its documents once, in <code>documentEventProfile</code>: the
+          <code>documentTypes</code> it emits, the <code>personRoles</code> its normaliser actually
+          writes, and <code>metadataFields</code>, each with a dotted <code>path</code> under
+          <code>metadata</code>, a <code>type</code> (<code>string</code>, <code>number</code>,
+          <code>boolean</code>, or <code>string-array</code>) and a <code>description</code>.
+          Declare only what the source really writes. The collector publishes the description with
+          the source's <code>outputRevision</code>, and the gateway keeps the one with the highest
+          revision, so a collector on an older build cannot replace a newer description.
+        </p>
+        <p>
+          A field that holds the source's own ID for something a record belongs to (a label, a
+          folder, a chat) can also carry <code>filter</code>, which says how records can be matched
+          on it. The source chooses a <code>capability</code> the gateway already has and brings no
+          matching code of its own:
+        </p>
+        <ul>
+          <li>
+            <code>membership</code>: a record belongs to one or more named things. Use a
+            <code>string-array</code> field, where an empty array means "none" and an absent field
+            means "not known".
+          </li>
+          <li>
+            <code>tree</code>: a record sits somewhere in a tree, and matching a node covers what is
+            beneath it. The record carries only its immediate parent's ID.
+          </li>
+        </ul>
+        <p>The rest of the declaration is checked when the source is defined:</p>
+        <ul>
+          <li>
+            <code>minVersion</code>: the first <code>outputRevision</code> whose records carry the
+            field, or <code>0</code> when records stored before versions existed already do. It
+            cannot exceed the source's <code>outputRevision</code>.
+          </li>
+          <li>
+            <code>scope</code>: <code>global</code> when an ID means the same thing on every device,
+            or <code>device</code> when it only means something on the device that produced the
+            record, such as a path. Only a <code>partitioned</code> source may declare
+            <code>device</code>.
+          </li>
+          <li>
+            <code>noun</code>: what one value is called, as <code>{ one, many }</code>.
+            <code>picker</code> is <code>search</code> for a flat list or <code>tree</code>.
+          </li>
+          <li>
+            For a tree, optional <code>levels</code> names each depth, roots first, and
+            <code>inside</code> names what a node contains.
+          </li>
+          <li>
+            <code>listsMembers</code> marks a field whose values each have members, such as a chat.
+          </li>
+        </ul>
+        <p>
+          <code>filter</code> is valid only on <code>string</code> and
+          <code>string-array</code> fields, and a profile may mark at most eight. Write IDs, never
+          display names, so a rename upstream changes nothing on stored records.
+        </p>
+        <p>
+          People are declared once per profile, in <code>personFilter</code>: the
+          <code>roles</code> that count as involvement (any declared role except
+          <code>mentioned</code>), the <code>identifiers</code> the source writes on them
+          (<code>phone</code>, <code>email</code>, <code>domain</code>), a <code>minVersion</code>,
+          an optional <code>maxPeople</code> when the source stops listing people at some length,
+          and an optional <code>membersOf</code> naming a field declared with
+          <code>listsMembers</code>.
         </p>
 
         <h3 id="analytics-rows">Analytics rows</h3>

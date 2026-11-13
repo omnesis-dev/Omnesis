@@ -12,7 +12,11 @@ import {
   WsInvalidInputError,
 } from "@omnesis/core";
 import { AccountId, SourceId, SourceType, trySourceType } from "@omnesis/types";
-import { isDrivenByHost } from "@omnesis/source-sdk";
+import {
+  isDrivenByHost,
+  mergeContractDeclarations,
+  resolvedOutputRevision,
+} from "@omnesis/source-sdk";
 import {
   allDescriptors as defaultDescriptors,
   allDefinitions as defaultDefinitions,
@@ -32,7 +36,9 @@ import type { SourceConfig, AttachmentExtractFn, AudioTranscribeFn } from "@omne
 import type {
   AccountDescriptor,
   DocumentEventProfile,
+  DocumentEventProfilePublication,
   GatewayClient,
+  SourceContractDeclaration,
   SourceDescriptor,
   SourceOrProviderDefinition,
   WidgetOrigins,
@@ -126,9 +132,12 @@ export function collectOwnedWebDomains(
 
 /**
  * Collect the `documentEventProfile` declared by *every* source definition —
- * added or not — as `{ sourceType, profile }` entries. The gateway persists
- * them so subscription compilation can learn what each source's documents can
- * be asked about without holding source-specific knowledge itself.
+ * added or not — as `{ sourceType, outputRevision, profile }` entries. The
+ * gateway persists them so subscription compilation can learn what each
+ * source's documents can be asked about without holding source-specific
+ * knowledge itself. `outputRevision` is the source's own version, which lets
+ * the gateway keep the newest description when collectors on different builds
+ * publish the same source type.
  *
  * Definitions that declare no profile contribute nothing; their documents stay
  * addressable only through the fields every document has. Entries are sorted
@@ -138,16 +147,28 @@ export function collectOwnedWebDomains(
  */
 export function collectDocumentEventProfiles(
   definitions: readonly SourceOrProviderDefinition[],
-): Array<{ sourceType: string; profile: DocumentEventProfile }> {
-  const entries: Array<{ sourceType: string; profile: DocumentEventProfile }> = [];
-  const collect = (sourceType: string, profile: DocumentEventProfile | undefined): void => {
-    if (profile) entries.push({ sourceType, profile });
+): DocumentEventProfilePublication[] {
+  const entries: DocumentEventProfilePublication[] = [];
+  const collect = (
+    sourceType: string,
+    profile: DocumentEventProfile | undefined,
+    contract: SourceContractDeclaration | undefined,
+  ): void => {
+    if (profile) {
+      entries.push({ sourceType, outputRevision: resolvedOutputRevision(contract), profile });
+    }
   };
   for (const def of definitions) {
     if (def.type === "provider") {
-      for (const source of def.sources) collect(source.id, source.documentEventProfile);
+      for (const source of def.sources) {
+        collect(
+          source.id,
+          source.documentEventProfile,
+          mergeContractDeclarations(def.contract, source.contract),
+        );
+      }
     } else {
-      collect(def.id, def.documentEventProfile);
+      collect(def.id, def.documentEventProfile, def.contract);
     }
   }
   return entries.sort((a, b) => a.sourceType.localeCompare(b.sourceType));

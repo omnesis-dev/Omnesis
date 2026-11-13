@@ -123,7 +123,7 @@ export interface RegisteredSource {
    * picking one account's: two accounts of one type legitimately differ, so
    * copying either names a family after one of its members.
    */
-  family: { name: string; icon?: SourceIcon };
+  family: { name: string; icon?: SourceIcon; resyncCost?: string };
   urlPatterns?: Array<{ regex: string; idGroup?: number }>;
   /**
    * Per-host URL canonicalizer copied from the source's

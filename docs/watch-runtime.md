@@ -112,7 +112,9 @@ What "what it reads" covers is exactly what the fingerprint covers, projected
 onto this watch: a source's declared profile and whether it is semantically
 indexed, an analytics table's schema, the people it names. Not a source's
 provider, which is read from the corpus and appears on that source's first
-sync.
+sync. Not a profile's filter declarations either (`filter` on a metadata field,
+the profile's `personFilter`): no node of a watch reads them, so a source that
+starts declaring one moves neither the fingerprint nor any watch's record.
 
 **Drift arrives with the data, not with the deploy.** The ontology is built from
 what the install has actually seen, so a release that adds a table changes

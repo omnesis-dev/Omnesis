@@ -270,7 +270,8 @@ function runSchemaSetupInTxn(db: Db): void {
       label TEXT,
       bg_color TEXT,
       accent_color TEXT,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      resync_cost TEXT
     )
   `);
 

@@ -41,7 +41,7 @@ import type {
   GatewaySearchResponse,
   AnalyticsTableSchema,
   AnalyticsCatalogEntry,
-  DocumentEventProfile,
+  DocumentEventProfilePublication,
   DocumentTemporalProjectionSpec,
   ReconcileResponse,
   SnapshotAbsenceOutcome,
@@ -992,9 +992,7 @@ export class HttpGatewayClient implements GatewayClient {
    * restart the collector has not yet reconnected after. Replaces whatever was
    * previously stored.
    */
-  async setDocumentEventProfiles(
-    entries: Array<{ sourceType: string; profile: DocumentEventProfile }>,
-  ): Promise<void> {
+  async setDocumentEventProfiles(entries: DocumentEventProfilePublication[]): Promise<void> {
     await this.request("/admin/source-document-profiles", {
       method: "POST",
       body: JSON.stringify({ entries }),
