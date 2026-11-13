@@ -58,6 +58,12 @@ extension SourceFilterEditorView {
     }
 }
 
+/// What the review's counts are asked for: the filter as it stands, and how many times the owner asked again.
+struct ScopeCountsRequest: Hashable {
+    var policy: ScopePolicy
+    var generation: Int
+}
+
 #if DEBUG
 #Preview("Named filter") {
     NavigationStack {

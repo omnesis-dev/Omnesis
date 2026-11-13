@@ -51,6 +51,9 @@ public struct DocumentFilterDetails: Decodable, Equatable, Sendable {
 
 /// Whether one capability of one access level can read a document, and why, in the gateway's words.
 public struct DocumentAccessVerdict: Decodable, Equatable, Sendable {
+    /// The code of a capability the level does not grant.
+    public static let notGranted = "permission-not-granted"
+
     public var readable: Bool
     public var code: String
     public var text: String

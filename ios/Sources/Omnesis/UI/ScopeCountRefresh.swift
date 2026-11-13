@@ -43,4 +43,4 @@ func scopeSettledPreview(_ policy: ScopePolicy, client: AccessClient, attempts: 
 }
 
 /// Said under a filter that names more entries than the gateway holds.
-let scopeFilterLimitMessage = "A filter can include at most \(scopeFilterMaxEntries) values."
+let scopeFilterLimitMessage = "A filter can include at most \(scopeFilterMaxEntries) items."

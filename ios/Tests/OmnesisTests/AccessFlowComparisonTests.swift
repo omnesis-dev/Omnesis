@@ -78,7 +78,7 @@ final class AccessFlowComparisonTests: XCTestCase {
         XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.unauthorized))
         XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.notFound))
         XCTAssertTrue(scopePreviewCanRetry(GatewayClient.Error.invalidResponse))
-        XCTAssertEqual(scopePreviewFailureMessage(GatewayClient.Error.invalidResponse), "Counts unavailable")
+        XCTAssertEqual(scopePreviewFailureMessage(GatewayClient.Error.invalidResponse), "Counts could not be loaded.")
         XCTAssertTrue(scopePreviewFailureMessage(GatewayClient.Error.unauthorized).contains("gateway connection changed"))
     }
 }

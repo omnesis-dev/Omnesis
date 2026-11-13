@@ -13,7 +13,8 @@ extension SourceFilterPickerView {
     /// The path to the open item, from the root every account has, named in the source's word for its top level.
     /// Each item on the way is named by the last part of its name.
     var folderTrail: [String] {
-        let roots = scopeLevelNoun(declaration, depth: 0)?.many ?? declaration?.noun.many ?? "folders"
+        let devices = declaration?.perDevice == true && editor?.showDeviceLevel == true
+        let roots = devices ? "devices" : scopeLevelNoun(declaration, depth: 0)?.many ?? declaration?.noun.many ?? "folders"
         return ["All " + roots] + ancestors.map(\.shortLabel)
     }
 

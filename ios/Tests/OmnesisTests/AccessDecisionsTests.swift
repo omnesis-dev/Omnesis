@@ -242,7 +242,7 @@ final class AccessDecisionsTests: XCTestCase {
         XCTAssertTrue(scopePreviewCanRetry(URLError(.timedOut)))
         XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.unauthorized))
         XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.notFound))
-        XCTAssertEqual(scopePreviewFailureMessage(URLError(.timedOut)), "Counts unavailable")
+        XCTAssertEqual(scopePreviewFailureMessage(URLError(.timedOut)), "Counts could not be loaded.")
     }
 
     func testAFilterOfAnAccountNoLongerConnectedAppliesOnlyOnceItLosesAnItem() {
@@ -300,6 +300,6 @@ final class AccessDecisionsTests: XCTestCase {
             accessNoConnectedAccountsMessage,
             "No connected accounts are available. Connect a source before granting data access."
         )
-        XCTAssertEqual(scopeFilterLimitMessage, "A filter can include at most 256 values.")
+        XCTAssertEqual(scopeFilterLimitMessage, "A filter can include at most 256 items.")
     }
 }

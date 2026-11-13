@@ -67,4 +67,43 @@ final class ScopeLevelNounTests: XCTestCase {
         XCTAssertEqual(merged.map(\.noun), ["repository"])
         XCTAssertEqual(merged.map(\.count), [21])
     }
+
+    private func gmail(_ labels: FilterFieldState, _ people: FilterFieldState) -> [FilterEditorField] {
+        var person = self.people
+        person.state = people
+        let label = FilterEditorField(
+            field: "extra.labelIds", capability: "tree", noun: .init(one: "label", many: "labels"), picker: "tree", state: labels
+        )
+        return [person, label]
+    }
+
+    func testFieldsWaitingForTheSameResyncShowOneStateNamingThemTogether() {
+        let cost = "This reads about 75,000 messages a day."
+        let rest = " filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + cost
+        let fields = gmail(.needsResync(cost: cost, text: "Label" + rest), .needsResync(cost: cost, text: "People" + rest))
+        let shared = FilterFieldState.needsResync(cost: cost, text: "Label and people" + rest)
+        XCTAssertEqual(scopeFieldShownState(fields[0], in: fields), shared)
+        XCTAssertEqual(scopeFieldShownState(fields[1], in: fields), shared)
+        XCTAssertTrue(scopeAccountWaitsForResync(fields))
+
+        let progress = FilterFieldState.resyncing(processed: 212, total: 900, text: "Resyncing Gmail: 212 of about 900.")
+        let resyncing = gmail(progress, progress)
+        XCTAssertEqual(scopeFieldShownState(resyncing[1], in: resyncing), progress)
+        XCTAssertTrue(scopeAccountWaitsForResync(resyncing))
+    }
+
+    func testFieldsInDifferentStatesEachShowTheirOwn() {
+        let labels = FilterFieldState.needsResync(cost: nil, text: "Label filters need Gmail to be resynced.")
+        let fields = gmail(labels, .ready)
+        XCTAssertEqual(scopeFieldShownState(fields[1], in: fields), labels)
+        XCTAssertFalse(scopeAccountWaitsForResync(fields))
+        XCTAssertFalse(scopeAccountWaitsForResync([fields[1]]), "One field alone keeps its own screen")
+        let odd = gmail(labels, .needsResync(cost: nil, text: "Resync Gmail to filter on people."))
+        XCTAssertEqual(scopeFieldShownState(odd[1], in: odd), labels, "A sentence that cannot be joined is shown as the gateway wrote it")
+    }
+
+    func testAnEmptyListSaysWhetherASearchFoundNothing() {
+        XCTAssertEqual(scopePickerEmptyText("labels", searching: true), "No labels match this search.")
+        XCTAssertEqual(scopePickerEmptyText("folders", searching: false), "No folders here.")
+    }
 }

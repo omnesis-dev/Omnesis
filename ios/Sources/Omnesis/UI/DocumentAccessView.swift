@@ -126,8 +126,8 @@ private struct DocumentAccessLevelSection: View {
     }
 }
 
-/// One capability's verdict: its pill, in its colour when it can read, a mark and words that say so without the
-/// colour, and the gateway's reason under them.
+/// One capability's verdict: its pill, in its colour when the level grants the capability and muted when it does
+/// not, a mark and words that say whether it can read the document, and the gateway's reason under them.
 @available(iOS 17.0, *)
 struct DocumentAccessVerdictRow: View {
     let capability: AccessCapability
@@ -137,7 +137,7 @@ struct DocumentAccessVerdictRow: View {
     var body: some View {
         AccessRow(last: last) {
             HStack(alignment: .firstTextBaseline, spacing: AccessUI.iconGap) {
-                AccessCapabilityPill(capability: capability, held: verdict.readable)
+                AccessCapabilityPill(capability: capability, held: verdict.code != DocumentAccessVerdict.notGranted)
                     .frame(width: 64, alignment: .leading)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
@@ -162,7 +162,8 @@ struct DocumentAccessVerdictRow: View {
 }
 
 /// The owner's view of a document's access, at the top of its inspector: the way to "Who can read this?" and what a
-/// filter can see on the document. Shown only to the paired owner, whose credential can read it.
+/// filter can see on the document. Shown only once the gateway has given the filter details, which only the paired
+/// owner's credential can read.
 @available(iOS 17.0, *)
 struct DocumentAccessSection: View {
     @Environment(AppStore.self) private var store
@@ -177,11 +178,12 @@ struct DocumentAccessSection: View {
     }
 
     var body: some View {
-        Group { if store.access != nil || previewing { owner } }
+        // Shown once the details arrive: a gateway that cannot answer for them cannot say who reads the document.
+        Group { if let details { owner(details) } }
             .task(id: documentId) { await load() }
     }
 
-    @ViewBuilder private var owner: some View {
+    @ViewBuilder private func owner(_ details: DocumentFilterDetails) -> some View {
         FlatSection("Access") {
             NavigationLink { DocumentAccessView(documentId: documentId) } label: {
                 HStack(spacing: 10) {
@@ -196,11 +198,9 @@ struct DocumentAccessSection: View {
             }
             .buttonStyle(.plain)
         }
-        if let details {
-            FlatSection("Filter details") {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(documentFilterDetailRows(details), id: \.key) { row in InspectorKeyValue(key: row.key, value: row.value) }
-                }
+        FlatSection("Filter details") {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(documentFilterDetailRows(details), id: \.key) { row in InspectorKeyValue(key: row.key, value: row.value) }
             }
         }
     }

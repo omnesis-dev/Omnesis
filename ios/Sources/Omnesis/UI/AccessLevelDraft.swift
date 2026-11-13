@@ -622,5 +622,5 @@ func scopePreviewFailureMessage(_ error: Error) -> String {
     if case GatewayClient.Error.notFound = error {
         return "This account is unavailable. Close this filter and return to data selection."
     }
-    return "Counts unavailable"
+    return "Counts could not be loaded."
 }

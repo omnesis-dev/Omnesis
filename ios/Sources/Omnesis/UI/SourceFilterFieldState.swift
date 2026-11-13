@@ -11,7 +11,8 @@ struct SourceFilterFieldStateView: View {
     let state: FilterFieldState
     /// The source's name, as the resync button says it: "Gmail".
     let sourceName: String
-    var resyncing = false
+    /// The owner asked for the resync and the gateway has not reported it running yet.
+    var starting = false
     var problem: String?
     let resync: () -> Void
 
@@ -29,16 +30,15 @@ struct SourceFilterFieldStateView: View {
                 ProgressView(value: Double(min(processed, max(total, 1))), total: Double(max(total, 1)))
                     .tint(Theme.accent)
                     .accessibilityLabel(text)
+            case .needsResync where starting:
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    AccessCountingSpinner()
+                    sentence(sourceFilterResyncStartingText(sourceName))
+                }
+                .accessibilityElement(children: .combine)
             case .needsResync(_, let text):
                 sentence(text)
-                Button(action: resync) {
-                    HStack(spacing: 10) {
-                        if resyncing { AccessCountingSpinner() }
-                        Text(sourceFilterResyncTitle(sourceName))
-                    }
-                }
-                .buttonStyle(AccessSecondaryButtonStyle())
-                .disabled(resyncing)
+                Button(sourceFilterResyncTitle(sourceName), action: resync).buttonStyle(AccessSecondaryButtonStyle())
                 AccessProblemText(text: problem, top: 0)
             default:
                 state.text.map(sentence)
@@ -56,6 +56,37 @@ struct SourceFilterFieldStateView: View {
 /// The button that resyncs an account in place so its records carry what a filter needs: "Resync Gmail".
 func sourceFilterResyncTitle(_ sourceName: String) -> String {
     "Resync " + sourceName
+}
+
+/// What shows once the resync is asked for, until the gateway reports it running: "Resyncing Gmail…".
+func sourceFilterResyncStartingText(_ sourceName: String) -> String {
+    "Resyncing \(sourceName)…"
+}
+
+/// A spinner and "Loading…", while the account's fields or a page of its items are on their way.
+struct SourceFilterLoadingLine: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            AccessCountingSpinner()
+            Text("Loading…").accessText(.rowSecondary, color: AccessUI.secondary)
+        }
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Why something could not be loaded, and "Try again".
+struct SourceFilterRetryLine: View {
+    let message: String
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(message).accessText(.rowSecondary, color: AccessUI.secondary).fixedSize(horizontal: false, vertical: true)
+            Button(action: retry) { Text("Try again").accessText(.rowTitle, color: Theme.accent).frame(minHeight: 44) }
+                .buttonStyle(.plain)
+        }
+    }
 }
 
 #if DEBUG

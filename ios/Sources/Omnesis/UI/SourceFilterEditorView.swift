@@ -26,7 +26,9 @@ struct SourceFilterEditorView: View {
     @State var editor: SourceFilterEditor?
     @State var editorError: Error?
     @State var editorGeneration = 0
-    @State var resyncInFlight = false
+    @State var countsGeneration = 0
+    /// The owner asked for a resync and the gateway has not reported it running yet.
+    @State var resyncStarting = false
     @State var resyncProblem: String?
     @State private var managing = false
     @State private var retainedRefs: [ScopeRef] = []
@@ -174,7 +176,7 @@ struct SourceFilterEditorView: View {
                     sessionChanged: { adoptPickerSession($0) },
                     manageSelection: { managing = true },
                     resync: { Task { await resyncAccount() } },
-                    resyncInFlight: resyncInFlight,
+                    resyncStarting: resyncStarting,
                     resyncProblem: resyncProblem,
                     selected: { ref in policy.toggleMatch(ref) }
                 )
@@ -217,7 +219,9 @@ struct SourceFilterEditorView: View {
         .task(id: step == .review ? nil : policy) { if step != .review { await resolveDisplayHints() } }
         .onChange(of: policy) { _, _ in previewedPolicy = nil }
         .id(step)
-        .task(id: previewing ? policy : nil) { if previewing { await keepCountsCurrent() } }
+        .task(id: previewing ? ScopeCountsRequest(policy: policy, generation: countsGeneration) : nil) {
+            if previewing { await keepCountsCurrent() }
+        }
     }
 
     /// Asks for the filter's counts, and again while the gateway is still working them out, so they arrive without
@@ -435,8 +439,10 @@ extension SourceFilterEditorView {
             .frame(minHeight: 44)
             .accessibilityElement(children: .combine)
         } else if let error {
-            Text(scopePreviewFailureMessage(error))
-                .accessText(.rowSecondary, color: AccessUI.secondary)
+            SourceFilterRetryLine(message: scopePreviewFailureMessage(error)) {
+                self.error = nil
+                countsGeneration += 1
+            }
         } else if let preview = currentPreview {
             AccessStatPair(shared: preview.visible, hidden: preview.hidden)
             let lines = preview.undecidedLines
@@ -453,18 +459,18 @@ extension SourceFilterEditorView {
     /// Resyncs the account in place, the remedy for a field its records predate, then asks the editor again at once
     /// so the field shows its progress.
     func resyncAccount() async {
-        guard !resyncInFlight else { return }
+        guard !resyncStarting else { return }
         guard let admin = store.admin else {
             resyncProblem = GatewayErrorView.classify(GatewayClient.Error.unauthorized).title
             return
         }
-        resyncInFlight = true
-        defer { resyncInFlight = false }
+        resyncStarting = true
+        resyncProblem = nil
         do {
             try await admin.resyncSource(sourceId: source.id, mode: .inPlace)
-            resyncProblem = nil
             editorGeneration += 1
         } catch {
+            resyncStarting = false
             resyncProblem = GatewayErrorView.classify(error).title
         }
     }
@@ -484,7 +490,9 @@ extension SourceFilterEditorView {
                 guard client.isCurrent(store.access), value.sourceId == source.id else { return }
                 editor = value
                 editorError = nil
-                guard value.settling else { return }
+                let waiting = value.fields.contains { if case .needsResync = $0.state { true } else { false } }
+                if !waiting { resyncStarting = false }
+                guard value.settling || (resyncStarting && waiting) else { return }
                 attempt += 1
                 try await Task.sleep(for: scopeRetryDelay(retryAfterMs: value.retryAfterMs, attempt: attempt))
             } catch is CancellationError { return } catch {

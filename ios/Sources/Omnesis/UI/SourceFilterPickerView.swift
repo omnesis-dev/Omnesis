@@ -18,7 +18,7 @@ struct SourceFilterPickerView: View {
     let manageSelection: (() -> Void)?
     /// Resyncs the account in place, for a field whose records predate it.
     let resync: () -> Void
-    let resyncInFlight: Bool
+    let resyncStarting: Bool
     let resyncProblem: String?
     @State var field = ""
     @State var query = ""
@@ -80,7 +80,7 @@ struct SourceFilterPickerView: View {
         sessionChanged: @escaping (ScopePickerSession) -> Void = { _ in },
         manageSelection: (() -> Void)? = nil,
         resync: @escaping () -> Void = {},
-        resyncInFlight: Bool = false,
+        resyncStarting: Bool = false,
         resyncProblem: String? = nil,
         selected: @escaping (ScopeRef) -> Void
     ) {
@@ -100,7 +100,7 @@ struct SourceFilterPickerView: View {
         self.selected = selected
         self.sessionChanged = sessionChanged
         self.resync = resync
-        self.resyncInFlight = resyncInFlight
+        self.resyncStarting = resyncStarting
         self.resyncProblem = resyncProblem
         _options = State(initialValue: initialOptions)
         _optionsLocation = State(initialValue: initialOptions == nil ? nil : location)
@@ -149,12 +149,10 @@ struct SourceFilterPickerView: View {
                     AccessHeader(title: enteringIdentifier ? adding : "Choose matching content") { AccessAccountLine(source: source) }
                         .id(ScopePickerAnchor.top)
                     if enteringIdentifier { identifierEntry } else { catalogue }
-                    if loading {
-                        ProgressView().controlSize(.small).tint(AccessUI.secondary).frame(maxWidth: .infinity).padding(.vertical, 16)
-                    }
+                    if loading { SourceFilterLoadingLine().padding(.vertical, 8) }
                     if let error {
-                        GatewayErrorView(context: "load matching items", error: error, onRetry: { Task { await openLocation() } })
-                            .padding(.vertical, 12)
+                        SourceFilterRetryLine(message: GatewayErrorView.classify(error).title) { Task { await openLocation() } }
+                            .padding(.vertical, 8)
                     }
                 }
                 .scrollTargetLayout()
@@ -225,21 +223,17 @@ struct SourceFilterPickerView: View {
 
     /// The fields as tabs, then the open field's items or why they cannot be chosen yet.
     @ViewBuilder var catalogue: some View {
-        if fields.count > 1 {
+        if fields.count > 1, !scopeAccountWaitsForResync(fields) {
             AccessKindTabs(tabs: fields.map { .init(id: $0.field, title: scopeFieldTabTitle($0)) }, selection: $field)
                 .padding(.bottom, 16)
         }
         if editor == nil {
-            HStack(spacing: 10) {
-                AccessCountingSpinner()
-                Text("Loading…").accessText(.rowSecondary, color: AccessUI.secondary)
-            }
-            .frame(minHeight: 44)
+            SourceFilterLoadingLine()
         } else if let declaration, !declaration.state.isReady {
             SourceFilterFieldStateView(
-                state: declaration.state,
+                state: scopeFieldShownState(declaration, in: fields),
                 sourceName: accessSourceNameParts(source).source,
-                resyncing: resyncInFlight,
+                starting: resyncStarting,
                 problem: resyncProblem,
                 resync: resync
             )
@@ -279,7 +273,9 @@ struct SourceFilterPickerView: View {
             .disabled(loading)
         }
         if !loading, error == nil, options?.items.isEmpty == true {
-            Text("No matching options.").accessText(.rowSecondary, color: AccessUI.secondary).padding(.vertical, 12)
+            Text(scopePickerEmptyText(declaration?.noun.many ?? "items", searching: !query.isEmpty))
+                .accessText(.rowSecondary, color: AccessUI.secondary)
+                .padding(.vertical, 12)
         }
         if offersIdentifier {
             Button { enteringIdentifier = true } label: {

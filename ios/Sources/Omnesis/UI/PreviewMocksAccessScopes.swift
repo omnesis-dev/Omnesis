@@ -9,13 +9,6 @@ import SwiftUI
 @available(iOS 17.0, *)
 extension PreviewMocks {
     /// The fields each canonical account offers, as each source declares them.
-    static let accessPeopleByEmail = FilterEditorField(
-        field: FilterEditorField.peopleField,
-        capability: "person",
-        noun: .init(one: "person", many: "people"),
-        picker: "search",
-        identifiers: ["email", "domain"]
-    )
     static let accessPeopleByPhone = FilterEditorField(
         field: FilterEditorField.peopleField,
         capability: "person",
@@ -52,9 +45,20 @@ extension PreviewMocks {
     static let accessDrive = account("google-drive:reader@example.org", "Google Drive · reader@example.org", type: "google-drive")
     static let accessWhatsApp = account("whatsapp-messages:+15550100123", "WhatsApp · +1 (555) 010-0123", type: "whatsapp-messages")
 
-    /// Gmail: people at once, labels once the account is resynced in place.
+    /// Gmail before a resync in place: both its people and its labels wait for it.
     static let accessGmailEditor = SourceFilterEditor(sourceId: accessGmail.id, sourceType: "gmail", fields: [
-        accessPeopleByEmail,
+        FilterEditorField(
+            field: FilterEditorField.peopleField,
+            capability: "person",
+            noun: .init(one: "person", many: "people"),
+            picker: "search",
+            identifiers: ["email", "domain"],
+            state: .needsResync(
+                cost: "This reads about 75,000 messages a day.",
+                text: "People filters need Gmail to be resynced. Your mail stays searchable meanwhile. "
+                    + "This reads about 75,000 messages a day."
+            )
+        ),
         treeField(accessLabelField, .init(one: "label", many: "labels"), state: .needsResync(
             cost: "This reads about 75,000 messages a day.",
             text: "Label filters need Gmail to be resynced. Your mail stays searchable meanwhile. "
