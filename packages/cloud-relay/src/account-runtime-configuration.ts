@@ -9,6 +9,7 @@ import { readPrivateJson } from "./google-credentials.js";
 import { bindingOrigin } from "./gateway-binding.js";
 import { signupPolicySchema } from "./gateway-signup.js";
 import { configuredConnectShortUrl } from "./connect-short-url.js";
+import { loadGoogleGroupMembership } from "./google-group.js";
 import type { AccountSignInConfiguration } from "./account-services.js";
 import type { IdentityProvider } from "./identity.js";
 
@@ -18,6 +19,8 @@ export async function accountRuntimeConfiguration(options: {
   origin?: string;
   database: string;
   nativeGoogleIdentity?: IdentityProvider;
+  /** Test-only: reaches Google's token and Cloud Identity endpoints through a loopback fixture. */
+  googleFetch?: typeof fetch;
 }): Promise<AccountSignInConfiguration | undefined> {
   if (options.env.OMNESIS_CLOUD_RELAY_ENABLED !== "1") return undefined;
   // A routing-only relay does not need an account authority or a browser origin.
@@ -26,6 +29,7 @@ export async function accountRuntimeConfiguration(options: {
       options.env.OMNESIS_CLOUD_RELAY_ACCOUNT_KEY_FILE !== undefined ||
       options.env.OMNESIS_CLOUD_RELAY_APP_ASSOCIATIONS_FILE !== undefined ||
       options.env.OMNESIS_CLOUD_RELAY_SIGNUP_POLICY !== undefined ||
+      options.env.OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP !== undefined ||
       options.env.OMNESIS_CLOUD_RELAY_CONNECT_SHORT_URL !== undefined
     )
       throw new Error("Account sign-in requires the relay's public HTTPS origin");
@@ -38,15 +42,40 @@ export async function accountRuntimeConfiguration(options: {
       OMNESIS_CLOUD_RELAY_APP_ASSOCIATIONS_FILE: z.string().trim().min(1).optional(),
       OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: signupPolicySchema.default("invitation"),
       OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE: z.string().trim().min(1).optional(),
+      OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP: z.string().trim().min(1).optional(),
+      OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE: z.string().trim().min(1).optional(),
+      OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL: z.string().trim().min(1).optional(),
     })
     .parse(options.env);
+  const group = paths.OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP;
+  if (
+    !group &&
+    (paths.OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE ||
+      paths.OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL)
+  )
+    throw new Error("Google Group signup settings require OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP");
   if (
     paths.OMNESIS_CLOUD_RELAY_SIGNUP_POLICY === "allowlist" &&
-    !paths.OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE
+    !paths.OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE &&
+    !group
   )
     throw new Error(
-      "The allowlist signup policy requires OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE",
+      "The allowlist signup policy requires OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE or OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP",
     );
+  if (group && paths.OMNESIS_CLOUD_RELAY_SIGNUP_POLICY !== "allowlist")
+    throw new Error("OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP requires the allowlist signup policy");
+  if (group && !paths.OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE)
+    throw new Error(
+      "OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP requires OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE",
+    );
+  const googleGroup = group
+    ? await loadGoogleGroupMembership({
+        group,
+        credentialsFile: paths.OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE!,
+        joinUrl: paths.OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL,
+        fetch: options.googleFetch,
+      })
+    : undefined;
   const connectShortUrl = configuredConnectShortUrl(
     options.env.OMNESIS_CLOUD_RELAY_CONNECT_SHORT_URL,
   );
@@ -66,6 +95,7 @@ export async function accountRuntimeConfiguration(options: {
     signup: {
       policy: paths.OMNESIS_CLOUD_RELAY_SIGNUP_POLICY,
       allowlistFile: paths.OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE,
+      ...(googleGroup ? { googleGroup } : {}),
     },
   };
 }

@@ -185,3 +185,58 @@ test("the signup policy defaults to invitation, and an allowlist needs its file"
     }),
   ).toBeUndefined();
 });
+
+test("a google group is optional, needs its key and the allowlist policy, and is checked at startup", async () => {
+  const f = await fixture(),
+    { FakeGoogle } = await import("../test/fake-google.js"),
+    google = await FakeGoogle.start();
+  try {
+    const credentials = join(f.dir, "service-account.json");
+    await writeFile(credentials, JSON.stringify(google.serviceAccountKey()), { mode: 0o600 });
+    const env = {
+      OMNESIS_CLOUD_RELAY_ENABLED: "1",
+      OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "allowlist",
+      OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP: "testers@example.com",
+      OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE: credentials,
+      OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL: "https://groups.example.com/g/testers",
+    };
+    // The group alone may stand for the allowlist, and the link is kept for the refusal page.
+    const signup = (await accountRuntimeConfiguration({ ...f, env }))!.signup!;
+    expect(signup).toMatchObject({ policy: "allowlist", allowlistFile: undefined });
+    expect(signup.googleGroup?.joinUrl).toBe("https://groups.example.com/g/testers");
+    // Nothing was asked of Google to start.
+    expect(google.requests).toEqual([]);
+    const { OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL: _, ...withoutLink } = env;
+    expect(
+      (await accountRuntimeConfiguration({ ...f, env: withoutLink }))!.signup!.googleGroup?.joinUrl,
+    ).toBeUndefined();
+    for (const [change, message] of [
+      [{ OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE: undefined }, "requires"],
+      [
+        { OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE: join(f.dir, "missing.json") },
+        "service account JSON key",
+      ],
+      [{ OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL: "http://groups.example.com/" }, "https"],
+      [{ OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP: "testers" }, "group's email address"],
+      [{ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: "open" }, "allowlist signup policy"],
+      [{ OMNESIS_CLOUD_RELAY_SIGNUP_POLICY: undefined }, "allowlist signup policy"],
+      [
+        { OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP: undefined },
+        "require OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP",
+      ],
+    ] as const)
+      await expect(
+        accountRuntimeConfiguration({ ...f, env: { ...env, ...change } }),
+      ).rejects.toThrow(message);
+    // Unset, nothing changes.
+    expect(
+      (await accountRuntimeConfiguration({ ...f, env: { OMNESIS_CLOUD_RELAY_ENABLED: "1" } }))!
+        .signup,
+    ).not.toHaveProperty("googleGroup");
+    await expect(accountRuntimeConfiguration({ ...f, origin: undefined, env })).rejects.toThrow(
+      "public HTTPS origin",
+    );
+  } finally {
+    await google.close();
+  }
+});

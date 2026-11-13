@@ -309,6 +309,105 @@ test("a refused sign-in shows what to send the operator and offers nothing else"
   }
 });
 
+test("a sign-up outside the invitation group is told accounts are invite-only and where to ask to join", async () => {
+  const pending = {
+    purpose: "gateway-signup",
+    gatewayName: "Fictional gateway",
+    code: "ABCD-EF23",
+    needsProof: true,
+  };
+  const f = setup();
+  f.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
+  f.session({
+    ...signedOut,
+    pending: {
+      ...pending,
+      denied: {
+        reason: "not-allowed",
+        googleSubject: "a".repeat(64),
+        inviteOnly: true,
+        joinUrl: "https://groups.example.com/g/testers",
+      },
+    },
+  });
+  installAccountUI();
+  await f.wait("Omnesis accounts are invite-only for now.");
+  const root = f.document.getElementById("account-root")!;
+  expect(root.textContent).toContain("Ask to join here: https://groups.example.com/g/testers");
+  const link = root.querySelector("a")!;
+  expect(link.getAttribute("href")).toBe("https://groups.example.com/g/testers");
+  expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+  // Joining is the way in, so the page does not ask the person to send the operator a digest.
+  expect(f.document.querySelector(".code.long")).toBeNull();
+  expect(root.textContent).toContain("start again from your gateway");
+  expect(f.document.querySelectorAll("button")).toHaveLength(0);
+
+  // Without a usable link, the operator's value is shown as before.
+  for (const joinUrl of [undefined, "javascript:alert(1)", "not a url"]) {
+    const plain = setup();
+    plain.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
+    plain.session({
+      ...signedOut,
+      pending: {
+        ...pending,
+        denied: { reason: "not-allowed", googleSubject: "a".repeat(64), inviteOnly: true, joinUrl },
+      },
+    });
+    installAccountUI();
+    await plain.wait("invite-only");
+    expect(plain.document.querySelector("a")).toBeNull();
+    expect(plain.document.querySelector(".code.long")?.textContent).toBe("a".repeat(64));
+  }
+});
+
+test("a passkey refused on an invite-only relay is told to sign in with google", async () => {
+  for (const joinUrl of ["https://groups.example.com/g/testers", undefined]) {
+    const f = setup();
+    f.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
+    f.session({
+      ...authenticated,
+      pending: {
+        purpose: "gateway-signup",
+        gatewayName: "Fictional gateway",
+        needsProof: true,
+        denied: { reason: "not-allowed", accountId: "b".repeat(64), googleRequired: true, joinUrl },
+      },
+    });
+    installAccountUI();
+    await f.wait("invite-only");
+    const text = f.document.getElementById("account-root")!.textContent;
+    expect(text).toContain(
+      "If you were invited, start again from your gateway and sign in with Google, so your invitation can be checked.",
+    );
+    expect(f.document.querySelectorAll("button")).toHaveLength(0);
+    if (joinUrl) {
+      expect(f.document.querySelector("a")?.getAttribute("href")).toBe(joinUrl);
+      expect(f.document.querySelector(".code.long")).toBeNull();
+    } else expect(f.document.querySelector(".code.long")?.textContent).toBe("b".repeat(64));
+  }
+});
+
+test("an invitation that could not be checked says to try again, and offers the sign-in again", async () => {
+  const f = setup();
+  f.location.search = "?failed=invitation&signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
+  f.session({
+    ...signedOut,
+    pending: {
+      purpose: "gateway-signup",
+      gatewayName: "Fictional gateway",
+      needsProof: true,
+      intent: "create",
+    },
+  });
+  installAccountUI();
+  await vi.waitFor(() =>
+    expect(f.alert()).toBe(
+      "We couldn't check your invitation right now. Try again in a few minutes.",
+    ),
+  );
+  expect(f.button("Create with Google")).toBeDefined();
+});
+
 test("a refused continuation refreshes the page, so it offers what the operation now needs", async () => {
   const f = setup();
   f.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";

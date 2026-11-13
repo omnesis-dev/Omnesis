@@ -246,6 +246,43 @@ describe("local daemon and credential files", () => {
     }
   });
 
+  test("a synthetic loopback relay may send its Google sign-in to a loopback fixture", async () => {
+    const env = await daemonEnv();
+    delete env.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE;
+    const secretFile = join(dir, "fixture-web-secret.json");
+    await writeFile(
+      secretFile,
+      JSON.stringify({
+        web: { client_id: "fictional-web-client", client_secret: "fictional-backend-secret" },
+      }),
+    );
+    const configured = {
+      ...env,
+      OMNESIS_SYNTHETIC: "1",
+      OMNESIS_CLOUD_RELAY_GOOGLE_FIXTURE_URL: "http://127.0.0.1:9",
+      OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID: "fictional-web-client",
+      OMNESIS_CLOUD_RELAY_GOOGLE_WEB_SECRET_FILE: secretFile,
+      OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: "https://relay.example.test",
+      OMNESIS_CLOUD_RELAY_ENABLED: "1",
+    };
+    const relay = await startRelayDaemon(configured);
+    try {
+      const begin = await fetch(`${relay.url}/_relay/web/start`, {
+        method: "POST",
+        headers: { origin: "https://relay.example.test" },
+        redirect: "manual",
+      });
+      expect(begin.headers.get("location")).toMatch(
+        /^http:\/\/127\.0\.0\.1:9\/o\/oauth2\/v2\/auth\?/,
+      );
+    } finally {
+      await relay.close();
+    }
+    await expect(startRelayDaemon({ ...configured, OMNESIS_SYNTHETIC: undefined })).rejects.toThrow(
+      "synthetic relay on a loopback listener",
+    );
+  });
+
   test("invalid web secrets fail before database creation and constructor failures close their database", async () => {
     const env = await daemonEnv();
     const secretFile = join(dir, "blank-web-secret.json");

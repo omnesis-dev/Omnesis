@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, createPublicKey, randomBytes, timingSafeEqual, verify } from "node:crypto";
+import { createLogger } from "@omnesis/core";
 import { z } from "zod";
 import { bindingOrigin } from "./gateway-binding.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
@@ -24,6 +25,7 @@ import {
 } from "./gateway-signup-contract.js";
 import { NoAccount, type AccountAdmission } from "./account-admission.js";
 import type { AccountBrowserAccount } from "./account-browser-broker.js";
+import type { GoogleGroupGate } from "./google-group.js";
 import type { AccountBrowserOwner } from "./account-browser-contract.js";
 import type { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import type { RelaySessions } from "./identity.js";
@@ -33,11 +35,18 @@ const digest = (value: string) => createHash("sha256").update(value).digest();
 /** Registration may need a certificate first; this is how long the gateway has to call `link`. */
 const LINK_WINDOW_SECONDS = 900;
 const COOKIE_PREFIX = "__Host-omnesis-signup-";
+const log = createLogger("cloud-relay:signup");
 
 export const signupPolicySchema = z.enum(["invitation", "allowlist", "open"]);
 export interface SignupConfiguration {
   policy: z.infer<typeof signupPolicySchema>;
   allowlistFile?: string;
+  /**
+   * Under `allowlist`, a Google sign-in is also admitted when its verified email is in this group:
+   * one that would create an account, or one for an account with no gateway that the allowlist
+   * does not name. An account that already has a gateway, or is listed, never asks it.
+   */
+  googleGroup?: GoogleGroupGate;
 }
 const allowlistSchema = z
   .object({
@@ -53,6 +62,21 @@ export class SignupDenied extends RelayError {
   }
 }
 
+/** The invitation could not be checked. Nothing is recorded, so the person may sign in again. */
+export class SignupUnavailable extends RelayError {
+  constructor() {
+    super(503, "We couldn't check your invitation right now. Try again in a few minutes.");
+  }
+}
+
+/** What a Google sign-in brings to the policy. `email` is read only when it is needed. */
+export interface GoogleSignupIdentity {
+  subjectDigest: string;
+  account?: string;
+  /** The address Google verified for this sign-in, if any. Used once and never kept. */
+  email?: () => string | undefined;
+}
+
 interface Operation {
   request: z.infer<typeof gatewaySignupStart>;
   gatewayId: string;
@@ -66,7 +90,17 @@ interface Operation {
   /** Creating an account is the person's explicit choice; signing in never creates one. */
   intent: GatewaySignupIntent;
   googleSubject?: string;
-  denied?: { reason: GatewaySignupDenialReason; googleSubject?: string; accountId?: string };
+  /** The Google subject the group admitted; approval honours it without asking Google again. */
+  invited?: string;
+  denied?: {
+    reason: GatewaySignupDenialReason;
+    googleSubject?: string;
+    accountId?: string;
+    /** Refused because it is not invited, so the page offers the join link. */
+    inviteOnly?: true;
+    /** A passkey can't show an invitation: only a Google sign-in's email can be checked. */
+    googleRequired?: true;
+  };
   approved?: { account: AccountBrowserAccount; enrollmentToken: string };
 }
 
@@ -202,8 +236,16 @@ export class GatewaySignup implements AccountOperationBroker {
       expiresAt: operation.request.expiresAt,
       needsProof: operation.proof.needed(),
       intent: operation.intent,
-      ...(operation.denied ? { denied: operation.denied } : {}),
+      ...(operation.denied ? { denied: this.deniedView(operation.denied) } : {}),
     };
+  }
+  /**
+   * A Google sign-in here must carry its email when a group decides: who signs in, and whether
+   * their account needs the invitation, is only known once Google answers.
+   */
+  requestsEmail(id: string, cookieHeader: string): boolean {
+    this.active(id, cookieHeader);
+    return this.options.configuration.googleGroup !== undefined;
   }
   setIntent(id: string, cookieHeader: string, intent: GatewaySignupIntent): void {
     this.active(id, cookieHeader).intent = intent;
@@ -217,25 +259,37 @@ export class GatewaySignup implements AccountOperationBroker {
   recordProof(id: string, cookieHeader: string, evidence: ProofEvidence): void {
     const operation = this.active(id, cookieHeader);
     operation.proof.record(evidence);
-    if (evidence.type !== "google") operation.googleSubject = undefined;
+    if (evidence.type !== "google") operation.googleSubject = operation.invited = undefined;
   }
 
   /** Runs after Google verifies the token and before any account exists for it. */
   async authorizeGoogle(
     id: string,
     cookieHeader: string,
-    google: { subjectDigest: string; account?: string },
+    google: GoogleSignupIdentity,
   ): Promise<AccountAdmission> {
     const operation = this.active(id, cookieHeader);
     if (!google.account && operation.intent !== "create") throw new NoAccount();
-    const allowed = await this.allowed(google.subjectDigest, google.account);
+    let allowed = await this.allowed(google.subjectDigest, google.account);
+    // The allowlist, and an account's linked gateway, answer first; the group is asked otherwise.
+    const group = this.options.configuration.googleGroup;
+    let invited = false;
+    if (!allowed && group) {
+      this.active(id, cookieHeader);
+      invited = allowed = await this.invited(group, google.email?.());
+    }
     // A restarted operation has a new browser secret, so this also refuses a replacement.
     this.active(id, cookieHeader);
     if (!allowed) {
-      operation.denied = { reason: "not-allowed", googleSubject: google.subjectDigest };
+      operation.denied = {
+        reason: "not-allowed",
+        googleSubject: google.subjectDigest,
+        ...(group ? { inviteOnly: true as const } : {}),
+      };
       throw new SignupDenied();
     }
     operation.googleSubject = google.subjectDigest;
+    operation.invited = invited ? google.subjectDigest : undefined;
     return this.admission(id, cookieHeader, operation);
   }
 
@@ -244,7 +298,7 @@ export class GatewaySignup implements AccountOperationBroker {
     const operation = this.active(id, cookieHeader);
     const allowed = await this.allowed(undefined, accountId);
     this.active(id, cookieHeader);
-    if (!allowed) operation.denied = { reason: "not-allowed", accountId };
+    if (!allowed) operation.denied = { reason: "not-allowed", accountId, ...this.googleRequired() };
     return allowed;
   }
 
@@ -266,8 +320,11 @@ export class GatewaySignup implements AccountOperationBroker {
     operation.proof.assertFrom(account.accountId);
     operation.phase = "verifying";
     try {
-      // The operator may have edited the policy since sign-in, and each check reads it afresh.
-      const allowed = await this.allowed(operation.googleSubject, account.accountId);
+      // The operator may have edited the policy since sign-in, and each check reads it afresh. A
+      // group invitation was checked moments ago for this very sign-in and is not asked again.
+      const allowed =
+        (operation.invited !== undefined && operation.invited === operation.googleSubject) ||
+        (await this.allowed(operation.googleSubject, account.accountId));
       this.unchanged(id, operation);
       const reason: GatewaySignupDenialReason | undefined = !allowed
         ? "not-allowed"
@@ -279,6 +336,10 @@ export class GatewaySignup implements AccountOperationBroker {
           reason,
           accountId: account.accountId,
           googleSubject: operation.googleSubject,
+          // Without a Google sign-in on the operation, the group could not be asked.
+          ...(reason === "not-allowed" && operation.googleSubject === undefined
+            ? this.googleRequired()
+            : {}),
         };
         throw new SignupDenied();
       }
@@ -366,8 +427,9 @@ export class GatewaySignup implements AccountOperationBroker {
     const { policy, allowlistFile } = this.options.configuration;
     if (policy === "open") return true;
     if (accountId !== undefined && this.options.hasLinkedGateway(accountId)) return true;
+    if (!allowlistFile) return false;
     try {
-      const list = allowlistSchema.parse(await readPrivateJson(allowlistFile!));
+      const list = allowlistSchema.parse(await readPrivateJson(allowlistFile));
       return (
         (googleSubject !== undefined && list.googleSubjects.includes(googleSubject)) ||
         (accountId !== undefined && list.accounts.includes(accountId))
@@ -375,6 +437,29 @@ export class GatewaySignup implements AccountOperationBroker {
     } catch {
       return false;
     }
+  }
+  /** Fails closed: an answer Google could not give refuses the sign-up, and leaves it to retry. */
+  private async invited(group: GoogleGroupGate, email: string | undefined): Promise<boolean> {
+    if (email === undefined) {
+      log.info("A Google sign-up without a verified email was refused without asking the group");
+      return false;
+    }
+    try {
+      return await group.isMember(email);
+    } catch {
+      // The gate has logged why, without the address.
+      throw new SignupUnavailable();
+    }
+  }
+  private deniedView(denied: NonNullable<Operation["denied"]>) {
+    const joinUrl =
+      denied.inviteOnly || denied.googleRequired
+        ? this.options.configuration.googleGroup?.joinUrl
+        : undefined;
+    return { ...denied, ...(joinUrl ? { joinUrl } : {}) };
+  }
+  private googleRequired(): { googleRequired?: true } {
+    return this.options.configuration.googleGroup ? { googleRequired: true } : {};
   }
   private admission(id: string, cookieHeader: string, operation: Operation): AccountAdmission {
     return {

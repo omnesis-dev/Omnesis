@@ -19,8 +19,11 @@ export interface RelayWebLoginOptions {
   publicOrigin: string;
   identity: IdentityProvider;
   accountBrowser: {
-    /** `nonce` is set when the sign-in must commit to an operation. */
-    begin(req: IncomingMessage): Promise<{ context?: string; nonce?: string }>;
+    /**
+     * `nonce` is set when the sign-in must commit to an operation, and `email` when its policy
+     * needs the verified address.
+     */
+    begin(req: IncomingMessage): Promise<{ context?: string; nonce?: string; email?: boolean }>;
     complete(
       idToken: string,
       nonce: string,
@@ -31,6 +34,8 @@ export interface RelayWebLoginOptions {
     failed(context: string | undefined): string;
   };
   fetch?: typeof fetch;
+  /** Test-only: a loopback stand-in for Google's authorization endpoint. */
+  authorizationEndpoint?: string;
 }
 const cookieName = "__Host-omnesis-relay-login";
 /** Google's browser redirect. It only ever signs in to the account page, which does the rest. */
@@ -80,13 +85,15 @@ export class RelayWebLogin {
         throw new RelayError(403, "Same-origin sign-in required");
       req.resume();
       await this.admission.run(async () => {
-        const { context, nonce } = await this.options.accountBrowser.begin(req);
+        const { context, nonce, email } = await this.options.accountBrowser.begin(req);
         this.prune();
         if (this.pending.size >= 32) throw new RelayError(429, "Too many Google sign-in requests");
         const authorization = beginGoogleAuthorization({
           clientId: this.options.clientId,
           redirectUri: new URL("/_relay/web/callback", this.origin).href,
           nonce: nonce ?? randomBytes(32).toString("base64url"),
+          email,
+          endpoint: this.options.authorizationEndpoint,
         });
         this.pending.set(authorization.state, { authorization, context });
         res.writeHead(303, {

@@ -22,6 +22,10 @@ export function beginGoogleAuthorization(options: {
   redirectUri: string;
   nonce: string;
   offline?: boolean;
+  /** Also asks for the verified email address, for a policy that needs it. */
+  email?: boolean;
+  /** Test-only: a loopback stand-in for Google's authorization endpoint. */
+  endpoint?: string;
 }): GoogleAuthorization {
   z.string().min(1).max(512).parse(options.clientId);
   z.string().min(16).max(256).parse(options.nonce);
@@ -40,12 +44,12 @@ export function beginGoogleAuthorization(options: {
     throw new Error("Unsupported Google callback URI");
   const state = randomBytes(32).toString("base64url");
   const verifier = randomBytes(48).toString("base64url");
-  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  const url = new URL(options.endpoint ?? "https://accounts.google.com/o/oauth2/v2/auth");
   for (const [key, value] of Object.entries({
     client_id: options.clientId,
     redirect_uri: options.redirectUri,
     response_type: "code",
-    scope: "openid",
+    scope: options.email ? "openid email" : "openid",
     state,
     nonce: options.nonce,
     code_challenge: createHash("sha256").update(verifier).digest("base64url"),

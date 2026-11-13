@@ -463,6 +463,28 @@ for the code shown on the approving device before it waits.
 The gateway registers with the invitation, then `POST /_relay/v3/signup/link`
 binds the account using its new owner session.
 
+Under `allowlist`, the relay may also take invitations from a Google Group
+(`OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP`, its service account key in
+`OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_CREDENTIALS_FILE`, and an optional
+`https` link to ask to join in `OMNESIS_CLOUD_RELAY_SIGNUP_GOOGLE_GROUP_JOIN_URL`;
+`packages/cloud-relay/README.md` lists the Google-side setup). It applies only
+to a Google sign-in that the allowlist does not already admit and that either
+would create an account or is for an existing account with no linked gateway.
+On such a relay, the sign-in for connecting a gateway also asks Google for the
+`email` scope,
+and the address Google marked `email_verified` is checked once against the group
+through the Cloud Identity Groups API. The address is never stored, logged or
+returned, and the account is keyed by Google's subject as always. A member
+creates the account or connects the gateway to it; anyone else is refused with "Omnesis accounts are
+invite-only for now." and the join link, and the gateway's poll sees the usual
+`not-allowed`. If Google cannot answer, the sign-up is refused for now ("We
+couldn't check your invitation right now. Try again in a few minutes."),
+nothing is recorded, and the person can sign in again on the same request.
+An account that already has a linked gateway, or that the allowlist names, is
+never checked against the group. A passkey sign-in the allowlist refuses stays
+refused, since it carries no email; the page asks the person to start again
+from the gateway and sign in with Google.
+
 ### Accounts are created on purpose
 
 Signing in never creates an Omnesis account. One is created only while connecting a

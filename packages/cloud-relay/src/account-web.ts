@@ -14,7 +14,7 @@ import {
   type AccountAuthentication,
   type GoogleAdmission,
 } from "./account-authentication.js";
-import { SignupDenied, type GatewaySignup } from "./gateway-signup.js";
+import { SignupDenied, SignupUnavailable, type GatewaySignup } from "./gateway-signup.js";
 import {
   NoAccount,
   type AccountAdmission,
@@ -81,7 +81,10 @@ function contextTarget(value: z.infer<typeof googleContextSchema>): OperationTar
 }
 type GoogleContext = z.infer<typeof googleContextSchema>;
 /** Returns to the plain account page, or to the one operation or front-door request it serves. */
-const accountLocation = (value?: GoogleContext, failed?: "google" | "no-account") => {
+const accountLocation = (
+  value?: GoogleContext,
+  failed?: "google" | "no-account" | "invitation",
+) => {
   const query = new URLSearchParams(
       failed ? { failed } : value?.linkSession ? { linked: "google" } : {},
     ),
@@ -118,14 +121,18 @@ export class AccountWeb {
     this.admission = options.admission ?? new LoginAdmission();
   }
 
-  async googleContext(req: IncomingMessage): Promise<{ context?: string; nonce?: string }> {
+  async googleContext(
+    req: IncomingMessage,
+  ): Promise<{ context?: string; nonce?: string; email?: boolean }> {
     const query = new URL(req.url!, this.origin).searchParams;
     if (query.getAll("link").length > 1 || (query.has("link") && query.get("link") !== "1"))
       throw new RelayError(400, "Invalid account linking request");
-    const target = this.target(req);
+    const target = this.target(req),
+      cookieHeader = req.headers.cookie ?? "";
     if (target && query.has("link")) throw new RelayError(400, "Finish this sign-in first");
-    const nonce =
-      target && this.broker(target.kind).googleProofNonce(target.id, req.headers.cookie ?? "");
+    const nonce = target && this.broker(target.kind).googleProofNonce(target.id, cookieHeader);
+    // Only a sign-up whose invitation is a Google Group needs the address.
+    const email = target?.kind === "signup" && this.signup().requestsEmail(target.id, cookieHeader);
     let linkSession: string | undefined;
     if (query.has("link")) {
       linkSession = cookie(req, sessionCookie);
@@ -152,6 +159,7 @@ export class AccountWeb {
             })
           : undefined,
       nonce,
+      ...(email ? { email } : {}),
     };
   }
 
@@ -177,6 +185,9 @@ export class AccountWeb {
     } catch (error) {
       // The refusal is on the operation, so the page can show the person what to send the operator.
       if (error instanceof SignupDenied) return { location: accountLocation(value) };
+      // Nothing was decided, so the same operation offers the sign-in again.
+      if (error instanceof SignupUnavailable)
+        return { location: accountLocation(value, "invitation") };
       // Signing in never creates an account, so the page says how to create one.
       if (error instanceof NoAccount) return { location: accountLocation(value, "no-account") };
       throw error;
