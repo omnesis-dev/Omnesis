@@ -203,6 +203,7 @@ import {
   beginSyncAttempt,
   revokeSyncAttempt,
   resetMemberCursor,
+  resetSourceCursors,
   reserveReauthReminder,
   releaseReauthReminder,
   applySnapshotAbsencePlan,
@@ -866,6 +867,11 @@ export interface WriteGate extends KnowledgeWriteGate {
   revokeSyncAttempt(sourceId: string, expectedEpoch: number, cursorRow?: string): Promise<boolean>;
   /** Send one member's cursor row back to a bootstrap: no cursor, its epoch advanced, the row kept. */
   resetMemberCursor(sourceId: string, deviceId: string): Promise<void>;
+  /**
+   * Send every cursor row of a source back to a bootstrap, deleting nothing.
+   * `memberRows` says its members each sync on a row of their own.
+   */
+  resetSourceCursors(sourceId: string, memberRows: boolean): Promise<void>;
 
   setSyncState(
     sourceId: string,
@@ -2472,6 +2478,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     revokeSyncAttempt: (sourceId, expectedEpoch, cursorRow) =>
       call("db.revokeSyncAttempt", [sourceId, expectedEpoch, cursorRow]),
     resetMemberCursor: (sourceId, deviceId) => call("db.resetMemberCursor", [sourceId, deviceId]),
+    resetSourceCursors: (sourceId, memberRows) =>
+      call("db.resetSourceCursors", [sourceId, memberRows]),
 
     setSyncState: (sourceId, cursor, meta, writeEpoch, deviceId) =>
       call("db.setSyncState", [sourceId, cursor, meta, writeEpoch, deviceId]),
@@ -3058,6 +3066,9 @@ export function directWriteGate(db: Db): WriteGate {
       revokeSyncAttempt(db, sourceId, expectedEpoch, cursorRow ?? ""),
     resetMemberCursor: async (sourceId, deviceId) => {
       resetMemberCursor(db, sourceId, deviceId);
+    },
+    resetSourceCursors: async (sourceId, memberRows) => {
+      resetSourceCursors(db, sourceId, memberRows);
     },
 
     setSyncState: async (sourceId, cursor, meta, writeEpoch, deviceId) =>

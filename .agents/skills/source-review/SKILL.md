@@ -350,8 +350,11 @@ local`). `link-widget` also needs `widgetOrigins` and `widgetRenderer`, or
   connection implements `suspend()` / `resume()`; without them a disabled
   push source keeps reconnecting and a re-enable stacks a second socket.
 - **Resync.** `onResync()` re-marks the source's whole local store for
-  emission, so a resync rebuilds the corpus in full rather than from recent
-  changes, and fences a late page from a run that timed out.
+  emission, so a resync reads the corpus in full rather than from recent
+  changes, and fences a late page from a run that timed out. It runs for both
+  resync modes: after a from-scratch resync the gateway holds nothing, after
+  an in-place one it holds every record, so the source re-emits each item
+  under the external id it had and must not assume anything was wiped.
 - **Change-triggered sync.** `watchPaths` names the database and its `-wal`
   sibling; `watchDirectoryPaths` for directories that may be absent at boot.
 - **Freshness.** `freshness` is declared only when `sync()` is how data

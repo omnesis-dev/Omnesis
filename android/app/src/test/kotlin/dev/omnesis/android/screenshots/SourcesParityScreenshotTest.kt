@@ -25,6 +25,9 @@ import dev.omnesis.android.designsystem.components.NoticeGroup
 import dev.omnesis.android.designsystem.components.NoticeSeverity
 import dev.omnesis.android.designsystem.components.NoticeSheetBody
 import dev.omnesis.android.designsystem.components.NoticeUi
+import dev.omnesis.android.transport.ResyncOffer
+import dev.omnesis.android.transport.dto.ResyncMode
+import dev.omnesis.android.ui.sources.ResyncSheetBody
 import dev.omnesis.android.ui.sources.SourceDetailContent
 import dev.omnesis.android.ui.sources.SourceDetailUi
 import dev.omnesis.android.ui.sources.SourceHostDeviceUi
@@ -369,6 +372,36 @@ class SourcesParityScreenshotTest {
         Surface(color = OmTheme.colors.bgPrimary) {
             Box(Modifier.fillMaxWidth().padding(top = 24.dp)) { content() }
         }
+    }
+
+    /** The Resync sheet on one selection, for a source the catalog labels Gmail. */
+    @Composable
+    private fun ResyncSheetShot(initial: ResyncMode, brainNote: Boolean = false) {
+        SheetSurface {
+            ResyncSheetBody(
+                "Gmail", ResyncOffer.Choice(ResyncMode.entries), brainNote,
+                onConfirm = {}, onCancel = {}, initialMode = initial,
+            )
+        }
+    }
+
+    @Test fun source_resync_in_place_dark() = capture("source_resync_in_place_dark", dark = true) {
+        ResyncSheetShot(ResyncMode.IN_PLACE)
+    }
+    @Test fun source_resync_in_place_light() = capture("source_resync_in_place_light", dark = false) {
+        ResyncSheetShot(ResyncMode.IN_PLACE)
+    }
+    @Test fun source_resync_from_scratch_dark() = capture("source_resync_from_scratch_dark", dark = true) {
+        ResyncSheetShot(ResyncMode.FROM_SCRATCH)
+    }
+    @Test fun source_resync_from_scratch_light() = capture("source_resync_from_scratch_light", dark = false) {
+        ResyncSheetShot(ResyncMode.FROM_SCRATCH)
+    }
+    @Test fun source_resync_from_scratch_brain_dark() = capture("source_resync_from_scratch_brain_dark", dark = true) {
+        ResyncSheetShot(ResyncMode.FROM_SCRATCH, brainNote = true)
+    }
+    @Test fun source_resync_from_scratch_brain_light() = capture("source_resync_from_scratch_brain_light", dark = false) {
+        ResyncSheetShot(ResyncMode.FROM_SCRATCH, brainNote = true)
     }
 
     @Test

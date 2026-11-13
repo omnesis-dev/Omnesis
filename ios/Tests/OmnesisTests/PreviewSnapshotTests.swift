@@ -3704,6 +3704,28 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// The Resync sheet on each selection, with and without the Brain line
+    /// under From scratch, then presented the way the source detail opens it.
+    func testSourceResyncChoice() {
+        func sheet(_ initial: SourceResyncMode, brainNote: Bool = false) -> some View {
+            SourceResyncSheet(
+                sourceName: humanName(for: PreviewMocks.sourceGmail.type),
+                modes: SourceResyncMode.allCases,
+                brainNote: brainNote,
+                initialMode: initial,
+                onConfirm: { _ in }
+            )
+        }
+        let size = CGSize(width: 393, height: 480)
+        snapshot(sheet(.inPlace), name: "50h-source-resync-in-place", size: size)
+        snapshot(sheet(.fromScratch), name: "50i-source-resync-from-scratch", size: size)
+        snapshot(sheet(.fromScratch, brainNote: true), name: "50j-source-resync-from-scratch-brain", size: size)
+        snapshotPresented(
+            Color.clear.sheet(isPresented: .constant(true)) { sheet(.inPlace) },
+            name: "50k-source-resync-presented"
+        )
+    }
+
     // MARK: - Settings
 
     func testSettingsConnected() async throws {

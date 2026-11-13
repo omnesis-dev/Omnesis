@@ -2,16 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Pick one device from a short list, then confirm. Used by the Sources page
-// to join a device to a source, to detach one from it and to choose which
-// device a resync applies to. Renders inside the same `.confirm-modal-*`
-// chrome as `ConfirmModal`, with a device list between the title and the
-// buttons; the body text and the confirm button's danger colour may depend on
-// the selected entry, so a confirmation can name what it is about to do and
-// paint red only for the choices that delete something.
+// to join a device to a source and to detach one from it. Renders inside the
+// same `.confirm-modal-*` chrome as `ConfirmModal`, with a device list between
+// the title and the buttons; the body text and the confirm button's danger
+// colour may depend on the selected entry, so a confirmation can name what it
+// is about to do and paint red only for the choices that delete something.
 //
-// An entry need not be a device: a caller may list a synthetic choice (the
-// Sources page's "Whole source") with its own `icon` in place of the
-// device-kind glyph.
+// An entry need not be a device: a caller may list a synthetic choice with
+// its own `icon` in place of the device-kind glyph.
 //
 // Escape and click-outside cancel; the confirm button stays disabled until a
 // device is selected. An empty list renders `emptyText` instead of the list.

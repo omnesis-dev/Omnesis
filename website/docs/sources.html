@@ -1875,16 +1875,25 @@
                 </td>
               </tr>
               <tr>
-                <td>Rebuild</td>
+                <td>Resync</td>
                 <td>
-                  <strong>Resync</strong>, or <code>omnesis sources resync &lt;id&gt;</code>.<br />
-                  Deletes everything the source has indexed and syncs it again from scratch. Use it
-                  only when the indexed data must be rebuilt, or after widening the source's
-                  <code>maxAge</code> to fetch the older history (see
-                  <a href="operating#configuration">Configuration</a>). The CLI asks first; pass
-                  <code>--yes</code> in scripts. Pages captured by the browser extension cannot be
-                  resynced, because the gateway has nowhere to fetch them again from. A phone source
-                  is resynced from the CLI only; the phone sends its data again.
+                  <strong>Resync…</strong>, or <code>omnesis sources resync &lt;id&gt;</code>.<br />
+                  Reads the source again from the start, in one of two ways.
+                  <strong>In place</strong>, the default, deletes nothing: each item updates the
+                  record already indexed, so records keep their place, items you deleted one by one
+                  stay deleted, and search keeps working meanwhile. Use it to pick up anything a
+                  sync missed, or after widening the source's <code>maxAge</code> to fetch the older
+                  history (see <a href="operating#configuration">Configuration</a>). Because it
+                  never deletes, it does not clear duplicate or stray records.
+                  <strong>From scratch</strong>, <code>--from-scratch</code> in the CLI, deletes
+                  everything the source has indexed and then imports it again: search for the source
+                  is empty until it finishes, and items you had deleted one by one come back. Use it
+                  when the indexed data must be rebuilt. The CLI asks before a from-scratch resync;
+                  pass <code>--yes</code> in scripts. <strong>Resync</strong> on a source's page in
+                  the mobile apps offers the same two ways, in place selected. Pages captured by the
+                  browser extension cannot be resynced, because the gateway has nowhere to fetch
+                  them again from. A phone source has no Resync in the portal: resync it from the
+                  CLI or the mobile apps, and the phone sends its data again.
                 </td>
               </tr>
               <tr>
@@ -2114,10 +2123,12 @@
           with the same outcome.
         </p>
         <p>
-          <code>omnesis sources resync &lt;id&gt; --device &lt;device&gt;</code> re-syncs one member
-          of a shared or per-device source and leaves the others alone. On a per-device source, that
-          member's data is deleted and synced again; on a shared source, only that member's sync
-          progress starts over, because the data is shared.
+          <code>omnesis sources resync &lt;id&gt; --device &lt;device&gt;</code>, or picking the
+          device in the portal's Resync dialog, re-syncs one member of a shared or per-device source
+          and leaves the others alone. In place, that member's sync progress starts over and nothing
+          is deleted. From scratch applies to a per-device source only: that member's data is
+          deleted and synced again. A member of a shared source is always resynced in place, because
+          the data is shared; resync the whole source to rebuild it from scratch.
         </p>
         <p>
           If shared members disagree about whether an item was deleted — one reports it gone while

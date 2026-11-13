@@ -167,6 +167,47 @@ export function resetAllMemberCursors(db: Db, sourceId: string): void {
 }
 
 /**
+ * Send a whole source back to a bootstrap without deleting anything: every
+ * cursor row it has is left in place with no completed sync on it, and every
+ * row's epoch advances, so a sync that began before the reset cannot write
+ * its stale cursor back. The documents, the rows and the record of what the
+ * owner deleted are untouched; the next sync reads the source from the start
+ * and each item lands on the record it already has.
+ *
+ * With `memberRows` — a source whose members each sync on a row of their own
+ * — every member is given a row first, so none of them adopts the shared row,
+ * and each member's restores are withdrawn until its bootstrap re-states
+ * them. Membership is resolved by the statements themselves, and every
+ * statement is set-based, so the writer's work is bounded by the member
+ * count.
+ */
+export function resetSourceCursors(db: Db, sourceId: string, memberRows: boolean): void {
+  if (memberRows) {
+    const members = `SELECT device_id FROM sources WHERE id = ?
+                     UNION SELECT device_id FROM source_devices WHERE source_id = ?`;
+    db.prepare(
+      `INSERT OR IGNORE INTO sync_state (source_id, device_id, cursor, last_synced_at)
+       SELECT ?, device_id, '{}', NULL FROM (${members})`,
+    ).run(sourceId, sourceId, sourceId);
+    db.prepare(
+      `INSERT OR IGNORE INTO source_wipe_epoch (source_id, device_id, epoch)
+       SELECT ?, device_id, 0 FROM (${members})`,
+    ).run(sourceId, sourceId, sourceId);
+    clearRestoredClaims(db, sourceId, "all");
+  }
+  db.prepare(
+    `UPDATE sync_state SET
+       cursor = '{}',
+       last_synced_at = NULL,
+       last_error = NULL,
+       errored_at = NULL,
+       last_error_remediation = NULL
+     WHERE source_id = ?`,
+  ).run(sourceId);
+  bumpWipeEpoch(db, sourceId);
+}
+
+/**
  * Every cursor row a write on the source can be fenced on: the shared row
  * (`""`) and each device row known to the source — its current members,
  * plus any row that still carries an epoch or a cursor for a device that

@@ -24,6 +24,12 @@ data class SourceRecord(
     val members: List<String> = emptyList(),
     /** How the source type shares its row across devices (`exclusive`, `handoff`, `replicated`, `partitioned`). */
     val multiDeviceMode: String? = null,
+    /**
+     * The modes a resync of the whole source offers ([ResyncMode.wire] values): empty for a
+     * source that cannot be resynced. Null on a gateway that predates resync modes, where a
+     * resync always wipes.
+     */
+    val resyncModes: List<String>? = null,
 ) {
     /** Whether [deviceId] contributes to this source, on gateways with and without membership. */
     fun hosts(deviceId: String): Boolean = deviceId == this.deviceId || deviceId in members
@@ -58,6 +64,19 @@ data class SourceInventory(
     val pendingRemovals: List<PendingSourceRemoval> = emptyList(),
     val removedSourceIds: List<String> = emptyList(),
 )
+
+/** How a resync treats what the source already indexed. */
+enum class ResyncMode(val wire: String) {
+    /** Nothing is deleted: the source is read again and each item updates the record it already has. */
+    IN_PLACE("in-place"),
+
+    /** Everything the source indexed is deleted, then imported again. */
+    FROM_SCRATCH("from-scratch"),
+}
+
+/** Request body for `POST /admin/sources/:id/resync` — a [ResyncMode.wire] value. */
+@Serializable
+data class SourceResyncBody(val mode: String)
 
 /** Request body for `POST /admin/sources/:id/members` — the device joining the source. */
 @Serializable

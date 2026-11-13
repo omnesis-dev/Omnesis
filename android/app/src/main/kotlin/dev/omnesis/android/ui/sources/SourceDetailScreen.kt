@@ -74,6 +74,8 @@ import dev.omnesis.android.designsystem.components.SourceIconModel
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
+import dev.omnesis.android.transport.ResyncOffer
+import dev.omnesis.android.transport.dto.ResyncMode
 import dev.omnesis.android.ui.common.GatewayErrorView
 import dev.omnesis.android.ui.common.Loadable
 
@@ -109,7 +111,7 @@ fun SourceDetailContent(
     onOpenSettings: () -> Unit = {},
     onSyncNow: () -> Unit = {},
     onTogglePause: () -> Unit = {},
-    onResync: () -> Unit = {},
+    onResync: (ResyncMode) -> Unit = {},
     onRemove: () -> Unit = {},
     onLoadDebug: () -> Unit = {},
 ) {
@@ -172,7 +174,7 @@ private fun DetailBody(
     onOpenRecent: () -> Unit,
     onSyncNow: () -> Unit,
     onTogglePause: () -> Unit,
-    onResync: () -> Unit,
+    onResync: (ResyncMode) -> Unit,
     onRemove: () -> Unit,
     onLoadDebug: () -> Unit,
 ) {
@@ -212,6 +214,7 @@ private fun DetailBody(
             paused = detail.paused,
             inFlight = detail.actionInFlight,
             isInternal = detail.isInternal,
+            resync = detail.resync,
             onSyncNow = onSyncNow,
             onTogglePause = onTogglePause,
             onDebug = { showDebug = true; onLoadDebug() },
@@ -233,13 +236,23 @@ private fun DetailBody(
         )
     }
     if (showResyncConfirm) {
-        ConfirmDialog(
-            title = "Resync this source?",
-            body = "This deletes the source's documents and refetches everything from scratch.",
-            confirmLabel = "Resync",
-            onConfirm = { showResyncConfirm = false; onResync() },
-            onDismiss = { showResyncConfirm = false },
-        )
+        when (val offer = detail.resync) {
+            is ResyncOffer.Choice -> ResyncSheet(
+                sourceName = detail.label,
+                offer = offer,
+                brainNote = detail.resyncBrainNote,
+                onConfirm = { mode -> showResyncConfirm = false; onResync(mode) },
+                onDismiss = { showResyncConfirm = false },
+            )
+            ResyncOffer.WipeOnly -> ConfirmDialog(
+                title = ResyncCopy.WIPE_ONLY_TITLE,
+                body = ResyncCopy.WIPE_ONLY_BODY,
+                confirmLabel = ResyncCopy.WIPE_ONLY_CONFIRM,
+                onConfirm = { showResyncConfirm = false; onResync(ResyncMode.FROM_SCRATCH) },
+                onDismiss = { showResyncConfirm = false },
+            )
+            ResyncOffer.Unavailable -> Unit
+        }
     }
     if (showDebug) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -336,6 +349,7 @@ private fun ActionsSection(
     paused: Boolean,
     inFlight: Boolean,
     isInternal: Boolean = false,
+    resync: ResyncOffer,
     onSyncNow: () -> Unit,
     onTogglePause: () -> Unit,
     onDebug: () -> Unit,
@@ -379,16 +393,20 @@ private fun ActionsSection(
                 onClick = onDebug,
             )
             ActionDivider()
-            ActionRow(
-                icon = Icons.Outlined.RestartAlt,
-                label = "Resync",
-                labelColor = c.danger,
-                iconColor = c.danger,
-                showChevron = !inFlight,
-                enabled = !inFlight,
-                onClick = onResync,
-            )
-            ActionDivider()
+            if (resync != ResyncOffer.Unavailable) {
+                // Red only where the action can do nothing but delete first.
+                val resyncColor = if (resync == ResyncOffer.WipeOnly) c.danger else c.textPrimary
+                ActionRow(
+                    icon = Icons.Outlined.RestartAlt,
+                    label = "Resync",
+                    labelColor = resyncColor,
+                    iconColor = resyncColor,
+                    showChevron = !inFlight,
+                    enabled = !inFlight,
+                    onClick = onResync,
+                )
+                ActionDivider()
+            }
             ActionRow(
                 icon = Icons.Outlined.Delete,
                 label = "Remove whole source",

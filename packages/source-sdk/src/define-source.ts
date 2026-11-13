@@ -373,15 +373,19 @@ export interface SourceInstance<TCursor extends SyncCursor = SyncCursor> {
 
   /**
    * Reset internal state before a sync that starts the source over — the
-   * gateway's resync, which wipes what the source ingested and then tells the
-   * collector to start it again. Called once the collector no longer tracks
+   * gateway's resync, which sends the source's cursor back to the start (after
+   * wiping what the source ingested, when asked to resync from scratch; with
+   * every record still in place otherwise) and then tells the collector to
+   * start it again. Called once the collector no longer tracks
    * a run of the source, and the fresh sync follows this call. A run that
    * was in progress is aborted first and this waits for it to unwind — except
    * a run the collector gave up on at its wall-clock timeout, whose page loop
    * may still be draining when this is called: a source whose reset cannot
    * tolerate a late page from such a run must fence it itself. A source that
    * keeps a local store re-marks everything in it for emission here, so the
-   * corpus is rebuilt in full rather than from recent changes.
+   * corpus is read in full rather than from recent changes. Each item must be
+   * emitted under the external id it had: after an in-place resync that is
+   * what lands it on its existing record.
    */
   onResync?(): void;
 

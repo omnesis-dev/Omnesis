@@ -71,6 +71,7 @@ let package = Package(
                 "AdminCoordinatorPendingAccessTests.swift",
                 "AdminCoordinatorInternalSourcesTests.swift",
                 "AdminCoordinatorNoticesTests.swift",
+                "AdminCoordinatorResyncTests.swift",
                 // Exercises the hosted UIKit Google enrollment composition.
                 "GoogleDefaultPairingCompositionTests.swift",
                 // Constructs HealthSampleProbeView (SwiftUI + UIKit-gated).

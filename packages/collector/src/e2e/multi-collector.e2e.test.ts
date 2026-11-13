@@ -217,6 +217,7 @@ describe("multi-collector disambiguation (gateway)", () => {
       macbook.receivedCommands.length = 0;
       expect(await resync()).toEqual({
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: [macbook.deviceId],
         restarting: [],
@@ -234,6 +235,7 @@ describe("multi-collector disambiguation (gateway)", () => {
       macbook.sourceSyncResponse = { ok: true, triggered: 0, skipped: 1, disabled: 0 };
       expect(await resync()).toEqual({
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: [],
         restarting: [],
@@ -246,6 +248,7 @@ describe("multi-collector disambiguation (gateway)", () => {
       macbook.sourceSyncResponse = { ok: true, triggered: 0, skipped: 0, disabled: 1 };
       expect(await resync()).toEqual({
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: [],
         restarting: [],
@@ -257,6 +260,7 @@ describe("multi-collector disambiguation (gateway)", () => {
       macbook.sourceSyncResponse = { ok: true, triggered: 0, skipped: 0, restarting: 1 };
       expect(await resync()).toEqual({
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: [],
         restarting: [macbook.deviceId],
