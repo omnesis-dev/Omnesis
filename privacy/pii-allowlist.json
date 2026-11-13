@@ -13007,6 +13007,40 @@
         "packages/providers/whatsapp/src/stored-record-forms.test.ts"
       ],
       "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Fictional Drive",
+      "paths": [
+        "evals/universes/default/sources/google-drive/folders.json",
+        "evals/universes/e2e-minimal/sources/google-drive/folders.json",
+        "evals/universes/graph-search/sources/google-drive/folders.json",
+        "evals/universes/handoff/sources/google-drive/folders.json",
+        "evals/universes/japan-trip/sources/google-drive/folders.json",
+        "evals/universes/loops-test-life/sources/google-drive/folders.json",
+        "evals/universes/sacha-bellamy/sources/google-drive/folders.json",
+        "packages/collector/src/e2e/filter-details-google.e2e.test.ts"
+      ],
+      "reason": "Invented root-folder display label shared by synthetic folder-tree fixtures; not a person or corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": ["evals/universes/label-filters/cast.json"],
+      "reason": "Invented cast of the label-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": ["evals/universes/label-filters/cast.json"],
+      "reason": "Invented cast of the label-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "David Lin",
+      "paths": ["evals/universes/label-filters/cast.json"],
+      "reason": "Invented cast of the label-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "My Drive",
+      "paths": ["packages/providers/google/src/filter-details.test.ts"],
+      "reason": "The name Google Drive gives every account's root folder; a product label, not a person or corpus data."
     }
   ],
   "secretFixtures": [

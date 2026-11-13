@@ -45,6 +45,7 @@ import {
   GMAIL_QUOTA_INCREASE_UNITS_PER_MINUTE,
   GMAIL_QUOTA_QUIET_PERIOD_MS,
   GMAIL_QUOTA_HOLD_MS,
+  GMAIL_SYNC_BUDGET_MS,
   type GmailRequest,
 } from "./constants.js";
 import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
@@ -58,6 +59,7 @@ import {
   partHeader,
   selfAuthoredMailText,
 } from "./gmail-message.js";
+import { gmailLabelItems, gmailListedLabelIds, gmailRecordLabelIds } from "./gmail-labels.js";
 import type {
   AttachmentInfo,
   AttachmentExtractionConfig,
@@ -70,7 +72,7 @@ import type {
   HistoryCoverage,
   SyncRun,
 } from "@omnesis/source-sdk";
-import type { DocumentInput } from "@omnesis/types";
+import type { DocumentInput, FilterListItem } from "@omnesis/types";
 
 const log = createLogger("source:gmail");
 
@@ -322,15 +324,6 @@ export function gmailMessageUrl(messageId: string, accountEmail?: string): strin
 // actually opens the specific message rather than the inbox or composer.
 
 /**
- * How long one sync may run before it ends and leaves the rest to the next.
- * A first sync of a large mailbox pages through every message for hours; the
- * host stops a sync that runs too long and reports it as an error, while a
- * sync that ends on its own keeps its pages and reports none. The cursor
- * already records where the walk stands, so the next sync continues it.
- */
-const GMAIL_SYNC_BUDGET_MS = 20 * 60 * 1000;
-
-/**
  * What fetching one message came to: its documents and when it reached the
  * mailbox, or that Gmail no longer has it.
  */
@@ -350,6 +343,10 @@ export class GmailSource {
   private extractAttachment?: AttachmentExtractFn;
   private labelMap: Map<string, string> | null = null;
   private labelMapFetchedAt = 0;
+  /** The ids of the account's labels a filter can name, as of the last listing. */
+  private listedLabelIds: ReadonlySet<string> = new Set();
+  /** Ids seen on a message that the last listing, made for them, did not contain. */
+  private readonly absentLabelIds = new Set<string>();
   /**
    * When the current sync began, and the host run it belongs to. A page from
    * a different run starts a fresh budget, so a sync the host abandoned
@@ -425,37 +422,66 @@ export class GmailSource {
       return this.labelMap;
     }
     try {
-      const res = await this.request("labelsList", () =>
-        this.gmail.users.labels.list({ userId: "me" }),
-      );
-      const map = new Map<string, string>();
-      for (const label of res.data.labels ?? []) {
-        if (label.id && label.name) map.set(label.id, label.name);
-      }
-      this.labelMap = map;
-      this.labelMapFetchedAt = Date.now();
-      return map;
+      await this.fetchLabels();
+      return this.labelMap!;
     } catch (err) {
       // A rate limit fails the page: the fallback below would tag messages
       // with raw label ids, and the page would land with them.
       if (isRateLimit(err)) throw err;
+      // With no listing at all, a message's label ids could not be told from
+      // "none", so the page fails and is read again.
+      // The same goes for a listing asked for because a message names a
+      // label the last one lacks: its id would be left off the record.
+      if (!this.labelMap || forceRefresh) throw err;
       log.warn(`Failed to fetch Gmail labels: ${err instanceof Error ? err.message : String(err)}`);
-      return this.labelMap ?? new Map();
+      return this.labelMap;
+    }
+  }
+
+  /**
+   * The account's labels, from one `labels.list` request, which Gmail does
+   * not page. Every read also renews the id-to-name map messages are tagged
+   * from, so a renamed label is known by its new name from then on.
+   */
+  private async fetchLabels(): Promise<gmail_v1.Schema$Label[]> {
+    const res = await this.request("labelsList", () =>
+      this.gmail.users.labels.list({ userId: "me" }),
+    );
+    const labels = res.data.labels ?? [];
+    const map = new Map<string, string>();
+    for (const label of labels) {
+      if (label.id && label.name) map.set(label.id, label.name);
+    }
+    this.labelMap = map;
+    this.listedLabelIds = gmailListedLabelIds(labels);
+    this.absentLabelIds.clear();
+    this.labelMapFetchedAt = Date.now();
+    return labels;
+  }
+
+  /**
+   * The labels that exist in the account, for the list a filter picks from.
+   * One paced `labels.list` request however many messages the mailbox holds;
+   * a failure throws, so a list is never published in part.
+   */
+  async listLabels(): Promise<FilterListItem[]> {
+    try {
+      return gmailLabelItems(await this.fetchLabels());
+    } catch (error: unknown) {
+      throw mapGoogleApiError(error);
     }
   }
 
   private async resolveLabels(labelIds: string[]): Promise<string[]> {
     if (labelIds.length === 0) return [];
     let map = await this.getLabelMap();
-    let needsRefresh = false;
-    for (const id of labelIds) {
-      if (id.startsWith("Label_") && !map.has(id)) {
-        needsRefresh = true;
-        break;
-      }
-    }
-    if (needsRefresh) {
+    // A label made since the last listing: list again, once. An id the fresh
+    // listing still lacks belongs to a label deleted meanwhile, and is not
+    // asked about again until the next listing.
+    const unlisted = (id: string) => !map.has(id) && !this.absentLabelIds.has(id);
+    if (labelIds.some(unlisted)) {
       map = await this.getLabelMap(true);
+      for (const id of labelIds) if (!map.has(id)) this.absentLabelIds.add(id);
     }
     return labelIds.map((id) => map.get(id) ?? id);
   }
@@ -1041,6 +1067,10 @@ export class GmailSource {
       content += formatAttachmentMarkers(attachments.infos);
     }
 
+    // Resolving the names lists the account's labels when a message names one
+    // not seen before, so the ids written below are judged against that listing.
+    const tags = await this.resolveLabels(labels);
+
     const emailDoc: DocumentInput = {
       providerId: this.providerId,
       sourceId: this.id,
@@ -1050,7 +1080,7 @@ export class GmailSource {
       contentHash: computeContentHash(content),
       metadata: {
         sourceUrl: gmailMessageUrl(msg.id, this.accountEmail),
-        tags: await this.resolveLabels(labels),
+        tags,
         documentType: "email",
         ...(this.isTranscriptionVocabularyEnabled() &&
         labels.includes("SENT") &&
@@ -1084,6 +1114,10 @@ export class GmailSource {
         people,
         extra: {
           threadId: msg.threadId,
+          // The ids the account's label list contains, and no other. Always
+          // written, empty for a message with none, so a reader can tell "no
+          // labels" from a record that predates the field.
+          labelIds: gmailRecordLabelIds(labels, this.listedLabelIds),
           ...(attachments.infos.length > 0 ? { attachments: attachments.infos } : {}),
         },
       },

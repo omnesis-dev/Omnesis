@@ -172,7 +172,7 @@ describe("handoff universe — one device syncs at a time", () => {
     const rows = syncStateRows();
     expect(rows.map((r) => r.device_id)).toEqual([""]);
     expect(rows[0]!.last_synced_at).not.toBeNull();
-    expect((await cursorAs(owner)).cursor).toEqual({ offset: FIXTURE_COUNT });
+    expect((await cursorAs(owner)).cursor).toMatchObject({ offset: FIXTURE_COUNT });
   }, 90_000);
 
   test("the member's tick while the owner holds the lease is skipped: no event, no write, same holder", async () => {
@@ -188,6 +188,7 @@ describe("handoff universe — one device syncs at a time", () => {
 
   test("once the lease lapses the member's tick claims it and continues from the shared cursor", async () => {
     const before = syncStateRows();
+    const committedCursor = (await cursorAs(owner)).cursor;
     // A production collector normally stays online after its sync and earns
     // the incumbent grace window. Disconnect it deliberately: this case is
     // specifically about takeover after the holder goes offline.
@@ -205,8 +206,8 @@ describe("handoff universe — one device syncs at a time", () => {
       LEASE_TTL_MS + 10_000,
       "the owner's lease lapsed",
     );
-    // The member reads the shared cursor before it syncs.
-    expect((await cursorAs(member)).cursor).toEqual({ offset: FIXTURE_COUNT });
+    // The member reads the shared cursor, whole, before it syncs.
+    expect((await cursorAs(member)).cursor).toEqual(committedCursor);
 
     const stats = await completedTick(member);
     expect(await leaseHolder()).toBe(member.deviceId);
@@ -217,7 +218,7 @@ describe("handoff universe — one device syncs at a time", () => {
     const rows = syncStateRows();
     expect(rows.map((r) => r.device_id)).toEqual([""]);
     expect(rows[0]!.last_synced_at! > before[0]!.last_synced_at!).toBe(true);
-    expect((await cursorAs(member)).cursor).toEqual({ offset: FIXTURE_COUNT });
+    expect((await cursorAs(member)).cursor).toMatchObject({ offset: FIXTURE_COUNT });
   }, 90_000);
 
   test("a holder whose credentials fail gives the lease up at once; the sibling's next tick takes over", async () => {

@@ -1,0 +1,20 @@
+{
+  "name": "label-filters",
+  "description": "An invented Gmail account whose messages, from two senders, carry a work label, a personal label, both or neither, for the filters that share or hide by label or by person. Every record carries the word zqfilter and a title and body of its own, so a test can state exactly which records a filter leaves.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "laptop",
+      "name": "Invented laptop collector",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "gmail",
+      "accountIds": ["maya.reeves@example.org"],
+      "device": "laptop"
+    }
+  ]
+}
