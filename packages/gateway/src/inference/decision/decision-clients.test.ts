@@ -194,14 +194,25 @@ describe("DecisionClients.vetAssignment", () => {
       await c.vetAssignment("box/kev", { current: null, resolve: resolveTo(BACKEND), body }),
     ).toEqual({ ok: true });
     expect(refusing).not.toHaveBeenCalled();
+    const keyed = clients({ typesafeKey: "ts-key", fetchFn: refusing });
     const typesafeBody = { inference: { typesafe: { url: "http://127.0.0.1:9/v1/systemone" } } };
     expect(
-      await c.vetAssignment("typesafe/jev-1.13.0", {
+      await keyed.vetAssignment("typesafe/jev-1.13.0", {
         current: null,
         resolve: resolveTo(TYPESAFE),
         body: typesafeBody,
       }),
     ).toEqual({ ok: true });
+    expect(refusing).not.toHaveBeenCalled();
+    // The same assignment in a write that leaves TypeSafe alone is tested.
+    expect(
+      await keyed.vetAssignment("typesafe/jev-1.13.0", {
+        current: null,
+        resolve: resolveTo(TYPESAFE),
+        body: { inference: { assignments: { decision: "typesafe/jev-1.13.0" } } },
+      }),
+    ).toMatchObject({ ok: false });
+    expect(refusing).toHaveBeenCalledTimes(1);
   });
 
   it("lets through what it cannot test: a cleared role, a backend not loaded yet, an unavailable one", async () => {

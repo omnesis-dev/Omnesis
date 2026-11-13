@@ -103,8 +103,8 @@ export function mentionWorthGateTask(
   const clock = deps.clock ?? Date.now;
   const judgeDeps = { ...deps, idGen: deps.idGen ?? (() => randomUUID()) };
   let requeued = false;
-  /** The threshold every stored verdict is sorted by, once the re-sort has caught up. */
-  let sortedBy: number | null = null;
+  /** The model and threshold its stored verdicts are sorted by, once the re-sort has caught up. */
+  let sortedBy: string | null = null;
   let judged = 0;
   return {
     name: MENTION_WORTH_GATE_TASK_NAME,
@@ -133,12 +133,18 @@ export function mentionWorthGateTask(
             else return { idle: false };
           }
           const threshold = getSettings().worthThreshold;
-          if (sortedBy !== threshold) {
-            // Judgements stored under another threshold move to the side
-            // their score is on, a bounded batch per tick and no model call.
-            const n = await writeGate.resettleMentionJudgements(threshold, REQUEUE_BATCH);
+          const sortKey = `${decision.modelId} ${threshold}`;
+          if (sortedBy !== sortKey) {
+            // This model's judgements stored under another threshold move to
+            // the side their score is on, a bounded batch per tick and no
+            // model call.
+            const n = await writeGate.resettleMentionJudgements(
+              threshold,
+              decision.modelId,
+              REQUEUE_BATCH,
+            );
             if (n > 0) log.info(`mention worth gate: ${n} judgements re-sorted at ${threshold}`);
-            if (n < REQUEUE_BATCH) sortedBy = threshold;
+            if (n < REQUEUE_BATCH) sortedBy = sortKey;
             else return { idle: false };
           }
 

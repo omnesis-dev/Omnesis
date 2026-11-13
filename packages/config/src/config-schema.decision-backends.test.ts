@@ -102,6 +102,15 @@ describe("validateConfig — backends with a decision API", () => {
     expect(errors({ backends: { "a/b": OLLAYA } }).join()).toContain("/inference/backends/a~1b");
   });
 
+  test("refuses a decision API on a backend named claude-code, a built-in runtime's prefix", () => {
+    expect(errors({ backends: { "claude-code": OLLAYA } }).join()).toContain(
+      'A backend named "claude-code" cannot serve decision models',
+    );
+    for (const name of ["local", "replay", "anthropic", "codex"]) {
+      expect(errors({ backends: { [name]: OLLAYA } }), name).not.toEqual([]);
+    }
+  });
+
   test("refuses a decision API on a backend named typesafe, the built-in slot's prefix", () => {
     expect(errors({ backends: { typesafe: OLLAYA } }).join()).toContain(
       'A backend named "typesafe" cannot serve decision models',
@@ -130,10 +139,8 @@ describe("validateConfig — backends with a decision API", () => {
     ).not.toEqual([]);
   });
 
-  test("refuses a calibration, which a decision API does not carry", () => {
-    expect(errors(withDecision({ calibration: { kev: { points: [[0.5, 0.36]] } } }))).not.toEqual(
-      [],
-    );
+  test("refuses a key a decision API does not carry", () => {
+    expect(errors(withDecision({ unknownKey: true }))).not.toEqual([]);
   });
 
   test("a merge patch adds and removes a backend's decision API without touching the rest", () => {

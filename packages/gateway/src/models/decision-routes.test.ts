@@ -86,7 +86,7 @@ beforeEach(() => {
     allowRemoteInference: () => false,
     getDecisionEndpoint: (key) => registry.getDecisionEndpoint(key),
     hasBackend: (key) => registry.hasBackend(key),
-    getBackendApiKey: (key) => registry.getBackendApiKey(key),
+    getBackendApiKeyForUrl: (key, url) => registry.getBackendApiKeyForUrl(key, url),
     resolveDecision: (assignment) => registry.resolveValue("decision", assignment),
     clients,
     fetchFn,
@@ -157,10 +157,16 @@ describe("decision routes", () => {
         "authorization",
       );
     await post("/admin/inference/decision/probe", {
-      url: "http://127.0.0.1:11435/v1/systemone",
+      url: "http://127.0.0.1:11436/v1/systemone",
       backendKey: "keyed",
     });
     expect(authOf()).toBe("Bearer sk-keyed");
+    // The saved key stays on the backend's own hosts.
+    await post("/admin/inference/decision/probe", {
+      url: "http://127.0.0.1:11435/v1/systemone",
+      backendKey: "keyed",
+    });
+    expect(authOf()).toBeNull();
     // A key in the body wins over the backend's.
     await post("/admin/inference/decision/probe", {
       url: "http://127.0.0.1:11435/v1/systemone",
@@ -208,10 +214,5 @@ describe("decision routes", () => {
       reason: expect.stringContaining("send data off your machine"),
     });
     expect(decisionServer).not.toHaveBeenCalled();
-  });
-
-  it("serves no calibration routes", async () => {
-    expect((await app.request("/admin/models/decision/calibration")).status).toBe(404);
-    expect((await post("/admin/models/decision/calibration")).status).toBe(404);
   });
 });

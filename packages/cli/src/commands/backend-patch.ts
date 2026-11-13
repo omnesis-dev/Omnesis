@@ -16,7 +16,7 @@ export interface ConfigPatch {
   inference: Record<string, unknown>;
 }
 
-/** Parse repeated `--param key=value` flags. */
+/** Parse `--param key=value`. */
 export function parseParams(raw: string | string[] | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const item of Array.isArray(raw) ? raw : raw ? [raw] : []) {

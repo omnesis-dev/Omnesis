@@ -221,6 +221,25 @@ describe("TaskProposeGate", () => {
     ]);
   });
 
+  test("a score equal to a cut falls on its upper side: adopted at the adoption cut, suggested at the withhold cut", async () => {
+    thresholds = { taskAdopt: 1.8, taskWithhold: 0.8 };
+    score = 1.8;
+    expect((await judge()).tier).toBe("adopt");
+    // An ignored example makes withholding reachable, so only the comparison keeps it suggested.
+    interest = interestOf({ negative: [ignored("Renew the parking permit")] });
+    score = 0.8;
+    expect((await judge()).tier).toBe("suggest");
+    score = 0.79;
+    expect((await judge()).tier).toBe("withhold");
+    expect(
+      listDecisionsForRun(db, "run_propose").map((d) => [d.score, d.threshold, d.verdict]),
+    ).toEqual([
+      [1.8, 1.8, "pass"],
+      [0.8, 1.8, "pass"],
+      [0.79, 0.8, "skip"],
+    ]);
+  });
+
   test("withhold needs something the owner did not want", async () => {
     score = 0;
     expect((await judge()).tier).toBe("suggest");

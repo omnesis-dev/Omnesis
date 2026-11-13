@@ -109,7 +109,7 @@ const backendAddCommand = defineCommand({
     },
     param: {
       type: "string",
-      description: "A preset's decision URL value, key=value (repeatable), e.g. account=…",
+      description: "A preset's decision URL value, key=value, e.g. account=…",
     },
     "allow-remote": {
       type: "boolean",

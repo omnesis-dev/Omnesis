@@ -105,6 +105,37 @@ describe("InferenceRegistry — decision role on a backend's decision API", () =
     });
   });
 
+  it("leaves typesafe/<model> to TypeSafe when a chat backend is named typesafe", () => {
+    load({ backends: { typesafe: { type: "http", url: "http://127.0.0.1:8000" } } });
+    expect(registry.resolveValue("decision", "typesafe/jev-1.13.0")).toMatchObject({
+      kind: "typesafe",
+      model: "jev-1.13.0",
+    });
+  });
+
+  it("lends a backend's key only to that backend's own hosts", () => {
+    load({
+      backends: {
+        fireworks: { type: "http", url: "https://api.fireworks.ai/inference", apiKey: "fw-key" },
+        box: {
+          type: "http",
+          apiKey: "box-key",
+          decision: { url: "http://127.0.0.1:11435/v1/systemone" },
+        },
+        keyless: { type: "http", url: "http://127.0.0.1:8000" },
+      },
+    });
+    const keyFor = (key: string, url: string) => registry.getBackendApiKeyForUrl(key, url);
+    // Its chat host, which its provider's decision API shares.
+    expect(keyFor("fireworks", "https://api.fireworks.ai/inference/v1/systemone")).toBe("fw-key");
+    expect(keyFor("box", "http://127.0.0.1:11435/other")).toBe("box-key");
+    expect(keyFor("fireworks", "https://example.com/v1/systemone")).toBeUndefined();
+    expect(keyFor("box", "http://127.0.0.1:11436/v1/systemone")).toBeUndefined();
+    expect(keyFor("fireworks", "not a url")).toBeUndefined();
+    expect(keyFor("keyless", "http://127.0.0.1:8000/v1")).toBeUndefined();
+    expect(keyFor("gone", "http://127.0.0.1:8000/v1")).toBeUndefined();
+  });
+
   it("keeps a backend without a decision API on the experimental chat-model path", () => {
     load({ backends: { vllm: { type: "http", url: "http://127.0.0.1:8000" } } });
     const stable = registry.resolveValue("decision", "vllm/qwen3-4b");

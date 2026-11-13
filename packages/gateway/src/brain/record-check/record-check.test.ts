@@ -873,6 +873,117 @@ describe("record check", () => {
       );
     });
 
+    test.each([
+      ["documentRecordValue", "belongs"],
+      ["personRecordValue", "belongs"],
+      ["personWithdrawal", "withdrawal_preservation"],
+      ["profileDistillation", "profile_distillation"],
+      ["wikiRepair", "belongs"],
+      ["outcomeIntegrity", "transition_integrity"],
+      ["outcomeDeadline", "deadline_support"],
+    ] as const)(
+      "enforce refuses a record scored below a raised %s cut and no other",
+      async (key, question) => {
+        const text = "Maya Reeves keeps the planetarium projector calibration log.";
+        const doc = insertDoc(`raised-${key}`, text);
+        const maintenance = run("synthesis", { focus: "knowledge-maintenance", batchId: "batch" });
+        const person = (operation: "create" | "withdraw") =>
+          personRecordContext("fictional-person", [{ docId: doc, quote: text }], {
+            operation,
+            reason: null,
+            predecessors: [],
+            retained_profile: [],
+            truncated: false,
+          });
+        const outcome = (deadline: { type: "by"; date: string } | null) => {
+          const base = {
+            title: "Calibrate the planetarium projector",
+            description: "Record the calibration in the log.",
+            state: "open" as const,
+            deadline: null,
+            actors: [],
+          };
+          const prepared = prepareOutcomeRecordContext(db, {
+            documentIds: [doc],
+            // A deadline on a new outcome asks the deadline facet alone; a
+            // revision without one asks the integrity facet alone.
+            previous: deadline ? null : base,
+            proposed: { ...base, description: "Log the calibration.", deadline },
+            now: NOW,
+          })!;
+          return {
+            record: {
+              type: "outcome" as const,
+              kind: deadline ? "creation" : "revision",
+              text: JSON.stringify(prepared.context.proposed),
+            },
+            outcomeContext: prepared.context,
+            payloadCapture: prepared.payloadCapture,
+          };
+        };
+        const fixture = {
+          documentRecordValue: {
+            record: { type: "doc-fact" as const, kind: "context", text },
+            documentContext: documentRecordContext(doc, text, [{ docId: doc, quote: text }]),
+          },
+          personRecordValue: {
+            record: { type: "person-fact" as const, kind: "role", text },
+            personContext: person("create"),
+          },
+          profileDistillation: {
+            record: { type: "person-fact" as const, kind: "role", text },
+            personContext: person("create"),
+          },
+          personWithdrawal: {
+            personWithdrawal: true,
+            record: { type: "person-fact" as const, kind: "withdrawal", text },
+            personContext: {
+              ...person("withdraw"),
+              withdrawal_sources: [{ id: doc, title: "Calibration log", content: text }],
+            },
+          },
+          wikiRepair: {
+            record: { type: "wiki" as const, kind: "factual_repair", text },
+            wikiContext: {
+              title: "Planetarium projector",
+              references: [],
+              referencesOmitted: 0,
+              factualRepair: {
+                claimIds: ["log-keeper"],
+                beforeMarkup: "Studio Northstar",
+                afterMarkup: "Maya Reeves",
+                beforeStates: [],
+                afterStates: [],
+              },
+            },
+          },
+          outcomeIntegrity: outcome(null),
+          outcomeDeadline: outcome({ type: "by", date: "2028-05-12" }),
+        }[key];
+        // Every question the check asks is scored 2: above each default cut.
+        const decision = new ScriptedDecision({}, undefined, 2);
+        let thresholds: RecordCheckThresholds = BRAIN_DEFAULTS.thresholds;
+        const bound = check(decision, "enforce", { thresholds: () => thresholds }).check.forRun(
+          maintenance,
+        )!;
+        const input = { recordId: `raised-${key}`, documentId: doc, ...fixture };
+
+        expect((await bound(input)).save).toBe(true);
+        // Only this cut moves; every other stays at its default.
+        thresholds = { ...BRAIN_DEFAULTS.thresholds, [key]: 2.5 };
+        const refused = await bound(input);
+        expect(refused).toMatchObject({ save: false, score: 2, threshold: 2.5 });
+        if (!refused.save && refused.questionId) expect(refused.questionId).toBe(question);
+        expect(Object.keys(decision.calls[1]!.questions)).toContain(question);
+        expect(
+          listDecisionsForRun(db, "run_1").map((d) => [d.score, d.threshold, d.verdict]),
+        ).toEqual([
+          [2, BRAIN_DEFAULTS.thresholds[key], "pass"],
+          [2, 2.5, "skip"],
+        ]);
+      },
+    );
+
     test.each(["timeline", "doc-fact", "person-fact"] as const)(
       "enforce applies the current rubric and keeps its exact boundary for %s",
       async (type) => {

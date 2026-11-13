@@ -399,20 +399,41 @@ describe("mention judgements", () => {
     const verdicts = () => Object.values(ids).map(verdictOf);
     expect(verdicts()).toEqual(["drop", "keep", "keep"]);
     // Nothing is on the wrong side of the threshold they were judged at.
-    expect(resettleMentionJudgements(db, 1.08, 10)).toBe(0);
+    // Rows with no score of this model's stay as they are: one waiting, one
+    // exempt, and one another model scored.
+    const waiting = seed("waiting");
+    extract(waiting);
+    const exempt = seed("exempt");
+    extract(exempt);
+    db.prepare("UPDATE date_mention_judgements SET verdict = 'exempt' WHERE document_id = ?").run(
+      exempt,
+    );
+    const others = seed("others");
+    extract(others);
+    settle(only(others), 1.5);
+    db.prepare(
+      "UPDATE worth_answers SET requested_model_id = 'another-model' WHERE subject_document_id = ?",
+    ).run(others);
+    const untouched = () => [waiting, exempt, others].map(verdictOf);
+    expect(untouched()).toEqual(["pending", "exempt", "keep"]);
+    expect(resettleMentionJudgements(db, 1.08, MODEL, 10)).toBe(0);
 
     // Raised: the email scored 1.5 now drops, two writer calls of one row each.
-    expect(resettleMentionJudgements(db, 2, 1)).toBe(1);
-    expect(resettleMentionJudgements(db, 2, 1)).toBe(0);
+    expect(resettleMentionJudgements(db, 2, MODEL, 1)).toBe(1);
+    expect(resettleMentionJudgements(db, 2, MODEL, 1)).toBe(0);
     expect(verdicts()).toEqual(["drop", "drop", "keep"]);
+    expect(resettleMentionJudgements(db, 3, MODEL, 10)).toBe(1);
+    expect(untouched()).toEqual(["pending", "exempt", "keep"]);
 
     // Lowered below every score: all keep, and the scores are untouched.
-    expect(resettleMentionJudgements(db, 0.1, 10)).toBe(2);
+    expect(resettleMentionJudgements(db, 0.1, MODEL, 10)).toBe(3);
     expect(verdicts()).toEqual(["keep", "keep", "keep"]);
     const stored = db
-      .prepare<[], { score: number }>("SELECT score FROM date_mention_judgements ORDER BY score")
+      .prepare<[], { score: number }>(
+        "SELECT score FROM date_mention_judgements WHERE score IS NOT NULL ORDER BY score",
+      )
       .all()
       .map((r) => r.score);
-    expect(stored).toEqual([0.2, 1.5, 2.7]);
+    expect(stored).toEqual([0.2, 1.5, 1.5, 2.7]);
   });
 });

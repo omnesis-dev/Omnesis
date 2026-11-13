@@ -197,8 +197,9 @@ describe("mentionWorthGateTask", () => {
       writeGate: {
         applyMentionJudgements: async () => 0,
         requeueStaleMentionJudgements: async () => 0,
-        resettleMentionJudgements: async (t, limit) => {
+        resettleMentionJudgements: async (t, modelId, limit) => {
           calls.push(t);
+          expect(modelId).toBe(decision.modelId);
           expect(limit).toBe(500);
           return sizes.shift() ?? 0;
         },

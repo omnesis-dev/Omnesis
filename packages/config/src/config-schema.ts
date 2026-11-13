@@ -3871,15 +3871,18 @@ const inference = z
   })
   .strict()
   .superRefine((value, ctx) => {
-    // "typesafe/<model>" always names the built-in TypeSafe slot for the
-    // Decision model, so a backend of that name cannot serve decisions.
-    if (value.backends?.typesafe?.decision) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["backends", "typesafe", "decision"],
-        message:
-          'A backend named "typesafe" cannot serve decision models: "typesafe/<model>" is the built-in TypeSafe',
-      });
+    // These prefixes name built-in runtimes in an assignment, so a backend of
+    // one of those names cannot serve decisions ("typesafe/<model>" is always
+    // the built-in TypeSafe slot). The other built-in names are not backend
+    // names at all.
+    for (const name of ["typesafe", "claude-code"]) {
+      if (value.backends?.[name]?.decision) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["backends", name, "decision"],
+          message: `A backend named "${name}" cannot serve decision models: "${name}/<model>" names a built-in runtime`,
+        });
+      }
     }
   });
 

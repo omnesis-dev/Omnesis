@@ -227,6 +227,15 @@ export function isSelfHostedTypeSafeUrl(url: string): boolean {
   return host !== "typesafe.ai" && !host.endsWith(".typesafe.ai");
 }
 
+/** A URL's origin, or undefined when it does not parse (a preset URL with a `{param}` host). */
+function originOf(url: string): string | undefined {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 const DECISION_MODEL_HINT =
   'Assign a decision model: "typesafe/<model>", or "<backend>/<model>" for a backend with decision models, set up in Settings → Models.';
 
@@ -637,7 +646,9 @@ export class InferenceRegistry {
     // gate's threshold), so they stay experimental.
     if (
       role === "decision" &&
-      (prefixOf === "local" || slashIndex === -1 || this.httpBackends.has(prefixOf)) &&
+      (prefixOf === "local" ||
+        slashIndex === -1 ||
+        (this.httpBackends.has(prefixOf) && prefixOf !== "typesafe")) &&
       value !== "replay" &&
       !experimentalEnabled()
     ) {
@@ -1417,6 +1428,21 @@ export class InferenceRegistry {
   /** Return the API key for a named HTTP backend, if configured. */
   getBackendApiKey(key: string): string | undefined {
     return this.backendConfigs.get(key)?.apiKey;
+  }
+
+  /**
+   * A backend's API key for a request to `url`, or undefined when the backend
+   * has no key or `url` is on a host the key does not already go to: the
+   * backend's own APIs and its provider's decision API.
+   */
+  getBackendApiKeyForUrl(key: string, url: string): string | undefined {
+    const cfg = this.backendConfigs.get(key);
+    if (!cfg?.apiKey) return undefined;
+    const target = originOf(url);
+    if (!target) return undefined;
+    const preset = findPreset(cfg.preset, cfg.url ? { url: cfg.url } : {});
+    const own = [cfg.url, cfg.decision?.url, preset?.decision?.url].map((u) => u && originOf(u));
+    return own.includes(target) ? cfg.apiKey : undefined;
   }
 
   /** Whether `inference.backends` declares a backend of that name. */

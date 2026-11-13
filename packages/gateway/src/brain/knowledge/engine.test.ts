@@ -1746,6 +1746,72 @@ describe("knowledge coordinator", () => {
     );
   });
 
+  // Scored 0.4, between the two cuts: only the purpose whose own cut is 0.6 settles unread.
+  it.each([
+    { discovery: 0.6, impact: 0.1, settled: "source" },
+    { discovery: 0.1, impact: 0.6, settled: "page" },
+  ] as const)(
+    "settles a source below a configured discovery cut and a page change below a configured impact cut (discovery $discovery, impact $impact)",
+    async ({ discovery, impact, settled }) => {
+      saveKnowledgeNode(
+        db,
+        {
+          id: "root-existing",
+          kind: "root",
+          title: "Current context",
+          markdown: "Earlier context.",
+          expectedRevision: 0,
+          inputVersions: {},
+        },
+        now,
+      );
+      source();
+      await wiki();
+      await engine.tick();
+      now += settings.knowledge.routineDelayMs;
+      source("notice", "v1", "Parcel update: out for delivery.");
+      await engine.tick();
+      const record = vi.fn();
+      engine.deps.decisions.record = record;
+      const ledger = (purpose: string) =>
+        record.mock.calls
+          .map(
+            ([entry]) =>
+              entry as { purpose: string; nodeId: string; score: number; threshold: number },
+          )
+          .filter((entry) => entry.purpose === purpose)
+          .map((entry) => [entry.nodeId, entry.score, entry.threshold]);
+      const sourceBatch = batchFor("notice");
+      const pageBatch = batchFor("root-existing");
+      const offered = async (batch: { id: string; runId: string }) =>
+        (await engine.next(batch.id, batch.runId)).items.map((item) => item.id);
+      const status = (batchId: string, nodeId: string) =>
+        listKnowledgeFrontier(db, batchId).find((row) => row.nodeId === nodeId)?.status;
+      settings = resolveBrainSettings({
+        bootstrap: { enabled: false },
+        thresholds: { discovery, impact },
+      });
+      score = 0.4;
+
+      const sources = await offered(sourceBatch);
+      expect(sources.includes("source:notice")).toBe(settled !== "source");
+      expect(status(sourceBatch.id, "source:notice") === "skipped").toBe(settled === "source");
+      expect(
+        db
+          .prepare(
+            "SELECT 1 FROM knowledge_discovery_coverage WHERE subject_id='notice' AND status='gated'",
+          )
+          .get() !== undefined,
+      ).toBe(settled === "source");
+      expect(ledger("discovery")).toEqual([["source:notice", 0.4, discovery]]);
+
+      const pages = await offered(pageBatch);
+      expect(pages.includes("root-existing")).toBe(settled !== "page");
+      expect(status(pageBatch.id, "root-existing") === "skipped").toBe(settled === "page");
+      expect(ledger("impact")).toEqual([["root-existing", 0.4, impact]]);
+    },
+  );
+
   it("keeps the root in a separate run and offers bounded orientation", async () => {
     source();
     await wiki();

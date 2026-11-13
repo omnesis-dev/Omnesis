@@ -12,6 +12,7 @@ import {
   assertNever,
   createLogger,
   fetchWithInferenceUrlPolicy,
+  InferenceUrlPolicyError,
   type DecisionAuth,
 } from "@omnesis/core";
 import type { ConcurrencyLimiter } from "./limiter.js";
@@ -89,7 +90,8 @@ export class DecisionTransport {
           },
         );
       } catch (err) {
-        if (callSignal?.aborted) throw err;
+        // The URL policy's answer does not change on a retry.
+        if (callSignal?.aborted || err instanceof InferenceUrlPolicyError) throw err;
         lastError = err instanceof Error ? err : new Error(String(err));
         if (attempt < this.maxRetries) {
           await this.sleep(backoffMs(attempt, null), callSignal);
@@ -97,7 +99,14 @@ export class DecisionTransport {
         }
         break;
       }
-      if (response.ok) return response.json();
+      if (response.ok) {
+        try {
+          return (await response.json()) as unknown;
+        } catch {
+          // A proxy or captive portal answering in the provider's place.
+          throw new DecisionHttpError(502, `${this.label} reply is not JSON`);
+        }
+      }
       const detail = errorDetail(await response.text().catch(() => "")).slice(0, 300);
       const requestId = REQUEST_ID_HEADERS.map((h) => response.headers.get(h)).find(Boolean);
       lastError = new DecisionHttpError(

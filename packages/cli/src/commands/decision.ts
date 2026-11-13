@@ -111,7 +111,7 @@ const enableCommand = defineCommand({
     url: { type: "string", description: "Decision endpoint URL, for a server no preset describes" },
     param: {
       type: "string",
-      description: "A preset URL value, key=value (repeatable), e.g. account=…",
+      description: "A preset URL value, key=value, e.g. account=…",
     },
     model: { type: "string", description: "Also assign this model to the Decision role" },
   },

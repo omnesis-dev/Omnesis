@@ -202,7 +202,7 @@ export class ModelsDevDecisionCatalog {
       const price = model.cost?.input;
       out.set(id, {
         id,
-        ...(context && context > 0 ? { contextTokens: context } : {}),
+        ...(context && context > 0 ? { contextTokens: Math.round(context) } : {}),
         ...(typeof price === "number" ? { inputCostPerMillion: price } : {}),
         source: "models.dev",
       });

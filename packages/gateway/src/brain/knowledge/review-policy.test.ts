@@ -160,6 +160,8 @@ it.each([
 });
 it.each([
   [0.3, "dormant"],
+  // A score equal to the dormant cut is not below it: deferred, not dormant.
+  [0.35, "defer"],
   [0.4, "defer"],
   [0.6, "now"],
 ] as const)("reads review score %s as %s at configured thresholds", (score, decision) => {

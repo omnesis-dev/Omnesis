@@ -5,6 +5,8 @@
  * Admin routes for setting up the Decision model:
  *
  *   POST   /admin/inference/decision/probe                 {url, …} models an unsaved decision API has
+ *                                                           (a saved backend's key is sent only to that
+ *                                                           backend's own hosts)
  *   POST   /admin/inference/backends/:key/decision/probe   models a backend's decision API has
  *   POST   /admin/inference/backends/:key/decision/verify  {model} → one test decision
  *   POST   /admin/inference/typesafe/verify                 {model} → the same, for TypeSafe
@@ -30,8 +32,8 @@ export interface DecisionRouteOptions {
   getDecisionEndpoint: (key: string) => DecisionEndpointConfig | undefined;
   /** Whether a backend of that name is configured. */
   hasBackend: (key: string) => boolean;
-  /** A configured backend's API key, when it has one. */
-  getBackendApiKey: (key: string) => string | undefined;
+  /** A configured backend's API key, when it has one and `url` is on a host that key already goes to. */
+  getBackendApiKeyForUrl: (key: string, url: string) => string | undefined;
   /** Resolve `<key>/<model>` (a backend's decision API) or `typesafe/<model>` for the decision role. */
   resolveDecision: (assignment: string) => ResolvedAssignment;
   clients: DecisionClients;
@@ -53,7 +55,7 @@ export function registerDecisionRoutes(app: RouteApp, opts: DecisionRouteOptions
       const { backendKey, ...target } = c.req.valid("json");
       if (backendKey !== undefined && target.apiKey === undefined) {
         if (!opts.hasBackend(backendKey)) throw new NotFoundError(`unknown backend: ${backendKey}`);
-        const apiKey = opts.getBackendApiKey(backendKey);
+        const apiKey = opts.getBackendApiKeyForUrl(backendKey, target.url);
         if (apiKey) target.apiKey = apiKey;
       }
       return c.json(await probeDecisionBackend(target, opts.allowRemoteInference(), opts.fetchFn));

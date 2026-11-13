@@ -10,7 +10,7 @@
  * restart. The backend it replaces is disposed, which frees a local model.
  *
  * Backends: TypeSafe (`typesafe/<model>`), a backend's decision API
- * (`<backend>/<model>`: a System One server, Workers AI or OpenAI Decisions),
+ * (`<backend>/<model>`: a System One server, Workers AI, OpenAI Decisions or Gemini Decisions),
  * a local GGUF chat model, an OpenAI-compatible HTTP backend that returns
  * token log-probabilities, and recorded replay. `get()` returns null when the role is unset or cannot run —
  * no key, remote inference off, a missing model file, an unreadable replay

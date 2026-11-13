@@ -6,11 +6,11 @@ import { z } from "zod";
 
 // POST /admin/inference/backends/:key/decision/verify, /admin/inference/typesafe/verify
 export const decisionModelBody = z.object({ model: z.string().trim().min(1).max(256) }).strict();
-export type DecisionModelBody = z.infer<typeof decisionModelBody>;
 
 // POST /admin/inference/decision/probe — a decision API not saved yet. `backendKey`
 // names a saved backend whose API key to send when the body carries none, so a
-// form adding decisions to an existing backend never asks for its key again.
+// form adding decisions to an existing backend never asks for its key again;
+// the key is sent only when `url` is on one of that backend's own hosts.
 export const decisionProbeBody = z
   .object({
     url: z.string().url().max(2048),
@@ -21,4 +21,3 @@ export const decisionProbeBody = z
     backendKey: z.string().min(1).max(256).optional(),
   })
   .strict();
-export type DecisionProbeBody = z.infer<typeof decisionProbeBody>;

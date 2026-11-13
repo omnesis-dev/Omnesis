@@ -1,8 +1,45 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
-import { decisionAuthHeaders, errorDetail } from "./transport.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  DecisionHttpError,
+  DecisionTransport,
+  decisionAuthHeaders,
+  errorDetail,
+} from "./transport.js";
+
+describe("DecisionTransport", () => {
+  const URL_ON_HOST = "http://127.0.0.1:9/v1/systemone";
+  const transport = (fetchFn: typeof fetch, allowRemoteInference = false) =>
+    new DecisionTransport({
+      url: URL_ON_HOST,
+      label: "Box",
+      allowRemoteInference,
+      sleep: async () => {},
+      fetchFn,
+    });
+
+  it("does not retry a request the URL policy refuses", async () => {
+    const fetchFn = vi.fn(async () => Response.json({})) as unknown as typeof fetch;
+    await expect(
+      transport(fetchFn).post("http://192.0.2.5:8000/v1/systemone", {}),
+    ).rejects.toMatchObject({ name: "InferenceUrlPolicyError" });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("reports a reply that is not JSON as the server's failure, without retrying", async () => {
+    const fetchFn = vi.fn(
+      async () => new Response("<html>Sign in to the network</html>"),
+    ) as unknown as typeof fetch;
+    const failure = await transport(fetchFn)
+      .post(URL_ON_HOST, {})
+      .catch((err: unknown) => err);
+    expect(failure).toBeInstanceOf(DecisionHttpError);
+    expect(failure).toMatchObject({ status: 502, message: "Box reply is not JSON" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("errorDetail", () => {
   it("reads the message out of the error bodies providers send", () => {

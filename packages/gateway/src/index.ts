@@ -2812,7 +2812,7 @@ const app = createServer(db, DB_PATH, {
     allowRemoteInference: () => configStore.get().inference?.allowRemoteInference === true,
     getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
     hasBackend: (key) => inferenceRegistry.hasBackend(key),
-    getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
+    getBackendApiKeyForUrl: (key, url) => inferenceRegistry.getBackendApiKeyForUrl(key, url),
     resolveDecision: (assignment) => inferenceRegistry.resolveValue("decision", assignment),
     clients: decisionClients,
   },
