@@ -545,3 +545,10 @@ a.agent-loop-row.agent-ephemeral-result-link:hover .agent-loop-state {
 .agent-ephemeral-error .agent-ephemeral-result-title {
   color: var(--warning, #d29922);
 }
+
+/* JSON in Markdown and structured payloads shares the portal's token palette.
+   Fallbacks keep embedded consumers readable without CodeMirror variables. */
+.cm-tok-property { color: var(--cm-func, #d2a8ff); }
+.cm-tok-string { color: var(--cm-string, #a5d6ff); }
+.cm-tok-number { color: var(--cm-number, #79c0ff); }
+.cm-tok-atom { color: var(--cm-atom, #79c0ff); }

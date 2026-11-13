@@ -24,7 +24,7 @@ vi.mock("../../api.js", () => ({
 }));
 
 // @ts-expect-error — portal is plain JS without sibling declarations.
-import { listPrivacySubscriptionFirings, listWatchV2Firings } from "../../api.js";
+import { getWatchV2Watch, listPrivacySubscriptionFirings, listWatchV2Firings } from "../../api.js";
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { InstalledWatchRoute } from "./installed.js";
 
@@ -88,6 +88,7 @@ describe("one watch's screen, mounted", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getWatchV2Watch).mockResolvedValue({ watch: { dsl: { watch: { name: "shipment-delay" } } } });
     originalDocument = globalThis.document;
     originalWindow = globalThis.window;
     const parsed = parseHTML("<html><body><main id='root'></main></body></html>");
@@ -129,6 +130,16 @@ describe("one watch's screen, mounted", () => {
    * read it did not belong to would leave this screen waiting on a response it
    * had already thrown away, for as long as it stayed open.
    */
+  test("loads the expanded definition on arrival without a toggle", async () => {
+    vi.mocked(listWatchV2Firings).mockResolvedValue({ firings: [] });
+    vi.mocked(listPrivacySubscriptionFirings).mockResolvedValue({ firings: [] });
+    await mount();
+    expect(getWatchV2Watch).toHaveBeenCalledWith(WATCH.id);
+    expect(host.querySelector(".watch-dsl")?.hasAttribute("open")).toBe(true);
+    expect(host.querySelector(".watch-dsl-pre")?.textContent).toBe(JSON.stringify({ watch: { name: "shipment-delay" } }, null, 2));
+    expect(host.querySelector(".watch-dsl-pre .cm-tok-property")?.textContent).toBe('"watch"');
+  });
+
   test("both reads settle whichever order they land in", async () => {
     for (const egressFirst of [true, false]) {
       const caught = deferred<unknown>();

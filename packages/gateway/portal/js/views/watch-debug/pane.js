@@ -9,7 +9,7 @@
  * with its threshold, a judge with the sentence it puts and the schema it must
  * answer in — because a pane that dumped the JSON would be the definition
  * disclosure that already exists on the Watches page. The raw JSON is still
- * one toggle away, since it is what you copy when a watch is not doing what you
+ * expanded by default, since it is what you copy when a watch is not doing what you
  * expected.
  *
  * When a state snapshot has been read it opens with what the node is *holding* —
@@ -24,6 +24,7 @@
 import { html } from "htm/preact";
 import { format } from "sql-formatter";
 import { highlightSqlToHtml } from "../../lib/sql-editor.js";
+import { JsonCode } from "../../components/json-code.js";
 
 import { navigate } from "../../lib/router.js";
 import {
@@ -646,13 +647,11 @@ function code(value) {
 }
 
 /**
- * The node exactly as it is stored. Closed by default — the structured reading
- * above is the point of the pane — and open when what you need is the text to
- * paste somewhere else.
+ * The node exactly as it is stored, expanded for inspection and copying.
  */
 export function WatchRawJson({ value }) {
-  return html`<details class="watch-dag-raw">
+  return html`<details class="watch-dag-raw" open>
     <summary>Raw JSON</summary>
-    <pre>${JSON.stringify(value, null, 2)}</pre>
+    <pre><${JsonCode} text=${JSON.stringify(value, null, 2) ?? "null"} /></pre>
   </details>`;
 }
