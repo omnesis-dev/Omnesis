@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createPublicKey, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
@@ -18,6 +18,7 @@ import {
   passkeyEndorsementNonce,
   passkeyProofChallenge,
   signInDigest,
+  signInProofNonce,
   type AccountSignIn,
   type PasskeyCountersignature,
   type SignInProof,
@@ -276,6 +277,9 @@ test("corrupt metadata blocks legacy fallback while allowing explicit local clea
   expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).toEqual({
     version: 1,
     linked: false,
+    declinedPasskeys: [],
+    declinedGoogle: [],
+    withdrawnSignIns: [],
   });
 });
 
@@ -414,6 +418,8 @@ test("a metadata reload during asynchronous directory creation cannot be overwri
   expect(f.manager.status().pendingUnlink).toBe(false);
 });
 
+/** What a sign-in made on a link operation commits to: the gateway's nonce under the link purpose. */
+const linkNonce = (nonce: string) => signInProofNonce("gateway-link", nonce);
 /** A real WebAuthn registration bound to the link operation, as the relay hands it over. */
 function registrationProof(device: ReturnType<typeof passkeyAuthenticator>, nonce: string) {
   const salt = opaque(),
@@ -455,7 +461,7 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
     Promise.resolve({
       identityToken: "verified-role-proof",
       identity: { issuer: origin + "/_relay/account", subject: f.accountId, expiresAt: 1 },
-      signInProof: registrationProof(device, pending.nonce),
+      signInProof: registrationProof(device, linkNonce(pending.nonce)),
     })) as never);
   // Not linked: nothing joins automatically, and there is no policy to set.
   expect(f.manager.enrollmentPolicy()).toBe("ask");
@@ -579,7 +585,7 @@ test("sign-in checks use this installation's relay, Android origins and Google a
   await linked.completeSignup({
     accountId: f.accountId,
     nonce,
-    proof: registrationProof(device, nonce),
+    proof: registrationProof(device, linkNonce(nonce)),
     signal: new AbortController().signal,
   });
   expect(linked.verifiedAccountId()).toBe(f.accountId);
@@ -592,6 +598,11 @@ test("sign-in checks use this installation's relay, Android origins and Google a
   expect(
     await enrollment()!.verifyProof(assertionProof(device, fromApp, android), fromApp),
   ).toMatchObject({ trusted: true });
+  // The same pinned passkey's sign-in, made on a link operation whose nonce is this enrollment's,
+  // is no enrollment proof: whoever started that operation chose the nonce.
+  expect(
+    await enrollment()!.verifyProof(assertionProof(device, linkNonce(fromApp), android), fromApp),
+  ).toBeUndefined();
   const googleProof = { type: "google" as const, idToken: "x", salt: opaque() };
   expect(await enrollment()!.verifyProof(googleProof, nonce)).toBeUndefined();
   expect(google).toHaveBeenCalledOnce();
@@ -615,8 +626,13 @@ test("sign-in checks use this installation's relay, Android origins and Google a
   expect(await proofs.verifyProof(googleProof, nonce)).toBeUndefined();
   f.env.OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID = "web.example";
   expect(await proofs.verifyProof(googleProof, nonce)).toBeUndefined();
-  // A signup with no proof, or one for another request, pins nothing.
-  for (const proof of [undefined, registrationProof(device, opaque())]) {
+  // A signup with no proof, one for another request, or one made to enroll a device under the
+  // same nonce pins nothing.
+  for (const proof of [
+    undefined,
+    registrationProof(device, linkNonce(opaque())),
+    registrationProof(device, nonce),
+  ]) {
     const fresh = new GatewayAccountLink({
       ...f.options,
       metadataFile: join(directory, `signup-${randomUUID()}.json`),
@@ -638,7 +654,7 @@ test("refresh drops pins the account no longer lists and never adds one", async 
     Promise.resolve({
       identityToken: "verified-role-proof",
       identity: { issuer: origin + "/_relay/account", subject: f.accountId, expiresAt: 1 },
-      signInProof: registrationProof(device, pending.nonce),
+      signInProof: registrationProof(device, linkNonce(pending.nonce)),
     })) as never);
   // Without a credential listing the pins stay as they are.
   await f.manager.refresh();
@@ -714,7 +730,7 @@ async function passkeyDevice() {
     relayOrigin: () => origin,
     passkeyOrigins: () => [],
     trusted: () => [],
-  }).verify(registrationProof(authenticator, nonce), nonce);
+  }).verify(registrationProof(authenticator, nonce), "device-enrollment", nonce);
   const { publicKey } = registered!.pin as { publicKey: string };
   return { authenticator, id: authenticator.id, publicKey };
 }
@@ -1243,7 +1259,7 @@ async function passkeyLinked(signInSyncIntervalMs = 0) {
   await manager.completeSignup({
     accountId: f.accountId,
     nonce,
-    proof: assertionProof(passkey.authenticator, nonce),
+    proof: assertionProof(passkey.authenticator, linkNonce(nonce)),
     credentialPublicKey: passkey.publicKey,
     signal: new AbortController().signal,
   });
@@ -1592,7 +1608,7 @@ test("linking the same account again keeps what was declined and withdrawn, and 
     await f.manager.completeSignup({
       accountId: f.accountId,
       nonce,
-      proof: assertionProof(device.authenticator, nonce),
+      proof: assertionProof(device.authenticator, linkNonce(nonce)),
       credentialPublicKey: device.publicKey,
       signal: new AbortController().signal,
     });
@@ -1605,7 +1621,7 @@ test("linking the same account again keeps what was declined and withdrawn, and 
     await f.manager.completeSignup({
       accountId: f.accountId,
       nonce: linking,
-      proof: assertionProof(device.authenticator, linking),
+      proof: assertionProof(device.authenticator, linkNonce(linking)),
       credentialPublicKey: device.publicKey,
       signal: new AbortController().signal,
     });
@@ -1626,6 +1642,82 @@ test("linking the same account again keeps what was declined and withdrawn, and 
     declinedPasskeys: [],
     withdrawnSignIns: [],
   });
+});
+
+test("ask and the owner's refusals survive linking again, unlinking and a lost account; the pins do not", async () => {
+  const f = await passkeyLinked();
+  const relink = async (manager: GatewayAccountLink, accountId = f.accountId) => {
+    const nonce = opaque();
+    await manager.completeSignup({
+      accountId,
+      nonce,
+      proof: assertionProof(f.passkey.authenticator, linkNonce(nonce)),
+      credentialPublicKey: f.passkey.publicKey,
+      signal: new AbortController().signal,
+    });
+  };
+  await f.manager.setEnrollmentPolicy("ask");
+  await f.manager.removeTrustedSignIn(f.google);
+  const choices = { enrollmentPolicy: "ask", declinedGoogle: [f.google] };
+  // Linking the same account again, as reconnecting does.
+  await relink(f.manager);
+  expect(f.manager.enrollmentPolicy()).toBe("ask");
+  expect(await f.saved()).toMatchObject({ linked: true, ...choices });
+
+  // Unlinking drops the link and its pins and keeps the choices, across a restart.
+  await f.manager.unlink();
+  const unlinked = await f.saved();
+  expect(unlinked).toMatchObject({ linked: false, accountId: f.accountId, ...choices });
+  expect(unlinked).not.toHaveProperty("trustedSignIns");
+  const restarted = new GatewayAccountLink(f.options);
+  await restarted.initialize();
+  expect(restarted.accountModeActivated()).toBe(true);
+  await relink(restarted);
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+  expect(await f.saved()).toMatchObject({ linked: true, ...choices });
+  expect(restarted.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([f.passkey.id]);
+
+  // Told the account is gone, the gateway leaves it as if it never had one, but keeps the choices
+  // in case the same account comes back.
+  await restarted.forget();
+  expect(restarted.status()).toMatchObject({ activated: false, linked: false });
+  expect(restarted.enrollmentStatus()).toEqual({ policy: "ask", trustedSignIns: [] });
+  const forgotten = await f.saved();
+  expect(forgotten).toMatchObject({ linked: false, dormant: true, ...choices });
+  expect(forgotten).not.toHaveProperty("trustedSignIns");
+  const dormant = new GatewayAccountLink(f.options);
+  await dormant.initialize();
+  expect(dormant.accountModeActivated()).toBe(false);
+  expect(dormant.status()).toMatchObject({ activated: false, linked: false, lastError: undefined });
+  await relink(dormant);
+  expect(dormant.status()).toMatchObject({ activated: true, linked: true });
+  expect(await f.saved()).toMatchObject({ linked: true, ...choices });
+  expect(await f.saved()).not.toHaveProperty("dormant");
+
+  // Another account keeps the gateway's policy, but none of this account's refusals.
+  await dormant.forget();
+  await relink(dormant, "c".repeat(64));
+  expect(dormant.enrollmentPolicy()).toBe("ask");
+  expect(await f.saved()).toMatchObject({
+    enrollmentPolicy: "ask",
+    declinedGoogle: [],
+    declinedPasskeys: [],
+    withdrawnSignIns: [],
+  });
+});
+
+test("an old link record without the kept choices still reads, unlinks and forgets", async () => {
+  const f = await fixture();
+  await mkdir(dirname(f.options.metadataFile), { recursive: true });
+  await writeFile(f.options.metadataFile, JSON.stringify({ version: 1, linked: false }), {
+    mode: 0o600,
+  });
+  const old = new GatewayAccountLink(f.options);
+  await old.initialize();
+  expect(old.status()).toMatchObject({ activated: true, linked: false, lastError: undefined });
+  // With nothing chosen there is nothing to keep, so forgetting leaves no file behind.
+  await old.forget();
+  await expect(stat(f.options.metadataFile)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 test("the owner can decline in advance a sign-in this gateway never trusted, and no evidence pins it then", async () => {
@@ -1833,7 +1925,17 @@ test("forgetting a deleted account leaves the gateway as if it never had one, wi
   // The account is gone on the relay, so there is nothing to unlink there.
   expect(f.browser.unlink).not.toHaveBeenCalled();
   expect(f.browser.cancel).toHaveBeenCalledOnce();
-  await expect(stat(f.options.metadataFile)).rejects.toMatchObject({ code: "ENOENT" });
+  // Only the owner's choice of ask is kept, for whichever account the gateway links next.
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).toEqual({
+    version: 1,
+    linked: false,
+    dormant: true,
+    accountId: f.accountId,
+    enrollmentPolicy: "ask",
+    declinedPasskeys: [],
+    declinedGoogle: [],
+    withdrawnSignIns: [],
+  });
   // A sign-in that was under way belongs to the old link and finishes nothing.
   const operation = f.operations.at(-1)!;
   await expect(
@@ -1849,4 +1951,5 @@ test("forgetting a deleted account leaves the gateway as if it never had one, wi
   await f.manager.forget();
   expect(await f.link()).toMatchObject({ redirectUrl: gatewayOrigin + "/portal/settings/account" });
   expect(f.manager.status()).toMatchObject({ activated: true, linked: true });
+  expect(f.manager.enrollmentPolicy()).toBe("ask");
 });

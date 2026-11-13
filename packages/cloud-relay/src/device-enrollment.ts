@@ -47,6 +47,29 @@ export function enrollmentNonce(value: EnrollmentIdentity): string {
   ]);
 }
 
+/**
+ * What a sign-in made on the relay's account page is for. A gateway accepts a sign-in proof only
+ * for the purpose it is verifying, so one made for one purpose never stands in for another:
+ *
+ * - `device-enrollment`: a device joins a gateway (`/devices/account/request`). The nonce is the
+ *   device's own `enrollmentNonce` (or a pairing nonce), committed to as it is, which is what the
+ *   iOS and Android apps sign. Produced by the account browser's `device-enrollment` operations,
+ *   the desktop and portal sign-ins, and native-app sign-ins.
+ * - `gateway-link`: a gateway is linked to an account, by gateway sign-up or by the `owner-link`
+ *   operation from its account page. Whoever starts one picks its nonce, so the proof commits to
+ *   that nonce under this purpose's own label (`signInProofNonce`) and can never equal an
+ *   enrollment nonce.
+ *
+ * A passkey's endorsement and countersignature commit to `passkeyEndorsementNonce` and
+ * `passkeyCountersignatureNonce` and are verified only as such.
+ */
+export type SignInPurpose = "device-enrollment" | "gateway-link";
+
+/** The value a sign-in for `purpose` commits to, given the nonce of the operation it was made for. */
+export function signInProofNonce(purpose: SignInPurpose, nonce: string): string {
+  return purpose === "gateway-link" ? digestUrl(["omnesis-gateway-link-proof-v1", nonce]) : nonce;
+}
+
 /** Google's `nonce` claim. The salt keeps one enrollment nonce from reusing a token across operations. */
 export function googleProofNonce(salt: string, nonce: string): string {
   return digestUrl(["omnesis-google-proof-v3", salt, nonce]);

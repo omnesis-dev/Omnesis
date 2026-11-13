@@ -34,6 +34,7 @@ import {
   chooseAccountMenu,
   clickFirst,
   connectGatewayBySignIn,
+  connectThisGateway,
   createAccountWithPasskey,
   enterConnectCode,
   expectPasskeySignInRefused,
@@ -164,7 +165,7 @@ describe.skipIf(!browserReady)("leave an Omnesis account", () => {
       await enterConnectCode(person.page, waiting.connect!.connectUrl!, waiting.connect!.code!);
       if (intent === "create") await createAccountWithPasskey(person.page);
       else await clickFirst(person.page, ["Sign in with Passkey"]);
-      await expectText(person.page, "You're all set");
+      await connectThisGateway(person.page);
       const done = await waitFor(
         async () => {
           const current = await status();

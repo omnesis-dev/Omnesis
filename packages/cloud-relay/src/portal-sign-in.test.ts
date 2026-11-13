@@ -321,7 +321,7 @@ test("a gateway accepts the handed-over attestation and proof for the portal's o
         policy: () => policy,
         spkiFingerprint: () => spki,
         challenges: new EnrollmentChallenges(),
-        verifyProof: (proof, nonce, key) => verifier.verify(proof, nonce, key),
+        verifyProof: (proof, nonce, key) => verifier.verify(proof, "device-enrollment", nonce, key),
         canTrust: async () => false,
         trustSignIn: async () => {},
       },

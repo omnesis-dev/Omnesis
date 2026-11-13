@@ -10,8 +10,10 @@ import {
   passkeyCountersignatureSchema,
   passkeyEndorsementNonce,
   passkeyProofChallenge,
+  signInProofNonce,
   signInProofSchema,
   type SignInProof,
+  type SignInPurpose,
 } from "./device-enrollment.js";
 import { bindingOrigin } from "./gateway-binding.js";
 import { accountId, type IdentityProvider } from "./identity.js";
@@ -100,16 +102,21 @@ export class GatewaySignInVerifier {
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
-  /** Undefined means unverifiable, which callers treat as "hold for a person", never as an error. */
+  /**
+   * Undefined means unverifiable, which callers treat as "hold for a person", never as an error.
+   * The proof must have been made for `purpose` (see `SignInPurpose`) on the operation `nonce`
+   * names: a sign-in made to link a gateway never verifies as a device's enrollment, nor the reverse.
+   */
   async verify(
     input: unknown,
+    purpose: SignInPurpose,
     nonce: string,
     credentialPublicKey?: string,
   ): Promise<VerifiedSignIn | undefined> {
     const parsed = signInProofSchema.safeParse(input);
     if (!parsed.success) return undefined;
     try {
-      return await this.check(parsed.data, nonce, credentialPublicKey);
+      return await this.check(parsed.data, signInProofNonce(purpose, nonce), credentialPublicKey);
     } catch {
       return undefined;
     }

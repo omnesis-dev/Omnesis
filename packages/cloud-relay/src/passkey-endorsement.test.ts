@@ -288,6 +288,7 @@ describe("a gateway checking who vouched for a passkey", () => {
         issuedAt,
         credential: authenticator.registration(passkeyProofChallenge(salt, issuedAt, nonce)),
       },
+      "device-enrollment",
       nonce,
     );
     const { publicKey } = registered!.pin as { publicKey: string };
@@ -354,7 +355,7 @@ describe("a gateway checking who vouched for a passkey", () => {
       ]),
     ).toBe(false);
     // The vouching is no sign-in for anything else.
-    expect(await verifier().verify(proof, opaque())).toBeUndefined();
+    expect(await verifier().verify(proof, "device-enrollment", opaque())).toBeUndefined();
   });
 
   test("a Google subject this gateway never trusted vouches for nothing", async () => {
@@ -424,7 +425,9 @@ describe("a gateway checking who vouched for a passkey", () => {
       ),
     };
     // It verifies as a registration, which is exactly why it must be refused by type.
-    expect(await verifier().verify(registration, endorsementNonce(added))).toMatchObject({
+    expect(
+      await verifier().verify(registration, "device-enrollment", endorsementNonce(added)),
+    ).toMatchObject({
       id: first.id,
       trusted: false,
     });
@@ -445,10 +448,14 @@ describe("a gateway checking who vouched for a passkey", () => {
       const google = await googleVouch(added, { issuedAt: seconds() - age });
       expect(await verifier().verifyEndorsement(google, added, trusted)).toBe(true);
       // As an ordinary sign-in the same token is long expired.
-      expect(await verifier().verify(google, endorsementNonce(added))).toBeUndefined();
+      expect(
+        await verifier().verify(google, "device-enrollment", endorsementNonce(added)),
+      ).toBeUndefined();
       const passkey = passkeyVouch(first, added, seconds() - age);
       expect(await verifier().verifyEndorsement(passkey, added, trusted)).toBe(true);
-      expect(await verifier().verify(passkey, endorsementNonce(added))).toBeUndefined();
+      expect(
+        await verifier().verify(passkey, "device-enrollment", endorsementNonce(added)),
+      ).toBeUndefined();
     }
     // A gateway that was offline for days checks today's vouching the same way.
     const later = verifier(() => seconds() + 30 * DAY);

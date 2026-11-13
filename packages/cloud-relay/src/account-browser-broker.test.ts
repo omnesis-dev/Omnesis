@@ -15,6 +15,7 @@ import {
   AccountEnrollmentVerifier,
   AccountGatewayLinkVerifier,
 } from "./account-enrollment-proof.js";
+import { googleProofNonce, signInProofNonce } from "./device-enrollment.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
 import { RelayError } from "./tunnels.js";
 
@@ -518,6 +519,29 @@ test("a sign-in made for one operation is refused on another", () => {
   expect(f.broker.describe(second.start.operationId, second.cookie)).toMatchObject({
     needsProof: true,
   });
+  f.broker.close();
+});
+
+test("a sign-in to link a gateway commits to the link purpose, and a device enrollment to the bare nonce", () => {
+  const f = fixture();
+  for (const [purpose, signed] of [
+    ["owner-link", "gateway-link"],
+    ["device-enrollment", "device-enrollment"],
+  ] as const) {
+    const value = f.launched(purpose),
+      id = value.start.operationId;
+    const committed = f.broker.proofCommitment(id, value.cookie);
+    expect(committed.nonce).toBe(signInProofNonce(signed, value.unsigned.nonce));
+    expect(f.broker.googleProofNonce(id, value.cookie)).toBe(
+      googleProofNonce(committed.salt, committed.nonce),
+    );
+  }
+  // The gateway that starts an owner link picks its nonce, so its sign-in can never be the
+  // enrollment proof the same nonce names.
+  const link = f.launched("owner-link");
+  expect(f.broker.proofCommitment(link.start.operationId, link.cookie).nonce).not.toBe(
+    link.unsigned.nonce,
+  );
   f.broker.close();
 });
 

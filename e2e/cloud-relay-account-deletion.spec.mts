@@ -308,7 +308,8 @@ test("a person deletes their Omnesis account from the account page, after a fres
     await page.getByRole("button", { name: "Create an account instead", exact: true }).click();
     await expectBrand(page);
     await page.getByRole("button", { name: "Create with a passkey", exact: true }).click();
-    // Creating the account was the decision: the page links the gateway and leaves for it.
+    // Pressing to connect links the gateway, and the page leaves for it.
+    await page.getByRole("button", { name: "Connect this gateway", exact: true }).click();
     await page.waitForURL(`${owner.publicOrigin}/**`);
     await page.goto(origin + "/_relay/account");
     await expect(page.getByRole("heading", { name: "Your gateways", exact: true })).toBeVisible();

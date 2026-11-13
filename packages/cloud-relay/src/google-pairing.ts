@@ -47,6 +47,7 @@ export interface GatewayEnrollment {
   policy(): EnrollmentPolicy;
   spkiFingerprint(): string | undefined;
   challenges: EnrollmentChallenges;
+  /** Verifies a sign-in made for `device-enrollment` on `nonce`; any other purpose fails. */
   verifyProof(
     proof: SignInProof,
     nonce: string,
