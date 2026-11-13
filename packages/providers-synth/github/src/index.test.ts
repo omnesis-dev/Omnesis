@@ -70,7 +70,7 @@ const instances: SourceInstance[] = [];
 
 async function create(sourceId: string): Promise<SourceInstance> {
   const entry = provider.sources.find((source) => source.id === sourceId.split(":")[0])!;
-  const instance = await entry.create(
+  const instance = await entry.create!(
     {
       sourceId: SourceId(sourceId),
       providerId: ProviderId(THREADS),
