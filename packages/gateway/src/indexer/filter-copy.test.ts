@@ -428,7 +428,7 @@ describe("the lists", () => {
     // Rows an interrupted copy of this version left behind.
     fixture.indexDb
       .prepare(
-        "INSERT INTO index_filter_items VALUES (?, 'extra.folderIds', '', ?, 'left-over', NULL, 'Left over')",
+        "INSERT INTO index_filter_items VALUES (?, 'extra.folderIds', '', ?, 'left-over', NULL, 'Left over', 0)",
       )
       .run(LEDGER, generation);
     refreshFilterListCopy({ corpusDb: fixture.db, indexDb: fixture.indexDb });

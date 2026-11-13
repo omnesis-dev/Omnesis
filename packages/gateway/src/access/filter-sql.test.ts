@@ -835,6 +835,53 @@ describe("person, for a source whose chats list their members", () => {
     });
   });
 
+  it("lets a match stand in a chat whose members are not all known, and hides the rest of it", () => {
+    publishList(fixture.db, { sourceId: PARLEY, field: "extra.chatId" }, [
+      {
+        id: "c-team",
+        label: "Studio team",
+        members: [{ type: "phone", value: MAYA }],
+        membersIncomplete: true,
+      },
+      {
+        id: "c-solo",
+        label: "Jamie Lopez",
+        members: [{ type: "phone", value: JAMIE }],
+        membersIncomplete: true,
+      },
+      {
+        id: "c-unreadable",
+        label: "Riverside group",
+        members: [
+          { type: "phone", value: MAYA },
+          { type: "phone", value: "member without a number" },
+        ],
+      },
+    ]);
+    day("w-unreadable-jamie", { chatId: "c-unreadable" }, [
+      { role: "participant", phones: [JAMIE] },
+    ]);
+    syncFilterCopy(fixture);
+    expectVerdicts([maya], PARLEY, {
+      // She is listed: found, whoever else is there.
+      "w-team-nobody-speaks": ["R", "H"],
+      "w-unreadable-member": ["R", "H"],
+      // Not found, and she may be among the members that are not known.
+      "w-solo": ["U", "U"],
+    });
+    expectVerdicts([person("Jamie Lopez", ["phone", JAMIE])], PARLEY, {
+      // Found on the record itself.
+      "w-solo": ["R", "H"],
+      "w-unreadable-jamie": ["R", "H"],
+      "w-team-nobody-speaks": ["U", "U"],
+    });
+    // A filter by chat does not ask who the members are.
+    expectVerdicts([chat("c-team")], PARLEY, {
+      "w-team-nobody-speaks": ["R", "H"],
+      "w-solo": ["N", "R"],
+    });
+  });
+
   it("filters by chat without needing the chat to be listed", () => {
     expectVerdicts([chat("c-team")], PARLEY, {
       "w-team-jamie-speaks": ["R", "H"],

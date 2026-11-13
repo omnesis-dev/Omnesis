@@ -186,7 +186,13 @@ export function publishList(
 ): void {
   const rows: FilterListStagedRow[] = [];
   for (const item of items) {
-    rows.push(["item", item.id, item.parentId ?? null, item.label]);
+    rows.push([
+      "item",
+      item.id,
+      item.parentId ?? null,
+      item.label,
+      item.membersIncomplete === true,
+    ]);
     for (const member of item.members ?? []) {
       rows.push(["member", item.id, member.type, member.value]);
     }

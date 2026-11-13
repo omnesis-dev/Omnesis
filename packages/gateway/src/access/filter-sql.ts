@@ -702,7 +702,19 @@ function savedKeysSql(sql: SqlBuilder, person: PersonDetail): string {
 }
 
 /** The conditions of a verdict over the subject row, in checking order. */
-function branches(compiled: CompiledFilter, map: FilterTableMap, subject: string): Branch[] {
+function branches(
+  compiled: CompiledFilter,
+  map: FilterTableMap,
+  subject: string,
+  options: {
+    /**
+     * `false` leaves out the check made after the match, that the members of
+     * the record's chat are all known. Only for counting what an entry would
+     * match, where the match is asked separately.
+     */
+    roster?: boolean;
+  } = {},
+): Branch[] {
   const out: Branch[] = [];
   const meta = `${subject}.${map.metadata}`;
   const push = (
@@ -803,13 +815,41 @@ function branches(compiled: CompiledFilter, map: FilterTableMap, subject: string
       index,
       "person-unreadable",
     );
-    const members = detail.members;
-    if (members) {
-      // A chat is unknown to a person filter when the list says one of its
-      // members cannot be identified. Today the list says so with a member
-      // whose value cannot be read; any other way a list item comes to say
-      // it (a flag on the item) is one more condition here, selecting the
-      // same (device, id) rows from the items table.
+  });
+
+  // The filter itself.
+  const matches = compiled.details.map((detail) =>
+    fragment((sql) => matchSql(sql, compiled, map, detail, subject)),
+  );
+  if (matches.length > 0) {
+    push(compiled.whenMatched, (sql) => matches.map((match) => sql.splice(match)).join(" OR "));
+  }
+
+  // A chat whose members are not all known: the list flags it, or lists a
+  // member that cannot be read. This comes after the match on purpose. A
+  // person found on the record or among the listed members is found whoever
+  // else is there, so the filter's own answer stands: hidden under "hide",
+  // shared under "share only". Without a match, someone the filter names may
+  // be among the members that are not known, so the record is unknown and
+  // hidden, never "not involved".
+  if (options.roster !== false) {
+    compiled.details.forEach((detail, index) => {
+      if (detail.kind !== "person" || !detail.members) return;
+      const members = detail.members;
+      push(
+        "U",
+        (sql) =>
+          anyValue(
+            sql,
+            map,
+            members,
+            subject,
+            (value) =>
+              `EXISTS (SELECT 1 FROM ${map.items} fi WHERE fi.source_id = ${sql.bind(compiled.sourceId)} AND fi.field = ${sql.bind(members.path)} AND fi.device_id = ${rowDevice(members, subject)} AND fi.generation = ${generationSql(sql, map, compiled.sourceId, members, rowDevice(members, subject))} AND fi.item_id = ${value} AND fi.members_incomplete = 1)`,
+          ),
+        index,
+        "person-unreadable",
+      );
       push(
         "U",
         (sql) =>
@@ -824,15 +864,7 @@ function branches(compiled: CompiledFilter, map: FilterTableMap, subject: string
         index,
         "person-unreadable",
       );
-    }
-  });
-
-  // The filter itself.
-  const matches = compiled.details.map((detail) =>
-    fragment((sql) => matchSql(sql, compiled, map, detail, subject)),
-  );
-  if (matches.length > 0) {
-    push(compiled.whenMatched, (sql) => matches.map((match) => sql.splice(match)).join(" OR "));
+    });
   }
   push(compiled.otherwise, () => "1");
   return out;
@@ -1260,9 +1292,11 @@ export function filterPersonCountsSql(
  * are bound first, as they come first in the text.
  */
 function knownRecordsSql(sql: SqlBuilder, probe: CompiledFilter, joins = ""): string {
+  // A record a saved entry matches is shared even when its chat's members
+  // are not all known, so that check is left out here: the joins are the match.
   return `documents d
       CROSS JOIN documents fs ON fs.id = ${subjectIdSql("d")}
       ${joins}
      WHERE d.source_id = ${sql.bind(probe.sourceId)}
-       AND (${sql.splice(caseSql(branches(probe, CORPUS_FILTER_TABLES, "fs"), (branch) => branch.verdict))}) = 'R'`;
+       AND (${sql.splice(caseSql(branches(probe, CORPUS_FILTER_TABLES, "fs", { roster: false }), (branch) => branch.verdict))}) = 'R'`;
 }

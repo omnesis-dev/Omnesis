@@ -81,6 +81,7 @@ export function createFilterCopyTables(indexDb: Db): void {
       item_id TEXT NOT NULL,
       parent_id TEXT,
       label TEXT NOT NULL,
+      members_incomplete INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (source_id, field, device_id, generation, item_id)
     ) WITHOUT ROWID;
     CREATE INDEX IF NOT EXISTS idx_index_filter_items_parent
@@ -564,8 +565,11 @@ function copyList(corpusDb: Db, indexDb: Db, list: ListState): void {
   const items = corpusDb
     .prepare<
       [string, string, string, number],
-      { item_id: string; parent_id: string | null; label: string }
-    >(`SELECT item_id, parent_id, label FROM source_filter_items WHERE ${where} AND generation = ?`)
+      { item_id: string; parent_id: string | null; label: string; members_incomplete: number }
+    >(
+      `SELECT item_id, parent_id, label, members_incomplete
+         FROM source_filter_items WHERE ${where} AND generation = ?`,
+    )
     .all(...listKey, list.generation);
   const members = corpusDb
     .prepare<
@@ -594,13 +598,20 @@ function copyList(corpusDb: Db, indexDb: Db, list: ListState): void {
   })();
   const insertItem = indexDb.prepare(
     `INSERT OR REPLACE INTO index_filter_items
-       (source_id, field, device_id, generation, item_id, parent_id, label)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (source_id, field, device_id, generation, item_id, parent_id, label, members_incomplete)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (let offset = 0; offset < items.length; offset += FILTER_COPY_LIST_BATCH) {
     indexDb.transaction(() => {
       for (const item of items.slice(offset, offset + FILTER_COPY_LIST_BATCH)) {
-        insertItem.run(...listKey, list.generation, item.item_id, item.parent_id, item.label);
+        insertItem.run(
+          ...listKey,
+          list.generation,
+          item.item_id,
+          item.parent_id,
+          item.label,
+          item.members_incomplete,
+        );
       }
     })();
   }

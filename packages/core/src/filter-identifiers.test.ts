@@ -9,7 +9,7 @@ import {
   readTypedFilterIdentifier,
   storedSpellings,
 } from "./filter-identifiers.js";
-import { normalizeEmail } from "./people-utils.js";
+import { normalizeEmail, normalizePhone } from "./people-utils.js";
 
 const value = (type: "phone" | "email" | "domain", raw: string) =>
   canonicalFilterIdentifier(type, raw)?.value ?? null;
@@ -142,6 +142,16 @@ describe("canonical source-filter identifiers", () => {
     expect(value("email", "Maya.Reeves+news@example.org")).toBe(
       normalizeEmail("Maya.Reeves+news@example.org"),
     );
+  });
+
+  it("spells a typed number exactly as a source that stores valid numbers does", () => {
+    for (const typed of ["+1 202 555 0123", "001 (202) 555-0142", "tel:+1-202-555-0199"]) {
+      expect(value("phone", typed)).toBe(normalizePhone(typed.replace(/^tel:/, "")));
+    }
+    // A number that fits its country's plan without being in a published
+    // range is still read, so it can be saved; no stored record holds it.
+    expect(normalizePhone("+1 555 010 0123")).toBeNull();
+    expect(value("phone", "+1 555 010 0123")).toBe("+15550100123");
   });
 
   it("refuses a type it does not know rather than passing the value through", () => {
