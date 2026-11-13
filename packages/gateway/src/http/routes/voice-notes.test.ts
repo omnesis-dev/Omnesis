@@ -18,6 +18,7 @@ import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { TranscribeService, MAX_AUDIO_BYTES } from "../../transcribe/index.js";
+import { LOCAL_WHISPER_UNAVAILABLE } from "../../transcribe/whisper-transcriber.js";
 import { dictationFeatureStatus } from "../../dictation/index.js";
 import { TRANSCRIBING_PLACEHOLDER, type VoiceNoteService } from "../../voice-notes/index.js";
 import { languageHint } from "./voice-notes.js";
@@ -233,7 +234,7 @@ describe("POST /notes/voice", () => {
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({
       code: "TRANSCRIBER_UNAVAILABLE",
-      error: expect.stringMatching(/smart-whisper/),
+      error: LOCAL_WHISPER_UNAVAILABLE,
     });
   });
 
@@ -319,7 +320,7 @@ describe("GET /status dictation", () => {
     await vi.waitFor(async () =>
       expect(await statusDictation()).toMatchObject({
         active: false,
-        reason: expect.stringMatching(/smart-whisper/),
+        reason: LOCAL_WHISPER_UNAVAILABLE,
       }),
     );
   });

@@ -21,7 +21,11 @@
  */
 
 import { createLogger, assertNever } from "@omnesis/core";
-import { WhisperTranscriber, whisperDepsAvailable } from "./whisper-transcriber.js";
+import {
+  LOCAL_WHISPER_UNAVAILABLE,
+  WhisperTranscriber,
+  whisperDepsAvailable,
+} from "./whisper-transcriber.js";
 import { SyntheticTranscriber } from "./synthetic-transcriber.js";
 import { HttpTranscriber } from "./http-transcriber.js";
 import { ChatAudioTranscriber } from "./chat-audio-transcriber.js";
@@ -76,9 +80,7 @@ async function loadProvider(
         return null;
       }
       if (!(await whisperDepsAvailable(deps.loadModule))) {
-        log.warn(
-          "Local transcription needs the smart-whisper and ffmpeg-static optional dependencies — install them to enable Whisper.",
-        );
+        log.warn(LOCAL_WHISPER_UNAVAILABLE);
         return null;
       }
       return new WhisperTranscriber({

@@ -24,7 +24,7 @@ import { createHash } from "node:crypto";
 import { MAX_TRANSCRIBE_AUDIO_BYTES, createLogger, assertNever } from "@omnesis/core";
 import { AudioDecodeError } from "./audio-decode.js";
 import { loadTranscriberFromResolved, type LoadTranscriberDeps } from "./loader.js";
-import { whisperDepsAvailable } from "./whisper-transcriber.js";
+import { LOCAL_WHISPER_UNAVAILABLE, whisperDepsAvailable } from "./whisper-transcriber.js";
 import type {
   CapabilityVerdict,
   ResolvedAssignment,
@@ -149,8 +149,6 @@ export interface TranscriberReadiness {
 }
 
 const LOCAL_RUNTIME_CHECKING = "Checking for the local transcription runtime.";
-const LOCAL_RUNTIME_MISSING =
-  "Local transcription needs the smart-whisper and ffmpeg-static optional dependencies.";
 
 /**
  * Readiness of a resolved assignment by what `loadTranscriberFromResolved`
@@ -265,7 +263,7 @@ export class TranscribeService {
       this.probeLocalRuntime();
       return { runnable: false, reason: LOCAL_RUNTIME_CHECKING };
     }
-    return this.localRuntime ? readiness : { runnable: false, reason: LOCAL_RUNTIME_MISSING };
+    return this.localRuntime ? readiness : { runnable: false, reason: LOCAL_WHISPER_UNAVAILABLE };
   }
 
   /**
