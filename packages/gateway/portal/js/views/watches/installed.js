@@ -13,6 +13,7 @@
  */
 
 import { html } from "htm/preact";
+import { JsonCode } from "../../components/json-code.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import {
@@ -486,8 +487,7 @@ export function InstalledWatchDetail({
   egressError = null,
   onRevoke = null,
   onPurge = null,
-  // The definition is fetched on demand, so the screen renders fine without
-  // it — an unopened disclosure and nothing else.
+  // The definition loads independently of the firing history.
   dsl = null,
   dslLoading = false,
   dslError = null,
@@ -538,7 +538,7 @@ export function InstalledWatchDetail({
           ${installedWatchStatusLabel(watch.status)}: ${watch.note}
         </div>`
       : null}
-    <div class="watch-detail-cards">
+    <div class="watch-detail-summary">
       <section class="privacy-section">
         <header class="privacy-section-head"><h2>What you asked for</h2></header>
         <p class="privacy-subscription-exact">
@@ -635,12 +635,10 @@ export function InstalledWatchDetail({
  * the definition. It is what you send someone when a watch is not doing what
  * you expected, and the thing you edit and re-add when it is wrong.
  *
- * Fetched only when opened, and closed by default, for the same reason the
- * listing omits it: it is by far the largest field a watch has, and the screen
- * around it is about what the watch does rather than how it is written.
+ * Open on arrival, with its own scroll area to keep long definitions bounded.
  */
 function WatchDefinition({ dsl, loading, error, onOpen }) {
-  return html`<details class="watch-dsl" onToggle=${(event) => {
+  return html`<details class="watch-dsl" open onToggle=${(event) => {
     if (event.currentTarget.open) onOpen();
   }}>
     <summary>Definition</summary>
@@ -649,7 +647,7 @@ function WatchDefinition({ dsl, loading, error, onOpen }) {
     ${dsl
       ? html`<div class="watch-dsl-body">
           <${CopyIconButton} text=${dsl} class="watch-dsl-copy" title="Copy the definition" />
-          <pre class="watch-dsl-pre">${dsl}</pre>
+          <pre class="watch-dsl-pre"><${JsonCode} text=${dsl} /></pre>
         </div>`
       : null}
   </details>`;
@@ -777,13 +775,10 @@ export function InstalledWatchRoute({ watch }) {
     }
   }
 
-  /**
-   * Read the definition, once, the first time it is asked for.
-   *
-   * The listing omits it because it is the largest field a watch has and the
-   * list is polled; the same reasoning says not to fetch it here until someone
-   * opens it.
-   */
+  // The polled listing omits the DSL; read it when entering the detail.
+  useEffect(() => { showDefinition(); }, [watchId]);
+
+  // Reopening also allows retry after a failed read.
   function showDefinition() {
     if (askedForDsl.current) return;
     askedForDsl.current = true;

@@ -59,6 +59,7 @@ import {
 } from "./watch-debug/history.js";
 import { WatchDagPane, WatchRawJson } from "./watch-debug/pane.js";
 import { WatchStateBar } from "./watch-debug/state.js";
+import { useWatchFiringAuditHref } from "./watch-debug/firing-audit.js";
 
 export function WatchDebugTab({ watchId = null, seq = null }) {
   return watchId
@@ -297,6 +298,7 @@ function WatchDefinitionRoute({ watchId, seq }) {
   // is a navigation, so arriving from a firing in the ledger and picking a row
   // here land in exactly the same state.
   const history = useWatchHistoryLens(watchId, seq);
+  const auditHref = useWatchFiringAuditHref(watch, history.path);
 
   // A newly selected event opens the pane on itself. Without this the pane
   // would stay on whichever node was last clicked, and the evidence and
@@ -407,6 +409,7 @@ function WatchDefinitionRoute({ watchId, seq }) {
     ${selection === null && history.path
       ? html`<${WatchHistoryPane}
           path=${history.path}
+          auditHref=${auditHref}
           names=${names}
           lineage=${history.lineage}
           documents=${history.documents}

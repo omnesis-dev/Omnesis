@@ -4254,6 +4254,7 @@ kbd {
 .cm-tok-keyword  { color: var(--cm-keyword); }
 .cm-tok-operator { color: var(--cm-keyword); }
 .cm-tok-string   { color: var(--cm-string); }
+.cm-tok-property { color: var(--cm-func); }
 .cm-tok-number   { color: var(--cm-number); }
 .cm-tok-atom     { color: var(--cm-atom); }
 .cm-tok-comment  { color: var(--cm-comment); font-style: italic; }
@@ -16904,9 +16905,7 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
 }
 
 /* ── The watch's own definition ─────────────────────────────────────────
-   A disclosure on the watch detail. Closed by default and fetched only when
-   opened: the definition is the largest field a watch has, and the screen it
-   sits on is about what the watch does rather than how it is written. */
+   Expanded on arrival, with a bounded scroll area for long definitions. */
 .watch-dsl {
   margin: 16px 0;
   border: 1px solid var(--border);
@@ -16933,10 +16932,22 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   top: 8px;
   right: 8px;
   z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
 }
+.watch-dsl-copy:hover { background: transparent; }
+.watch-dsl-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .watch-dsl-pre {
   margin: 0;
-  padding: 12px 14px;
+  padding: 12px 48px 12px 14px;
   /* The one thing a definition must never do is wrap: its shape is how you
      read it. Horizontal scroll belongs to this block, never the page. */
   overflow-x: auto;
@@ -17896,6 +17907,17 @@ pre.watch-pane-code.sql-static {
    one — a model was asked a question and this is the answer it gave. */
 .watch-history-detail { margin: 4px 0 0; }
 
+.watch-delivery-failed { color: var(--danger); }
+
+.watch-delivery-audit {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--text-muted);
+  text-underline-offset: 3px;
+}
+.watch-delivery-audit:hover { text-decoration-color: currentColor; }
+
+
 /* The two controls that address a firing's two records. Carried by the link
    and by the dim form alike, so the pair keeps one size and one gap however
    much of the firing this install holds. */
@@ -17909,33 +17931,35 @@ pre.watch-pane-code.sql-static {
 
 /* ── Installed watch detail ──────────────────────────────────────────────
    The request and what it does when it comes true, side by side: they are the
-   two halves of one sentence, and a reader checks one against the other. Each
-   is a bordered card with its heading inside, so the quoted text needs no box
-   of its own. One column on a narrow screen. */
-.watch-detail-cards {
+   two halves of one sentence. Plain sections leave the definition as the
+   page’s main bounded surface. One column on a narrow screen. */
+.watch-detail-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 20px 40px;
+  margin: 24px 0;
 }
-.watch-detail-cards > .privacy-section {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-secondary);
-  padding: 16px 18px;
+.watch-detail-summary > .privacy-section {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
 }
-.watch-detail-cards .privacy-section-head { margin-bottom: 8px; }
-.watch-detail-cards .privacy-section-head h2 {
+.watch-detail-summary .privacy-section-head { margin-bottom: 8px; }
+.watch-detail-summary .privacy-section-head h2 {
   font-size: 13px;
   color: var(--text-secondary);
 }
-.watch-detail-cards .privacy-subscription-exact {
+.watch-detail-summary .privacy-subscription-exact {
   padding: 0;
   border: none;
   border-radius: 0;
   background: transparent;
 }
 @media (max-width: 720px) {
-  .watch-detail-cards { grid-template-columns: minmax(0, 1fr); }
+  .watch-detail-summary { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* The definition's own box already closes the section above, so the firings
