@@ -90,7 +90,7 @@ function resultBytes(result: WindowsJobResult): Buffer {
     const code = diagnostic?.[1] ?? "EPRIVATE";
     const stage = diagnostic?.[2];
     const nativeCode = diagnostic?.[3] === undefined ? undefined : Number(diagnostic[3]);
-    throw Object.assign(
+    const failure = Object.assign(
       new Error(
         "Private file must be a bounded private regular file with a trusted Windows owner and ACL" +
           (stage === undefined ? "" : ` (${stage}; native error ${nativeCode})`),
@@ -101,6 +101,21 @@ function resultBytes(result: WindowsJobResult): Buffer {
         ...(result.failure ? { failure: result.failure } : {}),
       },
     );
+    const cleanup = /^OMNESIS_PRIVATE_CLEANUP_FAILED:([0-9]+)\r?$/mu.exec(result.stderr);
+    if (cleanup) {
+      throw new AggregateError(
+        [
+          failure,
+          Object.assign(new Error("Private staging cleanup failed"), {
+            code: "EPRIVATE",
+            stage: "cleanup",
+            nativeCode: Number(cleanup[1]),
+          }),
+        ],
+        "Private write failed and staging cleanup failed",
+      );
+    }
+    throw failure;
   }
   return Buffer.from(result.stdout);
 }

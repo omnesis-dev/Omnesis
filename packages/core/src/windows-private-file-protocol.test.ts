@@ -144,6 +144,27 @@ describe("Windows private native protocol", () => {
       expect(error).toMatchObject({ code: "EPRIVATE", stage: "rename", nativeCode: 87 });
     }
   });
+  it("preserves native publication and staging-cleanup failures together", () => {
+    mocks.spawnSync.mockReturnValue({
+      status: 1,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("OMNESIS_JOB:0\nOMNESIS_PRIVATE_CLEANUP_FAILED:32\nEEXIST:rename:183"),
+    });
+    let caught: unknown;
+    try {
+      writeWindowsPrivateFileAtomicSync("C:\\example\\key", Buffer.from("invented secret"));
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AggregateError);
+    expect((caught as AggregateError).errors).toMatchObject([
+      { code: "EEXIST", stage: "rename", nativeCode: 183 },
+      { code: "EPRIVATE", stage: "cleanup", nativeCode: 32 },
+    ]);
+    expect(String(caught)).not.toContain("invented secret");
+    expect(String(caught)).not.toContain("example");
+  });
   it("returns generic errors without secret material or private path content", () => {
     mocks.spawnSync.mockReturnValue({
       status: 1,

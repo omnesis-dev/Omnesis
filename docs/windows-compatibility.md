@@ -43,6 +43,10 @@ the same entrypoint accepts `focused`, `e2e` and `portal`. Installer exclusions
 carry explicit reasons in that entrypoint. The workflow becomes scheduled only
 after it reaches the default branch.
 
+Manual dispatch defaults to the complete sweep and can select only units,
+both E2E shards, or the portal for investigating a failure. This does not reduce
+the daily coverage or the focused pull-request check.
+
 The audit is in progress. Passing Linux tests and inspecting Windows-specific
 branches do not establish Windows compatibility. Native dependency installation,
 the broader runtime surface, Windows lifecycle tests and macOS regression checks

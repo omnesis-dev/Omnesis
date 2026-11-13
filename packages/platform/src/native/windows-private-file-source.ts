@@ -26,6 +26,9 @@ public static partial class OmnesisPrivateFile {
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern SafeFileHandle CreateFile(string path,uint access,uint share,IntPtr security,uint mode,uint flags,IntPtr template);
   [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle handle,out Info info);
   [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetFileInformationByHandle(SafeFileHandle handle,int kind,IntPtr info,uint size);
+  [StructLayout(LayoutKind.Sequential)] struct RenameIoStatus { public IntPtr status; public UIntPtr information; }
+  [DllImport("ntdll.dll")] static extern int NtSetInformationFile(SafeFileHandle file,out RenameIoStatus io,IntPtr info,uint size,int kind);
+  [DllImport("ntdll.dll")] static extern uint RtlNtStatusToDosError(int status);
   [DllImport("advapi32.dll")] static extern uint GetSecurityInfo(SafeFileHandle handle,int kind,uint sections,out IntPtr owner,out IntPtr group,out IntPtr dacl,out IntPtr sacl,out IntPtr descriptor);
   [DllImport("advapi32.dll")] static extern uint SetSecurityInfo(SafeFileHandle handle,int kind,uint sections,IntPtr owner,IntPtr group,IntPtr dacl,IntPtr sacl);
   [DllImport("advapi32.dll")] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
@@ -167,8 +170,10 @@ public static partial class OmnesisPrivateFile {
   static void Rename(SafeFileHandle file,SafeFileHandle parent,string target,bool replaceExisting) {
     // SMB requires an absolute name and a null RootDirectory; the validated
     // parent denies untrusted writes and stays pinned without delete sharing.
-    bool network=target.StartsWith(@"\\");
-    byte[] name=Encoding.Unicode.GetBytes(network?target:Path.GetFileName(target));
+    bool extendedNetwork=target.StartsWith(@"\\?\UNC\",StringComparison.OrdinalIgnoreCase);
+    bool network=extendedNetwork || (target.StartsWith(@"\\") && !target.StartsWith(@"\\?\"));
+    string absolute=extendedNetwork?@"\??\"+target.Substring(4):@"\??\UNC\"+target.Substring(2);
+    byte[] name=Encoding.Unicode.GetBytes(network?absolute:Path.GetFileName(target));
     int rootOffset=IntPtr.Size,lengthOffset=IntPtr.Size*2,nameOffset=lengthOffset+4;
     int infoSize=(IntPtr.Size==8?24:16)+name.Length;
     IntPtr info=Marshal.AllocHGlobal(infoSize);
@@ -176,11 +181,16 @@ public static partial class OmnesisPrivateFile {
       for(int i=0;i<infoSize;i++) Marshal.WriteByte(info,i,0);
       Marshal.WriteInt32(info,0,replaceExisting?0x43:0x42); Marshal.WriteIntPtr(info,rootOffset,network?IntPtr.Zero:parent.DangerousGetHandle());
       Marshal.WriteInt32(info,lengthOffset,name.Length); Marshal.Copy(name,0,IntPtr.Add(info,nameOffset),name.Length);
-      int kind=22;
+      // The Win32 wrapper rejects this valid relative RootDirectory form.
+      // Native rename preserves the pinned parent instead of resolving a path
+      // again. FileStream opened this handle synchronously (FileOptions.None).
+      int kind=65;
       for(int attempt=0;;attempt++) {
-        if(SetFileInformationByHandle(file,kind,info,(uint)infoSize)) break;
-        int error=Marshal.GetLastWin32Error();
-        if(kind==22 && (error==50 || error==87)) { kind=3; Marshal.WriteInt32(info,0,replaceExisting?1:0); continue; }
+        RenameIoStatus io;
+        int status=NtSetInformationFile(file,out io,info,(uint)infoSize,kind);
+        if(status>=0) break;
+        int error=(int)RtlNtStatusToDosError(status);
+        if(kind==65 && (error==50 || error==87)) { kind=10; Marshal.WriteInt32(info,0,replaceExisting?1:0); continue; }
         if((error!=5 && error!=32 && error!=33) || attempt>=40) throw new Win32Exception(error);
         System.Threading.Thread.Sleep(25);
       }
@@ -189,7 +199,7 @@ public static partial class OmnesisPrivateFile {
   static void Discard(SafeFileHandle file) {
     try { ReadOnly(file,false); } catch { }
     IntPtr info=Marshal.AllocHGlobal(4);
-    try { Marshal.WriteInt32(info,1); SetFileInformationByHandle(file,4,info,4); } finally { Marshal.FreeHGlobal(info); }
+    try { Marshal.WriteInt32(info,1); Check(SetFileInformationByHandle(file,4,info,4)); } finally { Marshal.FreeHGlobal(info); }
   }
   static string Identity(Info info) {
     System.Globalization.CultureInfo culture=System.Globalization.CultureInfo.InvariantCulture;
@@ -221,7 +231,6 @@ public static partial class OmnesisPrivateFile {
         if(Path.GetFileName(staging)!=staging || staging.IndexOfAny(Path.GetInvalidFileNameChars())>=0) throw new UnauthorizedAccessException();
         scratch=Path.Combine(Path.GetDirectoryName(path),staging);
       }
-      bool published=false;
       Stage="create";using(FileStream file=new FileStream(scratch,FileMode.CreateNew,FileSystemRights.FullControl,FileShare.Read|FileShare.Delete,65536,FileOptions.None,FileAcl())) {
         try {
           Stage="validate";Info created=Information(file.SafeFileHandle,false); RequirePrivate(file.SafeFileHandle,true);
@@ -237,8 +246,16 @@ public static partial class OmnesisPrivateFile {
           Stage="flush";file.Flush(true);
           if(readOnly) { Stage="readonly";ReadOnly(file.SafeFileHandle,true); }
           if(atomic) { Stage="rename";Rename(file.SafeFileHandle,parent,path,replaceExisting); }
-          published=true;
-        } finally { if(!published) Discard(file.SafeFileHandle); }
+        } catch(Exception failure) {
+          string originalStage=Stage;
+          try { Stage="cleanup";Discard(file.SafeFileHandle); }
+          catch(Exception cleanup) {
+            Win32Exception native=cleanup as Win32Exception;
+            failure.Data["PrivateCleanupCode"]=native==null?cleanup.HResult&65535:native.NativeErrorCode;
+          }
+          Stage=originalStage;
+          throw;
+        }
       }
     }
   }
@@ -284,6 +301,7 @@ if ($config.action -eq 'create' -or $config.action -eq 'atomic') {
   while ($cause.InnerException) { $cause=$cause.InnerException }
   $code=$cause.HResult -band 65535
   if ($cause -is [System.ComponentModel.Win32Exception]) { $code=$cause.NativeErrorCode }
+  if ($cause.Data.Contains('PrivateCleanupCode')) { [Console]::Error.WriteLine('OMNESIS_PRIVATE_CLEANUP_FAILED:'+[string]$cause.Data['PrivateCleanupCode']) }
   $stage='bootstrap'
   if ('OmnesisPrivateFile' -as [type]) { $stage=[OmnesisPrivateFile]::Stage }
   $category='EPRIVATE'

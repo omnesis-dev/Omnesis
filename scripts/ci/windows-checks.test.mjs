@@ -28,11 +28,12 @@ describe("Windows CI coverage", () => {
     expect(config.on.schedule).toEqual([{ cron: "43 4 * * *" }]);
     expect(config.on).toHaveProperty("workflow_dispatch");
     const expression = config.jobs.windows.strategy.matrix.include.slice(3, -2);
-    const matrix = (event) =>
+    const matrix = (event, lane = "all") =>
       JSON.parse(
         JSON.stringify(
           runInNewContext(expression, {
             github: { event_name: event },
+            inputs: { lane },
             fromJSON: JSON.parse,
           }),
         ),
@@ -46,6 +47,17 @@ describe("Windows CI coverage", () => {
         ["portal", null],
       ]);
     }
+    expect(config.on.workflow_dispatch.inputs.lane).toMatchObject({
+      type: "choice",
+      default: "all",
+      options: ["all", "unit", "e2e", "portal"],
+    });
+    expect(matrix("workflow_dispatch", "unit").map(({ lane }) => lane)).toEqual(["unit"]);
+    expect(matrix("workflow_dispatch", "e2e").map(({ shard }) => shard)).toEqual(["1/2", "2/2"]);
+    expect(matrix("workflow_dispatch", "portal").map(({ lane }) => lane)).toEqual(["portal"]);
+    // A diagnostic input cannot reduce scheduled or pull-request coverage.
+    expect(matrix("schedule", "unit")).toEqual(matrix("schedule"));
+    expect(matrix("pull_request", "portal")).toEqual(matrix("pull_request"));
     expect(config.jobs.windows.strategy["max-parallel"]).toBe(4);
   });
 
