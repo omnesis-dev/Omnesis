@@ -378,6 +378,7 @@ const filterListItemSchema = z.object({
     )
     .max(FILTER_LIST_LIMITS.membersPerItem)
     .optional(),
+  membersIncomplete: z.boolean().optional(),
 });
 const filterListPublicationSchema = z
   .object({

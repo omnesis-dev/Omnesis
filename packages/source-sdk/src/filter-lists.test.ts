@@ -176,6 +176,26 @@ describe("filterListDigest", () => {
     );
   });
 
+  it("changes when an item gains or loses members it cannot name, and only then", async () => {
+    const named = await collect([{ id: "c-1", label: "Chat", members: [] }]);
+    const explicit = await collect([
+      { id: "c-1", label: "Chat", members: [], membersIncomplete: false },
+    ]);
+    const incomplete = await collect([
+      { id: "c-1", label: "Chat", members: [], membersIncomplete: true },
+    ]);
+    expect(explicit).toEqual(named);
+    expect(filterListDigest(explicit)).toBe(filterListDigest(named));
+    expect(incomplete[0]?.membersIncomplete).toBe(true);
+    expect(filterListDigest(incomplete)).not.toBe(filterListDigest(named));
+  });
+
+  it("refuses a membersIncomplete that is not a boolean", async () => {
+    await expect(
+      collect([{ id: "c-1", label: "Chat", membersIncomplete: "yes" as unknown as boolean }]),
+    ).rejects.toThrow(/membersIncomplete/);
+  });
+
   it("changes when a member joins", async () => {
     const before = await collect([{ id: "c-1", label: "Chat", members: [] }]);
     const after = await collect([

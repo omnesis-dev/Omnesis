@@ -612,7 +612,8 @@ export class MessageStore {
         kind TEXT,
         parent_community_jid TEXT,
         participants_json TEXT,
-        participants_fetched_at INTEGER
+        participants_fetched_at INTEGER,
+        roster_complete INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS contacts (
@@ -682,6 +683,16 @@ export class MessageStore {
       `);
     }
 
+    const chatCols = new Set(
+      (db.prepare(`PRAGMA table_info(chats)`).all() as { name: string }[]).map((c) => c.name),
+    );
+    // A roster stored before this column existed may have been built from
+    // membership events alone, so it stays unconfirmed until the next full
+    // roster WhatsApp delivers.
+    if (!chatCols.has("roster_complete")) {
+      db.exec(`ALTER TABLE chats ADD COLUMN roster_complete INTEGER`);
+    }
+
     // Created here (not in the CREATE block above) because it references the
     // media columns, which on an upgraded DB exist only after the ALTERs run.
     db.exec(
@@ -729,15 +740,16 @@ export class MessageStore {
       `),
       upsertChat: this.db.prepare(`
         INSERT INTO chats (jid, name, is_group, kind, parent_community_jid,
-          participants_json, participants_fetched_at)
+          participants_json, participants_fetched_at, roster_complete)
         VALUES (@jid, @name, @is_group, @kind, @parent_community_jid,
-          @participants_json, @participants_fetched_at)
+          @participants_json, @participants_fetched_at, @roster_complete)
         ON CONFLICT(jid) DO UPDATE SET
           name = excluded.name, is_group = excluded.is_group,
           kind = COALESCE(excluded.kind, chats.kind),
           parent_community_jid = COALESCE(excluded.parent_community_jid, chats.parent_community_jid),
           participants_json = excluded.participants_json,
-          participants_fetched_at = excluded.participants_fetched_at
+          participants_fetched_at = excluded.participants_fetched_at,
+          roster_complete = excluded.roster_complete
       `),
       upsertContact: this.db.prepare(`
         INSERT INTO contacts (jid, name, push_name, phone_number, lid, verified_name, username)
@@ -806,6 +818,7 @@ export class MessageStore {
       parentCommunityJid: (row.parent_community_jid as string) ?? undefined,
       participants,
       participantsFetchedAt: (row.participants_fetched_at as number) ?? undefined,
+      rosterComplete: row.roster_complete ? true : undefined,
     };
   }
 
@@ -818,6 +831,7 @@ export class MessageStore {
       parent_community_jid: chat.parentCommunityJid ?? null,
       participants_json: chat.participants ? JSON.stringify(chat.participants) : null,
       participants_fetched_at: chat.participantsFetchedAt ?? null,
+      roster_complete: chat.rosterComplete ? 1 : null,
     });
   }
 
@@ -1058,6 +1072,7 @@ export class MessageStore {
                 ...chat,
                 participants: existing.participants,
                 participantsFetchedAt: existing.participantsFetchedAt,
+                rosterComplete: existing.rosterComplete,
                 kind: chat.kind ?? existing.kind,
                 parentCommunityJid: chat.parentCommunityJid ?? existing.parentCommunityJid,
               }
@@ -1074,19 +1089,26 @@ export class MessageStore {
   }
 
   /**
-   * Replace a group's full participant roster. Does NOT mark days dirty — a
+   * Replace a group's full participant roster, as WhatsApp's group metadata
+   * gives it; the roster then names every member. Does NOT mark days dirty — a
    * roster change alone re-renders lazily on the next message for that chat.
    */
   updateGroupRoster(jid: string, participants: string[]): void {
     const existing = this.chats.get(jid);
     const next: StoredChat = existing
-      ? { ...existing, participants: [...participants], participantsFetchedAt: nowSeconds() }
+      ? {
+          ...existing,
+          participants: [...participants],
+          participantsFetchedAt: nowSeconds(),
+          rosterComplete: true,
+        }
       : {
           jid,
           name: jid,
           isGroup: jid.endsWith("@g.us"),
           participants: [...participants],
           participantsFetchedAt: nowSeconds(),
+          rosterComplete: true,
         };
     this.chats.set(jid, next);
     this.writeChat(next);
@@ -1113,6 +1135,8 @@ export class MessageStore {
       parentCommunityJid: existing?.parentCommunityJid,
       participants: [...set],
       participantsFetchedAt: nowSeconds(),
+      // Adding to a whole roster keeps it whole; adding to none does not make one.
+      rosterComplete: existing?.rosterComplete,
     };
     this.chats.set(jid, next);
     this.writeChat(next);
@@ -1220,6 +1244,20 @@ export class MessageStore {
 
   get lidPhoneMap(): Map<string, string> {
     return this._lidPhoneMap;
+  }
+
+  /** Whether WhatsApp has given this LID more than one phone, so that none is trusted. */
+  isLidContested(lid: string): boolean {
+    return this._contestedLids.has(bareLid(lid));
+  }
+
+  /** Every chat WhatsApp has told this account about, with or without messages. */
+  get allChats(): ReadonlyMap<string, StoredChat> {
+    return this.chats;
+  }
+
+  get allContacts(): Map<string, StoredContact> {
+    return this.contacts;
   }
 
   // ───────────────────────────── edits / deletes ────────────────────────────

@@ -140,6 +140,13 @@ export interface FilterListItem {
   parentId?: string;
   /** Who belongs to the item, when the field declares `listsMembers`. */
   members?: FilterIdentifier[];
+  /**
+   * True when the item has members that `members` does not name: one whose
+   * identifier the source cannot read, or a roster the source does not hold
+   * whole. Whether a person outside `members` belongs to the item is then not
+   * known, and a record of the item cannot be matched against a person.
+   */
+  membersIncomplete?: boolean;
 }
 
 /**

@@ -1762,6 +1762,73 @@
       "value": "zeta@gmail.com",
       "paths": ["packages/gateway/portal/js/views/reauth-grouping.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "0@s.whatsapp.net",
+      "paths": ["evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json"],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "120000000000000001@g.us",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "120000000000000002@g.us",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "12025550101@s.whatsapp.net",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "12025550123@s.whatsapp.net",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "12025550142@s.whatsapp.net",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "12025550177@s.whatsapp.net",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/provider.e2e.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "3@s.whatsapp.net",
+      "paths": ["packages/providers/whatsapp/src/chat-list.test.ts"],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
     }
   ],
   "phones": [
@@ -12877,6 +12944,69 @@
       "value": "Maya Reeves",
       "paths": ["evals/universes/filter-lists/cast.json"],
       "reason": "Invented cast of the filter-lists universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "David Lin",
+      "paths": [
+        "evals/universes/chat-filters/cast.json",
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/providers/whatsapp/src/chat-list.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": [
+        "evals/universes/chat-filters/cast.json",
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "evals/universes/chat-filters/cast.json",
+        "evals/universes/chat-filters/sources/apple-imessage/messages.json",
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers-synth/_common/src/chat-roster.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Northstar Offers",
+      "paths": ["evals/universes/chat-filters/cast.json"],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Riverside Estate",
+      "paths": [
+        "evals/universes/chat-filters/sources/apple-imessage/chats.json",
+        "evals/universes/chat-filters/sources/apple-imessage/messages.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers-synth/_common/src/chat-roster.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Sam Rivera",
+      "paths": ["evals/universes/chat-filters/cast.json"],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Studio Northstar",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/apple/src/imessage-chat-list.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
     }
   ],
   "secretFixtures": [

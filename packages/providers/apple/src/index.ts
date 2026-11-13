@@ -9,7 +9,8 @@ import {
   readStorageKeySync,
   resolveAttachmentConfig,
 } from "@omnesis/core";
-import { defineProvider } from "@omnesis/source-sdk";
+import { defineProvider, withFilterLists } from "@omnesis/source-sdk";
+import { IMESSAGE_CHAT_FIELD } from "./imessage-chat-list.js";
 import { unavailableStorePage } from "./store-unavailable.js";
 import { throwOnOpenFailure } from "./db-helpers/internal.js";
 import { AppleProvider } from "./provider.js";
@@ -96,6 +97,7 @@ export { AppleProvider } from "./provider.js";
 export { AppleNotesSource } from "./notes.js";
 export { AppleRemindersSource } from "./reminders.js";
 export { AppleIMessageSource } from "./imessage.js";
+export { IMESSAGE_CHAT_FIELD } from "./imessage-chat-list.js";
 export { AppleContactsSource } from "./contacts.js";
 export { AppleCalendarSource } from "./calendar.js";
 export { AppleCallLogSource } from "./call-log.js";
@@ -370,6 +372,8 @@ export default defineProvider<AppleContext>({
         imageDataUri: appleIMessageIconDataUri,
       },
       documentEventProfile: appleIMessageDocumentProfile,
+      resyncCost:
+        "Reads the Messages database and its attachments on this Mac again; nothing is downloaded, and voice clips already transcribed are not transcribed again.",
       async create({ sourceId, providerId, dataCutoff, sourceConfig, host }, ctx) {
         const probeReadAccess = appleFileReadAccess(ctx.provider.imessageDbFilePath);
         const probeLocalStores = async () => [
@@ -400,13 +404,16 @@ export default defineProvider<AppleContext>({
           configDir: host?.configDir,
         });
 
-        return {
-          probeReadAccess,
-          probeLocalStores,
-          sync: (cursor) => source.sync(cursor),
-          watchPaths: source.watchPaths,
-          dispose: async () => source.dispose(),
-        };
+        return withFilterLists(
+          {
+            probeReadAccess,
+            probeLocalStores,
+            sync: (cursor) => source.sync(cursor),
+            watchPaths: source.watchPaths,
+            dispose: async () => source.dispose(),
+          },
+          { [IMESSAGE_CHAT_FIELD]: () => source.listChats() },
+        );
       },
     },
     {

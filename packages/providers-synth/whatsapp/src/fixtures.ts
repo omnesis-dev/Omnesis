@@ -103,6 +103,8 @@ export function mapChat(
       people,
       extra: {
         chatId: e.chatId,
+        // The path the real source declares for the chat a day belongs to.
+        chatJid: e.chatId,
         date: e.date,
         messageCount: e.messages.length,
         ...(attachmentInfos.length > 0 ? { attachments: attachmentInfos } : {}),
