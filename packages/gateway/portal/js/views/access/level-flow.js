@@ -20,11 +20,11 @@ import {
   dataDecisionCapability,
   directFollowsAnswer,
   levelDecisions,
-  sameDecision,
 } from "./level-flow-state.js";
 
 /** The headings of the pages that are not a single decision. */
 const PAGE_TITLES = {
+  name: "What should this access level be called?",
   review: "Ready to create this access level?",
   overview: "What would you like to change?",
   changes: "Review your changes",
@@ -56,6 +56,8 @@ export function LevelFlow({
   error = "",
   recovery = null,
   impact = null,
+  name = null,
+  unchanged = false,
 }) {
   const memory = useLevelDecisionMemory();
   const walk = useNewLevelWalk({ step, onStep, rules, linkDirect });
@@ -76,6 +78,10 @@ export function LevelFlow({
     else onStep(target);
   };
   const next = () => {
+    if (current === "name") {
+      if (!locked() && name?.valid) onStep("overview");
+      return;
+    }
     if (locked() || !pass(rules, sources)) return;
     if (isNew) walk.advance();
     else onStep(current === "overview" ? "changes" : "overview");
@@ -89,7 +95,9 @@ export function LevelFlow({
   const notice = error
     ? html`<div class="access-error guided-task-error" role="alert" tabindex="-1" ref=${alert}>${error}${recovery}</div>`
     : null;
+  // On a page of its own the notice leads, above the caption, so it is read first.
   return html`<section class="guided-level-flow">
+    ${page ? notice : null}
     <div class="guided-progress" aria-label="Progress">
       ${isNew ? (current === "review" ? "Final review" : walk.correcting ? "Update your decision" : "Create access level") : current === "overview" ? "Edit access level" : current === "changes" ? "Final review" : "Edit decision"}
     </div>
@@ -117,11 +125,33 @@ export function LevelFlow({
         : html`<header class="guided-question">
               <h3 ref=${heading} tabindex="-1">${page}</h3>
             </header>
-            ${notice}
             <div class="guided-decision-body">
+      ${current === "name" ? name?.field : null}
       ${
         current === "overview"
           ? html`<div class="guided-edit-overview">
+              ${
+                name
+                  ? html`<section class="guided-overview-decision is-setting">
+                      <header>
+                        <h4>${DECISION_TITLES.name}</h4>
+                        <span class="guided-overview-actions"
+                          ><button
+                            type="button"
+                            class="btn-secondary"
+                            disabled=${disabled}
+                            onClick=${() => move("name")}
+                          >
+                            Change
+                          </button></span
+                        >
+                      </header>
+                      <div class="guided-overview-value">
+                        <p class="compact-setting-value">${name.value}</p>
+                      </div>
+                    </section>`
+                  : null
+              }
               ${levelDecisions(rules).map((key) => {
                 const data = dataDecisionCapability(key);
                 const follows = key === "direct-data" && linked;
@@ -159,13 +189,13 @@ export function LevelFlow({
             </div>`
           : null
       }
-      ${current === "review" || current === "changes" ? html`${review}<${LevelReview} rules=${rules} initial=${initial ?? rules} sources=${sources} policies=${policies} isNew=${isNew} linked=${linked} disabled=${disabled} onChange=${changeFromReview} />${impact}` : null}
+      ${current === "review" || current === "changes" ? html`${review}<${LevelReview} rules=${rules} initial=${initial ?? rules} sources=${sources} policies=${policies} isNew=${isNew} linked=${linked} disabled=${disabled} onChange=${changeFromReview} name=${name ? { before: name.initial, after: name.value } : null} />${impact}` : null}
             </div>`
     }
     <footer class="guided-task-footer">
       <div>${leadAction}</div>
       <span
-        >${(isNew && walk.position > 0) || (!isNew && current === "changes") ? html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${back}>Back</button>` : null}${current === "review" || current === "changes" ? finalAction : html`<button type="button" class="btn-primary" disabled=${disabled || (!isNew && current === "overview" && sameDecision(initial, rules))} onClick=${next}>${!isNew && current === "overview" ? "Review changes" : !isNew ? "Done" : "Continue"}</button>`}</span
+        >${(isNew && walk.position > 0) || (!isNew && current === "changes") ? html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${back}>Back</button>` : null}${current === "review" || current === "changes" ? finalAction : html`<button type="button" class="btn-primary" disabled=${disabled || (!isNew && current === "overview" && unchanged) || (current === "name" && !name?.valid)} onClick=${next}>${!isNew && current === "overview" ? "Review changes" : !isNew ? "Done" : "Continue"}</button>`}</span
       >
     </footer>
   </section>`;

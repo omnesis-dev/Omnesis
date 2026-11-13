@@ -128,7 +128,7 @@ test("a document shows its filter details and opens who can read it", async ({ p
   await page.getByRole("link", { name: "Who can read this?" }).click();
   await expect(page).toHaveURL(new RegExp(`/portal/doc/${documentId}/access$`));
   await expect(page.getByRole("heading", { name: "Who can read this?", level: 1 })).toBeVisible();
-  await expect(page.getByRole("status")).toContainText("Loading…");
+  await expect(page.getByRole("status")).toContainText("Checking each access level…");
   release();
   await expect(page.getByRole("heading", { name: "Research assistant" })).toBeVisible();
   await expect(page.locator(".doc-access-level h2")).toHaveText([

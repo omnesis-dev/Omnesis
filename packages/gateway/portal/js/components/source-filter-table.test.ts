@@ -77,7 +77,7 @@ async function show(props: Record<string, unknown>) {
 const column = (selector: string) =>
   [...host.querySelectorAll(selector)].map((element) => element.textContent);
 
-test("typed addresses keep their type and value while named people keep their addresses beside the name", async () => {
+test("typed addresses keep their type and value while named people are shown by name alone", async () => {
   const person = (label: string, type: string, value: string) => ({
     capability: "person",
     label,
@@ -96,7 +96,7 @@ test("typed addresses keep their type and value while named people keep their ad
     "example.org",
     "maya@example.com",
     "+15550100123",
-    "Example participantmaya@example.com",
+    "Example participant",
   ]);
   expect(host.querySelectorAll("button")).toHaveLength(0);
 });
@@ -179,23 +179,4 @@ test("a tree item is typed by its level's noun, from the row's own depth or the 
     items: [{ ref: ref("listed"), label: "Invented shelf", count: 3, depth: 0 }],
   });
   expect(column(".compact-filter-kind")).toEqual(["Shelf", "Binder", "Shelf or binder"]);
-});
-
-test("an entry named without its depth is typed by whether the tree's first level lists it", async () => {
-  const ref = (id: string) => ({ capability: "tree", field: "extra.shelf", id });
-  api.getSourceFilterOptions.mockResolvedValue({
-    sourceId: source.id,
-    field: "extra.shelf",
-    items: [{ ref: ref("north"), label: "North", shortLabel: "North", count: 4, depth: 0 }],
-  });
-  await show({ refs: [ref("north"), ref("north/atlas")] });
-  // Effects of a render that settled outside act run after the next paint.
-  await act(() => new Promise((resolve) => setTimeout(resolve, 150)));
-  await act(async () => {});
-  expect(api.getSourceFilterOptions).toHaveBeenCalledWith(
-    source.id,
-    { field: "extra.shelf" },
-    expect.anything(),
-  );
-  expect(column(".compact-filter-kind")).toEqual(["Shelf", "Binder"]);
 });

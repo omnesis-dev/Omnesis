@@ -640,7 +640,12 @@ test("the picker of a tree browses level by level, short names inside, full name
     "atlas-api4 matching",
     "empty-drafts0 matching",
   ]);
-  expect(picker.querySelector(".source-filter-select-location")?.textContent).toBe("Select this folder");
+  expect(picker.querySelector(".source-filter-select-location span")?.textContent).toBe("Select this folder");
+  expect(picker.querySelector(".source-filter-select-location small")?.textContent).toBe("4 matching");
+  // The hint about what selecting includes sits under the location, above the row it explains.
+  expect(
+    [...picker.querySelectorAll(".source-filter-results > *")].map((element) => element.className),
+  ).toEqual(expect.arrayContaining(["source-filter-breadcrumbs", "filter-option-hint", "source-filter-select-location"]));
   await type(search, "atlas");
   await waitOptions();
   expect(picker.querySelector(".source-filter-options li label")?.textContent).toBe("~/work/atlas-api4 matching");
@@ -687,14 +692,14 @@ test("a field whose items belong to a device starts at the devices when the acco
     { field: "extra.project", device: "dev-one" },
     expect.any(AbortSignal),
   );
-  expect(picker.querySelector(".source-filter-select-location")?.textContent).toBe("Select this device");
+  expect(picker.querySelector(".source-filter-select-location span")?.textContent).toBe("Select this device");
   await flushUI();
   await act(async () => button("Apply filter").click());
   expect(onApply.mock.calls[0]![0].rules[0].match).toEqual([device("dev-two")]);
   expect([...host.querySelectorAll(".compact-filter-kind")].map((cell) => cell.textContent)).toEqual(["Device"]);
 });
 
-test("a tree whose levels have their own names says which level each row and location is at", async () => {
+test("a tree whose levels have their own names says which level a saved entry and the location are at", async () => {
   const repoField = {
     ...folderField,
     field: "extra.repository",
@@ -713,20 +718,24 @@ test("a tree whose levels have their own names says which level each row and loc
         : [{ ref: repo("owner:1"), label: "northstar-labs", shortLabel: "northstar-labs", count: 5, hasChildren: true, depth: 0 }],
     }),
   );
+  api.previewSourceFilter.mockImplementation(async (id: string, p: typeof policy) => ({
+    ...readyPreview(id, p),
+    items: [{ ref: repo("owner:1"), label: "northstar-labs", count: 5, depth: 0 }],
+  }));
   await mount({ savedPolicy: { ...policy, rules: [{ action: "share", match: [repo("owner:1")] }] } });
   await waitOptions();
-  // The saved owner is named as an owner although the preview gave no depth.
+  // The saved owner is named by the level the preview gives it.
   expect([...host.querySelectorAll(".compact-filter-kind")].map((cell) => cell.textContent)).toEqual(["Owner"]);
   const search = searchOf("repositories");
   await act(async () => search.dispatchEvent(new window.Event("input", { bubbles: true })));
   await waitOptions();
   const picker = search.closest(".source-filter-picker")!;
   expect(picker.querySelector(".source-filter-breadcrumbs")?.textContent).toContain("All owners");
-  expect(picker.querySelector(".source-filter-options small")?.textContent).toBe("Owner · 5 matching");
+  expect(picker.querySelector(".source-filter-options small")?.textContent).toBe("5 matching");
   await act(async () => picker.querySelector<HTMLButtonElement>('button[aria-label="Open northstar-labs"]')!.click());
   await waitOptions();
-  expect(picker.querySelector(".source-filter-select-location")?.textContent).toBe("Select this owner");
-  expect(picker.querySelector(".source-filter-options small")?.textContent).toBe("Repository · 2 matching");
+  expect(picker.querySelector(".source-filter-select-location span")?.textContent).toBe("Select this owner");
+  expect(picker.querySelector(".source-filter-options small")?.textContent).toBe("2 matching");
   expect(picker.querySelector(".source-filter-options li label span")?.textContent).toBe("atlas-api");
 });
 
@@ -831,13 +840,13 @@ test("an unfiltered account opens as All content and continuing cannot imply a n
   expect(onRemove).not.toHaveBeenCalled();
 });
 
-test("an account that is no longer connected lists its saved filters, counts nothing, and applies a removal", async () => {
+test("an account that is no longer connected lists its saved entries by name, counts nothing, and applies a removal", async () => {
   const kept = room("kept-room");
   const saved = { ...policy, rules: [{ action: "share", match: [...policy.rules[0]!.match, kept] }] };
   const onApply = vi.fn();
   await mount({ source: { id: source.id, displayName: "Fictional", available: false }, savedPolicy: saved, onApply });
   expect(host.querySelector(".source-filter-notice")?.textContent).toBe(
-    "This account is no longer connected. Saved filters can be removed but not added.",
+    "This account is no longer connected. You can remove its saved entries.",
   );
   expect(host.querySelector("input[type=search]")).toBeNull();
   const removals = () => [...host.querySelectorAll<HTMLButtonElement>(".compact-filter-remove")];
@@ -848,7 +857,9 @@ test("an account that is no longer connected lists its saved filters, counts not
   expect(button("Apply filter").disabled).toBe(false);
   await act(async () => button("Apply filter").click());
   expect(onApply).toHaveBeenCalledWith({ ...saved, rules: [{ action: "share", match: [kept] }] });
-  expect(api.previewSourceFilter).not.toHaveBeenCalled();
+  // Its saved entries keep the names the gateway last knew; no count is shown.
+  expect(host.querySelector(".source-filter-counts")).toBeNull();
+  expect([...host.querySelectorAll("tbody .compact-filter-count")].map((cell) => cell.textContent)).toEqual(["—"]);
 });
 
 test("removing every saved filter of an account that is no longer connected leaves nothing to apply", async () => {

@@ -18,13 +18,13 @@ export function filterDetailValue(field) {
  */
 export function DocumentFilterDetails({ details }) {
   if (!details) return null;
-  return html`<section class="meta-filter-details" aria-label="Filter details">
-    <div class="meta-filter-title">Filter details</div>
+  return html`<section class="meta-section meta-filter-details" aria-label="Filter details">
+    <div class="meta-section-title">Filter details</div>
     ${(details.fields ?? []).map((field) => {
       // "Chat", "People", "Labels: None"; a field the record cannot answer for is named once.
       const many = field.state === "present" && (field.items ?? []).length !== 1;
       const name = capitalized(fieldNoun(field, many));
-      return html`<div class="meta-row meta-row-block" key=${field.field}>
+      return html`<div class="meta-row" key=${field.field}>
         <span class="meta-key">${name}</span>
         <span class=${`meta-value meta-value-text${field.state === "present" ? "" : " meta-value-muted"}`}
           >${filterDetailValue(field)}</span

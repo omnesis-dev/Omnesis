@@ -140,7 +140,8 @@ test("edit review shows only changed accounts with before/after tables and a vis
   expect(pair.querySelectorAll(":scope > section > strong")[0]?.textContent).toBe("Before");
   expect(pair.querySelectorAll(":scope > section > strong")[1]?.textContent).toBe("After");
   expect(pair.textContent).toContain("Not shared");
-  expect(host.querySelector(".guided-unchanged-accounts")?.textContent).toBe("1 account unchanged");
+  // Accounts that did not change are not counted: only what changes is listed.
+  expect(host.textContent).not.toContain("unchanged");
   expect(host.querySelectorAll("details")).toHaveLength(0);
 });
 
@@ -488,9 +489,7 @@ describe("a filter's items show under the side that holds them", () => {
     expect(listed.map((item) => item.querySelector(".compact-source-account")?.textContent)).toEqual([
       "maya@example.com",
     ]);
-    expect(host.querySelector(".compact-review-answer-data .guided-unchanged-accounts")?.textContent).toBe(
-      "1 account unchanged",
-    );
+    expect(listed).toHaveLength(1);
   });
 
   test("a Direct that follows Answer is summarised in one line where it is unchanged or new", async () => {

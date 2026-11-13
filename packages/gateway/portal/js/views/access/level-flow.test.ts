@@ -386,7 +386,7 @@ test("adding Direct from create review visits only newly required decisions and 
   await click("Continue");
   expect(host.textContent).toContain("Ready to create this access level?");
   expect(host.querySelector(".compact-release-summary")?.textContent).toBe(
-    "Privacy reviewInvented policy",
+    "Privacy review · Invented policy",
   );
 });
 test("data change review pairs only the changed account and keeps unchanged count visible", async () => {
@@ -421,9 +421,7 @@ test("data change review pairs only the changed account and keeps unchanged coun
   expect(host.querySelector(".guided-account-delta")?.textContent).toContain(
     "BeforeAll contentAfterNot shared",
   );
-  expect(host.querySelector(".guided-unchanged-accounts")?.textContent).toContain(
-    "1 account unchanged",
-  );
+  expect(host.querySelector(".guided-unchanged-accounts")).toBeNull();
 });
 
 test("a delayed creation freezes review navigation, the name and dismissal until the request settles", async () => {
@@ -502,16 +500,16 @@ test("a delayed save keeps all review controls frozen and closes only the submit
   await change([...host.querySelectorAll<HTMLInputElement>(".grant-builder-release input")][1]!);
   await click("Done");
   await click("Review changes");
+  // The review of an edit goes Back to the level page; it has no Cancel of its own.
+  expect([...host.querySelectorAll("button")].some((item) => item.textContent?.trim() === "Cancel")).toBe(false);
   const changeButton = host.querySelector<HTMLButtonElement>(".guided-review-decision button")!,
-    back = button("Back"),
-    cancel = button("Cancel");
+    back = button("Back");
   await act(async () => {
     button("Save changes").click();
     changeButton.click();
     back.click();
-    cancel.click();
   });
-  expect(changeButton.disabled && back.disabled && cancel.disabled).toBe(true);
+  expect(changeButton.disabled && back.disabled).toBe(true);
   expect(host.textContent).toContain("Review your changes");
   expect(host.querySelector(".grant-builder-release")).toBeNull();
   expect(onSaved).not.toHaveBeenCalled();
@@ -799,9 +797,9 @@ test("choosing separate Direct data after a copy restores the boundary the copy 
   // Direct's own list opens editable, with the one action that links it to Answer above it.
   expect(host.querySelector(".guided-direct-link p")).toBeNull();
   expect(sourceChecks().map((input) => input.disabled)).toEqual([false, false]);
-  await click("Use same sources and filters as Answer mode");
+  await click("Use same sources and filters as Answer");
   expect(host.querySelector(".guided-direct-link p")?.textContent).toBe(
-    "Uses the same sources and filters as Answer mode.",
+    "Uses the same sources and filters as Answer.",
   );
   expect(sourceChecks().map((input) => [ticked(input), input.disabled])).toEqual([
     [true, true],
@@ -832,7 +830,7 @@ test("a saved Direct that mirrors Answer opens linked, follows Answer's edits an
   ]);
   await openDecision("Direct data");
   expect(host.querySelector(".guided-direct-link p")?.textContent).toBe(
-    "Uses the same sources and filters as Answer mode.",
+    "Uses the same sources and filters as Answer.",
   );
   // The frozen list shows each account's status but offers no checkbox or filter to change.
   expect(sourceChecks().every((input) => input.disabled)).toBe(true);
@@ -894,7 +892,7 @@ test("switching Answer on beside Direct's own accounts keeps them and leaves Dir
   await openDecision("Direct data");
   // Direct opens on its own list, not on Answer's.
   expect(host.querySelector(".guided-source-list.is-frozen")).toBeNull();
-  expect(button("Use same sources and filters as Answer mode")).toBeTruthy();
+  expect(button("Use same sources and filters as Answer")).toBeTruthy();
   expect(sourceChecks().map((input) => [ticked(input), input.disabled])).toEqual([
     [true, false],
     [false, false],
@@ -946,7 +944,7 @@ test("Direct switched on while editing starts linked to Answer, filters included
   await change(preset("Direct"));
   await click("Done");
   // Direct never reads an account more widely than Answer does.
-  expect(host.textContent).toContain("Uses the same sources and filters as Answer mode.");
+  expect(host.textContent).toContain("Uses the same sources and filters as Answer.");
   expect(host.querySelector(".guided-source-list.is-frozen")).not.toBeNull();
   await click("Done");
   await click("Review changes");
@@ -958,4 +956,86 @@ test("Direct switched on while editing starts linked to Answer, filters included
   expect(direct.scopePolicies).toEqual([
     { ...filter, audience: { accessLevel: "invented-level", capability: "direct" } },
   ]);
+});
+
+test("the name is a decision of the level: renamed alone, it is reviewed and saved without the rules", async () => {
+  const answer = {
+    ...newGrantRule("answer", "invented-policy"),
+    sources: { mode: "allowlist", sourceIds: [source.id] },
+  };
+  const onClose = vi.fn();
+  await act(async () =>
+    render(
+      h(LevelEditorPage, {
+        level: { id: "invented-level", name: "Project assistant", revision: 4, rules: [answer] },
+        connections: [],
+        overview: {
+          ...overview,
+          levels: [{ id: "invented-other", name: "Taken name", revision: 1, rules: [answer] }],
+        },
+        onSaved: vi.fn(),
+        onClose,
+        onConflict: vi.fn(),
+        onGone: vi.fn(),
+      }),
+      host,
+    ),
+  );
+  const rows = () => [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")];
+  expect(rows()[0]!.querySelector("h4")?.textContent).toBe("Name");
+  expect(rows()[0]!.querySelector(".compact-setting-value")?.textContent).toBe("Project assistant");
+  expect(button("Review changes").disabled).toBe(true);
+  await act(async () => rows()[0]!.querySelector<HTMLButtonElement>("button")!.click());
+  expect(host.querySelector(".guided-question h3")?.textContent).toBe(
+    "What should this access level be called?",
+  );
+  const field = host.querySelector<HTMLInputElement>("#access-edit-level-name")!;
+  await change(field, "Taken name");
+  expect(button("Done").disabled).toBe(true);
+  await change(field, "Renamed assistant");
+  await click("Done");
+  expect(rows()[0]!.querySelector(".compact-setting-value")?.textContent).toBe("Renamed assistant");
+  await click("Review changes");
+  const review = host.querySelector(".compact-review-name")!;
+  expect(review.textContent).toContain("BeforeProject assistant");
+  expect(review.textContent).toContain("AfterRenamed assistant");
+  expect(
+    [...host.querySelectorAll(".compact-unchanged-settings h5")].map((heading) => heading.textContent),
+  ).not.toContain("Name");
+  await click("Save changes");
+  expect(api.updateAccessLevel).toHaveBeenCalledWith("invented-level", {
+    expectedRevision: 4,
+    name: "Renamed assistant",
+  });
+});
+
+test("an unchanged name is listed with what the review leaves alone", async () => {
+  const answer = {
+    ...newGrantRule("answer", "invented-policy"),
+    sources: { mode: "allowlist", sourceIds: [source.id] },
+  };
+  await act(async () =>
+    render(
+      h(LevelEditorPage, {
+        level: { id: "invented-level", name: "Project assistant", revision: 4, rules: [answer] },
+        connections: [],
+        overview,
+        onSaved: vi.fn(),
+        onClose: vi.fn(),
+        onConflict: vi.fn(),
+        onGone: vi.fn(),
+      }),
+      host,
+    ),
+  );
+  const release = [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")].find(
+    (row) => row.querySelector("h4")?.textContent === "Answer release",
+  )!;
+  await act(async () => release.querySelector<HTMLButtonElement>("button")!.click());
+  await change([...host.querySelectorAll<HTMLInputElement>(".grant-builder-release input")][1]!);
+  await click("Done");
+  await click("Review changes");
+  const unchanged = [...host.querySelectorAll(".compact-unchanged-settings section > section, .compact-unchanged-settings > div > section")];
+  expect(unchanged[0]?.textContent).toBe("NameProject assistant");
+  expect(host.querySelector(".compact-review-release")?.textContent).toContain("No privacy review");
 });

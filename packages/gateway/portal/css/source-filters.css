@@ -476,3 +476,11 @@ p > .source-filter-spinner,
   background: var(--accent);
   border-radius: 3px;
 }
+.source-filter-select-location > span {
+  flex: 1;
+}
+.source-filter-select-location > small {
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}

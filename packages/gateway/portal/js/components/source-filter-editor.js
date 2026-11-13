@@ -62,7 +62,8 @@ export function SourceFilterEditor({
   const selected = editable
     ? draft.rules[0].match
     : (draft.rules ?? []).flatMap((rule) => rule.match ?? []);
-  // An account that is no longer connected has nothing to count and no fields to pick from.
+  // An account that is no longer connected has no fields to pick from and shows no counts;
+  // the gateway still names its saved entries.
   const connected = source.available !== false;
   const fields = useSourceFilterEditor(connected ? sourceId : null, {
     watch: true,
@@ -71,7 +72,7 @@ export function SourceFilterEditor({
   const editor = fields.data;
   const preview = useSourceFilterPreview(
     sourceId,
-    connected && currentSource && mode !== "all" && selected.length && (step === "builder" || readOnly)
+    currentSource && mode !== "all" && selected.length && (step === "builder" || readOnly)
       ? draft
       : null,
   );
@@ -114,7 +115,10 @@ export function SourceFilterEditor({
     : step === "mode"
       ? "What should be shared?"
       : "Choose matching content";
-  const freshItems = !preview.pending && !preview.error ? (preview.data?.items ?? []) : [];
+  const freshItems =
+    preview.pending || preview.error
+      ? []
+      : (preview.data?.items ?? []).map((item) => (connected ? item : { ...item, count: null }));
   useEffect(() => {
     heading.current?.focus?.();
   }, [step]);
@@ -174,7 +178,7 @@ export function SourceFilterEditor({
                 ${!readOnly ? html`<div class="filter-builder-inputs">
                       ${
                         !connected
-                          ? html`<p class="source-filter-notice" role="status">This account is no longer connected. Saved filters can be removed but not added.</p>`
+                          ? html`<p class="source-filter-notice" role="status">This account is no longer connected. You can remove its saved entries.</p>`
                           : fields.error
                             ? html`<div class="source-filter-count-error" role="status"><p>${fields.error}</p><button type="button" class="btn-secondary" onClick=${fields.reload}>${RETRY_COUNTS_LABEL}</button></div>`
                             : !editor
@@ -225,7 +229,7 @@ export function SourceFilterEditor({
                   source=${source}
                   refs=${selected}
                   items=${freshItems}
-                  pending=${preview.pending}
+                  pending=${connected && preview.pending}
                   onRemove=${readOnly ? undefined : (ref) => toggle(ref)}
                 />
                 ${!selected.length && ready.length ? html`<p class="filter-selection-empty">Search above to choose matching content.</p>` : null}

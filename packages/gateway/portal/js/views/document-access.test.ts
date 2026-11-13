@@ -23,7 +23,7 @@ const audit = {
   sourceName: "WhatsApp",
   sourceVersion: 1,
   notes: {
-    answer: 'For Answer, "readable" means the document is within what Omnesis may use when answering that agent.',
+    answer: "“Can read” under Answer means Omnesis may use this document when answering that agent. Whether an answer is then released is decided by the privacy policy’s review.",
     owner: "This page is for you, the owner. It is never available to an external agent.",
   },
   levels: [
@@ -31,7 +31,7 @@ const audit = {
       id: "lvl-family",
       name: "Family helper",
       agents: [],
-      answer: { readable: true, code: "readable", text: "Readable: this account is shared with all content" },
+      answer: { readable: true, code: "readable", text: "This account is shared with all content" },
       direct: { readable: false, code: "permission-not-granted", text: "Direct is not granted on this level" },
     },
     {
@@ -73,7 +73,7 @@ describe("Who can read this?", () => {
     expect(api.getDocumentAccess).toHaveBeenCalledWith("doc-invented", expect.any(AbortSignal));
     expect(host.querySelector("h1")?.textContent).toBe("Who can read this?");
     expect(host.querySelector(".doc-access-subject")?.textContent).toContain("Workshop planning — 14 March");
-    expect(host.querySelector(".doc-access-subject")?.textContent).toContain("WhatsApp");
+    expect(host.querySelector(".doc-access-source")?.textContent?.trim()).toMatch(/WhatsApp · \+1 \(555\) 010-0123$/);
     expect(text(".doc-access-notes p")).toEqual([audit.notes.answer, audit.notes.owner]);
     expect(text(".doc-access-level h2")).toEqual(["Family helper", "Research assistant"]);
     const [family, research] = [...host.querySelectorAll(".doc-access-level")];
@@ -90,7 +90,7 @@ describe("Who can read this?", () => {
         row.querySelector("dd p")?.textContent,
       ]);
     expect(verdicts(family!)).toEqual([
-      ["capability-pill capability-pill-answer", "Can read", "Readable: this account is shared with all content"],
+      ["capability-pill capability-pill-answer", "Can read", "This account is shared with all content"],
       ["capability-pill capability-pill-direct is-off", "Can’t read", "Direct is not granted on this level"],
     ]);
     expect(verdicts(research!)).toEqual([
@@ -105,7 +105,7 @@ describe("Who can read this?", () => {
     api.getDocumentAccess.mockReturnValue(new Promise((done) => (resolve = done)));
     await show();
     expect(host.querySelector("h1")?.textContent).toBe("Who can read this?");
-    expect(host.querySelector(".doc-access-loading")?.textContent).toBe("Loading…");
+    expect(host.querySelector(".doc-access-loading")?.textContent).toBe("Checking each access level…");
     await act(async () => resolve(audit));
     expect(host.querySelector(".doc-access-loading")).toBeNull();
 

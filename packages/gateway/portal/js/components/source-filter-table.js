@@ -9,7 +9,6 @@ import {
   fieldNoun,
   refTypeLabel,
   useSourceFilterEditor,
-  useTreeRootDepth,
 } from "./source-filter-fields.js";
 import { sourceId } from "./grant-builder-state.js";
 
@@ -56,7 +55,6 @@ export function SourceFilterTable({
     const depth = byRef.get(scopeRefKey(ref))?.depth ?? entryDisplay(id, ref, editor).depth;
     return Number.isInteger(depth) ? depth : undefined;
   };
-  const rootDepth = useTreeRootDepth(id, editor, refs, knownDepth);
   const identitiesByName = new Map();
   for (const ref of [...refs, ...comparisonRefs]) {
     if (typeof ref.id !== "string") continue;
@@ -91,21 +89,15 @@ export function SourceFilterTable({
           const label =
             exact?.value ||
             (item?.label && !(item.missing && item.label === ref.id) ? item.label : display.label);
-          const identifiers =
-            ref.capability === "person" && !exact
-              ? (ref.identifiers ?? [])
-                  .map((identifier) => identifier.value)
-                  .filter((value) => value !== label)
-              : [];
           const ambiguous =
             typeof ref.id === "string" &&
             identitiesByName.get(JSON.stringify([ref.field, label]))?.size > 1;
           const count = Number.isFinite(item?.count) && item.count >= 0 ? item.count : null;
           const mark = marks?.get(scopeRefKey(ref));
           return html`<tr key=${scopeRefKey(ref)} class=${mark ? `is-${mark}` : undefined}>
-            <td class="compact-filter-kind">${refTypeLabel(refField(editor, ref), ref, knownDepth(ref) ?? rootDepth(ref))}</td>
+            <td class="compact-filter-kind">${refTypeLabel(refField(editor, ref), ref, knownDepth(ref))}</td>
             <td class="compact-filter-value">
-              <span class="compact-filter-name">${label}</span>${mark ? html`<span class="compact-filter-diff">${mark === "added" ? "Added" : "Removed"}</span>` : null}${ambiguous ? html`<small class="compact-filter-ref">Selection ID: ${ref.id}</small>` : null}${identifiers.length ? html`<span class="compact-filter-identifiers">${identifiers.join(" · ")}</span>` : null}${item?.missing ? html`<small>Unavailable · selection retained</small>` : display.unavailable ? html`<small>${pending ? "Loading name…" : "Name unavailable · saved selection"}</small>` : null}
+              <span class="compact-filter-name">${label}</span>${mark ? html`<span class="compact-filter-diff">${mark === "added" ? "Added" : "Removed"}</span>` : null}${ambiguous ? html`<small class="compact-filter-ref">Selection ID: ${ref.id}</small>` : null}${item?.missing ? html`<small>Unavailable · selection retained</small>` : display.unavailable ? html`<small>${pending ? "Loading name…" : "Name unavailable · saved selection"}</small>` : null}
             </td>
             <td
               class="compact-filter-count"

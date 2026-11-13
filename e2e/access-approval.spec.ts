@@ -185,7 +185,7 @@ test("approving a request onto a new access level uses the access-level page's d
   await expect(step()).toContainText("Data");
   await expect(question("Which sources can Direct read?")).toBeVisible();
   await expect(
-    page.getByRole("radio", { name: "Use same sources and filters as Answer mode", exact: true }),
+    page.getByRole("radio", { name: "Use same sources and filters as Answer", exact: true }),
   ).toBeChecked();
   await expect(page.locator(".guided-reuse-summary")).toContainText("Fictional mail");
   await forward();
@@ -219,7 +219,7 @@ test("approving a request onto a new access level uses the access-level page's d
   await forward();
   await expect(step()).toContainText("Review");
 
-  await page.getByRole("button", { name: /^Allow Answer \+ raw Direct access$/ }).click();
+  await page.getByRole("button", { name: /^Allow Answer and Direct access$/ }).click();
   await expect.poll(() => decision).not.toBeNull();
   const filter = (capability: string) => ({
     sourceId: mail.id,

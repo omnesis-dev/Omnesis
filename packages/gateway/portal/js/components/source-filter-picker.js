@@ -7,8 +7,6 @@ import { checkFilterIdentifier } from "../api.js";
 import { useScopeLabelGeneration } from "./source-filter-labels.js";
 import { readFilterOptions } from "./source-filter-requests.js";
 import {
-  capitalized,
-  fieldHasNamedLevels,
   fieldLevelNoun,
   fieldNoun,
   filterApiError,
@@ -200,7 +198,6 @@ export function SourceFilterPicker({
     setQuery("");
     setTrail(next);
   };
-  const named = fieldHasNamedLevels(field);
   const levelNoun = (ref, depth) => (isDeviceRef(ref) ? "device" : fieldLevelNoun(field, depth));
   const rootLabel = deviceLevel ? "All devices" : `All ${fieldLevelNoun(field, 0, true)}`;
   const many = fieldNoun(field, true);
@@ -263,8 +260,8 @@ export function SourceFilterPicker({
                 <span class="source-filter-location">Location</span>
                 ${location ? html`<button type="button" onClick=${() => navigate([])}>${rootLabel}</button>` : html`<span aria-current="location">${rootLabel}</span>`}${trail.map((item, index) => (index === trail.length - 1 ? html`<span aria-current="location">${item.label}</span>` : html`<button type="button" onClick=${() => navigate(trail.slice(0, index + 1))}>${item.label}</button>`))}
               </nav>
-              ${location ? html`<label class="source-filter-select-location"><input type="checkbox" checked=${keys.has(scopeRefKey(location.ref))} disabled=${disabled} onChange=${() => onToggle(location.ref, location.item)} />Select this ${levelNoun(location.ref, location.item.depth)}</label>` : null}
-              ${field.insideText ? html`<p class="filter-option-hint">${field.insideText}</p>` : null}`
+              ${field.insideText ? html`<p class="filter-option-hint">${field.insideText}</p>` : null}
+              ${location ? html`<label class="source-filter-select-location"><input type="checkbox" checked=${keys.has(scopeRefKey(location.ref))} disabled=${disabled} onChange=${() => onToggle(location.ref, location.item)} /><span>Select this ${levelNoun(location.ref, location.item.depth)}</span>${Number.isFinite(location.item.count) ? html`<small>${location.item.count.toLocaleString()} matching</small>` : null}</label>` : null}`
           : null
       }
       ${visible.pending ? html`<p role="status">Loading…</p>` : null}
@@ -288,10 +285,6 @@ export function SourceFilterPicker({
       <ul class="source-filter-options">
         ${visible.items.map((item) => {
           const label = browsable && !query ? item.shortLabel || item.label : item.label;
-          const prefix =
-            named && Number.isInteger(item.depth) && !isDeviceRef(item.ref)
-              ? `${capitalized(levelNoun(item.ref, item.depth))} · `
-              : "";
           return html`<li key=${scopeRefKey(item.ref)}>
             <label
               ><input
@@ -299,7 +292,7 @@ export function SourceFilterPicker({
                 checked=${keys.has(scopeRefKey(item.ref))}
                 disabled=${disabled}
                 onChange=${() => onToggle(item.ref, item)}
-              /><span>${label}</span>${Number.isFinite(item.count) ? html`<small>${prefix}${item.count.toLocaleString()} matching</small>` : html`<${CountSpinner} />`}</label
+              /><span>${label}</span>${Number.isFinite(item.count) ? html`<small>${item.count.toLocaleString()} matching</small>` : html`<${CountSpinner} />`}</label
             >
             ${openable(item) ? html`<button type="button" class="btn-tiny" aria-label=${`Open ${label}`} onClick=${() => navigate([...trail, { ref: item.ref, label, item }])}><span aria-hidden="true">›</span></button>` : null}
           </li>`;

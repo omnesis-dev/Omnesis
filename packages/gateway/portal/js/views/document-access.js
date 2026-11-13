@@ -11,9 +11,8 @@ import { useEffect, useState } from "preact/hooks";
 import { getDocumentAccess } from "../api.js";
 import { navigate } from "../lib/router.js";
 import { sourceIcon } from "../lib/format.js";
-import { KindIcon } from "../lib/device-kind-icon.js";
+import { sourceAccountOf } from "../lib/source-id.js";
 import { CapabilityPill } from "../components/access-pills.js";
-import { ExternalAgentGlyph } from "./audit/shared.js";
 
 /** The two ways an agent reads, in the order the page lists them. */
 const VERDICTS = ["answer", "direct"];
@@ -27,12 +26,9 @@ function VerdictMark({ readable }) {
   </span>`;
 }
 
-/** One agent on a level: a connection by name, an integration with its kind's icon and tag. */
+/** One agent on a level: a connection by its name, an integration with its pill. */
 function Agent({ agent }) {
   return html`<li class="doc-access-agent">
-    ${agent.kind === "device"
-      ? html`<${KindIcon} kind="integration" size=${13} class="access-device-icon" />`
-      : html`<${ExternalAgentGlyph} />`}
     <span>${agent.name}</span>
     ${agent.kind === "device" ? html`<span class="portal-pill">Integration</span>` : null}
   </li>`;
@@ -78,7 +74,6 @@ function LevelVerdicts({ level }) {
 export function DocumentAccessReport({ audit, documentId }) {
   return html`
     <p class="doc-access-subject">
-      <span class="doc-access-source-icon" aria-hidden="true">${sourceIcon(audit.sourceId)}</span>
       <a
         href=${`/portal/doc/${encodeURIComponent(documentId)}`}
         onClick=${(event) => {
@@ -86,8 +81,10 @@ export function DocumentAccessReport({ audit, documentId }) {
           navigate(`/portal/doc/${encodeURIComponent(documentId)}`);
         }}
       >${audit.title || "Untitled"}</a>
-      <span class="doc-source-sep">·</span>
-      <span>${audit.sourceName}</span>
+      <span class="doc-access-source">
+        <span class="doc-access-source-icon" aria-hidden="true">${sourceIcon(audit.sourceId)}</span>
+        ${[audit.sourceName, sourceAccountOf(audit.sourceId)].filter(Boolean).join(" · ")}
+      </span>
     </p>
     <div class="doc-access-notes">
       ${audit.notes?.answer ? html`<p>${audit.notes.answer}</p>` : null}
@@ -139,7 +136,7 @@ export function DocumentAccessView({ id }) {
     <div class="doc-access-page">
       <h1 class="doc-access-title">Who can read this?</h1>
       ${state.loading
-        ? html`<p class="doc-access-loading" role="status"><span class="spinner"></span>Loading…</p>`
+        ? html`<p class="doc-access-loading" role="status"><span class="spinner"></span>Checking each access level…</p>`
         : state.missing
           ? html`<p class="doc-access-empty" role="alert">This document no longer exists.</p>`
           : state.error

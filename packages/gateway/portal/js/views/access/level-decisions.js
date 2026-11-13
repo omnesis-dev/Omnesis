@@ -37,12 +37,12 @@ import {
 } from "./level-flow-state.js";
 
 /** The one label for giving Direct exactly what Answer has, and the one for giving it its own. */
-const SAME_AS_ANSWER_LABEL = "Use same sources and filters as Answer mode";
+const SAME_AS_ANSWER_LABEL = "Use same sources and filters as Answer";
 const OWN_SOURCES_LABEL = "Choose different sources";
 
 const DIRECT_QUESTION = [
   "Which sources can Direct read?",
-  "Direct mode allows the agent to read allowed raw records directly without Answer’s privacy review.",
+  "Direct allows the agent to read allowed original records directly without Answer’s privacy review.",
 ];
 
 /** Each decision's question and, where it has one, the line under it. */
@@ -381,7 +381,7 @@ export function LevelDecision({
       ${
         step === "direct-data" && !isNew && rules.answer
           ? html`<div class="guided-direct-link">
-              ${linked ? html`<p>Uses the same sources and filters as Answer mode.</p>` : null}
+              ${linked ? html`<p>Uses the same sources and filters as Answer.</p>` : null}
               <button
                 type="button"
                 class="btn-secondary"

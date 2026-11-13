@@ -23,7 +23,6 @@ import { useLevelExitGuard } from "./level-exit-guard.js";
 import { directMirrorsAnswer, sameDecision } from "./level-flow-state.js";
 import { LEVEL_NAME_TAKEN_MESSAGE, LevelNameField, validNewLevelName } from "./name-fields.js";
 import { PageHeader } from "./page-header.js";
-import { KindIcon } from "../../lib/device-kind-icon.js";
 import {
   accessRules,
   errorMessage,
@@ -46,7 +45,7 @@ function useDraftLock(busy) {
 }
 
 const CHANGED_ELSEWHERE_MESSAGE =
-  "This access level changed elsewhere. Your draft is retained. Reload the latest level before saving.";
+  "This access level changed elsewhere. Your changes are kept. Load the latest version before saving.";
 
 /**
  * @param {object} props
@@ -69,6 +68,7 @@ export function LevelEditorPage({
   const [baseline, setBaseline] = useState(level);
   const initial = accessRules(baseline, overview);
   const [value, setValue] = useState(initial);
+  const [name, setName] = useState(baseline.name);
   const [step, setStep] = useState("overview");
   // A saved Direct that reads exactly what Answer uses opens linked to it.
   const [linkDirect, setLinkDirect] = useState(() => directMirrorsAnswer(initial));
@@ -79,7 +79,12 @@ export function LevelEditorPage({
   const reloadController = useRef(null);
   const { inFlightRef, locked, whenIdle } = useDraftLock(busy);
   const validationError = validateGrantRules(value, sources);
-  const exit = useLevelExitGuard(!sameDecision(initial, value), busy, onClose, inFlightRef);
+  // The level's name is one of its decisions; other levels' names are taken.
+  const otherLevels = (overview.levels ?? []).filter((candidate) => candidate.id !== baseline.id);
+  const renamed = name.trim() !== baseline.name;
+  const nameValid = validNewLevelName(name, otherLevels);
+  const unchanged = sameDecision(initial, value) && !renamed;
+  const exit = useLevelExitGuard(!unchanged, busy, onClose, inFlightRef);
   // The draft as it stood when the open decision was entered, and the page it
   // was entered from: cancelling the decision returns to both.
   const entered = useRef(null);
@@ -92,7 +97,7 @@ export function LevelEditorPage({
         ? "direct-data"
         : target;
     if (hub && next !== "overview" && next !== "changes")
-      entered.current = { from: step, value, linkDirect };
+      entered.current = { from: step, value, linkDirect, name };
     setStep(next);
   };
   const cancelDecision = () => {
@@ -102,6 +107,7 @@ export function LevelEditorPage({
     if (origin) {
       setValue(origin.value);
       setLinkDirect(origin.linkDirect);
+      setName(origin.name);
     }
     setStep(origin?.from ?? "overview");
   };
@@ -139,6 +145,7 @@ export function LevelEditorPage({
       setBaseline(current);
       const latest = accessRules(current, fresh);
       setValue(latest);
+      setName(current.name);
       setLinkDirect(directMirrorsAnswer(latest));
       setStale(false);
       setError("");
@@ -149,7 +156,7 @@ export function LevelEditorPage({
         setError(
           errorMessage(
             error,
-            "The latest access level could not be loaded. Your draft is retained.",
+            "The latest access level could not be loaded. Your changes are kept.",
           ),
         );
     } finally {
@@ -159,15 +166,20 @@ export function LevelEditorPage({
   }
 
   async function save() {
-    if (validationError || stale || sameDecision(initial, value) || inFlightRef.current) return;
+    if (validationError || stale || unchanged || !nameValid || inFlightRef.current) return;
     inFlightRef.current = true;
     setBusy(true);
     setError("");
     try {
       await updateAccessLevel(baseline.id, {
         expectedRevision: baseline.revision,
-        expectedFilterRevisions: expectedFilterRevisions(initial),
-        rules: serializeGrantRules(value),
+        ...(renamed ? { name: name.trim() } : {}),
+        ...(sameDecision(initial, value)
+          ? {}
+          : {
+              expectedFilterRevisions: expectedFilterRevisions(initial),
+              rules: serializeGrantRules(value),
+            }),
       });
       if (!mounted.current) return;
       exit.saved();
@@ -182,6 +194,8 @@ export function LevelEditorPage({
       } else if (error?.status === 409 && error?.serverMessage !== "level-in-use") {
         setStale(true);
         setError(CHANGED_ELSEWHERE_MESSAGE);
+      } else if (error?.serverMessage === "level-name-taken") {
+        setError(LEVEL_NAME_TAKEN_MESSAGE);
       } else if (error?.status === 404) {
         await onGone();
       } else if (error?.serverMessage === "level-in-use") {
@@ -232,7 +246,7 @@ export function LevelEditorPage({
           count || devices.length
             ? html`<ul>
                   ${connections.map((connection) => html`<li key=${connection.id}>${connection.name}</li>`)}
-                  ${devices.map((device) => html`<li key=${device.id} class="access-impact-device"><${KindIcon} kind=${device.kind} size=${13} class="access-device-icon" />${device.name} <span class="portal-pill">Integration</span></li>`)}
+                  ${devices.map((device) => html`<li key=${device.id}>${device.name} <span class="portal-pill">Integration</span></li>`)}
                 </ul>
                 <p>
                   Connected agents receive the new permissions when they refresh. They do not need
@@ -241,9 +255,24 @@ export function LevelEditorPage({
             : html`<p>No connections use this access level yet.</p>`
         }
       </section>`}
-      recovery=${stale ? html`<button type="button" class="btn-secondary guided-conflict-recovery" disabled=${busy} onClick=${reloadLatest}>Reload latest and discard draft</button>` : null}
-      leadAction=${html`<button type="button" class="btn-ghost" disabled=${busy} onClick=${hub ? exit.close : cancelDecision}>Cancel</button>`}
-      finalAction=${html`<button type="button" class="btn-primary" disabled=${busy || stale || sameDecision(initial, value) || Boolean(validationError)} onClick=${save}>${busy ? "Saving…" : "Save changes"}</button>`}
+      unchanged=${unchanged}
+      name=${{
+        value: name,
+        initial: baseline.name,
+        valid: nameValid,
+        field: html`<div class="access-level-name-form">
+          <${LevelNameField}
+            id="access-edit-level-name"
+            value=${name}
+            onInput=${whenIdle(setName)}
+            levels=${otherLevels}
+            disabled=${busy}
+          />
+        </div>`,
+      }}
+      recovery=${stale ? html`<button type="button" class="btn-secondary guided-conflict-recovery" disabled=${busy} onClick=${reloadLatest}>Load the latest version and discard my changes</button>` : null}
+      leadAction=${step === "changes" ? null : html`<button type="button" class="btn-ghost" disabled=${busy} onClick=${hub ? exit.close : cancelDecision}>Cancel</button>`}
+      finalAction=${html`<button type="button" class="btn-primary" disabled=${busy || stale || unchanged || !nameValid || Boolean(validationError)} onClick=${save}>${busy ? "Saving…" : "Save changes"}</button>`}
     />
   </div>
     ${exit.confirmation}

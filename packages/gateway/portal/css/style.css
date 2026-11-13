@@ -55,7 +55,7 @@
   --text-secondary: #8b949e;
   --text-muted: #6e7681;
   /* A permission a level does not hold: outline and label of its pill. */
-  --capability-off: #5d6673;
+  --capability-off: #8b949e;
   --text-link: #58a6ff;
 
   --accent: #58a6ff;
@@ -142,7 +142,7 @@
   --text-primary: #1f2328;
   --text-secondary: #59636e;
   --text-muted: #656d76;
-  --capability-off: #8c959f;
+  --capability-off: #59636e;
   --text-link: #0969da;
 
   --accent: #0969da;
@@ -1235,8 +1235,7 @@ a:hover { text-decoration: underline; }
 .access-device-heading .access-device-link { font-size: 13px; font-weight: 600; }
 .access-device-meta { color: var(--text-muted); font-size: 11.5px; }
 .access-device-item + .access-device-item { border-top: 1px solid var(--border-light); }
-.access-device-link,
-.access-impact-device {
+.access-device-link {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1317,6 +1316,7 @@ a:hover { text-decoration: underline; }
 .access-agent-logo { display: inline-flex; flex: none; }
 .access-app-cell { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 11.5px; }
 .access-connection-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: var(--text-secondary); font-size: 11.5px; }
+.access-app-cell + .access-used-cell::before { content: "· "; }
 .access-connection-heading { display: grid; gap: 3px; min-width: 0; }
 .access-cell-lead { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; }
 /* An agent's or a connection's name is one the client or the owner chose, so
@@ -1719,7 +1719,6 @@ a:hover { text-decoration: underline; }
    outlined in the warning colour every other mention of it uses. Danger stays
    with Direct, which is the capability that returns raw records. */
 .grant-builder-risk { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); }
-.access-risk-action { border-color: var(--danger) !important; background: var(--danger) !important; }
 /* A review is the last thing read before access is granted, so it is set on
    the page's own background with a border rather than in a tinted panel, and
    in the body colour rather than the muted one: the wash plus muted text put

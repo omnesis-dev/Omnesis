@@ -20,7 +20,7 @@ import { NOTES_SOURCE_ID, manageNotesHref, notesDayForDocument } from "../lib/no
 import { renderMarkdown } from "../lib/markdown.js";
 import { sourceIcon, sourceLabel, timeAgo, isOpenableExternalUrl } from "../lib/format.js";
 import { FileTypeIcon, fileTypeKind, fileTypeLabel } from "../lib/file-type-icons.js";
-import { MetadataPanel } from "../components/metadata-panel.js";
+import { MetadataPanel, documentTypeLabel } from "../components/metadata-panel.js";
 import { GraphTimelinePanel } from "../components/graph-card.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { navigate } from "../lib/router.js";
@@ -223,8 +223,9 @@ export function DocumentView({ id }) {
             onClick=${(e) => { e.preventDefault(); navigate(documentAccessPath(doc.id)); }}
           >
             <svg aria-hidden="true" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/>
-              <circle cx="8" cy="8" r="2"/>
+              <path d="M8 1.5 2.5 3.5v4c0 3.2 2.3 5.9 5.5 7 3.2-1.1 5.5-3.8 5.5-7v-4z"/>
+              <rect x="5.75" y="7" width="4.5" height="3.5" rx="0.75"/>
+              <path d="M6.75 7V5.75a1.25 1.25 0 0 1 2.5 0V7"/>
             </svg>
             Who can read this?
           </a>`}
@@ -255,7 +256,7 @@ export function DocumentView({ id }) {
                 <${FileTypeIcon} mimeType=${meta.extra?.mimeType} filename=${doc.title} size=${14} />
                 ${fileTypeLabel({ mimeType: meta.extra?.mimeType, filename: doc.title })}
               </span>`
-            : html`<span>${meta.documentType}</span>`
+            : html`<span>${documentTypeLabel(meta.documentType)}</span>`
           }
         `}
         ${doc.source_created_at && html`

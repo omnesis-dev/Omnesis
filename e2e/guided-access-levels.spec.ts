@@ -792,6 +792,11 @@ for (const theme of ["dark", "light"])
       ).toContainText("Planning");
       await expect(page.locator(".guided-account-delta")).not.toContainText("Google Drive");
       await shot("edit-03-data-delta");
+      // The review goes Back to the level page, which holds Cancel.
+      await expect(
+        page.locator(".guided-task-footer").getByRole("button", { name: "Cancel" }),
+      ).toHaveCount(0);
+      await page.getByRole("button", { name: "Back", exact: true }).click();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(page.getByRole("button", { name: "Keep editing", exact: true })).toBeFocused();
       await shot("edit-03b-discard-confirmation");
@@ -800,19 +805,22 @@ for (const theme of ["dark", "light"])
       await expect(
         page.getByRole("dialog", { name: "Discard this draft?", exact: true }),
       ).toHaveCount(0);
+      await page.getByRole("button", { name: "Review changes", exact: true }).click();
       await expect(page.locator(".guided-account-delta")).toContainText("Hide matching content");
       await expect(
         page.locator(".guided-account-delta .compact-filter-table").last(),
       ).toContainText("Planning");
       await page.getByRole("button", { name: "Save changes", exact: true }).click();
-      await expect(page.getByRole("alert")).toContainText("Your draft is retained");
+      await expect(page.getByRole("alert")).toContainText("Your changes are kept");
       await expect(page.getByRole("alert")).toBeInViewport();
       await shot("edit-04-conflict");
-      await expect(page.locator(".guided-task-footer")).not.toContainText("Reload latest");
+      await expect(page.locator(".guided-task-footer")).not.toContainText(
+        "Load the latest version",
+      );
       if (width === 390) {
         await page.setViewportSize({ width: width / 2, height: 422 });
         const recovery = page.getByRole("button", {
-          name: "Reload latest and discard draft",
+          name: "Load the latest version and discard my changes",
           exact: true,
         });
         await recovery.scrollIntoViewIfNeeded();
@@ -848,7 +856,10 @@ for (const theme of ["dark", "light"])
         await page.setViewportSize({ width, height: 844 });
       }
       await page
-        .getByRole("button", { name: "Reload latest and discard draft", exact: true })
+        .getByRole("button", {
+          name: "Load the latest version and discard my changes",
+          exact: true,
+        })
         .click();
       await expect(
         page.getByRole("heading", { name: "What would you like to change?", exact: true }),
@@ -865,7 +876,6 @@ for (const theme of ["dark", "light"])
       await expect.poll(() => Boolean(releaseWrite)).toBe(true);
       await expect(page.locator(".guided-review-decision button")).toBeDisabled();
       await expect(page.getByRole("button", { name: "Back", exact: true })).toBeDisabled();
-      await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
       await shot("edit-05b-saving");
       holdWrite = false;
       releaseWrite!();
@@ -1184,6 +1194,7 @@ for (const theme of ["dark", "light"])
       await page.getByRole("button", { name: "Done", exact: true }).click();
       await page.getByRole("button", { name: "Review changes", exact: true }).click();
       await shot("supplement-14b-edit-future-delta");
+      await page.getByRole("button", { name: "Back", exact: true }).click();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Discard draft", exact: true }).click();
       await page.goto("/portal/settings/access/levels/new");
@@ -1301,6 +1312,7 @@ for (const theme of ["dark", "light"])
       await expect(page.getByRole("alert")).toContainText("would not be able to read any source");
       await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeDisabled();
       await shot("supplement-21-unavailable-account-review");
+      await page.getByRole("button", { name: "Back", exact: true }).click();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Discard draft", exact: true }).click();
       // Create genuine app-owned history destinations before editing the draft.

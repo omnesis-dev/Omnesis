@@ -17,7 +17,7 @@ import {
   SAVED_FILTER_SOURCE_MESSAGE,
 } from "../../components/grant-builder-state.js";
 import { levelSourceInventory } from "./level-flow-state.js";
-import { ReadableBoundary } from "./level-review.js";
+import { AccountStatusPill } from "./level-review.js";
 
 /**
  * The accounts one capability reads, each with its checkbox, its status and
@@ -64,7 +64,7 @@ export function LevelDataDecision({
     aria-label=${`${capabilityName(capability)} source selection`}
   >
     ${
-      all.length > 5 && !frozen
+      all.length && !frozen
         ? html`<label class="guided-source-search"
               >Find an account<input
                 type="search"
@@ -113,7 +113,7 @@ export function LevelDataDecision({
             /></label
           >
           <div class="guided-source-boundary">
-            <${ReadableBoundary}
+            <${AccountStatusPill}
               rule=${rule}
               source=${source}
             />${!frozen && ((allowed && enabled && source.filterable) || policy) ? html`<button type="button" class="btn-secondary" disabled=${disabled} aria-label=${`${enabled ? "Change" : "View"} ${sourceLabel(source)} content`} onClick=${() => setEditing(source)}>${enabled ? "Change" : "View"}</button>` : null}

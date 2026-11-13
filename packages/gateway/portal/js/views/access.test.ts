@@ -343,7 +343,7 @@ describe("AccessView", () => {
     expect(host.querySelector(".access-connect-dialog")).toBeNull();
     expect(host.querySelector("[role='dialog']")).toBeNull();
     const text = host.textContent.replace(/\s+/g, " ");
-    expect(text).toMatch(/read the corpus/i);
+    expect(text).toMatch(/read your data/i);
     expect(host.querySelector(".access-empty")).not.toBeNull();
   });
 
@@ -760,11 +760,12 @@ describe("AccessView", () => {
     await mount();
     const row = connectionRow("Fictional laptop");
     expect(host.querySelector(".access-expand")).toBeNull();
+    // The separator between the two is drawn by the stylesheet.
     expect(row.querySelector(".access-connection-heading .access-connection-meta")?.textContent?.trim())
-      .toBe(`Signed in from Fictional desktop app · Last used ${timeAgo(1_757_000_000_000)}`);
+      .toBe(`Signed in from Fictional desktop appLast used ${timeAgo(1_757_000_000_000)}`);
     const panel = row.closest(".access-connection-item")!;
     expect(detailFacts(panel)).toEqual({
-      "Connection ID": "principal-laptop",
+      "Connection": "principal-laptop",
       "Signed in": timestamp(1_756_000_000_000),
       "Last used": timestamp(1_757_000_000_000),
     });
@@ -2255,8 +2256,8 @@ describe("AccessView", () => {
       expect(api.getAccessOverview).toHaveBeenCalledTimes(1);
       expect(saveButton().disabled).toBe(true);
       expect(router.replaceRoute).not.toHaveBeenCalled();
-      expect(host.textContent).toContain("Your draft is retained");
-      await act(async () => {button("Reload latest and discard draft").click();await new Promise(resolve=>setTimeout(resolve,0));});
+      expect(host.textContent).toContain("Your changes are kept");
+      await act(async () => {button("Load the latest version and discard my changes").click();await new Promise(resolve=>setTimeout(resolve,0));});
       expect(api.getAccessOverview.mock.calls.length).toBeGreaterThanOrEqual(2);
       expect(host.querySelector(".guided-question h3")?.textContent).toBe("What would you like to change?");
       await editPermissions();
@@ -2449,10 +2450,10 @@ describe("AccessView", () => {
     expect(host.textContent).not.toContain(request.clientId);
     expect(host.textContent).not.toContain(request.redirectOrigin);
     expect(host.querySelector(".access-request-facts")?.getAttribute("aria-label")).toBe(
-      "Connection destinations",
+      "Connection request",
     );
-    // The destinations are metadata under the title, not a section of their
-    // own, so they live inside the page header beside the client and expiry.
+    // The client's name and where it returns to are metadata under the title,
+    // not a section of their own, so they live inside the page header.
     expect(
       host.querySelector(".access-page-header .access-request-facts"),
     ).not.toBeNull();
@@ -2618,7 +2619,7 @@ describe("AccessView", () => {
       "Select at least one source for Answer.",
     );
 
-    const source = host.querySelector<HTMLInputElement>("[aria-label='Answer source selection'] input")!;
+    const source = host.querySelector<HTMLInputElement>("[aria-label='Answer source selection'] input[type=checkbox]")!;
     await act(async () => {
       source.checked = true;
       source.dispatchEvent(new window.Event("change", { bubbles: true }));
@@ -2763,10 +2764,10 @@ describe("AccessView", () => {
         ),
       ).toEqual(["Permissions", "Answer data", "New sources", "Answer release"]);
       expect(host.querySelector(".access-review-decisions .compact-release-summary")?.textContent).toBe(
-        "Privacy reviewHousehold",
+        "Privacy review · Household",
       );
       expect(host.querySelector(".access-review-note")).toBeNull();
-      expect(allowButton().textContent).toMatch(/^allow answer \+ notes$/i);
+      expect(allowButton().textContent).toMatch(/^allow answer and notes access$/i);
 
       api.decideAccessAuthorization.mockResolvedValue({ request: { ...request, status: "approved" } });
       await allow();
@@ -2827,11 +2828,11 @@ describe("AccessView", () => {
       ).toBe("Answer allowed, Direct and Notes not allowed");
       expect(reviewedDecisions()).toEqual(["Permissions", "Answer data", "New sources", "Answer release"]);
       expect(host.querySelector(".access-review-decisions .compact-release-summary")?.textContent).toBe(
-        "Privacy reviewHousehold",
+        "Privacy review · Household",
       );
       expect(host.querySelector(".access-review-decisions button")).toBeNull();
       expect(host.querySelector(".access-review-note")?.textContent)
-        .toBe("Also used by 2 other connections. Changing this access level later changes all of them.");
+        .toBe("Also used by Fictional desktop and Fictional laptop. Changing this access level later changes them too.");
 
       api.decideAccessAuthorization.mockResolvedValue({ request: { ...request, status: "approved" } });
       await allow();
@@ -2844,17 +2845,17 @@ describe("AccessView", () => {
         },
       });
 
-      // Choosing another level from the list works the same way; one other connection is singular.
+      // Choosing another level from the list works the same way; an integration is named too.
       vi.clearAllMocks();
       await openReview(proposal(), {
         ...levelOverview,
-        levels: levelOverview.levels.map((level) => level.id === "level-notes" ? { ...level, connectionCount: 1 } : level),
+        levels: levelOverview.levels.map((level) => level.id === "level-notes" ? { ...level, devices: [{ id: "device-speaker", name: "Fictional speaker", kind: "integration" }] } : level),
       });
       await check(choice("Fictional notes"));
       expect(chips()).toEqual(["Connection", "Review"]);
       await act(async () => continueButton().click());
       expect(host.querySelector(".access-review-note")?.textContent)
-        .toBe("Also used by 1 other connection. Changing this access level later changes all of them.");
+        .toBe("Also used by Fictional speaker. Changing this access level later changes it too.");
     });
 
     test("keeps an agent that needs Answer off a level without it", async () => {
@@ -2919,7 +2920,7 @@ describe("AccessView", () => {
       expect(rows.Replaces).toBe("The current sign-in of Fictional laptop");
       // The replaced connection is not another user of its own level.
       expect(host.querySelector(".access-review-note")?.textContent)
-        .toBe("Also used by 1 other connection. Changing this access level later changes all of them.");
+        .toBe("Also used by Fictional desktop. Changing this access level later changes it too.");
 
       api.decideAccessAuthorization.mockResolvedValue({ request: { ...request, status: "approved" } });
       await allow();
@@ -3000,7 +3001,7 @@ describe("AccessView", () => {
       await allow();
       expect(allowButton().disabled).toBe(true);
       expect(api.getAccessAuthorization).toHaveBeenCalledTimes(1);
-      await act(async () => {button("Reload choices and discard draft").click();await new Promise(resolve=>setTimeout(resolve,0));});
+      await act(async () => {button("Load the latest choices and discard my changes").click();await new Promise(resolve=>setTimeout(resolve,0));});
 
       expect(api.getAccessAuthorization).toHaveBeenCalledTimes(2);
       expect(currentStep()).toBe("Connection");
@@ -3036,7 +3037,7 @@ describe("AccessView", () => {
       await allow();
       expect(allowButton().disabled).toBe(true);
       expect(api.getAccessAuthorization).toHaveBeenCalledTimes(1);
-      await act(async () => {button("Reload choices and discard draft").click();await new Promise(resolve=>setTimeout(resolve,0));});
+      await act(async () => {button("Load the latest choices and discard my changes").click();await new Promise(resolve=>setTimeout(resolve,0));});
 
       expect(api.getAccessAuthorization).toHaveBeenCalledTimes(2);
       expect(currentStep()).toBe("Connection");
@@ -3061,7 +3062,7 @@ describe("AccessView", () => {
       await allow();
       expect(allowButton().disabled).toBe(true);
       expect(api.getAccessAuthorization).toHaveBeenCalledTimes(1);
-      await act(async () => {button("Reload choices and discard draft").click();await new Promise(resolve=>setTimeout(resolve,0));});
+      await act(async () => {button("Load the latest choices and discard my changes").click();await new Promise(resolve=>setTimeout(resolve,0));});
 
       expect(host.querySelector(".access-authorization-page .access-error")?.textContent)
         .toBe("The authorization request could not be reloaded.");
@@ -3103,7 +3104,7 @@ describe("AccessView", () => {
       expect(currentStep()).toBe("Data");
       expect(question()).toBe("Which sources can Direct read?");
       expect(guidedChoices()).toEqual([
-        ["Use same sources and filters as Answer mode", true],
+        ["Use same sources and filters as Answer", true],
         ["Choose different sources", false],
       ]);
       // Answer's accounts are listed under the choice that reuses them.
@@ -3613,7 +3614,7 @@ describe("AccessView", () => {
     });
     while (button(/^continue$/i)) await act(async () => button(/^continue$/i).click());
     await act(async () => {
-      button(/^allow answer$/i).click();
+      button(/^allow answer access$/i).click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
@@ -3671,7 +3672,7 @@ describe("AccessView", () => {
     expect(host.querySelector(".access-wizard-steps button[aria-current='step']")?.textContent).toMatch(/Review$/u);
     expect(chips()).toEqual(["Connection", "Permissions", "Review"]);
     expect(host.querySelector(".access-request-actions .access-wizard-nav .btn-primary")?.textContent)
-      .toMatch(/^allow notes$/i);
+      .toMatch(/^allow notes access$/i);
 
     // Back returns to Permissions, not to the skipped step.
     const backButton = [...host.querySelectorAll<HTMLButtonElement>("button")]

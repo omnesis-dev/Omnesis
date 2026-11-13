@@ -10,8 +10,7 @@ import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
 import { getSourceFilterEditor, resyncSource } from "../api.js";
 import { scopeLabelGeneration, useScopeLabelGeneration } from "./source-filter-labels.js";
-import { readFilterOptions } from "./source-filter-requests.js";
-import { isDeviceRef, scopeRefKey } from "./source-filter-state.js";
+import { isDeviceRef } from "./source-filter-state.js";
 import { sourceId as accountIdOf, sourceLabel } from "./grant-builder-state.js";
 
 /** How long to wait before asking again about a field that is still changing, when the gateway names no time. */
@@ -42,14 +41,6 @@ export function fieldLevelNoun(field, depth, many = false) {
       ? levels[Math.min(depth, levels.length - 1)]
       : null;
   return (many ? noun?.many : noun?.one) || fieldNoun(field, many);
-}
-
-/** A tree field whose levels have different names, so a row says which level it is at. */
-export function fieldHasNamedLevels(field) {
-  return (
-    Array.isArray(field?.levels) &&
-    new Set(field.levels.map((level) => level?.one)).size > 1
-  );
 }
 
 /** The typed address a person entry is, when it is one address shown as itself. */
@@ -163,50 +154,6 @@ export function useSourceFilterEditor(sourceId, { watch = false, expectChange = 
     error: entry?.data ? "" : (entry?.error ?? ""),
     pending: Boolean(entry && !entry.data && !entry.error),
     reload: () => entry && readEditor(entry),
-  };
-}
-
-// The first level of each tree whose levels have different names, read once
-// per account and field: a saved entry the gateway names without its depth
-// is a root when it is listed there, and lies deeper when the whole first
-// level is listed without it.
-const roots = new Map();
-
-/**
- * The depth to name an entry by when nothing gave its own: 0 for a root of
- * a field whose levels have different names, the second level for an entry
- * that is not a root of a two-level tree, and undefined when it cannot be
- * told.
- */
-export function useTreeRootDepth(sourceId, editor, refs, knownDepth) {
-  const generation = useScopeLabelGeneration();
-  const [, setVersion] = useState(0);
-  const fields = (editor?.fields ?? []).filter(
-    (field) =>
-      field.capability !== "person" &&
-      fieldHasNamedLevels(field) &&
-      refs.some((ref) => ref.field === field.field && !Number.isInteger(knownDepth(ref))),
-  );
-  const keyOf = (field) => JSON.stringify([generation, sourceId, field]);
-  useEffect(() => {
-    for (const field of fields) {
-      const key = keyOf(field.field);
-      if (roots.has(key)) continue;
-      roots.set(key, null);
-      readFilterOptions(sourceId, { field: field.field })
-        .then((page) => {
-          roots.set(key, page.nextCursor ? null : new Set(page.items.map((item) => scopeRefKey(item.ref))));
-        })
-        .catch(() => roots.delete(key))
-        .finally(() => setVersion((value) => value + 1));
-    }
-  }, [sourceId, generation, fields.map((field) => field.field).join("\n")]);
-  return (ref) => {
-    const field = fields.find((item) => item.field === ref.field);
-    const listed = field ? roots.get(keyOf(field.field)) : null;
-    if (!listed) return undefined;
-    if (listed.has(scopeRefKey(ref))) return 0;
-    return field.levels.length === 2 ? 1 : undefined;
   };
 }
 

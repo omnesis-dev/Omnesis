@@ -335,9 +335,9 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   await expect(directData.getByRole("button")).toHaveText(["Change"]);
   await directData.getByRole("button", { name: "Change", exact: true }).click();
   await page
-    .getByRole("button", { name: "Use same sources and filters as Answer mode", exact: true })
+    .getByRole("button", { name: "Use same sources and filters as Answer", exact: true })
     .click();
-  await expect(page.getByText("Uses the same sources and filters as Answer mode.")).toBeVisible();
+  await expect(page.getByText("Uses the same sources and filters as Answer.")).toBeVisible();
   await expect(page.locator(".guided-source-list.is-frozen input[type=checkbox]")).toBeDisabled();
   await expect(
     page.getByRole("button", { name: "Choose different sources", exact: true }),
@@ -347,7 +347,7 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   await expect(page.locator(".guided-review-decision")).toHaveCount(2);
   await expect(page.locator(".guided-account-delta").last()).toContainText("person@example.com");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  await expect(page.getByText(/Your draft is retained/)).toBeVisible();
+  await expect(page.getByText(/Your changes are kept/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeDisabled();
   expect(submitted).toMatchObject({
     expectedRevision: 1,
@@ -379,7 +379,9 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   expect(
     rules.find((rule) => rule.capability === "direct")?.scopePolicies[0]?.rules[0]?.match,
   ).toHaveLength(3);
-  await page.getByRole("button", { name: "Reload latest and discard draft", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Load the latest version and discard my changes", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "What would you like to change?", exact: true }),
   ).toBeVisible();

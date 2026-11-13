@@ -327,8 +327,8 @@
   color: var(--text-secondary);
 }
 /* Answer's list, shown read-only under a linked Direct. */
-.guided-source-list.is-frozen .guided-source-row {
-  opacity: 0.6;
+.guided-source-list.is-frozen .guided-source-row strong {
+  color: var(--text-secondary);
 }
 .guided-source-list.is-frozen .guided-source-select {
   cursor: default;
@@ -469,8 +469,7 @@
 }
 /* A new level's review lists each setting's value directly under its heading. */
 .guided-review-decision > .capability-pills,
-.guided-review-decision > .compact-setting-values,
-.guided-review-decision > .compact-release-summary {
+.guided-review-decision > .compact-setting-value {
   padding: 12px 14px;
 }
 .guided-review-decision > .capability-pills {
@@ -483,7 +482,7 @@
   border-top: 1px solid var(--border-light);
 }
 .guided-data-summary > p,
-.guided-account-deltas > p:not(.guided-unchanged-accounts) {
+.guided-account-deltas > p {
   margin: 0;
   padding: 12px 14px;
   color: var(--text-secondary);
@@ -511,12 +510,6 @@
   font-size: 12px;
   font-weight: 500;
   line-height: 1.75;
-}
-.guided-change-pair > section:first-child .capability-pills,
-.guided-change-pair > section:first-child .compact-setting-values,
-.guided-change-pair > section:first-child .compact-release-summary,
-.guided-change-pair > section:first-child .access-pill {
-  opacity: 0.7;
 }
 /* A capability that is off has no value to show, only that it is off. */
 .guided-not-granted {
@@ -586,9 +579,14 @@
   background: #58a6ff;
   border-color: #58a6ff;
 }
+/* A step that cannot go on yet: a quiet surface button, not a dimmed primary one. */
 .guided-level-flow .btn-primary:disabled,
-.guided-filter-editor .btn-primary:disabled {
-  opacity: 0.5;
+.guided-filter-editor .btn-primary:disabled,
+.access-request-actions .btn-primary:disabled {
+  opacity: 1;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-color: var(--border);
 }
 .guided-exit-confirmation button {
   min-height: 36px;
@@ -739,4 +737,17 @@
   margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+/* Text these pages call muted must stay readable: every flow uses the secondary tone for it. */
+.access-view,
+.access-editor-page,
+.access-authorization-page,
+.doc-access-view,
+.modal-panel:has(.guided-filter-editor) {
+  --text-muted: var(--text-secondary);
+}
+/* A notice that leads a page keeps its distance from the caption under it. */
+.guided-level-flow > .guided-task-error {
+  margin-bottom: 16px;
 }
