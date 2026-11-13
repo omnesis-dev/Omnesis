@@ -189,6 +189,7 @@ export default defineProvider<LunchflowContext>({
         "Sync transactions and balances from UK, EU, and global banks via the Lunch Flow aggregator (GoCardless and others)",
       unitName: "transactions",
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before
         // `syncStructured` runs, so an unrecognised value is refused as
         // unreadable rather than read as "no accounts yet".

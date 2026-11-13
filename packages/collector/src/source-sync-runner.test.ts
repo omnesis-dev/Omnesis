@@ -3537,6 +3537,121 @@ describe("SourceSyncRunner — initial inventory provenance", () => {
   );
 });
 
+describe("SourceSyncRunner — the source's version travels with every page", () => {
+  type PageArgs = Parameters<GatewayClient["upsertWithCursor"]>[0];
+
+  function twoPages(sourceId: string) {
+    let page = 0;
+    return async () => {
+      page += 1;
+      return {
+        documents: [makeDoc(`item-${page}`, sourceId)],
+        deletedExternalIds: [],
+        cursor: { page },
+        hasMore: page < 2,
+      };
+    };
+  }
+
+  test("a document source sends its version on every page", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    const writes = vi.spyOn(gateway, "upsertWithCursor");
+    const source = makeDocumentSource("versioned-documents", twoPages("versioned-documents"));
+    source.sourceVersion = 3;
+    registry.registerProvider(makeProvider(source));
+
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      source,
+    );
+
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).sourceVersion)).toEqual([3, 3]);
+  });
+
+  test("a structured source sends its version on every page", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    const writes = vi.spyOn(gateway, "upsertWithCursor");
+    const pages = twoPages("versioned-structured");
+    const source = makeStructuredSource("versioned-structured", async () => {
+      const { deletedExternalIds: _none, ...result } = await pages();
+      return result;
+    });
+    source.sourceVersion = 2;
+    registry.registerProvider(makeProvider(source));
+
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      source,
+    );
+
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).sourceVersion)).toEqual([2, 2]);
+  });
+
+  test("a registration without a version sends none", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    const writes = vi.spyOn(gateway, "upsertWithCursor");
+    const source = makeDocumentSource("unversioned", twoPages("unversioned"));
+    registry.registerProvider(makeProvider(source));
+
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      source,
+    );
+
+    expect(writes).toHaveBeenCalledTimes(2);
+    for (const [args] of writes.mock.calls) {
+      expect((args as PageArgs).sourceVersion).toBeUndefined();
+    }
+  });
+
+  test("a stored page is committed at the version that produced it, not the running build's", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    let pending: PendingStructuredPage | null = null;
+    const prepared: PrepareStructuredPage[] = [];
+    const client = Object.assign(gateway, {
+      getPendingStructuredPage: vi.fn(async () => structuredClone(pending)),
+      prepareStructuredPage: vi.fn(async (_sourceId: SourceId, page: PrepareStructuredPage) => {
+        prepared.push(structuredClone(page));
+        const { writeEpoch: _epoch, ...stored } = page;
+        pending ??= structuredClone({ ...stored, cursorCommitted: false });
+        return structuredClone(pending);
+      }),
+      acknowledgeStructuredPage: vi.fn(async () => {
+        pending = null;
+        return { acknowledged: true };
+      }),
+    });
+    const commit = client.upsertWithCursor.bind(client);
+    const writes = vi
+      .spyOn(client, "upsertWithCursor")
+      .mockRejectedValueOnce(new Error("gateway restarted"))
+      .mockImplementation(async (args) => {
+        const response = await commit(args);
+        if (pending) pending.cursorCommitted = true;
+        return response;
+      });
+    const source = makeStructuredSource("upgraded-mid-page", async () => ({
+      documents: [makeDoc("item", "upgraded-mid-page")],
+      cursor: { page: 1 },
+      hasMore: false,
+    }));
+    source.sourceVersion = 1;
+    registry.registerProvider(makeProvider(source));
+
+    await new SourceSyncRunner(client as unknown as GatewayClient, registry, 60_000).runOne(source);
+    expect(prepared.map((page) => page.sourceVersion)).toEqual([1]);
+    expect(pending).not.toBeNull();
+
+    // The host is upgraded while the page waits; its replay is still version 1.
+    source.sourceVersion = 2;
+    await new SourceSyncRunner(client as unknown as GatewayClient, registry, 60_000).runOne(source);
+
+    expect(prepared).toHaveLength(1);
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).sourceVersion)).toEqual([1, 1]);
+  });
+});
+
 describe("isGatewayValidationError", () => {
   test("recognises only the gateway refusing a body as invalid", () => {
     const refused = (status: number, body: string) => new Error(`Gateway error ${status}: ${body}`);

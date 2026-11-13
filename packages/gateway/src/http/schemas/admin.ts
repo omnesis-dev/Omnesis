@@ -20,6 +20,7 @@ import {
   deviceKindSchema,
   nonEmptyString,
   scopeArraySchema,
+  sourceVersionShape,
   stringParamsSchema,
   urlPatternRegexSchema,
 } from "./common.js";
@@ -640,7 +641,7 @@ export const sourceDocumentProfilesBody = z.object({
       sourceType: nonEmptyString,
       // The source version the profile describes. A collector that sends none
       // counts as 0 and cannot replace a profile published with a version.
-      outputRevision: z.number().int().min(0).max(1_000_000).optional(),
+      outputRevision: sourceVersionShape.optional(),
       profile: z.object({
         documentTypes: z.array(nonEmptyString).optional(),
         personRoles: z.array(z.enum(PERSON_ROLES)).optional(),

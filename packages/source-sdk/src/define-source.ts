@@ -39,7 +39,7 @@ import {
 import { emptySync } from "./source.js";
 import {
   mergeContractDeclarations,
-  resolvedOutputRevision,
+  resolveOutputRevision,
   validateContractDeclaration,
   type SourceContractDeclaration,
 } from "./source-contract.js";
@@ -1364,7 +1364,7 @@ export function defineSource<
     `defineSource('${def.id}')`,
   );
   validateDocumentEventProfile(def.documentEventProfile, `defineSource('${def.id}')`, {
-    outputRevision: resolvedOutputRevision(def.contract),
+    outputRevision: resolveOutputRevision(def.contract),
     partitioned: def.multiDevice?.mode === "partitioned",
   });
   validateResyncCost(def.resyncCost, `defineSource('${def.id}')`);
@@ -1472,7 +1472,7 @@ export function defineProvider<TContext>(
       `defineProvider source '${s.id}'`,
     );
     validateDocumentEventProfile(s.documentEventProfile, `defineProvider source '${s.id}'`, {
-      outputRevision: resolvedOutputRevision(mergeContractDeclarations(def.contract, s.contract)),
+      outputRevision: resolveOutputRevision(mergeContractDeclarations(def.contract, s.contract)),
       partitioned: (s.multiDevice ?? def.multiDevice)?.mode === "partitioned",
     });
     validateResyncCost(s.resyncCost, `defineProvider source '${s.id}'`);
@@ -1568,7 +1568,7 @@ export function defineStructuredSource<
     `defineStructuredSource('${def.id}')`,
   );
   validateDocumentEventProfile(def.documentEventProfile, `defineStructuredSource('${def.id}')`, {
-    outputRevision: resolvedOutputRevision(def.contract),
+    outputRevision: resolveOutputRevision(def.contract),
     partitioned: def.multiDevice?.mode === "partitioned",
   });
   validateResyncCost(def.resyncCost, `defineStructuredSource('${def.id}')`);

@@ -178,6 +178,7 @@ export default defineProvider<GoogleContext>({
       },
       icon: { sfSymbol: "envelope.fill", color: "#EA4335", bgColor: "#2D1716", url: gmailIconUrl },
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
@@ -233,6 +234,7 @@ export default defineProvider<GoogleContext>({
         url: googleCalendarIconUrl,
       },
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
@@ -299,6 +301,7 @@ export default defineProvider<GoogleContext>({
         url: googleDriveIconUrl,
       },
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
@@ -332,6 +335,7 @@ export default defineProvider<GoogleContext>({
         url: googleContactsIconUrl,
       },
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.

@@ -200,6 +200,8 @@ interface CursorUpsertRequest {
     consentExpiresAt?: string | null;
     watermark?: UpsertWithCursorArgs["watermark"];
     meta?: UpsertWithCursorArgs["meta"];
+    /** The source version the host sent with the page; absent from a host that sends none. */
+    sourceVersion?: number;
   };
 }
 
@@ -992,6 +994,7 @@ export class DocumentService {
         edges: body.edges,
         hasMore: body.hasMore,
         initialInventory: body.initialInventory,
+        sourceVersion: body.sourceVersion ?? 0,
         cursor: body.cursor as UpsertWithCursorArgs["cursor"],
         cursorDeviceId: args.cursorDeviceId,
         streamId: args.streamId,

@@ -75,6 +75,56 @@ describe("descriptorSupportsPlatform", () => {
   });
 });
 
+describe("extractDescriptors — output revision", () => {
+  const create = async () => ({
+    sync: async () => ({ documents: [], cursor: {}, hasMore: false }),
+  });
+
+  it("a descriptor carries the revision its source resolves to, 1 when none is declared", () => {
+    const declared = defineSource({
+      id: "revised",
+      name: "Revised",
+      description: "declares its revision",
+      authType: "local",
+      contract: { outputRevision: 4 },
+      create,
+    });
+    const omitted = defineSource({
+      id: "unrevised",
+      name: "Unrevised",
+      description: "declares none",
+      authType: "local",
+      create,
+    });
+
+    expect(extractDescriptors(declared)[0].outputRevision).toBe(4);
+    expect(extractDescriptors(omitted)[0].outputRevision).toBe(1);
+  });
+
+  it("a provider's entry uses its own revision, else the provider's", () => {
+    const def = defineProvider({
+      provider: { id: "revised-provider", name: "revised-provider" },
+      authType: "local",
+      contract: { outputRevision: 2 },
+      sources: [
+        { id: "inherits", name: "Inherits", description: "the provider's", create },
+        {
+          id: "own",
+          name: "Own",
+          description: "its own",
+          contract: { outputRevision: 6 },
+          create,
+        },
+      ],
+    });
+
+    expect(extractDescriptors(def).map((d) => [String(d.id), d.outputRevision])).toEqual([
+      ["inherits", 2],
+      ["own", 6],
+    ]);
+  });
+});
+
 describe("extractDescriptors — supportedPlatforms inheritance", () => {
   it("child sources inherit supportedPlatforms from the provider", () => {
     const def = defineProvider({

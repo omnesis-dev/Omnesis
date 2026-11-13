@@ -163,6 +163,7 @@ import { addCredentialApprovedAudience } from "./migration-183-credential-approv
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck-queued.js";
+import { addSourceVersion } from "./migration-218-source-version.js";
 import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
@@ -5005,6 +5006,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 217,
     description: "store the lists collectors publish for a source's filterable fields",
     up: addSourceFilterLists,
+  },
+  {
+    version: 218,
+    description: "record the source version on every document, cursor row and inventory",
+    up: addSourceVersion,
   },
 ];
 

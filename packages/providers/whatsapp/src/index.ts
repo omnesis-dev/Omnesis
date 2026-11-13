@@ -32,6 +32,7 @@ export default defineSource<WhatsAppSyncCursor>({
   ownedWebDomains: ["web.whatsapp.com"],
   icon: { sfSymbol: "message.fill", color: "#25D366", bgColor: "#12251C", url: whatsappIconUrl },
   contract: {
+    outputRevision: 1,
     // The host resolves the stored cursor against this before `sync` runs,
     // so a value from a build that could not read it never reaches `sync`.
     state: whatsappStateSpec,

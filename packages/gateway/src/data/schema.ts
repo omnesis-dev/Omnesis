@@ -40,6 +40,10 @@ import { createSourceInventoryTables } from "./repositories/SourceInventoryRepos
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
+import {
+  createDocumentFilterIndexQueue,
+  createSourceVersionCounts,
+} from "./migration-218-source-version.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { installCollectorRosterRevision, installMutableListRevisions } from "./list-revisions.js";
@@ -121,6 +125,10 @@ function runSchemaSetupInTxn(db: Db): void {
       -- per-partition snapshot claim can be acted on; the empty string (a
       -- source with one backing store) is the overwhelming majority.
       partition_key TEXT NOT NULL DEFAULT '',
+      -- The highest version of its source's output this document was written
+      -- or re-read at. 0 is a document stored without one: written before
+      -- versions were stored, or by a host that sends none.
+      source_version INTEGER NOT NULL DEFAULT 0,
       UNIQUE(provider_id, source_id, external_id, stream_id)
     )
   `);
@@ -254,6 +262,8 @@ function runSchemaSetupInTxn(db: Db): void {
       consent_expires_at TEXT,
       last_document_at TEXT,
       minimum_gateway_version INTEGER NOT NULL DEFAULT 0,
+      -- The source version of the last page committed on this cursor row.
+      source_version INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (source_id, device_id)
     )
   `);
@@ -685,6 +695,11 @@ function runSchemaSetupInTxn(db: Db): void {
         ON documents(provider_id, source_id, stream_id, partition_key, id)
     `);
   }
+  // Schema setup precedes migrations on an upgrade, so the column the counts
+  // are kept from may not be there yet; the migration that adds it creates
+  // them, filled from the documents already stored.
+  createSourceVersionCounts(db);
+  createDocumentFilterIndexQueue(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS snapshot_absence_cascade_outbox (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

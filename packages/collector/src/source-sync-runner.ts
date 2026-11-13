@@ -782,6 +782,7 @@ export class SourceSyncRunner {
               },
               meta: metaForGateway,
               documentTemporalProjections: source.documentTemporalProjections,
+              sourceVersion: source.sourceVersion,
             });
             result = pendingStructuredPage.result;
           }
@@ -921,6 +922,11 @@ export class SourceSyncRunner {
                 initialInventory,
                 cursor: result.cursor,
                 wipeEpoch,
+                // A stored page commits under the revision that produced it,
+                // which after a host upgrade is not this build's.
+                sourceVersion: pendingStructuredPage
+                  ? pendingStructuredPage.sourceVersion
+                  : source.sourceVersion,
                 // Forward the source's forward-looking consent deadline so the
                 // gateway persists it and can warn ahead of expiry. Pass through
                 // verbatim — `undefined` leaves the stored value untouched, `null`
@@ -1070,6 +1076,7 @@ export class SourceSyncRunner {
               ? undefined
               : (result.watermark ?? { guarantee: "observation" }),
             meta: metaForGateway,
+            sourceVersion: source.sourceVersion,
           });
           if (writeResult.rejectedAsRemoved) {
             log.info(`Sync stopped because ${source.id} was removed at the gateway`);

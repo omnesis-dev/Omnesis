@@ -17,6 +17,7 @@ import {
   resolveDeclaredPaths,
   nodePathProbe,
   mergeContractDeclarations,
+  resolveOutputRevision,
   resolveProvider,
   withVersionedState,
 } from "@omnesis/source-sdk";
@@ -715,6 +716,7 @@ async function setupSourceDefinition(
             contentRetention: def.contentRetention,
             documentTemporalProjections: def.documentTemporalProjections,
             multiDeviceMode: ctx.multiDeviceModes?.get(sourceId) ?? def.multiDevice?.mode,
+            sourceVersion: resolveOutputRevision(def.contract),
           },
         ],
       };
@@ -1019,6 +1021,9 @@ async function setupProviderDefinition(
             ctx.multiDeviceModes?.get(sourceId) ??
             sourceDef.multiDevice?.mode ??
             def.multiDevice?.mode,
+          sourceVersion: resolveOutputRevision(
+            mergeContractDeclarations(def.contract, sourceDef.contract),
+          ),
         });
       }
 

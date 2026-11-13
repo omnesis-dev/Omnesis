@@ -12,15 +12,12 @@ import {
   WsInvalidInputError,
 } from "@omnesis/core";
 import { AccountId, SourceId, SourceType, trySourceType } from "@omnesis/types";
-import {
-  isDrivenByHost,
-  mergeContractDeclarations,
-  resolvedOutputRevision,
-} from "@omnesis/source-sdk";
+import { isDrivenByHost } from "@omnesis/source-sdk";
 import {
   allDescriptors as defaultDescriptors,
   allDefinitions as defaultDefinitions,
   experimentalDescriptorHidden,
+  extractDescriptors,
 } from "./source-descriptors.js";
 import {
   anotherEnabledKeyAddresses,
@@ -35,10 +32,8 @@ import type { SourceSetupFailure } from "./source-instantiator.js";
 import type { SourceConfig, AttachmentExtractFn, AudioTranscribeFn } from "@omnesis/core";
 import type {
   AccountDescriptor,
-  DocumentEventProfile,
   DocumentEventProfilePublication,
   GatewayClient,
-  SourceContractDeclaration,
   SourceDescriptor,
   SourceOrProviderDefinition,
   WidgetOrigins,
@@ -149,26 +144,17 @@ export function collectDocumentEventProfiles(
   definitions: readonly SourceOrProviderDefinition[],
 ): DocumentEventProfilePublication[] {
   const entries: DocumentEventProfilePublication[] = [];
-  const collect = (
-    sourceType: string,
-    profile: DocumentEventProfile | undefined,
-    contract: SourceContractDeclaration | undefined,
-  ): void => {
-    if (profile) {
-      entries.push({ sourceType, outputRevision: resolvedOutputRevision(contract), profile });
-    }
-  };
   for (const def of definitions) {
-    if (def.type === "provider") {
-      for (const source of def.sources) {
-        collect(
-          source.id,
-          source.documentEventProfile,
-          mergeContractDeclarations(def.contract, source.contract),
-        );
-      }
-    } else {
-      collect(def.id, def.documentEventProfile, def.contract);
+    // The descriptor carries the revision the source's sync pages are sent at.
+    const revisions = new Map(
+      extractDescriptors(def).map((descriptor) => [
+        String(descriptor.id),
+        descriptor.outputRevision,
+      ]),
+    );
+    const declared = def.type === "provider" ? def.sources : [def];
+    for (const { id, documentEventProfile: profile } of declared) {
+      if (profile) entries.push({ sourceType: id, outputRevision: revisions.get(id), profile });
     }
   }
   return entries.sort((a, b) => a.sourceType.localeCompare(b.sourceType));

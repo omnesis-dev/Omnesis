@@ -30,7 +30,7 @@ import {
 import { FILTER_IDENTIFIER_TYPES, FILTER_LIST_LIMITS } from "@omnesis/types";
 import { z } from "zod";
 import { SOURCE_ICON_MAX_INPUT_CHARS } from "../../icon-limits.js";
-import { nonEmptyString, urlPatternSpecSchema } from "./common.js";
+import { nonEmptyString, sourceVersionShape, urlPatternSpecSchema } from "./common.js";
 import { accountDescriptorSchema } from "./account-descriptor.js";
 
 const documentInputShape = z
@@ -460,6 +460,12 @@ export const upsertWithCursorBody = z
       .array(filterListPublicationSchema)
       .max(FILTER_LIST_LIMITS.publicationsPerPage)
       .optional(),
+    /**
+     * The version of the source's output, as its host declares it; applies to
+     * every document on the page. A host that predates versions sends none,
+     * which is stored as 0.
+     */
+    sourceVersion: sourceVersionShape.optional(),
   })
   .superRefine((body, ctx) => {
     refuseBothSpellings(body, ctx);

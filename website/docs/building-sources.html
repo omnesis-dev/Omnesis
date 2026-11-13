@@ -698,11 +698,14 @@ export default defineSource({
         <p>
           <code>outputRevision</code> describes changed output meaning, not cursor shape. It is the
           source's own version: an integer that starts at 1, only goes up, and is unrelated to the
-          Omnesis release. Raise it in the change that makes the source write something new on its
-          records. It does not trigger reprocessing or a backfill: implement and test any required
-          re-emission separately. Provider contracts contribute their API generation and required
-          capabilities; each child declares its own state. Never migrate one sibling's bookmark
-          using another's decoder.
+          Omnesis release. Declare it on every source and raise it in the change that makes the
+          source write something new on its records. The host sends it with every sync page and the
+          gateway stores it on each document, keeping the highest revision a document was written or
+          re-read at; a document stored without one counts as revision 0. A source that omits it
+          writes at revision 1, and the conformance checks warn. It does not trigger reprocessing or
+          a backfill: implement and test any required re-emission separately. Provider contracts
+          contribute their API generation and required capabilities; each child declares its own
+          state. Never migrate one sibling's bookmark using another's decoder.
         </p>
 
         <h3 id="authentication">Authentication sessions</h3>

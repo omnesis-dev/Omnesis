@@ -503,6 +503,7 @@ export default defineSource({
   conversational: true,
   contentRetention: "best-effort",
   contract: {
+    outputRevision: 1,
     // The host resolves the stored cursor against this before `sync` runs,
     // so an unrecognised value is refused as unreadable rather than read as
     // "no sessions yet".

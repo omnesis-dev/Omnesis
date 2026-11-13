@@ -87,6 +87,8 @@ const WOUND_BACK = [
   216,
   // 217 creates the published filter lists; windBack drops them before replay.
   217,
+  // 218 adds the source version columns, their counts and the queue, which undoSourceVersion drops.
+  218,
 ];
 
 let dir: string;
@@ -289,7 +291,27 @@ function undoDeviceEnrollment(db: Db): void {
   }
 }
 
+/** Undo migration 218: the source version columns, their running counts and the queue. */
+function undoSourceVersion(db: Db): void {
+  db.exec("DROP TABLE IF EXISTS document_filter_index_queue");
+  for (const trigger of ["insert", "delete", "move"])
+    db.exec(`DROP TRIGGER IF EXISTS source_version_counts_${trigger}`);
+  db.exec("DROP TABLE IF EXISTS source_version_counts");
+  for (const [table, column] of [
+    ["documents", "source_version"],
+    ["sync_state", "source_version"],
+    ["source_inventories", "min_source_version"],
+  ] as const) {
+    const present = db
+      .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)
+      .all()
+      .some((row) => row.name === column);
+    if (present) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+  }
+}
+
 function windBack(db: Db): void {
+  undoSourceVersion(db);
   db.exec("DROP TABLE source_filter_item_members");
   db.exec("DROP TABLE source_filter_items");
   db.exec("DROP TABLE source_filter_lists");
@@ -985,6 +1007,48 @@ describe("an install several versions behind, upgrading", () => {
           .all()
           .map((row) => row.partition_key),
       ).toEqual([""]);
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+
+  test("stored documents, cursors and inventories count as written before versions were stored", () => {
+    seedOlderInstall((db) => {
+      db.prepare(
+        `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at)
+         VALUES ('d-1', 'fixture-notes', 'fixture-notes:studio', 'note-1', 'A note', 'body', 'hash-1', '{}', '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01')`,
+      ).run();
+      db.prepare(
+        "INSERT INTO sync_state (source_id, device_id, cursor) VALUES ('fixture-notes:studio', '', '{}')",
+      ).run();
+      db.prepare(
+        `INSERT INTO source_inventories (id, source_id, cursor_row, started_at, first_received_at, observed_at)
+         VALUES ('inventory-1', 'fixture-notes:studio', '', '2026-01-01T00:00:00.000Z', 1, 1)`,
+      ).run();
+    });
+
+    const db = upgrade();
+    try {
+      expect(db.prepare("SELECT source_version FROM documents").all()).toEqual([
+        { source_version: 0 },
+      ]);
+      expect(db.prepare("SELECT source_version FROM sync_state").all()).toEqual([
+        { source_version: 0 },
+      ]);
+      expect(db.prepare("SELECT min_source_version FROM source_inventories").all()).toEqual([
+        { min_source_version: 0 },
+      ]);
+      expect(db.prepare("SELECT * FROM source_version_counts").all()).toEqual([
+        {
+          source_id: "fixture-notes:studio",
+          stream_id: "",
+          source_version: 0,
+          document_count: 1,
+        },
+      ]);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM document_filter_index_queue").get()).toEqual({
+        n: 0,
+      });
     } finally {
       (db as unknown as Database.Database).close();
     }
