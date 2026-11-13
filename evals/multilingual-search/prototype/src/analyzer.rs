@@ -201,7 +201,7 @@ pub fn analyze(text: &str, config: &Config, prefix_last: bool) -> Result<Analysi
                 });
                 normalizer.normalize(token.lemma()).into_owned()
             } else {
-                surface.clone()
+                stemmed.into_owned()
             };
             let lemma = if lemma.is_empty() {
                 surface.clone()
