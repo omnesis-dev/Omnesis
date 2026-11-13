@@ -1172,14 +1172,6 @@ function probeDetail<K extends FilterDetail["kind"]>(
   return detail as Extract<FilterDetail, { kind: K }>;
 }
 
-/** The records of the account whose detail is known, with the row each is decided through. */
-function knownRecordsSql(sql: SqlBuilder, probe: CompiledFilter): string {
-  return `documents d
-      CROSS JOIN documents fs ON fs.id = ${subjectIdSql("d")}
-     WHERE d.source_id = ${sql.bind(probe.sourceId)}
-       AND (${sql.splice(caseSql(branches(probe, CORPUS_FILTER_TABLES, "fs"), (branch) => branch.verdict))}) = 'R'`;
-}
-
 /**
  * Rows of `(idx, n)`: for each entry `[idx, device, id]` of a field probed
  * with {@link compileFieldProbe}, how many records it would share. An entry
@@ -1251,19 +1243,23 @@ export function filterPersonCountsSql(
               AND fm.generation = (SELECT fl.generation FROM ${map.lists} fl WHERE fl.source_id = fm.source_id AND fl.field = fm.field AND fl.device_id = fm.device_id))`
       : "";
     const onRecord = `SELECT wanted.idx AS idx, d.id AS id
-        FROM ${knownRecordsSqlWithJoin(sql, probe, `CROSS JOIN json_each(${peopleSql(sql, map, person, "fs")}) fv CROSS JOIN wanted ON wanted.key = fv.value`)}`;
+        FROM ${knownRecordsSql(sql, probe, `CROSS JOIN json_each(${peopleSql(sql, map, person, "fs")}) fv CROSS JOIN wanted ON wanted.key = fv.value`)}`;
     const inChat = members
       ? ` UNION SELECT chats.idx AS idx, d.id AS id
-        FROM ${knownRecordsSqlWithJoin(sql, probe, `CROSS JOIN ${valuesFrom(sql, map, members, "fs")} CROSS JOIN chats ON chats.device = ${rowDevice(members, "fs")} AND chats.id = fv.value`)}`
+        FROM ${knownRecordsSql(sql, probe, `CROSS JOIN ${valuesFrom(sql, map, members, "fs")} CROSS JOIN chats ON chats.device = ${rowDevice(members, "fs")} AND chats.id = fv.value`)}`
       : "";
     return `WITH wanted(idx, key) AS MATERIALIZED (${keys})${chats}
       SELECT hit.idx AS idx, count(*) AS n FROM (${onRecord}${inChat}) hit GROUP BY hit.idx`;
   });
 }
 
-/** {@link knownRecordsSql} with further joins on the subject row before its WHERE. */
-function knownRecordsSqlWithJoin(sql: SqlBuilder, probe: CompiledFilter, joins: string): string {
-  // `joins` was built first, so its parameters are already bound in order.
+/**
+ * The records of the account whose detail is known, as a FROM clause and its
+ * WHERE: `d` is the record and `fs` the row it is decided through. `joins`
+ * are further joins on `fs`; build them before calling, so their parameters
+ * are bound first, as they come first in the text.
+ */
+function knownRecordsSql(sql: SqlBuilder, probe: CompiledFilter, joins = ""): string {
   return `documents d
       CROSS JOIN documents fs ON fs.id = ${subjectIdSql("d")}
       ${joins}
