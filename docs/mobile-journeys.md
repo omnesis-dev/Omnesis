@@ -30,7 +30,9 @@ Each journey is independent. Pairing starts from an app with no stored
 credentials. The others start paired with a device credential of their own:
 the test mints a pairing code and hands it to a DEBUG launch seam — on iOS it
 redeems the code itself and passes the credential in `DEMO_PAIRING_JSON`, on
-Android the `seed_*` launch extras make the app run the real pairing exchange. Android runs
+Android the test, which runs inside the app's process, offers the code to
+`DebugPairingSeed` and the app runs the real pairing exchange (never from launch
+extras, which any other app could send to the exported activity). Android runs
 each test in its own instrumentation with the app's data cleared (the test
 orchestrator), so a failed journey leaves nothing behind for the next.
 
