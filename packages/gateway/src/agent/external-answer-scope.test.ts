@@ -183,7 +183,9 @@ describe("external Answer context", () => {
       expect(scopeReads.recordDocuments).toHaveBeenLastCalledWith(["whole-doc"]);
     }
     expect(scopeReads.recordDocuments).toHaveBeenCalledTimes(3);
-    expect(scopeReads.markComplete).not.toHaveBeenCalled();
+    // Building the tools is what closes the run's read set: every tool reads
+    // through the observer it was built with.
+    expect(scopeReads.markComplete).toHaveBeenCalledTimes(1);
   });
 
   it("enforces the same table boundary in the filtered Answer SQL tool", async () => {

@@ -498,7 +498,6 @@ export function createAgentService(
         {},
         { audience: "interactive", citationSurface: false, authorization, scopeReads },
       );
-      scopeReads?.markComplete();
       return {
         tools,
         systemPrompt: `${base}\n\n${renderSourceRestrictedAnswerSection(permittedSourceTypes(authorization))}`,

@@ -68,6 +68,9 @@ export function createExternalAnswerTools(deps: {
   ]);
   const filtered = authorization.scopePolicies.length > 0;
   const documentKnowledgeReads = knowledgeReads && !filtered;
+  // Every tool an Answer run can call is built below with the run's read
+  // observer, so the run's read set is complete once they exist.
+  deps.scopeReads?.markComplete();
   if (filtered) safeNames.add("run_sql");
   const search = createGatewaySearchPort(
     searchPipeline,

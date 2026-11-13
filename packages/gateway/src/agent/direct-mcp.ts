@@ -354,6 +354,11 @@ export class DirectMcpService {
     args: Record<string, unknown>,
     context: DirectMcpInvokeContext,
   ): Promise<ToolResult> {
+    // Every tool of a call reads the corpus through ports built with the
+    // call's read observer, or reads no document at all (list_tables reads
+    // the catalog), so the call's read set is complete for every tool. A
+    // filtered grant's release refuses a read set that is not.
+    context.scopeReads?.markComplete();
     if (context.authorization?.restricted && !RESTRICTED_DIRECT_MCP_TOOL_NAME_SET.has(name)) {
       return { kind: "error", code: "tool_not_found", message: "Direct MCP tool not found" };
     }
@@ -665,11 +670,7 @@ export function createGatewayDirectMcpService(deps: GatewayDirectMcpDeps): Direc
         graphContext: !authorization?.restricted && deps.searchPipeline.agentSearchV2Enabled,
       };
     },
-    (authorization, scopeReads) => {
-      const tools = buildHandles(authorization, scopeReads);
-      scopeReads?.markComplete();
-      return tools;
-    },
+    (authorization, scopeReads) => buildHandles(authorization, scopeReads),
     (id) => labFeatureEnabled(deps.db, id),
     (authorization) => {
       const capture = createScopeReleaseCapture(deps.db, authorization);
