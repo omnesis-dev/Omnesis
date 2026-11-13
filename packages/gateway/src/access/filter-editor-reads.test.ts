@@ -13,6 +13,7 @@ import {
   FILTER_OPTIONS_PAGE,
   countFilterEntries,
   filterPersonIdentifiers,
+  readDocumentFilterDetails,
   readFilterOptions,
   readFilterPreview,
   shortFilterLabel,
@@ -607,6 +608,77 @@ describe("the preview of a draft filter", () => {
     expect(result.visible).toBe(2);
     expect(result.items).toHaveLength(256);
     expect(result.items[255]).toMatchObject({ label: "Finance", count: 4 });
+  });
+});
+
+describe("the filter-related details of one document", () => {
+  const byField = (id: string) =>
+    Object.fromEntries(
+      readDocumentFilterDetails(db, id)!.fields.map((field) => [
+        field.field,
+        [field.state, field.items.map((item) => item.label)],
+      ]),
+    );
+
+  it("names what the record belongs to from the account's list", () => {
+    expect(readDocumentFilterDetails(db, "m2")).toMatchObject({
+      sourceVersion: 3,
+      fields: [
+        {
+          field: "extra.labelIds",
+          noun: { one: "label", many: "labels" },
+          state: "present",
+          items: [
+            { id: "L-finance", label: "Finance", listed: true },
+            { id: "L-clients", label: "Clients", listed: true },
+          ],
+        },
+        { field: "extra.folderIds", state: "present", items: [{ label: "Finance" }] },
+        { field: "extra.directory", state: "unknown", items: [] },
+        { field: "extra.tagIds", state: "unknown", items: [] },
+      ],
+    });
+  });
+
+  it("tells none from unknown, shows an unlisted id as itself, and says when a record is too old", () => {
+    expect(byField("m4")).toMatchObject({
+      "extra.labelIds": ["present", []],
+      "extra.folderIds": ["present", []],
+    });
+    expect(byField("m-unlisted")["extra.folderIds"]).toEqual(["present", ["vanished"]]);
+    expect(readDocumentFilterDetails(db, "m-unlisted")!.fields[1]!.items[0]!.listed).toBe(false);
+    expect(byField("m-unknown")["extra.labelIds"]).toEqual(["unknown", []]);
+    expect(byField("m-old")).toMatchObject({
+      "extra.labelIds": ["too-old", []],
+      "extra.folderIds": ["too-old", []],
+      // A field old records already carry is judged on what is there.
+      "extra.directory": ["unknown", []],
+    });
+    expect(readDocumentFilterDetails(db, "m-old")!.sourceVersion).toBe(1);
+  });
+
+  it("names a per-device detail from the list of the record's own device", () => {
+    expect(byField("s1")["extra.directory"]).toEqual(["present", ["~/work/atlas-api"]]);
+  });
+
+  it("shows an attachment the details of the record it was attached to", () => {
+    expect(byField("m1-attachment")).toMatchObject({
+      "extra.labelIds": ["present", ["Finance"]],
+      "extra.folderIds": ["present", ["Invoices"]],
+    });
+    insertDocument(db, {
+      id: "orphan",
+      sourceId: LEDGER,
+      version: 3,
+      metadata: { documentType: "attachment", extra: { parentExternalId: "gone" } },
+    });
+    expect(byField("orphan")["extra.labelIds"]).toEqual(["unknown", []]);
+  });
+
+  it("has nothing for a document that does not exist, and no field for an undeclared source", () => {
+    expect(readDocumentFilterDetails(db, "nope")).toBeNull();
+    insertDocument(db, { id: "note", sourceId: "almanac:home", version: 4, metadata: {} });
+    expect(readDocumentFilterDetails(db, "note")).toEqual({ sourceVersion: 4, fields: [] });
   });
 });
 

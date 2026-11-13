@@ -474,6 +474,7 @@ describe("membership: a record's ids against the saved ids", () => {
       "m-old": ["N", "R"],
       // Metadata that cannot be read is never readable through a filter.
       "m-not-json": ["U", "U"],
+      "m-json-scalar": ["U", "U"],
       // Still decided through its parent.
       "att-orphan": ["U", "U"],
     });
@@ -496,6 +497,18 @@ describe("an attachment is decided through the record it was attached to", () =>
       "att-no-parent-id": ["U", "U"],
       "att-of-attachment": ["U", "U"],
     });
+  });
+
+  it("is unknown when the parent's id is not text, even if a record has that id", () => {
+    entry("77", { labelIds: ["L-clients"] });
+    insertDocument(fixture.db, {
+      id: "att-numeric-parent",
+      sourceId: LEDGER,
+      version: 3,
+      metadata: { documentType: "attachment", extra: { parentExternalId: 77 } },
+    });
+    syncFilterCopy(fixture);
+    expectVerdicts([label("L-finance")], LEDGER, { "att-numeric-parent": ["U", "U"] });
   });
 
   it("is not found through a record of another stream", () => {

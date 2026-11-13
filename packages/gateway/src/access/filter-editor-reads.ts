@@ -638,3 +638,131 @@ export function readFilterPreview(
     };
   })();
 }
+
+// ── The filter-related details of one document ──────────────────────────────
+
+export interface DocumentFilterDetails {
+  /** The source version that wrote the record. */
+  sourceVersion: number;
+  fields: Array<{
+    /** The field's path. */
+    field: string;
+    noun: { one: string; many: string };
+    /**
+     * `present`: the record carries the detail, possibly as "none".
+     * `too-old`: the record was written before the field was.
+     * `unknown`: the record is new enough and the detail is not there.
+     */
+    state: "present" | "too-old" | "unknown";
+    /** What the record belongs to, named from the account's list; the id stands in for a name the list lacks. */
+    items: Array<{ id: string; label: string; listed: boolean }>;
+  }>;
+}
+
+/**
+ * What a document's own record says for each filterable field of its source,
+ * so its owner can see why a filter does or does not match it. `null` when
+ * the document does not exist. An attachment shows the details of the record
+ * it was attached to, since that record is what a filter decides it by.
+ */
+export function readDocumentFilterDetails(
+  db: Db,
+  documentId: string,
+): DocumentFilterDetails | null {
+  return db.transaction((): DocumentFilterDetails | null => {
+    interface Row {
+      id: string;
+      provider_id: string;
+      source_id: string;
+      stream_id: string;
+      source_version: number;
+      metadata: string;
+    }
+    const columns = "id, provider_id, source_id, stream_id, source_version, metadata";
+    const parse = (text: string): Record<string, unknown> | null => {
+      try {
+        const value: unknown = JSON.parse(text);
+        return typeof value === "object" && value !== null && !Array.isArray(value)
+          ? (value as Record<string, unknown>)
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    let row = db
+      .prepare<[string], Row>(`SELECT ${columns} FROM documents WHERE id = ?`)
+      .get(documentId);
+    if (!row) return null;
+    const own = row;
+    let metadata = parse(row.metadata);
+    const extra = metadata?.extra;
+    const parentExternalId =
+      typeof extra === "object" && extra !== null
+        ? (extra as Record<string, unknown>).parentExternalId
+        : undefined;
+    if (metadata && (metadata.documentType === "attachment" || parentExternalId !== undefined)) {
+      row =
+        typeof parentExternalId === "string"
+          ? db
+              .prepare<[string, string, string, string, string], Row>(
+                `SELECT ${columns} FROM documents
+                  WHERE provider_id = ? AND source_id = ? AND external_id = ? AND stream_id = ? AND id <> ?`,
+              )
+              .get(row.provider_id, row.source_id, parentExternalId, row.stream_id, row.id)
+          : undefined;
+      metadata = row ? parse(row.metadata) : null;
+    }
+    const details: DocumentFilterDetails = {
+      sourceVersion: (row ?? own).source_version,
+      fields: [],
+    };
+    const declared = filterFieldsFor(db, sourceTypeOf(own.source_id));
+    if (declared.state !== "declared") return details;
+    for (const field of declared.fields) {
+      if (field.state !== "ready") continue;
+      const base = { field: field.path, noun: field.filter.noun };
+      if (!row || row.source_version < field.filter.minVersion) {
+        details.fields.push({ ...base, state: row ? "too-old" : "unknown", items: [] });
+        continue;
+      }
+      let value: unknown = metadata;
+      for (const segment of field.path.split(".")) {
+        value =
+          typeof value === "object" && value !== null && !Array.isArray(value)
+            ? (value as Record<string, unknown>)[segment]
+            : undefined;
+      }
+      const ids =
+        field.type === "string-array"
+          ? Array.isArray(value) && value.every((id) => typeof id === "string" && id !== "")
+            ? (value as string[])
+            : null
+          : typeof value === "string" && value !== ""
+            ? [value]
+            : null;
+      if (ids === null) {
+        details.fields.push({ ...base, state: "unknown", items: [] });
+        continue;
+      }
+      const listed = getFilterListItems(
+        db,
+        {
+          sourceId: own.source_id,
+          field: field.path,
+          deviceId: field.filter.scope === "device" ? row.stream_id : "",
+        },
+        ids,
+      );
+      details.fields.push({
+        ...base,
+        state: "present",
+        items: ids.map((id) => ({
+          id,
+          label: listed.get(id)?.label ?? id,
+          listed: listed.has(id),
+        })),
+      });
+    }
+    return details;
+  })();
+}

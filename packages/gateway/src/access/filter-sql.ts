@@ -192,6 +192,15 @@ const DOCUMENT_TYPE_PATH = "$.documentType";
 const PARENT_PATH = "$.extra.parentExternalId";
 const PEOPLE_PATH = "$.people";
 
+/**
+ * Whether stored metadata cannot be read as a JSON object. Written as a CASE
+ * so the type is only asked of text that is JSON: a JSON function raises on
+ * text that is not, and a raised error would fail the whole read.
+ */
+function unreadableSql(meta: string): string {
+  return `(CASE WHEN json_valid(${meta}) THEN json_type(${meta}) IS NOT 'object' ELSE 1 END)`;
+}
+
 /** The path of a declared field as SQLite reads it, or `null` when it cannot be written as one. */
 export function filterFieldJsonPath(path: string): string | null {
   const segments = path.split(".");
@@ -726,7 +735,7 @@ function branches(compiled: CompiledFilter, map: FilterTableMap, subject: string
   }
   // Every later condition reads the JSON; a row whose JSON cannot be read is
   // settled here, so no JSON function ever raises.
-  push("U", () => `NOT json_valid(${meta})`, undefined, "absent");
+  push("U", () => unreadableSql(meta), undefined, "absent");
   // An attachment is decided through a record that is not itself one.
   push(
     "U",
@@ -902,11 +911,12 @@ function overSubject(
     const outer = "row" in target ? alias(target.row) : "fx";
     const meta = `${outer}.${map.metadata}`;
     const inner = `CASE
-        WHEN NOT json_valid(${meta}) THEN ${missing}
+        WHEN ${unreadableSql(meta)} THEN ${missing}
         WHEN json_extract(${meta}, '${DOCUMENT_TYPE_PATH}') IS 'attachment' OR json_type(${meta}, '${PARENT_PATH}') IS NOT NULL
           THEN COALESCE((SELECT ${sql.splice(over("fs"))}
                  FROM ${map.documents} fs
                 WHERE fs.provider_id = ${outer}.provider_id AND fs.source_id = ${outer}.source_id
+                  AND json_type(${meta}, '${PARENT_PATH}') IS 'text'
                   AND fs.external_id = json_extract(${meta}, '${PARENT_PATH}')
                   AND fs.stream_id = ${outer}.stream_id AND fs.${map.id} <> ${outer}.${map.id}), ${missing})
         ELSE ${sql.splice(over(outer))}
@@ -1140,9 +1150,11 @@ export function sourceFilterInclusionSql(
 function subjectIdSql(outer: string): string {
   const meta = `${outer}.metadata`;
   return `CASE
-      WHEN json_valid(${meta}) AND (json_extract(${meta}, '${DOCUMENT_TYPE_PATH}') IS 'attachment' OR json_type(${meta}, '${PARENT_PATH}') IS NOT NULL)
+      WHEN ${unreadableSql(meta)} THEN ${outer}.id
+      WHEN json_extract(${meta}, '${DOCUMENT_TYPE_PATH}') IS 'attachment' OR json_type(${meta}, '${PARENT_PATH}') IS NOT NULL
         THEN (SELECT fx.id FROM documents fx
                WHERE fx.provider_id = ${outer}.provider_id AND fx.source_id = ${outer}.source_id
+                 AND json_type(${meta}, '${PARENT_PATH}') IS 'text'
                  AND fx.external_id = json_extract(${meta}, '${PARENT_PATH}')
                  AND fx.stream_id = ${outer}.stream_id AND fx.id <> ${outer}.id)
       ELSE ${outer}.id
