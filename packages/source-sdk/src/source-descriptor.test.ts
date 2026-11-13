@@ -77,6 +77,11 @@ describe("serializeDescriptor", () => {
     expect(serializeDescriptor(descriptor()).documentEventProfile).toBeUndefined();
   });
 
+  it("serializes the output revision, which is 1 for a descriptor that names none", () => {
+    expect(serializeDescriptor(descriptor()).outputRevision).toBe(1);
+    expect(serializeDescriptor(descriptor({ outputRevision: 3 })).outputRevision).toBe(3);
+  });
+
   it("serializes the multi-device mode, defaulting an undeclared source to exclusive", () => {
     expect(serializeDescriptor(descriptor()).multiDeviceMode).toBe("exclusive");
     expect(

@@ -743,6 +743,12 @@ export interface GatewayClient {
     consentExpiresAt?: string | null;
     watermark?: SourceWatermark;
     meta?: Omit<SourceSyncMeta, "contentRetention">;
+    /**
+     * The source's output revision (`contract.outputRevision`), applied to
+     * every document on the page. The gateway stores it per document, never
+     * lowering a stored one, and counts a page that carries none as 0.
+     */
+    sourceVersion?: number;
   }): Promise<UpsertWithCursorResponse>;
 
   /** List documents with filtering and pagination. The wire envelope is

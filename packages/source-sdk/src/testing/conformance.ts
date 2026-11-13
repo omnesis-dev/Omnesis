@@ -389,6 +389,18 @@ export async function runSourceConformance<
     }
   }
 
+  // ── Output revision ────────────────────────────────────────────────────
+  // An omitted revision resolves to 1, so the package still loads; the
+  // warning is for the day its output changes, when a declaration nobody
+  // wrote is a number nobody remembers to raise.
+  ran();
+  if (def.contract?.outputRevision === undefined) {
+    warn(
+      "output.revision-declared",
+      "the source declares no contract.outputRevision. It is stored on every document the source writes; declare 1 and raise it whenever the documents it produces change.",
+    );
+  }
+
   return { source: def.id, checks, findings, ok: !findings.some((f) => f.severity === "error") };
 }
 

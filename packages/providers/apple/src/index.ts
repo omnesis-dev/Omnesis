@@ -234,6 +234,7 @@ export default defineProvider<AppleContext>({
       description: "Notes from Apple Notes app",
       unitName: "notes",
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never
         // reaches `sync`.
@@ -267,6 +268,7 @@ export default defineProvider<AppleContext>({
       description: "Tasks and reminders from Apple Reminders",
       unitName: "reminders",
       contract: {
+        outputRevision: 1,
         state: appleRemindersStateSpec,
       },
       icon: {
@@ -357,6 +359,7 @@ export default defineProvider<AppleContext>({
       // Apple sources are not conversation streams.
       conversational: true,
       contract: {
+        outputRevision: 1,
         state: appleImessageStateSpec,
         requires: ["state-envelope"],
       },
@@ -416,6 +419,7 @@ export default defineProvider<AppleContext>({
       description: "Contacts from Apple Contacts app",
       unitName: "contacts",
       contract: {
+        outputRevision: 1,
         state: appleContactsStateSpec,
         apiVersion: 2,
         requires: ["snapshot-sessions"],
@@ -457,6 +461,7 @@ export default defineProvider<AppleContext>({
       description: "Events from Apple Calendar app",
       unitName: "events",
       contract: {
+        outputRevision: 1,
         state: appleCalendarStateSpec,
       },
       icon: {
@@ -496,6 +501,7 @@ export default defineProvider<AppleContext>({
       description: "Phone and FaceTime calls (macOS iCloud call-history sync)",
       unitName: "calls",
       contract: {
+        outputRevision: 1,
         state: appleCallLogStateSpec,
         requires: ["state-envelope"],
       },
@@ -536,6 +542,7 @@ export default defineProvider<AppleContext>({
       description: "Carrier voicemail transcripts synchronized by macOS Phone",
       unitName: "voicemails",
       contract: {
+        outputRevision: 1,
         state: appleVoicemailStateSpec,
         requires: ["state-envelope"],
       },

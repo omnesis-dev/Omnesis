@@ -355,6 +355,9 @@ const edgeDeclarationShape = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+/** A source's output version on the wire: a whole number, 0 meaning "none". */
+export const sourceVersionShape = z.number().int().min(0).max(1_000_000);
+
 // POST /documents/with-cursor — atomic per-page sync write.
 // Bundles every SQLite-side write the collector needs to commit at the
 // end of a sync page so they either all land or none do, closing the
@@ -409,6 +412,12 @@ export const upsertWithCursorBody = z
       })
       .optional(),
     meta: sourceSyncMetaBody.omit({ contentRetention: true }).optional(),
+    /**
+     * The version of the source's output, as its host declares it; applies to
+     * every document on the page. A host that predates versions sends none,
+     * which is stored as 0.
+     */
+    sourceVersion: sourceVersionShape.optional(),
   })
   .superRefine((body, ctx) => {
     refuseBothSpellings(body, ctx);

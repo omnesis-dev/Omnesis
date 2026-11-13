@@ -447,6 +447,7 @@ export default defineSource({
     imageDataUri: localFilesIconDataUri,
   },
   contract: {
+    outputRevision: 1,
     // Checked once by the host before `sync` runs, rather than re-derived on
     // every page for the lifetime of the install.
     state: localFilesStateSpec,

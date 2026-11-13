@@ -244,9 +244,12 @@ through the registry. Verify:
 - A missing capability refuses creation, reaches setup-failure reporting, and
   leaves supported siblings operational. Provider and entry requirements merge;
   a provider-level state decoder must never migrate a child's bookmark.
-- `outputRevision` describes output meaning, not cursor shape. It does not
-  schedule reprocessing; prove the explicit re-emission/backfill mechanism if
-  output changes must affect already indexed records.
+- `outputRevision` describes output meaning, not cursor shape. Every source
+  declares its own, starting at 1, and a change to what the source writes raises
+  it in the same change; it never goes down. The host sends it with every sync
+  page and the gateway stores it on each document. It does not schedule
+  reprocessing; prove the explicit re-emission/backfill mechanism if output
+  changes must affect already indexed records.
 - `contract.state.decode` accepts every settled, pending, empty-store and legacy
   state the source can produce. Supply a complete major migration chain and
   classify bare installed cursors with `legacyVersion` where needed. Minor

@@ -38,6 +38,8 @@ export {
   deleteAllByStream,
   deleteAllByProvider,
   getDocumentCount,
+  countDocumentsBySourceVersion,
+  type SourceVersionCount,
   getLatestActivityBySource,
   getRecentDocuments,
   listDocuments,

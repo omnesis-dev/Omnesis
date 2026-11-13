@@ -10,6 +10,7 @@ export function createSourceInventoryTables(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS source_inventories (
       id TEXT PRIMARY KEY, source_id TEXT NOT NULL, cursor_row TEXT NOT NULL,
       started_at TEXT NOT NULL, first_received_at INTEGER NOT NULL, observed_at INTEGER NOT NULL, completed_at INTEGER,
+      min_source_version INTEGER,
       UNIQUE(source_id,cursor_row,id)
     );
     CREATE INDEX IF NOT EXISTS source_inventories_scope ON source_inventories(source_id,cursor_row,observed_at DESC);
@@ -42,7 +43,13 @@ export function hasSourceInventoryTables(db: Database.Database): boolean {
     .get();
 }
 
-/** Called inside each document chunk or final cursor transaction; retries never reopen completion. */
+/**
+ * Called inside each document chunk or final cursor transaction; retries never reopen completion.
+ *
+ * `sourceVersion` is the version the page was sent at. The inventory keeps the
+ * lowest one among its pages, so an enumeration whose host was upgraded part
+ * way through is recorded at the version it started with.
+ */
 export function recordSourceInventoryPage(
   db: Database.Database,
   sourceId: string,
@@ -50,6 +57,7 @@ export function recordSourceInventoryPage(
   inventory: InitialSourceInventory,
   complete: boolean,
   now: number,
+  sourceVersion = 0,
 ): void {
   const existing = db
     .prepare<[string], { source_id: string; cursor_row: string; started_at: string }>(
@@ -64,10 +72,20 @@ export function recordSourceInventoryPage(
   )
     throw new Error("Initial inventory identity belongs to another source enumeration");
   db.prepare(
-    `INSERT INTO source_inventories(id,source_id,cursor_row,started_at,first_received_at,observed_at,completed_at)
-    VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET observed_at=excluded.observed_at,
-      completed_at=COALESCE(source_inventories.completed_at,excluded.completed_at)`,
-  ).run(inventory.id, sourceId, cursorRow, inventory.startedAt, now, now, complete ? now : null);
+    `INSERT INTO source_inventories(id,source_id,cursor_row,started_at,first_received_at,observed_at,completed_at,min_source_version)
+    VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET observed_at=excluded.observed_at,
+      completed_at=COALESCE(source_inventories.completed_at,excluded.completed_at),
+      min_source_version=MIN(COALESCE(source_inventories.min_source_version,excluded.min_source_version),excluded.min_source_version)`,
+  ).run(
+    inventory.id,
+    sourceId,
+    cursorRow,
+    inventory.startedAt,
+    now,
+    now,
+    complete ? now : null,
+    sourceVersion,
+  );
 }
 
 /** Only a newly inserted document is inventory. Updating an existing document remains reactive. */

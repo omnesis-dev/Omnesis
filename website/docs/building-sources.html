@@ -689,11 +689,15 @@ export default defineSource({
           decode. Test both document and structured sync paths.
         </p>
         <p>
-          <code>outputRevision</code> describes changed output meaning, not cursor shape. It does
-          not trigger reprocessing or a backfill: implement and test any required re-emission
-          separately. Provider contracts contribute their API generation and required capabilities;
-          each child declares its own state. Never migrate one sibling's bookmark using another's
-          decoder.
+          <code>outputRevision</code> describes changed output meaning, not cursor shape. Declare it
+          on every source, starting at 1, and raise it in the change that alters what the source
+          writes; it never goes down. The host sends it with every sync page and the gateway stores
+          it on each document, keeping the highest revision a document was written or re-read at; a
+          document stored without one counts as revision 0. A source that omits it writes at
+          revision 1, and the conformance checks warn. It does not trigger reprocessing or a
+          backfill: implement and test any required re-emission separately. Provider contracts
+          contribute their API generation and required capabilities; each child declares its own
+          state. Never migrate one sibling's bookmark using another's decoder.
         </p>
 
         <h3 id="authentication">Authentication sessions</h3>

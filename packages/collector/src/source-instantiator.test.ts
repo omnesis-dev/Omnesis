@@ -529,6 +529,74 @@ describe("setupSources — per-instance label override", () => {
     expect(source.family.name).toBe("the-family");
   });
 
+  it("a registered source carries the output revision its definition resolves to", async () => {
+    const standalone = (id: string, contract?: { outputRevision: number }) =>
+      defineSource({
+        id,
+        name: id,
+        description: "x",
+        authType: "local",
+        contract,
+        discover: async () => [{ id: "acct-1" }],
+        create: async () => ({ sync: noopSync }),
+      });
+    const provider = defineProvider({
+      provider: { id: "test-revision-provider", name: "test-revision-provider" },
+      authType: "local",
+      contract: { outputRevision: 2 },
+      discover: async () => [AccountId("acct-1")],
+      sources: [
+        {
+          id: "test-revision-inherits",
+          name: "Inherits",
+          description: "x",
+          create: async () => ({ sync: noopSync }),
+        },
+        {
+          id: "test-revision-own",
+          name: "Own",
+          description: "x",
+          contract: { outputRevision: 5 },
+          create: async () => ({ sync: noopSync }),
+        },
+      ],
+    });
+    const registered: RegisteredProvider[] = [];
+    const ctx = makeCtx(
+      [
+        standalone("test-revision-declared", { outputRevision: 3 }),
+        standalone("test-revision-omitted"),
+        provider,
+      ],
+      [
+        makeDescriptor("test-revision-declared", "test-revision-declared"),
+        makeDescriptor("test-revision-omitted", "test-revision-omitted"),
+        makeDescriptor("test-revision-inherits", "test-revision-provider"),
+        makeDescriptor("test-revision-own", "test-revision-provider"),
+      ],
+      registered,
+    );
+
+    await setupSources(ctx, {
+      "test-revision-declared": { enabled: true },
+      "test-revision-omitted": { enabled: true },
+      "test-revision-inherits": { enabled: true },
+      "test-revision-own": { enabled: true },
+    });
+
+    expect(
+      Object.fromEntries(
+        registered.flatMap((p) => p.sources.map((s) => [String(s.id), s.sourceVersion] as const)),
+      ),
+    ).toEqual({
+      "test-revision-declared:acct-1": 3,
+      // A package that declares none writes at revision 1.
+      "test-revision-omitted:acct-1": 1,
+      "test-revision-inherits:acct-1": 2,
+      "test-revision-own:acct-1": 5,
+    });
+  });
+
   it("provider definition: instance.label wins over the source entry name", async () => {
     const def = defineProvider({
       provider: { id: "test-label-provider", name: "Test Label Provider" },
