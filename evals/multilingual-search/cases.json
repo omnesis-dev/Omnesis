@@ -1,0 +1,978 @@
+[
+  {
+    "id": "ko-synthetic-ending",
+    "language": "ko",
+    "category": "attached-ending",
+    "query": "파란고래우체통",
+    "positive": ["파란고래우체통입니다"],
+    "negative": ["노란참새상자입니다", "파란고래우체국입니다"],
+    "note": "Exact public synthetic reproduction from issue 902; treat the entire invented compound as the requested concept, not any shared component."
+  },
+  {
+    "id": "ko-subject-particle",
+    "language": "ko",
+    "category": "attached-particle",
+    "query": "고양이",
+    "positive": ["고양이가 창문 옆에서 잠을 잡니다."],
+    "negative": ["강아지가 마당에서 놀고 있습니다."]
+  },
+  {
+    "id": "ko-object-particle",
+    "language": "ko",
+    "category": "attached-particle",
+    "query": "우산",
+    "positive": ["우산을 문 옆에 두었습니다."],
+    "negative": ["모자를 서랍 안에 두었습니다."]
+  },
+  {
+    "id": "ko-location-particle",
+    "language": "ko",
+    "category": "attached-particle",
+    "query": "도서관",
+    "positive": ["도서관에서 책을 읽었습니다."],
+    "negative": ["박물관에서 그림을 보았습니다."]
+  },
+  {
+    "id": "ko-short-word",
+    "language": "ko",
+    "category": "short-query",
+    "query": "책",
+    "positive": ["책을 빌렸습니다."],
+    "negative": ["꽃을 샀습니다.", "책상을 조립했습니다."],
+    "note": "책 means book; 책상 means desk and is a deliberate substring false positive."
+  },
+  {
+    "id": "ko-suffix-chain",
+    "language": "ko",
+    "category": "attached-particle",
+    "query": "학교",
+    "positive": ["학교에서는 운동회를 준비합니다."],
+    "negative": ["공원에서는 음악회를 준비합니다."]
+  },
+  {
+    "id": "ko-mixed-script",
+    "language": "ko",
+    "category": "mixed-script",
+    "query": "gateway 우체통",
+    "positive": ["gateway의 우체통을 점검했습니다."],
+    "negative": ["gateway의 알림을 점검했습니다.", "collector의 우체통을 점검했습니다."],
+    "note": "Both concepts are required; generic OR retrieval can return the contrastive negatives independently of tokenization."
+  },
+  {
+    "id": "zh-contained-noun",
+    "language": "zh",
+    "category": "segmentation",
+    "query": "图书馆",
+    "positive": ["明天去图书馆借书。"],
+    "negative": ["明天去游泳馆锻炼。"]
+  },
+  {
+    "id": "zh-two-character",
+    "language": "zh",
+    "category": "short-query",
+    "query": "火车",
+    "positive": ["我们坐火车旅行。"],
+    "negative": ["我们坐汽车旅行。", "火山附近有一辆汽车。"]
+  },
+  {
+    "id": "zh-traditional",
+    "language": "zh",
+    "category": "segmentation",
+    "query": "圖書館",
+    "positive": ["下午到圖書館還書。"],
+    "negative": ["下午到體育館運動。"]
+  },
+  {
+    "id": "zh-mixed-script",
+    "language": "zh",
+    "category": "mixed-script",
+    "query": "SQLite 数据库",
+    "positive": ["这份笔记介绍SQLite数据库备份。"],
+    "negative": ["这份笔记介绍SQLite安装。", "这份笔记介绍图片数据库备份。"],
+    "note": "Both concepts are required; assesses query composition as well as tokenization."
+  },
+  {
+    "id": "ja-noun-particle",
+    "language": "ja",
+    "category": "segmentation",
+    "query": "図書館",
+    "positive": ["図書館で本を借りました。"],
+    "negative": ["映画館で映画を見ました。"]
+  },
+  {
+    "id": "ja-compound-part",
+    "language": "ja",
+    "category": "compound",
+    "query": "郵便",
+    "positive": ["郵便局で切手を買いました。"],
+    "negative": ["銀行でお金を下ろしました。"],
+    "note": "Postal-service concept should match a post-office compound; dictionary compound policy affects this."
+  },
+  {
+    "id": "ja-inflected-verb",
+    "language": "ja",
+    "category": "inflection",
+    "query": "食べる",
+    "positive": ["野菜を食べました。"],
+    "negative": ["野菜を育てました。"],
+    "note": "Lexical goal is matching the same verb across polite past and dictionary forms; surface segmentation alone may not lemmatize it."
+  },
+  {
+    "id": "ja-short-word",
+    "language": "ja",
+    "category": "short-query",
+    "query": "猫",
+    "positive": ["猫が窓のそばにいます。"],
+    "negative": ["犬が庭にいます。"]
+  },
+  {
+    "id": "ja-width",
+    "language": "ja",
+    "category": "width-normalization",
+    "query": "カタカナ",
+    "positive": ["この欄にはｶﾀｶﾅを入力します。"],
+    "negative": ["この欄には数字を入力します。"]
+  },
+  {
+    "id": "th-contained-noun",
+    "language": "th",
+    "category": "segmentation",
+    "query": "ห้องสมุด",
+    "positive": ["พรุ่งนี้จะไปห้องสมุดเพื่ออ่านหนังสือ"],
+    "negative": ["พรุ่งนี้จะไปตลาดเพื่อซื้อผลไม้"]
+  },
+  {
+    "id": "th-book",
+    "language": "th",
+    "category": "segmentation",
+    "query": "หนังสือ",
+    "positive": ["ฉันกำลังอ่านหนังสือเล่มใหม่"],
+    "negative": ["ฉันกำลังฟังเพลงใหม่"]
+  },
+  {
+    "id": "th-train",
+    "language": "th",
+    "category": "segmentation",
+    "query": "รถไฟ",
+    "positive": ["เราจะเดินทางด้วยรถไฟตอนเช้า"],
+    "negative": ["เราจะเดินทางด้วยเครื่องบินตอนเย็น"]
+  },
+  {
+    "id": "th-short-word",
+    "language": "th",
+    "category": "short-query",
+    "query": "ชา",
+    "positive": ["ฉันดื่มชาร้อน"],
+    "negative": ["ฉันดื่มนมอุ่น", "มีชาวนาทำงานในทุ่ง"],
+    "note": "ชา means tea; ชาวนา means farmer and contains the query characters without the requested concept."
+  },
+  {
+    "id": "fr-plural",
+    "language": "fr",
+    "category": "inflection",
+    "query": "cheval",
+    "positive": ["Les chevaux attendent dans le pré."],
+    "negative": ["Les moutons attendent dans le pré."],
+    "note": "Irregular plural; a stemmer may not conflate it even though a lemmatizer could."
+  },
+  {
+    "id": "fr-regular-plural",
+    "language": "fr",
+    "category": "inflection",
+    "query": "jardin",
+    "positive": ["Les jardins sont ouverts."],
+    "negative": ["Les garages sont ouverts."]
+  },
+  {
+    "id": "fr-conjugation",
+    "language": "fr",
+    "category": "inflection",
+    "query": "manger",
+    "positive": ["Nous mangeons des légumes."],
+    "negative": ["Nous cultivons des légumes."]
+  },
+  {
+    "id": "fr-accent-folding",
+    "language": "fr",
+    "category": "accent-normalization",
+    "query": "ecole",
+    "positive": ["La réunion se tient à l’école."],
+    "negative": ["La réunion se tient à la mairie."],
+    "note": "Accent-insensitive keyboard spelling is an explicit retrieval policy, not a claim that all accents can be removed without ambiguity."
+  },
+  {
+    "id": "es-plural",
+    "language": "es",
+    "category": "inflection",
+    "query": "ciudad",
+    "positive": ["Las ciudades tienen bibliotecas."],
+    "negative": ["Los pueblos tienen parques."]
+  },
+  {
+    "id": "es-conjugation",
+    "language": "es",
+    "category": "inflection",
+    "query": "comer",
+    "positive": ["Comemos verduras frescas."],
+    "negative": ["Compramos verduras frescas."]
+  },
+  {
+    "id": "es-accent-folding",
+    "language": "es",
+    "category": "accent-normalization",
+    "query": "reunion",
+    "positive": ["La reunión empieza pronto."],
+    "negative": ["La exposición empieza pronto."],
+    "note": "Accent-insensitive input policy."
+  },
+  {
+    "id": "es-prefix-negative",
+    "language": "es",
+    "category": "boundary-control",
+    "query": "pan",
+    "positive": ["Compramos pan fresco."],
+    "negative": ["Compramos pantalones nuevos.", "Limpiamos la pantalla."],
+    "note": "Bread should not match trousers or screen merely because their spellings begin with pan."
+  },
+  {
+    "id": "de-plural",
+    "language": "de",
+    "category": "inflection",
+    "query": "Haus",
+    "positive": ["Die Häuser stehen am Fluss."],
+    "negative": ["Die Boote liegen am Fluss."]
+  },
+  {
+    "id": "de-compound-suffix",
+    "language": "de",
+    "category": "compound",
+    "query": "Versicherung",
+    "positive": ["Die Krankenversicherung wurde erneuert."],
+    "negative": ["Die Krankenakte wurde erneuert."],
+    "note": "Insurance is a meaningful component of health-insurance compound."
+  },
+  {
+    "id": "de-compound-prefix",
+    "language": "de",
+    "category": "compound",
+    "query": "Fahrrad",
+    "positive": ["Die Fahrradkette wurde gereinigt."],
+    "negative": ["Die Halskette wurde gereinigt."],
+    "note": "Bicycle concept should match bicycle-chain compound."
+  },
+  {
+    "id": "de-eszett",
+    "language": "de",
+    "category": "orthographic-normalization",
+    "query": "strasse",
+    "positive": ["Die Straße ist gesperrt."],
+    "negative": ["Die Brücke ist gesperrt."],
+    "note": "Accept ss keyboard spelling for ß as an explicit normalization policy."
+  },
+  {
+    "id": "de-prefix-negative",
+    "language": "de",
+    "category": "boundary-control",
+    "query": "Rat",
+    "positive": ["Der Rat stimmt heute ab."],
+    "negative": ["Die Ratte läuft durch den Keller.", "Die Ration wurde verteilt."],
+    "note": "Council/advice concept should not match rat or ration by raw prefix."
+  },
+  {
+    "id": "ru-case",
+    "language": "ru",
+    "category": "inflection",
+    "query": "книга",
+    "positive": ["Мы говорили о книге."],
+    "negative": ["Мы говорили о музыке."]
+  },
+  {
+    "id": "ru-plural",
+    "language": "ru",
+    "category": "inflection",
+    "query": "машина",
+    "positive": ["На стоянке стоят машины."],
+    "negative": ["На стоянке стоят автобусы."]
+  },
+  {
+    "id": "ru-adjective",
+    "language": "ru",
+    "category": "inflection",
+    "query": "новый",
+    "positive": ["Мы купили новую лампу."],
+    "negative": ["Мы купили старую лампу."]
+  },
+  {
+    "id": "ru-yo-folding",
+    "language": "ru",
+    "category": "orthographic-normalization",
+    "query": "елка",
+    "positive": ["В комнате стоит ёлка."],
+    "negative": ["В комнате стоит сосна."],
+    "note": "Treat е/ё substitution as accepted search spelling, not universal lexical equivalence."
+  },
+  {
+    "id": "tr-locative",
+    "language": "tr",
+    "category": "inflection",
+    "query": "kitap",
+    "positive": ["Kitapta renkli resimler var."],
+    "negative": ["Defterde renkli resimler var."]
+  },
+  {
+    "id": "tr-suffix-chain",
+    "language": "tr",
+    "category": "inflection",
+    "query": "ev",
+    "positive": ["Evlerimizden bahsediyoruz."],
+    "negative": ["Arabalarımızdan bahsediyoruz."]
+  },
+  {
+    "id": "tr-case-normalization",
+    "language": "tr",
+    "category": "case-normalization",
+    "query": "ışık",
+    "positive": ["IŞIK açık kaldı."],
+    "negative": ["KAPI açık kaldı."],
+    "note": "Requires Turkish dotted/dotless-I-aware case behavior."
+  },
+  {
+    "id": "tr-prefix-negative",
+    "language": "tr",
+    "category": "boundary-control",
+    "query": "at",
+    "positive": ["At tarlada koşuyor."],
+    "negative": ["Ateş ocakta yanıyor.", "Atlas masada duruyor."],
+    "note": "Horse should not match fire or atlas by raw prefix; short-query relevance control."
+  },
+  {
+    "id": "fi-locative",
+    "language": "fi",
+    "category": "inflection",
+    "query": "talo",
+    "positive": ["Talossa on suuri ikkuna."],
+    "negative": ["Autossa on pieni ikkuna."]
+  },
+  {
+    "id": "fi-suffix-chain",
+    "language": "fi",
+    "category": "inflection",
+    "query": "kirja",
+    "positive": ["Kirjoissamme on värikkäitä kuvia."],
+    "negative": ["Lehdissämme on värikkäitä kuvia."],
+    "note": "Book inflection includes a stem alternation; simple suffix removal may fail."
+  },
+  {
+    "id": "fi-plural",
+    "language": "fi",
+    "category": "inflection",
+    "query": "koira",
+    "positive": ["Koirat juoksevat pihalla."],
+    "negative": ["Kissat juoksevat pihalla."]
+  },
+  {
+    "id": "fi-compound",
+    "language": "fi",
+    "category": "compound",
+    "query": "asema",
+    "positive": ["Rautatieasema on suljettu."],
+    "negative": ["Rautatiesilta on suljettu."],
+    "note": "Station is a meaningful component of railway-station compound; decompounding policy affects this."
+  },
+  {
+    "id": "ar-definite-article",
+    "language": "ar",
+    "category": "attached-article",
+    "query": "كتاب",
+    "positive": ["الكتاب على الطاولة."],
+    "negative": ["القلم على الطاولة."]
+  },
+  {
+    "id": "ar-broken-plural",
+    "language": "ar",
+    "category": "inflection",
+    "query": "كتاب",
+    "positive": ["اشتريت كتبًا جديدة."],
+    "negative": ["اشتريت أقلامًا جديدة."],
+    "note": "Broken plural cannot generally be recovered by suffix stripping alone."
+  },
+  {
+    "id": "ar-diacritics",
+    "language": "ar",
+    "category": "diacritic-normalization",
+    "query": "مدرسة",
+    "positive": ["هذه مَدْرَسَة جميلة."],
+    "negative": ["هذه حديقة جميلة."],
+    "note": "Arabic vowel marks should not prevent unvocalized query matching."
+  },
+  {
+    "id": "ar-alef-normalization",
+    "language": "ar",
+    "category": "orthographic-normalization",
+    "query": "اجازة",
+    "positive": ["طلبت إجازة قصيرة."],
+    "negative": ["طلبت وجبة صغيرة."],
+    "note": "Accept omitted hamza in keyboard query as an explicit search-normalization policy."
+  },
+  {
+    "id": "he-prefix",
+    "language": "he",
+    "category": "attached-prefix",
+    "query": "ספר",
+    "positive": ["הספר מונח על השולחן."],
+    "negative": ["העט מונח על השולחן."]
+  },
+  {
+    "id": "he-plural",
+    "language": "he",
+    "category": "inflection",
+    "query": "ספר",
+    "positive": ["קניתי ספרים חדשים."],
+    "negative": ["קניתי עטים חדשים."]
+  },
+  {
+    "id": "he-niqqud",
+    "language": "he",
+    "category": "diacritic-normalization",
+    "query": "שלום",
+    "positive": ["שָׁלוֹם לכולם."],
+    "negative": ["תודה לכולם."],
+    "note": "Vowel/cantillation marks should not block unpointed matching."
+  },
+  {
+    "id": "el-case-inflection",
+    "language": "el",
+    "category": "inflection",
+    "query": "κήπος",
+    "positive": ["Καθόμαστε στον κήπο."],
+    "negative": ["Καθόμαστε στο σπίτι."]
+  },
+  {
+    "id": "el-accent-folding",
+    "language": "el",
+    "category": "accent-normalization",
+    "query": "καφες",
+    "positive": ["Ο καφές είναι ζεστός."],
+    "negative": ["Το τσάι είναι ζεστό."],
+    "note": "Accent-insensitive input policy."
+  },
+  {
+    "id": "el-case-normalization",
+    "language": "el",
+    "category": "case-normalization",
+    "query": "κόσμος",
+    "positive": ["Ο ΚΟΣΜΟΣ αλλάζει."],
+    "negative": ["Ο ΚΑΙΡΟΣ αλλάζει."],
+    "note": "Includes final-sigma and accent normalization policy."
+  },
+  {
+    "id": "pt-plural",
+    "language": "pt",
+    "category": "inflection",
+    "query": "flor",
+    "positive": ["As flores estão no vaso."],
+    "negative": ["As folhas estão no chão."]
+  },
+  {
+    "id": "pt-conjugation",
+    "language": "pt",
+    "category": "inflection",
+    "query": "comprar",
+    "positive": ["Compramos legumes frescos."],
+    "negative": ["Cozinhamos legumes frescos."]
+  },
+  {
+    "id": "pt-accent-folding",
+    "language": "pt",
+    "category": "accent-normalization",
+    "query": "reuniao",
+    "positive": ["A reunião começa cedo."],
+    "negative": ["A viagem começa cedo."],
+    "note": "Accent-insensitive input policy."
+  },
+  {
+    "id": "it-plural",
+    "language": "it",
+    "category": "inflection",
+    "query": "libro",
+    "positive": ["I libri sono sul tavolo."],
+    "negative": ["I piatti sono sul tavolo."]
+  },
+  {
+    "id": "it-conjugation",
+    "language": "it",
+    "category": "inflection",
+    "query": "mangiare",
+    "positive": ["Mangiamo verdure fresche."],
+    "negative": ["Coltiviamo verdure fresche."]
+  },
+  {
+    "id": "it-elision",
+    "language": "it",
+    "category": "elision",
+    "query": "albero",
+    "positive": ["L’albero cresce nel giardino."],
+    "negative": ["L’erba cresce nel giardino."]
+  },
+  {
+    "id": "hi-plural",
+    "language": "hi",
+    "category": "inflection",
+    "query": "किताब",
+    "positive": ["मेज़ पर किताबें रखी हैं।"],
+    "negative": ["मेज़ पर चाबियाँ रखी हैं।"]
+  },
+  {
+    "id": "hi-case-ending",
+    "language": "hi",
+    "category": "inflection",
+    "query": "लड़का",
+    "positive": ["लड़कों ने खेल शुरू किया।"],
+    "negative": ["लड़कियों ने गीत शुरू किया।"],
+    "note": "Male child query contrasts with female child noun; aggressive normalization must not erase this distinction."
+  },
+  {
+    "id": "hi-nukta-normalization",
+    "language": "hi",
+    "category": "unicode-normalization",
+    "query": "क़लम",
+    "positive": ["यह क़लम नीली है।"],
+    "negative": ["यह किताब नीली है।"],
+    "note": "Canonical-equivalent precomposed/decomposed nukta forms, not general removal of meaningful combining marks."
+  },
+  {
+    "id": "fa-kaf-normalization",
+    "language": "fa",
+    "category": "orthographic-normalization",
+    "query": "کتاب",
+    "positive": ["این كتاب روی میز است."],
+    "negative": ["این دفتر روی میز است."],
+    "note": "Persian ک query versus Arabic ك in document, a common keyboard-encoding variation."
+  },
+  {
+    "id": "fa-yeh-normalization",
+    "language": "fa",
+    "category": "orthographic-normalization",
+    "query": "سیب",
+    "positive": ["این سيب شیرین است."],
+    "negative": ["این گلابی شیرین است."],
+    "note": "Persian ی query versus Arabic ي in document."
+  },
+  {
+    "id": "fa-plural-zwnj",
+    "language": "fa",
+    "category": "inflection",
+    "query": "کتاب",
+    "positive": ["کتاب‌ها روی میز هستند."],
+    "negative": ["دفترها روی میز هستند."],
+    "note": "Plural suffix separated by zero-width non-joiner; preserve original text while normalizing search representation."
+  },
+  {
+    "id": "vi-contained-word",
+    "language": "vi",
+    "category": "boundary-control",
+    "query": "cá",
+    "positive": ["Tôi mua cá tươi."],
+    "negative": ["Tôi mua cái bàn mới.", "Tôi uống cà phê."],
+    "note": "Fish should not match classifier cái or coffee cà phê through indiscriminate prefix or accent folding."
+  },
+  {
+    "id": "vi-case-normalization",
+    "language": "vi",
+    "category": "case-normalization",
+    "query": "thư viện",
+    "positive": ["THƯ VIỆN mở cửa hôm nay."],
+    "negative": ["BẢO TÀNG mở cửa hôm nay."],
+    "note": "The multiword concept library is the query; both words are needed."
+  },
+  {
+    "id": "vi-unicode-normalization",
+    "language": "vi",
+    "category": "unicode-normalization",
+    "query": "cửa",
+    "positive": ["cửa đang mở."],
+    "negative": ["Đèn đang sáng."],
+    "note": "Precomposed query versus decomposed combining hook in document; canonical equivalence."
+  },
+  {
+    "id": "uk-case",
+    "language": "uk",
+    "category": "inflection",
+    "query": "книга",
+    "positive": ["Ми говорили про книгу."],
+    "negative": ["Ми говорили про музику."]
+  },
+  {
+    "id": "uk-plural",
+    "language": "uk",
+    "category": "inflection",
+    "query": "сад",
+    "positive": ["Сади цвітуть навесні."],
+    "negative": ["Ліси зеленіють навесні."]
+  },
+  {
+    "id": "uk-apostrophe",
+    "language": "uk",
+    "category": "punctuation-normalization",
+    "query": "пам’ять",
+    "positive": ["Ця пам'ять працює швидко."],
+    "negative": ["Цей процесор працює швидко."],
+    "note": "Curly versus straight apostrophe in the same written word; do not conflate arbitrary punctuation deletion with morphology."
+  },
+  {
+    "id": "en-regular-stemming",
+    "language": "en",
+    "category": "inflection",
+    "query": "recipe",
+    "positive": ["These recipes use fresh vegetables."],
+    "negative": ["These receipts list fresh vegetables."]
+  },
+  {
+    "id": "en-irregular",
+    "language": "en",
+    "category": "inflection",
+    "query": "mouse",
+    "positive": ["The mice live in the barn."],
+    "negative": ["The birds live in the barn."],
+    "note": "Irregular plural; current English Porter stemming is not a full lemmatizer."
+  },
+  {
+    "id": "en-prefix-negative",
+    "language": "en",
+    "category": "boundary-control",
+    "query": "car",
+    "positive": ["The car needs a repair."],
+    "negative": ["The carpet needs cleaning.", "The carbon filter needs cleaning."],
+    "note": "Raw prefix and substring expansion must not treat all longer words as the requested concept."
+  },
+  {
+    "id": "en-substring-negative",
+    "language": "en",
+    "category": "boundary-control",
+    "query": "art",
+    "positive": ["The art is on display."],
+    "negative": ["The cart is outside.", "The party starts soon."],
+    "note": "Raw substring matching would return unrelated words."
+  },
+  {
+    "id": "en-short-word",
+    "language": "en",
+    "category": "short-query",
+    "query": "ox",
+    "positive": ["An ox pulls the cart."],
+    "negative": ["A fox crosses the path.", "An oxygen tank stands nearby."],
+    "note": "Two-character exact term should work without substring false positives."
+  },
+  {
+    "id": "en-phrase",
+    "language": "en",
+    "category": "phrase-control",
+    "query": "\"red kite\"",
+    "positive": ["A red kite flies above the field."],
+    "negative": ["A red balloon floats beside a kite.", "A kite flies over a red roof."],
+    "note": "Explicit quoted phrase requires adjacent words in order; bag-of-token scoring is insufficient."
+  },
+  {
+    "id": "nl-plural",
+    "language": "nl",
+    "category": "inflection",
+    "query": "boek",
+    "positive": ["De boeken liggen op tafel."],
+    "negative": ["De borden liggen op tafel."]
+  },
+  {
+    "id": "nl-stem-alternation",
+    "language": "nl",
+    "category": "inflection",
+    "query": "huis",
+    "positive": ["De huizen staan aan het water."],
+    "negative": ["De boten liggen aan het water."],
+    "note": "Singular/plural includes both vowel-length spelling and consonant alternation; lexical matching goal, not guaranteed by suffix stripping."
+  },
+  {
+    "id": "nl-compound",
+    "language": "nl",
+    "category": "compound",
+    "query": "fiets",
+    "positive": ["De fietsketting is kapot."],
+    "negative": ["De halsketting is kapot."],
+    "note": "Bicycle concept should match bicycle-chain compound; decompounding policy affects this."
+  },
+  {
+    "id": "sv-irregular-plural",
+    "language": "sv",
+    "category": "inflection",
+    "query": "bok",
+    "positive": ["Böckerna ligger på bordet."],
+    "negative": ["Tallrikarna ligger på bordet."],
+    "note": "Books is an irregular plural of book; a suffix-only stemmer need not recover the base."
+  },
+  {
+    "id": "sv-definite",
+    "language": "sv",
+    "category": "inflection",
+    "query": "hus",
+    "positive": ["Huset har ett stort fönster."],
+    "negative": ["Båten har ett litet fönster."]
+  },
+  {
+    "id": "sv-prefix-negative",
+    "language": "sv",
+    "category": "boundary-control",
+    "query": "bil",
+    "positive": ["Bilen behöver repareras."],
+    "negative": ["Biljetten behöver ändras."],
+    "note": "Car should not match ticket merely because its spelling starts with bil."
+  },
+  {
+    "id": "da-irregular-plural",
+    "language": "da",
+    "category": "inflection",
+    "query": "bog",
+    "positive": ["Bøgerne ligger på bordet."],
+    "negative": ["Tallerkenerne ligger på bordet."],
+    "note": "Books is an irregular plural of book; lemmatization exceeds simple suffix stripping."
+  },
+  {
+    "id": "da-definite",
+    "language": "da",
+    "category": "inflection",
+    "query": "hus",
+    "positive": ["Huset har et stort vindue."],
+    "negative": ["Båden har et lille vindue."]
+  },
+  {
+    "id": "da-prefix-negative",
+    "language": "da",
+    "category": "boundary-control",
+    "query": "bil",
+    "positive": ["Bilen holder ved vejen."],
+    "negative": ["Billen kravler på bladet."],
+    "note": "Car should not match beetle by raw prefix; short root bil contrasts with bille."
+  },
+  {
+    "id": "nb-irregular-plural",
+    "language": "nb",
+    "category": "inflection",
+    "query": "bok",
+    "positive": ["Bøkene ligger på bordet."],
+    "negative": ["Tallerkenene ligger på bordet."],
+    "note": "Norwegian Bokmål; irregular plural of book."
+  },
+  {
+    "id": "nb-definite",
+    "language": "nb",
+    "category": "inflection",
+    "query": "hus",
+    "positive": ["Huset har et stort vindu."],
+    "negative": ["Båten har et lite vindu."],
+    "note": "Norwegian Bokmål."
+  },
+  {
+    "id": "nb-plural",
+    "language": "nb",
+    "category": "inflection",
+    "query": "katt",
+    "positive": ["Kattene leker i hagen."],
+    "negative": ["Hundene leker i hagen."],
+    "note": "Norwegian Bokmål."
+  },
+  {
+    "id": "hu-locative",
+    "language": "hu",
+    "category": "inflection",
+    "query": "ház",
+    "positive": ["A házban nagy ablak van."],
+    "negative": ["Az autóban kis ablak van."]
+  },
+  {
+    "id": "hu-suffix-chain",
+    "language": "hu",
+    "category": "inflection",
+    "query": "könyv",
+    "positive": ["A könyveinkben színes képek vannak."],
+    "negative": ["Az újságjainkban színes képek vannak."],
+    "note": "Possessive plural with locative suffix; the requested concept is books."
+  },
+  {
+    "id": "hu-plural",
+    "language": "hu",
+    "category": "inflection",
+    "query": "kert",
+    "positive": ["A kertek tavasszal szépek."],
+    "negative": ["Az erdők tavasszal szépek."]
+  },
+  {
+    "id": "id-possessive",
+    "language": "id",
+    "category": "inflection",
+    "query": "buku",
+    "positive": ["Bukunya ada di atas meja."],
+    "negative": ["Penanya ada di atas meja."],
+    "note": "Attached possessive -nya; book versus pen."
+  },
+  {
+    "id": "id-prefix",
+    "language": "id",
+    "category": "inflection",
+    "query": "baca",
+    "positive": ["Saya membaca buku baru."],
+    "negative": ["Saya membeli buku baru."],
+    "note": "Read versus buy; both documents mention a book so the action is the requested concept."
+  },
+  {
+    "id": "id-assimilated-prefix",
+    "language": "id",
+    "category": "inflection",
+    "query": "tulis",
+    "positive": ["Saya menulis surat pendek."],
+    "negative": ["Saya membaca surat pendek."],
+    "note": "Writing prefix changes the initial consonant; simple substring matching cannot recover tulis from menulis."
+  },
+  {
+    "id": "ro-plural",
+    "language": "ro",
+    "category": "inflection",
+    "query": "carte",
+    "positive": ["Cărțile sunt pe masă."],
+    "negative": ["Farfuriile sunt pe masă."],
+    "note": "Definite plural books includes a stem alternation; compare lexical concept rather than literal prefix."
+  },
+  {
+    "id": "ro-definite-plural",
+    "language": "ro",
+    "category": "inflection",
+    "query": "casă",
+    "positive": ["Casele sunt lângă râu."],
+    "negative": ["Bărcile sunt lângă râu."]
+  },
+  {
+    "id": "ro-plural-car",
+    "language": "ro",
+    "category": "inflection",
+    "query": "mașină",
+    "positive": ["Mașinile sunt în parcare."],
+    "negative": ["Autobuzele sunt în parcare."]
+  },
+  {
+    "id": "cs-plural",
+    "language": "cs",
+    "category": "inflection",
+    "query": "kniha",
+    "positive": ["Knihy leží na stole."],
+    "negative": ["Talíře leží na stole."]
+  },
+  {
+    "id": "cs-stem-alternation",
+    "language": "cs",
+    "category": "inflection",
+    "query": "dům",
+    "positive": ["Domy stojí u řeky."],
+    "negative": ["Lodě kotví u řeky."],
+    "note": "House/houses includes a stem vowel alternation; a light stemmer may not conflate it."
+  },
+  {
+    "id": "cs-plural-cat",
+    "language": "cs",
+    "category": "inflection",
+    "query": "kočka",
+    "positive": ["Kočky si hrají na zahradě."],
+    "negative": ["Psi si hrají na zahradě."]
+  },
+  {
+    "id": "pl-plural",
+    "language": "pl",
+    "category": "inflection",
+    "query": "książka",
+    "positive": ["Książki leżą na stole."],
+    "negative": ["Talerze leżą na stole."]
+  },
+  {
+    "id": "pl-case",
+    "language": "pl",
+    "category": "inflection",
+    "query": "dom",
+    "positive": ["W domu jest duże okno."],
+    "negative": ["W samochodzie jest małe okno."]
+  },
+  {
+    "id": "pl-plural-cat",
+    "language": "pl",
+    "category": "inflection",
+    "query": "kot",
+    "positive": ["Koty bawią się w ogrodzie."],
+    "negative": ["Psy bawią się w ogrodzie."]
+  },
+  {
+    "id": "km-library",
+    "language": "km",
+    "category": "segmentation",
+    "query": "បណ្ណាល័យ",
+    "positive": ["ខ្ញុំទៅបណ្ណាល័យ។"],
+    "negative": ["ខ្ញុំទៅផ្សារ។"],
+    "note": "Khmer dictionary segmentation; fixture has not received native-speaker review."
+  },
+  {
+    "id": "km-book",
+    "language": "km",
+    "category": "segmentation",
+    "query": "សៀវភៅ",
+    "positive": ["នេះជាសៀវភៅថ្មី។"],
+    "negative": ["នេះជាប៊ិចថ្មី។"],
+    "note": "Khmer combining marks are part of the word and must survive query tokenization; not native-speaker reviewed."
+  },
+  {
+    "id": "km-train",
+    "language": "km",
+    "category": "segmentation",
+    "query": "រថភ្លើង",
+    "positive": ["យើងធ្វើដំណើរតាមរថភ្លើង។"],
+    "negative": ["យើងធ្វើដំណើរតាមឡានក្រុង។"],
+    "note": "Train versus bus; not native-speaker reviewed."
+  },
+  {
+    "id": "fr-query-nfd",
+    "language": "fr",
+    "category": "unicode-normalization",
+    "query": "école",
+    "positive": ["La porte de l’école est ouverte."],
+    "negative": ["La porte du garage est ouverte."],
+    "note": "Query uses NFD combining acute; document uses precomposed é. Canonical-equivalent forms should match before any accent-folding policy."
+  },
+  {
+    "id": "de-query-nfd",
+    "language": "de",
+    "category": "unicode-normalization",
+    "query": "Bücher",
+    "positive": ["Die Bücher liegen auf dem Tisch."],
+    "negative": ["Die Teller liegen auf dem Tisch."],
+    "note": "NFD combining diaeresis in query versus precomposed document; no singular/plural conflation is required in this case."
+  },
+  {
+    "id": "ko-query-nfd",
+    "language": "ko",
+    "category": "unicode-normalization",
+    "query": "고양이",
+    "positive": ["고양이 옆에 물이 있습니다."],
+    "negative": ["강아지 옆에 물이 있습니다."],
+    "note": "Query decomposes Hangul syllables into canonical Jamo; normalize canonically before segmentation. Not a request for arbitrary compatibility-Jamo equivalence."
+  },
+  {
+    "id": "mixed-french-korean",
+    "language": "ko",
+    "category": "mixed-language",
+    "query": "우산",
+    "positive": ["Note rapide: 우산을 문 옆에 두었습니다."],
+    "negative": ["Note rapide: 모자를 서랍 안에 두었습니다."],
+    "note": "French and Korean coexist in one document; document-level majority-language detection must not prevent Korean particle analysis."
+  },
+  {
+    "id": "mixed-french-english",
+    "language": "fr",
+    "category": "mixed-language",
+    "query": "jardin",
+    "positive": ["Status update: les jardins sont ouverts."],
+    "negative": ["Status update: les garages sont ouverts."],
+    "note": "French inflected noun inside an English frame; whole-document and per-token language hints can differ."
+  }
+]
