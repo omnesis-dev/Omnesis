@@ -137,7 +137,10 @@ final class AccessSourceFilterClientTests: XCTestCase {
         let session = Session()
         session.body = """
         {"sourceId":"gmail:mail@example.org","sourceType":"gmail","devices":[{"id":"dev_studio","name":"Studio Mac"}],
-         "showDeviceLevel":false,"retryAfterMs":1500,"fields":[
+         "showDeviceLevel":false,"retryAfterMs":1500,
+         "resync":{"state":"needs-resync","fields":["$people","extra.labelIds"],
+                   "text":"Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile."},
+         "fields":[
           {"field":"$people","capability":"person","noun":{"one":"person","many":"people"},"picker":"search","scope":"global",
            "identifiers":["email","domain"],"state":{"status":"ready"},
            "counts":{"status":"ready","tooOld":0,"unmatched":0,"tooOldText":null,"unmatchedText":null}},
@@ -162,6 +165,11 @@ final class AccessSourceFilterClientTests: XCTestCase {
         let editor = try await client(session).filterEditor(sourceId: "gmail:mail@example.org")
         XCTAssertEqual(session.requests.first?.url?.path, "/admin/access/source-filters/gmail:mail@example.org")
         XCTAssertEqual(editor.devices, [.init(id: "dev_studio", name: "Studio Mac")])
+        XCTAssertEqual(editor.resync?.fields, ["$people", "extra.labelIds"])
+        XCTAssertEqual(
+            editor.resync?.fieldState,
+            .needsResync(cost: nil, text: "Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile.")
+        )
         XCTAssertEqual(editor.fields.map(\.state), [
             .ready,
             .needsResync(cost: "This reads about 95,000 messages a day.", text: "Label filters need Gmail to be resynced."),

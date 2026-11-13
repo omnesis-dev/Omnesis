@@ -34,12 +34,7 @@ struct DocumentAccessView: View {
                 } else if let error {
                     GatewayErrorView(context: "check who can read this document", error: error, onRetry: { attempt += 1 })
                 } else {
-                    HStack(spacing: 10) {
-                        AccessCountingSpinner()
-                        Text(DocumentAccessCopy.loading).accessText(.rowSecondary, color: AccessUI.secondary)
-                    }
-                    .frame(minHeight: 44)
-                    .accessibilityElement(children: .combine)
+                    SourceFilterLoadingLine()
                 }
             }
         } footer: {
@@ -80,7 +75,6 @@ struct DocumentAccessView: View {
 /// The words of the "Who can read this?" page that are the app's own; every reason is the gateway's.
 enum DocumentAccessCopy {
     static let title = "Who can read this?"
-    static let loading = "Checking who can read this…"
     static let noLevels = "There are no access levels, so no agent can read this document."
     static let noConnections = "No connections"
     static let canRead = "Can read"
@@ -141,11 +135,12 @@ struct DocumentAccessVerdictRow: View {
                     .frame(width: 64, alignment: .leading)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Image(systemName: verdict.readable ? "checkmark.circle.fill" : "xmark.circle")
-                            .font(.system(size: 15, weight: .semibold))
+                        Image(systemName: verdict.readable ? "checkmark" : "xmark")
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(verdict.readable ? Theme.success : AccessUI.secondary)
                             .accessibilityHidden(true)
-                        Text(verdict.readable ? DocumentAccessCopy.canRead : DocumentAccessCopy.cannotRead).accessText(.rowTitle)
+                        Text(verdict.readable ? DocumentAccessCopy.canRead : DocumentAccessCopy.cannotRead)
+                            .accessText(.rowTitle, color: verdict.readable ? Theme.success : Theme.textPrimary)
                     }
                     Text(verdict.text)
                         .accessText(.rowSecondary, color: AccessUI.secondary)

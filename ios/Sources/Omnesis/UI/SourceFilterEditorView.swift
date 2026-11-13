@@ -490,7 +490,8 @@ extension SourceFilterEditorView {
                 guard client.isCurrent(store.access), value.sourceId == source.id else { return }
                 editor = value
                 editorError = nil
-                let waiting = value.fields.contains { if case .needsResync = $0.state { true } else { false } }
+                let waiting = value.resync?.state == "needs-resync"
+                    || value.fields.contains { if case .needsResync = $0.state { true } else { false } }
                 if !waiting { resyncStarting = false }
                 guard value.settling || (resyncStarting && waiting) else { return }
                 attempt += 1

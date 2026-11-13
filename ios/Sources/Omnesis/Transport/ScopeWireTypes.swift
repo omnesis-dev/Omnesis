@@ -272,6 +272,35 @@ public struct FilterEditorField: Equatable, Sendable, Decodable {
     }
 }
 
+/// The one resync several fields of an account wait for, or the one running for them, with the gateway's sentence
+/// naming them together.
+public struct FilterAccountResync: Equatable, Sendable, Decodable {
+    /// "needs-resync" or "resyncing".
+    public var state: String
+    /// The paths of the fields it covers.
+    public var fields: [String]
+    public var text: String
+    public var processed: Int?
+    public var total: Int?
+
+    public init(state: String, fields: [String], text: String, processed: Int? = nil, total: Int? = nil) {
+        self.state = state
+        self.fields = fields
+        self.text = text
+        self.processed = processed
+        self.total = total
+    }
+
+    /// The state the fields it covers show together; nil for a state this app does not know.
+    public var fieldState: FilterFieldState? {
+        switch state {
+        case "needs-resync": .needsResync(cost: nil, text: text)
+        case "resyncing": .resyncing(processed: processed ?? 0, total: total ?? 0, text: text)
+        default: nil
+        }
+    }
+}
+
 /// What the gateway says about filtering one account: its devices and the fields a filter can use.
 public struct SourceFilterEditor: Equatable, Sendable, Decodable {
     public var sourceId: String
@@ -280,6 +309,8 @@ public struct SourceFilterEditor: Equatable, Sendable, Decodable {
     /// Whether a per-device field's tree starts at the devices; false for an account on one device.
     public var showDeviceLevel: Bool
     public var fields: [FilterEditorField]
+    /// The resync several fields share, when they do: shown once for all of them.
+    public var resync: FilterAccountResync?
     /// Set while a field's counts are being worked out: ask again after it.
     public var retryAfterMs: Int?
 
@@ -289,6 +320,7 @@ public struct SourceFilterEditor: Equatable, Sendable, Decodable {
         devices: [FilterDevice] = [],
         showDeviceLevel: Bool = false,
         fields: [FilterEditorField],
+        resync: FilterAccountResync? = nil,
         retryAfterMs: Int? = nil
     ) {
         self.sourceId = sourceId
@@ -296,6 +328,7 @@ public struct SourceFilterEditor: Equatable, Sendable, Decodable {
         self.devices = devices
         self.showDeviceLevel = showDeviceLevel
         self.fields = fields
+        self.resync = resync
         self.retryAfterMs = retryAfterMs
     }
 
@@ -303,9 +336,22 @@ public struct SourceFilterEditor: Equatable, Sendable, Decodable {
         fields.first { $0.field == path }
     }
 
+    /// The state the picker shows for `field`: the shared resync's when it covers the field, the field's own
+    /// otherwise.
+    public func shownState(_ field: FilterEditorField) -> FilterFieldState {
+        guard let resync, resync.fields.contains(field.field), let shared = resync.fieldState else { return field.state }
+        return shared
+    }
+
+    /// Whether one shared resync covers every field, so the picker shows it alone, without tabs.
+    public var resyncCoversEveryField: Bool {
+        guard let resync, resync.fieldState != nil else { return false }
+        return fields.allSatisfy { resync.fields.contains($0.field) }
+    }
+
     /// Whether the editor must be asked again: counts are being worked out, or a field is on its way to ready.
     public var settling: Bool {
-        retryAfterMs != nil || fields.contains { $0.state.settling }
+        retryAfterMs != nil || fields.contains { $0.state.settling } || resync?.state == "resyncing"
     }
 }
 

@@ -134,35 +134,3 @@ func scopePickerRowTitle(_ item: ScopeOption, inTree: Bool, searching: Bool) -> 
 func scopePickerEmptyText(_ many: String, searching: Bool) -> String {
     searching ? "No \(many) match this search." : "No \(many) here."
 }
-
-/// The state the picker shows for `field`. A resync is of the whole account, so when two or more fields wait for
-/// the same resync, or are being resynced, they show one state together: "Label and people filters need Gmail to
-/// be resynced. …", built from the gateway's sentence for each field. Any other state is the field's own.
-func scopeFieldShownState(_ field: FilterEditorField, in fields: [FilterEditorField]) -> FilterFieldState {
-    let group = scopeResyncGroup(field, in: fields)
-    guard group.count > 1, case .needsResync(let cost, _) = field.state else { return field.state }
-    let parts = group.compactMap { $0.state.text?.components(separatedBy: " filters need ") }
-    guard parts.count == group.count, parts.allSatisfy({ $0.count == 2 }) else { return field.state }
-    let names = parts.enumerated().map { index, part in index == 0 ? part[0] : part[0].lowercased() }
-    let joined = names.count == 2 ? names.joined(separator: " and ")
-        : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
-    return .needsResync(cost: cost, text: joined + " filters need " + parts[0][1])
-}
-
-/// The fields that share `field`'s resync state: all the fields that wait for the account to be resynced, or all
-/// those being resynced, in the editor's order with the person field last ("Label and people filters …"). A field
-/// in any other state stands alone.
-func scopeResyncGroup(_ field: FilterEditorField, in fields: [FilterEditorField]) -> [FilterEditorField] {
-    let group: [FilterEditorField] = switch field.state {
-    case .needsResync: fields.filter { if case .needsResync = $0.state { true } else { false } }
-    case .resyncing: fields.filter { if case .resyncing = $0.state { true } else { false } }
-    default: [field]
-    }
-    return group.filter { $0.capability != "person" } + group.filter { $0.capability == "person" }
-}
-
-/// Whether every field of the account shares one resync state, so the picker shows that one state and no tabs.
-func scopeAccountWaitsForResync(_ fields: [FilterEditorField]) -> Bool {
-    guard fields.count > 1, let first = fields.first else { return false }
-    return scopeResyncGroup(first, in: fields).count == fields.count
-}

@@ -45,35 +45,50 @@ extension PreviewMocks {
     static let accessDrive = account("google-drive:reader@example.org", "Google Drive · reader@example.org", type: "google-drive")
     static let accessWhatsApp = account("whatsapp-messages:+15550100123", "WhatsApp · +1 (555) 010-0123", type: "whatsapp-messages")
 
-    /// Gmail before a resync in place: both its people and its labels wait for it.
-    static let accessGmailEditor = SourceFilterEditor(sourceId: accessGmail.id, sourceType: "gmail", fields: [
-        FilterEditorField(
-            field: FilterEditorField.peopleField,
-            capability: "person",
-            noun: .init(one: "person", many: "people"),
-            picker: "search",
-            identifiers: ["email", "domain"],
-            state: .needsResync(
-                cost: "This reads about 75,000 messages a day.",
-                text: "People filters need Gmail to be resynced. Your mail stays searchable meanwhile. "
-                    + "This reads about 75,000 messages a day."
-            )
-        ),
-        treeField(accessLabelField, .init(one: "label", many: "labels"), state: .needsResync(
-            cost: "This reads about 75,000 messages a day.",
-            text: "Label filters need Gmail to be resynced. Your mail stays searchable meanwhile. "
-                + "This reads about 75,000 messages a day."
-        )),
-    ])
+    private static let gmailCost = "This reads about 75,000 messages a day."
+
+    /// Gmail before a resync in place: both its people and its labels wait for it, and the gateway names them
+    /// together.
+    static let accessGmailEditor = SourceFilterEditor(
+        sourceId: accessGmail.id,
+        sourceType: "gmail",
+        fields: [
+            FilterEditorField(
+                field: FilterEditorField.peopleField,
+                capability: "person",
+                noun: .init(one: "person", many: "people"),
+                picker: "search",
+                identifiers: ["email", "domain"],
+                state: .needsResync(
+                    cost: gmailCost,
+                    text: "People filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + gmailCost
+                )
+            ),
+            treeField(accessLabelField, .init(one: "label", many: "labels"), state: .needsResync(
+                cost: gmailCost,
+                text: "Label filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + gmailCost
+            )),
+        ],
+        resync: .init(
+            state: "needs-resync",
+            fields: [FilterEditorField.peopleField, accessLabelField],
+            text: "Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + gmailCost
+        )
+    )
     static let accessDriveEditor = SourceFilterEditor(
         sourceId: accessDrive.id, sourceType: "google-drive", fields: [treeField(accessFolderField, .init(one: "folder", many: "folders"))]
     )
     /// Drive while it is resynced in place for its folders.
-    static let accessDriveResyncingEditor = SourceFilterEditor(sourceId: accessDrive.id, sourceType: "google-drive", fields: [
-        treeField(accessFolderField, .init(one: "folder", many: "folders"), state: .resyncing(
+    static let accessDriveResyncingEditor = SourceFilterEditor(
+        sourceId: accessDrive.id,
+        sourceType: "google-drive",
+        fields: [treeField(accessFolderField, .init(one: "folder", many: "folders"), state: .resyncing(
             processed: 212, total: 900, text: "Resyncing Google Drive: 212 of about 900."
-        )),
-    ])
+        ))],
+        resync: .init(
+            state: "resyncing", fields: [accessFolderField], text: "Resyncing Google Drive: 212 of about 900.", processed: 212, total: 900
+        )
+    )
     static let accessWhatsAppEditor = SourceFilterEditor(sourceId: accessWhatsApp.id, sourceType: "whatsapp-messages", fields: [
         FilterEditorField(field: accessChatField, capability: "membership", noun: .init(one: "chat", many: "chats"), picker: "search"),
         accessPeopleByPhone,

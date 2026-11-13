@@ -61,7 +61,8 @@ struct SourceFilterPickerView: View {
 
     /// The field's items can be listed and chosen.
     var usable: Bool {
-        declaration?.state.isReady == true
+        guard let editor, let declaration else { return false }
+        return editor.shownState(declaration).isReady
     }
 
     var identifierPlaceholder: String {
@@ -223,15 +224,15 @@ struct SourceFilterPickerView: View {
 
     /// The fields as tabs, then the open field's items or why they cannot be chosen yet.
     @ViewBuilder var catalogue: some View {
-        if fields.count > 1, !scopeAccountWaitsForResync(fields) {
+        if fields.count > 1, editor?.resyncCoversEveryField != true {
             AccessKindTabs(tabs: fields.map { .init(id: $0.field, title: scopeFieldTabTitle($0)) }, selection: $field)
                 .padding(.bottom, 16)
         }
         if editor == nil {
             SourceFilterLoadingLine()
-        } else if let declaration, !declaration.state.isReady {
+        } else if let declaration, let editor, !editor.shownState(declaration).isReady {
             SourceFilterFieldStateView(
-                state: scopeFieldShownState(declaration, in: fields),
+                state: editor.shownState(declaration),
                 sourceName: accessSourceNameParts(source).source,
                 starting: resyncStarting,
                 problem: resyncProblem,
