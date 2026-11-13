@@ -553,7 +553,9 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
     google.id,
   ]);
   await f.manager.removeTrustedSignIn(second.id);
-  await expect(f.manager.removeTrustedSignIn("c".repeat(64))).rejects.toMatchObject({
+  // An id this gateway never pinned is declined in advance; one that is no id at all is refused.
+  await f.manager.removeTrustedSignIn("c".repeat(64));
+  await expect(f.manager.removeTrustedSignIn("not an id")).rejects.toMatchObject({
     status: 400,
   });
   await f.manager.removeTrustedSignIn(device.id);
@@ -954,7 +956,8 @@ test("removing a pin declines it whatever pinned it, a passkey and a Google acco
     declinedPasskeys: [approved.id],
     declinedGoogle: [other],
   });
-  await expect(f.manager.removeTrustedSignIn(approved.id)).rejects.toMatchObject({ status: 400 });
+  // Removing it again declines it once, not twice.
+  await f.manager.removeTrustedSignIn(approved.id);
   expect((await f.saved()).declinedPasskeys).toEqual([approved.id]);
   // The vouching the relay still lists does not bring it back.
   await f.manager.refresh();
@@ -1545,6 +1548,120 @@ test("a Google account or passkey the owner removed here is not pinned again by 
     declinedPasskeys: [older.id],
     trustedSignIns: [{ id: f.passkey.id }, { id: f.google, source: "approval" }],
   });
+});
+
+test("linking the same account again keeps what was declined and withdrawn, and another account starts afresh", async () => {
+  const f = await passkeyLinked();
+  const older = await passkeyDevice(),
+    removed = await passkeyDevice();
+  f.credentials.mockResolvedValue({
+    google: [f.google],
+    passkeys: [
+      f.countersigned(googleSignInOf(f.google), passkeySignInOf(older)),
+      { id: older.id, publicKey: older.publicKey },
+    ],
+  });
+  await f.manager.refresh();
+  // The owner declines Google here; the account withdraws the older passkey.
+  await f.manager.removeTrustedSignIn(f.google);
+  f.credentials.mockResolvedValue({
+    google: [f.google],
+    passkeys: [f.countersigned(googleSignInOf(f.google), passkeySignInOf(older))],
+  });
+  await f.manager.refresh();
+  const refusals = {
+    declinedGoogle: [f.google],
+    withdrawnSignIns: [signInDigest(passkeySignInOf(older))],
+  };
+  expect(await f.saved()).toMatchObject(refusals);
+  // Linked to the same account again, with the same passkey or with another one.
+  for (const device of [f.passkey, removed]) {
+    const nonce = opaque();
+    await f.manager.completeSignup({
+      accountId: f.accountId,
+      nonce,
+      proof: assertionProof(device.authenticator, nonce),
+      credentialPublicKey: device.publicKey,
+      signal: new AbortController().signal,
+    });
+    expect(await f.saved()).toMatchObject(refusals);
+  }
+  // Linking with a sign-in it had refused is the owner's choice, like approving it.
+  const nonce = opaque();
+  await f.manager.completeSignup({
+    accountId: f.accountId,
+    nonce,
+    proof: assertionProof(older.authenticator, nonce),
+    credentialPublicKey: older.publicKey,
+    signal: new AbortController().signal,
+  });
+  expect(await f.saved()).toMatchObject({ declinedGoogle: [f.google], withdrawnSignIns: [] });
+  // Another account has none of this account's refusals.
+  await f.manager.completeSignup({
+    accountId: "c".repeat(64),
+    nonce,
+    signal: new AbortController().signal,
+  });
+  expect(await f.saved()).toMatchObject({
+    declinedGoogle: [],
+    declinedPasskeys: [],
+    withdrawnSignIns: [],
+  });
+});
+
+test("the owner can decline in advance a sign-in this gateway never trusted, and no evidence pins it then", async () => {
+  const f = await passkeyLinked();
+  const older = await passkeyDevice();
+  // By the ids another gateway lists: a Google subject digest, which could also be a passkey id,
+  // and a passkey id.
+  await f.manager.removeTrustedSignIn(f.google);
+  await f.manager.removeTrustedSignIn(older.id);
+  // Declining again changes nothing.
+  await f.manager.removeTrustedSignIn(older.id);
+  expect(await f.saved()).toMatchObject({
+    declinedGoogle: [f.google],
+    declinedPasskeys: [f.google, older.id],
+    trustedSignIns: [{ id: f.passkey.id }],
+  });
+  for (const invalid of ["", "not an id", "x".repeat(2049)])
+    await expect(f.manager.removeTrustedSignIn(invalid)).rejects.toMatchObject({ status: 400 });
+  f.credentials.mockResolvedValue({
+    google: [f.google],
+    passkeys: [
+      f.countersigned(googleSignInOf(f.google), passkeySignInOf(older)),
+      { id: older.id, publicKey: older.publicKey },
+    ],
+  });
+  await f.manager.refresh();
+  expect(f.pins()).toEqual([[f.passkey.id, "link-page"]]);
+  expect(await f.googleSignIn()).toMatchObject({ trusted: false });
+});
+
+test("two listing entries under one passkey id are checked each on its own", async () => {
+  const f = await passkeyLinked();
+  const added = await passkeyDevice(),
+    impostor = await passkeyDevice();
+  const endorsement = await googleVouch({ id: added.id, publicKey: added.publicKey });
+  f.credentials.mockResolvedValue({
+    google: [f.google],
+    passkeys: [
+      // The same id under another key, with the same endorsement: it fails, and that verdict
+      // must not stand for the genuine entry after it.
+      { id: added.id, publicKey: impostor.publicKey, endorsement },
+      { id: added.id, publicKey: added.publicKey, endorsement },
+      f.countersigned(googleSignInOf(f.google)),
+    ],
+  });
+  await f.manager.refresh();
+  expect(f.manager.enrollmentStatus().trustedSignIns).toContainEqual(
+    expect.objectContaining({ id: added.id, source: "endorsed" }),
+  );
+  const nonce = opaque();
+  expect(
+    await f.manager
+      .pairingIdentity()!
+      .enrollment.verifyProof(assertionProof(added.authenticator, nonce), nonce),
+  ).toMatchObject({ id: added.id, trusted: true });
 });
 
 test("sign-ins fetch evidence one at a time and no more often than the interval, and each proof is verified once per fetch", async () => {

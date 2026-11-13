@@ -394,6 +394,44 @@ test("removing a sign-in removes every countersignature that names it, and only 
   }
 });
 
+test("a countersignature naming a sign-in removed while the passkey was being added is not stored", async () => {
+  const db = new Database(":memory:");
+  try {
+    const accounts = new OmnesisAccounts(db),
+      service = new Passkeys(accounts, { origin });
+    const google = "a".repeat(64),
+      accountId = accounts.signInFederated("google", google);
+    const first = await park(service, accounts, { accountId, version: 1 }, "Passkey 1");
+    vouchWithGoogle(service, first, { accountId, version: 1 });
+    // The new passkey signs for Google and the first passkey, as the account stood.
+    const second = await park(service, accounts, { accountId, version: 1 }, "Passkey 2");
+    const begin = await service.beginCountersignature(
+      second.binding,
+      second.endorse,
+      second.cookie,
+    );
+    await service.finishCountersignature(
+      begin.ceremonyId,
+      second.binding,
+      second.endorse,
+      second.cookie,
+      second.authenticator.authentication(begin.options.challenge, second.begin.options.user.id, 1),
+    );
+    // Meanwhile the owner removes the first passkey, signs in again and finishes the add.
+    accounts.removePasskey(accountId, first.authenticator.id, ["google"], 1);
+    const account = { accountId, version: accounts.sessionVersion(accountId)! };
+    vouchWithGoogle(service, second, account);
+    const stored = accounts
+      .passkeyKeys(accountId)
+      .find((key) => key.id === second.authenticator.id)!;
+    expect(stored.endorsement).toMatchObject({ type: "google" });
+    expect(stored).not.toHaveProperty("countersignature");
+    service.close();
+  } finally {
+    db.close();
+  }
+});
+
 test("registration rejects origin, challenge, user-verification, replay and browser-binding substitution", async () => {
   const db = new Database(":memory:");
   try {

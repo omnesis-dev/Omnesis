@@ -246,7 +246,8 @@ sign for the other:
    countersignature is listed only to a gateway that sends the header
    `omnesis-credential-evidence: countersignature-v2`: a gateway from before it
    parses the listing strictly and would refuse the whole of it. Gateways now
-   drop fields they do not know instead, and read up to 256 KiB of it.
+   drop fields they do not know instead, drop an endorsement or countersignature
+   they can't read (which only means trusting less), and read up to 256 KiB.
 5. A gateway pins, repeating until nothing changes:
    - (`endorsed`) a listed passkey whose endorsement verifies against that id and
      key, when the endorsement's signer is already pinned: a Google subject by
@@ -313,14 +314,21 @@ later, so removal is recorded on both sides:
   lists. No endorsement or countersignature pins a withdrawn sign-in again,
   whatever a relay lists later, and neither do they pin one the owner removed on
   the gateway (`declinedPasskeys`, `declinedGoogle`). Only approving a device that
-  signed in with it does, which lifts both.
+  signed in with it does, which lifts both. Linking the gateway to the same account
+  again keeps both lists, except for the sign-in it links with; linking it to
+  another account starts without them.
+- A countersignature that names a sign-in the account no longer has by the time
+  the new passkey is stored (removed while the passkey was being added) is not
+  stored; the passkey keeps its endorsement only.
 
 A gateway learns of a removal only from the listing. One that did not sync
 between the removal and a later compromise of the relay can't tell a sign-in the
 account removed from one it still has, and a compromised relay can list it again
 with the evidence it kept. When a sign-in is removed because it may be in the
-wrong hands, also remove it on each gateway (`omnesis cloud remove-sign-in <id>`)
-so that gateway declines it whatever it is told later. The same applies to Google
+wrong hands, also remove it on each gateway (`omnesis cloud remove-sign-in <id>`,
+with the id `omnesis cloud trusted-sign-ins` shows on a gateway that trusts it) so
+that gateway declines it whatever it is told later. A gateway that never trusted
+it declines it in advance. The same applies to Google
 pins removed on a gateway before `declinedGoogle` existed: that removal was not
 recorded, so remove them again.
 
@@ -350,7 +358,8 @@ Each pin records its `source`: `link-page` (the relay's link or signup page),
 page) or
 `native-app` (approving a request signed in in the iOS or Android app).
 `omnesis cloud trusted-sign-ins` lists each pin with its source, and
-`omnesis cloud remove-sign-in <id>` drops one; the portal does not list them. See
+`omnesis cloud remove-sign-in <id>` drops and declines one, or declines in advance
+one the gateway does not trust; the portal does not list them. See
 Limits of automatic mode for why the source matters.
 
 ## Relay surfaces

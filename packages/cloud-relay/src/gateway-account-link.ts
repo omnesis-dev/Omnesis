@@ -301,23 +301,30 @@ export class GatewayAccountLink {
       record,
     );
   }
+  /**
+   * Stops trusting a sign-in and declines it. A sign-in this gateway does not trust can be declined
+   * in advance by the id another gateway lists for it, so no evidence ever pins it here: a Google
+   * subject digest, or a passkey id. Not knowing which, an id that could be either is declined as
+   * both. Only approving a device that signed in with it lifts the decline.
+   */
   async removeTrustedSignIn(id: string): Promise<void> {
     const record = this.requireLinked();
-    if (!record.trustedSignIns.some((value) => value.id === id))
+    if (!/^[A-Za-z0-9_-]{1,2048}$/.test(id))
       throw new CloudRelayManagementFailure(400, "configuration-invalid");
     const removed = record.trustedSignIns.filter((value) => value.id === id);
+    const passkey = removed.length > 0 ? removed.some((value) => value.type === "passkey") : true;
+    const google =
+      removed.length > 0
+        ? removed.some((value) => value.type === "google")
+        : digest.safeParse(id).success;
+    const decline = (list: string[], add: boolean) =>
+      add ? [...list.filter((value) => value !== id), id].slice(-MAX_DECLINED_PASSKEYS) : list;
     await this.save(
       {
         ...record,
         trustedSignIns: record.trustedSignIns.filter((value) => value.id !== id),
-        declinedPasskeys: [
-          ...record.declinedPasskeys,
-          ...removed.filter((value) => value.type === "passkey").map((value) => value.id),
-        ].slice(-MAX_DECLINED_PASSKEYS),
-        declinedGoogle: [
-          ...record.declinedGoogle,
-          ...removed.filter((value) => value.type === "google").map((value) => value.id),
-        ].slice(-MAX_DECLINED_PASSKEYS),
+        declinedPasskeys: decline(record.declinedPasskeys, passkey),
+        declinedGoogle: decline(record.declinedGoogle, google),
       },
       this.abort.signal,
       record,
@@ -336,6 +343,24 @@ export class GatewayAccountLink {
     const verified = proof && (await this.verifier.verify(proof, nonce, credentialPublicKey));
     return verified ? [{ ...verified.pin, source: "link-page" }] : [];
   }
+  /**
+   * A link's account, pins and remembered refusals. Linking the same account again keeps what the
+   * owner declined and what the account withdrew, except the sign-in the owner just linked with,
+   * as approving it would; another account starts with none.
+   */
+  private relinked(accountId: string, trustedSignIns: TrustedSignIn[]) {
+    const previous =
+      this.record?.linked && this.record.accountId === accountId ? this.record : undefined;
+    const ids = new Set(trustedSignIns.map((value) => value.id)),
+      names = new Set(trustedSignIns.map((value) => signInDigest(value)));
+    return {
+      accountId,
+      trustedSignIns,
+      declinedPasskeys: (previous?.declinedPasskeys ?? []).filter((id) => !ids.has(id)),
+      declinedGoogle: (previous?.declinedGoogle ?? []).filter((id) => !ids.has(id)),
+      withdrawnSignIns: (previous?.withdrawnSignIns ?? []).filter((name) => !names.has(name)),
+    };
+  }
   /** Finishes a sign-in-first connection: the account proof arrived before the gateway registered. */
   async completeSignup(input: {
     accountId: string;
@@ -350,11 +375,10 @@ export class GatewayAccountLink {
         version: 1,
         linked: true,
         binding,
-        accountId: digest.parse(input.accountId),
-        trustedSignIns: await this.pinFromLink(input.proof, input.nonce, input.credentialPublicKey),
-        declinedPasskeys: [],
-        declinedGoogle: [],
-        withdrawnSignIns: [],
+        ...this.relinked(
+          digest.parse(input.accountId),
+          await this.pinFromLink(input.proof, input.nonce, input.credentialPublicKey),
+        ),
       },
       input.signal,
     );
@@ -437,18 +461,20 @@ export class GatewayAccountLink {
           publicKey: passkey.publicKey,
           addedAt: 0,
         };
+        // Keyed by id and key together, so two entries under one id can't stand in for each other.
+        const name = signInDigest(self);
         const signer = passkey.endorsement && this.verifier.endorsementSigner(passkey.endorsement);
         if (passkey.endorsement && signer && open(self) && isTrusted(signer)) {
-          let verified = endorsed.get(passkey.id);
+          let verified = endorsed.get(name);
           if (verified === undefined) {
             verified = await this.verifier.verifyEndorsement(passkey.endorsement, passkey, trusted);
-            endorsed.set(passkey.id, verified);
+            endorsed.set(name, verified);
           }
           if (verified) pin(self, "endorsed");
         }
         if (
           !passkey.countersignature ||
-          countersigned.has(passkey.id) ||
+          countersigned.has(name) ||
           !trusted.some(
             (value) =>
               value.type === "passkey" &&
@@ -457,7 +483,7 @@ export class GatewayAccountLink {
           )
         )
           continue;
-        countersigned.add(passkey.id);
+        countersigned.add(name);
         const named = await this.verifier.verifyCountersignature(
           passkey.countersignature,
           passkey,
@@ -598,15 +624,10 @@ export class GatewayAccountLink {
           version: 1,
           linked: true,
           binding,
-          accountId: digest.parse(result.identity.subject),
-          trustedSignIns: await this.pinFromLink(
-            result.signInProof,
-            pending.nonce,
-            result.credentialPublicKey,
+          ...this.relinked(
+            digest.parse(result.identity.subject),
+            await this.pinFromLink(result.signInProof, pending.nonce, result.credentialPublicKey),
           ),
-          declinedPasskeys: [],
-          declinedGoogle: [],
-          withdrawnSignIns: [],
         },
         signal,
       );

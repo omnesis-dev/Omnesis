@@ -12,7 +12,7 @@ import { tlsFiles, listen } from "../test/support.js";
 import { registeredPasskey, signInOnOperation } from "../test/operation-sign-in.js";
 import { ManagedAccountBrowser } from "./account-browser-client.js";
 import { ACCOUNT_CREDENTIALS_EVIDENCE } from "./account-browser-contract.js";
-import { signInProofSchema } from "./device-enrollment.js";
+import { signInDigest, signInProofSchema } from "./device-enrollment.js";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import { createCloudRelay } from "./server.js";
 import { RelayAccounts } from "./accounts.js";
@@ -522,26 +522,32 @@ test("credentials list the linked account's current sign-ins and answer nothing 
   });
   const request = f.transport.mock.calls.at(-1)!;
   expect(new URL(String(request[0])).pathname).toBe("/_relay/v3/account-browser/credentials");
-  // A passkey without a vouching sign-in is listed as it is; anything else in its place is refused.
+  // A passkey without a vouching sign-in is listed as it is, and evidence this gateway can't
+  // read is dropped rather than refused: the entry, and the rest of the listing, still count.
   const original = f.transport.getMockImplementation()!;
-  for (const [endorsement, accepted] of [
-    [undefined, true],
-    [{ type: "relay-says-so" }, false],
+  const genuine = assertionShape("fictional-endorser");
+  for (const [endorsement, countersignature, kept] of [
+    [undefined, undefined, {}],
+    [{ type: "relay-says-so" }, undefined, {}],
+    [{ ...genuine, laterField: 1 }, { proof: genuine, signIns: [opaque()], laterField: 1 }, {}],
+    [genuine, { proof: genuine, signIns: ["not-a-digest"] }, { endorsement: genuine }],
   ] as const) {
     f.transport.mockImplementation(async (target, init) =>
       new URL(String(target)).pathname.endsWith("/credentials")
         ? Response.json({
             accountId: f.accountId,
-            google: [],
-            passkeys: [{ id: "fictional", publicKey: "ZmljdGlvbmFs", endorsement }],
+            google: ["b".repeat(64)],
+            passkeys: [
+              { id: "fictional", publicKey: "ZmljdGlvbmFs", endorsement, countersignature },
+            ],
           })
         : original(target, init),
     );
-    if (accepted)
-      expect((await f.client.credentials())!.passkeys).toEqual([
-        { id: "fictional", publicKey: "ZmljdGlvbmFs" },
-      ]);
-    else await expect(f.client.credentials()).rejects.toThrow();
+    const listed = await f.client.credentials();
+    expect(listed!.google).toEqual(["b".repeat(64)]);
+    expect(JSON.parse(JSON.stringify(listed!.passkeys))).toEqual([
+      { id: "fictional", publicKey: "ZmljdGlvbmFs", ...kept },
+    ]);
   }
   f.transport.mockImplementation(original);
   // A registered gateway that no account lists gets no credentials.
@@ -628,7 +634,10 @@ test("countersignatures reach only a gateway that asks for them, so one from bef
     undefined,
     undefined,
     undefined,
-    { proof: assertionShape(id), signIns: [opaque()] },
+    {
+      proof: assertionShape(id),
+      signIns: [signInDigest({ type: "google", id: "a".repeat(64) })],
+    },
   );
   const listed = await f.client.credentials();
   expect(listed!.passkeys.find((passkey) => passkey.id === id)!.countersignature).toMatchObject({
@@ -692,7 +701,16 @@ test("a full account of RSA passkeys with the longest ids lists within the bound
       undefined,
       undefined,
       { ...assertionShape(endorser), credentialPublicKey: rsaCoseKey().toString("base64url") },
-      { proof: assertionShape(id), signIns: Array.from({ length: 15 }, opaque) },
+      // Signed for every sign-in already on the account, as the account page has it.
+      {
+        proof: assertionShape(id),
+        signIns: [
+          signInDigest({ type: "google", id: "a".repeat(64) }),
+          ...f.accounts.identities
+            .passkeyKeys(f.accountId)
+            .map(({ id, publicKey }) => signInDigest({ type: "passkey", id, publicKey })),
+        ],
+      },
     );
     ids.push(id);
   }

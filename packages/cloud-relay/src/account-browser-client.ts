@@ -137,6 +137,18 @@ export interface AccountBrowserPort {
  */
 const MAX_CREDENTIALS_LISTING_BYTES = 262_144;
 /**
+ * A piece of evidence this version can read, or nothing. Dropping one only means trusting less,
+ * whereas refusing it would refuse the whole listing, and with it every removal it reports.
+ */
+const evidence = <T extends z.ZodTypeAny>(schema: T) =>
+  z
+    .unknown()
+    .optional()
+    .transform((value): z.infer<T> | undefined => {
+      const parsed = schema.safeParse(value);
+      return parsed.success ? parsed.data : undefined;
+    });
+/**
  * The account's sign-ins as the relay lists them. Fields this version does not know are dropped,
  * not refused, so the relay can add one without cutting off gateways that predate it.
  */
@@ -148,8 +160,8 @@ export const accountCredentialsListing = z.object({
       z.object({
         id: z.string().max(2048),
         publicKey: z.string().max(4096),
-        endorsement: signInProofSchema.optional(),
-        countersignature: passkeyCountersignatureSchema.optional(),
+        endorsement: evidence(signInProofSchema),
+        countersignature: evidence(passkeyCountersignatureSchema),
       }),
     )
     .max(64),
