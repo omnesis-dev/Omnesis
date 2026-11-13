@@ -117,8 +117,7 @@ class DecisionSetupViewModel internal constructor(
         viewModelScope.launch {
             val key = runCatching { gateway.modelCredentials() }.fold(
                 onSuccess = { entries ->
-                    if (entries.firstOrNull { it.fileKey == DecisionSetup.TYPESAFE_KEY }?.configured == true) KeyState.Stored
-                    else KeyState.Missing
+                    if (DecisionSetup.typesafeKeyListed(entries)) KeyState.Stored else KeyState.Missing
                 },
                 onFailure = { e -> KeyState.Unknown(gatewayMessage(e)) },
             )

@@ -147,17 +147,17 @@ class DecisionModelsDecodeTest {
 
     @Test fun unknown_kinds_and_protocols_are_kept() {
         val overview = OmnesisJson.decodeFromString<ModelsOverview>(
-            """{"decisionProviders":[{"id":"edge-box","name":"Edge box","kind":"appliance","futureField":{"x":1},
+            """{"decisionProviders":[{"id":"appliance-box","name":"Appliance box","kind":"appliance","futureField":{"x":1},
               "decision":{"url":"https://decide.example.com","protocol":"future-proto","auth":"signature","futureField":1}}],
               "inference":{"assignments":{"decision":{"kind":"future-kind","available":false,"reason":"Not yet"}},
-              "backends":{"edge":{"type":"http","status":"ok","decision":{"url":"https://decide.example.com","protocol":"future-proto","auth":"signature"}}}}}""",
+              "backends":{"appliance":{"type":"http","status":"ok","decision":{"url":"https://decide.example.com","protocol":"future-proto","auth":"signature"}}}}}""",
         )
         val preset = overview.decisionProviders.single()
         assertEquals("appliance", preset.kind)
         assertFalse(preset.isLocal)
         assertEquals("future-proto", preset.decision!!.protocol)
         assertEquals("future-kind", overview.inference.assignments.getValue("decision").kind)
-        val backend = overview.inference.backends.getValue("edge").decision!!
+        val backend = overview.inference.backends.getValue("appliance").decision!!
         assertEquals("signature", backend.auth)
         assertFalse(backend.onHost)
     }

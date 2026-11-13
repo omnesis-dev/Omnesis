@@ -1603,7 +1603,7 @@ class AdminClientTest {
                     "fields":[{"name":"apiKey","label":"API Key","placeholder":"sk-ant-…",
                       "secret":true,"pattern":"^sk-ant-.+$","patternHint":"starts with sk-ant-"}],
                     "wizard":{"intro":"","why":"","estMinutes":1,"steps":[]}},
-                  "configured":true
+                  "configured":true,"environment":true
                 }],
                 "pageInfo":{"hasMore":false,"limit":1},"hostname":"gateway-host"}
                 """.trimIndent(),
@@ -1614,6 +1614,7 @@ class AdminClientTest {
         assertEquals("anthropic", entries[0].fileKey)
         assertEquals("Anthropic", entries[0].providerName)
         assertTrue(entries[0].configured)
+        assertTrue(entries[0].environment)
         assertEquals(1, entries[0].spec.fields.size)
         assertEquals("apiKey", entries[0].spec.fields[0].name)
         assertEquals(true, entries[0].spec.fields[0].secret)

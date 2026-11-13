@@ -8,6 +8,8 @@ import dev.omnesis.android.transport.dto.BackendDecisionStatus
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
 import dev.omnesis.android.transport.dto.DecisionModelOption
+import dev.omnesis.android.transport.dto.DecisionProbeBody
+import dev.omnesis.android.transport.dto.ModelCredentialEntry
 import dev.omnesis.android.transport.dto.ProviderDecisionPreset
 import dev.omnesis.android.transport.dto.ProviderPreset
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
@@ -143,6 +145,60 @@ class DecisionSetupTest {
         assertTrue(DecisionSetup.canProbe(groups.yours[0]))
         // Adding decisions to a hosted chat backend lists its preset's models.
         assertFalse(DecisionSetup.canProbe(groups.yours[1]))
+    }
+
+    /** The sample overview with a local Ollama backend set up for chat only, holding a key. */
+    private fun overviewWithLocalChatBackend() = sampleDecisionOverview().let { overview ->
+        val ollama = BackendStatus(type = "http", status = "ok", url = "http://127.0.0.1:11434", hasApiKey = true, preset = "ollama")
+        overview.copy(inference = overview.inference.copy(backends = overview.inference.backends + ("ollama" to ollama)))
+    }
+
+    @Test fun a_local_backend_gaining_decisions_is_probed_with_its_saved_key() {
+        val enable = DecisionSetup.providerGroups(overviewWithLocalChatBackend()).yours
+            .filterIsInstance<Provider.Enable>().single { it.key == "ollama" }
+        assertTrue(DecisionSetup.canProbe(enable))
+        assertEquals(
+            DecisionProbeBody(
+                url = wire("ollama").url,
+                preset = "ollama",
+                protocol = wire("ollama").protocol,
+                auth = wire("ollama").auth,
+                backendKey = "ollama",
+            ),
+            DecisionSetup.unsavedProbe(enable, wire("ollama").url, "  "),
+        )
+    }
+
+    @Test fun a_server_not_saved_yet_is_probed_with_the_typed_key_and_no_backend() {
+        assertEquals(
+            DecisionProbeBody(url = "http://127.0.0.1:8080/v1/systemone", apiKey = "example-key-0011"),
+            DecisionSetup.unsavedProbe(Provider.Custom, "http://127.0.0.1:8080/v1/systemone", " example-key-0011 "),
+        )
+        val body = DecisionSetup.unsavedProbe(Provider.Preset(preset("ollama")), wire("ollama").url, "")
+        assertEquals("ollama", body.preset)
+        assertNull(body.apiKey)
+        assertNull(body.backendKey)
+    }
+
+    @Test fun a_decision_url_needs_an_http_scheme_and_a_host() {
+        assertNull(DecisionSetup.urlError("http://127.0.0.1:8080/v1/systemone"))
+        assertNull(DecisionSetup.urlError("  HTTPS://decisions.example.com  "))
+        assertNull(DecisionSetup.urlError("http://[::1]:8080/v1/systemone"))
+        assertNull(DecisionSetup.urlError("http://decision_server:8080"))
+        assertEquals("Enter the server's URL.", DecisionSetup.urlError("  "))
+        val incomplete = "Enter a full URL, such as http://127.0.0.1:8080/v1/systemone."
+        for (bad in listOf("http://", "https://", "http:///v1", "http://:8080", "127.0.0.1:8080", "ftp://files.example.com", "http://a b")) {
+            assertEquals(bad, incomplete, DecisionSetup.urlError(bad))
+        }
+    }
+
+    @Test fun a_typesafe_key_is_listed_from_its_file_or_the_gateway_environment() {
+        fun entry(fileKey: String, configured: Boolean = false, environment: Boolean = false) =
+            ModelCredentialEntry(fileKey = fileKey, configured = configured, environment = environment)
+        assertTrue(DecisionSetup.typesafeKeyListed(listOf(entry("typesafe", configured = true))))
+        assertTrue(DecisionSetup.typesafeKeyListed(listOf(entry("typesafe", environment = true))))
+        assertFalse(DecisionSetup.typesafeKeyListed(listOf(entry("typesafe"), entry("anthropic", environment = true))))
+        assertFalse(DecisionSetup.typesafeKeyListed(emptyList()))
     }
 
     @Test fun the_current_provider_is_marked_and_prefills_its_model() {
@@ -523,11 +579,18 @@ class DecisionSetupTest {
     // --- Verify ---
 
     @Test fun verify_text_is_the_answer_time_or_the_reason_verbatim() {
-        assertEquals("Answered by kev:latest in 240 ms.", DecisionSetup.verifyText(DecisionVerifyResult(ok = true, answeredBy = "kev:latest", latencyMs = 240)))
-        assertEquals("Answered.", DecisionSetup.verifyText(DecisionVerifyResult(ok = true)))
+        assertEquals("Answered.", DecisionSetup.verifyText(DecisionVerifyResult(ok = true), "kev"))
         val reason = "Nothing answered at http://127.0.0.1:11435/v1/systemone. Is the server running? (fetch failed)"
-        assertEquals(reason, DecisionSetup.verifyText(DecisionVerifyResult(ok = false, reason = reason)))
-        assertEquals("The model did not answer.", DecisionSetup.verifyText(DecisionVerifyResult(ok = false)))
+        assertEquals(reason, DecisionSetup.verifyText(DecisionVerifyResult(ok = false, reason = reason), "kev"))
+        assertEquals("The model did not answer.", DecisionSetup.verifyText(DecisionVerifyResult(ok = false), "kev"))
+    }
+
+    @Test fun verify_text_names_the_answering_model_only_when_it_is_not_the_one_asked() {
+        val same = DecisionVerifyResult(ok = true, answeredBy = "kev", latencyMs = 240)
+        assertEquals("Answered in 240 ms.", DecisionSetup.verifyText(same, "kev"))
+        val other = DecisionVerifyResult(ok = true, answeredBy = "kev:latest", latencyMs = 240)
+        assertEquals("Answered by kev:latest in 240 ms.", DecisionSetup.verifyText(other, "kev"))
+        assertEquals("Answered by kev:latest.", DecisionSetup.verifyText(other.copy(latencyMs = null), "kev"))
     }
 
     @Test fun preset_logos_are_named_by_their_models_dev_id() {

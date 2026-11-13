@@ -58,7 +58,6 @@ import dev.omnesis.android.transport.dto.BackendDecisionStatus
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
 import dev.omnesis.android.transport.dto.DecisionModelOption
-import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionUrlParam
 import dev.omnesis.android.transport.dto.ModelDisplay
 import dev.omnesis.android.transport.dto.ModelsOverview
@@ -320,7 +319,7 @@ private fun VerifyLine(target: String, state: VerifyState, onVerify: () -> Unit)
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
-                        DecisionSetup.verifyText(state.result),
+                        DecisionSetup.verifyText(state.result, target.substringAfter('/')),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (ok) c.textPrimary else c.danger,
                         modifier = Modifier.testTag("decision-verify-result"),
@@ -450,7 +449,7 @@ private fun DecisionFormPane(
     var confirmRemove by remember { mutableStateOf(false) }
 
     val filled = paramsWire?.let { DecisionSetup.fillUrl(it, values.urlParams) }
-    val typedUrl = values.url.trim().takeIf { it.startsWith("http://") || it.startsWith("https://") }
+    val typedUrl = values.url.trim().takeIf { DecisionSetup.urlError(it) == null }
     val url = when {
         askParams -> (filled as? DecisionSetup.FilledUrl.Ok)?.url
         askUrl -> typedUrl
@@ -463,24 +462,17 @@ private fun DecisionFormPane(
     val probeTarget: ProbeTarget? = when {
         !canProbe -> null
         existing != null -> ProbeTarget.Saved(existing.key)
-        url != null -> ProbeTarget.Unsaved(
-            DecisionProbeBody(
-                url = url,
-                preset = preset?.id,
-                protocol = wire?.protocol,
-                auth = wire?.auth,
-                apiKey = values.apiKey.trim().ifEmpty { null },
-            ),
-        )
+        url != null -> ProbeTarget.Unsaved(DecisionSetup.unsavedProbe(provider, url, values.apiKey))
         else -> null
     }
     if (existing != null && canProbe) {
         LaunchedEffect(existing.key) { onProbe(ProbeTarget.Saved(existing.key)) }
     }
-    val newLocalPreset = preset?.takeIf { isNew && it.isLocal }
-    if (newLocalPreset != null) {
-        // A local preset's server is listed once, at its default address.
-        LaunchedEffect(newLocalPreset.id) { probeTarget?.let(onProbe) }
+    val unsavedLocalPreset = preset?.takeIf { (isNew || enable != null) && it.isLocal }
+    if (unsavedLocalPreset != null) {
+        // A local preset's server is listed once, at its default address; a
+        // backend gaining decisions is listed with the key it already has.
+        LaunchedEffect(unsavedLocalPreset.id, enable?.key) { probeTarget?.let(onProbe) }
     }
 
     BackRow(onBack)
@@ -548,6 +540,7 @@ private fun DecisionFormPane(
             wire?.url ?: "http://127.0.0.1:8080/v1/systemone",
             values.url,
             { onValuesChange(values.copy(url = it)) },
+            error = values.url.takeIf { it.isNotEmpty() }?.let(DecisionSetup::urlError),
             hint = "The server's decision endpoint.",
         )
     }

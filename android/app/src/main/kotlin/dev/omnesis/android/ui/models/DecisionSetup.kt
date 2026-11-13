@@ -9,7 +9,9 @@ import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
 import dev.omnesis.android.transport.dto.DecisionEndpointConfig
 import dev.omnesis.android.transport.dto.DecisionModelOption
+import dev.omnesis.android.transport.dto.DecisionProbeBody
 import dev.omnesis.android.transport.dto.DecisionVerifyResult
+import dev.omnesis.android.transport.dto.ModelCredentialEntry
 import dev.omnesis.android.transport.dto.ModelsOverview
 import dev.omnesis.android.transport.dto.ProviderDecisionPreset
 import dev.omnesis.android.transport.dto.ProviderPreset
@@ -151,7 +153,24 @@ object DecisionSetup {
      */
     fun canProbe(provider: Provider): Boolean {
         val preset = presetOf(provider)
-        return provider !is Provider.Enable && (preset == null || preset.isLocal)
+        return preset == null || preset.isLocal
+    }
+
+    /**
+     * What to ask a server not saved as a decision backend for its models, at
+     * [url]. A typed key is sent as it is; a backend gaining decisions is
+     * named so the gateway sends the key it holds for that backend.
+     */
+    fun unsavedProbe(provider: Provider, url: String, apiKey: String): DecisionProbeBody {
+        val preset = presetOf(provider)
+        return DecisionProbeBody(
+            url = url,
+            preset = preset?.id,
+            protocol = preset?.decision?.protocol,
+            auth = preset?.decision?.auth,
+            apiKey = apiKey.trim().ifEmpty { null },
+            backendKey = (provider as? Provider.Enable)?.key,
+        )
     }
 
     /** Where a local preset's server listens: "On this host · port 11435", or its URL's host. */
@@ -215,6 +234,24 @@ object DecisionSetup {
         }
         return candidate
     }
+
+    /** Why [raw] cannot be a decision endpoint, or null for an http(s) URL with a host. */
+    fun urlError(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return "Enter the server's URL."
+        val uri = runCatching { URI(trimmed) }.getOrNull()
+        val http = uri?.scheme?.lowercase(Locale.ROOT) in setOf("http", "https")
+        return if (http && !authorityHost(uri).isNullOrEmpty()) null
+        else "Enter a full URL, such as http://127.0.0.1:8080/v1/systemone."
+    }
+
+    /**
+     * The host a URL names. [URI.getHost] is null for a name outside the
+     * strict hostname grammar (an underscore, say), so the authority is read
+     * without its user info and port.
+     */
+    private fun authorityHost(uri: URI?): String? = uri?.host
+        ?: uri?.rawAuthority?.substringAfterLast('@')?.substringBefore(':')
 
     /** The URL a preset fills in, or why it cannot yet. */
     sealed interface FilledUrl {
@@ -302,6 +339,10 @@ object DecisionSetup {
      * The TypeSafe key's state: the assigned TypeSafe model's `hasApiKey` is
      * the gateway's own word, ahead of the credential list.
      */
+    /** Whether the credential list names a TypeSafe key, in its file or the gateway's environment. */
+    fun typesafeKeyListed(entries: List<ModelCredentialEntry>): Boolean =
+        entries.firstOrNull { it.fileKey == TYPESAFE_KEY }?.let { it.configured || it.environment } ?: false
+
     fun typesafeKeyFor(overview: ModelsOverview, fromCredentials: KeyState): KeyState {
         val assigned = assignment(overview)?.takeIf { it.kind == "typesafe" }
         return if (assigned?.hasApiKey == true) KeyState.Stored else fromCredentials
@@ -579,9 +620,12 @@ object DecisionSetup {
         data class Done(val assignment: String, val result: DecisionVerifyResult) : VerifyState
     }
 
-    /** The answer time, or the server's reason verbatim. */
-    fun verifyText(result: DecisionVerifyResult): String = if (result.ok) {
-        val via = result.answeredBy?.takeIf { it.isNotBlank() }?.let { " by $it" }.orEmpty()
+    /**
+     * The answer time, or the server's reason verbatim. The answering model is
+     * named only when it is not [model], the one that was asked for.
+     */
+    fun verifyText(result: DecisionVerifyResult, model: String): String = if (result.ok) {
+        val via = result.answeredBy?.takeIf { it.isNotBlank() && it != model }?.let { " by $it" }.orEmpty()
         result.latencyMs?.let { "Answered$via in $it ms." } ?: "Answered$via."
     } else {
         result.reason?.takeIf { it.isNotBlank() } ?: "The model did not answer."

@@ -256,4 +256,15 @@ class DecisionSetupViewModelTest {
         vm.opened()
         assertEquals(KeyState.Stored, vm.state.value.typesafeKey)
     }
+
+    @Test fun a_typesafe_key_in_the_gateway_environment_counts_as_stored() = runTest {
+        val vm = viewModel()
+        gateway.credentials = listOf(ModelCredentialEntry(fileKey = "typesafe"))
+        vm.opened()
+        assertEquals(KeyState.Missing, vm.state.value.typesafeKey)
+
+        gateway.credentials = listOf(ModelCredentialEntry(fileKey = "typesafe", environment = true))
+        vm.opened()
+        assertEquals(KeyState.Stored, vm.state.value.typesafeKey)
+    }
 }

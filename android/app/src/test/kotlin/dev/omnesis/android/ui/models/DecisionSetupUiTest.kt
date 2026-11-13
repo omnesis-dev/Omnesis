@@ -4,10 +4,12 @@
 package dev.omnesis.android.ui.models
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
+import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.ui.models.DecisionSetup.SaveRequest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -105,5 +107,54 @@ class DecisionSetupUiTest {
         assertEquals(null, save.config.apiKey)
         assertEquals(null, save.config.type)
         assertEquals("https://api.fireworks.ai/inference/v1/systemone", save.config.decision?.url)
+    }
+
+    @Test fun adding_decisions_to_a_local_backend_lists_its_models_with_the_backends_key() {
+        val sample = sampleDecisionOverview()
+        val ollama = BackendStatus(type = "http", status = "ok", url = "http://127.0.0.1:11434", hasApiKey = true, preset = "ollama")
+        val overview = sample.copy(inference = sample.inference.copy(backends = sample.inference.backends + ("ollama" to ollama)))
+        val enable = DecisionSetup.providerGroups(overview).yours
+            .filterIsInstance<DecisionSetup.Provider.Enable>().single { it.key == "ollama" }
+        val probes = mutableListOf<ProbeTarget>()
+        compose.setContent {
+            OmnesisTheme(darkTheme = false) {
+                DecisionSetupContent(
+                    cap = overview.capabilities.first { it.role == "decision" },
+                    overview = overview,
+                    ui = DecisionUiState(),
+                    actions = DecisionActions(onProbe = { probes += it }),
+                    previewStep = DecisionStep.Form,
+                    previewProvider = enable,
+                    previewForm = DecisionFormValues(name = "ollama", url = enable.decision.url),
+                )
+            }
+        }
+        compose.waitForIdle()
+        val body = (probes.single() as ProbeTarget.Unsaved).body
+        assertEquals(enable.decision.url, body.url)
+        assertEquals("ollama", body.backendKey)
+        assertEquals(null, body.apiKey)
+        compose.onNodeWithText("List the server's models").assertIsDisplayed()
+    }
+
+    @Test fun a_url_without_a_host_cannot_be_saved() {
+        val overview = sampleDecisionOverview()
+        val saves = mutableListOf<SaveRequest>()
+        compose.setContent {
+            OmnesisTheme(darkTheme = false) {
+                DecisionSetupContent(
+                    cap = overview.capabilities.first { it.role == "decision" },
+                    overview = overview,
+                    ui = DecisionUiState(),
+                    actions = DecisionActions(onSave = { request, _ -> saves += request }),
+                    previewStep = DecisionStep.Form,
+                    previewProvider = DecisionSetup.Provider.Custom,
+                    previewForm = DecisionFormValues(name = "my-decider", url = "http://", model = "kev"),
+                )
+            }
+        }
+        compose.onNodeWithText("Enter a full URL, such as http://127.0.0.1:8080/v1/systemone.").assertIsDisplayed()
+        compose.onNodeWithText("Save and verify").assertIsNotEnabled().performClick()
+        assertTrue(saves.isEmpty())
     }
 }

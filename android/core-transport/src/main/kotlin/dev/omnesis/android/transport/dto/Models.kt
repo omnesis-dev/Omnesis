@@ -553,8 +553,9 @@ data class CapabilityVerdict(
  * One row of `GET /admin/model-credentials` — a model-provider credential entry.
  * Mirrors `ModelCredentialEntry` in `packages/gateway/src/model-credentials.ts`:
  * the stable `fileKey`, the provider's type/name, the field spec the form
- * renders, and whether credentials are currently configured. No secret value is
- * ever included — only `configured`.
+ * renders, and whether credentials are configured: `configured` for the stored
+ * file, `environment` for the gateway's environment variables. No secret value
+ * is ever included.
  */
 @Serializable
 data class ModelCredentialEntry(
@@ -563,6 +564,7 @@ data class ModelCredentialEntry(
     val providerName: String = "",
     val spec: CredentialSpec = CredentialSpec(),
     val configured: Boolean = false,
+    val environment: Boolean = false,
 )
 
 /**
