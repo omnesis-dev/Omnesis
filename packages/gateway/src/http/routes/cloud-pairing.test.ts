@@ -1057,6 +1057,7 @@ function enrollmentServer(options: { trusted: boolean; spki?: string | undefined
     type: "google",
     id: "fictional-sign-in",
     trusted: options.trusted,
+    channel: "web-google",
     pin: { id: "fictional-sign-in" } as VerifiedSignIn["pin"],
   };
   const enrollment: GatewayEnrollment = {

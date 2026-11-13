@@ -11,6 +11,8 @@ import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
 import { GatewaySignInVerifier } from "./gateway-sign-in-proof.js";
+import { OFFICIAL_ANDROID_PASSKEY_ORIGINS } from "./google-browser-trust.js";
+import { hostedGatewayHostname } from "./hosted-name.js";
 import { accountId as identityDigest, googleIdentityProvider } from "./identity.js";
 import {
   googleProofNonce,
@@ -511,6 +513,7 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
     type: "google" as const,
     id: "b".repeat(64),
     trusted: false,
+    channel: "web-google" as const,
     pin: { type: "google" as const, id: "b".repeat(64), addedAt: 1 },
   };
   expect(await enrollment.canTrust(google)).toBe(true);
@@ -666,6 +669,7 @@ test("refresh drops pins the account no longer lists and never adds one", async 
       type: "google",
       id: google,
       trusted: false,
+      channel: "web-google" as const,
       pin: { type: "google", id: google, addedAt: 1 },
     },
     "approval",
@@ -773,7 +777,13 @@ async function endorsing() {
   });
   const google = googleDigest();
   await manager.trustSignIn(
-    { type: "google", id: google, trusted: false, pin: { type: "google", id: google, addedAt: 1 } },
+    {
+      type: "google",
+      id: google,
+      trusted: false,
+      channel: "web-google" as const,
+      pin: { type: "google", id: google, addedAt: 1 },
+    },
     "link-page",
   );
   return {
@@ -956,7 +966,13 @@ test("removing a pin declines it whatever pinned it, a passkey and a Google acco
   };
   f.credentials.mockResolvedValue({ google: [f.google, other], passkeys: [listed] });
   await f.manager.trustSignIn(
-    { type: "google", id: other, trusted: false, pin: { type: "google", id: other, addedAt: 1 } },
+    {
+      type: "google",
+      id: other,
+      trusted: false,
+      channel: "web-google" as const,
+      pin: { type: "google", id: other, addedAt: 1 },
+    },
     "approval",
   );
   // Pinned by approving a device, before any refresh could have pinned it on the vouching.
@@ -965,6 +981,7 @@ test("removing a pin declines it whatever pinned it, a passkey and a Google acco
       type: "passkey",
       id: approved.id,
       trusted: false,
+      channel: "relay-page" as const,
       pin: { type: "passkey", id: approved.id, publicKey: approved.publicKey, addedAt: 1 },
     },
     "approval",
@@ -994,6 +1011,7 @@ test("removing a pin declines it whatever pinned it, a passkey and a Google acco
       type: "passkey",
       id: approved.id,
       trusted: false,
+      channel: "relay-page" as const,
       pin: { type: "passkey", id: approved.id, publicKey: approved.publicKey, addedAt: 1 },
     },
     "approval",
@@ -1130,7 +1148,13 @@ test("endorsed passkeys never take a gateway past 32 pinned sign-ins", async () 
   const others = Array.from({ length: 31 }, (_, index) => index.toString(16).padStart(64, "0"));
   for (const id of others)
     await f.manager.trustSignIn(
-      { type: "google", id, trusted: false, pin: { type: "google", id, addedAt: 1 } },
+      {
+        type: "google",
+        id,
+        trusted: false,
+        channel: "web-google" as const,
+        pin: { type: "google", id, addedAt: 1 },
+      },
       "approval",
     );
   expect(f.pins()).toHaveLength(32);
@@ -1202,6 +1226,7 @@ test("a sign-in with a passkey added moments ago fetches its vouching first, and
   expect(await enrollment.verifyProof(stranger, vouchedNonce(listed[0]!))).toMatchObject({
     type: "google",
     trusted: false,
+    channel: "web-google" as const,
   });
   expect(f.credentials).toHaveBeenCalledTimes(4);
 });
@@ -1952,4 +1977,122 @@ test("forgetting a deleted account leaves the gateway as if it never had one, wi
   expect(await f.link()).toMatchObject({ redirectUrl: gatewayOrigin + "/portal/settings/account" });
   expect(f.manager.status()).toMatchObject({ activated: true, linked: true });
   expect(f.manager.enrollmentPolicy()).toBe("ask");
+});
+
+test("the gateway derives its own origin and vouches only for its hosted name under the relay", async () => {
+  const f = await fixture();
+  const own = `https://${hostedGatewayHostname(f.gatewayId, "relay.example.test")}`;
+  // Nothing saved yet: no origin to vouch for.
+  expect(f.manager.gatewayOrigin()).toBeUndefined();
+  f.env.OMNESIS_PUBLIC_BASE_URL = own;
+  expect(f.manager.gatewayOrigin()).toBe(own);
+  f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN = `${own}:8443`;
+  expect(f.manager.gatewayOrigin()).toBe(`${own}:8443`);
+  // An origin the relay returned for this gateway that isn't its own name is never vouched for.
+  for (const chosen of [
+    origin,
+    `https://${hostedGatewayHostname(randomUUID(), "relay.example.test")}`,
+    gatewayOrigin,
+  ]) {
+    f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN = chosen;
+    expect(f.manager.gatewayOrigin()).toBeUndefined();
+  }
+});
+
+test("confirmed sign-ins belong to the link, fail closed when unreadable and go with their pin", async () => {
+  const f = await fixture();
+  expect(f.manager.confirmedSignIns()).toEqual([]);
+  await f.link();
+  const device = passkeyAuthenticator();
+  const confirmed = {
+    type: "passkey",
+    id: device.id,
+    publicKey: device.publicKey,
+    counter: 3,
+    at: 1,
+    via: "gateway-origin",
+  };
+  const saved = JSON.parse(await readFile(f.options.metadataFile, "utf8"));
+  expect(saved.confirmedSignIns).toEqual([]);
+  // An entry this version can't read (a later version's) is dropped, not trusted and not fatal.
+  await writeFile(
+    f.options.metadataFile,
+    JSON.stringify({
+      ...saved,
+      confirmedSignIns: [confirmed, { ...confirmed, id: "later", via: "later-way" }, "garbage"],
+    }) + "\n",
+    { mode: 0o600 },
+  );
+  const restored = new GatewayAccountLink(f.options);
+  await restored.initialize();
+  expect(restored.status()).toMatchObject({ linked: true, lastError: undefined });
+  expect(restored.confirmedSignIns()).toEqual([confirmed]);
+  // Other changes keep it.
+  await restored.setEnrollmentPolicy("ask");
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8")).confirmedSignIns).toEqual([
+    confirmed,
+  ]);
+  // A version that predates the field drops it when it saves: nothing is confirmed then.
+  const { confirmedSignIns: _dropped, ...older } = JSON.parse(
+    await readFile(f.options.metadataFile, "utf8"),
+  );
+  await writeFile(f.options.metadataFile, JSON.stringify(older) + "\n", { mode: 0o600 });
+  const rolledBack = new GatewayAccountLink(f.options);
+  await rolledBack.initialize();
+  expect(rolledBack.confirmedSignIns()).toEqual([]);
+  // Removing the sign-in removes its confirmation too.
+  await writeFile(
+    f.options.metadataFile,
+    JSON.stringify({ ...older, confirmedSignIns: [confirmed] }) + "\n",
+    { mode: 0o600 },
+  );
+  const removing = new GatewayAccountLink(f.options);
+  await removing.initialize();
+  await removing.removeTrustedSignIn(device.id);
+  expect(removing.confirmedSignIns()).toEqual([]);
+  // A new link is confirmed afresh, and an unlinked gateway has none.
+  await writeFile(
+    f.options.metadataFile,
+    JSON.stringify({ ...older, confirmedSignIns: [confirmed] }) + "\n",
+    { mode: 0o600 },
+  );
+  const relinking = new GatewayAccountLink(f.options);
+  await relinking.initialize();
+  expect(relinking.confirmedSignIns()).toHaveLength(1);
+  await relinking.unlink();
+  expect(relinking.confirmedSignIns()).toEqual([]);
+});
+
+test("the official Android app's passkey origins are compiled in", async () => {
+  const f = await fixture();
+  const device = passkeyAuthenticator();
+  f.browser.redeem.mockImplementationOnce(((pending: AccountBrowserPending) =>
+    Promise.resolve({
+      identityToken: "verified-role-proof",
+      identity: { issuer: origin + "/_relay/account", subject: f.accountId, expiresAt: 1 },
+      signInProof: registrationProof(device, linkNonce(pending.nonce)),
+    })) as never);
+  await f.link();
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  for (const app of OFFICIAL_ANDROID_PASSKEY_ORIGINS) {
+    const nonce = opaque();
+    expect(await enrollment.verifyProof(assertionProof(device, nonce, app), nonce)).toMatchObject({
+      id: device.id,
+      trusted: true,
+      channel: "android-app",
+    });
+  }
+  // An app origin that is neither compiled in nor configured locally is refused.
+  const nonce = opaque();
+  const unknown = `android:apk-key-hash:${opaque()}`;
+  expect(await enrollment.verifyProof(assertionProof(device, nonce, unknown), nonce)).toBe(
+    undefined,
+  );
+  f.env.OMNESIS_CLOUD_RELAY_PASSKEY_ANDROID_ORIGINS = `${unknown}, not-an-origin`;
+  expect(await enrollment.verifyProof(assertionProof(device, nonce, unknown), nonce)).toMatchObject(
+    { channel: "android-app" },
+  );
+  expect(await enrollment.verifyProof(assertionProof(device, nonce), nonce)).toMatchObject({
+    channel: "relay-page",
+  });
 });
