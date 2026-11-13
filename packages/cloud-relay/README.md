@@ -138,6 +138,7 @@ it, in one transaction, and closes those gateways' tunnels. What each table keep
 | `omnesis_account_sessions`                                 | Every session of the account is deleted                         |
 | `omnesis_federated_credentials`, `omnesis_google_aliases`  | Its Google sign-in and that sign-in's aliases are deleted       |
 | `omnesis_passkeys`, `omnesis_passkey_endorsements`         | Its passkeys and the sign-ins that vouched for them are deleted |
+| `omnesis_passkey_countersignatures`                        | Each passkey's countersignature of the account is deleted       |
 | `omnesis_gateway_links`, `omnesis_account_admissions`      | Rows of the account and of each of its gateways are deleted     |
 | `relay_accounts`, `relay_gateway_bindings`                 | Each gateway's owner row and binding are deleted                |
 | `relay_gateway_recovery`                                   | Each gateway's recovery receipt is deleted                      |
@@ -179,8 +180,10 @@ app". A passkey's public key arrives with the request, so the gateway trusts a
 passkey on approval only when the relay's credential list for the linked account
 holds that id with that key, and drops a pin whose listed key changes. A passkey
 added to an account later is stored only once a sign-in the account already has
-vouches for it; gateways verify that proof themselves and then trust the passkey
-without an approval (`docs/device-enrollment.md`, Passkeys added later). Gateways
+vouches for it, and the new passkey itself countersigns the sign-ins the account
+already had; gateways verify both themselves, so a gateway that trusts either
+side comes to trust the other without an approval
+(`docs/device-enrollment.md`, Passkeys added later). Gateways
 that do not trust the relay with joining devices keep the default `ask` policy.
 
 Account services require `OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN` to name the public

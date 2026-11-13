@@ -6,9 +6,12 @@ import { decodeJwt } from "jose";
 import { z } from "zod";
 import {
   googleProofNonce,
+  passkeyCountersignatureNonce,
+  passkeyCountersignatureSchema,
   passkeyEndorsementNonce,
   passkeyProofChallenge,
   signInProofSchema,
+  type CountersignedSignIns,
   type SignInProof,
 } from "./device-enrollment.js";
 import { bindingOrigin } from "./gateway-binding.js";
@@ -21,8 +24,10 @@ const FUTURE_TOLERANCE_SECONDS = 60;
 /**
  * Where a pin came from. A relay-hosted page (`link-page`, and `approval` of a sign-in made on one)
  * is only as trustworthy as the relay; a sign-in made in a native app (`native-app`) committed to
- * a nonce the device computed itself. An `endorsed` passkey was added to the account later and
- * vouched for by a sign-in this gateway already trusted.
+ * a nonce the device computed itself. An `endorsed` sign-in was confirmed by one this gateway
+ * already trusted: a passkey added to the account later that a trusted sign-in vouched for, or a
+ * sign-in the account already had when a trusted passkey was added, which that passkey
+ * countersigned.
  */
 export const trustedSignInSourceSchema = z.enum([
   "link-page",
@@ -137,6 +142,47 @@ export class GatewaySignInVerifier {
       return verified?.trusted === true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * The sign-ins `signer` countersigned for `accountId` when it was added, provided `signer` is
+   * pinned here with that very key; otherwise nothing. Only the passkey's own signature can say
+   * this: a sign-in that vouched for the passkey (an endorsement) says nothing about itself,
+   * because anyone with any Google account or passkey can make one naming a passkey they saw
+   * listed. Like an endorsement it is checked as of when it was made: the passkey's key does not
+   * expire and nobody can retire it.
+   */
+  async verifyCountersignature(
+    input: unknown,
+    signer: { id: string; publicKey: string },
+    accountId: string,
+    trusted: readonly TrustedSignIn[],
+  ): Promise<CountersignedSignIns | undefined> {
+    const parsed = passkeyCountersignatureSchema.safeParse(input);
+    if (
+      !parsed.success ||
+      parsed.data.proof.credential.id !== signer.id ||
+      !trusted.some(
+        (value) =>
+          value.type === "passkey" &&
+          value.id === signer.id &&
+          value.publicKey === signer.publicKey,
+      )
+    )
+      return undefined;
+    const { proof, ...signIns } = parsed.data;
+    try {
+      const verified = await this.passkey(
+        proof,
+        passkeyCountersignatureNonce(accountId, signIns),
+        undefined,
+        trusted,
+        true,
+      );
+      return verified?.trusted ? signIns : undefined;
+    } catch {
+      return undefined;
     }
   }
 

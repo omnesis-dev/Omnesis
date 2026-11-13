@@ -22,6 +22,7 @@ import { EnrollmentChallenges } from "./enrollment-challenges.js";
 import {
   GatewaySignInVerifier,
   trustedSignInSchema,
+  type SignInPin,
   type TrustedSignIn,
   type TrustedSignInSource,
   type VerifiedSignIn,
@@ -53,6 +54,11 @@ const recordSchema = z.discriminatedUnion("linked", [
        * again; only approving a device with that passkey does.
        */
       declinedPasskeys: z.array(z.string().max(2048)).max(MAX_DECLINED_PASSKEYS).default([]),
+      /**
+       * Google pins the owner removed on this gateway. A passkey's countersignature never pins
+       * these again; only approving a device that signed in with that Google account does.
+       */
+      declinedGoogle: z.array(digest).max(MAX_DECLINED_PASSKEYS).default([]),
     })
     .strict(),
   z
@@ -203,10 +209,14 @@ export class GatewayAccountLink {
       trustSignIn: (signIn, source) => this.trustSignIn(signIn, source),
     };
   }
-  /** A passkey added moments ago may carry a vouching sign-in this gateway has not fetched yet. */
+  /**
+   * A passkey added moments ago may carry a vouching sign-in this gateway has not fetched yet, and
+   * a Google account or passkey the account had before this gateway's passkey was added may be
+   * countersigned by it. Either way the evidence is fetched and checked before the answer.
+   */
   private async verifyProof(proof: SignInProof, nonce: string, key: string | undefined) {
     const verified = await this.verifier.verify(proof, nonce, key);
-    if (!verified || verified.trusted || verified.type !== "passkey") return verified;
+    if (!verified || verified.trusted) return verified;
     await this.syncCredentials(this.abort.signal).catch(() => undefined);
     return this.verifier.verify(proof, nonce, key);
   }
@@ -248,6 +258,7 @@ export class GatewayAccountLink {
           { ...signIn.pin, source },
         ],
         declinedPasskeys: record.declinedPasskeys.filter((id) => id !== signIn.id),
+        declinedGoogle: record.declinedGoogle.filter((id) => id !== signIn.id),
       },
       this.abort.signal,
       record,
@@ -265,6 +276,10 @@ export class GatewayAccountLink {
         declinedPasskeys: [
           ...record.declinedPasskeys,
           ...removed.filter((value) => value.type === "passkey").map((value) => value.id),
+        ].slice(-MAX_DECLINED_PASSKEYS),
+        declinedGoogle: [
+          ...record.declinedGoogle,
+          ...removed.filter((value) => value.type === "google").map((value) => value.id),
         ].slice(-MAX_DECLINED_PASSKEYS),
       },
       this.abort.signal,
@@ -301,6 +316,7 @@ export class GatewayAccountLink {
         accountId: digest.parse(input.accountId),
         trustedSignIns: await this.pinFromLink(input.proof, input.nonce, input.credentialPublicKey),
         declinedPasskeys: [],
+        declinedGoogle: [],
       },
       input.signal,
     );
@@ -321,45 +337,71 @@ export class GatewayAccountLink {
   }
   /**
    * A pin the account no longer lists, or a passkey pin whose key differs from the one the account
-   * lists, is dropped. A listed passkey is pinned only when a sign-in already pinned here vouched
-   * for it, which this gateway verifies itself: the relay's list alone never adds trust.
+   * lists, is dropped. A listed sign-in is pinned only on evidence this gateway verifies itself
+   * against a sign-in already pinned here: a passkey that such a sign-in vouched for when it was
+   * added, or a sign-in that such a passkey countersigned when it was added. The relay's list
+   * alone never adds trust, and a sign-in the owner removed here is never pinned this way again.
    */
   private async syncCredentials(signal: AbortSignal): Promise<void> {
     const record = this.record;
     if (!record?.linked || !this.bound || record.trustedSignIns.length === 0) return;
     const current = await this.browser.credentials?.(signal);
     if (!current) return;
+    const listed = (passkey: { id: string; publicKey: string }) =>
+      current.passkeys.some(
+        (value) => value.id === passkey.id && value.publicKey === passkey.publicKey,
+      );
     let trusted = record.trustedSignIns.filter((value) =>
-      value.type === "google"
-        ? current.google.includes(value.id)
-        : current.passkeys.some(
-            (listed) => listed.id === value.id && listed.publicKey === value.publicKey,
-          ),
+      value.type === "google" ? current.google.includes(value.id) : listed(value),
     );
     let changed = trusted.length !== record.trustedSignIns.length;
-    // One newly pinned passkey may be what vouched for another, so repeat until nothing is added.
-    for (let added = true; added;) {
+    let added = true;
+    const open = (type: SignInPin["type"], id: string) =>
+      trusted.length < MAX_TRUSTED_SIGN_INS &&
+      !trusted.some((value) => value.id === id) &&
+      !(type === "google" ? record.declinedGoogle : record.declinedPasskeys).includes(id);
+    const pin = (signIn: SignInPin) => {
+      if (!open(signIn.type, signIn.id)) return;
+      trusted = [...trusted, { ...signIn, source: "endorsed" }];
+      added = changed = true;
+    };
+    const now = () => Math.floor(Date.now() / 1000);
+    // Each passkey's countersignature is checked once: it depends only on that passkey's pin.
+    const countersigned = new Set<string>();
+    // One newly pinned sign-in may be what vouches for or countersigns the next, so repeat until
+    // nothing is added.
+    while (added) {
       added = false;
-      for (const listed of current.passkeys) {
+      for (const passkey of current.passkeys) {
         if (
-          !listed.endorsement ||
-          trusted.length >= MAX_TRUSTED_SIGN_INS ||
-          record.declinedPasskeys.includes(listed.id) ||
-          trusted.some((value) => value.id === listed.id) ||
-          !(await this.verifier.verifyEndorsement(listed.endorsement, listed, trusted))
+          passkey.endorsement &&
+          open("passkey", passkey.id) &&
+          (await this.verifier.verifyEndorsement(passkey.endorsement, passkey, trusted))
+        )
+          pin({ type: "passkey", id: passkey.id, publicKey: passkey.publicKey, addedAt: now() });
+        if (
+          !passkey.countersignature ||
+          countersigned.has(passkey.id) ||
+          !trusted.some(
+            (value) =>
+              value.type === "passkey" &&
+              value.id === passkey.id &&
+              value.publicKey === passkey.publicKey,
+          )
         )
           continue;
-        trusted = [
-          ...trusted,
-          {
-            type: "passkey",
-            id: listed.id,
-            publicKey: listed.publicKey,
-            addedAt: Math.floor(Date.now() / 1000),
-            source: "endorsed",
-          },
-        ];
-        added = changed = true;
+        countersigned.add(passkey.id);
+        const named = await this.verifier.verifyCountersignature(
+          passkey.countersignature,
+          passkey,
+          record.accountId,
+          trusted,
+        );
+        // Only what the account still lists: a sign-in removed from it stays removed.
+        for (const google of named?.google ?? [])
+          if (current.google.includes(google)) pin({ type: "google", id: google, addedAt: now() });
+        for (const other of named?.passkeys ?? [])
+          if (listed(other)) pin({ type: "passkey", ...other, addedAt: now() });
       }
     }
     signal.throwIfAborted();
@@ -484,6 +526,7 @@ export class GatewayAccountLink {
             result.credentialPublicKey,
           ),
           declinedPasskeys: [],
+          declinedGoogle: [],
         },
         signal,
       );

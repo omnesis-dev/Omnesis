@@ -199,11 +199,13 @@ export function installAccountUI() {
             ].find(([, pattern]) => pattern.test(platform))?.[0];
       return family ? `Passkey on ${family}` : "Passkey";
     },
-    async passkey(register, createAccount = false, endorse) {
+    /** `countersign` signs with the passkey being added, which `endorse` names. */
+    async passkey(register, createAccount = false, endorse, countersign = false) {
       if (!window.PublicKeyCredential || !navigator.credentials)
         throw new Error("Passkeys unavailable");
+      const step = countersign ? "countersign" : register ? "register" : "authenticate";
       const ceremony = await ui.api(
-        `passkeys/${register ? "register" : "authenticate"}/options`,
+        `passkeys/${step}/options`,
         register ? { createAccount, label: ui.label() } : {},
         endorse,
       );
@@ -242,7 +244,7 @@ export function installAccountUI() {
         credential.response.userHandle = ui.encode(result.response.userHandle);
       }
       const done = await ui.api(
-        `passkeys/${register ? "register" : "authenticate"}/complete`,
+        `passkeys/${step}/complete`,
         { ceremonyId: ceremony.ceremonyId, credential },
         endorse,
       );
@@ -411,8 +413,9 @@ export function installAccountUI() {
           : "This device already has a passkey for your Omnesis account.";
         return ui.render();
       }
-      // The passkey exists on this device; the account keeps it once a sign-in vouches for it.
-      endorsing = { id: made.endorse, credential: made.id };
+      // The passkey exists on this device; the account keeps it once it has signed for the
+      // account's other sign-ins and one of them has vouched for it.
+      endorsing = { id: made.endorse, credential: made.id, countersigned: false };
       ui.render();
     },
     /** Stores the new passkey once a sign-in the account already had has vouched for it. */
@@ -435,6 +438,13 @@ export function installAccountUI() {
       const { id } = endorsing;
       await ui.passkey(false, false, id);
       await ui.finishEndorsement(id);
+    },
+    /** The new passkey's own signature, which lets a gateway that trusts it trust the others. */
+    async countersign() {
+      failure = "The new passkey could not be used. Try again, or cancel.";
+      await ui.passkey(false, false, endorsing.id, true);
+      endorsing.countersigned = true;
+      ui.render();
     },
     async cancelEndorsement() {
       const { id, credential } = endorsing;
@@ -814,16 +824,32 @@ export function installAccountUI() {
       ).className = "danger";
       root.append(wrapper);
     },
-    /** The second half of adding a passkey: a sign-in the account already has vouches for it. */
+    /**
+     * The rest of adding a passkey: the new passkey signs for the sign-ins the account already
+     * has, then one of those vouches for it.
+     */
     endorsement(session, parent) {
       const panel = document.createElement("div"),
         hasPasskey = session.credentials.passkeys.length > 0;
       panel.className = "confirm";
+      if (!endorsing.countersigned) {
+        panel.append(
+          ui.node("h3", "Use your new passkey once"),
+          ui.node(
+            "p",
+            "Your new passkey is ready. Use it once now, so that your gateways can tell it belongs with the sign-in methods you already have.",
+          ),
+        );
+        ui.button("Use new passkey", ui.countersign, false, panel);
+        ui.button("Cancel", ui.cancelEndorsement, true, panel);
+        parent.append(panel);
+        return;
+      }
       panel.append(
         ui.node("h3", "Confirm it's you to finish"),
         ui.node(
           "p",
-          "Your new passkey is ready. Confirm with a sign-in you already use, so that someone else using this browser can't add their own passkey. Your gateways check this confirmation and then trust the new passkey.",
+          "Now confirm with a sign-in you already use, so that someone else using this browser can't add their own passkey. Your gateways check both steps themselves before they trust a sign-in.",
         ),
       );
       if (hasPasskey) ui.button("Confirm with passkey", ui.endorse, false, panel);
@@ -991,7 +1017,8 @@ export function installAccountUI() {
     if (endorsed.length === 1) {
       // Back from Google, which either vouched for the new passkey or did not complete.
       if (!query.has("failed")) return ui.finishEndorsement(endorsed[0]);
-      endorsing = { id: endorsed[0] };
+      // The new passkey signed before the person chose Google.
+      endorsing = { id: endorsed[0], countersigned: true };
       return ui.render();
     }
     if (current.credentialsRequireSignIn) return;

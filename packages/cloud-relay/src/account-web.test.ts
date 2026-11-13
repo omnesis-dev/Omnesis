@@ -276,6 +276,74 @@ test("an account session adds a passkey once a sign-in vouches for it, and remov
   }
 });
 
+test("the new passkey countersigns through the page's routes, bound to its name and browser, and is stored with it", async () => {
+  const f = await fixture(undefined, true),
+    google = "a".repeat(64),
+    accountId = f.accounts.signInFederated("google", google);
+  const session = await f.authentication.issuePasskeySession({ accountId, version: 1 });
+  const cookie = `${f.browser}; __Host-omnesis-account=${session.token}`;
+  const added = await createPasskey(f, cookie),
+    query = `?endorse=${added.endorse}`;
+  const begin = (path = query, as = cookie) =>
+    f.post(`passkeys/countersign/options${path}`, {}, as);
+  const finish = (ceremony: { ceremonyId: string }, credential: unknown, path = query) =>
+    f.post(
+      `passkeys/countersign/complete${path}`,
+      { ceremonyId: ceremony.ceremonyId, credential },
+      cookie,
+    );
+  // It needs the waiting passkey's name and the browser that created it.
+  expect((await begin("")).status).toBe(400);
+  expect((await begin(`?desktop=${added.endorse}`)).status).toBe(400);
+  expect((await begin("?endorse=b1fba1ce-2398-4c2c-a66b-9044433d1a02")).status).toBe(403);
+  expect(
+    (await begin(query, `__Host-omnesis-account-browser=${randomBytes(32).toString("base64url")}`))
+      .status,
+  ).toBe(403);
+  expect(
+    (await f.post(`passkeys/countersign/options${query}`, { unknown: true }, cookie)).status,
+  ).toBe(400);
+  const options = await (await begin()).json();
+  expect(options.options.allowCredentials).toEqual([
+    expect.objectContaining({ id: added.authenticator.id }),
+  ]);
+  // A signature by another passkey, or for another challenge, is refused and stores nothing.
+  const other = passkeyAuthenticator();
+  expect(
+    (await finish(options, other.authentication(options.options.challenge, added.userHandle)))
+      .status,
+  ).toBe(400);
+  const retry = await (await begin()).json();
+  const signature = added.authenticator.authentication(
+    retry.options.challenge,
+    added.userHandle,
+    1,
+  );
+  expect((await finish(retry, signature, "")).status).toBe(400);
+  const signing = await (await begin()).json();
+  const signed = await finish(
+    signing,
+    added.authenticator.authentication(signing.options.challenge, added.userHandle, 2),
+  );
+  expect(await signed.json()).toEqual({ ok: true });
+  // It signs nobody in.
+  expect(hasSessionCookie(signed)).toBe(false);
+  f.passkeys.endorsements.recordProof(added.endorse, f.browser, {
+    type: "google",
+    accountId,
+    idToken: "fictional-google-token",
+    nonce: f.passkeys.endorsements.googleProofNonce(added.endorse, f.browser),
+  });
+  expect(await (await f.post(`passkeys/register/confirm${query}`, {}, cookie)).json()).toEqual({
+    id: added.authenticator.id,
+  });
+  expect(f.accounts.passkeyKeys(accountId)[0]!.countersignature).toMatchObject({
+    proof: { type: "passkey", credential: { id: added.authenticator.id } },
+    google: [google],
+    passkeys: [],
+  });
+});
+
 test("a Google sign-in vouches for a new passkey through its round trip, bound to that passkey and browser", async () => {
   const f = await fixture(undefined, true);
   const signedIn = await f.authentication.googleSignIn(

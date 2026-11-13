@@ -96,7 +96,8 @@ test("deleting an account removes every row about it and its gateways, in every 
     const digest = "a".repeat(64),
       legacy = "b".repeat(64),
       passkey = "fixture-deleted-passkey";
-    // The account its first gateway created, with Google and a vouched-for passkey.
+    // The account its first gateway created, with Google and a vouched-for passkey that
+    // countersigned the Google sign-in.
     const account = identities.signInFederated("google", digest, {
       gatewayId: first.gatewayId,
       ownerAccountId: first.owner,
@@ -115,6 +116,27 @@ test("deleting an account removes every row about it and its gateways, in every 
       undefined,
       undefined,
       { type: "google", idToken: "fixture-token", salt: "c".repeat(43) },
+      {
+        proof: {
+          type: "passkey",
+          salt: "d".repeat(43),
+          issuedAt: "1793318400",
+          credential: {
+            id: passkey,
+            rawId: passkey,
+            type: "public-key",
+            clientExtensionResults: {},
+            response: {
+              clientDataJSON: "Zml4dHVyZQ",
+              authenticatorData: "Zml4dHVyZQ",
+              signature: "Zml4dHVyZQ",
+              userHandle: "Zml4dHVyZQ",
+            },
+          },
+        },
+        google: [digest],
+        passkeys: [],
+      },
     );
     identities.registerSession(account, 1, randomUUID(), Math.floor(Date.now() / 1000) + 600);
     for (const gateway of [first, second])

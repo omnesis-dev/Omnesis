@@ -14,8 +14,11 @@ import { GatewaySignInVerifier } from "./gateway-sign-in-proof.js";
 import { accountId as identityDigest, googleIdentityProvider } from "./identity.js";
 import {
   googleProofNonce,
+  passkeyCountersignatureNonce,
   passkeyEndorsementNonce,
   passkeyProofChallenge,
+  type CountersignedSignIns,
+  type PasskeyCountersignature,
   type SignInProof,
 } from "./device-enrollment.js";
 import type { AccountBrowserPending, AccountBrowserPort } from "./account-browser-client.js";
@@ -755,6 +758,7 @@ async function endorsing() {
     saved: async () =>
       JSON.parse(await readFile(f.options.metadataFile, "utf8")) as {
         declinedPasskeys?: string[];
+        declinedGoogle?: string[];
         trustedSignIns: { id: string }[];
       },
   };
@@ -910,7 +914,7 @@ test("a passkey pin the owner removed is not pinned again by a refresh, a restar
   });
 });
 
-test("removing a passkey pin declines it whatever pinned it, and removing a Google pin declines nothing", async () => {
+test("removing a pin declines it whatever pinned it, a passkey and a Google account each in its own list", async () => {
   const f = await endorsing();
   const approved = await passkeyDevice(),
     other = "1".repeat(64);
@@ -940,9 +944,12 @@ test("removing a passkey pin declines it whatever pinned it, and removing a Goog
     [approved.id, "approval"],
   ]);
   await f.manager.removeTrustedSignIn(other);
-  expect((await f.saved()).declinedPasskeys).toEqual([]);
+  expect(await f.saved()).toMatchObject({ declinedPasskeys: [], declinedGoogle: [other] });
   await f.manager.removeTrustedSignIn(approved.id);
-  expect((await f.saved()).declinedPasskeys).toEqual([approved.id]);
+  expect(await f.saved()).toMatchObject({
+    declinedPasskeys: [approved.id],
+    declinedGoogle: [other],
+  });
   await expect(f.manager.removeTrustedSignIn(approved.id)).rejects.toMatchObject({ status: 400 });
   expect((await f.saved()).declinedPasskeys).toEqual([approved.id]);
   // The vouching the relay still lists does not bring it back.
@@ -1133,23 +1140,349 @@ test("a sign-in with a passkey added moments ago fetches its vouching first, and
   // A listed passkey nobody vouched for stays untrusted after the fetch.
   expect(await signIn(unvouched)).toMatchObject({ id: unvouched.id, trusted: false });
   expect(f.credentials).toHaveBeenCalledTimes(3);
-  // Nothing is fetched for a proof that does not verify, or for a Google sign-in.
+  // Nothing is fetched for a proof that does not verify.
   const nonce = opaque();
   expect(
     await enrollment.verifyProof(assertionProof(added.authenticator, opaque()), nonce),
   ).toBeUndefined();
+  expect(f.credentials).toHaveBeenCalledTimes(3);
+  // A Google account this gateway has not pinned is looked up too, and stays untrusted when
+  // no pinned passkey countersigned it.
   const stranger = await googleVouch(listed[0]!, "fictional-other-subject");
   expect(await enrollment.verifyProof(stranger, vouchedNonce(listed[0]!))).toMatchObject({
     type: "google",
     trusted: false,
   });
-  expect(f.credentials).toHaveBeenCalledTimes(3);
+  expect(f.credentials).toHaveBeenCalledTimes(4);
+});
+
+/** A passkey's own signature over the sign-ins its account had when it was added. */
+function countersignature(
+  by: PasskeyDevice,
+  signIns: CountersignedSignIns,
+  account = "a".repeat(64),
+): PasskeyCountersignature {
+  const proof = assertionProof(by.authenticator, passkeyCountersignatureNonce(account, signIns));
+  return {
+    proof,
+    google: [...signIns.google],
+    passkeys: signIns.passkeys.map((value) => ({ ...value })),
+  };
+}
+/** A Google sign-in for an enrollment, as a device would send it. */
+async function googleSignIn(subject: string, nonce: string): Promise<SignInProof> {
+  const salt = opaque(),
+    issuedAt = Math.floor(Date.now() / 1000);
+  const idToken = await new SignJWT({ nonce: googleProofNonce(salt, nonce) })
+    .setProtectedHeader({ alg: "RS256", kid: "1" })
+    .setIssuer("https://accounts.google.com")
+    .setAudience(AUDIENCE)
+    .setSubject(subject)
+    .setIssuedAt(issuedAt)
+    .setExpirationTime(issuedAt + 3600)
+    .sign(googleKey);
+  return { type: "google", salt, idToken };
+}
+
+/**
+ * A gateway linked by signing in with a passkey: the account was created with Google and the
+ * passkey added later, so the passkey is the only sign-in this gateway saw for itself.
+ */
+async function passkeyLinked() {
+  const f = await fixture();
+  const credentials = vi.fn<NonNullable<AccountBrowserPort["credentials"]>>();
+  const options = {
+    ...f.options,
+    browser: { ...f.browser, credentials },
+    google: () => googleIdentityProvider(AUDIENCE, googleKeys, { authorizedParties: [AUDIENCE] }),
+  };
+  const manager = new GatewayAccountLink(options);
+  await manager.initialize();
+  const passkey = await passkeyDevice(),
+    nonce = opaque();
+  await manager.completeSignup({
+    accountId: f.accountId,
+    nonce,
+    proof: assertionProof(passkey.authenticator, nonce),
+    credentialPublicKey: passkey.publicKey,
+    signal: new AbortController().signal,
+  });
+  const google = googleDigest();
+  const enrollment = manager.pairingIdentity()!.enrollment;
+  return {
+    ...f,
+    options,
+    manager,
+    credentials,
+    passkey,
+    google,
+    listedPasskey: { id: passkey.id, publicKey: passkey.publicKey },
+    pins: () => manager.enrollmentStatus().trustedSignIns.map(({ id, source }) => [id, source]),
+    saved: async () =>
+      JSON.parse(await readFile(f.options.metadataFile, "utf8")) as {
+        declinedPasskeys: string[];
+        declinedGoogle: string[];
+        trustedSignIns: { id: string; source: string }[];
+      },
+    /** A device's Google sign-in, checked as the enrollment routes check it. */
+    googleSignIn: async (subject = SUBJECT) => {
+      const nonce = opaque();
+      return enrollment.verifyProof(await googleSignIn(subject, nonce), nonce, undefined);
+    },
+  };
+}
+
+test("a gateway linked with a passkey trusts the Google account and passkeys that passkey countersigned, when the account still lists them", async () => {
+  const f = await passkeyLinked();
+  expect(f.pins()).toEqual([[f.passkey.id, "link-page"]]);
+  const older = await passkeyDevice(),
+    unsigned = await passkeyDevice();
+  const stranger = googleDigest("fictional-other-subject");
+  const olderListed = { id: older.id, publicKey: older.publicKey };
+  // Before anything is fetched, a Google sign-in is checked against what the relay lists now.
+  f.credentials.mockResolvedValue({
+    google: [f.google, stranger],
+    passkeys: [
+      {
+        ...f.listedPasskey,
+        countersignature: countersignature(f.passkey, {
+          google: [f.google],
+          passkeys: [olderListed],
+        }),
+      },
+      olderListed,
+      { id: unsigned.id, publicKey: unsigned.publicKey },
+    ],
+  });
+  expect(await f.googleSignIn()).toMatchObject({ type: "google", id: f.google, trusted: true });
+  expect(f.credentials).toHaveBeenCalledOnce();
+  expect(f.pins()).toEqual([
+    [f.passkey.id, "link-page"],
+    [f.google, "endorsed"],
+    [older.id, "endorsed"],
+  ]);
+  // The other passkey's sign-ins are trusted with the key the countersignature named.
+  const nonce = opaque();
+  expect(
+    await f.manager
+      .pairingIdentity()!
+      .enrollment.verifyProof(assertionProof(older.authenticator, nonce), nonce),
+  ).toMatchObject({ id: older.id, trusted: true });
+  // Listed is not countersigned: the other Google account and the other passkey stay untrusted.
+  expect(await f.googleSignIn("fictional-other-subject")).toMatchObject({ trusted: false });
+  expect(f.pins()).toHaveLength(3);
+  // The pins survive a restart.
+  const restored = new GatewayAccountLink(f.options);
+  await restored.initialize();
+  expect(restored.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([
+    f.passkey.id,
+    f.google,
+    older.id,
+  ]);
+
+  // A countersigned sign-in the account has since removed is dropped and not pinned again.
+  f.credentials.mockResolvedValue({
+    google: [],
+    passkeys: [
+      {
+        ...f.listedPasskey,
+        countersignature: countersignature(f.passkey, {
+          google: [f.google],
+          passkeys: [olderListed],
+        }),
+      },
+    ],
+  });
+  await f.manager.refresh();
+  expect(f.manager.status().lastError).toBeUndefined();
+  expect(f.pins()).toEqual([[f.passkey.id, "link-page"]]);
+  // Nobody removed it here, so once the account lists it again it is pinned again.
+  f.credentials.mockResolvedValue({
+    google: [f.google],
+    passkeys: [
+      {
+        ...f.listedPasskey,
+        countersignature: countersignature(f.passkey, { google: [f.google], passkeys: [] }),
+      },
+    ],
+  });
+  await f.manager.refresh();
+  expect(f.pins()).toEqual([
+    [f.passkey.id, "link-page"],
+    [f.google, "endorsed"],
+  ]);
+});
+
+test("trust follows countersignatures and endorsements in both directions, as far as the evidence goes", async () => {
+  const f = await passkeyLinked();
+  // The account: Google, then the gateway's passkey (countersigning Google), then a third passkey
+  // that Google vouched for, which countersigned an older passkey of its own.
+  const third = await passkeyDevice(),
+    fourth = await passkeyDevice();
+  const fourthListed = { id: fourth.id, publicKey: fourth.publicKey };
+  const thirdListed = { id: third.id, publicKey: third.publicKey };
+  f.credentials.mockResolvedValue({
+    google: [f.google],
+    passkeys: [
+      {
+        ...thirdListed,
+        endorsement: await googleVouch(thirdListed),
+        countersignature: countersignature(third, { google: [], passkeys: [fourthListed] }),
+      },
+      fourthListed,
+      {
+        ...f.listedPasskey,
+        countersignature: countersignature(f.passkey, { google: [f.google], passkeys: [] }),
+      },
+    ],
+  });
+  await f.manager.refresh();
+  expect(f.manager.status().lastError).toBeUndefined();
+  expect(f.pins()).toEqual([
+    [f.passkey.id, "link-page"],
+    [f.google, "endorsed"],
+    [third.id, "endorsed"],
+    [fourth.id, "endorsed"],
+  ]);
+});
+
+test("the reverse of an endorsement, the relay's list, or a countersignature it altered or moved trusts nothing", async () => {
+  const f = await passkeyLinked();
+  const other = await passkeyDevice(),
+    stranger = googleDigest("fictional-other-subject");
+  const otherListed = { id: other.id, publicKey: other.publicKey };
+  const genuine = countersignature(f.passkey, { google: [f.google], passkeys: [] });
+  const cases: NonNullable<Awaited<ReturnType<NonNullable<AccountBrowserPort["credentials"]>>>>[] =
+    [
+      // The account was created with Google, and Google vouched for this passkey when it was
+      // added. That proves only that the Google account's holder named this passkey, which anyone
+      // with any Google account can do for a passkey they saw listed: it says nothing about
+      // Google from the passkey's side.
+      {
+        google: [f.google],
+        passkeys: [{ ...f.listedPasskey, endorsement: await googleVouch(f.listedPasskey) }],
+      },
+      // The relay withholds the countersignature, or lists sign-ins with none.
+      { google: [f.google, stranger], passkeys: [f.listedPasskey, otherListed] },
+      // It adds a Google account to the signed list, or swaps one in.
+      {
+        google: [f.google, stranger],
+        passkeys: [
+          {
+            ...f.listedPasskey,
+            countersignature: { ...genuine, google: [f.google, stranger] },
+          },
+        ],
+      },
+      {
+        google: [f.google, stranger],
+        passkeys: [{ ...f.listedPasskey, countersignature: { ...genuine, google: [stranger] } }],
+      },
+      // It replays this passkey's countersignature from another account.
+      {
+        google: [f.google],
+        passkeys: [
+          {
+            ...f.listedPasskey,
+            countersignature: countersignature(
+              f.passkey,
+              { google: [f.google], passkeys: [] },
+              "b".repeat(64),
+            ),
+          },
+        ],
+      },
+      // A passkey this gateway never pinned countersigns, under its own entry or this one's.
+      {
+        google: [f.google, stranger],
+        passkeys: [
+          f.listedPasskey,
+          {
+            ...otherListed,
+            countersignature: countersignature(other, { google: [stranger], passkeys: [] }),
+          },
+        ],
+      },
+      {
+        google: [f.google, stranger],
+        passkeys: [
+          {
+            ...f.listedPasskey,
+            countersignature: countersignature(other, { google: [stranger], passkeys: [] }),
+          },
+        ],
+      },
+      // Not a countersignature at all.
+      {
+        google: [f.google],
+        passkeys: [
+          {
+            ...f.listedPasskey,
+            countersignature: { proof: genuine.proof } as unknown as PasskeyCountersignature,
+          },
+        ],
+      },
+    ];
+  for (const listed of cases) {
+    f.credentials.mockResolvedValue(listed);
+    await f.manager.refresh();
+    expect(f.manager.status().lastError).toBeUndefined();
+    expect(f.pins()).toEqual([[f.passkey.id, "link-page"]]);
+    // And a device that signs in with either Google account is held for a person.
+    expect(await f.googleSignIn()).toMatchObject({ trusted: false });
+    expect(await f.googleSignIn("fictional-other-subject")).toMatchObject({ trusted: false });
+  }
+  // The same listing with the genuine countersignature pins the Google account it names.
+  f.credentials.mockResolvedValue({
+    google: [f.google, stranger],
+    passkeys: [{ ...f.listedPasskey, countersignature: genuine }],
+  });
+  expect(await f.googleSignIn()).toMatchObject({ trusted: true });
+  expect(f.pins()).toEqual([
+    [f.passkey.id, "link-page"],
+    [f.google, "endorsed"],
+  ]);
+});
+
+test("a Google pin the owner removed is not pinned again by a countersignature, only by approving a device", async () => {
+  const f = await passkeyLinked();
+  f.credentials.mockResolvedValue({
+    google: [f.google],
+    passkeys: [
+      {
+        ...f.listedPasskey,
+        countersignature: countersignature(f.passkey, { google: [f.google], passkeys: [] }),
+      },
+    ],
+  });
+  await f.manager.refresh();
+  expect(f.pins()).toHaveLength(2);
+  await f.manager.removeTrustedSignIn(f.google);
+  expect(await f.saved()).toMatchObject({ declinedGoogle: [f.google], declinedPasskeys: [] });
+  for (let index = 0; index < 2; index++) {
+    await f.manager.refresh();
+    expect(f.pins()).toEqual([[f.passkey.id, "link-page"]]);
+  }
+  const restored = new GatewayAccountLink(f.options);
+  await restored.initialize();
+  await restored.refresh();
+  expect(restored.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([f.passkey.id]);
+  const verified = await f.googleSignIn();
+  expect(verified).toMatchObject({ type: "google", id: f.google, trusted: false });
+  // Approving a device that signed in with it is the owner's decision, and lifts the decline.
+  await f.manager.trustSignIn(verified!, "approval");
+  expect(await f.saved()).toMatchObject({
+    declinedGoogle: [],
+    trustedSignIns: [{ id: f.passkey.id }, { id: f.google, source: "approval" }],
+  });
 });
 
 test("an account link saved before declined passkeys existed still loads, and one with an unknown key does not", async () => {
   const f = await endorsing();
-  const { declinedPasskeys, ...older } = await f.saved();
+  // Nor before declined Google accounts existed.
+  const { declinedPasskeys, declinedGoogle, ...older } = await f.saved();
   expect(declinedPasskeys).toEqual([]);
+  expect(declinedGoogle).toEqual([]);
   await writeFile(f.options.metadataFile, JSON.stringify(older) + "\n", { mode: 0o600 });
   const restored = new GatewayAccountLink(f.options);
   await restored.initialize();

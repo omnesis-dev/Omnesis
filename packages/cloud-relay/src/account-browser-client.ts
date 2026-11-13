@@ -27,7 +27,12 @@ import {
   AccountEnrollmentVerifier,
   AccountGatewayLinkVerifier,
 } from "./account-enrollment-proof.js";
-import { signInProofSchema, type SignInProof } from "./device-enrollment.js";
+import {
+  passkeyCountersignatureSchema,
+  signInProofSchema,
+  type PasskeyCountersignature,
+  type SignInProof,
+} from "./device-enrollment.js";
 import { bindingOrigin } from "./gateway-binding.js";
 import {
   gatewayBrowserCallback,
@@ -105,7 +110,12 @@ export interface AccountBrowserPort {
   credentials?(signal?: AbortSignal): Promise<
     | {
         google: string[];
-        passkeys: Array<{ id: string; publicKey: string; endorsement?: SignInProof }>;
+        passkeys: Array<{
+          id: string;
+          publicKey: string;
+          endorsement?: SignInProof;
+          countersignature?: PasskeyCountersignature;
+        }>;
       }
     | undefined
   >;
@@ -344,7 +354,10 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
     };
   }
 
-  /** The account's current sign-ins, used only to drop pins the owner has since removed. */
+  /**
+   * The account's current sign-ins, with the evidence each passkey carries. A gateway drops pins
+   * the account no longer lists and pins only what that evidence proves to it.
+   */
   async credentials(callerSignal?: AbortSignal) {
     const signal = this.signal(callerSignal),
       env = this.environment();
@@ -373,6 +386,7 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
                 id: z.string().max(2048),
                 publicKey: z.string().max(4096),
                 endorsement: signInProofSchema.optional(),
+                countersignature: passkeyCountersignatureSchema.optional(),
               })
               .strict(),
           )

@@ -6,6 +6,8 @@ import Database from "better-sqlite3";
 import { expect, test } from "vitest";
 import { testPasskeyAuthorization } from "../test/account-admission.js";
 import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
+import { passkeyCountersignatureNonce, passkeyProofChallenge } from "./device-enrollment.js";
+import { GatewaySignInVerifier } from "./gateway-sign-in-proof.js";
 import { OmnesisAccounts } from "./omnesis-accounts.js";
 import { Passkeys } from "./passkeys.js";
 
@@ -176,6 +178,136 @@ test("a passkey added to an existing account is held until a sign-in the account
     expect(() => service.endorsements.describe(waiting.endorse, waiting.cookie)).toThrow(
       "no longer waiting",
     );
+  } finally {
+    db.close();
+  }
+});
+
+test("the passkey being added countersigns the account's other sign-ins with its own key, and nothing else can", async () => {
+  const db = new Database(":memory:");
+  try {
+    const accounts = new OmnesisAccounts(db),
+      service = new Passkeys(accounts, { origin });
+    const google = "a".repeat(64),
+      accountId = accounts.signInFederated("google", google),
+      account = { accountId, version: 1 };
+    // A passkey added before countersignatures existed is stored without one.
+    const first = await park(service, accounts, account, "Passkey 1");
+    vouchWithGoogle(service, first, account);
+    expect(accounts.passkeyKeys(accountId)[0]).not.toHaveProperty("countersignature");
+    const firstKey = accounts.passkeyKeys(accountId)[0]!.publicKey;
+    const second = await park(service, accounts, account, "Passkey 2");
+    expect(service.endorsements.describe(second.endorse, second.cookie)).toMatchObject({
+      needsCountersignature: true,
+    });
+    // It commits to the sign-ins the account had when the passkey was created.
+    const { commitment } = service.endorsements.countersigning(second.endorse, second.cookie);
+    const signIns = {
+      google: [google],
+      passkeys: [{ id: first.authenticator.id, publicKey: firstKey }],
+    };
+    expect(commitment.nonce).toBe(passkeyCountersignatureNonce(accountId, signIns));
+    const handle = second.begin.options.user.id;
+    const ceremony = () =>
+      service.beginCountersignature(second.binding, second.endorse, second.cookie);
+    const begin = await ceremony();
+    // Only the new passkey is offered, and the challenge is the commitment a gateway recomputes.
+    expect(begin.options.allowCredentials).toEqual([
+      expect.objectContaining({ id: second.authenticator.id }),
+    ]);
+    expect(begin.options.challenge).toBe(
+      passkeyProofChallenge(commitment.salt, commitment.issuedAt, commitment.nonce),
+    );
+    const finish = (
+      ceremonyId: string,
+      response: unknown,
+      binding = second.binding,
+      endorse = second.endorse,
+      cookie = second.cookie,
+    ) => service.finishCountersignature(ceremonyId, binding, endorse, cookie, response);
+    // The account's other passkey can't sign in the new one's place, even for the right challenge.
+    await expect(
+      finish(begin.ceremonyId, first.authenticator.authentication(begin.options.challenge, handle)),
+    ).rejects.toThrow("did not sign");
+    for (const attempt of [
+      // A signature over anything else.
+      async (id: string) => finish(id, second.authenticator.authentication("d3Jvbmc", handle, 1)),
+      // Another account's user handle.
+      async (id: string, challenge: string) =>
+        finish(
+          id,
+          second.authenticator.authentication(
+            challenge,
+            Buffer.alloc(32, 7).toString("base64url"),
+            1,
+          ),
+        ),
+      // Another browser, or the passkey waiting under another name.
+      async (id: string, challenge: string) =>
+        finish(id, second.authenticator.authentication(challenge, handle, 1), browser()),
+      async (id: string, challenge: string) =>
+        finish(
+          id,
+          second.authenticator.authentication(challenge, handle, 1),
+          second.binding,
+          first.endorse,
+        ),
+    ]) {
+      const attemptBegin = await ceremony();
+      await expect(
+        attempt(attemptBegin.ceremonyId, attemptBegin.options.challenge),
+      ).rejects.toThrow(/did not sign|unavailable/);
+    }
+    expect(service.endorsements.describe(second.endorse, second.cookie)).toMatchObject({
+      needsCountersignature: true,
+    });
+    // The new passkey's own signature is kept, and the ceremony can't be used twice.
+    const signing = await ceremony(),
+      signature = second.authenticator.authentication(signing.options.challenge, handle, 5);
+    await finish(signing.ceremonyId, signature);
+    await expect(finish(signing.ceremonyId, signature)).rejects.toThrow("unavailable");
+    expect(service.endorsements.describe(second.endorse, second.cookie)).toMatchObject({
+      needsCountersignature: false,
+      needsProof: true,
+    });
+    vouchWithGoogle(service, second, account);
+    const stored = accounts
+      .passkeyKeys(accountId)
+      .find((key) => key.id === second.authenticator.id)!;
+    expect(stored.countersignature).toEqual({
+      proof: {
+        type: "passkey",
+        salt: commitment.salt,
+        issuedAt: commitment.issuedAt,
+        credential: signature,
+      },
+      ...signIns,
+    });
+    // It reached counter 5, so the stored passkey starts from there.
+    expect(accounts.passkey(second.authenticator.id)!.credential.counter).toBe(5);
+    // A gateway that pinned the new passkey verifies it, and learns the account's other sign-ins.
+    const verifier = new GatewaySignInVerifier({
+      google: () => undefined,
+      relayOrigin: () => origin,
+      passkeyOrigins: () => [],
+      trusted: () => [],
+    });
+    const pin = {
+      type: "passkey" as const,
+      id: stored.id,
+      publicKey: stored.publicKey,
+      addedAt: 1,
+      source: "link-page" as const,
+    };
+    expect(
+      await verifier.verifyCountersignature(stored.countersignature, stored, accountId, [pin]),
+    ).toEqual(signIns);
+    // Removing the passkey removes its countersignature with it.
+    accounts.removePasskey(accountId, second.authenticator.id, ["google"], account.version);
+    expect(
+      db.prepare("SELECT count(*) AS count FROM omnesis_passkey_countersignatures").get(),
+    ).toEqual({ count: 0 });
+    service.close();
   } finally {
     db.close();
   }

@@ -34,7 +34,7 @@ const SIGN_IN_SOURCES: Record<string, string> = {
   "link-page": "signed in on the Omnesis account page",
   approval: "signed in on the Omnesis account page, trusted when a device was approved",
   "native-app": "signed in in the app, trusted when a device was approved",
-  endorsed: "passkey added to the account, confirmed by a sign-in trusted here",
+  endorsed: "confirmed for the account by a sign-in trusted here",
 };
 
 /** One line per trusted sign-in. The id is what `omnesis cloud remove-sign-in` takes. */
