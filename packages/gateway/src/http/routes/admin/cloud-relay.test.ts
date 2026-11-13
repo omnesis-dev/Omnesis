@@ -10,6 +10,13 @@ import { HttpError, errorResponse } from "../../errors.js";
 import { mountCloudRelayManagementRoutes } from "./cloud-relay.js";
 import type { AppEnv, AuthContext } from "../types.js";
 import type { CloudRelayManagement, CloudRelayManagementStatus } from "@omnesis/cloud-relay";
+// Which sockets the relay tunnel dialled is the tunnel client's own record; it is tested there.
+const tunnelSockets = vi.hoisted(() => new Set<string>());
+vi.mock("@omnesis/cloud-relay", async (original) => ({
+  ...(await original<typeof import("@omnesis/cloud-relay")>()),
+  isRelayTunnelPeer: (peer: { remoteAddress?: string; remotePort?: number }) =>
+    tunnelSockets.has(`${peer.remoteAddress}|${peer.remotePort}`),
+}));
 const status: CloudRelayManagementStatus = {
   revision: 1,
   enabled: false,
@@ -422,4 +429,63 @@ test("reading the status lets the service ask its relay about signup first, and 
   service.refreshSignupAccess = vi.fn(async () => {});
   expect((await app().request("/admin/cloud-relay")).status).toBe(404);
   expect(service.refreshSignupAccess).not.toHaveBeenCalled();
+});
+
+test("a certificate incident is acknowledged only by an admin request that didn't come through the relay", async () => {
+  const held = {
+    ...status,
+    incidentHold: { since: "2028-01-02T00:00:00.000Z", certificates: ["e".repeat(64)] },
+  };
+  const acknowledgeIncidentHold = vi.fn().mockResolvedValue(status);
+  service = { ...service, acknowledgeIncidentHold, status: vi.fn().mockResolvedValue(held) };
+  const router = app();
+  const socket = (remotePort: number) => ({
+    incoming: { socket: { remoteAddress: "127.0.0.1", remotePort } },
+  });
+  tunnelSockets.add("127.0.0.1|40300");
+  try {
+    // Through the tunnel, with or without the relay's own marker, an admin token is not enough.
+    for (const [headers, env] of [
+      [{}, socket(40300)],
+      [{ "x-omnesis-cloud-relay": "1" }, socket(40301)],
+    ] as const) {
+      const refused = await router.request(
+        "/admin/cloud-relay/incidents/ack",
+        post({}, headers),
+        env,
+      );
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({ code: "local-request-required" });
+    }
+    expect(acknowledgeIncidentHold).not.toHaveBeenCalled();
+    expect(await (await router.request("/admin/cloud-relay")).json()).toMatchObject({
+      incidentHold: held.incidentHold,
+    });
+    // The CLI on the gateway host.
+    const local = await router.request("/admin/cloud-relay/incidents/ack", post(), socket(40302));
+    expect(local.status).toBe(200);
+    expect(await local.json()).toEqual(status);
+    expect(acknowledgeIncidentHold).toHaveBeenCalledOnce();
+  } finally {
+    tunnelSockets.clear();
+  }
+  // Admin only, a body of nothing, and unavailable without account support.
+  expect(
+    (
+      await app({ ...bearer, scopes: [SCOPE_READ] }).request(
+        "/admin/cloud-relay/incidents/ack",
+        post(),
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (await router.request("/admin/cloud-relay/incidents/ack", post({ force: true }))).status,
+  ).toBe(400);
+  delete service.acknowledgeIncidentHold;
+  const unavailable = await app().request("/admin/cloud-relay/incidents/ack", post());
+  expect(unavailable.status).toBe(503);
+  expect(await unavailable.json()).toMatchObject({ code: "account-unavailable" });
+  // Without the opt-in the route doesn't exist.
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
+  expect((await app().request("/admin/cloud-relay/incidents/ack", post())).status).toBe(404);
 });

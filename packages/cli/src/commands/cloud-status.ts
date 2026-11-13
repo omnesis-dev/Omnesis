@@ -76,6 +76,23 @@ export function trustedSignInLines(status: CloudStatus): string[] {
   });
 }
 
+/** The incident hold and each certificate behind it, as `omnesis cloud incidents list` prints them. */
+export function incidentLines(status: CloudStatus): string[] {
+  const hold = status.incidentHold;
+  const incidents = status.certificateMonitor?.incidents ?? [];
+  return [
+    ...(hold
+      ? [
+          `New devices are held for approval since ${iso(hold.since)}: ${hold.certificates?.length ?? 0} unexpected certificates. Run \`omnesis cloud incidents ack\` on the gateway host once you have looked into them.`,
+        ]
+      : []),
+    ...incidents.map(
+      (incident) =>
+        `name ${plain(incident.hostname)}, public key ${plain(incident.spkiFingerprint)}, certificate ${plain(incident.certificateFingerprint)}, issuer ${plain(incident.issuer)}, serial ${plain(incident.serial)}, valid ${iso(incident.validFrom)} to ${iso(incident.validTo)}, seen ${iso(incident.observedAt)}, log entry ${plain(incident.providerEntryId)}${hold?.certificates?.includes(incident.certificateFingerprint) ? ", holding new devices" : ""}`,
+    ),
+  ];
+}
+
 /** Every error code the gateway reports, with where it came from. */
 function errors(status: CloudStatus): string[] {
   const reported: [string, unknown][] = [
@@ -96,6 +113,7 @@ function errors(status: CloudStatus): string[] {
   if (status.certificate?.state === "expiring") codes.push("certificate-expiring (certificate)");
   if ((status.certificateMonitor?.incidents?.length ?? 0) > 0)
     codes.push("unexpected-certificate (certificate monitor)");
+  if (status.incidentHold) codes.push("incident-hold (new devices)");
   return codes;
 }
 
@@ -146,6 +164,14 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
           ? "unlinked here, account not updated yet"
           : "not linked",
     ],
+    ...(status.incidentHold
+      ? [
+          [
+            "Incident hold",
+            `since ${iso(status.incidentHold.since)}: every new device waits for approval until \`omnesis cloud incidents ack\` on the gateway host`,
+          ] as [string, string],
+        ]
+      : []),
     [
       "New devices",
       status.deviceEnrollment?.policy === "ask"

@@ -559,11 +559,18 @@ function PolicyChoices({ name, value, disabled, onChange }) {
   </div>`;
 }
 
-function NewDevices({ enrollment, busy, run }) {
-  const disabled = Boolean(busy) && busy !== "refresh";
+function NewDevices({ enrollment, held, busy, run }) {
+  // While a certificate incident holds the gateway, the choice can't take effect, so it waits.
+  const disabled = held || (Boolean(busy) && busy !== "refresh");
   return html`<section class="relay-section" aria-labelledby="relay-new-devices-title">
     <h3 class="relay-section-title" id="relay-new-devices-title">New devices</h3>
     <p class="relay-hint">What happens when a new device signs in to your Omnesis account.</p>
+    ${
+      held &&
+      html`<p class="relay-hint">
+        Every new device waits for your approval until the certificate problem above is dealt with.
+      </p>`
+    }
     <${PolicyChoices}
       name="relay-policy"
       value=${enrollment.policy}
@@ -631,6 +638,14 @@ export function RelayView() {
     }
     ${established && html`<${AccountSection} status=${status} busy=${busy} run=${run} />`}
     ${established && html`<${RemoteAccess} status=${status} busy=${busy} run=${run} />`}
-    ${enrollment && html`<${NewDevices} enrollment=${enrollment} busy=${busy} run=${run} />`}
+    ${
+      enrollment &&
+      html`<${NewDevices}
+        enrollment=${enrollment}
+        held=${Boolean(status.incidentHold)}
+        busy=${busy}
+        run=${run}
+      />`
+    }
   </div>`;
 }

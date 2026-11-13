@@ -124,6 +124,7 @@ import { RealtimeService } from "./realtime/service.js";
 import { mountRealtimeRoutes } from "./realtime/route.js";
 import { lookupToken, listDeviceIdsWithActiveScope } from "./data/repositories/TokenRepository.js";
 import { PairingNotifier } from "./push/pairing-notifier.js";
+import { CertificateIncidentNotifier } from "./push/certificate-incident-notifier.js";
 import { WsEventHandler } from "./http/services/WsEventHandler.js";
 import { FleetUpdateService } from "./http/services/FleetUpdateService.js";
 import { HostFleetUpdateService } from "./http/services/HostFleetUpdateService.js";
@@ -811,6 +812,11 @@ const mobilePermissionNotifier = new SourcePermissionNotifier({
 });
 
 const pairingNotifier = new PairingNotifier(
+  pushBroadcaster,
+  () => listDevices(db),
+  () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
+);
+const certificateIncidentNotifier = new CertificateIncidentNotifier(
   pushBroadcaster,
   () => listDevices(db),
   () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
@@ -1934,6 +1940,7 @@ try {
         },
         directCertificateCoversHostname: (hostname) => tlsLifecycle.coversHostname(hostname),
         publicSpkiFingerprint: cloudPublicSpkiFingerprint,
+        onIncidentHold: () => void certificateIncidentNotifier.notify(),
         activate: async (material, signal) => {
           signal.throwIfAborted();
           publicSni.activate(material);

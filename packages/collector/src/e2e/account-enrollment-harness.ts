@@ -708,6 +708,8 @@ export interface CloudRelayStatus {
     policy: "automatic" | "ask";
     trustedSignIns: Array<{ type: string; id: string; addedAt: number; source?: string }>;
   };
+  certificateMonitor?: { state: string; incidents: Array<{ certificateFingerprint: string }> };
+  incidentHold?: { since: string; certificates: string[] };
 }
 
 export interface DeviceRow {
@@ -835,6 +837,55 @@ export class EnrollmentGateway {
 
   async json<T = unknown>(path: string, init?: RequestInit): Promise<T> {
     return this.harness.gatewayJson<T>(path, init);
+  }
+
+  /** Stops the gateway and starts it again with all its state, then waits for its tunnel. */
+  async restart(): Promise<void> {
+    await this.harness.restartGateway();
+    await waitFor(
+      async () => (await this.status()).tunnel.state === "online",
+      "the gateway tunnel to come back online",
+      gatewayBootBudgetMs(),
+    );
+  }
+
+  /**
+   * A request to the gateway's public name through the relay, as any client on the
+   * internet would send it: TLS to the relay's data port, passed through to this
+   * gateway's tunnel.
+   */
+  async throughRelay(
+    path: string,
+    init: { method?: string; body?: string; token?: string } = {},
+  ): Promise<{ status: number; body: string }> {
+    const { request } = await import("node:https");
+    return new Promise((resolve, reject) => {
+      const outgoing = request(
+        {
+          host: "127.0.0.1",
+          port: this.world.dataPort,
+          servername: this.hostname,
+          ca: this.world.pki.caCert,
+          method: init.method ?? "GET",
+          path,
+          headers: {
+            host: `${this.hostname}:${this.world.dataPort}`,
+            "content-type": "application/json",
+            ...(init.token ? { authorization: `Bearer ${init.token}` } : {}),
+          },
+          timeout: 30_000,
+        },
+        (response) => {
+          let body = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk: string) => (body += chunk));
+          response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
+        },
+      );
+      outgoing.on("timeout", () => outgoing.destroy(new Error("Relayed request timed out")));
+      outgoing.on("error", reject);
+      outgoing.end(init.body);
+    });
   }
 
   private pairingTokens = 10;

@@ -245,3 +245,114 @@ test("local identity changes cannot reuse the old hostname baseline and pending 
   await vi.waitFor(() => expect(watcher.check.mock.calls.length).toBeGreaterThan(1));
   await monitor.close();
 });
+const incident = {
+  hostname: "gateway.example.test",
+  certificateFingerprint: "c".repeat(64),
+  spkiFingerprint: "d".repeat(64),
+  issuer: "Fictional test issuer",
+  serial: "01",
+  validFrom: "2028-01-01T00:00:00.000Z",
+  validTo: "2028-02-01T00:00:00.000Z",
+  providerEntryId: "fixture-1",
+  observedAt: "2028-01-02T00:00:00.000Z",
+};
+test("incidents the journal already holds are reported when the monitor opens, and new ones reach the same callback", async () => {
+  const watcher = port();
+  watcher.status.mockReturnValue({ ...watcher.status(), state: "incident", incidents: [incident] });
+  const onIncident = vi.fn(() => Promise.resolve()),
+    create = vi.fn((_options: Omit<CertificateMonitorOptions, "provider">) =>
+      Promise.resolve(watcher),
+    ),
+    monitor = new GatewayCertificateMonitor({
+      env: {},
+      configDir: directory,
+      identity: () => known,
+      onIncident,
+      create,
+    });
+  monitor.start();
+  await vi.waitFor(() => expect(watcher.check).toHaveBeenCalledOnce());
+  expect(onIncident).toHaveBeenCalledExactlyOnceWith([incident]);
+  // The monitor itself calls it for incidents it finds later.
+  expect(create.mock.calls[0]![0].onIncident).toBe(onIncident);
+  await monitor.close();
+});
+test("a hold that can't be saved when the monitor opens is retried by opening again", async () => {
+  let now = Date.now();
+  const watcher = port();
+  watcher.status.mockReturnValue({ ...watcher.status(), state: "incident", incidents: [incident] });
+  const onIncident = vi
+      .fn<(value: unknown) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockResolvedValue(undefined),
+    create = vi.fn(() => Promise.resolve(watcher)),
+    monitor = new GatewayCertificateMonitor({
+      env: {},
+      configDir: directory,
+      identity: () => known,
+      onIncident,
+      create,
+      now: () => now,
+    });
+  monitor.start();
+  await vi.waitFor(() => expect(monitor.status().state).toBe("unavailable"));
+  expect(watcher.check).not.toHaveBeenCalled();
+  now += 60000;
+  monitor.start();
+  await vi.waitFor(() => expect(watcher.check).toHaveBeenCalledOnce());
+  expect(onIncident).toHaveBeenCalledTimes(2);
+  await monitor.close();
+});
+test("recorded incidents with nobody to tell still start the monitor", async () => {
+  const watcher = port();
+  watcher.status.mockReturnValue({ ...watcher.status(), state: "incident", incidents: [incident] });
+  const monitor = new GatewayCertificateMonitor({
+    env: {},
+    configDir: directory,
+    identity: () => known,
+    create: () => Promise.resolve(watcher),
+  });
+  monitor.start();
+  await vi.waitFor(() => expect(watcher.check).toHaveBeenCalledOnce());
+  await monitor.close();
+});
+test("an operator-chosen provider address is used as a base path and must be plain https", async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json([]));
+  vi.stubGlobal("fetch", transport);
+  for (const [configured, expected] of [
+    ["https://ct-mirror.example.test", "https://ct-mirror.example.test/v1/issuances"],
+    ["https://ct-mirror.example.test/search", "https://ct-mirror.example.test/search/v1/issuances"],
+  ] as const) {
+    transport.mockClear();
+    const monitor = new GatewayCertificateMonitor({
+      env: { OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: configured },
+      configDir: directory,
+      identity: () => known,
+    });
+    monitor.start();
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce());
+    expect(String(transport.mock.calls[0]![0]).split("?")[0]).toBe(expected);
+    await monitor.close();
+  }
+  for (const configured of [
+    "http://ct-mirror.example.test",
+    "https://user:secret@ct-mirror.example.test",
+    "https://ct-mirror.example.test/?q=1",
+    "https://ct-mirror.example.test/#part",
+    "not a url",
+  ]) {
+    const create = vi.fn(),
+      monitor = new GatewayCertificateMonitor({
+        env: { OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: configured },
+        configDir: directory,
+        identity: () => known,
+        create,
+      });
+    expect(monitor.status()).toMatchObject({
+      state: "unavailable",
+      lastError: "ct-configuration-invalid",
+    });
+    expect(create).not.toHaveBeenCalled();
+    await monitor.close();
+  }
+});

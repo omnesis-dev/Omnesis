@@ -60,6 +60,8 @@ const confirmedSignInsSchema = z
   );
 const MAX_DECLINED_PASSKEYS = 256;
 const MAX_WITHDRAWN_SIGN_INS = 256;
+/** Certificates an incident hold names, and acknowledged ones kept so a restart doesn't raise them again. */
+const MAX_INCIDENT_CERTIFICATES = 64;
 /** A sign-in that arrives untrusted fetches the account's evidence at most this often. */
 const SIGN_IN_SYNC_INTERVAL_MS = 2_000;
 const bindingSchema = z
@@ -94,6 +96,20 @@ const choices = {
     .array(z.string().regex(/^[A-Za-z0-9_-]{43}$/))
     .max(MAX_WITHDRAWN_SIGN_INS)
     .default([]),
+  /**
+   * Set when the certificate monitor sees a certificate for this gateway's name with a key the
+   * gateway doesn't hold, as SHA-256 fingerprints of those certificates. Only the owner's
+   * acknowledgement on this gateway lifts it, never anything the relay sends.
+   */
+  incidentHold: z
+    .object({
+      since: z.number().int().nonnegative(),
+      certificates: z.array(digest).min(1).max(MAX_INCIDENT_CERTIFICATES),
+    })
+    .strict()
+    .optional(),
+  /** Certificates the owner acknowledged, so the monitor's journal doesn't hold for them again. */
+  acknowledgedIncidents: z.array(digest).max(MAX_INCIDENT_CERTIFICATES).optional(),
 };
 /**
  * Not strict: fields a later version adds are dropped, so going back a version keeps the link.
@@ -146,6 +162,14 @@ export class GatewayAccountLink {
   private readonly pending = new Map<string, AccountBrowserPending>();
   private readonly browser: AccountBrowserPort;
   private lastError?: "account-unavailable" | "account-link-failed";
+  /**
+   * The incident hold and acknowledged certificates. Kept here rather than read from the record,
+   * so every save writes them whatever record it was given: no relink, unlink or forget can drop
+   * them. `unreadable` means a link file exists that this version can't read; it is left alone.
+   */
+  private hold?: { since: number; certificates: string[] };
+  private acknowledged: string[] = [];
+  private unreadable = false;
   constructor(
     private readonly options: {
       env(): NodeJS.ProcessEnv;
@@ -223,6 +247,8 @@ export class GatewayAccountLink {
       const value = await readPrivateJson(this.options.metadataFile);
       this.activated = true;
       this.record = recordSchema.parse(value);
+      this.hold = this.record.incidentHold;
+      this.acknowledged = this.record.acknowledgedIncidents ?? [];
       if (!this.record.linked && this.record.dormant) this.activated = false;
       this.bound =
         this.record.linked && this.sameBinding(this.record.binding, await this.binding());
@@ -230,6 +256,7 @@ export class GatewayAccountLink {
       if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
         this.activated = true;
         this.bound = false;
+        this.unreadable = true;
         this.lastError = "account-link-failed";
       }
     }
@@ -325,11 +352,88 @@ export class GatewayAccountLink {
     return this.syncing;
   }
   /**
-   * A linked gateway joins trusted sign-ins automatically unless its owner chose ask. The choice is
-   * local, and an unlinked gateway joins nothing.
+   * A linked gateway joins trusted sign-ins automatically unless its owner chose ask or a
+   * certificate incident holds it. Both are local, and an unlinked gateway joins nothing.
    */
   enrollmentPolicy(): EnrollmentPolicy {
-    return this.record?.linked && this.record.enrollmentPolicy !== "ask" ? "automatic" : "ask";
+    return !this.hold && this.record?.linked && this.record.enrollmentPolicy !== "ask"
+      ? "automatic"
+      : "ask";
+  }
+  /**
+   * While someone else may hold a certificate for this gateway's name, a page on that name may
+   * not be the gateway's. A sign-in proof made on the gateway's own origin (the planned
+   * `gateway-passkey` proof) must call this first and refuse the proof when it is true.
+   */
+  gatewayOriginAssertionsRefused(): boolean {
+    return this.hold !== undefined;
+  }
+  incidentHold(): { since: string; certificates: string[] } | undefined {
+    return this.hold
+      ? {
+          since: new Date(this.hold.since * 1000).toISOString(),
+          certificates: [...this.hold.certificates],
+        }
+      : undefined;
+  }
+  /**
+   * Holds every new device for approval: the certificate monitor saw these certificates for this
+   * gateway's name with a key the gateway doesn't hold. Certificates already held or acknowledged
+   * change nothing. Returns whether the hold names a certificate it didn't before. The hold
+   * applies at once, and is saved even on a gateway that never had an account.
+   */
+  async holdForCertificateIncident(certificates: string[]): Promise<boolean> {
+    const known = new Set([...(this.hold?.certificates ?? []), ...this.acknowledged]);
+    const fresh = [...new Set(certificates)].filter(
+      (value) => digest.safeParse(value).success && !known.has(value),
+    );
+    if (fresh.length === 0) return false;
+    this.hold = {
+      since: this.hold?.since ?? Math.floor(Date.now() / 1000),
+      certificates: [...(this.hold?.certificates ?? []), ...fresh].slice(
+        -MAX_INCIDENT_CERTIFICATES,
+      ),
+    };
+    await this.saveIncidents();
+    return true;
+  }
+  /**
+   * The owner looked into the incident. Callers must make sure the request came from the owner on
+   * this gateway, never through the relay.
+   */
+  async acknowledgeIncidentHold(): Promise<void> {
+    const hold = this.hold,
+      acknowledged = this.acknowledged;
+    if (!hold) return;
+    this.acknowledged = [
+      ...acknowledged.filter((value) => !hold.certificates.includes(value)),
+      ...hold.certificates,
+    ].slice(-MAX_INCIDENT_CERTIFICATES);
+    this.hold = undefined;
+    try {
+      await this.saveIncidents();
+    } catch (error) {
+      this.hold = hold;
+      this.acknowledged = acknowledged;
+      throw error;
+    }
+  }
+  /** Writes the incident state into the current record, or a dormant one, keeping account mode. */
+  private async saveIncidents(): Promise<void> {
+    if (this.unreadable) return;
+    const activated = this.activated;
+    await this.save(
+      this.record ?? {
+        version: 1,
+        linked: false,
+        dormant: true,
+        declinedPasskeys: [],
+        declinedGoogle: [],
+        withdrawnSignIns: [],
+      },
+      new AbortController().signal,
+    );
+    this.activated = activated;
   }
   async setEnrollmentPolicy(policy: EnrollmentPolicy): Promise<void> {
     const record = this.requireLinked();
@@ -772,6 +876,8 @@ export class GatewayAccountLink {
     const kept = this.kept();
     if (
       kept.enrollmentPolicy ||
+      this.hold ||
+      this.acknowledged.length > 0 ||
       kept.declinedPasskeys.length + kept.declinedGoogle.length + kept.withdrawnSignIns.length > 0
     )
       await this.save({ version: 1, linked: false, dormant: true, ...kept }, this.abort.signal);
@@ -797,12 +903,18 @@ export class GatewayAccountLink {
     await mkdir(dirname(this.options.metadataFile), { recursive: true, mode: 0o700 });
     signal.throwIfAborted();
     if (expected && this.record !== expected) throw new Error("Account operation changed");
+    const stored: Record = {
+      ...record,
+      incidentHold: this.hold,
+      acknowledgedIncidents: this.acknowledged.length > 0 ? this.acknowledged : undefined,
+    };
     atomicWriteFileSync(
       this.options.metadataFile,
-      JSON.stringify(recordSchema.parse(record)) + "\n",
+      JSON.stringify(recordSchema.parse(stored)) + "\n",
       { mode: 0o600 },
     );
-    this.record = record;
+    this.record = stored;
+    this.unreadable = false;
     this.activated = true;
   }
   private matchesEnvironment(binding: Binding): boolean {

@@ -661,30 +661,45 @@ and DNS-01. Do not rely on CAA that the compromised component can rewrite.
 The DNS records and provider credentials are operator deployment configuration;
 this implementation does not apply them to a live zone.
 
-## Optional certificate issuance monitoring
+## Certificate issuance monitoring
 
-Gateway-owned monitoring can observe the gateway's public hostname through
+Gateway-owned monitoring observes the gateway's public hostname through
 [SSLMate's Cert Spotter API](https://sslmate.com/help/reference/ct_search_api_v1).
-It is disabled by default. To enable it, set
-`OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED=1`; optional settings are
-`OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_INTERVAL_MS` and
-`OMNESIS_CLOUD_RELAY_CERTSPOTTER_API_KEY_FILE`. The private API-key file contains
-an `apiKey` field and is sent only to the fixed provider HTTPS origin. Provider
-access, quotas and credentials are operator configuration.
+It is on by default for a gateway with a relay address, because automatic
+device enrollment relies on it. Set
+`OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED=0` to turn it off. Optional
+settings are `OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_INTERVAL_MS`,
+`OMNESIS_CLOUD_RELAY_CERTSPOTTER_API_KEY_FILE` and
+`OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL` (an HTTPS service with the same API, used
+in place of `https://api.certspotter.com/`). The private API-key file contains
+an `apiKey` field and is sent only to that provider origin. Provider access,
+quotas and credentials are operator configuration.
 
 The observer sends the public hostname to that provider and compares certificate
-public keys with the gateway's own stable TLS key. It parses certificate DER
-itself and verifies hostname coverage. Same-key renewals are expected; another
-key produces a local incident containing public certificate metadata. It never
-changes pins, routing credentials or device grants. A bounded durable journal
-retains incidents and pagination progress; failed or incomplete checks are
-reported as unavailable or stale, rather than as successful observation.
+public keys with the key of the certificate the gateway serves for that name. It
+parses certificate DER itself and verifies hostname coverage. Same-key renewals
+are expected; another key produces a local incident containing public
+certificate metadata. A bounded durable journal retains incidents and
+pagination progress; failed or incomplete checks are reported as unavailable or
+stale, rather than as successful observation.
 
-The portal and CLI expose monitoring status, last completed observation and
-incidents. An observing status describes the provider results checked so far;
-it is not proof that every issuance has been observed. Monitoring detects
-evidence and does not prevent fraudulent issuance. Requests contain no gateway
-application bearer, Google token, DNS credential or private key.
+An incident puts the gateway on an incident hold, saved with the owner's other
+local choices in `cloud-relay/account-link.json` before the journal records the
+incident. While the hold lasts, every new device waits for approval whatever
+the owner's new-device policy says, and administrator phones get a generic
+notification. The hold survives restarts, unlinking and relinking, and the
+account being deleted; nothing the relay sends can lift it. Only the owner can,
+with `omnesis cloud incidents ack` on the gateway host, or through
+`POST /admin/cloud-relay/incidents/ack` in a request that did not come through
+the relay. The monitor never changes pins, routing credentials or existing
+device grants.
+
+The portal and CLI expose monitoring status, last completed observation,
+incidents and the hold. An observing status describes the provider results
+checked so far; it is not proof that every issuance has been observed.
+Monitoring detects evidence and does not prevent fraudulent issuance. Requests
+contain no gateway application bearer, Google token, DNS credential or private
+key.
 
 When investigating an unexpected certificate, retain the public incident
 metadata, compare the observed key with the local gateway key, and request

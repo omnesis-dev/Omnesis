@@ -408,7 +408,8 @@ recorded, so remove them again.
 Under `automatic`, a verified sign-in is held for approval with a comparison code
 when the gateway can't tie it to a sign-in it already trusts:
 
-1. The gateway's owner chose `ask`, or the request set `requireApproval`.
+1. The gateway's owner chose `ask`, the request set `requireApproval`, or the
+   gateway is on a certificate incident hold (below).
 2. The sign-in is new to the account, and nothing the gateway trusts vouched for it.
 3. The gateway was linked with a passkey that was added before passkeys
    countersigned, or that was the account's first one, and the sign-in is one the
@@ -432,6 +433,28 @@ page) or
 `omnesis cloud remove-sign-in <id>` drops and declines one, or declines in advance
 one the gateway does not trust; the portal does not list them. See
 Limits of automatic mode for why the source matters.
+
+### Certificate incident hold
+
+The gateway's certificate monitor watches Certificate Transparency for
+certificates issued for its public name. One whose key is not the key the
+gateway serves means someone else may be able to pose as the gateway, so the
+gateway goes on an incident hold:
+
+- every new device waits for approval, whatever the owner chose;
+- the owner's administrator phones get a generic notification;
+- the portal's Omnesis account page and `omnesis cloud status` say so;
+- a sign-in made on a page served under the gateway's own name proves nothing
+  while it lasts (`gatewayOriginAssertionsRefused`).
+
+The hold is saved with the owner's other local choices before the monitor
+records the incident, so it survives restarts, unlinking and linking again, and
+the account being deleted. Nothing the relay sends lifts it. The owner lifts it,
+after looking into the certificate, with `omnesis cloud incidents ack` on the
+gateway host (`omnesis cloud incidents list` shows what is held). The gateway
+refuses the acknowledgement when it arrives through its relay, however it is
+authenticated. A certificate already acknowledged does not put the hold back;
+another one does.
 
 ## Relay surfaces
 
@@ -701,8 +724,8 @@ another key.
 
 A compromised relay can also show one brand-new device a fake gateway. That fake
 cannot reach the real gateway; first contact requires a publicly trusted, logged
-certificate, which the gateway's certificate monitor reports; and `ask` mode
-blocks it.
+certificate, which the gateway's certificate monitor reports when it is for the
+gateway's own name (and holds new devices, above); and `ask` mode blocks it.
 
 Operators who do not trust the relay with joining devices switch to `ask`, in
 the Omnesis account settings of the portal or the iOS and Android apps, or with

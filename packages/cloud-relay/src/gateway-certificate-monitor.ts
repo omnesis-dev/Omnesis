@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { bindingOrigin } from "./gateway-binding.js";
 import type {
+  CertificateIncident,
   CertificateMonitorOptions,
   CertificateMonitorStatus,
   CertificateIssuanceMonitor,
@@ -24,11 +25,19 @@ export interface GatewayCertificateMonitorOptions {
   env: NodeJS.ProcessEnv;
   configDir: string;
   identity(): { publicOrigin?: string; spkiFingerprint?: string } | undefined;
+  /**
+   * Every incident the journal holds when the monitor opens, then each new one before it is
+   * recorded. Called again for incidents it was already told about, so it must be idempotent.
+   */
+  onIncident?(incidents: CertificateIncident[]): Promise<void>;
   create?: (options: Omit<CertificateMonitorOptions, "provider">) => Promise<Monitor>;
   now?: () => number;
 }
 
-/** Optional gateway-owned observer. Status polling can initialize it after setup; no relay dependency or trust mutation. */
+/**
+ * Gateway-owned observer. Status polling can initialize it after setup. It has no relay
+ * dependency; what an incident changes is decided by `onIncident`.
+ */
 export class GatewayCertificateMonitor {
   private readonly enabled: boolean;
   private readonly now: () => number;
@@ -56,7 +65,7 @@ export class GatewayCertificateMonitor {
       }
       return;
     }
-    let hostname: string, interval: number | undefined;
+    let hostname: string, interval: number | undefined, providerUrl: string | undefined;
     try {
       const identity = this.options.identity();
       if (!identity?.publicOrigin || identity.spkiFingerprint === undefined) return;
@@ -72,6 +81,14 @@ export class GatewayCertificateMonitor {
           interval > 86400000
         )
           throw new Error();
+      }
+      providerUrl = this.options.env.OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL;
+      if (providerUrl !== undefined) {
+        const url = new URL(providerUrl);
+        if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
+          throw new Error();
+        // A base path, so `v1/issuances` resolves below it.
+        providerUrl = url.href.endsWith("/") ? url.href : `${url.href}/`;
       }
     } catch {
       this.failure = "ct-configuration-invalid";
@@ -95,6 +112,7 @@ export class GatewayCertificateMonitor {
         hostname,
         expectedSpkiFingerprint,
         journalFile: join(this.options.configDir, "cloud-relay/certificate-incidents.json"),
+        ...(this.options.onIncident ? { onIncident: this.options.onIncident } : {}),
       };
       let monitor: Monitor;
       if (this.options.create) monitor = await this.options.create(input);
@@ -107,10 +125,14 @@ export class GatewayCertificateMonitor {
           ...input,
           provider: new CertSpotterProvider({
             apiKeyFile: this.options.env.OMNESIS_CLOUD_RELAY_CERTSPOTTER_API_KEY_FILE,
+            ...(providerUrl ? { baseUrl: providerUrl } : {}),
           }),
         });
       }
       if (this.closed) return;
+      // Incidents recorded before a restart, or before a version that acted on them, count too.
+      const recorded = monitor.status().incidents;
+      if (recorded.length) await this.options.onIncident?.(recorded);
       this.poller = startCertificateMonitorPoller({ monitor, intervalMs: interval });
       this.failure = undefined;
     })()

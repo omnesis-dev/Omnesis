@@ -12,13 +12,24 @@
  *   real gateway refuse the device's signature, and the device saves nothing;
  * - a captured request cannot be replayed into a second join;
  * - first contact needs a publicly trusted, logged certificate: a leaf without
- *   the embedded SCT extension makes the device ask for the comparison.
+ *   the embedded SCT extension makes the device ask for the comparison;
+ * - a certificate for the gateway's name with a key the gateway doesn't hold
+ *   holds every new device until the owner acknowledges it on the gateway
+ *   itself; no request through the relay lifts the hold, and a restart keeps it.
  *
  * The automatic policy is on and the signing passkey is pinned throughout, so
  * every hold below is caused by the attack, not by the owner's settings.
  */
 
-import { createPrivateKey, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
+import {
+  X509Certificate,
+  createPrivateKey,
+  generateKeyPairSync,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
+import { once } from "node:events";
+import { createServer } from "node:https";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +50,7 @@ import {
   EnrollmentWorld,
   GatewayRefused,
   PasskeyBrowser,
+  runCli,
   browserSuiteAvailable,
   certificateSwapProxy,
   connectGatewayBySignIn,
@@ -49,6 +61,44 @@ import {
   type PasskeySession,
 } from "./account-enrollment-harness.js";
 import { gatewayBootBudgetMs } from "./gateway-env.js";
+import type { AddressInfo } from "node:net";
+
+/**
+ * A stand-in for the certificate transparency search service the gateway's
+ * monitor asks, with the same API: what it lists is what has been logged for the
+ * gateway's name.
+ */
+async function certificateLog(world: EnrollmentWorld) {
+  const leaf = await world.pki.leaf("ct-log", ["localhost", "127.0.0.1"]);
+  const entries: Array<{ id: string; cert_der: string }> = [];
+  const server = createServer(
+    { cert: leaf.cert, key: await readFile(leaf.keyFile, "utf8") },
+    (request, response) => {
+      const url = new URL(request.url ?? "/", "https://localhost");
+      if (url.pathname !== "/v1/issuances") {
+        response.writeHead(404).end();
+        return;
+      }
+      const after = Number(url.searchParams.get("after") ?? "0");
+      response
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify(entries.filter((entry) => Number(entry.id) > after)));
+    },
+  );
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  return {
+    url: `https://localhost:${(server.address() as AddressInfo).port}`,
+    /** A certificate now appears in the log. */
+    log(certificate: string) {
+      entries.push({
+        id: String(entries.length + 1),
+        cert_der: new X509Certificate(certificate).raw.toString("base64"),
+      });
+    },
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
 
 const browserReady = browserSuiteAvailable("account-enrollment-attacks.e2e");
 
@@ -371,4 +421,126 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
       1,
     );
   }, 180_000);
+
+  test(
+    "F23: a certificate for the gateway's name with another key holds every new device until the owner acknowledges it on the gateway itself; no request through the relay lifts it and a restart keeps it",
+    async () => {
+      const ctLog = await certificateLog(world);
+      let watched: EnrollmentGateway | undefined;
+      try {
+        watched = await EnrollmentGateway.start(world, "watched", {
+          extraEnv: {
+            OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1",
+            OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: ctLog.url,
+            OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_INTERVAL_MS: "60000",
+          },
+        });
+        const gateway = watched;
+        // The gateway's own certificate is logged, as every public one is: no incident.
+        ctLog.log(gateway.leaf.cert);
+        const linked = await connectGatewayBySignIn(gateway, session, "existing");
+        if (linked.connect?.state !== "done")
+          throw new Error(`Link failed: ${JSON.stringify(linked.connect)}`);
+        await gateway.setPolicy("automatic");
+        const observing = await waitFor(
+          async () => {
+            const status = await gateway.status();
+            return status.certificateMonitor?.state === "observing" ? status : undefined;
+          },
+          "the certificate monitor to check the log",
+          60_000,
+        );
+        expect(observing.certificateMonitor!.incidents).toEqual([]);
+        expect(observing.deviceEnrollment.policy).toBe("automatic");
+        expect(observing).not.toHaveProperty("incidentHold");
+
+        // Someone obtains a publicly trusted, logged certificate for the gateway's name
+        // with a key of their own.
+        const rogue = await world.pki.leaf("rogue", [gateway.hostname], { sct: true });
+        const rogueFingerprint = new X509Certificate(rogue.cert).fingerprint256
+          .replaceAll(":", "")
+          .toLowerCase();
+        ctLog.log(rogue.cert);
+        const held = await waitFor(
+          async () => {
+            const status = await gateway.status();
+            return status.incidentHold ? status : undefined;
+          },
+          "the gateway to hold new devices",
+          150_000,
+        );
+        expect(held.incidentHold!.certificates).toEqual([rogueFingerprint]);
+        expect(
+          held.certificateMonitor!.incidents.map((incident) => incident.certificateFingerprint),
+        ).toEqual([rogueFingerprint]);
+        expect(held.deviceEnrollment.policy).toBe("ask");
+
+        // A sign-in the gateway trusts, which joined with no approval before, now waits for one.
+        const name = "Fictional held-by-incident CLI";
+        const pairing = await pairBySignIn({
+          gateway,
+          name,
+          keyFile: join(directory, "incident", "device.key"),
+        });
+        const request = await waitFor(
+          async () => (await gateway.pendingRequests()).find((value) => value.name === name),
+          "the held request",
+        );
+        expect(request).toMatchObject({ status: "pending", signIn: "passkey" });
+        await waitFor(() => pairing.comparisons.length === 1, "the comparison code");
+        await gateway.decide(request.requestId, false);
+        await expect(pairing.result).rejects.toBeDefined();
+        expect((await gateway.devices()).some((device) => device.name === name)).toBe(false);
+
+        // Through the relay, an admin credential is enough to read the status but never to
+        // lift the hold, whether or not the relay marks the request as relayed.
+        const token = gateway.harness.apiKey;
+        const read = await gateway.throughRelay("/admin/cloud-relay", { token });
+        expect(read.status).toBe(200);
+        expect(JSON.parse(read.body)).toMatchObject({ incidentHold: held.incidentHold });
+        const lifted = await gateway.throughRelay("/admin/cloud-relay/incidents/ack", {
+          method: "POST",
+          body: "{}",
+          token,
+        });
+        expect(lifted.status).toBe(403);
+        expect(JSON.parse(lifted.body)).toMatchObject({ code: "local-request-required" });
+        // Nor does choosing automatic again lift it.
+        await gateway.setPolicy("automatic");
+        expect((await gateway.status()).deviceEnrollment.policy).toBe("ask");
+
+        // A restart keeps the hold.
+        await gateway.restart();
+        const restarted = await gateway.status();
+        expect(restarted.incidentHold).toEqual(held.incidentHold);
+        expect(restarted.deviceEnrollment.policy).toBe("ask");
+
+        // The owner, on the gateway host, acknowledges it.
+        const ack = runCli(world, ["cloud", "incidents", "ack"], {
+          OMNESIS_CLOUD_RELAY_ENABLED: "1",
+          OMNESIS_CONFIG_DIR: join(directory, "incident-cli"),
+          OMNESIS_GATEWAY_URL: gateway.harness.gatewayUrl,
+          OMNESIS_TOKEN: token,
+        });
+        expect(await ack.exit, ack.stderr()).toBe(0);
+        expect(ack.stdout()).toContain("Certificate incident acknowledged.");
+        const acknowledged = await gateway.status();
+        expect(acknowledged).not.toHaveProperty("incidentHold");
+        expect(acknowledged.deviceEnrollment.policy).toBe("automatic");
+        // The incident itself stays on record, and doesn't hold again after another restart.
+        expect(acknowledged.certificateMonitor!.incidents).toHaveLength(1);
+        await gateway.restart();
+        await waitFor(
+          async () => (await gateway.status()).certificateMonitor?.incidents.length === 1,
+          "the monitor to read its journal",
+          60_000,
+        );
+        expect(await gateway.status()).not.toHaveProperty("incidentHold");
+      } finally {
+        await watched?.close();
+        await ctLog.close();
+      }
+    },
+    gatewayBootBudgetMs() * 3 + 420_000,
+  );
 });

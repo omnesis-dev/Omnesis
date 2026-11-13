@@ -96,6 +96,12 @@ export interface CloudRelayManagementStatus {
     expiresAt?: number;
     error?: "not-allowed" | "capacity" | "expired" | "enrollment-refused" | "account-link-failed";
   };
+  /**
+   * The certificate monitor saw a certificate for this gateway's name with a key the gateway
+   * doesn't hold. Until the owner acknowledges it on the gateway itself, every new device waits
+   * for approval. `certificates` are SHA-256 fingerprints of those certificates.
+   */
+  incidentHold?: { since: string; certificates: string[] };
   /** Local choices about new devices. These are never sent to the relay. */
   deviceEnrollment?: {
     policy: "automatic" | "ask";
@@ -147,6 +153,8 @@ export interface CloudRelayManagement {
   }): Promise<CloudRelayManagementStatus>;
   cancelConnect?(): Promise<CloudRelayManagementStatus>;
   setEnrollmentPolicy?(policy: "automatic" | "ask"): Promise<CloudRelayManagementStatus>;
+  /** Lifts an incident hold. Callers must refuse a request that came through the relay. */
+  acknowledgeIncidentHold?(): Promise<CloudRelayManagementStatus>;
   removeTrustedSignIn?(id: string): Promise<CloudRelayManagementStatus>;
   accountLink?(input: { requestOrigin: string }): Promise<{ authorizeUrl: string; cookie: string }>;
   accountCallback?(input: {

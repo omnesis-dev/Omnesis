@@ -84,6 +84,7 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["POST", "/admin/cloud-relay/connect/cancel", {}],
       ["PUT", "/admin/cloud-relay/enrollment", { policy: "automatic" }],
       ["DELETE", "/admin/cloud-relay/trusted-sign-ins/fictional"],
+      ["POST", "/admin/cloud-relay/incidents/ack", {}],
       ["GET", "/admin/cloud-pairing/requests"],
       ["POST", "/admin/cloud-pairing/decision", {}],
     ];
@@ -318,6 +319,8 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["cloud", "status"],
       ["cloud", "unlink"],
       ["cloud", "trusted-sign-ins"],
+      ["cloud", "incidents", "list"],
+      ["cloud", "incidents", "ack"],
     ]) {
       const run = await cliRun(args, false);
       expect(run.code, args.join(" ")).not.toBe(0);

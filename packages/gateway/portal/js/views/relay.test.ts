@@ -887,6 +887,53 @@ describe("account", () => {
   });
 });
 
+describe("certificate incident hold", () => {
+  const HELD = {
+    since: "2028-01-02T00:00:00.000Z",
+    certificates: ["e".repeat(64), "9".repeat(64)],
+  };
+  test("says new devices wait whatever was chosen, names the one command that lifts it, and locks the choice", async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    state.status = connected({
+      incidentHold: HELD,
+      deviceEnrollment: { policy: "ask", trustedSignIns: [] },
+      certificateMonitor: { state: "incident", incidents: [] },
+    });
+    await show();
+    const said = [...host.querySelectorAll('.relay-problems [role="alert"]')].map(
+      (alert) => alert.textContent,
+    );
+    expect(said).toEqual([
+      "A certificate for this gateway's address was issued with a key this gateway does not hold, so someone else may be able to pose as this gateway. Until you deal with it, every new device waits for your approval, whatever you chose for new devices. Don't sign in or approve anything from a link you didn't expect. Copy the details and ask for help. Once it is resolved, run omnesis cloud incidents ack on the gateway host.",
+    ]);
+    // The fingerprints stay in the details, out of the page.
+    expect(text()).not.toContain("e".repeat(64));
+    expect(text()).toContain(
+      "Every new device waits for your approval until the certificate problem above is dealt with.",
+    );
+    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    expect(radios.every((radio) => radio.disabled)).toBe(true);
+    await click("Copy details");
+    const copied = writeText.mock.calls[0]![0];
+    expect(copied).toContain("Error codes: incident-hold (new devices)");
+    expect(copied).toContain("Incident hold: since 2028-01-02T00:00:00.000Z, 2 certificates");
+    // A hold without its list still prints.
+    state.status = connected({ incidentHold: { since: HELD.since } });
+    render(null, host);
+    await show();
+    await click("Copy details");
+    expect(writeText.mock.calls[1]![0]).toContain("Incident hold: since 2028-01-02T00:00:00.000Z, 0 certificates");
+  });
+  test("without a hold, the choice is free and the details say nothing about one", async () => {
+    state.status = connected();
+    await show();
+    expect(text()).not.toContain("certificate problem above");
+    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    expect(radios.some((radio) => radio.disabled)).toBe(false);
+  });
+});
+
 describe("new devices", () => {
   test("the policy choice saves immediately, and trusted sign-ins are not listed", async () => {
     state.status = connected();

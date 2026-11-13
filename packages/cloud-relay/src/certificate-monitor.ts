@@ -53,10 +53,18 @@ export interface CertificateMonitorOptions {
   expectedSpkiFingerprint(): string | undefined;
   journalFile: string;
   provider: CertificateIssuanceProvider;
+  /**
+   * Told about each certificate the journal is about to record for the first time, before the
+   * journal records it. If it throws, nothing is recorded and the next check reports it again.
+   */
+  onIncident?(incidents: CertificateIncident[]): Promise<void>;
   now?: () => number;
 }
 
-/** Advisory CT evidence only. It never alters TLS pins, routing credentials or device grants. */
+/**
+ * CT evidence. It never alters TLS pins, routing credentials or device grants itself; what a new
+ * incident causes is up to `onIncident`.
+ */
 export class CertificateIssuanceMonitor {
   private journal: Journal;
   private incidents: CertificateIncident[] = [];
@@ -144,6 +152,15 @@ export class CertificateIssuanceMonitor {
     // All non-incident fields are bounded below 1KiB. Each iteration removes one retained record.
     while (Buffer.byteLength(JSON.stringify(next)) + 1 > 65536 && next.incidents.length)
       next.incidents.shift();
+    const recorded = new Set(this.journal.incidents.map((item) => item.certificateFingerprint));
+    const fresh = this.incidents.filter((item) => !recorded.has(item.certificateFingerprint));
+    // Before the journal records them: a crash in between reports them again, never loses them.
+    if (fresh.length && this.options.onIncident)
+      try {
+        await this.options.onIncident(fresh.map((item) => ({ ...item })));
+      } catch {
+        throw new CertificateMonitorFailure("ct-journal-write-failed");
+      }
     try {
       await savePrivateJson(this.options.journalFile, next);
     } catch {

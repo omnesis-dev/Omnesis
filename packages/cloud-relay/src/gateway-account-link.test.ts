@@ -2096,3 +2096,173 @@ test("the official Android app's passkey origins are compiled in", async () => {
     channel: "relay-page",
   });
 });
+const ROGUE = "e".repeat(64),
+  SECOND_ROGUE = "9".repeat(64);
+test("a certificate incident holds every new device until the owner acknowledges it, across restarts and whatever the relay lists", async () => {
+  const f = await passkeyLinked();
+  expect(f.manager.enrollmentPolicy()).toBe("automatic");
+  expect(f.manager.incidentHold()).toBeUndefined();
+  expect(f.manager.gatewayOriginAssertionsRefused()).toBe(false);
+  vi.useFakeTimers({ now: Date.UTC(2028, 0, 2), toFake: ["Date"] });
+  // Anything that isn't a certificate fingerprint is ignored.
+  expect(await f.manager.holdForCertificateIncident(["not-a-digest"])).toBe(false);
+  expect(await f.manager.holdForCertificateIncident([ROGUE, ROGUE])).toBe(true);
+  expect(f.manager.enrollmentPolicy()).toBe("ask");
+  expect(f.manager.pairingIdentity()!.enrollment.policy()).toBe("ask");
+  expect(f.manager.gatewayOriginAssertionsRefused()).toBe(true);
+  expect(f.manager.incidentHold()).toEqual({
+    since: "2028-01-02T00:00:00.000Z",
+    certificates: [ROGUE],
+  });
+  // The owner's own choice is untouched, and saving it doesn't lift the hold.
+  await f.manager.setEnrollmentPolicy("automatic");
+  expect(f.manager.enrollmentPolicy()).toBe("ask");
+  expect(await f.saved()).toMatchObject({
+    enrollmentPolicy: "automatic",
+    incidentHold: { since: Date.UTC(2028, 0, 2) / 1000, certificates: [ROGUE] },
+  });
+  // The same certificate again changes nothing; another one joins the same hold.
+  vi.setSystemTime(Date.UTC(2028, 0, 3));
+  expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(false);
+  expect(await f.manager.holdForCertificateIncident([ROGUE, SECOND_ROGUE])).toBe(true);
+  expect(f.manager.incidentHold()).toEqual({
+    since: "2028-01-02T00:00:00.000Z",
+    certificates: [ROGUE, SECOND_ROGUE],
+  });
+
+  // The relay's listing changes and the gateway saves the change: the hold stays.
+  f.credentials.mockResolvedValue({ google: [], passkeys: [] });
+  await f.manager.refresh();
+  expect(f.pins()).toEqual([]);
+  expect(await f.saved()).toMatchObject({ incidentHold: { certificates: [ROGUE, SECOND_ROGUE] } });
+
+  // A restart reads it back.
+  const restarted = new GatewayAccountLink(f.options);
+  await restarted.initialize();
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+  expect(restarted.gatewayOriginAssertionsRefused()).toBe(true);
+
+  // Unlinking, linking again and the relay saying the account is gone all keep it.
+  await restarted.unlink();
+  expect(await f.saved()).toMatchObject({
+    linked: false,
+    incidentHold: { certificates: [ROGUE, SECOND_ROGUE] },
+  });
+  const nonce = opaque();
+  await restarted.completeSignup({
+    accountId: f.accountId,
+    nonce,
+    proof: assertionProof(f.passkey.authenticator, linkNonce(nonce)),
+    credentialPublicKey: f.passkey.publicKey,
+    signal: new AbortController().signal,
+  });
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+  await restarted.forget();
+  expect(await f.saved()).toMatchObject({
+    dormant: true,
+    incidentHold: { certificates: [ROGUE, SECOND_ROGUE] },
+  });
+  await restarted.completeSignup({
+    accountId: "c".repeat(64),
+    nonce,
+    signal: new AbortController().signal,
+  });
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+
+  // Only the owner's acknowledgement lifts it, and the owner's choice applies again.
+  await restarted.acknowledgeIncidentHold();
+  expect(restarted.enrollmentPolicy()).toBe("automatic");
+  expect(restarted.incidentHold()).toBeUndefined();
+  expect(restarted.gatewayOriginAssertionsRefused()).toBe(false);
+  const acknowledged = await f.saved();
+  expect(acknowledged).not.toHaveProperty("incidentHold");
+  expect(acknowledged).toMatchObject({ acknowledgedIncidents: [ROGUE, SECOND_ROGUE] });
+  // Acknowledging with nothing held is a no-op.
+  await restarted.acknowledgeIncidentHold();
+  // The monitor reporting the same certificates again after a restart doesn't hold again.
+  const again = new GatewayAccountLink(f.options);
+  await again.initialize();
+  expect(await again.holdForCertificateIncident([ROGUE, SECOND_ROGUE])).toBe(false);
+  expect(again.enrollmentPolicy()).toBe("automatic");
+  // A new certificate does, and acknowledging it keeps the earlier ones acknowledged once each.
+  const third = "8".repeat(64);
+  expect(await again.holdForCertificateIncident([ROGUE, third])).toBe(true);
+  expect(again.incidentHold()!.certificates).toEqual([third]);
+  await again.acknowledgeIncidentHold();
+  expect(((await f.saved()) as { acknowledgedIncidents: string[] }).acknowledgedIncidents).toEqual([
+    ROGUE,
+    SECOND_ROGUE,
+    third,
+  ]);
+});
+
+test("a gateway with no account saves a hold without turning account mode on, and forgetting keeps it", async () => {
+  const f = await fixture();
+  expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(true);
+  expect(f.manager.accountModeActivated()).toBe(false);
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).toMatchObject({
+    version: 1,
+    linked: false,
+    dormant: true,
+    incidentHold: { certificates: [ROGUE] },
+  });
+  const restarted = new GatewayAccountLink(f.options);
+  await restarted.initialize();
+  expect(restarted.accountModeActivated()).toBe(false);
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+  // Forgetting an account keeps it.
+  await restarted.forget();
+  expect(await stat(f.options.metadataFile)).toBeDefined();
+  // With only acknowledged certificates left, forgetting still keeps the file.
+  await restarted.acknowledgeIncidentHold();
+  await restarted.forget();
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).toMatchObject({
+    dormant: true,
+    acknowledgedIncidents: [ROGUE],
+  });
+});
+
+test("a hold on a link file this version can't read applies at once and leaves the file alone", async () => {
+  const f = await fixture();
+  await mkdir(dirname(f.options.metadataFile), { recursive: true });
+  await writeFile(f.options.metadataFile, "unreadable");
+  const restored = new GatewayAccountLink(f.options);
+  await restored.initialize();
+  expect(await restored.holdForCertificateIncident([ROGUE])).toBe(true);
+  expect(restored.enrollmentPolicy()).toBe("ask");
+  expect(await readFile(f.options.metadataFile, "utf8")).toBe("unreadable");
+  await restored.acknowledgeIncidentHold();
+  expect(restored.incidentHold()).toBeUndefined();
+  expect(await readFile(f.options.metadataFile, "utf8")).toBe("unreadable");
+  // Writing the file again, as unlinking does, carries the hold state with it from then on.
+  await restored.holdForCertificateIncident([SECOND_ROGUE]);
+  await restored.unlink();
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).toMatchObject({
+    incidentHold: { certificates: [SECOND_ROGUE] },
+    acknowledgedIncidents: [ROGUE],
+  });
+  await restored.acknowledgeIncidentHold();
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).not.toHaveProperty(
+    "incidentHold",
+  );
+});
+
+test("an acknowledgement that can't be saved leaves the hold on", async () => {
+  const f = await fixture();
+  await f.link();
+  await f.manager.holdForCertificateIncident([ROGUE]);
+  filesystem.afterMkdir = () => Promise.reject(new Error("disk full"));
+  await expect(f.manager.acknowledgeIncidentHold()).rejects.toThrow("disk full");
+  expect(f.manager.enrollmentPolicy()).toBe("ask");
+  expect(f.manager.incidentHold()!.certificates).toEqual([ROGUE]);
+  filesystem.afterMkdir = undefined;
+  // At most 64 certificates are named, the newest kept.
+  const many = Array.from({ length: 70 }, (_, index) => index.toString(16).padStart(64, "0"));
+  await f.manager.holdForCertificateIncident(many);
+  expect(f.manager.incidentHold()!.certificates).toEqual(many.slice(-64));
+  await f.manager.acknowledgeIncidentHold();
+  const saved = JSON.parse(await readFile(f.options.metadataFile, "utf8")) as {
+    acknowledgedIncidents: string[];
+  };
+  expect(saved.acknowledgedIncidents).toEqual(many.slice(-64));
+});
