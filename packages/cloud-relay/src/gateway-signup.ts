@@ -42,8 +42,9 @@ export interface SignupConfiguration {
   policy: z.infer<typeof signupPolicySchema>;
   allowlistFile?: string;
   /**
-   * Under `allowlist`, a Google sign-in may also create an account when its verified email is in
-   * this group. Asked only when an account would be created, never for an existing one.
+   * Under `allowlist`, a Google sign-in is also admitted when its verified email is in this group:
+   * one that would create an account, or one for an account with no gateway that the allowlist
+   * does not name. An account that already has a gateway, or is listed, never asks it.
    */
   googleGroup?: GoogleGroupGate;
 }
@@ -95,8 +96,10 @@ interface Operation {
     reason: GatewaySignupDenialReason;
     googleSubject?: string;
     accountId?: string;
-    /** A new account was refused because it is not invited, so the page offers the join link. */
+    /** Refused because it is not invited, so the page offers the join link. */
     inviteOnly?: true;
+    /** A passkey can't show an invitation: only a Google sign-in's email can be checked. */
+    googleRequired?: true;
   };
   approved?: { account: AccountBrowserAccount; enrollmentToken: string };
 }
@@ -236,12 +239,13 @@ export class GatewaySignup implements AccountOperationBroker {
       ...(operation.denied ? { denied: this.deniedView(operation.denied) } : {}),
     };
   }
-  /** A new account's Google sign-in must carry its email when a group decides who may create one. */
+  /**
+   * A Google sign-in here must carry its email when a group decides: who signs in, and whether
+   * their account needs the invitation, is only known once Google answers.
+   */
   requestsEmail(id: string, cookieHeader: string): boolean {
-    return (
-      this.options.configuration.googleGroup !== undefined &&
-      this.active(id, cookieHeader).intent === "create"
-    );
+    this.active(id, cookieHeader);
+    return this.options.configuration.googleGroup !== undefined;
   }
   setIntent(id: string, cookieHeader: string, intent: GatewaySignupIntent): void {
     this.active(id, cookieHeader).intent = intent;
@@ -267,8 +271,8 @@ export class GatewaySignup implements AccountOperationBroker {
     const operation = this.active(id, cookieHeader);
     if (!google.account && operation.intent !== "create") throw new NoAccount();
     let allowed = await this.allowed(google.subjectDigest, google.account);
-    // The allowlist answers first; the group is asked only about an account that would be created.
-    const group = google.account === undefined ? this.options.configuration.googleGroup : undefined;
+    // The allowlist, and an account's linked gateway, answer first; the group is asked otherwise.
+    const group = this.options.configuration.googleGroup;
     let invited = false;
     if (!allowed && group) {
       this.active(id, cookieHeader);
@@ -294,7 +298,7 @@ export class GatewaySignup implements AccountOperationBroker {
     const operation = this.active(id, cookieHeader);
     const allowed = await this.allowed(undefined, accountId);
     this.active(id, cookieHeader);
-    if (!allowed) operation.denied = { reason: "not-allowed", accountId };
+    if (!allowed) operation.denied = { reason: "not-allowed", accountId, ...this.googleRequired() };
     return allowed;
   }
 
@@ -332,6 +336,10 @@ export class GatewaySignup implements AccountOperationBroker {
           reason,
           accountId: account.accountId,
           googleSubject: operation.googleSubject,
+          // Without a Google sign-in on the operation, the group could not be asked.
+          ...(reason === "not-allowed" && operation.googleSubject === undefined
+            ? this.googleRequired()
+            : {}),
         };
         throw new SignupDenied();
       }
@@ -444,8 +452,14 @@ export class GatewaySignup implements AccountOperationBroker {
     }
   }
   private deniedView(denied: NonNullable<Operation["denied"]>) {
-    const joinUrl = denied.inviteOnly ? this.options.configuration.googleGroup?.joinUrl : undefined;
+    const joinUrl =
+      denied.inviteOnly || denied.googleRequired
+        ? this.options.configuration.googleGroup?.joinUrl
+        : undefined;
     return { ...denied, ...(joinUrl ? { joinUrl } : {}) };
+  }
+  private googleRequired(): { googleRequired?: true } {
+    return this.options.configuration.googleGroup ? { googleRequired: true } : {};
   }
   private admission(id: string, cookieHeader: string, operation: Operation): AccountAdmission {
     return {

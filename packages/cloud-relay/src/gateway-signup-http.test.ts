@@ -351,6 +351,8 @@ test("an allowlisted Google subject connects, and its digest is what a gateway c
   const op = await f.launched("create");
   expect(await f.session(op)).toMatchObject({ canCreateAccount: false });
   const signIn = await f.google(op);
+  // Without a group, the relay never asks Google for the address.
+  expect(signIn.scope).toBe("openid");
   expect(signIn.callback.headers.get("location")).toBe(`${origin}/_relay/account${op.query}`);
   expect(f.verify).toHaveBeenCalledWith(f.idToken, signIn.nonce);
   const signedIn = `${op.cookie}; ${signIn.cookie}`;
@@ -1138,10 +1140,10 @@ test("an invited google sign-in asks for the email, creates an account and conne
     email: " Maya.Reeves@Example.com",
     email_verified: true,
   });
-  // Signing in to an existing account does not need the address.
+  // Any sign-in here asks for the address, but one with no account is never checked.
   const existing = await f.launched("existing");
   const plain = await f.google(existing);
-  expect(plain.scope).toBe("openid");
+  expect(plain.scope).toBe("openid email");
   expect(plain.callback.headers.get("location")).toContain("failed=no-account");
   expect(gate.asked).toEqual([]);
 

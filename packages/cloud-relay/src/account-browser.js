@@ -550,8 +550,16 @@ export function installAccountUI() {
       await ui.refresh();
     },
     denied(denied) {
-      if (denied.inviteOnly) {
+      if (denied.inviteOnly || denied.googleRequired) {
         root.append(ui.node("p", "Omnesis accounts are invite-only for now."));
+        // A passkey carries no email, so only a Google sign-in can show the invitation.
+        if (denied.googleRequired)
+          root.append(
+            ui.node(
+              "p",
+              "If you were invited, start again from your gateway and sign in with Google, so your invitation can be checked.",
+            ),
+          );
         let join;
         try {
           join = denied.joinUrl && new URL(denied.joinUrl);
@@ -564,7 +572,9 @@ export function installAccountUI() {
           link.href = join.href;
           link.rel = "noopener noreferrer";
           line.append(link);
-          root.append(line, ui.node("p", "Once you're in, start again from your gateway."));
+          root.append(line);
+          if (!denied.googleRequired)
+            root.append(ui.node("p", "Once you're in, start again from your gateway."));
           return;
         }
       } else

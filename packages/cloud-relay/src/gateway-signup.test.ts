@@ -903,9 +903,10 @@ test("an unverified or missing email is refused as not invited without asking go
   expect(gate.asked).toEqual([]);
 });
 
-test("the allowlist answers first, and an existing account is never checked against the group", async () => {
+test("the allowlist and a linked gateway answer first, without asking the group", async () => {
   const listed = "e".repeat(64),
-    known = "a".repeat(64);
+    known = "a".repeat(64),
+    withGateway = "c".repeat(64);
   const gate = group([], joinUrl);
   const email = vi.fn(() => invitedEmail);
   const f = fixture(
@@ -922,6 +923,8 @@ test("the allowlist answers first, and an existing account is never checked agai
   ).resolves.toBeDefined();
   for (const intent of ["create", "existing"] as const) {
     const op = f.launched({}, intent);
+    // On a relay with a group every sign-in asks for the address: whose it is comes later.
+    expect(f.signup.requestsEmail(op.id, op.cookie)).toBe(true);
     await expect(
       f.signup.authorizeGoogle(op.id, op.cookie, {
         subjectDigest: "f".repeat(64),
@@ -929,20 +932,19 @@ test("the allowlist answers first, and an existing account is never checked agai
         email,
       }),
     ).resolves.toBeDefined();
-    // An existing account the allowlist does not name is refused as before, with no link.
-    const refused = f.launched({}, intent);
+    f.state.hasGateway = true;
+    const linked = f.launched({}, intent);
     await expect(
-      f.signup.authorizeGoogle(refused.id, refused.cookie, {
+      f.signup.authorizeGoogle(linked.id, linked.cookie, {
         subjectDigest: "f".repeat(64),
-        account: "b".repeat(64),
+        account: withGateway,
         email,
       }),
-    ).rejects.toBeInstanceOf(SignupDenied);
-    expect(f.signup.describe(refused.id, refused.cookie).denied).not.toHaveProperty("inviteOnly");
+    ).resolves.toBeDefined();
+    f.state.hasGateway = false;
   }
   // Signing in without choosing to create is told there is no account, as before.
   const existing = f.launched({}, "existing");
-  expect(f.signup.requestsEmail(existing.id, existing.cookie)).toBe(false);
   await expect(
     f.signup.authorizeGoogle(existing.id, existing.cookie, {
       subjectDigest: "f".repeat(64),
@@ -951,6 +953,95 @@ test("the allowlist answers first, and an existing account is never checked agai
   ).rejects.toBeInstanceOf(NoAccount);
   expect(gate.asked).toEqual([]);
   expect(email).not.toHaveBeenCalled();
+});
+
+test("an existing account with no gateway is admitted by the group, and refused once it leaves", async () => {
+  const members = [invitedEmail];
+  const gate = group(members, joinUrl);
+  const f = fixture(
+    { policy: "allowlist", allowlistFile: await allowlistFile({}), googleGroup: gate },
+    { maxPerOwner: 32 },
+  );
+  const google = {
+    subjectDigest: "e".repeat(64),
+    account: f.actor.accountId,
+    email: () => invitedEmail,
+  };
+  for (const intent of ["existing", "create"] as const) {
+    const op = f.launched({}, intent);
+    await expect(f.signup.authorizeGoogle(op.id, op.cookie, google)).resolves.toMatchObject({
+      gatewayId: f.gatewayId,
+    });
+    f.signIn(op);
+    // Approval honours the invitation just checked for this sign-in.
+    await expect(f.signup.confirm(op.id, op.cookie, f.actor)).resolves.toBeDefined();
+    expect(f.signup.poll(op.redemption)).toMatchObject({ status: "approved" });
+  }
+  expect(gate.asked).toEqual([invitedEmail, invitedEmail]);
+
+  // Removed from the group: the same account is refused as not invited.
+  members.splice(0);
+  const removed = f.launched({}, "existing");
+  await expect(f.signup.authorizeGoogle(removed.id, removed.cookie, google)).rejects.toBeInstanceOf(
+    SignupDenied,
+  );
+  expect(f.signup.describe(removed.id, removed.cookie).denied).toEqual({
+    reason: "not-allowed",
+    googleSubject: google.subjectDigest,
+    inviteOnly: true,
+    joinUrl,
+  });
+  expect(f.signup.poll(removed.redemption)).toEqual({ status: "denied", reason: "not-allowed" });
+
+  // Google not answering refuses for now, and leaves the operation to retry.
+  gate.failing = true;
+  const failing = f.launched({}, "existing");
+  await expect(f.signup.authorizeGoogle(failing.id, failing.cookie, google)).rejects.toBeInstanceOf(
+    SignupUnavailable,
+  );
+  expect(f.signup.describe(failing.id, failing.cookie)).not.toHaveProperty("denied");
+
+  // No verified email: refused as not invited, without asking.
+  gate.failing = false;
+  const asked = gate.asked.length;
+  const unverified = f.launched({}, "existing");
+  await expect(
+    f.signup.authorizeGoogle(unverified.id, unverified.cookie, {
+      ...google,
+      email: () => undefined,
+    }),
+  ).rejects.toBeInstanceOf(SignupDenied);
+  expect(gate.asked).toHaveLength(asked);
+});
+
+test("a passkey for an account the allowlist does not name is told to sign in with google", async () => {
+  const gate = group([invitedEmail], joinUrl);
+  const f = fixture({
+    policy: "allowlist",
+    allowlistFile: await allowlistFile({}),
+    googleGroup: gate,
+  });
+  const op = f.launched({}, "existing");
+  expect(await f.signup.authorizeAccount(op.id, op.cookie, f.actor.accountId)).toBe(false);
+  expect(f.signup.describe(op.id, op.cookie).denied).toEqual({
+    reason: "not-allowed",
+    accountId: f.actor.accountId,
+    googleRequired: true,
+    joinUrl,
+  });
+  expect(f.signup.poll(op.redemption)).toEqual({ status: "denied", reason: "not-allowed" });
+  expect(gate.asked).toEqual([]);
+
+  // Without a group the refusal is what it always was.
+  const plain = fixture({ policy: "allowlist", allowlistFile: await allowlistFile({}) });
+  const other = plain.launched({}, "existing");
+  expect(await plain.signup.authorizeAccount(other.id, other.cookie, plain.actor.accountId)).toBe(
+    false,
+  );
+  expect(plain.signup.describe(other.id, other.cookie).denied).toEqual({
+    reason: "not-allowed",
+    accountId: plain.actor.accountId,
+  });
 });
 
 test("an invitation holds only for the google sign-in it was checked for", async () => {

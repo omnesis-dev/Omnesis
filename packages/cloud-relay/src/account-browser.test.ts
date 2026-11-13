@@ -358,6 +358,33 @@ test("a sign-up outside the invitation group is told accounts are invite-only an
   }
 });
 
+test("a passkey refused on an invite-only relay is told to sign in with google", async () => {
+  for (const joinUrl of ["https://groups.example.com/g/testers", undefined]) {
+    const f = setup();
+    f.location.search = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
+    f.session({
+      ...authenticated,
+      pending: {
+        purpose: "gateway-signup",
+        gatewayName: "Fictional gateway",
+        needsProof: true,
+        denied: { reason: "not-allowed", accountId: "b".repeat(64), googleRequired: true, joinUrl },
+      },
+    });
+    installAccountUI();
+    await f.wait("invite-only");
+    const text = f.document.getElementById("account-root")!.textContent;
+    expect(text).toContain(
+      "If you were invited, start again from your gateway and sign in with Google, so your invitation can be checked.",
+    );
+    expect(f.document.querySelectorAll("button")).toHaveLength(0);
+    if (joinUrl) {
+      expect(f.document.querySelector("a")?.getAttribute("href")).toBe(joinUrl);
+      expect(f.document.querySelector(".code.long")).toBeNull();
+    } else expect(f.document.querySelector(".code.long")?.textContent).toBe("b".repeat(64));
+  }
+});
+
 test("an invitation that could not be checked says to try again, and offers the sign-in again", async () => {
   const f = setup();
   f.location.search = "?failed=invitation&signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";

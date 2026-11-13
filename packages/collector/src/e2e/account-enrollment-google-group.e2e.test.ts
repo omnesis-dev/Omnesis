@@ -10,7 +10,9 @@
  * endpoints. A person whose verified email is in the group creates an account
  * and the gateway is approved; a person outside it is told accounts are
  * invite-only, with the link to ask to join, and the gateway sees the usual
- * refusal. The relay never writes either address to its log.
+ * refusal. An invited account that left its gateway connects another one by
+ * signing in with Google, until it is removed from the group. The relay never
+ * writes any of these addresses to its log.
  */
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -20,7 +22,10 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { FakeGoogle } from "../../../cloud-relay/test/fake-google.js";
 import {
   CREATE_ACCOUNT_HEADING,
+  EnrollmentGateway,
   EnrollmentWorld,
+  SIGN_IN_HEADING,
+  finishedConnect,
   PasskeyBrowser,
   browserSuiteAvailable,
   clickFirst,
@@ -30,17 +35,20 @@ import {
   startGatewaySignup,
   waitFor,
 } from "./account-enrollment-harness.js";
+import { gatewayBootBudgetMs } from "./gateway-env.js";
 
 const browserReady = browserSuiteAvailable("account-enrollment-google-group.e2e");
 const JOIN_URL = "https://groups.example.com/g/testers";
 const INVITED = "maya.reeves@example.com";
 const STRANGER = "jamie.lopez@example.com";
+const RETURNING = "david.lin@example.com";
 
 describe.skipIf(!browserReady)("invite-only sign-up through a group at google", () => {
   let directory: string;
   let world: EnrollmentWorld;
   let browser: PasskeyBrowser;
   let google: FakeGoogle;
+  const gateways: EnrollmentGateway[] = [];
 
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "omnesis-e2e-signup-group-"));
@@ -71,6 +79,7 @@ describe.skipIf(!browserReady)("invite-only sign-up through a group at google", 
   });
 
   afterAll(async () => {
+    for (const gateway of gateways) await gateway.close();
     await browser?.close();
     await world?.close();
     await google?.close();
@@ -128,9 +137,77 @@ describe.skipIf(!browserReady)("invite-only sign-up through a group at google", 
     expect(await signup.poll()).toEqual({ status: "denied", reason: "not-allowed" });
   });
 
+  test(
+    "an invited account that left its gateway connects another with google, and is refused once removed from the group",
+    async () => {
+      const person = { subject: "fictional-returning-subject", email: RETURNING };
+      google.members.add(RETURNING);
+      /** The gateway shows a code; the person types it and signs in with Google. */
+      const connectWithGoogle = async (
+        gateway: EnrollmentGateway,
+        intent: "create" | "existing",
+      ) => {
+        const session = await browser.session();
+        google.nextSignIn = { ...person, emailVerified: true };
+        const started = await gateway.connect(intent);
+        if (started.connect?.state !== "waiting")
+          throw new Error(`Connect did not start: ${JSON.stringify(started.connect)}`);
+        await enterConnectCode(session.page, started.connect.connectUrl!, started.connect.code!);
+        await session.page
+          .getByRole("heading", {
+            name: intent === "create" ? CREATE_ACCOUNT_HEADING : SIGN_IN_HEADING,
+            exact: true,
+          })
+          .waitFor();
+        await clickFirst(session.page, [
+          intent === "create" ? "Create with Google" : "Sign in with Google",
+        ]);
+        return session;
+      };
+
+      // The group admits the new account, and its first gateway links.
+      const first = await EnrollmentGateway.start(world, "first");
+      gateways.push(first);
+      const creator = await connectWithGoogle(first, "create");
+      await expectText(creator.page, "You're all set");
+      expect(await finishedConnect(first)).toMatchObject({
+        connect: { state: "done" },
+        account: { linked: true },
+      });
+      const accountId = (await signedInAccount(world, creator)).accountId;
+      await first.unlinkAccount();
+
+      // The account now has no gateway and is on no allowlist: the group lets it connect another.
+      const second = await EnrollmentGateway.start(world, "second");
+      gateways.push(second);
+      const asked = google.groupApiRequests().length;
+      const returning = await connectWithGoogle(second, "existing");
+      await expectText(returning.page, "You're all set");
+      expect(await finishedConnect(second)).toMatchObject({
+        connect: { state: "done" },
+        account: { linked: true },
+      });
+      expect((await signedInAccount(world, returning)).accountId).toBe(accountId);
+      expect(google.groupApiRequests().length).toBeGreaterThan(asked);
+      await second.unlinkAccount();
+
+      // Removed from the group, the same account is refused as not invited.
+      google.members.delete(RETURNING);
+      const removed = await connectWithGoogle(second, "existing");
+      await expectText(removed.page, "Omnesis accounts are invite-only for now.");
+      expect(await removed.page.getByRole("link", { name: JOIN_URL }).getAttribute("href")).toBe(
+        JOIN_URL,
+      );
+      expect(await finishedConnect(second)).toMatchObject({
+        connect: { state: "failed", error: "not-allowed" },
+        account: { linked: false },
+      });
+    },
+    gatewayBootBudgetMs() * 2 + 180_000,
+  );
+
   test("the relay keeps no address in its log", () => {
     const log = world.relayLog().toLowerCase();
-    expect(log).not.toContain(INVITED);
-    expect(log).not.toContain(STRANGER);
+    for (const address of [INVITED, STRANGER, RETURNING]) expect(log).not.toContain(address);
   });
 });

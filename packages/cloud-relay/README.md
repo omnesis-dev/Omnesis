@@ -358,14 +358,17 @@ portal in the URL fragment. The gateway verifies that proof itself and applies
 its own enrollment policy. `docs/device-enrollment.md` describes the exchange.
 
 An `allowlist` relay can also accept invitations through a Google Group: a
-Google sign-in that creates an account is admitted when the allowlist does not
-name it but the email Google verified for it is a member of the group, directly
-or through a nested group. The allowlist is checked first, so its entries keep
-working without the group. The group is asked only when a Google sign-in would
-create an account; signing in to an existing account, and approving the sign-in
-that was just checked, never ask it. Passkey account creation still needs
-`open`. All three settings are optional, and with none of them set nothing
-changes:
+Google sign-in the allowlist does not admit is admitted when the email Google
+verified for it is a member of the group, directly or through a nested group.
+That covers a sign-in that creates an account and one for an existing account
+that has no linked gateway, such as an invited person connecting a new gateway
+after removing their last one. The allowlist and a linked gateway are checked
+first, so they keep working without the group and never ask it, and approving
+the sign-in that was just checked does not ask again. A passkey carries no
+email, so a passkey sign-in the allowlist refuses stays refused, and the page
+tells the person to start again and sign in with Google. Passkey account
+creation still needs `open`. All three settings are optional, and with none of
+them set nothing changes:
 
 | Setting                                                    | Value                                                                                                                          |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -393,9 +396,8 @@ recorded, and the same request can be retried. A person outside the group sees
 "Omnesis accounts are invite-only for now." with the join link; the gateway sees
 the ordinary `not-allowed` refusal.
 
-For this check only, the relay's Google sign-in asks for the `email` scope as
-well as `openid`, and only when the person chose to create an account on a relay
-with a group. The address is used only if the ID token says `email_verified`,
+For this check only, the relay's Google sign-in for connecting a gateway asks
+for the `email` scope as well as `openid`, and only on a relay with a group. The address is used only if the ID token says `email_verified`,
 compared lower-cased, and sent to Google once for the check. It is never stored,
 logged or returned, and accounts stay keyed by Google's subject.
 
