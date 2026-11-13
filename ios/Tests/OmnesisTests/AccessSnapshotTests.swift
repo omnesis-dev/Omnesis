@@ -107,11 +107,14 @@ extension PreviewSnapshotTests {
     }
 
     private func accessTreeGallery(
-        _ slug: String, height: CGFloat = 852, icons: [String: String] = PreviewMocks.accessTreeIcons,
+        _ slug: String,
+        height: CGFloat = 852,
+        icons: [String: String] = PreviewMocks.accessTreeIcons,
+        sources: [SourceRecord] = [],
         @ViewBuilder _ content: () -> some View
     ) {
         snapshot(
-            content().environment(AppStore.preview(sourceIconByType: icons)),
+            content().environment(AppStore.preview(sources: sources, sourceIconByType: icons)),
             name: "gallery-\(slug)",
             size: CGSize(width: 393, height: height),
             ignoresSafeArea: true,
