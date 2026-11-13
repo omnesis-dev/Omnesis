@@ -72,7 +72,7 @@ A `deviceKey` whose signature, challenge or SPKI hash fails is refused with 403,
 because it means the request was not meant for this gateway. Otherwise the
 request joins only when all of these hold:
 
-- `proof` verifies: Google signature, issuer, audience from the gateway's own registry, expiry and nonce; or the passkey signature against the pinned public key with this `nonce`-bound challenge, the relay's RP ID and a trusted origin.
+- `proof` verifies: Google signature, issuer, audience from the gateway's own registry (the official relay's public Google client IDs, compiled into the gateway, never taken from the relay or the environment), expiry and nonce; or the passkey signature against the pinned public key with this `nonce`-bound challenge, the relay's RP ID and a trusted origin.
 - The proof is at most 10 minutes old.
 - The Google subject digest or passkey credential is in Trusted sign-ins.
 - Policy is `automatic` (the default once linked) and `requireApproval` is not set.

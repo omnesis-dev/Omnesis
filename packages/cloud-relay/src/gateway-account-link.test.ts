@@ -600,6 +600,15 @@ test("sign-in checks use this installation's relay, Android origins and Google a
   await local.initialize();
   const proofs = local.pairingIdentity()!.enrollment;
   expect(await proofs.verifyProof(googleProof, nonce)).toBeUndefined();
+  // With no trusted Google client at all, no Google proof is checked.
+  const untrusted = new GatewayAccountLink({
+    ...f.options,
+    googleTrust: () => ({ deviceClientIds: [], deviceAuthorizedParties: [] }),
+  });
+  await untrusted.initialize();
+  expect(
+    await untrusted.pairingIdentity()!.enrollment.verifyProof(googleProof, nonce),
+  ).toBeUndefined();
   f.env.OMNESIS_CLOUD_RELAY_GOOGLE_CLIENT_ID = "client-a.example, client-b.example";
   f.env.OMNESIS_CLOUD_RELAY_GOOGLE_ANDROID_CLIENT_ID = "android.example";
   expect(await proofs.verifyProof(googleProof, nonce)).toBeUndefined();

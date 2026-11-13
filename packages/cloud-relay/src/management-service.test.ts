@@ -16,6 +16,7 @@ import {
 } from "./management-service.js";
 import { CloudRelayManagementFailure } from "./management.js";
 import { HostedNameTaken } from "./relay-configuration.js";
+import { googleBrowserTrust } from "./google-browser-trust.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
 
@@ -987,13 +988,13 @@ test("managed Google capabilities are fetched only after enrollment and expose a
   const transport = vi.fn<typeof fetch>(async () => Response.json(capabilities));
   const f = fixture({
     fetch: transport,
-    env: {
-      OMNESIS_CLOUD_RELAY_URL: input.relayUrl,
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID: "managed-owner-client",
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID: "managed-device-client",
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_NATIVE_CLIENT_IDS: "managed-device-client",
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_AUTHORIZED_PARTIES: "managed-android",
-    },
+    env: { OMNESIS_CLOUD_RELAY_URL: input.relayUrl },
+    googleTrust: () => ({
+      ownerLinkClientId: "managed-owner-client",
+      deviceEnrollmentClientId: "managed-device-client",
+      deviceClientIds: ["managed-device-client"],
+      deviceAuthorizedParties: ["managed-android"],
+    }),
   });
   manager = await GatewayCloudRelayManagement.open(f.options);
   expect(manager.managedGoogleBrowser()).toBeUndefined();
@@ -1043,10 +1044,12 @@ test("disable during managed capability lookup cannot leave a late tunnel behind
   });
   const f = fixture({
     fetch: transport,
-    env: {
-      OMNESIS_CLOUD_RELAY_URL: input.relayUrl,
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID: "managed-owner-client",
-    },
+    env: { OMNESIS_CLOUD_RELAY_URL: input.relayUrl },
+    googleTrust: () => ({
+      ownerLinkClientId: "managed-owner-client",
+      deviceClientIds: [],
+      deviceAuthorizedParties: [],
+    }),
   });
   manager = await GatewayCloudRelayManagement.open(f.options);
   await manager.configure(input);
@@ -1061,11 +1064,43 @@ test("disable during managed capability lookup cannot leave a late tunnel behind
   expect(await manager.status()).toMatchObject({ enabled: false, tunnel: { state: "disabled" } });
 });
 
-test("missing independent deployment IDs leave Google unavailable without querying the relay or disrupting direct and relay operation", async () => {
+test("the compiled-in official google clients enable managed sign-in with no google configuration", async () => {
+  const official = googleBrowserTrust();
+  const transport = vi.fn<typeof fetch>(async () =>
+    Response.json({
+      protocol: "omnesis-google-browser-v1",
+      ownerLinkClientId: official.ownerLinkClientId,
+      deviceEnrollmentClientId: official.deviceEnrollmentClientId,
+      deviceClientIds: official.deviceClientIds,
+      deviceAuthorizedParties: official.deviceAuthorizedParties,
+    }),
+  );
+  const f = fixture({ fetch: transport, env: { OMNESIS_CLOUD_RELAY_URL: input.relayUrl } });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await manager.enable();
+  await idle();
+  expect(manager.managedGoogleBrowser()?.clientId("owner-link")).toBe(official.ownerLinkClientId);
+  expect(manager.managedGoogleBrowser()?.clientId("device-enrollment")).toBe(
+    official.deviceEnrollmentClientId,
+  );
+  expect(manager.managedGoogleBrowser()?.deviceIdentity()).toEqual({
+    clientIds: official.deviceClientIds,
+    authorizedParties: official.deviceAuthorizedParties,
+  });
+  expect(await manager.status()).toMatchObject({
+    google: { configured: true, canLink: true, linked: false },
+  });
+});
+
+test("an empty trust registry leaves Google unavailable without querying the relay or disrupting direct and relay operation", async () => {
   const transport = vi.fn<typeof fetch>(async () => {
     throw new Error("unconfigured Google must not query a service");
   });
-  const f = fixture({ fetch: transport });
+  const f = fixture({
+    fetch: transport,
+    googleTrust: () => ({ deviceClientIds: [], deviceAuthorizedParties: [] }),
+  });
   manager = await GatewayCloudRelayManagement.open(f.options);
   await manager.configure(input);
   await manager.enable();
@@ -1098,11 +1133,13 @@ test("relay-advertised OAuth IDs outside independent installation trust cannot e
   );
   const f = fixture({
     fetch: transport,
-    env: {
-      OMNESIS_CLOUD_RELAY_URL: input.relayUrl,
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID: "trusted-owner",
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID: "trusted-device",
-    },
+    env: { OMNESIS_CLOUD_RELAY_URL: input.relayUrl },
+    googleTrust: () => ({
+      ownerLinkClientId: "trusted-owner",
+      deviceEnrollmentClientId: "trusted-device",
+      deviceClientIds: [],
+      deviceAuthorizedParties: [],
+    }),
   });
   manager = await GatewayCloudRelayManagement.open(f.options);
   await manager.configure(input);

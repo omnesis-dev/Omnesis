@@ -17,6 +17,7 @@ import { tlsFiles } from "../test/support.js";
 import { tlsSpkiFingerprint } from "./pinned-key.js";
 import { ManagedGoogleBrowser } from "./google-browser-client.js";
 import { googleBrowserStartTranscript } from "./google-browser-contract.js";
+import type { GoogleBrowserTrust } from "./google-browser-trust.js";
 const directories: string[] = [];
 afterEach(async () => {
   vi.useRealTimers();
@@ -41,9 +42,12 @@ async function fixture() {
     OMNESIS_PUBLIC_BASE_URL: "https://direct.example.test",
     OMNESIS_TLS_CERT: tls.certFile,
     OMNESIS_TLS_KEY: tls.keyFile,
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID: "owner-client",
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID: "device-client",
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_AUTHORIZED_PARTIES: "android-presenter",
+  };
+  const trust: GoogleBrowserTrust = {
+    ownerLinkClientId: "owner-client",
+    deviceEnrollmentClientId: "device-client",
+    deviceClientIds: [],
+    deviceAuthorizedParties: ["android-presenter"],
   };
   let start: any,
     issuedAt: number | undefined,
@@ -91,6 +95,7 @@ async function fixture() {
   }));
   const options = {
     env: (): NodeJS.ProcessEnv => env,
+    trust: (): GoogleBrowserTrust => trust,
     fetch: transport,
     register,
     callbackOrigins: () => ({ origins: [env.OMNESIS_PUBLIC_BASE_URL] }),
@@ -337,13 +342,10 @@ test("lifecycle cancellation rejects late operations even when an underlying tra
 
 test("a configured relay cannot enable managed sign-in or choose audiences without independent installation trust", async () => {
   const f = await fixture();
-  const unpinned = {
-    ...f.env,
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID: undefined,
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID: undefined,
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_AUTHORIZED_PARTIES: undefined,
-  };
-  const off = new ManagedGoogleBrowser({ ...f.options, env: () => unpinned });
+  const off = new ManagedGoogleBrowser({
+    ...f.options,
+    trust: () => ({ deviceClientIds: [], deviceAuthorizedParties: [] }),
+  });
   await off.refresh();
   expect(off.clientId("owner-link")).toBeUndefined();
   expect(off.deviceIdentity()).toBeUndefined();
@@ -368,12 +370,7 @@ test("native-only capability discovery stays constrained and tampered or stale p
   const f = await fixture();
   const native = new ManagedGoogleBrowser({
     ...f.options,
-    env: () => ({
-      ...f.env,
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID: undefined,
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID: undefined,
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_NATIVE_CLIENT_IDS: "device-client",
-    }),
+    trust: () => ({ deviceClientIds: ["device-client"], deviceAuthorizedParties: [] }),
   });
   f.transport.mockResolvedValueOnce(
     Response.json({
@@ -398,9 +395,10 @@ test("native-only capability discovery stays constrained and tampered or stale p
       "audience is not trusted",
     );
   }
-  f.options.env = () => ({
-    ...f.env,
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID: undefined,
+  f.options.trust = () => ({
+    ownerLinkClientId: "owner-client",
+    deviceClientIds: [],
+    deviceAuthorizedParties: ["android-presenter"],
   });
   await expect(f.client.redeem(pending, "r".repeat(43))).rejects.toThrow("audience is not trusted");
   await expect(f.client.refresh()).rejects.toThrow("trusted deployment audiences");

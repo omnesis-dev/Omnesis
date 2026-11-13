@@ -11,10 +11,34 @@ export interface GoogleBrowserTrust {
   readonly deviceAuthorizedParties: readonly string[];
 }
 
-/** Public deployment IDs belong in the installation, independently of the relay's discovery response. */
-export const DEFAULT_GOOGLE_BROWSER_TRUST: GoogleBrowserTrust = Object.freeze({
-  deviceClientIds: Object.freeze([] as string[]),
-  deviceAuthorizedParties: Object.freeze([] as string[]),
+const DEVICE_ENROLLMENT_WEB_CLIENT_ID =
+  "69746762909-e65hukbm0nqrntk71qc0prslr9eg6gik.apps.googleusercontent.com";
+const ANDROID_RELEASE_CLIENT_ID =
+  "69746762909-3lnneuvft93ud5ssdppe19tc7fol4aku.apps.googleusercontent.com";
+/**
+ * Android OAuth client bound to the operator's debug signing certificate (Android test build).
+ * Google only issues tokens presented by this client to apps signed with that certificate.
+ */
+const ANDROID_TEST_BUILD_CLIENT_ID =
+  "69746762909-sb5de515284geor9ui6vg7hsl4qsrg53.apps.googleusercontent.com";
+
+/**
+ * The Google OAuth apps whose tokens a gateway accepts for managed sign-in. These are public
+ * identifiers compiled into the gateway, never configuration and never taken from the relay.
+ * They only name which Google apps may present a token: the gateway still verifies Google's
+ * signature, issuer, audience, presenter and nonce itself.
+ */
+export const OFFICIAL_GOOGLE_BROWSER_TRUST: GoogleBrowserTrust = Object.freeze({
+  ownerLinkClientId: "69746762909-7vc7i6efbbig530e20gtaa83076q02l2.apps.googleusercontent.com",
+  deviceEnrollmentClientId: DEVICE_ENROLLMENT_WEB_CLIENT_ID,
+  deviceClientIds: Object.freeze([
+    DEVICE_ENROLLMENT_WEB_CLIENT_ID,
+    "69746762909-luas0k1rpi7nvn2ee0bogfu2vfha34si.apps.googleusercontent.com",
+    "69746762909-071jh21ngi85ne01k4oe5krfng2frmhr.apps.googleusercontent.com",
+    "69746762909-qc4prr14sagtienhn36lhmp7rthno16a.apps.googleusercontent.com",
+    ANDROID_RELEASE_CLIENT_ID,
+  ]),
+  deviceAuthorizedParties: Object.freeze([ANDROID_RELEASE_CLIENT_ID, ANDROID_TEST_BUILD_CLIENT_ID]),
 });
 const clientId = z
   .string()
@@ -24,41 +48,29 @@ const clientId = z
   .regex(/^[A-Za-z0-9._-]+$/);
 const clients = z.array(clientId).max(16);
 
-function list(value: string | undefined, fallback: readonly string[]): string[] {
-  return value === undefined
-    ? [...fallback]
-    : clients.parse(z.string().max(8192).parse(value).split(","));
-}
-
-/** Operator overrides contain only public IDs. Missing deployment IDs leave managed OAuth disabled. */
-export function googleBrowserTrust(env: NodeJS.ProcessEnv): GoogleBrowserTrust {
+/**
+ * Normalizes a trust registry: the enrollment client is a device audience, every audience may
+ * present its own token, and the owner-link client never doubles as a device audience or presenter.
+ * Tests pass synthetic registries; production uses the compiled-in official one.
+ */
+export function googleBrowserTrust(
+  configured: GoogleBrowserTrust = OFFICIAL_GOOGLE_BROWSER_TRUST,
+): GoogleBrowserTrust {
   try {
-    const defaults = DEFAULT_GOOGLE_BROWSER_TRUST;
-    const ownerLinkClientId =
-      env.OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID ?? defaults.ownerLinkClientId;
-    const deviceEnrollmentClientId =
-      env.OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID ?? defaults.deviceEnrollmentClientId;
+    const owner =
+      configured.ownerLinkClientId === undefined
+        ? undefined
+        : clientId.parse(configured.ownerLinkClientId);
+    const device =
+      configured.deviceEnrollmentClientId === undefined
+        ? undefined
+        : clientId.parse(configured.deviceEnrollmentClientId);
     const deviceClientIds = clients.parse([
-      ...new Set([
-        ...list(
-          env.OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_NATIVE_CLIENT_IDS,
-          defaults.deviceClientIds,
-        ),
-        ...(deviceEnrollmentClientId === undefined ? [] : [deviceEnrollmentClientId]),
-      ]),
+      ...new Set([...configured.deviceClientIds, ...(device === undefined ? [] : [device])]),
     ]);
     const deviceAuthorizedParties = clients.parse([
-      ...new Set([
-        ...deviceClientIds,
-        ...list(
-          env.OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_AUTHORIZED_PARTIES,
-          defaults.deviceAuthorizedParties,
-        ),
-      ]),
+      ...new Set([...deviceClientIds, ...configured.deviceAuthorizedParties]),
     ]);
-    const owner = ownerLinkClientId === undefined ? undefined : clientId.parse(ownerLinkClientId);
-    const device =
-      deviceEnrollmentClientId === undefined ? undefined : clientId.parse(deviceEnrollmentClientId);
     if (
       owner !== undefined &&
       (deviceClientIds.includes(owner) || deviceAuthorizedParties.includes(owner))
@@ -71,8 +83,7 @@ export function googleBrowserTrust(env: NodeJS.ProcessEnv): GoogleBrowserTrust {
       deviceAuthorizedParties: Object.freeze(deviceAuthorizedParties),
     });
   } catch {
-    // Do not reflect malformed operator configuration or discovery contents into gateway logs.
-
+    // Do not reflect malformed registry or discovery contents into gateway logs.
     throw new Error("Managed Google audience trust configuration is invalid");
   }
 }

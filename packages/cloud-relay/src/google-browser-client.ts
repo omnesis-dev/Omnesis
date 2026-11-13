@@ -25,7 +25,11 @@ import {
   googleBrowserConfigSchema,
   type GoogleBrowserPurpose,
 } from "./google-browser-contract.js";
-import { googleBrowserTrust, trustedGoogleBrowserConfiguration } from "./google-browser-trust.js";
+import {
+  googleBrowserTrust,
+  trustedGoogleBrowserConfiguration,
+  type GoogleBrowserTrust,
+} from "./google-browser-trust.js";
 
 const protocol = "omnesis-google-browser-v1" as const;
 const capabilities = googleBrowserConfigSchema;
@@ -78,21 +82,22 @@ export class ManagedGoogleBrowser implements GoogleBrowserPort {
       fetch?: typeof fetch;
       register?: typeof registerGatewayKey;
       identity?(audience: string): IdentityProvider;
+      /** Test seam: production always trusts the compiled-in official Google clients. */
+      trust?(): GoogleBrowserTrust;
     },
   ) {}
+  private trust(): GoogleBrowserTrust {
+    return googleBrowserTrust(this.options.trust?.());
+  }
   authorizationOrigin(): string | undefined {
     return installationRelayUrl(this.options.env());
   }
   clientId(purpose: GoogleBrowserPurpose): string | undefined {
-    const config =
-      this.config &&
-      trustedGoogleBrowserConfiguration(this.config, googleBrowserTrust(this.options.env()));
+    const config = this.config && trustedGoogleBrowserConfiguration(this.config, this.trust());
     return purpose === "owner-link" ? config?.ownerLinkClientId : config?.deviceEnrollmentClientId;
   }
   deviceIdentity() {
-    const config =
-      this.config &&
-      trustedGoogleBrowserConfiguration(this.config, googleBrowserTrust(this.options.env()));
+    const config = this.config && trustedGoogleBrowserConfiguration(this.config, this.trust());
     return config && config.deviceClientIds.length
       ? {
           clientIds: [...config.deviceClientIds],
@@ -117,15 +122,14 @@ export class ManagedGoogleBrowser implements GoogleBrowserPort {
   }
   async refresh(signal?: AbortSignal): Promise<void> {
     if (Date.now() < this.refreshAt) {
-      if (this.config)
-        trustedGoogleBrowserConfiguration(this.config, googleBrowserTrust(this.options.env()));
+      if (this.config) trustedGoogleBrowserConfiguration(this.config, this.trust());
       return;
     }
     if (this.refreshing) return this.refreshing;
     this.refreshing = (async () => {
       const e = this.options.env();
       if (!e.OMNESIS_CLOUD_RELAY_URL || !e.OMNESIS_CLOUD_RELAY_GATEWAY_ID) return;
-      const trust = googleBrowserTrust(e);
+      const trust = this.trust();
       if (
         !trust.ownerLinkClientId &&
         !trust.deviceEnrollmentClientId &&
@@ -263,7 +267,7 @@ export class ManagedGoogleBrowser implements GoogleBrowserPort {
     return { ...value, ...input, issuedAt, redemptionSecret, nonce: input.nonce };
   }
   async redeem(pending: GoogleBrowserPending, result: string, callerSignal?: AbortSignal) {
-    const trust = googleBrowserTrust(this.options.env());
+    const trust = this.trust();
     const audience =
       pending.purpose === "owner-link" ? trust.ownerLinkClientId : trust.deviceEnrollmentClientId;
     if (!audience || audience !== pending.clientId)

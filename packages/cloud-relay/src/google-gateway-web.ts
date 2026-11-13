@@ -22,6 +22,7 @@ import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
 import { relayOrigin } from "./network.js";
 import { CloudRelayManagementFailure } from "./management.js";
 import type { GoogleBrowserCallbackOrigins } from "./google-browser-callback.js";
+import type { GoogleBrowserTrust } from "./google-browser-trust.js";
 
 const cookieName = "__Host-omnesis-gateway-google";
 const callbackPath = "/admin/cloud-relay/google/callback";
@@ -33,6 +34,8 @@ export interface GatewayGoogleWebOptions {
   fetch?: typeof fetch;
   identity?: IdentityProvider;
   register?: typeof registerGatewayKey;
+  /** Test seam: production always trusts the compiled-in official Google clients. */
+  trust?(): GoogleBrowserTrust;
 }
 interface Configuration {
   clientId: string;
