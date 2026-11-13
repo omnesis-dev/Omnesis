@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: multilingual-search-research-${{ github.ref }}
-  cancel-in-progress: true
+  group: multilingual-search-research-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -45,7 +45,8 @@ jobs:
           rustup toolchain install 1.100.0 --profile minimal
           rustup override set 1.100.0
           echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-target" >> "$GITHUB_ENV"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cargo-cache
         with:
           path: |
             ~/.cargo/registry
@@ -53,7 +54,7 @@ jobs:
             ${{ runner.temp }}/multilingual-target
           key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
       - name: Rust analysis and FFI contract tests
-        run: cargo test --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+        run: cargo test --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
       - name: Build supported FTS5 extension
         shell: bash
         run: |
@@ -69,6 +70,16 @@ jobs:
           mkdir -p "$RUNNER_TEMP/multilingual-reports"
           node --import tsx evals/multilingual-search/integration/verify.mjs \
             "$MULTILINGUAL_EXTENSION" "$RUNNER_TEMP/multilingual-reports/native.json"
+      - name: Thirty-language token, original-offset and query roundtrip parity
+        shell: bash
+        run: |
+          node --import tsx evals/multilingual-search/integration/parity.mjs \
+            "$MULTILINGUAL_EXTENSION" "$RUNNER_TEMP/multilingual-reports/parity.json"
+      - name: Concurrent read, update, activation and rollback snapshots
+        shell: bash
+        run: |
+          node --import tsx evals/multilingual-search/integration/concurrency.mjs \
+            "$MULTILINGUAL_EXTENSION" "$RUNNER_TEMP/multilingual-reports/concurrency.json"
       - name: Preserve measured results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -77,3 +88,214 @@ jobs:
           path: ${{ runner.temp }}/multilingual-reports/*.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Preserve Cargo work after diagnostic failures
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-target
+          key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+
+  public-retrieval:
+    name: Independent held-out retrieval · 17 languages
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/free-runner-disk
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Select pinned tools
+        shell: bash
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          python3 -m pip install snowballstemmer==3.1.1
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-public-target" >> "$GITHUB_ENV"
+          echo "MULTILINGUAL_TOOLS_DIR=$RUNNER_TEMP/multilingual-tools" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: public-cargo-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-public-target
+          key: multilingual-public-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/**/Cargo.lock') }}
+      - name: Benchmark metric and matching contract tests
+        run: python3 -m unittest discover -s evals/multilingual-search/extended-public -p 'test_*.py'
+      - name: Build one fixed set of analyzer binaries
+        run: sh evals/multilingual-search/integration/build-probes.sh
+      - name: Download and audit frozen public inputs
+        run: python3 evals/multilingual-search/extended-public/prepare.py --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Run the frozen matrix and strict aggregate
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/extended-public/run-matrix.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" \
+            --cache-dir "$RUNNER_TEMP/multilingual-cache" \
+            --output-dir "$RUNNER_TEMP/multilingual-public-reports" \
+            --icu4x "$MULTILINGUAL_TOOLS_DIR/icu4x" \
+            --charabia-full "$MULTILINGUAL_TOOLS_DIR/charabia-full" \
+            --charabia-lean "$MULTILINGUAL_TOOLS_DIR/charabia-lean" \
+            --prototype "$MULTILINGUAL_TOOLS_DIR/prototype" --workers 3 --prune-successful-cache
+      - name: Preserve metrics and audit manifests
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-public-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-public-reports/*.json
+            ${{ runner.temp }}/multilingual-public-reports/*.log
+            ${{ runner.temp }}/multilingual-data/*/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve expensive analyzer builds
+        if: always() && steps.public-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-public-target
+          key: multilingual-public-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/**/Cargo.lock') }}
+
+  mixed-language-diagnostics:
+    name: Personal-document precision and language routing
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Select pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-diagnostic-target" >> "$GITHUB_ENV"
+      - name: Frozen-fixture and routing-contract tests
+        run: |
+          python3 evals/multilingual-search/diagnostics/run.py --validate-only
+          python3 -m unittest discover -s evals/multilingual-search/diagnostics -p 'test_*.py'
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: diagnostic-cargo-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-diagnostic-target
+          key: multilingual-diagnostics-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock', 'evals/multilingual-search/fasttext-probe/Cargo.lock') }}
+      - name: Build analyzer and detector
+        run: |
+          cargo build --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+          cargo build --release --locked --manifest-path evals/multilingual-search/fasttext-probe/Cargo.toml
+      - name: Prepare checksum-pinned model and official detector reference
+        run: python3 evals/multilingual-search/integration/prepare-detector.py --output-dir "$RUNNER_TEMP/multilingual-detector"
+      - name: Run all predefined development and held-out policies
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/multilingual-diagnostic-reports"
+          python3 evals/multilingual-search/diagnostics/run.py \
+            --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --detector "$CARGO_TARGET_DIR/release/omnesis-fasttext-probe" \
+            --detector-model "$RUNNER_TEMP/multilingual-detector/lid.176.ftz" \
+            --official-detector "$RUNNER_TEMP/multilingual-detector/fastText-0.9.2/fasttext" \
+            --cache-dir "$RUNNER_TEMP/multilingual-diagnostic-cache" \
+            --split all --output "$RUNNER_TEMP/multilingual-diagnostic-reports/diagnostics.json"
+      - name: Preserve aggregate metrics and detector provenance
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-diagnostic-reports/*.json
+            ${{ runner.temp }}/multilingual-detector/provenance.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve analyzer build work
+        if: always() && steps.diagnostic-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-diagnostic-target
+          key: multilingual-diagnostics-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock', 'evals/multilingual-search/fasttext-probe/Cargo.lock') }}
+
+  operational-scale:
+    name: Mixed-language encrypted operations · 10k / 100k / 250k
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/free-runner-disk
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Prepare pinned tools
+        shell: bash
+        run: |
+          scripts/ci/npm-ci.sh
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-operational-target" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: operational-cargo-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-operational-target
+          key: multilingual-operations-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+      - name: Build native FTS5 adapter
+        run: sh evals/multilingual-search/prototype/build-native.sh node_modules/better-sqlite3/deps/sqlite3
+      - name: Audit and prepare source pools
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/extended-public/prepare.py --data-dir "$RUNNER_TEMP/multilingual-data"
+          python3 evals/multilingual-search/integration/prepare-scale.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" \
+            --output-dir "$RUNNER_TEMP/multilingual-workload" --count 250000
+      - name: Measure isolated processes, cold reopen, memory, writes and restrictions
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/multilingual-operational-reports"
+          node --import tsx evals/multilingual-search/integration/scale.mjs \
+            --corpus "$RUNNER_TEMP/multilingual-workload/documents.jsonl" \
+            --queries "$RUNNER_TEMP/multilingual-workload/queries.json" \
+            --extension "$CARGO_TARGET_DIR/release/libomnesis_multilingual.so" \
+            --counts 10000,100000,250000 --repeats 7 \
+            --output "$RUNNER_TEMP/multilingual-operational-reports/scale.json"
+      - name: Preserve resource measurements and source identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-operations-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-operational-reports/*.json
+            ${{ runner.temp }}/multilingual-workload/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve analyzer build work
+        if: always() && steps.operational-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-operational-target
+          key: multilingual-operations-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}

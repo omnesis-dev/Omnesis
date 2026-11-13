@@ -2,11 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Prototype compiler and executor; production search defaults are unchanged. */
-import { LexicalIndex } from "../../../../packages/gateway/src/search/lexical-index.js";
-import { joinRankedCandidates } from "../../../../packages/gateway/src/search/bm25.js";
-import { buildMetadataFilter } from "../../../../packages/gateway/src/search/metadata.js";
-import { visibleChunkClause } from "../../../../packages/gateway/src/search/visible-chunks.js";
-import { withDocIdRestriction } from "../../../../packages/gateway/src/search/docid-filter.js";
+import { LexicalIndex } from "../../../packages/gateway/src/search/lexical-index.js";
+import { joinRankedCandidates } from "../../../packages/gateway/src/search/bm25.js";
+import { buildMetadataFilter } from "../../../packages/gateway/src/search/metadata.js";
+import { visibleChunkClause } from "../../../packages/gateway/src/search/visible-chunks.js";
+import { withDocIdRestriction } from "../../../packages/gateway/src/search/docid-filter.js";
 import { generation, assertGeneration } from "./store.mjs";
 
 export const COMPILED_QUERY_LOCALE = "und-x-omnesis-terms-v1";
@@ -18,7 +18,12 @@ export function analyze(db, text, language, mode) {
   const result = JSON.parse(row.value);
   if (!Array.isArray(result.tokens)) throw new Error("Invalid analyzer response");
   for (const token of result.tokens) {
-    if (typeof token.text !== "string" || !token.text || /[\u0000\t\n\v\f\r ]/u.test(token.text)) {
+    if (
+      typeof token.text !== "string" ||
+      !token.text ||
+      token.text.includes("\0") ||
+      /[\t\n\v\f\r ]/u.test(token.text)
+    ) {
       throw new Error("Analyzer emitted a term outside the compiled-query contract");
     }
   }

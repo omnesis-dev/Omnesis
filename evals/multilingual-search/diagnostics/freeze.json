@@ -1,0 +1,11 @@
+{
+  "fixtureCanonicalSha256": "88c87f0555f91d5a40acf3d57e50921224dd9ce2e836b1afbca1d1012be6cbae",
+  "fixtureFileSha256": "5410d8b30e69cedf954f6e03f6745e79034cd98455ff4c72af608dca6861b5f5",
+  "policy": {
+    "confidence": 0.6,
+    "minimum_letters": 20,
+    "rrf_k": 60,
+    "depth": 100
+  },
+  "notice": "Authored and frozen before the first development analyzer run. Heldout uses the same declared policies; bug fixes must be disclosed and are not parameter tuning."
+}

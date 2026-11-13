@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Isolated research schema. Never invoked by the production database opener. */
-import { openIndexDb } from "../../../../packages/gateway/src/indexer/db.js";
+import { openIndexDb } from "../../../packages/gateway/src/indexer/db.js";
 
 const TABLES = new Set(["chunks_fts", "research_next_fts", "research_previous_fts"]);
 
@@ -105,6 +105,9 @@ function refreshTriggers(db) {
 export function installPrototype(db, extension, analysisMode = "stem") {
   registerNative(db, extension);
   mode(analysisMode);
+  if (db.prepare("SELECT 1 FROM chunks WHERE rowid<=0 LIMIT 1").get()) {
+    throw new Error("Research generations require positive chunk rowids");
+  }
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='research_analysis_generation'").get()) {
     throw new Error("Research schema already installed; use the generation API");
   }
@@ -131,7 +134,10 @@ export function installPrototype(db, extension, analysisMode = "stem") {
         INSERT INTO chunks_fts_changes(chunk_rowid) VALUES(new.rowid); END;
       CREATE TRIGGER research_rowids_immutable BEFORE UPDATE OF rowid ON chunks
         WHEN old.rowid != new.rowid BEGIN
-        SELECT RAISE(ABORT,'Research index requires stable chunk rowids'); END;`);
+        SELECT RAISE(ABORT,'Research index requires stable chunk rowids'); END;
+      CREATE TRIGGER research_positive_rowids AFTER INSERT ON chunks
+        WHEN new.rowid<=0 BEGIN
+        SELECT RAISE(ABORT,'Research index requires positive chunk rowids'); END;`);
     db.prepare(
       `INSERT INTO research_analysis_generation
       (singleton,epoch,active_mode,active_fingerprint) VALUES(1,1,?,?)`,

@@ -51,6 +51,24 @@ pub struct Config {
     pub language: LanguageIdentifier,
     pub mode: Mode,
     pub segmenter: SegmenterMode,
+    pub folding: Folding,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Folding {
+    #[default]
+    None,
+    Broad,
+}
+
+impl Folding {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Broad => "broad",
+        }
+    }
 }
 
 impl Config {
@@ -66,22 +84,30 @@ impl Config {
             language,
             mode,
             segmenter,
+            folding: Folding::None,
         })
     }
 
     pub fn with_locale(&self, locale: Option<&str>) -> Result<Self, String> {
         match locale.filter(|value| !value.is_empty()) {
-            Some(language) => Self::new(language, self.mode, self.segmenter),
+            Some(language) => Self::new(language, self.mode, self.segmenter)
+                .map(|config| config.with_folding(self.folding)),
             None => Ok(self.clone()),
         }
     }
 
+    pub fn with_folding(mut self, folding: Folding) -> Self {
+        self.folding = folding;
+        self
+    }
+
     pub fn fingerprint(&self) -> String {
         let value = format!(
-            "{ANALYZER_VERSION};{};{};{};{DEPENDENCIES};{}",
+            "{ANALYZER_VERSION};{};{};{};{};{DEPENDENCIES};{}",
             self.language,
             self.mode.name(),
             self.segmenter.name(),
+            self.folding.name(),
             env!("OMNESIS_ANALYZER_SOURCE_HASH"),
         );
         format!("{ANALYZER_VERSION}:{:x}", Sha256::digest(value.as_bytes()))

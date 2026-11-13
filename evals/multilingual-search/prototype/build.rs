@@ -28,6 +28,7 @@ fn main() {
         "src/config.rs",
         "src/analyzer.rs",
         "src/ffi.rs",
+        "src/normalization.rs",
         "fts5-adapter.c",
     ] {
         println!("cargo:rerun-if-changed={name}");

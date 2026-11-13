@@ -18,8 +18,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stdout = io::BufWriter::new(io::stdout().lock());
     for line in io::stdin().lock().lines() {
         let request: Request = serde_json::from_str(&line?)?;
-        let language = canonical_language(&request.language)?;
-        let stemmer = Stemmer::try_from_name(language.language.as_str()).ok();
+        let language = canonical_language(&request.language)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| request.language.clone());
+        let stemmer = Stemmer::try_from_name(&request.language)
+            .or_else(|_| Stemmer::try_from_name(language.split('-').next().unwrap_or("und")))
+            .ok();
         let stem = stemmer
             .as_ref()
             .map(|value| value.stem(&request.text).into_owned())
@@ -27,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_writer(
             &mut stdout,
             &json!({
-                "text": stem, "language": language.to_string(),
+            "text": stem, "language": language,
                 "algorithm": stemmer.map(|value| value.algorithm().name()),
                 "version": "frostem=2.20261016.3",
             }),

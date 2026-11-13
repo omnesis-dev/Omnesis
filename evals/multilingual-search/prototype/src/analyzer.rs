@@ -11,9 +11,10 @@ use icu_segmenter::{options::WordBreakOptions, WordSegmenter};
 use serde::Serialize;
 
 use crate::config::{
-    charabia_language, Config, Mode, SegmenterMode, ANALYZER_VERSION, DEPENDENCIES,
+    charabia_language, Config, Folding, Mode, SegmenterMode, ANALYZER_VERSION, DEPENDENCIES,
     KOREAN_DICTIONARY_SHA256, SNOWBALL_COMMIT,
 };
+use crate::normalization::NormalizedText;
 
 #[derive(Debug, Serialize)]
 pub struct AnalyzedToken {
@@ -41,6 +42,7 @@ pub struct Analysis {
     pub segmenter: SegmenterMode,
     pub offset_unit: &'static str,
     pub prefix_last: bool,
+    pub folding: Folding,
 }
 
 struct Segment<'a> {
@@ -141,7 +143,8 @@ fn segment<'a>(text: &'a str, config: &Config) -> Result<Vec<Segment<'a>>, Strin
 }
 
 pub fn analyze(text: &str, config: &Config, prefix_last: bool) -> Result<Analysis, String> {
-    let segments = segment(text, config)?;
+    let normalized_text = NormalizedText::new(text)?;
+    let segments = segment(normalized_text.text(), config)?;
     let normalizer = ComposingNormalizer::new_nfkc();
     let case_mapper = CaseMapper::new();
     let configured = config.language.language.as_str();
@@ -173,7 +176,19 @@ pub fn analyze(text: &str, config: &Config, prefix_last: bool) -> Result<Analysi
             } else {
                 stemmed
             };
-            let lemma = if config.mode == Mode::Stem {
+            // Thai marks distinguish words. Charabia's lossy Thai mark removal
+            // is deliberately bypassed, while ICU's segmentation is retained.
+            let lemma = if config.mode == Mode::Stem
+                && config.folding == Folding::Broad
+                && matches!(
+                    segment.script,
+                    Script::Latin
+                        | Script::Greek
+                        | Script::Arabic
+                        | Script::Hebrew
+                        | Script::Cj
+                        | Script::Hangul
+                ) {
                 let token = charabia::Token {
                     lemma: Cow::Owned(stemmed.into_owned()),
                     script: segment.script,
@@ -199,11 +214,12 @@ pub fn analyze(text: &str, config: &Config, prefix_last: bool) -> Result<Analysi
             {
                 return Err("Analyzed terms cannot contain ASCII whitespace or NUL".into());
             }
+            let (start, end) = normalized_text.original_range(segment.start, segment.end)?;
             tokens.push(AnalyzedToken {
                 text: lemma,
                 surface,
-                start: segment.start,
-                end: segment.end,
+                start,
+                end,
                 position: tokens.len(),
                 colocated: false,
                 language: language.to_string(),
@@ -224,6 +240,7 @@ pub fn analyze(text: &str, config: &Config, prefix_last: bool) -> Result<Analysi
         segmenter: config.segmenter,
         offset_unit: "utf8_bytes",
         prefix_last,
+        folding: config.folding,
     })
 }
 
@@ -352,5 +369,95 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 1, 2, 3]
         );
+    }
+
+    #[test]
+    fn concurrent_calls_keep_language_configuration_independent() {
+        let workers: Vec<_> = ["en", "fr", "ko", "de"]
+            .into_iter()
+            .map(|language| {
+                std::thread::spawn(move || {
+                    let config = config(language, Mode::Stem);
+                    let expected =
+                        analyze("recipes 우산을 Krankenhausverwaltung", &config, false).unwrap();
+                    for _ in 0..10 {
+                        let observed =
+                            analyze("recipes 우산을 Krankenhausverwaltung", &config, false)
+                                .unwrap();
+                        assert_eq!(observed.fingerprint, expected.fingerprint);
+                        assert_eq!(
+                            observed
+                                .tokens
+                                .iter()
+                                .map(|token| &token.text)
+                                .collect::<Vec<_>>(),
+                            expected
+                                .tokens
+                                .iter()
+                                .map(|token| &token.text)
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn broad_thai_analysis_preserves_discriminative_marks() {
+        assert_ne!(terms("ป่า", "th", Mode::Stem), terms("ปา", "th", Mode::Stem));
+        assert_eq!(
+            terms("ป่า", "th", Mode::Stem),
+            terms("ป่า", "th", Mode::Exact)
+        );
+    }
+
+    #[test]
+    fn default_analysis_keeps_phonemic_marks_outside_stemmer_rules() {
+        for (marked, plain, language) in [
+            ("má", "ma", "vi"),
+            ("ọkọ", "oko", "yo"),
+            ("কী", "কি", "bn"),
+            ("ကိ", "က", "my"),
+            ("កិ", "ក", "km"),
+        ] {
+            assert_ne!(
+                terms(marked, language, Mode::Stem),
+                terms(plain, language, Mode::Stem)
+            );
+        }
+        assert_ne!(terms("I", "tr", Mode::Exact), terms("İ", "tr", Mode::Exact));
+        let broad = config("vi", Mode::Stem).with_folding(Folding::Broad);
+        assert_eq!(analyze("má", &broad, false).unwrap().tokens[0].text, "ma");
+        assert_ne!(broad.fingerprint(), config("vi", Mode::Stem).fingerprint());
+    }
+
+    #[test]
+    fn normalization_precedes_korean_morphology_and_preserves_original_ranges() {
+        let original = "파란고래우체통입니다";
+        let answer = analyze(original, &config("ko", Mode::Stem), false).unwrap();
+        assert_eq!(
+            answer
+                .tokens
+                .iter()
+                .map(|token| &token.text)
+                .collect::<Vec<_>>(),
+            terms("파란고래우체통입니다", "ko", Mode::Stem)
+                .iter()
+                .collect::<Vec<_>>()
+        );
+        for token in answer.tokens {
+            let source = &original[token.start..token.end];
+            assert_eq!(
+                ComposingNormalizer::new_nfkc().normalize(source),
+                token.surface
+            );
+        }
+        let latin = analyze("cafe\u{301}", &config("fr", Mode::Exact), false).unwrap();
+        assert_eq!(latin.tokens[0].text, "café");
+        assert_eq!(latin.tokens[0].end, 6);
     }
 }

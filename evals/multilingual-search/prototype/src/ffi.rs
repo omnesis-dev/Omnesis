@@ -4,7 +4,7 @@
 use std::ffi::{c_char, c_int, c_void, CString};
 use std::panic::catch_unwind;
 
-use crate::{analyze, config::QUERY_TERMS_LOCALE, Config, Mode, SegmenterMode};
+use crate::{analyze, config::QUERY_TERMS_LOCALE, Config, Folding, Mode, SegmenterMode};
 
 const SQLITE_OK: c_int = 0;
 const SQLITE_ERROR: c_int = 1;
@@ -47,6 +47,7 @@ pub unsafe extern "C" fn omnesis_analyzer_new(
     length: c_int,
     mode: c_int,
     segmenter: c_int,
+    folding: c_int,
     output: *mut *mut Config,
 ) -> c_int {
     if output.is_null() {
@@ -57,7 +58,12 @@ pub unsafe extern "C" fn omnesis_analyzer_new(
     }
     catch_unwind(|| {
         let language = unsafe { read_utf8(language, length) }?;
-        let value = config(language, mode, segmenter)?;
+        let folding = match folding {
+            0 => Folding::None,
+            1 => Folding::Broad,
+            _ => return Err("Invalid folding policy".into()),
+        };
+        let value = config(language, mode, segmenter)?.with_folding(folding);
         unsafe {
             *output = Box::into_raw(Box::new(value));
         }
@@ -167,6 +173,7 @@ pub unsafe extern "C" fn omnesis_analyzer_json(
     language_length: c_int,
     mode: c_int,
     segmenter: c_int,
+    folding: c_int,
     fingerprint_only: c_int,
     output: *mut *mut c_char,
 ) -> c_int {
@@ -179,7 +186,12 @@ pub unsafe extern "C" fn omnesis_analyzer_json(
     let answer = catch_unwind(|| {
         let input = unsafe { read_utf8(text, length) }?;
         let language = unsafe { read_utf8(language, language_length) }?;
-        let config = config(language, mode, segmenter)?;
+        let folding = match folding {
+            0 => Folding::None,
+            1 => Folding::Broad,
+            _ => return Err("Invalid folding policy".into()),
+        };
+        let config = config(language, mode, segmenter)?.with_folding(folding);
         if fingerprint_only != 0 {
             Ok(config.fingerprint())
         } else {
@@ -233,5 +245,54 @@ mod tests {
         assert!(unsafe { read_utf8(std::ptr::null(), 1) }.is_err());
         let invalid = [0xffu8];
         assert!(unsafe { read_utf8(invalid.as_ptr().cast(), 1) }.is_err());
+    }
+
+    unsafe extern "C" fn stop_after_first(
+        context: *mut c_void,
+        _flags: c_int,
+        _text: *const c_char,
+        _length: c_int,
+        _start: c_int,
+        _end: c_int,
+    ) -> c_int {
+        unsafe {
+            *context.cast::<usize>() += 1;
+        }
+        7
+    }
+
+    #[test]
+    fn callback_errors_stop_emission_and_reserved_document_locales_fail() {
+        let analyzer = config("en", 1, 0).unwrap();
+        let mut calls = 0usize;
+        let source = "recipes running";
+        let status = unsafe {
+            omnesis_analyzer_tokenize(
+                &analyzer,
+                (&mut calls as *mut usize).cast(),
+                4,
+                source.as_ptr().cast(),
+                source.len() as c_int,
+                std::ptr::null(),
+                0,
+                Some(stop_after_first),
+            )
+        };
+        assert_eq!(status, 7);
+        assert_eq!(calls, 1);
+        let status = unsafe {
+            omnesis_analyzer_tokenize(
+                &analyzer,
+                (&mut calls as *mut usize).cast(),
+                4,
+                source.as_ptr().cast(),
+                source.len() as c_int,
+                QUERY_TERMS_LOCALE.as_ptr().cast(),
+                QUERY_TERMS_LOCALE.len() as c_int,
+                Some(stop_after_first),
+            )
+        };
+        assert_eq!(status, SQLITE_ERROR);
+        assert_eq!(calls, 1);
     }
 }

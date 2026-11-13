@@ -11,7 +11,7 @@ import { Worker, isMainThread, parentPort, workerData } from "node:worker_thread
 import {
   createIndexDatabase,
   enqueueDocumentIndexPurge,
-} from "../../../../packages/gateway/src/indexer/db.js";
+} from "../../../packages/gateway/src/indexer/db.js";
 import {
   installPrototype,
   putChunk,
@@ -229,6 +229,23 @@ async function run(extension, output) {
           ids(searchCompiled(db, compileQuery(db, "privatequartz", "en"), options)),
           [],
         );
+    });
+    check("generation cursors reject nonpositive or mutable rowids", () => {
+      assert.throws(
+        () => db.prepare("UPDATE chunks SET rowid=-1 WHERE id='adjacent'").run(),
+        /stable chunk rowids/,
+      );
+      assert.throws(
+        () =>
+          db
+            .prepare(
+              `INSERT INTO chunks(rowid,id,document_id,chunk_index,content,title,source_id,source_created_at)
+        VALUES(0,'zero-rowid','zero-rowid',0,'running','','synthetic-notes','2026-01-01')`,
+            )
+            .run(),
+        /positive chunk rowids/,
+      );
+      integrity(db);
     });
     check("arbitrary input cannot inject MATCH operators or SQL", () => {
       for (const text of [

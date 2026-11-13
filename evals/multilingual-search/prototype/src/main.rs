@@ -3,7 +3,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use omnesis_multilingual_core::{analyze, Config, Mode, SegmenterMode};
+use omnesis_multilingual_core::{analyze, Config, Folding, Mode, SegmenterMode};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -16,6 +16,8 @@ struct Request {
     segmenter: SegmenterMode,
     #[serde(default)]
     prefix: bool,
+    #[serde(default)]
+    folding: Folding,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,7 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             request.language.as_deref().unwrap_or("und"),
             request.mode,
             request.segmenter,
-        )?;
+        )?
+        .with_folding(request.folding);
         let response = analyze(&request.text, &config, request.prefix)?;
         serde_json::to_writer(&mut stdout, &response)?;
         writeln!(&mut stdout)?;

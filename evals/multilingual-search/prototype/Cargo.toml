@@ -14,7 +14,7 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 charabia = { version = "=0.10.0", default-features = false, features = [
     "korean", "hebrew", "greek", "vietnamese", "swedish-recomposition",
-    "turkish", "german-segmentation", "chinese-normalization",
+    "turkish", "german-segmentation", "chinese-normalization", "thai",
 ] }
 lindera = { version = "=5.3.0", default-features = false }
 icu_segmenter = "=2.4.0"
