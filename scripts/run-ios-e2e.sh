@@ -137,14 +137,35 @@ json.dump({'gatewayURL': '$URL', 'apiToken': '$TOKEN'}, sys.stdout)
 RESULT_DIR="$(mktemp -d)"
 trap 'cleanup; rm -f "$CONFIG_FILE"; rm -rf "$RESULT_DIR"' EXIT
 
-xcodebuild test \
-  -project Omnesis.xcodeproj \
-  -scheme Omnesis \
-  -destination "$DEST" \
-  "${PACKAGE_FLAGS[@]}" \
-  -resultBundlePath "$RESULT_DIR/live.xcresult" \
-  -only-testing:OmnesisTests/GatewayLiveE2ETests \
-  -only-testing:OmnesisTests/RealtimeAudioCaptureDeviceTests
+# Every xcodebuild process discovers simulators afresh. On a loaded hosted
+# runner that discovery can give up with no simulators at all, even though the
+# readiness wait above saw the phone; xcodebuild then refuses the destination
+# (exit 70) before it builds or runs anything. Wait for the destination again
+# and retry that refusal once. Any other failure, or a second refusal, fails.
+LOST_DESTINATION="Unable to find a device matching the provided destination specifier"
+for attempt in 1 2; do
+  # A refused run may already have written its result bundle, and xcodebuild
+  # will not overwrite one.
+  rm -rf "$RESULT_DIR/live.xcresult"
+  status=0
+  xcodebuild test \
+    -project Omnesis.xcodeproj \
+    -scheme Omnesis \
+    -destination "$DEST" \
+    "${PACKAGE_FLAGS[@]}" \
+    -resultBundlePath "$RESULT_DIR/live.xcresult" \
+    -only-testing:OmnesisTests/GatewayLiveE2ETests \
+    -only-testing:OmnesisTests/RealtimeAudioCaptureDeviceTests \
+    2>&1 | tee "$RESULT_DIR/xcodebuild.log" || status=$?
+  if [[ "$status" -eq 70 && "$attempt" -eq 1 ]] &&
+    grep -qF "$LOST_DESTINATION" "$RESULT_DIR/xcodebuild.log"; then
+    echo "→ Xcode lost $DEST before building; waiting for it again and retrying once…" >&2
+    node "$ROOT/scripts/ci/wait-ios-destination.mjs" "$DEST" "${PACKAGE_FLAGS[@]}"
+    continue
+  fi
+  if [[ "$status" -ne 0 ]]; then exit "$status"; fi
+  break
+done
 
 # Gateway coverage must never silently skip. Hardware probes must pass when
 # their explicit local fixture is enabled, and otherwise remain skipped.
