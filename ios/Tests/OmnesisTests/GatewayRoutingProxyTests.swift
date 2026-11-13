@@ -588,6 +588,9 @@ extension GatewayRoutingProxyTests {
             verifyTrust: { trust, host in pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false) }
         )
         defer { proxy.close() }
+        let selected = expectation(description: "Wrong-key LAN hint falls back to relay")
+        let observer = proxy.observePath { path in if path == .relay { selected.fulfill() } }
+        defer { proxy.removePathObserver(observer) }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForResource = 10
         proxy.configure(configuration)
@@ -597,7 +600,9 @@ extension GatewayRoutingProxyTests {
         request.setValue("Bearer device-test-token", forHTTPHeaderField: "Authorization")
         let (data, _) = try await session.data(for: request)
         try assertCanonicalIdentity(data)
-        XCTAssertEqual(proxy.connectionPath, .relay)
+        // The HTTP peer closes its connection after replying, so the proxy can
+        // already be reconnecting when URLSession delivers the response.
+        await fulfillment(of: [selected], timeout: 2)
         let rejected = try stats(unrelated)
         XCTAssertGreaterThan(rejected["primary"] ?? 0, 0)
         XCTAssertEqual(rejected["requests"], 0)
