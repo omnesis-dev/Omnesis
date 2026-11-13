@@ -36,6 +36,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { windowsPowerShellExecutable, windowsProcessStart } from "./windows-process-tree.js";
 
 export const GATEWAY_LOCK_FILE = "gateway.lock";
 
@@ -191,7 +192,7 @@ export async function acquireGatewayLock(
 async function withClaimGuard<T>(path: string, operation: () => T): Promise<T> {
   const command =
     process.platform === "win32"
-      ? "powershell.exe"
+      ? windowsPowerShellExecutable()
       : process.platform === "darwin"
         ? "lockf"
         : process.platform === "linux"
@@ -471,26 +472,7 @@ function sameProcess(pid: number, expectedStart: string | null): boolean {
  * Linux, `ps`'s start time on macOS, UTC creation ticks on Windows.
  */
 function processStart(pid: number): string | null {
-  if (process.platform === "win32") {
-    if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-    try {
-      return (
-        execFileSync(
-          "powershell.exe",
-          [
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `$ErrorActionPreference = 'Stop'; [Console]::Out.Write((Get-Process -Id ${pid}).StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture))`,
-          ],
-          { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] },
-        ).trim() || null
-      );
-    } catch {
-      return null;
-    }
-  }
+  if (process.platform === "win32") return windowsProcessStart(pid);
   if (process.platform === "darwin") {
     try {
       return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {

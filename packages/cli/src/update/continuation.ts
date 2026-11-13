@@ -27,6 +27,8 @@
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { lstatSync, readFileSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -540,6 +542,8 @@ export interface ContinuationCommandContext {
   execPath: string;
   /** The global package's CLI entry as installed now. */
   packageEntry(): string | null;
+  /** Resolve tsx from the checkout that will run the continuation. */
+  sourceLoader?(rootDir: string): string;
   /** Whether a terminal is attached, which a container run must be told. */
   interactive: boolean;
 }
@@ -555,12 +559,19 @@ export interface ContinuationCommandContext {
  */
 export function installedCliCommand(
   install: { method: "source"; rootDir: string } | { method: "npm-global" },
-  ctx: Pick<ContinuationCommandContext, "execPath" | "packageEntry">,
+  ctx: Pick<ContinuationCommandContext, "execPath" | "packageEntry" | "sourceLoader">,
 ): CommandSpec | null {
   if (install.method === "source") {
+    const loader = ctx.sourceLoader
+      ? ctx.sourceLoader(install.rootDir)
+      : createRequire(pathToFileURL(join(install.rootDir, "package.json"))).resolve("tsx");
     return {
-      command: join(install.rootDir, "node_modules", ".bin", "tsx"),
-      args: [join(install.rootDir, "packages", "cli", "src", "index.ts")],
+      command: ctx.execPath,
+      args: [
+        "--import",
+        pathToFileURL(loader).href,
+        join(install.rootDir, "packages", "cli", "src", "index.ts"),
+      ],
     };
   }
   const entry = ctx.packageEntry();

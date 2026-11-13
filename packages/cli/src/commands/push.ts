@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { defineCommand } from "citty";
 import {
@@ -597,8 +598,10 @@ export const pushCommand = defineCommand({
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-function expandHome(p: string): string {
-  if (p.startsWith("~")) return (process.env.HOME ?? "") + p.slice(1);
+export function expandHome(p: string): string {
+  if (p === "~" || p.startsWith("~/") || (process.platform === "win32" && p.startsWith("~\\"))) {
+    return join(homedir(), p.slice(2));
+  }
   return p;
 }
 

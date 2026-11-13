@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { parsePackReport } from "./publish-graph.mjs";
+import { resolveNpmInvocation } from "../../packages/core/src/node-command.ts";
 
 import {
   assertExportsAreStaged,
@@ -39,7 +40,7 @@ describe("release package selection", () => {
 });
 
 describe("release package runtime assets", () => {
-  test("stages the gateway's offline Models.dev snapshot beside its compiled catalog service", () => {
+  test("stages the gateway's offline Models.dev snapshot beside its compiled catalog service", async () => {
     expect(runtimeAssetsFor("@omnesis/gateway")).toContainEqual({
       from: "models-dev",
       to: "models-dev",
@@ -68,8 +69,9 @@ describe("release package runtime assets", () => {
       // npm's file filter decides whether the root install scripts ship; the
       // thousands of compiled files only make the pack slow, so leave them out.
       rmSync(join(staged, "dist"), { recursive: true, force: true });
+      const npm = await resolveNpmInvocation(["pack", "--dry-run", "--json"]);
       const pack = parsePackReport(
-        execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: staged, encoding: "utf8" }),
+        execFileSync(npm.command, npm.args, { cwd: staged, encoding: "utf8" }),
       );
       expect(pack.files.map(({ path }) => path)).toContain("native-runtime-preflight.mjs");
       expect(pack.files.map(({ path }) => path)).toContain("native-vector-compat.mjs");

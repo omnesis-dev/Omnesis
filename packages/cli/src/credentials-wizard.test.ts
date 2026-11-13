@@ -4,6 +4,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { expandSpecTokens, type SerializedProviderCredentialsSpec } from "@omnesis/core";
 import {
+  browserInvocation,
   credentialsDestinationLines,
   resolveWizardOrigin,
   runCredentialsWizard,
@@ -194,5 +195,28 @@ describe("credentialsDestinationLines", () => {
       "They'll be stored under the account they turn out to belong to, once verified (mode 0600).",
     );
     expect(lines[1]).toContain("Not encrypted at rest");
+  });
+});
+
+describe("browser launch", () => {
+  test("keeps Linux and macOS URLs in one argument", () => {
+    const url = "https://example.com/setup?first=1&second=two";
+    expect(browserInvocation(url, "linux")).toEqual({ command: "xdg-open", args: [url] });
+    expect(browserInvocation(url, "darwin")).toEqual({ command: "open", args: [url] });
+  });
+
+  test("passes Windows URLs as a literal rather than command syntax", () => {
+    const url = "https://example.com/setup?name=O'Reilly&value=%PATH%&next=$(Get-Process)";
+    const invocation = browserInvocation(url, "win32");
+    expect(invocation.command).toBe("powershell.exe");
+    expect(invocation.args.slice(0, -1)).toEqual([
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+    ]);
+    const script = Buffer.from(invocation.args.at(-1)!, "base64").toString("utf16le");
+    expect(script).toBe(
+      "Start-Process -FilePath 'https://example.com/setup?name=O''Reilly&value=%PATH%&next=$(Get-Process)'",
+    );
   });
 });

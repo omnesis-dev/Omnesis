@@ -25,8 +25,8 @@
 //     exit 5) when the instance never serves rather than reporting a dead PID
 //     as ready.
 //   - the typecheck:fast / typecheck:watch fast-inner-loop scripts exist in
-//     package.json and typecheck:fast actually runs clean (exit 0), so the
-//     "Fast inner loops" guidance in AGENTS.md points at scripts that work.
+//     package.json and the real typecheck:fast runner selects the requested
+//     projects and preserves compiler failures.
 
 import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
 import captureAssert from "node:assert/strict";
@@ -49,7 +49,8 @@ import {
 import { join, dirname } from "node:path";
 import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { gatewayBootBudgetMs } from "./lib/boot-budget.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -119,7 +120,7 @@ const BOOT_BUDGET_MS = gatewayBootBudgetMs();
 // leave a test timing out one line after the wait it was given.
 const WITH_GATEWAY_TIMEOUT_MS = BOOT_BUDGET_MS + 60_000;
 const PID_CAPTURE_TIMEOUT_MS = 5_000;
-const tsx = join(repoRoot, "node_modules", ".bin", "tsx");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 const leanGatewayEnv = {
   OMNESIS_IO_CONCURRENCY: "2",
   OMNESIS_CPU_CONCURRENCY: "2",
@@ -189,10 +190,14 @@ describe("scripts/db-stats.ts", () => {
 
     // Run the real script. Before the fix this threw a ReferenceError on the
     // (Bun-only) Bun.file call, so a non-zero exit here is the regression net.
-    const out = execFileSync(tsx, ["scripts/db-stats.ts", dbPath], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    });
+    const out = execFileSync(
+      process.execPath,
+      ["--import", tsxLoader, "scripts/db-stats.ts", dbPath],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
 
     expect(out).toContain("Total documents: 2");
     expect(out).toMatch(/Db size: \d+\.\d+ MB/);
@@ -202,11 +207,15 @@ describe("scripts/db-stats.ts", () => {
   it("fails loudly when the DB path does not exist", () => {
     const dir = tmpDir("omnesis-dbstats-missing-");
     expect(() =>
-      execFileSync(tsx, ["scripts/db-stats.ts", join(dir, "nope.db")], {
-        cwd: repoRoot,
-        encoding: "utf8",
-        stdio: "pipe",
-      }),
+      execFileSync(
+        process.execPath,
+        ["--import", tsxLoader, "scripts/db-stats.ts", join(dir, "nope.db")],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: "pipe",
+        },
+      ),
     ).toThrow();
   });
 });
@@ -352,9 +361,9 @@ describe("scripts/chaos-gateway.mjs cross-platform liveness", () => {
       OMNESIS_MDNS_DISABLE: "1",
       OMNESIS_BIND: "127.0.0.1",
     };
-    // Spawn the already-resolved local tsx binary directly. Detached mode puts
-    // the gateway in its own process group so cleanup cannot orphan it.
-    const proc = spawn(tsx, ["packages/gateway/src/index.ts"], {
+    // Run the loader in the spawned Node process. POSIX detached mode gives
+    // cleanup a process group; Windows terminates the directly owned gateway.
+    const proc = spawn(process.execPath, ["--import", tsxLoader, "packages/gateway/src/index.ts"], {
       env,
       cwd: repoRoot,
       stdio: ["ignore", "pipe", "pipe"],
@@ -382,7 +391,8 @@ describe("scripts/chaos-gateway.mjs cross-platform liveness", () => {
       if (killed) return;
       killed = true;
       try {
-        if (typeof proc.pid === "number") process.kill(-proc.pid, "SIGKILL");
+        if (process.platform !== "win32" && typeof proc.pid === "number")
+          process.kill(-proc.pid, "SIGKILL");
         else proc.kill("SIGKILL");
       } catch {
         /* already dead */
@@ -536,14 +546,18 @@ describe("scripts/omnesis-where.sh read-only topology", () => {
       OMNESIS_MDNS_DISABLE: "1",
       OMNESIS_BIND: "127.0.0.1",
     };
-    const proc = spawn(tsx, [join(repoRoot, "packages/gateway/src/index.ts")], {
-      env,
-      // cwd is the discovered "serving checkout"; the gateway entry is an
-      // absolute path so it loads regardless of where we launch it from.
-      cwd: servingDir,
-      stdio: ["ignore", "ignore", "ignore"],
-      detached: true,
-    });
+    const proc = spawn(
+      process.execPath,
+      ["--import", tsxLoader, join(repoRoot, "packages/gateway/src/index.ts")],
+      {
+        env,
+        // cwd is the discovered "serving checkout"; the gateway entry is an
+        // absolute path so it loads regardless of where we launch it from.
+        cwd: servingDir,
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: true,
+      },
+    );
     const caCert = join(configDir, "tls", "cert.pem");
     const tokenPath = join(configDir, "token");
     const url = `https://localhost:${port}`;
@@ -553,7 +567,8 @@ describe("scripts/omnesis-where.sh read-only topology", () => {
       if (killed) return;
       killed = true;
       try {
-        if (typeof proc.pid === "number") process.kill(-proc.pid, "SIGKILL");
+        if (process.platform !== "win32" && typeof proc.pid === "number")
+          process.kill(-proc.pid, "SIGKILL");
         else proc.kill("SIGKILL");
       } catch {
         /* already dead */
@@ -2969,33 +2984,56 @@ describe("fast inner-loop typecheck scripts", () => {
   // The "Fast inner loops" section of AGENTS.md tells future agents to reach
   // for typecheck:fast / typecheck:watch as a narrower signal than the full
   // typecheck. This guards that the scripts it names actually exist and that
-  // the documented fast typecheck genuinely runs clean — the doc never points
-  // at an aspirational script.
+  // the documented runner executes the requested compiler projects and
+  // preserves failures without depending on a shell.
   const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 
   it("declares typecheck:fast and typecheck:watch in package.json", () => {
     expect(pkg.scripts["typecheck:fast"]).toBeTruthy();
     expect(pkg.scripts["typecheck:watch"]).toBeTruthy();
     // typecheck:watch must launch a watch (tsc --build --watch); typecheck:fast
-    // must be a real tsc --build (not an alias of the full typecheck verbatim).
+    // must use the portable runner (not an alias of the full typecheck verbatim).
     expect(pkg.scripts["typecheck:watch"]).toContain("--watch");
-    expect(pkg.scripts["typecheck:fast"]).toContain("tsc --build");
+    expect(pkg.scripts["typecheck:fast"]).toBe("node scripts/typecheck-fast.mjs");
     expect(pkg.scripts["typecheck:fast"]).not.toBe(pkg.scripts.typecheck);
   });
 
-  it("typecheck:fast runs clean (exit 0) against the real tree", () => {
-    // Run the real script via npm so the test exercises exactly what AGENTS.md
-    // documents. tsc --build is incremental; the cost here is a warm build of
-    // the app packages, well within the timeout. A type error anywhere in the
-    // gateway/collector/cli dependency chain makes this throw — the regression
-    // net for "the documented fast typecheck still passes".
-    const out = execFileSync("npm", ["run", "typecheck:fast"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      stdio: "pipe",
-    });
-    expect(out).not.toMatch(/error TS\d+/);
-  }, 120000);
+  it("the real fast runner selects default or explicit projects and propagates compiler failure", () => {
+    const root = tmpDir("fast-typecheck-fixture-");
+    const compilerDirectory = join(root, "node_modules", "typescript", "bin");
+    mkdirSync(compilerDirectory, { recursive: true });
+    writeFileSync(
+      join(compilerDirectory, "tsc"),
+      "process.stdout.write(JSON.stringify(process.argv.slice(2))); process.exit(Number(process.env.TYPECHECK_EXIT ?? 0));",
+    );
+    const invoke = (args, code = 0) =>
+      spawnSync(process.execPath, [join(repoRoot, "scripts", "typecheck-fast.mjs"), ...args], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          // The compiler is a fixture, not an admitted real typecheck.
+          OMNESIS_TEST_SCHEDULER: "0",
+          OMNESIS_TEST_SCHEDULER_ACTIVE: "",
+          OMNESIS_FORCE_TEST_ADMISSION: "",
+          OMNESIS_TREE_FINGERPRINT: "",
+          TYPECHECK_EXIT: String(code),
+        },
+      });
+    const defaults = invoke([]);
+    expect(defaults.status, defaults.stderr).toBe(0);
+    expect(JSON.parse(defaults.stdout)).toEqual([
+      "--build",
+      "packages/gateway",
+      "packages/collector",
+      "packages/cli",
+    ]);
+    const custom = invoke(["packages/example"]);
+    expect(custom.status, custom.stderr).toBe(0);
+    expect(JSON.parse(custom.stdout)).toEqual(["--build", "packages/example"]);
+    const failed = invoke(["packages/example"], 7);
+    expect(failed.status).toBe(7);
+  });
 });
 
 describe("agent-doc executable-claim drift guard (C6)", () => {

@@ -5887,7 +5887,10 @@
     },
     {
       "value": "Application Support",
-      "paths": ["packages/providers/screen-time/src/screen-time.test.ts"],
+      "paths": [
+        "packages/providers/browser-history/src/paths.test.ts",
+        "packages/providers/screen-time/src/screen-time.test.ts"
+      ],
       "reason": "reviewed existing fixture"
     },
     {
@@ -8418,9 +8421,10 @@
       "value": "Local State",
       "paths": [
         "packages/providers/browser-history/src/index.test.ts",
+        "packages/providers/browser-history/src/paths.test.ts",
+        "packages/providers/browser-history/src/read-access.test.ts",
         "packages/providers/browser-history/src/readers/chromium-recovery.test.ts",
         "packages/providers/browser-history/src/readers/chromium-scratch.test.ts",
-        "packages/providers/browser-history/src/read-access.test.ts",
         "packages/providers/chrome/src/provider.test.ts",
         "packages/providers/chrome/src/setup.test.ts"
       ],
@@ -12577,6 +12581,31 @@
       "value": "Rate Limit Exceeded",
       "paths": ["packages/providers/google/src/broker.test.ts"],
       "reason": "Google API error message text."
+    },
+    {
+      "value": "App Data",
+      "paths": ["packages/providers/browser-history/src/paths.test.ts"],
+      "reason": "Invented fixture directory containing spaces, not a person"
+    },
+    {
+      "value": "User Data",
+      "paths": ["packages/providers/browser-history/src/paths.test.ts"],
+      "reason": "Chromium browser profile directory name, not a person"
+    },
+    {
+      "value": "Microsoft Edge",
+      "paths": ["packages/providers/browser-history/src/paths.test.ts"],
+      "reason": "Public browser product and profile directory name"
+    },
+    {
+      "value": "Full Windows",
+      "paths": ["scripts/ci/windows-checks.test.mjs"],
+      "reason": "Public CI step label, not a person"
+    },
+    {
+      "value": "Local Files",
+      "paths": ["scripts/ci/windows-checks.test.mjs"],
+      "reason": "Public source product name, not a person"
     }
   ],
   "secretFixtures": [

@@ -3,8 +3,8 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { legacyMcpProfileTarget, retireLegacyMcpProfile } from "./access.js";
@@ -232,4 +232,14 @@ describe("access levels", () => {
       "No access levels.",
     ]);
   });
+});
+
+test("legacy profile paths expand native home separators without changing Unix filenames", () => {
+  const nativeTildePath = "~\\legacy-profile";
+  expect(legacyMcpProfileTarget("answer", "~/legacy-profile").configDir).toBe(
+    join(homedir(), "legacy-profile"),
+  );
+  expect(legacyMcpProfileTarget("answer", nativeTildePath).configDir).toBe(
+    process.platform === "win32" ? join(homedir(), "legacy-profile") : resolve(nativeTildePath),
+  );
 });

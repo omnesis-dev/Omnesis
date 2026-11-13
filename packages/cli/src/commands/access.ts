@@ -46,7 +46,11 @@ function defaultLegacyConfigDir(mode: LegacyMcpMode): string {
 }
 
 function expandHome(path: string): string {
-  return path === "~" || path.startsWith("~/") ? join(homedir(), path.slice(1)) : path;
+  return path === "~" ||
+    path.startsWith("~/") ||
+    (process.platform === "win32" && path.startsWith("~\\"))
+    ? join(homedir(), path.slice(2))
+    : path;
 }
 
 export function legacyMcpProfileTarget(

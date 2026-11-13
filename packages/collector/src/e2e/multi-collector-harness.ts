@@ -27,6 +27,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { GatewayWsClient } from "@omnesis/gateway-client";
+import { requestChildShutdown } from "@omnesis/core";
 import {
   createRecordingUpdater,
   registerSelfUpdateCommand,
@@ -152,6 +153,18 @@ export class MultiCollectorHarness {
   /** The PID of the gateway process this harness spawned, or null before boot. */
   get gatewayPid(): number | null {
     return this.gatewayProcess?.pid ?? null;
+  }
+
+  /** Ask the owned gateway to drain while allowing a replacement to start at once. */
+  async requestGatewayShutdown(): Promise<void> {
+    const proc = this.gatewayProcess;
+    if (!proc?.pid) throw new Error("No gateway is running");
+    if (process.platform === "win32") {
+      if (!(await requestChildShutdown(proc)))
+        throw new Error("The gateway parent channel is unavailable");
+    } else {
+      process.kill(-proc.pid, "SIGTERM");
+    }
   }
 
   /**
@@ -562,7 +575,7 @@ export class MultiCollectorHarness {
     this.gatewayProcess = spawn(gatewayCommand.command, gatewayCommand.args, {
       env,
       cwd: REPO_ROOT,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
       detached: true,
     });
     const recordOutput = (chunk: Buffer | string): void => {
@@ -572,7 +585,7 @@ export class MultiCollectorHarness {
     this.gatewayProcess.stderr?.on("data", recordOutput);
     // Reap this detached group if the runner dies before teardown runs —
     // otherwise the gateway orphans and holds ~1.5 GB indefinitely.
-    registerSubprocessGroup(this.gatewayProcess);
+    await registerSubprocessGroup(this.gatewayProcess);
 
     // Same handshake pattern as E2EHarness — wait for /health AND /whoami
     // with our bootstrap token so we're definitely talking to this gateway.

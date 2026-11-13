@@ -14,7 +14,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { GATEWAY_LOCK_FILE } from "@omnesis/core";
 import { MultiCollectorHarness, getFreePort } from "./multi-collector-harness.js";
@@ -53,7 +53,7 @@ function spawnGateway(env: NodeJS.ProcessEnv, port: number, lockWaitMs: number):
       OMNESIS_GATEWAY_LOCK_WAIT_MS: String(lockWaitMs),
     },
     cwd: REPO_ROOT,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
     detached: true,
   });
   registerSubprocessGroup(child);
@@ -73,28 +73,9 @@ function lockHolder(configDir: string): { pid: number } | null {
   }
 }
 
-function parentPid(pid: number): number | null {
-  try {
-    const out = execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" });
-    const parent = Number.parseInt(out.trim(), 10);
-    return Number.isFinite(parent) ? parent : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The gateway is launched through the tsx loader, so the process that takes
- * the lock is a child of the PID the harness (or this test) spawned. A lock
- * belongs to a spawned gateway when its holder sits in that process's tree.
- */
+/** The loader runs in the spawned Node process that owns the gateway lock. */
 function belongsTo(holderPid: number, rootPid: number): boolean {
-  let pid: number | null = holderPid;
-  for (let depth = 0; pid !== null && pid > 1 && depth < 8; depth += 1) {
-    if (pid === rootPid) return true;
-    pid = parentPid(pid);
-  }
-  return false;
+  return holderPid === rootPid;
 }
 
 async function waitFor(check: () => boolean, timeoutMs: number, what: string): Promise<void> {
@@ -160,13 +141,12 @@ describe("gateway ownership of a config dir", () => {
 
   test("a replacement started while the owner drains waits, then takes the directory over", async () => {
     const configDir = harness.gatewayConfigDir;
-    const predecessor = harness.gatewayPid!;
     const owner = lockHolder(configDir)!;
     // What a supervisor's restart does: signal the old gateway's process group
     // and start the new one at once. The replacement must not open a store
     // until the old one has released them all — either it finds the directory
     // free already, or it says it is waiting and then takes over.
-    process.kill(-predecessor, "SIGTERM");
+    await harness.requestGatewayShutdown();
     const replacement = spawnGateway(harness.gatewayLaunchEnv, harness.gatewayPort, 60_000);
     try {
       await waitFor(

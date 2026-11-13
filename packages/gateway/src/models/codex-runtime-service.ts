@@ -20,6 +20,7 @@ import {
   codexPaths,
   CODEX_SUPPORTED_ROLES,
   createLogger,
+  nodeCommandInvocation,
   type CapabilityRole,
   type CodexBackendStatus,
   type CodexLoginFlow,
@@ -527,7 +528,8 @@ export class CodexRuntimeService {
       );
     }
 
-    const result = await execFileAsync(command, [...this.cliArgsPrefix, "debug", "models"], {
+    const invocation = nodeCommandInvocation(command, [...this.cliArgsPrefix, "debug", "models"]);
+    const result = await execFileAsync(invocation.command, invocation.args, {
       env: childEnv,
       timeout: this.refreshTimeoutMs,
       maxBuffer: CODEX_MODEL_LIST_MAX_BUFFER,
@@ -544,7 +546,8 @@ export class CodexRuntimeService {
     env: NodeJS.ProcessEnv,
   ): Promise<{ ok: true } | { ok: false; reason: string }> {
     try {
-      await execFileAsync(command, [...this.cliArgsPrefix, "login", "status"], {
+      const invocation = nodeCommandInvocation(command, [...this.cliArgsPrefix, "login", "status"]);
+      await execFileAsync(invocation.command, invocation.args, {
         env,
         timeout: this.refreshTimeoutMs,
         windowsHide: true,

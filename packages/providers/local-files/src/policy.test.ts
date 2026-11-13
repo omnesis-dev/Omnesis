@@ -2,7 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect } from "vitest";
-import { classifyFile, isRefusedPath, subtreePruneReason } from "./policy.js";
+import {
+  classifyFile,
+  isProtectedAbsolutePath,
+  isRefusedPath,
+  subtreePruneReason,
+} from "./policy.js";
 
 describe("classifyFile", () => {
   test("indexes text and binary allow-list types", () => {
@@ -92,3 +97,59 @@ describe("subtreePruneReason", () => {
     expect(subtreePruneReason(["git", "notes.txt"])).toBeNull();
   });
 });
+
+describe("absolute sensitive paths", () => {
+  test("configuration roots and their aliases cannot bypass a relative-path deny-list", () => {
+    expect(
+      isProtectedAbsolutePath("/home/example/.config/app/settings.json", { platform: "linux" }),
+    ).toBe(true);
+    expect(
+      isProtectedAbsolutePath("/Users/example/Library/Preferences/settings.json", {
+        platform: "darwin",
+      }),
+    ).toBe(true);
+    expect(
+      isProtectedAbsolutePath("C:\\Users\\Example\\AppData\\Local\\settings.json", {
+        platform: "win32",
+        env: {},
+      }),
+    ).toBe(true);
+    expect(
+      isProtectedAbsolutePath("C:\\WINDOWS\\settings.json", { platform: "win32", env: {} }),
+    ).toBe(true);
+    expect(
+      isProtectedAbsolutePath("C:\\Users\\Example\\Documents\\report.txt", {
+        platform: "win32",
+        env: {},
+      }),
+    ).toBe(false);
+  });
+
+  test("redirected Windows config directories are protected by native case-insensitive containment", () => {
+    const env = { LOCALAPPDATA: "D:\\Configuration" };
+    expect(
+      isProtectedAbsolutePath("d:\\configuration\\app\\settings.json", { platform: "win32", env }),
+    ).toBe(true);
+    expect(
+      isProtectedAbsolutePath("D:\\Configuration-archive\\report.txt", { platform: "win32", env }),
+    ).toBe(false);
+  });
+
+  test("Windows configuration folders inside a selected tree are refused", () => {
+    expect(isRefusedPath("AppData/Local/settings.json", "win32")).toBe(true);
+    expect(isRefusedPath("ProgramData/app/settings.json", "win32")).toBe(true);
+    expect(isRefusedPath("Windows/System32/settings.json", "win32")).toBe(true);
+  });
+});
+
+test.each(["linux", "darwin"] as const)(
+  "Windows directory names retain their ordinary meaning on %s",
+  (platform) => {
+    for (const name of ["Windows", "AppData", "ProgramData"]) {
+      expect(isRefusedPath(`${name}/report.txt`, platform)).toBe(false);
+      expect(
+        isProtectedAbsolutePath(`/home/example/Documents/${name}/report.txt`, { platform }),
+      ).toBe(false);
+    }
+  },
+);

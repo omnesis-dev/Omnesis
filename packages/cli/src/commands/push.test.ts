@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test } from "vitest";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, test, vi } from "vitest";
 import {
   pushUnavailableLine,
+  expandHome,
   deliveryHealthLabel,
   formatDeliveryQueue,
   formatPushDeviceSummary,
@@ -219,4 +222,19 @@ describe("pushUnavailableLine", () => {
   test("an older gateway with neither plan nor reason gets the generic line", () => {
     expect(pushUnavailableLine(phone)).toContain("push transport unavailable");
   });
+});
+
+test("push credential paths use the OS home without requiring HOME", () => {
+  vi.stubEnv("HOME", undefined);
+  try {
+    expect(expandHome("~/push/key.p8")).toBe(join(homedir(), "push", "key.p8"));
+    expect(expandHome("~")).toBe(homedir());
+    expect(expandHome("~another/key.p8")).toBe("~another/key.p8");
+    expect(expandHome("relative/key.p8")).toBe("relative/key.p8");
+    if (process.platform === "win32") {
+      expect(expandHome("~\\push\\key.p8")).toBe(join(homedir(), "push", "key.p8"));
+    }
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

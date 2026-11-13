@@ -1380,3 +1380,20 @@ export { oauthCallbackHost } from "./oauth-callback-host.js";
 
 export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./models/speech-to-speech.js";
 export { CLI_COMMAND_ENV, operatorCommand } from "./operator-command.js";
+export { nodeCommandInvocation, type NodeCommandInvocation } from "./node-command.js";
+export { resolveNpmInvocation, type ResolveNpmInvocationOptions } from "./node-command.js";
+export { killWindowsProcessTree, terminateChildProcess } from "./child-termination.js";
+export { installParentShutdownHandler, requestChildShutdown } from "./parent-shutdown.js";
+export {
+  WindowsProcessTree,
+  type WindowsProcessIdentity,
+  type WindowsProcessTreeOptions,
+} from "./windows-process-tree.js";
+
+export {
+  killWindowsJob,
+  runWindowsJob,
+  windowsJobInvocation,
+  type WindowsJobOptions,
+  type WindowsJobResult,
+} from "./windows-job.js";

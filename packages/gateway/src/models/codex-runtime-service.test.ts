@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,91 @@ import type { CodexRuntimeInstaller } from "./codex-runtime-installer.js";
 const fakeCodexPath = fileURLToPath(
   new URL("../../../agent/src/test-fixtures/fake-codex-app-server.mjs", import.meta.url),
 );
+
+describe("Codex JavaScript command lifecycle", () => {
+  it.each([false, true])(
+    "refreshes and logs out a JavaScript command (fallback=%s)",
+    async (fallback) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-js-service-"));
+      const command = join(dir, "codex command & $().mjs");
+      await copyFile(fakeCodexPath, command);
+      await chmod(command, 0o700);
+      const home = join(dir, "codex-home");
+      await mkdir(home);
+      await writeFile(join(home, "auth.json"), "{}");
+      if (fallback)
+        vi.spyOn(CodexAppServerRuntime.prototype, "listModels").mockRejectedValue(
+          new Error("synthetic protocol unavailable"),
+        );
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command,
+        interactivePoolSize: 0,
+        backgroundPoolSize: 1,
+        inferencePoolSize: 1,
+      });
+      try {
+        const status = await service.refresh();
+        expect(status.loggedIn).toBe(true);
+        expect(status.discovery).toBe(fallback ? "debug-models" : "app-server");
+        expect(status.models).toContain("gpt-example-frontier");
+        const result = await service.logout();
+        expect(result.ok).toBe(true);
+        await expect(access(join(home, "auth.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        vi.restoreAllMocks();
+        await service.dispose();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("starts and cancels device login through a JavaScript wrapper", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-js-login-"));
+    const command = join(dir, "codex command & $().mjs");
+    const pidPath = join(dir, "child.pid");
+    await writeFile(
+      command,
+      `#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...args], { stdio: 'inherit' });
+child.once('spawn', () => { if (args.includes('--device-auth')) writeFileSync(${JSON.stringify(pidPath)}, String(child.pid)); });
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+child.on('exit', (code) => process.exit(code ?? 1));
+`,
+      { mode: 0o700 },
+    );
+    const service = new CodexRuntimeService({
+      configDir: dir,
+      command,
+      interactivePoolSize: 0,
+      backgroundPoolSize: 1,
+      inferencePoolSize: 1,
+    });
+    let childPid: number | undefined;
+    try {
+      const flow = await service.startDeviceLogin();
+      expect(flow.status).toBe("pending");
+      expect(flow.userCode).toBe("ABCD-12345");
+      childPid = Number(await readFile(pidPath, "utf8"));
+      expect(service.cancelLogin().canceled).toBe(true);
+      await service.dispose();
+      expect(() => process.kill(childPid!, 0)).toThrow();
+    } finally {
+      await service.dispose();
+      if (childPid !== undefined) {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {
+          /* already exited */
+        }
+      }
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("CodexRuntimeService parsers", () => {
   it("parses list-visible Codex models and omits hidden or upgrade-gated entries", () => {

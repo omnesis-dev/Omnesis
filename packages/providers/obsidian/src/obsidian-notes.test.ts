@@ -13,7 +13,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
@@ -39,7 +39,7 @@ function createVault(tmpDir: string): string {
 
 function writeNote(vaultPath: string, relativePath: string, content: string, mtime?: Date): void {
   const fullPath = join(vaultPath, relativePath);
-  const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
+  const dir = dirname(fullPath);
   mkdirSync(dir, { recursive: true });
   writeFileSync(fullPath, content);
   if (mtime) {

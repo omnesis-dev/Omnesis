@@ -13,7 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -70,6 +70,37 @@ function fakeRunner(
 }
 
 describe("CodexRuntimeInstaller", () => {
+  it("installs and probes JavaScript CLI entries with real subprocesses", async () => {
+    const root = await tempConfig();
+    const npmCommand = join(root, "synthetic npm & $().mjs");
+    await writeFile(
+      npmCommand,
+      `#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const args = process.argv.slice(2);
+const prefix = args[args.indexOf('--prefix') + 1];
+if (!prefix) process.exit(2);
+const pkg = join(prefix, 'node_modules', '@openai', 'codex');
+mkdirSync(join(pkg, 'bin'), { recursive: true });
+writeFileSync(join(pkg, 'package.json'), JSON.stringify({name:'@openai/codex', version:${JSON.stringify(CODEX_RUNTIME_COMPAT.testedVersion)}, bin:{codex:'bin/codex.js'}}));
+writeFileSync(join(pkg, 'bin', 'codex.js'), ${JSON.stringify(`#!/usr/bin/env node\nprocess.stdout.write('codex-cli ${CODEX_RUNTIME_COMPAT.testedVersion}\\n');\n`)}, { mode: 0o700 });
+`,
+      { mode: 0o700 },
+    );
+    const installer = new CodexRuntimeInstaller({
+      configDir: join(root, "config"),
+      npmCommand,
+      compatibilityProbe: async () => {},
+    });
+    const prepared = await installer.prepare();
+    const installed = await installer.commit(prepared);
+    expect(installed.version).toBe(CODEX_RUNTIME_COMPAT.testedVersion);
+    await expect(installer.readActive()).resolves.toMatchObject({
+      version: CODEX_RUNTIME_COMPAT.testedVersion,
+    });
+  });
+
   it("pins the wrapper and every platform payload to release-owned SRI digests", async () => {
     const rootLock = JSON.parse(
       await readFile(new URL("../../../../package-lock.json", import.meta.url), "utf8"),
@@ -136,12 +167,15 @@ describe("CodexRuntimeInstaller", () => {
       ),
       activatedAt: "2026-09-03T12:00:00.000Z",
     });
-    expect((await lstat(installed.installDir)).mode & 0o777).toBe(0o700);
-    expect((await lstat(installed.command)).mode & 0o777).toBe(0o700);
-    expect(
-      (await lstat(join(installed.installDir, "node_modules/@openai/codex/package.json"))).mode &
-        0o777,
-    ).toBe(0o600);
+    // Windows exposes its ACL through a different API, not POSIX permission bits.
+    if (process.platform !== "win32") {
+      expect((await lstat(installed.installDir)).mode & 0o777).toBe(0o700);
+      expect((await lstat(installed.command)).mode & 0o777).toBe(0o700);
+      expect(
+        (await lstat(join(installed.installDir, "node_modules/@openai/codex/package.json"))).mode &
+          0o777,
+      ).toBe(0o600);
+    }
   });
 
   it("runs an isolated app-server compatibility probe with no shared Codex home", async () => {
@@ -391,8 +425,8 @@ describe("CodexRuntimeInstaller", () => {
     };
 
     expect(second.installDir).not.toBe(first.installDir);
-    expect(pointer.generation).toBe(second.installDir.split("/").at(-1));
-    expect(pointer.previousGeneration).toBe(first.installDir.split("/").at(-1));
+    expect(pointer.generation).toBe(basename(second.installDir));
+    expect(pointer.previousGeneration).toBe(basename(first.installDir));
     expect((await lstat(first.installDir)).isDirectory()).toBe(true);
   });
 

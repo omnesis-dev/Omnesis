@@ -23,6 +23,7 @@ import {
   experimentalEnabled,
   experimentalVisible,
   loadManifest,
+  installParentShutdownHandler,
   primeSecretFileKeyCache,
   resolveWorkerEntry,
   runningSourceCommit,
@@ -3977,6 +3978,7 @@ coordinatedShutdown = shutdown;
 
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
+installParentShutdownHandler(() => void shutdown());
 
 // Spawned by a harness or dev script? Then leave when the spawner does — see
 // parent-watchdog.ts for why nothing else can save us from orphaning. Inert

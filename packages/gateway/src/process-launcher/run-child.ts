@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { killWindowsJob, runWindowsJob } from "@omnesis/core";
 
 /** How to run one short-lived external program and what to collect from it. */
 export interface RunProcessOptions {
@@ -48,9 +49,7 @@ export const STDERR_CAPTURE_CHARS = 4_000;
  */
 export function killProcessGroup(pid: number): void {
   if (process.platform === "win32") {
-    // Windows has no negative-PID process groups. Target this launcher's tree,
-    // including descendants holding its output pipes open.
-    execFile("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
+    killWindowsJob(pid);
     return;
   }
   try {
@@ -72,6 +71,7 @@ export function runChild(
   opts: RunProcessOptions,
   onSpawn?: (pid: number) => void,
 ): Promise<ProcessResult> {
+  if (process.platform === "win32") return runWindowsJob(command, args, opts, onSpawn);
   return new Promise((resolve) => {
     const empty = (failure: ProcessResult["failure"], failureMessage?: string): ProcessResult => ({
       exitCode: null,

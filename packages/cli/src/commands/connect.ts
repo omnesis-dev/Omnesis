@@ -23,6 +23,7 @@ import { defineCommand } from "citty";
 import { isScalar, isSeq, parse as parseYaml, parseDocument } from "yaml";
 import {
   assertNever,
+  resolveNpmInvocation,
   applyCaTrustInProcess,
   atomicWriteFileSync,
   DEFAULT_CONFIG_DIR,
@@ -82,7 +83,11 @@ import { openClawSavedArchive, readOpenClawInstallRecord } from "./openclaw-inst
 
 /** `~/`-expansion for user-supplied paths (flags are never shell-expanded). */
 function expandHome(path: string): string {
-  return path === "~" || path.startsWith("~/") ? join(homedir(), path.slice(1)) : path;
+  return path === "~" ||
+    path.startsWith("~/") ||
+    (process.platform === "win32" && path.startsWith("~\\"))
+    ? join(homedir(), path.slice(2))
+    : path;
 }
 
 function trimmedEnvValue(value: string | undefined): string | undefined {
@@ -707,12 +712,12 @@ export function publishManifestForLocalInstall(
  * packed as-is; source installs compile into an isolated temp directory and
  * never read the checkout's possibly absent or stale dist/.
  */
-export function prepareOpenClawInstallArchive(
+export async function prepareOpenClawInstallArchive(
   sourceOverride: { packageRoot: string; entry: string } | undefined = undefined,
-): {
+): Promise<{
   archivePath: string;
   cleanup(): void;
-} {
+}> {
   const packageRoot = sourceOverride?.packageRoot ?? integrationPackageRoot();
   const entry = sourceOverride?.entry ?? integrationPackageEntry();
   const sourceCommit = integrationSourceCommit(packageRoot);
@@ -770,9 +775,14 @@ export function prepareOpenClawInstallArchive(
         JSON.stringify(publishManifest, null, 2) + "\n",
       );
     }
-    execFileSync("npm", ["pack", "--ignore-scripts", "--pack-destination", tempRoot, packRoot], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const npm = await resolveNpmInvocation([
+      "pack",
+      "--ignore-scripts",
+      "--pack-destination",
+      tempRoot,
+      packRoot,
+    ]);
+    execFileSync(npm.command, npm.args, { stdio: ["ignore", "pipe", "pipe"] });
     const archives = readdirSync(tempRoot)
       .filter((name) => name.endsWith(".tgz"))
       .map((name) => join(tempRoot, name));
@@ -908,16 +918,16 @@ interface PreparedHarnessPlugin {
  * Preparation is side-effect free outside a temporary directory; activation
  * happens only after the new credentials are durably journaled.
  */
-function prepareHarnessPlugin(
+async function prepareHarnessPlugin(
   harness: Harness,
   home: string,
   selectedOpenClawConfigPath?: string,
-): PreparedHarnessPlugin {
+): Promise<PreparedHarnessPlugin> {
   const packageRoot = integrationPackageRoot();
   const sourceCommit = integrationSourceCommit(packageRoot);
   switch (harness) {
     case "openclaw": {
-      const artifact = prepareOpenClawInstallArchive();
+      const artifact = await prepareOpenClawInstallArchive();
       return {
         install: () => {
           const normalEnvironment = openClawInstallerEnvironment(
@@ -1028,8 +1038,8 @@ function prepareHarnessPlugin(
   }
 }
 
-export function installHarnessPlugin(harness: Harness, home: string): void {
-  const prepared = prepareHarnessPlugin(harness, home);
+export async function installHarnessPlugin(harness: Harness, home: string): Promise<void> {
+  const prepared = await prepareHarnessPlugin(harness, home);
   try {
     prepared.install();
   } finally {
@@ -1878,7 +1888,7 @@ export const connectCommand = defineCommand({
         consent,
         approvalRetryCommand,
       });
-      const prepared = prepareHarnessPlugin(harness, home, selectedOpenClawConfigPath);
+      const prepared = await prepareHarnessPlugin(harness, home, selectedOpenClawConfigPath);
       try {
         prepared.install();
       } finally {
@@ -1929,7 +1939,7 @@ export const connectCommand = defineCommand({
         );
         warnOnVersionDrift(capabilities, harness);
         skillCapabilities = { subscriptions: capabilities.subscriptions };
-        const prepared = prepareHarnessPlugin(harness, home, selectedOpenClawConfigPath);
+        const prepared = await prepareHarnessPlugin(harness, home, selectedOpenClawConfigPath);
         try {
           const credentials = persistGatewayTrust(
             credentialsPath,
@@ -2013,7 +2023,7 @@ export const connectCommand = defineCommand({
           pendingRedemption?.identity ?? loadOrCreateIntegrationIdentity(home, harness, false);
         const maxConcurrentRuns =
           pendingRedemption?.maxConcurrentRuns ?? (harness === "hermes" ? 1 : 2);
-        const prepared = prepareHarnessPlugin(harness, home, selectedOpenClawConfigPath);
+        const prepared = await prepareHarnessPlugin(harness, home, selectedOpenClawConfigPath);
         const redemptionJournal: ConnectRedemptionJournal = pendingRedemption ?? {
           version: 1,
           harness,

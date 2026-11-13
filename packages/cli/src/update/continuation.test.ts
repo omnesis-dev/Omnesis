@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
+
 import {
   realpathSync,
   existsSync,
@@ -398,14 +401,19 @@ describe("finding the installed build", () => {
     env: {},
     execPath: "/usr/bin/node",
     packageEntry: () => "/usr/lib/node_modules/omnesis/dist/index.js",
+    sourceLoader: () => "/opt/omnesis/node_modules/tsx/dist/loader.mjs",
     interactive: true,
     ...over,
   });
 
   test("the installed CLI is reached by path: a checkout's tsx entry, a package's manifest entry", () => {
     expect(installedCliCommand({ method: "source", rootDir: "/opt/omnesis" }, ctx())).toEqual({
-      command: "/opt/omnesis/node_modules/.bin/tsx",
-      args: ["/opt/omnesis/packages/cli/src/index.ts"],
+      command: "/usr/bin/node",
+      args: [
+        "--import",
+        pathToFileURL("/opt/omnesis/node_modules/tsx/dist/loader.mjs").href,
+        "/opt/omnesis/packages/cli/src/index.ts",
+      ],
     });
     expect(installedCliCommand({ method: "npm-global" }, ctx())).toEqual({
       command: "/usr/bin/node",
@@ -416,10 +424,47 @@ describe("finding the installed build", () => {
     );
   });
 
+  test("a source continuation resolves and executes the target checkout's loader", () => {
+    const root = join(tempDir(), "target checkout #");
+    const loaderDir = join(root, "node_modules", "tsx");
+    const sourceDir = join(root, "packages", "cli", "src");
+    mkdirSync(loaderDir, { recursive: true });
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(join(root, "package.json"), "{}");
+    writeFileSync(
+      join(loaderDir, "package.json"),
+      JSON.stringify({ name: "tsx", exports: "./loader.mjs" }),
+    );
+    writeFileSync(
+      join(loaderDir, "loader.mjs"),
+      "globalThis.targetLoaderMarker = 'installed target';",
+    );
+    writeFileSync(
+      join(sourceDir, "index.ts"),
+      "process.stdout.write(globalThis.targetLoaderMarker);",
+    );
+    const command = installedCliCommand(
+      { method: "source", rootDir: root },
+      { execPath: process.execPath, packageEntry: () => null },
+    )!;
+    expect(command.command).toBe(process.execPath);
+    expect(command.args[1]).toContain("%23");
+    expect(execFileSync(command.command, command.args, { encoding: "utf8" })).toBe(
+      "installed target",
+    );
+  });
+
   test("a checkout runs its own tsx entry, with the lock id to adopt", () => {
     expect(continuationCommand(offer().subject, OFFER_ID, LOCK_ID, ctx())).toEqual({
-      command: "/opt/omnesis/node_modules/.bin/tsx",
-      args: ["/opt/omnesis/packages/cli/src/index.ts", "update", "continue-after-apply", OFFER_ID],
+      command: "/usr/bin/node",
+      args: [
+        "--import",
+        pathToFileURL("/opt/omnesis/node_modules/tsx/dist/loader.mjs").href,
+        "/opt/omnesis/packages/cli/src/index.ts",
+        "update",
+        "continue-after-apply",
+        OFFER_ID,
+      ],
       env: { OMNESIS_UPDATE_LOCK_ID: LOCK_ID },
     });
   });

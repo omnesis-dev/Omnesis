@@ -1023,7 +1023,8 @@
             <code>Library</code> and <code>.config</code>, build and dependency folders, and files
             that look like keys or secrets are never read, even inside a chosen folder. Git working
             trees and Obsidian vaults are skipped whole — the Obsidian source indexes vaults — and
-            naming one as a folder is refused at setup with the reason.
+            naming one as a folder is refused at setup with the reason. Protected configuration
+            locations are also refused when selected directly or reached through an alias.
           </li>
           <li>
             <strong>Files it cannot read.</strong> A damaged PDF keeps the text of the pages that
@@ -1212,9 +1213,9 @@
                 </td>
                 <td>
                   Visit, daily-rollup, and search-term analytics tables, plus a daily browsing
-                  summary document. Reads Chrome, Brave, Edge, and Vivaldi on any collector, plus
-                  Safari and Arc on a macOS collector. Omnesis reads private copies of the browser
-                  databases and never modifies the originals.
+                  summary document. Reads Chrome, Brave, Edge, and Vivaldi on macOS, Linux, and
+                  Windows collectors, plus Safari and Arc on a macOS collector. Omnesis reads
+                  private copies of the browser databases and never modifies the originals.
                 </td>
               </tr>
               <tr>

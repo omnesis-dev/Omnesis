@@ -35,8 +35,9 @@ import {
   parseCodexCliVersion,
   type CodexRuntimeCommandInfo,
 } from "@omnesis/agent";
-import { codexPaths, distrustingNodeOptions } from "@omnesis/core";
+import { codexPaths, nodeCommandInvocation, resolveNpmInvocation } from "@omnesis/core";
 import { CODEX_RUNTIME_LOCK } from "./codex-runtime-lock.js";
+import { buildNpmEnv } from "./codex-npm.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -206,15 +207,15 @@ export class CodexRuntimeInstaller {
       await mkdir(npmHome, { mode: 0o700 });
       await mkdir(npmCache, { mode: 0o700 });
       onPhase?.("downloading");
-      await this.runner(
-        this.npmCommand,
+      const npm = await resolveNpmInvocation(
         ["ci", "--prefix", stagingDir, "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
-        {
-          env: buildNpmEnv(this.env, npmHome, npmCache),
-          timeoutMs: this.installTimeoutMs,
-          signal,
-        },
+        { command: this.npmCommand, env: this.env },
       );
+      await this.runner(npm.command, npm.args, {
+        env: buildNpmEnv(this.env, npmHome, npmCache),
+        timeoutMs: this.installTimeoutMs,
+        signal,
+      });
       await Promise.all([
         rm(npmHome, { recursive: true, force: true }),
         rm(npmCache, { recursive: true, force: true }),
@@ -554,7 +555,8 @@ async function runCommand(
   args: readonly string[],
   opts: { cwd?: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal },
 ): Promise<CodexInstallCommandResult> {
-  const result = await execFileAsync(command, [...args], {
+  const invocation = nodeCommandInvocation(command, args);
+  const result = await execFileAsync(invocation.command, invocation.args, {
     cwd: opts.cwd,
     env: opts.env,
     timeout: opts.timeoutMs,
@@ -563,45 +565,6 @@ async function runCommand(
     signal: opts.signal,
   });
   return { stdout: String(result.stdout), stderr: String(result.stderr) };
-}
-
-function buildNpmEnv(
-  source: NodeJS.ProcessEnv,
-  npmHome: string,
-  npmCache: string,
-): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    HOME: npmHome,
-    USERPROFILE: npmHome,
-    npm_config_cache: npmCache,
-    npm_config_registry: "https://registry.npmjs.org/",
-    npm_config_userconfig: join(npmHome, "npmrc"),
-    npm_config_audit: "false",
-    npm_config_fund: "false",
-    NODE_OPTIONS: distrustingNodeOptions(""),
-  };
-  for (const key of [
-    "PATH",
-    "TMPDIR",
-    "TEMP",
-    "TMP",
-    "SystemRoot",
-    "WINDIR",
-    "PATHEXT",
-    "COMSPEC",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NODE_EXTRA_CA_CERTS",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "NO_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "no_proxy",
-  ]) {
-    if (source[key] !== undefined) env[key] = source[key];
-  }
-  return env;
 }
 
 async function probeAppServerCompatibility(

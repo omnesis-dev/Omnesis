@@ -14,7 +14,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { type SourceInstance } from "@omnesis/source-sdk";
@@ -28,7 +28,7 @@ const providerId = ProviderId("local-files:host");
 
 function write(root: string, rel: string, content: string | Uint8Array): void {
   const full = join(root, rel);
-  mkdirSync(full.substring(0, full.lastIndexOf("/")), { recursive: true });
+  mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, content);
 }
 
@@ -82,6 +82,27 @@ describe("local-files sync", () => {
     },
   );
 
+  test("a protected configuration directory is refused as a root, including a symlink alias", async () => {
+    const configRoot = join(tmpDir, ".config");
+    mkdirSync(configRoot);
+    writeFileSync(join(configRoot, "settings.json"), '{"fictional":"private"}');
+    const alias = join(tmpDir, "ordinary-name");
+    symlinkSync(configRoot, alias, "junction");
+    await expect(createInstance(configRoot)).rejects.toThrow(/protected/);
+    await expect(createInstance(alias)).rejects.toThrow(/protected/);
+  });
+
+  test("document folder names follow their platform's configuration policy", async () => {
+    for (const folder of ["Windows", "AppData", "ProgramData"])
+      write(root, `${folder}/note.txt`, `Fictional note in ${folder}`);
+    const source = await createInstance(root);
+    const page = await source.sync(null);
+    const expected = process.platform === "win32" ? 0 : 3;
+    expect(page.documents).toHaveLength(expected);
+    expect(page.presentExternalIds).toHaveLength(expected);
+    expect(page.issues).toEqual([]);
+  });
+
   test("indexes text files and skips the deny-list", async () => {
     write(root, "Insurance/quote.txt", "Harbor quote number 42, valid 30 days.");
     write(root, "notes.md", "# heading\nsome personal notes");
@@ -101,6 +122,23 @@ describe("local-files sync", () => {
     }
     expect(result.hasMore).toBe(false);
     expect(result.deletedExternalIds ?? []).toHaveLength(0);
+  });
+
+  test("editing a file after an atomic save retains its inherited stable identity", async () => {
+    write(root, "plan.txt", "Fictional initial plan");
+    const source = await createInstance(root);
+    const first = await source.sync(null);
+    const id = first.documents[0]!.externalId;
+    write(root, "replacement.txt", "Fictional replacement plan");
+    renameSync(join(root, "replacement.txt"), join(root, "plan.txt"));
+    const second = await source.sync(first.cursor);
+    expect(second.documents[0]!.externalId).toBe(id);
+    write(root, "plan.txt", "Fictional plan edited after replacement");
+    const future = new Date(Date.now() + 10_000);
+    utimesSync(join(root, "plan.txt"), future, future);
+    const third = await source.sync(second.cursor);
+    expect(third.documents[0]!.externalId).toBe(id);
+    expect(third.presentExternalIds).toEqual([id]);
   });
 
   test("a stored brace glob keeps excluding files after configuration parsing", async () => {

@@ -93,7 +93,12 @@ export class HostedProcessLauncher implements ProcessLauncher {
         if (!pending) return;
         host.pending.delete(id);
         pending.cleanup();
-        if (pending.pid !== undefined) killProcessGroup(pending.pid);
+        if (process.platform === "win32") {
+          // Each native job helper watches this host through a pinned handle.
+          // Stopping an unresponsive host closes all its owned jobs without
+          // guessing whether a helper's numeric PID has been reused.
+          host.child.kill("SIGKILL");
+        } else if (pending.pid !== undefined) killProcessGroup(pending.pid);
         resolve(launcherFailure("timeout", "process launcher did not answer"));
       }, opts.timeoutMs + HOST_REPLY_GRACE_MS);
       backstop.unref();

@@ -12,7 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
@@ -625,6 +625,16 @@ describe("harness paths", () => {
   it("honors an explicit --dir override over defaults", () => {
     expect(harnessHome("openclaw", "/custom")).toBe("/custom");
     expect(harnessHome("hermes", "/custom")).toBe("/custom");
+  });
+
+  it("expands native tilde separators in an explicit harness directory", () => {
+    expect(harnessHome("openclaw", "~/fictional-harness")).toBe(
+      join(homedir(), "fictional-harness"),
+    );
+    const backslashPath = "~\\fictional-harness";
+    expect(harnessHome("hermes", backslashPath)).toBe(
+      process.platform === "win32" ? join(homedir(), "fictional-harness") : backslashPath,
+    );
   });
 
   it("resolves OpenClaw profiles and explicit config paths", () => {
@@ -1305,7 +1315,7 @@ describe("OpenClaw source artifact", () => {
 
   it.each(["absent", "stale"] as const)(
     "builds and packs current source with ambient dist %s",
-    (distState) => {
+    async (distState) => {
       const fixture = mkdtempSync(join(process.cwd(), ".openclaw-artifact-fixture-"));
       tempHomes.push(fixture);
       const sourceRoot = join(process.cwd(), "packages", "agent-integration");
@@ -1331,7 +1341,7 @@ describe("OpenClaw source artifact", () => {
         );
       }
 
-      const artifact = prepareOpenClawInstallArchive({
+      const artifact = await prepareOpenClawInstallArchive({
         packageRoot: fixture,
         entry: join(fixture, "src", "index.ts"),
       });

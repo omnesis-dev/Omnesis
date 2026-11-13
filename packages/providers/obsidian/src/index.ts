@@ -154,7 +154,7 @@ export default defineSource({
     const excludeMatchers = (config?.exclude ?? []).map((p) => picomatch(p));
 
     function isExcluded(relPath: string): boolean {
-      return excludeMatchers.some((m) => m(relPath));
+      return excludeMatchers.some((m) => m(relPath.split(sep).join("/")));
     }
 
     /**

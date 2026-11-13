@@ -1,0 +1,137 @@
+name: Windows
+
+# Pull requests get a bounded runtime check. The daily sweep exercises all
+# runtime unit, spawned-gateway and portal suites; only installation is out
+# of scope. A failing shell-based fixture must be ported, not excluded.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "extension/**"
+      - "scripts/**"
+      - "evals/**"
+      - "skills/**"
+      - "package*.json"
+      - "tsconfig*.json"
+      - "vitest*.ts"
+      - "playwright.config.ts"
+      - "nx.json"
+      - ".github/workflows/windows.yml"
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  TZ: UTC
+  OMNESIS_UNIT_WORKERS: "2"
+  OMNESIS_E2E_WORKERS: "1"
+
+jobs:
+  windows:
+    name: ${{ matrix.name }}
+    runs-on: windows-latest
+    timeout-minutes: ${{ matrix.lane == 'focused' && 40 || 180 }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"Windows focused","lane":"focused"}]' || '[{"name":"Windows unit","lane":"unit"},{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"},{"name":"Windows portal","lane":"portal"}]') }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          if ($env:TARGET_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Invalid target SHA' }
+          if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'Unexpected checked-out revision' }
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Privacy scan
+        run: node scripts/pii-scan.mjs --all
+
+      - name: Make OpenSSL available for isolated TLS certificates
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required for gateway tests' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+
+      - name: Install dependencies
+        run: |
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            npm ci --no-audit --no-fund
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw 'npm ci failed after three attempts' }
+            Start-Sleep -Seconds (10 * $attempt)
+          }
+
+      - name: Typecheck all TypeScript source and test projects
+        if: ${{ matrix.lane == 'unit' }}
+        run: node scripts/run-check.mjs types-tests
+
+      - name: Install spawned-gateway Chromium
+        if: ${{ matrix.lane == 'e2e' }}
+        run: npm exec --workspace packages/collector -- playwright install chromium
+
+      - name: Install portal Chromium
+        if: ${{ matrix.lane == 'portal' }}
+        run: node node_modules/@playwright/test/cli.js install chromium
+
+      - name: Restore the reference embedding model
+        if: ${{ matrix.lane == 'e2e' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/omnesis-test-embedder
+          key: windows-test-embedder-${{ hashFiles('scripts/ci/with-test-embedder.mjs') }}
+
+      - name: Focused Windows runtime tests
+        if: ${{ matrix.lane == 'focused' }}
+        run: node scripts/ci/windows-checks.mjs focused
+
+      - name: Full Windows unit and adapter tests
+        if: ${{ matrix.lane == 'unit' }}
+        run: node scripts/ci/windows-checks.mjs unit
+
+      - name: Full Windows E2E shard with the real reference embedder
+        if: ${{ matrix.lane == 'e2e' }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          OMNESIS_TEST_EMBEDDER_CACHE: ${{ runner.temp }}/omnesis-test-embedder
+        run: node scripts/ci/with-test-embedder.mjs scripts/ci/windows-checks.mjs e2e --shard=$env:SHARD
+
+      - name: Full Windows portal tests
+        if: ${{ matrix.lane == 'portal' }}
+        run: node scripts/ci/windows-checks.mjs portal
+
+      - name: Preserve portal failure artifacts
+        if: ${{ failure() && matrix.lane == 'portal' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-portal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7

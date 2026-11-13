@@ -25,6 +25,8 @@ import { promisify } from "node:util";
 
 import {
   createLogger,
+  nodeCommandInvocation,
+  terminateChildProcess,
   readPackageVersion,
   type AgentContextAssessment,
   type AgentEvent,
@@ -1165,10 +1167,18 @@ export async function ensureCodexRuntimeDirs(
   await chmod(configPath, 0o600);
 }
 
-export function buildCodexEnv(env: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
+export function buildCodexEnv(
+  env: NodeJS.ProcessEnv,
+  codexHome: string,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = { CODEX_HOME: codexHome };
   for (const key of SAFE_CODEX_ENV_KEYS) {
-    const value = env[key];
+    const actual =
+      platform === "win32"
+        ? Object.keys(env).find((name) => name.toUpperCase() === key.toUpperCase())
+        : key;
+    const value = actual === undefined ? undefined : env[actual];
     if (value !== undefined) childEnv[key] = value;
   }
   for (const [key, value] of Object.entries(env)) {
@@ -1233,15 +1243,12 @@ export async function assertSupportedCodexRuntime(opts: {
 }): Promise<CodexRuntimeProbe> {
   let stdout: string;
   try {
-    const result = await execFileAsync(
-      opts.command,
-      [...(opts.args ?? DEFAULT_CODEX_VERSION_ARGS)],
-      {
-        env: opts.env,
-        timeout: opts.timeoutMs ?? 10_000,
-        windowsHide: true,
-      },
-    );
+    const invocation = nodeCommandInvocation(opts.command, opts.args ?? DEFAULT_CODEX_VERSION_ARGS);
+    const result = await execFileAsync(invocation.command, invocation.args, {
+      env: opts.env,
+      timeout: opts.timeoutMs ?? 10_000,
+      windowsHide: true,
+    });
     stdout = `${result.stdout}${result.stderr}`;
   } catch (err) {
     const permissionFailure = codexSpawnPermissionFailure(err);
@@ -1350,7 +1357,8 @@ class CodexJsonRpcClient {
 
   start(): void {
     if (this.proc) return;
-    this.proc = spawn(this.opts.command, [...this.opts.args], {
+    const invocation = nodeCommandInvocation(this.opts.command, this.opts.args);
+    this.proc = spawn(invocation.command, invocation.args, {
       cwd: this.opts.cwd,
       env: this.opts.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -1421,6 +1429,14 @@ class CodexJsonRpcClient {
     // A spawn failure emits error/close without exit and never owns a live PID.
     if (proc.pid === undefined) return;
     if (proc.exitCode !== null || proc.signalCode !== null) return;
+
+    if (process.platform === "win32") {
+      // The Node CLI wrapper may own a native Codex child holding these pipes.
+      const closed = new Promise<void>((resolve) => proc.once("close", () => resolve()));
+      await terminateChildProcess(proc);
+      await closed;
+      return;
+    }
 
     await new Promise<void>((resolve) => {
       const killTimer = setTimeout(() => {

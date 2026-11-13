@@ -4,6 +4,7 @@
 import {
   appendFileSync,
   chmodSync,
+  copyFileSync,
   writeFileSync,
   existsSync,
   readFileSync,
@@ -26,6 +27,7 @@ import {
   MANAGED_CODEX_PACKAGE,
   MANAGED_CODEX_PACKAGE_VERSION,
   convertToolsToCodexDynamicTools,
+  buildCodexEnv,
   isSupportedCodexCliVersion,
   parseCodexCliVersion,
   parseCodexContextInputTokens,
@@ -190,6 +192,89 @@ describe("fake Codex log framing", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Codex JavaScript executable portability", () => {
+  it("disposes the app-server behind a JavaScript wrapper before returning", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-wrapper-"));
+    const command = join(dir, "codex wrapper.mjs");
+    const logPath = join(dir, "events.jsonl");
+    writeFileSync(
+      command,
+      `#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...process.argv.slice(2)], { stdio: 'inherit' });
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+child.on('exit', (code) => process.exit(code ?? 1));
+`,
+      { mode: 0o700 },
+    );
+    const runtime = new CodexAppServerRuntime({
+      command,
+      codexHome: join(dir, "home"),
+      env: { ...process.env, OMNESIS_FAKE_CODEX_LOG: logPath },
+    });
+    let childPid: number | undefined;
+    try {
+      await runtime.listModels();
+      childPid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+      await runtime.dispose();
+      expect(() => process.kill(childPid!, 0)).toThrow();
+    } finally {
+      await runtime.dispose();
+      if (childPid !== undefined) {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {
+          /* already exited */
+        }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("probes and starts a JavaScript app-server entry without a shell wrapper", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-js-"));
+    const command = join(dir, "codex entry & $().mjs");
+    copyFileSync(fakeCodexPath, command);
+    chmodSync(command, 0o700);
+    const runtime = new CodexAppServerRuntime({
+      command,
+      codexHome: join(dir, "home"),
+      workspaceDir: join(dir, "workspace"),
+      env: process.env,
+    });
+    try {
+      await expect(runtime.probeRuntime()).resolves.toMatchObject({ command, version: "0.142.4" });
+      await expect(runtime.listModels()).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ model: "gpt-example-frontier" })]),
+      );
+    } finally {
+      await runtime.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves case-insensitive Windows host variables while excluding credentials", () => {
+    expect(
+      buildCodexEnv(
+        {
+          Path: "synthetic path",
+          SYSTEMROOT: "synthetic root",
+          Temp: "synthetic temp",
+          OPENAI_API_KEY: "must-not-leak",
+          codex_home: "wrong home",
+        },
+        "private home",
+        "win32",
+      ),
+    ).toEqual({
+      CODEX_HOME: "private home",
+      PATH: "synthetic path",
+      SystemRoot: "synthetic root",
+      TEMP: "synthetic temp",
+    });
   });
 });
 

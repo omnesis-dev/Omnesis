@@ -173,12 +173,31 @@ export async function credentialsDestinationLines(input: {
   return lines;
 }
 
-/** Spawn `open <url>` (macOS) / `xdg-open` (linux). Best-effort, never throws. */
+/** Launch the configured browser without interpreting the URL as shell syntax. */
+export function browserInvocation(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+  if (platform === "win32") {
+    const script = `Start-Process -FilePath '${url.replaceAll("'", "''")}'`;
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(script, "utf16le").toString("base64"),
+      ],
+    };
+  }
+  return { command: platform === "darwin" ? "open" : "xdg-open", args: [url] };
+}
+
+/** Best-effort; the wizard also prints the URL for manual opening. */
 function openInBrowser(url: string): void {
-  const cmd =
-    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  const invocation = browserInvocation(url);
   try {
-    const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
+    const child = spawn(invocation.command, invocation.args, { stdio: "ignore", detached: true });
     child.on("error", () => {
       /* swallow — fall back to printing the URL */
     });

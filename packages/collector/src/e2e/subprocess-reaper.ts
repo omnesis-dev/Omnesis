@@ -19,16 +19,25 @@
  * `exit` handler alone would miss the `timeout` case the leak came from.
  */
 
+import { requestChildShutdown, WindowsProcessTree } from "@omnesis/core";
 import type { ChildProcess } from "node:child_process";
 
 /** Process-group leader PIDs of detached children still expected to be alive. */
 const liveGroups = new Set<number>();
+const windowsGroups = new Map<
+  number,
+  { proc: ChildProcess; tree: WindowsProcessTree; timer?: NodeJS.Timeout }
+>();
 let installed = false;
 
 /** Best-effort: SIGKILL every registered process group, then forget them. */
 function reapAll(): void {
   for (const pid of liveGroups) {
     try {
+      if (process.platform === "win32") {
+        windowsGroups.get(pid)?.tree.killSync();
+        continue;
+      }
       // Negative pid → signal the whole process group (the detached tree).
       process.kill(-pid, "SIGKILL");
     } catch {
@@ -36,6 +45,8 @@ function reapAll(): void {
     }
   }
   liveGroups.clear();
+  for (const { timer } of windowsGroups.values()) clearTimeout(timer);
+  windowsGroups.clear();
 }
 
 function installHandlers(): void {
@@ -64,17 +75,57 @@ function installHandlers(): void {
  * before the harness kills it. Auto-untracks only when the leader's exit
  * leaves no surviving member of the process group.
  */
-export function registerSubprocessGroup(proc: ChildProcess): void {
+export function registerSubprocessGroup(proc: ChildProcess): Promise<void> {
   installHandlers();
   const pid = proc.pid;
-  if (typeof pid !== "number") return;
+  if (typeof pid !== "number") return Promise.resolve();
   liveGroups.add(pid);
   proc.once("exit", () => reapAfterLeaderExit(proc, pid));
+  if (process.platform === "win32") {
+    const record = {
+      proc,
+      tree: new WindowsProcessTree(pid, {
+        rootIsAlive: () => proc.exitCode === null && proc.signalCode === null,
+      }),
+      timer: undefined as NodeJS.Timeout | undefined,
+    };
+    windowsGroups.set(pid, record);
+    const watch = (): void => {
+      if (windowsGroups.get(pid) !== record) return;
+      record.timer = setTimeout(() => {
+        const work =
+          proc.exitCode !== null || proc.signalCode !== null
+            ? record.tree.kill()
+            : record.tree.refresh();
+        void work
+          .then(() => {
+            if (!record.tree.alive && (proc.exitCode !== null || proc.signalCode !== null))
+              unregisterSubprocessGroup(proc);
+          })
+          .catch(() => {})
+          .finally(watch);
+      }, 500);
+      record.timer.unref();
+    };
+    const ready = record.tree.refresh();
+    // Callers that await registration receive failures. An ignored registration
+    // still retains ownership, and teardown retries the snapshot before acting.
+    void ready.catch(() => {}).finally(watch);
+    return ready;
+  }
+  return Promise.resolve();
 }
 
 /** Stop tracking a group the harness has already killed (idempotent). */
 export function unregisterSubprocessGroup(proc: ChildProcess): void {
-  if (typeof proc.pid === "number") liveGroups.delete(proc.pid);
+  if (typeof proc.pid !== "number") return;
+  const record = windowsGroups.get(proc.pid);
+  if (record && record.proc !== proc) return;
+  if (record) {
+    clearTimeout(record.timer);
+    windowsGroups.delete(proc.pid);
+  }
+  liveGroups.delete(proc.pid);
 }
 
 /** Signal a detached child's whole tree, falling back to the group leader alone. */
@@ -114,6 +165,19 @@ function subprocessGroupAlive(proc: ChildProcess): boolean {
  * process-group id is definitely absent so it cannot go stale in liveGroups.
  */
 function reapAfterLeaderExit(proc: ChildProcess, pid: number): void {
+  if (process.platform === "win32") {
+    const record = windowsGroups.get(pid);
+    if (!record || record.proc !== proc) return;
+    void record.tree
+      .kill()
+      .then(() => {
+        if (!record.tree.alive) unregisterSubprocessGroup(proc);
+      })
+      .catch(() => {
+        // Keep failed cleanup registered; normal teardown or the exit sweep retries.
+      });
+    return;
+  }
   if (!subprocessGroupAlive(proc)) {
     liveGroups.delete(pid);
     return;
@@ -162,6 +226,39 @@ export async function killSubprocessGroup(
   const initialSignal = opts.initialSignal ?? "SIGTERM";
   const termGraceMs = opts.termGraceMs ?? 5_000;
   const killGraceMs = opts.killGraceMs ?? 2_000;
+  if (process.platform === "win32" && typeof proc.pid === "number") {
+    if (
+      !windowsGroups.has(proc.pid) &&
+      !liveGroups.has(proc.pid) &&
+      (proc.exitCode !== null || proc.signalCode !== null)
+    )
+      return;
+    if (!windowsGroups.has(proc.pid)) await registerSubprocessGroup(proc);
+    const record = windowsGroups.get(proc.pid)!;
+    const goneWithin = async (ms: number): Promise<boolean> => {
+      const deadline = Date.now() + ms;
+      for (;;) {
+        await record.tree.refresh();
+        if (!record.tree.alive && (proc.exitCode !== null || proc.signalCode !== null)) return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      }
+    };
+    if (
+      initialSignal !== "SIGKILL" &&
+      (await requestChildShutdown(proc)) &&
+      (await goneWithin(termGraceMs))
+    ) {
+      unregisterSubprocessGroup(proc);
+      return;
+    }
+    await record.tree.kill();
+    if (await goneWithin(killGraceMs)) {
+      unregisterSubprocessGroup(proc);
+      return;
+    }
+    throw new Error(`subprocess group ${proc.pid} survived ${initialSignal} and SIGKILL`);
+  }
   if (!subprocessGroupAlive(proc)) {
     unregisterSubprocessGroup(proc);
     return;
