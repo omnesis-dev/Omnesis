@@ -25,6 +25,7 @@ import {
   filterAllowSql,
   filterDetailSql,
   filterVerdictSql,
+  forFewRecords,
   sourceFilterInclusionSql,
   type FilterVerdict,
 } from "./filter-sql.js";
@@ -342,9 +343,28 @@ function verdict(filter: SourceFilter, documentId: string): FilterVerdict {
     `SELECT (${detail.sql}) AS value FROM documents d WHERE d.id = ?`,
     [...detail.params, documentId],
   );
-  expect({ corpusId, index, detailed: detailed?.slice(0, 1) }).toEqual({
+  // The shape compiled for a statement that checks a few records.
+  const few = filterVerdictSql(forFewRecords(compiled), { row: "d" });
+  const fewRecords = one<FilterVerdict>(
+    fixture.db,
+    `SELECT (${few.sql}) AS value FROM documents d WHERE d.id = ?`,
+    [...few.params, documentId],
+  );
+  const fewCopy = filterVerdictSql(
+    forFewRecords(compiled),
+    { id: "t.document_id" },
+    INDEX_FILTER_TABLES,
+  );
+  const fewIndex = one<FilterVerdict>(
+    fixture.indexDb,
+    `SELECT (${fewCopy.sql}) AS value FROM (SELECT ? AS document_id) t`,
+    [...fewCopy.params, documentId],
+  );
+  expect({ corpusId, index, fewRecords, fewIndex, detailed: detailed?.slice(0, 1) }).toEqual({
     corpusId: corpusRow,
     index: corpusRow,
+    fewRecords: corpusRow,
+    fewIndex: corpusRow,
     detailed: corpusRow,
   });
 
@@ -1153,6 +1173,27 @@ describe("the plan of the compiled check", () => {
       expect(
         steps.some((step) => /^SEARCH fs USING INDEX sqlite_autoindex_documents_2/.test(step)),
       ).toBe(true);
+    }
+  });
+
+  it("reads a chat's members once for a statement, or by the record's chat for a few records", () => {
+    const compiled = compile(hide(PARLEY, [person("Maya", ["phone", MAYA])]));
+    const read = (shape: typeof compiled): string[] => {
+      const verdict = filterVerdictSql(shape, { row: "d" });
+      return plan(fixture.db, `SELECT (${verdict.sql}) FROM documents d WHERE d.id = ?`, [
+        ...verdict.params,
+        "w-solo",
+      ]).filter((step) => /\bfm\b/.test(step));
+    };
+    const perStatement = read(compiled);
+    expect(perStatement.length).toBeGreaterThan(0);
+    expect(perStatement.every((step) => step.includes("(source_id=? AND field=?)"))).toBe(true);
+    const perRecord = read(forFewRecords(compiled));
+    expect(perRecord.length).toBeGreaterThan(0);
+    for (const step of perRecord) {
+      expect(step).toBe(
+        "SEARCH fm USING PRIMARY KEY (source_id=? AND field=? AND device_id=? AND generation=? AND item_id=?)",
+      );
     }
   });
 

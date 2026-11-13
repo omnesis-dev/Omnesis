@@ -3066,6 +3066,7 @@
         "evals/universes/sacha-bellamy/sources/apple-imessage/messages.json",
         "evals/universes/sacha-bellamy/sources/granola-meetings/meetings.json",
         "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json",
+        "packages/gateway/src/access/filter-editor-reads.test.ts",
         "packages/gateway/src/access/filter-sql.test.ts",
         "packages/providers/discord/src/normalizer.test.ts",
         "packages/providers/immich/src/document-event-profile.test.ts",
@@ -3185,6 +3186,7 @@
         "packages/collector/src/e2e/immich-sync.e2e.test.ts",
         "packages/core/src/filter-identifiers.test.ts",
         "packages/gateway/src/access/filter-decision.test.ts",
+        "packages/gateway/src/access/filter-editor-reads.test.ts",
         "packages/gateway/src/access/filter-people.test.ts",
         "packages/gateway/src/access/filter-sql.test.ts",
         "packages/gateway/src/indexer/filter-copy.test.ts",
@@ -10442,17 +10444,18 @@
         "packages/collector/src/e2e/brain-rhythm.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts",
         "packages/core/src/models/decision-cassette.test.ts",
+        "packages/gateway/src/access/filter-editor-reads.test.ts",
         "packages/gateway/src/agent/record-port.test.ts",
         "packages/gateway/src/brain/admin-http-observation-routes.test.ts",
         "packages/gateway/src/http/routes/subscriptions.test.ts",
         "packages/gateway/src/sources/omnesis-notes/upsert.test.ts",
+        "packages/providers/discord/src/source.test.ts",
         "packages/providers/outlook/src/outlook-calendar.test.ts",
         "packages/providers/whatsapp/src/document-event-profile.test.ts",
         "packages/source-sdk/src/record-citation.test.ts",
         "packages/watch/src/runtime/update-storm.test.ts",
         "packages/watch/universes/poc/events.json",
-        "packages/watch/universes/poc/watches/alice-declines-dinner.json",
-        "packages/providers/discord/src/source.test.ts"
+        "packages/watch/universes/poc/watches/alice-declines-dinner.json"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -12968,6 +12971,19 @@
       "value": "Maya Reeves",
       "paths": ["evals/universes/filter-lists/cast.json"],
       "reason": "Invented cast of the filter-lists universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Aliases Unlimited",
+      "paths": ["packages/gateway/src/access/filter-editor-reads.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "Studio Mac",
+      "paths": [
+        "packages/gateway/src/access/filter-editor-reads.test.ts",
+        "packages/gateway/src/access/filter-readiness.test.ts"
+      ],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
     }
   ],
   "secretFixtures": [

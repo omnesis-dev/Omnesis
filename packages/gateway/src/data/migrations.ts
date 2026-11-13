@@ -164,6 +164,7 @@ import { indexDocumentsBySourceExternalId } from "./migration-187-documents-sour
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck-queued.js";
 import { addSourceVersion } from "./migration-218-source-version.js";
+import { addInventoryFullRead } from "./migration-219-inventory-full-read.js";
 import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
@@ -5011,6 +5012,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 218,
     description: "record the source version on every document, cursor row and inventory",
     up: addSourceVersion,
+  },
+  {
+    version: 219,
+    description: "record when an enumeration had read everything its source holds",
+    up: addInventoryFullRead,
   },
 ];
 

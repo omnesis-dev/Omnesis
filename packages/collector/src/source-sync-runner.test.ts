@@ -3587,6 +3587,45 @@ describe("SourceSyncRunner — the source's version travels with every page", ()
     expect(writes.mock.calls.map(([args]) => (args as PageArgs).sourceVersion)).toEqual([2, 2]);
   });
 
+  test("what a source says about having read everything travels with the page that says it", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new RecordingGateway();
+    const writes = vi.spyOn(gateway, "upsertWithCursor");
+    let page = 0;
+    const staged = makeDocumentSource("staged-documents", async () => {
+      page += 1;
+      return {
+        documents: [makeDoc(`item-${page}`, "staged-documents")],
+        deletedExternalIds: [],
+        cursor: { page },
+        hasMore: page < 2,
+        // The recent window is in; older history follows in a later cycle.
+        ...(page === 2 ? { fullReadComplete: false } : {}),
+      };
+    });
+    registry.registerProvider(makeProvider(staged));
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      staged,
+    );
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).fullReadComplete)).toEqual([
+      undefined,
+      false,
+    ]);
+
+    writes.mockClear();
+    const structured = makeStructuredSource("staged-structured", async () => ({
+      documents: [makeDoc("item", "staged-structured")],
+      cursor: { page: 1 },
+      hasMore: false,
+      fullReadComplete: true,
+    }));
+    registry.registerProvider(makeProvider(structured));
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      structured,
+    );
+    expect(writes.mock.calls.map(([args]) => (args as PageArgs).fullReadComplete)).toEqual([true]);
+  });
+
   test("a registration without a version sends none", async () => {
     const { registry } = makeRegistry();
     const gateway = new RecordingGateway();

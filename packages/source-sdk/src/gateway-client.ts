@@ -785,6 +785,8 @@ export interface GatewayClient {
      * lowering a stored one, and counts a page that carries none as 0.
      */
     sourceVersion?: number;
+    /** What the source said about having read everything; see `SyncResult.fullReadComplete`. */
+    fullReadComplete?: boolean;
   }): Promise<UpsertWithCursorResponse>;
 
   /** List documents with filtering and pagination. The wire envelope is

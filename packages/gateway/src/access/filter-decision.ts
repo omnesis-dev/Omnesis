@@ -21,8 +21,10 @@ import { filterFieldsFor } from "./filter-fields.js";
 import { getFilterListAncestors, getFilterListItems } from "./filter-lists.js";
 import { filterPersonKey, registerFilterSqlFunctions } from "./filter-people.js";
 import {
+  FILTER_PEOPLE_FIELD,
   compileSourceFilter,
   filterDetailSql,
+  forFewRecords,
   filterMatchSql,
   filterSubjectVersionSql,
   parseFilterDetail,
@@ -95,9 +97,6 @@ export interface DocumentAccessDecision {
   reason: AccessReason;
 }
 
-/** The field name a reason uses for the people of a record. */
-export const PEOPLE_FIELD = "$people";
-
 const hidden = (reason: AccessReason): DocumentAccessDecision => ({ readable: false, reason });
 
 function compiledFilters(db: Db, filters: readonly SourceFilter[]): CompiledFilter[] {
@@ -118,12 +117,17 @@ export function documentAccessInclusionSql(
   grant: DocumentAccessGrant,
   documentColumn: string,
   sourceColumn: string,
-  options: { row?: string } = {},
+  options: {
+    row?: string;
+    /** The statement checks a few records; see `forFewRecords`. */
+    fewRecords?: boolean;
+  } = {},
 ): FilterSql {
   if (!grant.capabilityGranted) return { sql: "0", params: [] };
   registerFilterSqlFunctions(db);
+  const compiled = compiledFilters(db, grant.filters);
   const filter = sourceFilterInclusionSql(
-    compiledFilters(db, grant.filters),
+    options.fewRecords ? compiled.map(forFewRecords) : compiled,
     documentColumn,
     sourceColumn,
     options,
@@ -174,9 +178,8 @@ export function decideDocumentAccess(
     let via: FilterItemLabel | undefined;
     for (const filter of grant.filters) {
       if (filter.sourceId !== row.source_id) continue;
-      const compiled = compileSourceFilter(
-        filter,
-        filterFieldsFor(db, sourceTypeOf(filter.sourceId)),
+      const compiled = forFewRecords(
+        compileSourceFilter(filter, filterFieldsFor(db, sourceTypeOf(filter.sourceId))),
       );
       const decision = decideUnderFilter(db, filter, compiled, documentId, row.stream_id);
       if (!decision.readable) return decision;
@@ -206,7 +209,11 @@ function decideUnderFilter(
   if (!found) return hidden({ code: "document-not-found" });
   const parsed = parseFilterDetail(found.code);
   const concerned = parsed.detail === null ? undefined : compiled.details[parsed.detail];
-  const field = concerned ? (concerned.kind === "person" ? PEOPLE_FIELD : concerned.path) : null;
+  const field = concerned
+    ? concerned.kind === "person"
+      ? FILTER_PEOPLE_FIELD
+      : concerned.path
+    : null;
   const noun = concerned ? nounOf(concerned) : null;
 
   switch (parsed.verdict) {
@@ -312,7 +319,10 @@ export function filterReadableDocumentIds(
 ): Set<string> {
   const readable = new Set<string>();
   if (documentIds.length === 0 || !grant.capabilityGranted) return readable;
-  const inclusion = documentAccessInclusionSql(db, grant, "d.id", "d.source_id", { row: "d" });
+  const inclusion = documentAccessInclusionSql(db, grant, "d.id", "d.source_id", {
+    row: "d",
+    fewRecords: true,
+  });
   const statement = db.prepare<unknown[], { id: string }>(
     `SELECT d.id FROM documents d
       WHERE d.id IN (SELECT value FROM json_each(?)) AND ${inclusion.sql}`,

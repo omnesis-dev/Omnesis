@@ -169,6 +169,13 @@ const SAFE_TABLES = new Set([
   "document_temporal_projection_sources",
   "document_temporal_projections",
   "documents",
+  // The search index's copy of what source filters read. Derived from the
+  // corpus and rebuilt by the indexer, so a clone starts with none of it.
+  "index_filter_documents",
+  "index_filter_item_members",
+  "index_filter_items",
+  "index_filter_lists",
+  "index_filter_sources",
   "index_meta",
   "index_totals",
   "index_versions",
@@ -360,6 +367,12 @@ const SAFE_ROW_FILTERS = new Map([
   // Pending derived work restarts empty; a clone's copies of a document's
   // source version are rebuilt from the documents themselves.
   ["document_filter_index_queue", "0"],
+  // Rebuilt from the clone's own documents, lists and declarations.
+  ["index_filter_documents", "0"],
+  ["index_filter_item_members", "0"],
+  ["index_filter_items", "0"],
+  ["index_filter_lists", "0"],
+  ["index_filter_sources", "0"],
   // Doctor runs are transient observations about one installation's hosts.
   // Preserve the table shape without cloning host-local health details.
   ["device_doctor_runs", "0"],

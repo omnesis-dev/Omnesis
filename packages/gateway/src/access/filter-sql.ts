@@ -240,6 +240,26 @@ export interface CompiledFilter {
   otherwise: "R" | "N";
   /** Digest of the declaration, compared with the one an index copy row was written under. */
   declaration: string;
+  /**
+   * How the members of a record's chat are looked up; see
+   * {@link forFewRecords}. Absent is `per-statement`.
+   */
+  memberLookup?: "per-statement" | "per-record";
+}
+
+/**
+ * The same filter, compiled for a statement that checks a few records: one
+ * document, a page of search results.
+ *
+ * Only the way a chat's members are read differs. By default the chats that
+ * hold a saved person, and the chats with a member that cannot be read, are
+ * each worked out once for the statement by a pass over the account's member
+ * list: right when the statement reads many records. For a few records it is
+ * cheaper to read the members of each record's own chat. The verdict is the
+ * same either way.
+ */
+export function forFewRecords(compiled: CompiledFilter): CompiledFilter {
+  return { ...compiled, memberLookup: "per-record" };
 }
 
 /**
@@ -417,6 +437,65 @@ export function compileSourceFilter(
   return compiled;
 }
 
+/** The name a caller uses for the people of a record where a field has its path. */
+export const FILTER_PEOPLE_FIELD = "$people";
+
+/**
+ * A filter that uses one detail and saves nothing for it: a hide filter with
+ * no entry, except that the detail is still required of every record. Its
+ * verdict is `O` for a record too old for the detail, `U` for one on which
+ * the detail is not known, and `R` for every other. It is how the records
+ * that cannot be placed for a field are counted with the conditions the real
+ * check uses. `field` is a declared path or {@link FILTER_PEOPLE_FIELD}.
+ */
+export function compileFieldProbe(
+  sourceId: string,
+  fields: SourceFilterFields,
+  field: string,
+): CompiledFilter {
+  const compiled: CompiledFilter = {
+    sourceId,
+    unusable: null,
+    details: [],
+    whenMatched: "H",
+    otherwise: "R",
+    declaration: filterDeclarationDigest(fields),
+  };
+  const unusable = (why: string): CompiledFilter => ({ ...compiled, unusable: why });
+  if (fields.state !== "declared") return unusable("the source declares no filterable field");
+  const declared = (path: string): FieldDetail | null => {
+    const found = fields.fields.find((candidate) => candidate.path === path);
+    return found?.state === "ready" ? fieldDetail(found) : null;
+  };
+  if (field !== FILTER_PEOPLE_FIELD) {
+    const detail = declared(field);
+    if (!detail) return unusable(`"${field}" cannot be applied by this gateway`);
+    compiled.details = [detail];
+    return compiled;
+  }
+  if (fields.person?.state !== "ready")
+    return unusable("the source declares no usable person filter");
+  const spec = fields.person.filter;
+  let members: FieldDetail | null = null;
+  if (spec.membersOf !== undefined) {
+    members = declared(spec.membersOf);
+    if (!members || members.spec.listsMembers !== true) {
+      return unusable(`"${spec.membersOf}" does not list members`);
+    }
+    compiled.details.push(members);
+  }
+  const peopleSpec = filterPeopleSpec(spec);
+  compiled.details.push({
+    kind: "person",
+    spec,
+    specText: encodeFilterPeopleSpec(peopleSpec),
+    kindsText: JSON.stringify(peopleSpec.kinds),
+    keys: [],
+    members,
+  });
+  return compiled;
+}
+
 /** One condition of a verdict, in the order they are checked. */
 interface Branch {
   when: FilterSql;
@@ -475,7 +554,7 @@ function valuesFrom(
   const meta = `${subject}.${map.metadata}`;
   return detail.array
     ? `json_each(${meta}, ${sql.bind(detail.jsonPath)}) fv`
-    : `(SELECT json_extract(${meta}, ${sql.bind(detail.jsonPath)}) AS value) fv`;
+    : `json_each(json_array(json_extract(${meta}, ${sql.bind(detail.jsonPath)}))) fv`;
 }
 
 /**
@@ -575,6 +654,38 @@ function chatsWhereSql(
       WHERE fm.source_id = ${sql.bind(sourceId)} AND fm.field = ${sql.bind(members.path)}
         AND fm.generation = (SELECT fl.generation FROM ${map.lists} fl WHERE fl.source_id = fm.source_id AND fl.field = fm.field AND fl.device_id = fm.device_id)
         AND ${condition()}`;
+}
+
+/**
+ * The record's chat has a member satisfying `condition`, which is SQL over a
+ * member row `fm`. Emitted in one of two shapes, chosen by
+ * {@link CompiledFilter.memberLookup}.
+ */
+function chatHasMemberSql(
+  sql: SqlBuilder,
+  compiled: CompiledFilter,
+  map: FilterTableMap,
+  members: FieldDetail,
+  subject: string,
+  condition: () => string,
+): string {
+  const device = rowDevice(members, subject);
+  if (compiled.memberLookup !== "per-record") {
+    return anyValue(
+      sql,
+      map,
+      members,
+      subject,
+      (value) =>
+        `(${device}, ${value}) IN (${chatsWhereSql(sql, map, compiled.sourceId, members, condition)})`,
+    );
+  }
+  return `EXISTS (SELECT 1 FROM ${map.members} fm
+      WHERE fm.source_id = ${sql.bind(compiled.sourceId)} AND fm.field = ${sql.bind(members.path)}
+        AND fm.device_id = ${device}
+        AND fm.generation = ${generationSql(sql, map, compiled.sourceId, members, device)}
+        AND fm.item_id IN (SELECT fv.value FROM ${valuesFrom(sql, map, members, subject)})
+        AND ${condition()})`;
 }
 
 function savedKeysSql(sql: SqlBuilder, person: PersonDetail): string {
@@ -693,13 +804,13 @@ function branches(compiled: CompiledFilter, map: FilterTableMap, subject: string
       push(
         "U",
         (sql) =>
-          anyValue(
+          chatHasMemberSql(
             sql,
+            compiled,
             map,
             members,
             subject,
-            (value) =>
-              `(${rowDevice(members, subject)}, ${value}) IN (${chatsWhereSql(sql, map, compiled.sourceId, members, () => `${memberKeysSql(sql, detail)} IS NULL`)})`,
+            () => `${memberKeysSql(sql, detail)} IS NULL`,
           ),
         index,
         "person-unreadable",
@@ -733,13 +844,14 @@ function matchSql(
   const members = detail.members;
   if (members) {
     parts.push(
-      anyValue(
+      chatHasMemberSql(
         sql,
+        compiled,
         map,
         members,
         subject,
-        (value) =>
-          `(${rowDevice(members, subject)}, ${value}) IN (${chatsWhereSql(sql, map, compiled.sourceId, members, () => `EXISTS (SELECT 1 FROM json_each(${memberKeysSql(sql, detail)}) fk WHERE fk.value IN ${savedKeysSql(sql, detail)})`)})`,
+        () =>
+          `EXISTS (SELECT 1 FROM json_each(${memberKeysSql(sql, detail)}) fk WHERE fk.value IN ${savedKeysSql(sql, detail)})`,
       ),
     );
   }
@@ -1014,4 +1126,135 @@ export function sourceFilterInclusionSql(
       )
       .join(" AND "),
   );
+}
+
+// ── Counts for the filter editor ────────────────────────────────────────────
+//
+// How many records each offered entry would share, counted in one pass over
+// the account rather than one pass per entry. A record counts for an entry
+// exactly when a share-only filter holding only that entry reads it: it is
+// new enough, the detail is known (the probe's verdict is `R`), and one of
+// its values is the entry or inside it. These read the corpus only.
+
+/** The id of the record `outer` is decided through, or NULL when there is none. */
+function subjectIdSql(outer: string): string {
+  const meta = `${outer}.metadata`;
+  return `CASE
+      WHEN json_valid(${meta}) AND (json_extract(${meta}, '${DOCUMENT_TYPE_PATH}') IS 'attachment' OR json_type(${meta}, '${PARENT_PATH}') IS NOT NULL)
+        THEN (SELECT fx.id FROM documents fx
+               WHERE fx.provider_id = ${outer}.provider_id AND fx.source_id = ${outer}.source_id
+                 AND fx.external_id = json_extract(${meta}, '${PARENT_PATH}')
+                 AND fx.stream_id = ${outer}.stream_id AND fx.id <> ${outer}.id)
+      ELSE ${outer}.id
+    END`;
+}
+
+function probeDetail<K extends FilterDetail["kind"]>(
+  probe: CompiledFilter,
+  kind: K,
+): Extract<FilterDetail, { kind: K }> {
+  const detail = probe.details[probe.details.length - 1];
+  if (probe.unusable !== null || !detail || detail.kind !== kind) {
+    throw new Error("The field cannot be counted.");
+  }
+  return detail as Extract<FilterDetail, { kind: K }>;
+}
+
+/** The records of the account whose detail is known, with the row each is decided through. */
+function knownRecordsSql(sql: SqlBuilder, probe: CompiledFilter): string {
+  return `documents d
+      CROSS JOIN documents fs ON fs.id = ${subjectIdSql("d")}
+     WHERE d.source_id = ${sql.bind(probe.sourceId)}
+       AND (${sql.splice(caseSql(branches(probe, CORPUS_FILTER_TABLES, "fs"), (branch) => branch.verdict))}) = 'R'`;
+}
+
+/**
+ * Rows of `(idx, n)`: for each entry `[idx, device, id]` of a field probed
+ * with {@link compileFieldProbe}, how many records it would share. An entry
+ * no record matches has no row.
+ */
+export function filterItemCountsSql(
+  probe: CompiledFilter,
+  entries: ReadonlyArray<readonly [idx: number, device: string, id: string]>,
+): FilterSql {
+  const detail = probeDetail(probe, "field");
+  const map = CORPUS_FILTER_TABLES;
+  return fragment((sql) => {
+    const seeds = `SELECT json_extract(fj.value, '$[0]'), json_extract(fj.value, '$[1]'), json_extract(fj.value, '$[2]') FROM json_each(${sql.bind(JSON.stringify(entries))}) fj`;
+    const selected =
+      detail.spec.capability === "tree"
+        ? `${seeds}
+           UNION
+           SELECT sel.idx, fi.device_id, fi.item_id
+             FROM sel
+             CROSS JOIN ${map.items} fi INDEXED BY ${map.itemsByParent}
+               ON fi.source_id = ${sql.bind(probe.sourceId)} AND fi.field = ${sql.bind(detail.path)}
+              AND fi.device_id = sel.device
+              AND fi.generation = ${generationSql(sql, map, probe.sourceId, detail, "sel.device")}
+              AND fi.parent_id = sel.id`
+        : seeds;
+    const values = valuesFrom(sql, map, detail, "fs");
+    return `WITH RECURSIVE sel(idx, device, id) AS (${selected}),
+        chosen(device, id, idx) AS MATERIALIZED (SELECT device, id, idx FROM sel)
+      SELECT hit.idx AS idx, count(*) AS n FROM (
+        SELECT DISTINCT chosen.idx AS idx, d.id AS id
+          FROM documents d
+          CROSS JOIN documents fs ON fs.id = ${subjectIdSql("d")}
+          CROSS JOIN ${values}
+          CROSS JOIN chosen ON chosen.device = ${rowDevice(detail, "fs")} AND chosen.id = fv.value
+         WHERE d.source_id = ${sql.bind(probe.sourceId)}
+           AND (${sql.splice(caseSql(branches(probe, map, "fs"), (branch) => branch.verdict))}) = 'R'
+      ) hit GROUP BY hit.idx`;
+  });
+}
+
+/** Rows of `(device, n)`: how many records each whole device would share for a device-scoped field. */
+export function filterDeviceCountsSql(probe: CompiledFilter): FilterSql {
+  probeDetail(probe, "field");
+  return fragment(
+    (sql) =>
+      `SELECT fs.stream_id AS device, count(*) AS n FROM ${knownRecordsSql(sql, probe)} GROUP BY fs.stream_id`,
+  );
+}
+
+/**
+ * Rows of `(idx, n)`: for each person, given as `[idx, key]` pairs of their
+ * people-keys, how many records a share-only filter naming them would share.
+ */
+export function filterPersonCountsSql(
+  probe: CompiledFilter,
+  entries: ReadonlyArray<readonly [idx: number, key: string]>,
+): FilterSql {
+  const person = probeDetail(probe, "person");
+  const map = CORPUS_FILTER_TABLES;
+  return fragment((sql) => {
+    const keys = `SELECT json_extract(fj.value, '$[0]') AS idx, json_extract(fj.value, '$[1]') AS key FROM json_each(${sql.bind(JSON.stringify(entries))}) fj`;
+    const members = person.members;
+    const chats = members
+      ? `, chats(device, id, idx) AS MATERIALIZED (
+           SELECT DISTINCT fm.device_id, fm.item_id, wanted.idx
+             FROM ${map.members} fm, json_each(${memberKeysSql(sql, person)}) fk
+             JOIN wanted ON wanted.key = fk.value
+            WHERE fm.source_id = ${sql.bind(probe.sourceId)} AND fm.field = ${sql.bind(members.path)}
+              AND fm.generation = (SELECT fl.generation FROM ${map.lists} fl WHERE fl.source_id = fm.source_id AND fl.field = fm.field AND fl.device_id = fm.device_id))`
+      : "";
+    const onRecord = `SELECT wanted.idx AS idx, d.id AS id
+        FROM ${knownRecordsSqlWithJoin(sql, probe, `CROSS JOIN json_each(${peopleSql(sql, map, person, "fs")}) fv CROSS JOIN wanted ON wanted.key = fv.value`)}`;
+    const inChat = members
+      ? ` UNION SELECT chats.idx AS idx, d.id AS id
+        FROM ${knownRecordsSqlWithJoin(sql, probe, `CROSS JOIN ${valuesFrom(sql, map, members, "fs")} CROSS JOIN chats ON chats.device = ${rowDevice(members, "fs")} AND chats.id = fv.value`)}`
+      : "";
+    return `WITH wanted(idx, key) AS MATERIALIZED (${keys})${chats}
+      SELECT hit.idx AS idx, count(*) AS n FROM (${onRecord}${inChat}) hit GROUP BY hit.idx`;
+  });
+}
+
+/** {@link knownRecordsSql} with further joins on the subject row before its WHERE. */
+function knownRecordsSqlWithJoin(sql: SqlBuilder, probe: CompiledFilter, joins: string): string {
+  // `joins` was built first, so its parameters are already bound in order.
+  return `documents d
+      CROSS JOIN documents fs ON fs.id = ${subjectIdSql("d")}
+      ${joins}
+     WHERE d.source_id = ${sql.bind(probe.sourceId)}
+       AND (${sql.splice(caseSql(branches(probe, CORPUS_FILTER_TABLES, "fs"), (branch) => branch.verdict))}) = 'R'`;
 }

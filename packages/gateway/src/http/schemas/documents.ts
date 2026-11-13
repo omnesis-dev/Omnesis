@@ -466,6 +466,12 @@ export const upsertWithCursorBody = z
      * which is stored as 0.
      */
     sourceVersion: sourceVersionShape.optional(),
+    /**
+     * Whether the source has now read everything it holds for the account,
+     * as it said on the last page of a cycle. Absent leaves the gateway's
+     * default: the last page of a cycle begun with no cursor is a full read.
+     */
+    fullReadComplete: z.boolean().optional(),
   })
   .superRefine((body, ctx) => {
     refuseBothSpellings(body, ctx);

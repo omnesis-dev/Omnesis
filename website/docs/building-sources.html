@@ -336,6 +336,15 @@
           scheduled sync.
         </p>
         <p>
+          A sync that starts with no cursor reads the account from the beginning. When its last page
+          arrives (<code>hasMore: false</code>), the gateway records that the source has read
+          everything it holds for the account. A source that imports its history in stages, a recent
+          window first and older history in later cycles, returns
+          <code>fullReadComplete: false</code> on the last page of a cycle that leaves history for
+          later, and <code>fullReadComplete: true</code> on the last page of the cycle that finishes
+          it. A source that reads everything in one cycle leaves the field out.
+        </p>
+        <p>
           A minimal source fits in one file. This one reads notes that each machine keeps in its own
           local folder, so every machine that hosts it contributes different notes:
         </p>
