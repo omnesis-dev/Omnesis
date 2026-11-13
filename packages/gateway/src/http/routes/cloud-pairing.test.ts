@@ -437,6 +437,40 @@ test("browser initiation and callbacks reject cross-site attempts, lost or ambig
   ).toBe(404);
 });
 
+test("attack: a sign-in state cookie planted by a sibling site cannot complete Google sign-in", async () => {
+  // The attacker starts a browser sign-in on the owner's gateway and keeps
+  // the state it was handed. A page on another gateway under the same parent
+  // domain then plants that state in the owner's browser as a parent-domain
+  // cookie (`__Secure-omnesis-google-login=<state>; Domain=relay.example.test`),
+  // which the browser then sends back without its Domain. Only a `__Host-`
+  // cookie, which no sibling can set, may bind the callback to a browser.
+  const server = webApp();
+  const before = db.prepare("SELECT count(*) AS n FROM devices").get();
+  const flow = await webBegin(server);
+  const state = flow.cookie.slice(flow.cookie.indexOf("=") + 1);
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        id_token: await webToken(flow.url.searchParams.get("nonce")!),
+        token_type: "Bearer",
+      }),
+    ),
+  );
+  vi.stubGlobal("fetch", transport);
+  const planted = await server.request(flow.callback.href, {
+    headers: { cookie: `__Secure-omnesis-google-login=${state}` },
+  });
+  expect(planted.status).toBe(302);
+  expect(planted.headers.get("location")).toBe("/portal/?googlePairing=failed");
+  expect(transport).not.toHaveBeenCalled();
+  expect(db.prepare("SELECT count(*) AS n FROM devices").get()).toEqual(before);
+  const poll = await post(server, "/devices/google/poll", {
+    requestId: flow.value.requestId,
+    secret: flow.value.secret,
+  });
+  expect(await poll.json()).not.toMatchObject({ status: "pending" });
+});
+
 test("request and polling burst limits are separate and apply before approval work", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   const server = app();

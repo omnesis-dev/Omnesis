@@ -5050,7 +5050,7 @@ describe("sync state endpoints", () => {
     expect(meta["example-browser"].icon).not.toBe(meta["example-browser:one"].icon);
   });
 
-  test("a relayed caller that has not signed in sees only family entries, never an account's", async () => {
+  test("attack: a relayed caller that has not signed in cannot read account ids from the public source map", async () => {
     await req("/sync-state/example-browser:maya@example.com", {
       method: "POST",
       body: JSON.stringify({
@@ -7952,6 +7952,31 @@ describe("portal session cookies and cross-site writes", () => {
       method: "POST",
       headers: { Host: "gateway.example.test", ...headers },
     });
+
+  test("attack: a page on a sibling gateway cannot make the owner's signed-in browser wipe a provider", async () => {
+    // The owner is signed in to their gateway's portal. They open a page on
+    // another gateway served under the same parent domain, which runs
+    //   fetch("https://g-owner.relay.example.test/documents/delete-all/provider/google",
+    //         { method: "POST", mode: "no-cors", credentials: "include" })
+    // `SameSite=Lax` does not stop it (same site), and a no-cors request needs
+    // no preflight. These are the headers the browser sends with it.
+    await seed();
+    const { cookie } = adminSession();
+    const res = await app.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Host: "g-owner.relay.example.test",
+        Cookie: cookie,
+        Origin: "https://g-attacker.relay.example.test",
+        "Sec-Fetch-Site": "same-site",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Dest": "empty",
+        "Content-Length": "0",
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(await remaining()).toBe(1);
+  });
 
   test("a body-less request another page makes with the session cookie is refused and deletes nothing", async () => {
     await seed();
