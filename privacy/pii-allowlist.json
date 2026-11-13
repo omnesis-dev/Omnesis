@@ -13041,6 +13041,33 @@
       "value": "My Drive",
       "paths": ["packages/providers/google/src/filter-details.test.ts"],
       "reason": "The name Google Drive gives every account's root folder; a product label, not a person or corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "evals/universes/repository-filters/cast.json",
+        "evals/universes/repository-filters/sources/github-commits/commits.json",
+        "evals/universes/repository-filters/sources/github/threads.json"
+      ],
+      "reason": "Invented cast of the repository-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": [
+        "evals/universes/repository-filters/cast.json",
+        "evals/universes/repository-filters/sources/github/threads.json"
+      ],
+      "reason": "Invented cast of the repository-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "David Lin",
+      "paths": ["evals/universes/repository-filters/cast.json"],
+      "reason": "Invented cast of the repository-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Northstar Labs",
+      "paths": ["evals/universes/repository-filters/cast.json"],
+      "reason": "Invented organization of the repository-filters universe."
     }
   ],
   "secretFixtures": [
