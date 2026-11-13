@@ -351,6 +351,22 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private var devicesDestinationView: some View {
+        #if DEBUG
+        if destinationMode == .preview {
+            DevicesView(
+                previewDevices: PreviewMocks.devices,
+                previewTokens: PreviewMocks.deviceTokens
+            )
+        } else {
+            DevicesView()
+        }
+        #else
+        DevicesView()
+        #endif
+    }
+
+    @ViewBuilder
     private func destinationView(_ destination: SettingsDestination) -> some View {
         switch destination {
         case .root: EmptyView()
@@ -378,18 +394,7 @@ struct SettingsView: View {
             ModelsView(initialPickerRole: initialRole)
             #endif
         case .devices:
-            #if DEBUG
-            if destinationMode == .preview {
-                DevicesView(
-                    previewDevices: PreviewMocks.devices,
-                    previewTokens: PreviewMocks.deviceTokens
-                )
-            } else {
-                DevicesView()
-            }
-            #else
-            DevicesView()
-            #endif
+            devicesDestinationView
         case .lab:
             labDestinationView
         case .notifications:
