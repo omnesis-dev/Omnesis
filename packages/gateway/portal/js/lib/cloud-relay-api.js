@@ -76,6 +76,8 @@ const ERRORS = {
   "invitation-required": "This relay requires an invitation for this gateway ID.",
   "enrollment-refused": "This gateway couldn't register with Omnesis Relay. It keeps trying by itself. If this message stays, try connecting again.",
   "tunnel-disconnected": "Remote access was interrupted. Reconnect to try again.",
+  "not-allowed":
+    "This account hasn't been approved for Omnesis yet. Nothing on this gateway changed.",
   "certificate-setup-failed":
     "The certificate for this gateway's address could not be prepared. The gateway tries again by itself.",
   "certificate-renewal-failed":
@@ -116,6 +118,17 @@ export function relayHttpsUrl(value) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Where to ask for an account when the relay's accounts are invite-only, with the host to show
+ * beside the link so a substituted address is visible. Null when the gateway reported nothing usable.
+ */
+export function relaySignupAccess(status) {
+  const signup = status?.signup;
+  if (!signup || signup.inviteOnly !== true) return null;
+  const url = relayHttpsUrl(signup.requestAccessUrl);
+  return url ? { url, host: new URL(url).host } : null;
 }
 
 /** Accept Google directly or a single-use launch on the gateway's authenticated installation service. */

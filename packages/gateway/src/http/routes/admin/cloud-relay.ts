@@ -27,7 +27,13 @@ export function mountCloudRelayManagementRoutes(
     await next();
   });
   const bounded = bodyLimit({ maxSize: 16_384 });
-  app.get("/admin/cloud-relay", scope.admin(), async (c) => respond(c, () => service.status()));
+  app.get("/admin/cloud-relay", scope.admin(), async (c) =>
+    respond(c, async () => {
+      // Only this read asks the relay; other callers of status() never reach the network.
+      await service.refreshSignupAccess?.();
+      return service.status();
+    }),
+  );
   app.post(
     "/admin/cloud-relay/configure",
     scope.admin(),

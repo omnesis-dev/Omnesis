@@ -401,6 +401,13 @@ recorded, and the same request can be retried. A person outside the group sees
 "Omnesis accounts are invite-only for now." with the join link; the gateway sees
 the ordinary `not-allowed` refusal.
 
+With a join link, the relay also publishes it before anyone signs in, at the
+public `GET /_relay/v3/signup/access`
+(`{"signup":{"inviteOnly":true,"requestAccessUrl":"…"}}`; `{}` without a link or
+under another policy). A gateway that is not linked yet reads it and shows the
+link with its host on its Omnesis account page, so the link does not need to be
+handed out separately.
+
 For this check only, the relay's Google sign-in for connecting a gateway asks
 for the `email` scope as well as `openid`, and only on a relay with a group. The address is used only if the ID token says `email_verified`,
 compared lower-cased, and sent to Google once for the check. It is never stored,

@@ -76,6 +76,44 @@ export const gatewaySignupLinked = z
   .strict();
 export type GatewaySignupDenialReason = z.infer<typeof gatewaySignupDenialReason>;
 
+/**
+ * Public and unauthenticated: `{ signup: GatewaySignupAccess }` on an invite-only relay with a
+ * join link, `{}` otherwise. A separate path, so gateways that read `/_relay/v2/config` strictly
+ * keep working.
+ */
+export const GATEWAY_SIGNUP_ACCESS_PATH = `${GATEWAY_SIGNUP_PATH}/access`;
+export interface GatewaySignupAccess {
+  inviteOnly: true;
+  /** Where a person asks to be let in. HTTPS, without credentials. */
+  requestAccessUrl: string;
+}
+const MAX_REQUEST_ACCESS_URL = 2048;
+
+/**
+ * The gateway's reading of the relay's answer. A link a person is sent to is checked again here:
+ * anything but a bounded HTTPS URL without credentials drops the whole notice. Fields the gateway
+ * does not know are ignored, so a relay can add some.
+ */
+export function gatewaySignupAccess(value: unknown): GatewaySignupAccess | undefined {
+  const signup = value && typeof value === "object" && "signup" in value ? value.signup : undefined;
+  if (!signup || typeof signup !== "object") return undefined;
+  const { inviteOnly, requestAccessUrl } = signup as Record<string, unknown>;
+  if (
+    inviteOnly !== true ||
+    typeof requestAccessUrl !== "string" ||
+    requestAccessUrl.length > MAX_REQUEST_ACCESS_URL
+  )
+    return undefined;
+  let url: URL;
+  try {
+    url = new URL(requestAccessUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" || url.username || url.password) return undefined;
+  return { inviteOnly: true, requestAccessUrl: url.href };
+}
+
 /** The owner key signs the exact request, so a relay cannot reuse it for another gateway or nonce. */
 export function gatewaySignupTranscript(
   origin: string,

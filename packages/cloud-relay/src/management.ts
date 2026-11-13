@@ -106,6 +106,11 @@ export interface CloudRelayManagementStatus {
    * went back to not being connected. Shown until it connects again or restarts.
    */
   notice?: "account-deleted";
+  /**
+   * The relay's accounts need approval, and this is where to ask for it. Present only before this
+   * gateway is linked to an account, once the relay has said so.
+   */
+  signup?: import("./gateway-signup-contract.js").GatewaySignupAccess;
   can: {
     configure: boolean;
     enable: boolean;
@@ -151,6 +156,8 @@ export interface CloudRelayManagement {
   accountUnlink?(): Promise<CloudRelayManagementStatus>;
   managedGoogleBrowser?(): import("./google-browser-client.js").GoogleBrowserPort | undefined;
   status(): Promise<CloudRelayManagementStatus>;
+  /** Reads the relay's public signup access when it is due; `status()` then carries it. */
+  refreshSignupAccess?(): Promise<void>;
   configure(input: CloudRelayConfigureInput): Promise<CloudRelayManagementStatus>;
   enable(input?: { invitation?: string }): Promise<CloudRelayManagementStatus>;
   disable(): Promise<CloudRelayManagementStatus>;

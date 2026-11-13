@@ -10,6 +10,7 @@ import {
   gatewayVersion,
   googleAuthorizationUrl,
   accountAuthorizationUrl,
+  relaySignupAccess,
   // @ts-expect-error portal JS
 } from "./cloud-relay-api.js";
 afterEach(() => vi.clearAllMocks());
@@ -44,8 +45,26 @@ test("never displays server bodies, unknown codes, paths or credentials", async 
     "certificate-setup-failed",
     "certificate-renewal-failed",
     "public-endpoint-unreachable",
+    "not-allowed",
   ])
     expect(relayError(code)).not.toContain("An operation failed");
+});
+test("an invite-only relay's request link is shown only as a safe https address, with its host", () => {
+  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
+  expect(relaySignupAccess({ signup: { inviteOnly: true, requestAccessUrl } })).toEqual({
+    url: requestAccessUrl,
+    host: "groups.example.com",
+  });
+  for (const status of [
+    null,
+    {},
+    { signup: null },
+    { signup: { inviteOnly: "true", requestAccessUrl } },
+    { signup: { inviteOnly: true, requestAccessUrl: "http://groups.example.com/" } },
+    { signup: { inviteOnly: true, requestAccessUrl: "https://a:b@groups.example.com/" } },
+    { signup: { inviteOnly: true, requestAccessUrl: ["https://groups.example.com/"] } },
+  ])
+    expect(relaySignupAccess(status)).toBeNull();
 });
 test("the gateway version is read from health and is never an error or an odd string", async () => {
   request.mockResolvedValue({ ok: true, json: async () => ({ version: "9.8.7-rc.1" }) });

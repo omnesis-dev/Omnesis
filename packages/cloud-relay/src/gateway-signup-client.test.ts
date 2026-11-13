@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createPublicKey, randomUUID, verify } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeSignupRelay, signupRelayOrigin } from "../test/fake-signup-relay.js";
-import { GatewaySignupClient } from "./gateway-signup-client.js";
+import { GatewaySignupClient, relaySignupAccess } from "./gateway-signup-client.js";
 import {
   gatewaySignupStart,
   gatewaySignupTranscript,
@@ -176,4 +176,50 @@ test("cancel is best effort", async () => {
     throw new Error("offline");
   });
   await expect(signup.cancel(pending)).resolves.toBeUndefined();
+});
+
+test("the relay's signup access is read with a plain public request and checked again on the gateway", async () => {
+  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
+  const answer = (body: unknown, status = 200) =>
+    vi.fn<typeof fetch>(async () =>
+      typeof body === "string" ? new Response(body, { status }) : Response.json(body, { status }),
+    );
+  const read = (transport: typeof fetch) =>
+    relaySignupAccess("https://relay.example.test", AbortSignal.timeout(5000), transport);
+  const transport = answer({
+    protocol: 9,
+    signup: { inviteOnly: true, requestAccessUrl, unknownField: "ignored" },
+    anotherField: true,
+  });
+  // Fields this gateway does not know are ignored, so a relay can add some.
+  expect(await read(transport)).toEqual({ inviteOnly: true, requestAccessUrl });
+  const [target, init] = transport.mock.calls[0]!;
+  expect(String(target)).toBe("https://relay.example.test/_relay/v3/signup/access");
+  expect(init).toMatchObject({ redirect: "error" });
+  expect(init).not.toHaveProperty("method");
+  expect(init).not.toHaveProperty("headers");
+  expect(init).not.toHaveProperty("body");
+  for (const signup of [
+    { inviteOnly: true, requestAccessUrl: "http://groups.example.com/g/fictional-testers" },
+    { inviteOnly: true, requestAccessUrl: "https://name:secret@groups.example.com/" },
+    { inviteOnly: true, requestAccessUrl: "https://:secret@groups.example.com/" },
+    { inviteOnly: true, requestAccessUrl: `https://groups.example.com/${"a".repeat(2048)}` },
+    { inviteOnly: true, requestAccessUrl: "javascript:alert(1)" },
+    { inviteOnly: true, requestAccessUrl: "not a url" },
+    { inviteOnly: true, requestAccessUrl: 42 },
+    { inviteOnly: true, requestAccessUrl: [requestAccessUrl] },
+    { inviteOnly: "true", requestAccessUrl },
+    { requestAccessUrl },
+    "invite-only",
+    null,
+  ])
+    expect(await read(answer({ signup })), JSON.stringify(signup)).toBeUndefined();
+  for (const transport of [
+    answer({}),
+    answer([]),
+    answer("null"),
+    answer({ signup: { inviteOnly: true, requestAccessUrl } }, 404),
+  ])
+    expect(await read(transport)).toBeUndefined();
+  await expect(read(answer("{"))).rejects.toThrow();
 });

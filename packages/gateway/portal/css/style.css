@@ -19175,6 +19175,9 @@ summary.decision-card-head {
 .relay-headline { margin: 0; font-size: 21px; line-height: 1.35; font-weight: 600; letter-spacing: -0.015em; overflow-wrap: anywhere; }
 .relay-hostname { font-weight: 600; color: var(--text-primary); }
 .relay-lede { margin-top: 8px !important; max-width: 62ch; font-size: 14px; line-height: 1.6; color: var(--text-secondary); }
+.relay-invite { margin-top: 14px !important; max-width: 62ch; padding: 2px 0 2px 12px; border-left: 2px solid var(--accent); font-size: 14px; line-height: 1.6; color: var(--text-primary); }
+.relay-invite a { color: var(--accent); font-weight: 500; }
+.relay-invite-host { color: var(--text-secondary); overflow-wrap: anywhere; }
 
 .relay-dot { display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
 .relay-dot-ok { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent); }

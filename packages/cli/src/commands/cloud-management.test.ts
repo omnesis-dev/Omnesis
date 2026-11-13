@@ -487,3 +487,59 @@ test("a failed or vanished connection reports why and sets no policy", async () 
   );
   expect(paths()).not.toContain("/admin/cloud-relay/enrollment");
 });
+
+test("on an invite-only relay connect says once where to request access, and a refusal points there", async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  terminal(false);
+  const signup = {
+    inviteOnly: true,
+    requestAccessUrl: "https://groups.example.com/g/fictional-testers",
+  };
+  const line =
+    "Omnesis accounts are invite-only for now. Request access at https://groups.example.com/g/fictional-testers (you can create your account once it's approved).\n";
+  gatewayReplies(waiting, { ...waiting, signup }, { ...waiting, signup }, { ...done, signup });
+  await connectGateway({ acceptTerms: true });
+  expect(output.mock.calls.filter(([text]) => text === line)).toHaveLength(1);
+  output.mockClear();
+  gatewayReplies({ ...waiting, signup }, { connect: { state: "failed", error: "not-allowed" } });
+  await expect(connectGateway({ acceptTerms: true })).rejects.toThrow(
+    "could not connect to your Omnesis account (not-allowed). Nothing changed on this gateway's existing access. This account isn't approved yet: request access at https://groups.example.com/g/fictional-testers",
+  );
+  // A link that is not a safe https address is never printed.
+  output.mockClear();
+  for (const requestAccessUrl of [
+    "http://groups.example.com/",
+    "https://name:secret@groups.example.com/",
+    "javascript:alert(1)",
+    7,
+  ]) {
+    gatewayReplies({ ...waiting, signup: { inviteOnly: true, requestAccessUrl } }, done);
+    await connectGateway({ acceptTerms: true });
+  }
+  expect(output.mock.calls.flat().join("")).not.toContain("invite-only");
+});
+
+test("status names an invite-only relay's request page", async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  gatewayJson.mockImplementation(async (path) =>
+    path === "/health"
+      ? { version: "1.2.3" }
+      : {
+          enabled: false,
+          signup: {
+            inviteOnly: true,
+            requestAccessUrl: "https://groups.example.com/g/fictional-testers",
+          },
+        },
+  );
+  await manageCloud("status");
+  expect(String(output.mock.calls[0]![0])).toContain(
+    "  Sign-up:                invite-only, request access at https://groups.example.com/g/fictional-testers\n",
+  );
+  output.mockClear();
+  gatewayJson.mockImplementation(async (path) => (path === "/health" ? {} : { enabled: false }));
+  await manageCloud("status");
+  expect(String(output.mock.calls[0]![0])).not.toContain("Sign-up");
+});

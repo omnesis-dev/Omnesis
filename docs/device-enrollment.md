@@ -485,6 +485,20 @@ never checked against the group. A passkey sign-in the allowlist refuses stays
 refused, since it carries no email; the page asks the person to start again
 from the gateway and sign in with Google.
 
+With a join link configured, the relay also says so before anyone signs in:
+`GET /_relay/v3/signup/access` (public, no parameters) answers
+`{"signup":{"inviteOnly":true,"requestAccessUrl":"…"}}` under `allowlist`, and
+`{}` under any other policy or without a link. It is a separate path because
+gateways parse `/_relay/v2/config` strictly. A gateway with
+`OMNESIS_CLOUD_RELAY_ENABLED=1` that is not linked to an account reads it when
+its owner opens Settings → Omnesis account (or runs `omnesis cloud status` or
+`connect`), at most every ten minutes, and keeps it only if the link is an
+`https` URL without credentials of at most 2048 characters; unknown fields are
+ignored. The management status then carries `signup`, and the portal shows
+"Omnesis accounts are invite-only for now." with a Request access link and its
+host above the two choices, and again when a sign-in is refused as
+`not-allowed`; the CLI prints the link once while waiting.
+
 ### Accounts are created on purpose
 
 Signing in never creates an Omnesis account. One is created only while connecting a

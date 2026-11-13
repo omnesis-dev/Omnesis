@@ -7,7 +7,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import { defineCommand } from "citty";
 import { cloudRelayEnabled } from "@omnesis/core";
 import { CliError, EXIT_USER_ERROR } from "@omnesis/cli-shared";
-import { formatCloudStatus, trustedSignInLines, type CloudStatus } from "./cloud-status.js";
+import {
+  formatCloudStatus,
+  inviteOnlyLine,
+  requestAccessUrl,
+  trustedSignInLines,
+  type CloudStatus,
+} from "./cloud-status.js";
 
 function requireCloudRelay(): void {
   if (!cloudRelayEnabled())
@@ -90,6 +96,7 @@ interface ConnectStatus {
     error?: string;
   };
   deviceEnrollment?: { policy: "automatic" | "ask" };
+  signup?: CloudStatus["signup"];
 }
 
 async function ask(question: string): Promise<string> {
@@ -126,6 +133,8 @@ export async function connectGateway(options: {
     body: JSON.stringify({ termsAccepted: true }),
   })) as ConnectStatus;
   let announced = false;
+  // The gateway learns from its relay whether accounts need approval; said once, when it knows.
+  let access: string | undefined;
   while (status.connect && !["done", "failed", "idle"].includes(status.connect.state)) {
     if (status.connect.state === "waiting" && !announced && status.connect.connectUrl) {
       announced = true;
@@ -133,14 +142,21 @@ export async function connectGateway(options: {
         `\nOn any device, visit ${status.connect.connectShortUrl ?? status.connect.connectUrl}\nand enter ${status.connect.code}\n\nWaiting for you to sign in to your Omnesis account…\n`,
       );
     }
+    if (!access) {
+      access = requestAccessUrl(status);
+      if (access) process.stdout.write(`${inviteOnlyLine(access)}\n`);
+    }
     await delay(2000);
     status = (await gatewayJson("/admin/cloud-relay")) as ConnectStatus;
   }
-  if (status.connect?.state !== "done")
+  if (status.connect?.state !== "done") {
+    const refused =
+      status.connect?.error === "not-allowed" ? (requestAccessUrl(status) ?? access) : undefined;
     throw new CliError(
-      `This gateway could not connect to your Omnesis account (${status.connect?.error ?? "unknown"}). Nothing changed on this gateway's existing access.`,
+      `This gateway could not connect to your Omnesis account (${status.connect?.error ?? "unknown"}). Nothing changed on this gateway's existing access.${refused ? ` This account isn't approved yet: request access at ${refused}` : ""}`,
       EXIT_USER_ERROR,
     );
+  }
   process.stdout.write("Connected to your Omnesis account.\n");
   // Joining automatically is the gateway's default; a flag is the owner's own choice to change it.
   const current = status.deviceEnrollment?.policy;

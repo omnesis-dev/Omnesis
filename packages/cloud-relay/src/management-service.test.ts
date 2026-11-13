@@ -1917,3 +1917,101 @@ test("a gateway named by its environment leaves the same way, with the operator'
   expect(await readdir(join(directory, "cloud-relay"))).toEqual(["management.json"]);
   expect(await readFile(tls.certFile, "utf8")).toContain("BEGIN CERTIFICATE");
 });
+
+test("a gateway not linked to an account learns from its relay that accounts need approval, at most every ten minutes", async () => {
+  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
+  const signupAccess = vi.fn<NonNullable<CloudRelayManagerOptions["signupAccess"]>>(async () => ({
+    inviteOnly: true as const,
+    requestAccessUrl,
+  }));
+  const f = fixture({ signupAccess });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  // Status alone never reaches the network.
+  expect(await manager.status()).not.toHaveProperty("signup");
+  expect(signupAccess).not.toHaveBeenCalled();
+  await manager.refreshSignupAccess();
+  expect(signupAccess).toHaveBeenCalledTimes(1);
+  expect(signupAccess.mock.calls[0]![0]).toBe("https://relay.example.test");
+  expect((await manager.status()).signup).toEqual({ inviteOnly: true, requestAccessUrl });
+  await manager.refreshSignupAccess();
+  expect(signupAccess).toHaveBeenCalledTimes(1);
+  // After ten minutes it asks again; a relay that stopped being invite-only clears the notice.
+  const now = Date.now();
+  vi.spyOn(Date, "now").mockReturnValue(now + 10 * 60_000 + 1);
+  signupAccess.mockResolvedValueOnce(undefined);
+  await manager.refreshSignupAccess();
+  expect(signupAccess).toHaveBeenCalledTimes(2);
+  expect(await manager.status()).not.toHaveProperty("signup");
+  // A relay that cannot be reached keeps the last answer and is asked again a minute later.
+  vi.spyOn(Date, "now").mockReturnValue(now + 20 * 60_000 + 2);
+  await manager.refreshSignupAccess();
+  expect((await manager.status()).signup).toEqual({ inviteOnly: true, requestAccessUrl });
+  vi.spyOn(Date, "now").mockReturnValue(now + 30 * 60_000 + 3);
+  signupAccess.mockRejectedValueOnce(new Error("relay offline"));
+  await manager.refreshSignupAccess();
+  expect((await manager.status()).signup).toEqual({ inviteOnly: true, requestAccessUrl });
+  vi.spyOn(Date, "now").mockReturnValue(now + 30 * 60_000 + 30_000);
+  await manager.refreshSignupAccess();
+  expect(signupAccess).toHaveBeenCalledTimes(4);
+  vi.spyOn(Date, "now").mockReturnValue(now + 31 * 60_000 + 4);
+  await manager.refreshSignupAccess();
+  expect(signupAccess).toHaveBeenCalledTimes(5);
+});
+
+test("a slow relay holds a status read only briefly, and its answer is there on the next read", async () => {
+  let answer!: (value: { inviteOnly: true; requestAccessUrl: string }) => void;
+  const signupAccess = vi.fn<NonNullable<CloudRelayManagerOptions["signupAccess"]>>(
+    () => new Promise((resolve) => (answer = resolve)),
+  );
+  const f = fixture({ signupAccess });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const started = performance.now();
+  await manager.refreshSignupAccess();
+  expect(performance.now() - started).toBeLessThan(3000);
+  expect(await manager.status()).not.toHaveProperty("signup");
+  // A second read while the first is in flight does not ask again.
+  const second = manager.refreshSignupAccess();
+  answer({ inviteOnly: true, requestAccessUrl: "https://groups.example.com/g/fictional-testers" });
+  await second;
+  expect(signupAccess).toHaveBeenCalledTimes(1);
+  expect((await manager.status()).signup?.inviteOnly).toBe(true);
+});
+
+test("signup access is not asked for or shown without a usable relay service or once linked", async () => {
+  const signupAccess = vi.fn<NonNullable<CloudRelayManagerOptions["signupAccess"]>>(async () => ({
+    inviteOnly: true as const,
+    requestAccessUrl: "https://groups.example.com/g/fictional-testers",
+  }));
+  manager = await GatewayCloudRelayManagement.open(
+    fixture({ signupAccess, env: { OMNESIS_CLOUD_RELAY_URL: "invalid" } }).options,
+  );
+  await manager.refreshSignupAccess();
+  expect(signupAccess).not.toHaveBeenCalled();
+  expect(await manager.status()).not.toHaveProperty("signup");
+  await manager.close();
+  manager = await GatewayCloudRelayManagement.open(fixture({ signupAccess }).options);
+  await manager.refreshSignupAccess();
+  expect((await manager.status()).signup).toBeDefined();
+  // A linked gateway has its account: there is nothing to ask for, and nothing is shown.
+  vi.spyOn(
+    (manager as unknown as { account: { status(): { linked: boolean } } }).account,
+    "status",
+  ).mockReturnValue({ linked: true } as never);
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60 * 60_000);
+  await manager.refreshSignupAccess();
+  expect(signupAccess).toHaveBeenCalledTimes(1);
+  expect(await manager.status()).not.toHaveProperty("signup");
+});
+
+test("by default the gateway asks its relay's public signup path through its own fetch", async () => {
+  const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
+  const fetch = vi.fn<typeof globalThis.fetch>(async (url) =>
+    String(url) === "https://relay.example.test/_relay/v3/signup/access"
+      ? Response.json({ signup: { inviteOnly: true, requestAccessUrl } })
+      : new Response(null, { status: 404 }),
+  );
+  manager = await GatewayCloudRelayManagement.open(fixture({ fetch }).options);
+  await manager.refreshSignupAccess();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect((await manager.status()).signup).toEqual({ inviteOnly: true, requestAccessUrl });
+});

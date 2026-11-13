@@ -30,6 +30,33 @@ function plain(value: unknown, fallback = "unknown"): string {
     : fallback;
 }
 
+/**
+ * Where to ask for an account when the relay's accounts are invite-only. The gateway checked it;
+ * it is checked again here because it is printed for a person to open.
+ */
+export function requestAccessUrl(status: { signup?: unknown } | undefined): string | undefined {
+  const signup: unknown = status?.signup;
+  if (!signup || typeof signup !== "object") return undefined;
+  const { inviteOnly, requestAccessUrl: value } = signup as Record<string, unknown>;
+  if (inviteOnly !== true || typeof value !== "string" || value.length > 2048) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      /^[\x21-\x7e]+$/.test(url.href)
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One line for a person about to create an account on an invite-only relay. */
+export function inviteOnlyLine(url: string): string {
+  return `Omnesis accounts are invite-only for now. Request access at ${url} (you can create your account once it's approved).`;
+}
+
 const SIGN_IN_SOURCES: Record<string, string> = {
   "link-page": "signed in on the Omnesis account page",
   approval: "signed in on the Omnesis account page, trusted when a device was approved",
@@ -128,6 +155,14 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
           : "not reported",
     ],
     ["Trusted sign-ins", String(signIns.length)],
+    ...(requestAccessUrl(status)
+      ? [
+          ["Sign-up", `invite-only, request access at ${requestAccessUrl(status)}`] as [
+            string,
+            string,
+          ],
+        ]
+      : []),
     ...signIns.map((line): [string, string] => ["", line]),
     ...(status.recovery
       ? [

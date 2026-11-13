@@ -8,14 +8,18 @@ import { accountPublicKeys } from "./account-browser-client.js";
 import { AccountGatewayLinkVerifier } from "./account-enrollment-proof.js";
 import { bindingOrigin } from "./gateway-binding.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
+import { relayOrigin } from "./network.js";
 import { readOrCreateGatewayOwnerKey, type registerGatewayKey } from "./gateway-key-client.js";
 import {
+  GATEWAY_SIGNUP_ACCESS_PATH,
   GATEWAY_SIGNUP_PATH,
   GATEWAY_SIGNUP_PROTOCOL,
+  gatewaySignupAccess,
   gatewaySignupLinked,
   gatewaySignupPollResult,
   gatewaySignupStarted,
   gatewaySignupTranscript,
+  type GatewaySignupAccess,
   type GatewaySignupIntent,
 } from "./gateway-signup-contract.js";
 import { readBoundedJson } from "./google-credentials.js";
@@ -174,4 +178,24 @@ export class GatewaySignupClient {
       AbortSignal.timeout(5000),
     ).catch(() => undefined);
   }
+}
+
+/**
+ * Whether the relay's accounts need approval, and where to ask. Public metadata, read before
+ * anyone signs in. A relay that does not answer, or answers with anything unexpected, says nothing.
+ */
+export async function relaySignupAccess(
+  relayUrl: string,
+  signal: AbortSignal,
+  transport: typeof fetch = fetch,
+): Promise<GatewaySignupAccess | undefined> {
+  const response = await transport(new URL(GATEWAY_SIGNUP_ACCESS_PATH, relayOrigin(relayUrl)), {
+    redirect: "error",
+    signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    return undefined;
+  }
+  return gatewaySignupAccess(await readBoundedJson(response));
 }

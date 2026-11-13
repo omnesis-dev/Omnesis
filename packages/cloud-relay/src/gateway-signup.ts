@@ -20,6 +20,7 @@ import {
   gatewaySignupRedemption,
   gatewaySignupStart,
   gatewaySignupTranscript,
+  type GatewaySignupAccess,
   type GatewaySignupDenialReason,
   type GatewaySignupIntent,
 } from "./gateway-signup-contract.js";
@@ -146,6 +147,18 @@ export class GatewaySignup implements AccountOperationBroker {
   /** `invitation` keeps every signup route closed, so a relay opts in to this surface explicitly. */
   enabled(): boolean {
     return this.options.configuration.policy !== "invitation";
+  }
+
+  /**
+   * What a gateway shows before anyone signs in: accounts here need approval, and where to ask
+   * for it. Only an invite-only relay with a join link says anything; the link was checked when
+   * the relay started.
+   */
+  access(): GatewaySignupAccess | undefined {
+    const { policy, googleGroup } = this.options.configuration;
+    return policy === "allowlist" && googleGroup?.joinUrl
+      ? { inviteOnly: true, requestAccessUrl: googleGroup.joinUrl }
+      : undefined;
   }
 
   start(input: unknown) {
