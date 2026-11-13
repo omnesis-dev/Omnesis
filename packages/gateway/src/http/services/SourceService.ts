@@ -20,9 +20,12 @@ import {
   trySourceType,
   writeScope,
   hasPerDeviceCursor,
+  memberResyncModes,
   DEVICE_HOSTED_SOURCE_TYPES,
+  RESYNC_MODES,
   SOURCE_HOSTING_DEVICE_KINDS,
   type MultiDeviceMode,
+  type ResyncMode,
   SCOPE_WRITE_ALL,
   DeviceId,
   type DeviceRecord,
@@ -178,7 +181,8 @@ export interface SourceServiceDeps {
   indexWriteGate?: IndexWriteGate;
   /**
    * The multi-store wipes: a partitioned member's stream goes with the
-   * member on detach and move, and a resync wipes a stream or the source.
+   * member on detach and move, and a from-scratch resync wipes a stream or
+   * the source.
    */
   sourceDataRemoval: SourceDataRemovalService;
   sourceWriteEpochFence?: SourceWriteEpochFence;
@@ -244,8 +248,9 @@ export function deviceCanHostType(device: DeviceRecord, sourceType: SourceType):
  * archive of the pages it captured, and a collector-hosted push source has an
  * inert `sync()` — an external runtime pushes its data. A phone pushes too,
  * but re-reads its own store when told to sync, so its sources are not
- * push-only. Wiping a push-only source is unrecoverable, so a resync of one
- * is refused.
+ * push-only. Wiping a push-only source is unrecoverable and there is no
+ * cursor behind it to send back to the start, so a resync of one is refused
+ * in either mode.
  */
 function isPushOnly(host: DeviceRecord, sourceType: SourceType): boolean {
   if (host.kind === "browser") return true;
@@ -312,6 +317,12 @@ export type AdminSourceListEntry = SourceRecord & {
    */
   joinCandidates: DeviceId[];
   pushBased: boolean;
+  /**
+   * The modes a resync of the whole source offers. Empty for a source that
+   * cannot be resynced, because its data only ever arrives by push. A resync
+   * scoped to one member offers `memberResyncModes` of the source's mode.
+   */
+  resyncModes: ResyncMode[];
   /** Durable recovery state while a cross-store mode transition is pending. */
   modeTransition: Pick<
     SourceModeTransition,
@@ -1562,6 +1573,7 @@ export class SourceService {
     return sources.map((s) => {
       const members = membersOf(s);
       const transition = transitionsById.get(s.id);
+      const host = devices.find((d) => d.id === s.deviceId);
       return {
         ...s,
         lastSyncedAt: lastSyncByKey.get(s.id) ?? null,
@@ -1573,6 +1585,7 @@ export class SourceService {
         pushBased:
           (pushHostById.get(s.deviceId) ?? false) ||
           (pushTypesByDeviceId.get(s.deviceId)?.has(s.type) ?? false),
+        resyncModes: host && isPushOnly(host, s.type) ? [] : [...RESYNC_MODES],
         modeTransition: transition
           ? {
               fromMode: transition.fromMode,
@@ -2269,40 +2282,60 @@ export class SourceService {
   }
 
   /**
-   * Start a source over (POST /admin/sources/:id/resync). Without a device
-   * the whole source is wiped — every document, row and cursor — and a sync
-   * is triggered wherever "Sync now" would reach. With a device, which must
-   * be a member of a source whose members sync on their own cursors, only
-   * that device starts over: on a partitioned source its stream is wiped
-   * with its cursor (the siblings' documents are untouched); on a
-   * replicated source only its cursor is reset — its re-bootstrap re-upserts
-   * the shared documents and the reconcile authority handles the rest. The
-   * device's cursor row is left in place with no cursor, so it bootstraps
-   * instead of adopting the shared cursor. The sync is then triggered on
-   * that device alone, if it is online. Returns what was wiped and what each
+   * Resync a source (POST /admin/sources/:id/resync) in one of two modes.
+   *
+   * `in-place` deletes nothing. The cursor is reset — every row of the
+   * source without a device, one member's row with one — and the next sync
+   * reads the source from the start: each item lands on the record it
+   * already has through the ordinary upsert, so record ids are unchanged, an
+   * item the owner deleted individually stays deleted, and the source stays
+   * searchable throughout. What an ordinary sync deletes — an item the source
+   * reports deleted, an item a completed snapshot keeps omitting — is still
+   * deleted, by the same paths and on the same terms.
+   *
+   * `from-scratch` wipes first. Without a device that is the whole source:
+   * every document, row and cursor, and the record of the owner's individual
+   * deletions. With a device, which must be a member of a source whose
+   * members sync on their own cursors, it is that member's stream on a
+   * partitioned source (the siblings' documents are untouched). A replicated
+   * member shares its documents with its siblings and has nothing of its own
+   * to wipe, so a resync of one is always in place.
+   *
+   * A reset member's cursor row is left in place with no cursor, so it
+   * bootstraps instead of adopting the shared cursor. The sync is then
+   * triggered wherever "Sync now" would reach, or on the named device alone.
+   * Returns the mode that was applied, the slice it applied to and what each
    * member the sync command reached did with it.
    *
-   * A source whose data only ever arrives by push is refused before anything
-   * is wiped: there is nothing to fetch it again from. The device that
-   * answers for that is the one whose slice is reset — the owner for the
-   * whole source, the named member for its own stream or cursor.
+   * A source whose data only ever arrives by push is refused in either mode
+   * before anything is touched: there is nothing to read it again from. The
+   * device that answers for that is the one whose slice is reset — the owner
+   * for the whole source, the named member for its own stream or cursor.
    */
   async resync(
     id: SourceId,
-    rawDeviceId?: string,
-  ): Promise<{ scope: "source" | "stream" | "cursor" } & ResyncDispatch> {
+    rawDeviceId: string | undefined,
+    requested: ResyncMode,
+  ): Promise<{ mode: ResyncMode; scope: "source" | "stream" | "cursor" } & ResyncDispatch> {
     const { db, writeGate: w, statusCache, sourceDataRemoval, wsServer } = this.deps;
     if (!wsServer) throw new ServiceUnavailableError("no WS server");
     const source = getSource(db, id);
     if (!source) throw new HttpError(404, "SOURCE_NOT_FOUND", `source ${id} not found`);
     this.assertNoModeTransition(id);
+    const sourceMode = this.modeFor(source);
     if (rawDeviceId === undefined) {
       const host = getDevice(db, source.deviceId);
       if (host && isPushOnly(host, source.type)) throw pushOnlyResyncError(id, host);
-      await sourceDataRemoval.deleteSource(id);
+      if (requested === "from-scratch") {
+        await sourceDataRemoval.deleteSource(id);
+        log.info(`Resync of ${id} from scratch: the source was wiped`);
+      } else {
+        await w.resetSourceCursors(id, hasPerDeviceCursor(sourceMode));
+        log.info(`Resync of ${id} in place: its cursors were reset, nothing was deleted`);
+      }
       statusCache.bump();
-      log.info(`Resync of ${id}: the source was wiped`);
       return {
+        mode: requested,
         scope: "source",
         ...(await this.dispatchResync(wsServer, id, this.syncTargets(id))),
       };
@@ -2316,23 +2349,26 @@ export class SourceService {
       throw new HttpError(409, "DEVICE_NOT_MEMBER", `device ${deviceId} does not host ${id}`);
     }
     if (isPushOnly(member, source.type)) throw pushOnlyResyncError(id, member);
-    const mode = this.modeFor(source);
-    if (!hasPerDeviceCursor(mode)) {
+    const offered = memberResyncModes(sourceMode);
+    if (offered.length === 0) {
       throw new HttpError(
         400,
         "RESYNC_NOT_PER_DEVICE",
-        `${id} syncs as ${mode}: its members share one cursor, so there is no per-device resync`,
+        `${id} syncs as ${sourceMode}: its members share one cursor, so there is no per-device resync`,
       );
     }
-    const scope = mode === "partitioned" ? "stream" : "cursor";
-    if (scope === "stream") {
+    const mode: ResyncMode = offered.includes(requested) ? requested : "in-place";
+    const scope = sourceMode === "partitioned" ? "stream" : "cursor";
+    if (mode === "from-scratch") {
       await sourceDataRemoval.deleteStream(id, deviceId, { resetCursor: true });
     } else {
       await w.resetMemberCursor(id, deviceId);
     }
     statusCache.bump();
-    log.info(`Resync of ${id} for device ${deviceId}: its ${scope} was reset`);
-    return { scope, ...(await this.dispatchResync(wsServer, id, [deviceId])) };
+    log.info(
+      `Resync of ${id} for device ${deviceId} ${mode === "from-scratch" ? "from scratch: its stream was wiped" : "in place: its cursor was reset, nothing was deleted"}`,
+    );
+    return { mode, scope, ...(await this.dispatchResync(wsServer, id, [deviceId])) };
   }
 
   /**

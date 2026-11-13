@@ -529,13 +529,13 @@ final class AdminCoordinator {
         await refreshSources()
     }
 
-    /// Resync: wipe every doc + analytics row for the source, then trigger
-    /// a fresh sync.
-    func resync(sourceId: String) async throws {
+    /// Resync the source in `mode`, through the requests its gateway
+    /// understands (`sourceResyncSteps`).
+    func resync(sourceId: String, mode: SourceResyncMode) async throws {
         try requireMutable(sourceId)
         guard let admin = adminClient else { throw GatewayClient.Error.invalidResponse }
-        try await admin.deleteAllForSource(sourceId: sourceId)
-        try await admin.syncSource(sourceId: sourceId)
+        let offer = SourceResyncOffer(resyncModes: sources.first { $0.id == sourceId }?.resyncModes)
+        try await admin.runResync(sourceResyncSteps(offer: offer, mode: mode), sourceId: sourceId)
     }
 
     /// Drop a single source from the local caches. Used by AppStore

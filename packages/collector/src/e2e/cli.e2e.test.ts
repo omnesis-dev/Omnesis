@@ -26,6 +26,7 @@ import { readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import Database from "better-sqlite3";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
@@ -180,21 +181,80 @@ describe("CLI end-to-end (e2e-minimal)", () => {
     expect(output).not.toContain("omnesis sources move");
   });
 
-  test("`omnesis sources resync --yes` wipes a seeded source and sends the sync to its host", async () => {
+  test("`omnesis sources resync` is in place by default: no confirmation, nothing deleted, every record keeps its id", async () => {
     const sourceId = seededSourceId(harness, "notion-pages");
     const host = harness.deviceForSource(sourceId);
-    const r = await runCli(harness, ["sources", "resync", sourceId, "--yes"]);
+    const before = recordIds(harness, sourceId);
+    expect(before.length).toBeGreaterThan(0);
+
+    // No `--yes`, and no terminal to ask on: an in-place resync asks nothing.
+    const r = await runCli(harness, ["sources", "resync", sourceId]);
     expect(r.exitCode, r.stderr).toBe(0);
     // The harness's collectors hold no WS connection, so the gateway has no
     // online member to send the sync to; a connected host is named instead.
     expect(r.stdout).toMatch(
       new RegExp(`Resync (sent to ${host.name}|queued; no member is online): ${sourceId}`),
     );
-    expect(r.stdout).toContain("Every document of the source was deleted.");
+    expect(r.stdout).toContain("Nothing was deleted");
+    expect(recordIds(harness, sourceId)).toEqual(before);
+    expect(cursorSyncedAt(harness, sourceId), "the cursor is back at the start").toBeNull();
 
-    const asJson = await runCli(harness, ["sources", "resync", sourceId, "--yes", "--json"]);
+    // The host reads the source again; every item lands on the record it had.
+    await harness.triggerSyncAndWait(sourceId, 60_000);
+    expect(recordIds(harness, sourceId)).toEqual(before);
+    expect(cursorSyncedAt(harness, sourceId)).not.toBeNull();
+
+    const asJson = await runCli(harness, ["sources", "resync", sourceId, "--json"]);
+    expect(parseJsonFromCli(asJson.stdout)).toMatchObject({
+      sourceId,
+      ok: true,
+      mode: "in-place",
+      scope: "source",
+    });
+    expect(recordIds(harness, sourceId)).toEqual(before);
+    await harness.triggerSyncAndWait(sourceId, 60_000);
+  });
+
+  test("`omnesis sources resync --from-scratch` needs --yes, then wipes the source and sends the sync to its host", async () => {
+    const sourceId = seededSourceId(harness, "notion-pages");
+    const host = harness.deviceForSource(sourceId);
+    const before = recordIds(harness, sourceId);
+    expect(before.length).toBeGreaterThan(0);
+
+    let refused: CliResult;
+    try {
+      refused = await execCli(harness, ["sources", "resync", sourceId, "--from-scratch"]);
+    } catch (err) {
+      refused = errToCliResult(err);
+    }
+    expect(refused.exitCode).toBe(EXIT_USER_ERROR);
+    expect(refused.stdout + refused.stderr).toContain("Re-run with --yes");
+    expect(recordIds(harness, sourceId), "nothing was deleted without --yes").toEqual(before);
+
+    const r = await runCli(harness, ["sources", "resync", sourceId, "--from-scratch", "--yes"]);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stdout).toMatch(
+      new RegExp(`Resync (sent to ${host.name}|queued; no member is online): ${sourceId}`),
+    );
+    expect(r.stdout).toContain("Every document of the source was deleted.");
+    expect(recordIds(harness, sourceId)).toEqual([]);
+
+    // Imported again, every record is a new one.
+    await harness.triggerSyncAndWait(sourceId, 60_000);
+    const after = recordIds(harness, sourceId);
+    expect(after).toHaveLength(before.length);
+    expect(after.filter((id) => before.includes(id))).toEqual([]);
+
+    const asJson = await runCli(harness, [
+      "sources",
+      "resync",
+      sourceId,
+      "--from-scratch",
+      "--yes",
+      "--json",
+    ]);
     const parsed = parseJsonFromCli(asJson.stdout) as { deviceIds: string[] };
-    expect(parsed).toMatchObject({ sourceId, ok: true, scope: "source" });
+    expect(parsed).toMatchObject({ sourceId, ok: true, mode: "from-scratch", scope: "source" });
     expect(parsed.deviceIds.every((id) => id === host.deviceId)).toBe(true);
   });
 
@@ -497,6 +557,35 @@ function seededSourceId(harness: SyntheticE2EHarness, type: string): string {
   const id = harness.getSourceIds().find((sourceId) => sourceId.startsWith(`${type}:`));
   if (!id) throw new Error(`e2e-minimal seeds no ${type} source`);
   return id;
+}
+
+/** The ids of every record a source holds, in a stable order. */
+function recordIds(harness: SyntheticE2EHarness, sourceId: string): string[] {
+  const db = new Database(harness.getDbPath(), { readonly: true });
+  try {
+    return db
+      .prepare<[string], { id: string }>("SELECT id FROM documents WHERE source_id = ? ORDER BY id")
+      .all(sourceId)
+      .map((row) => row.id);
+  } finally {
+    db.close();
+  }
+}
+
+/** When the source's shared cursor last completed a sync; null once it is back at the start. */
+function cursorSyncedAt(harness: SyntheticE2EHarness, sourceId: string): string | null {
+  const db = new Database(harness.getDbPath(), { readonly: true });
+  try {
+    return (
+      db
+        .prepare<[string], { last_synced_at: string | null }>(
+          "SELECT last_synced_at FROM sync_state WHERE source_id = ? AND device_id = ''",
+        )
+        .get(sourceId)?.last_synced_at ?? null
+    );
+  } finally {
+    db.close();
+  }
 }
 
 function parseJsonFromCli(stdout: string): unknown {

@@ -283,6 +283,7 @@ describe("partitioned universe — one stream per phone", () => {
     );
     expect(reset).toEqual({
       ok: true,
+      mode: "from-scratch",
       scope: "stream",
       deviceIds: [],
       restarting: [],
@@ -320,6 +321,7 @@ describe("partitioned universe — one stream per phone", () => {
       }),
     ).toEqual({
       ok: true,
+      mode: "from-scratch",
       scope: "stream",
       deviceIds: [],
       restarting: [],

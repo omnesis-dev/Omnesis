@@ -12,6 +12,7 @@ import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequests
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalDecision
 import dev.omnesis.android.transport.PermissionHealthSnapshot
+import dev.omnesis.android.transport.ResyncStep
 import dev.omnesis.android.transport.SourceMultiDeviceMode
 import dev.omnesis.android.transport.SourceModeTransitionNotConfirmed
 import dev.omnesis.android.transport.GatewayException
@@ -86,7 +87,9 @@ import dev.omnesis.android.transport.dto.PushPlan
 import dev.omnesis.android.transport.dto.RelayPushConsentBody
 import dev.omnesis.android.transport.dto.RelayPushRegistrationBody
 import dev.omnesis.android.transport.dto.InternalSource
+import dev.omnesis.android.transport.dto.ResyncMode
 import dev.omnesis.android.transport.dto.SourceMemberBody
+import dev.omnesis.android.transport.dto.SourceResyncBody
 import dev.omnesis.android.transport.dto.SourceMembershipResponse
 import dev.omnesis.android.transport.dto.SourceMetaEntry
 import dev.omnesis.android.transport.dto.SourceInventory
@@ -110,6 +113,7 @@ import dev.omnesis.android.transport.http.post
 import dev.omnesis.android.transport.http.postEmpty
 import dev.omnesis.android.transport.http.postEmptySegments
 import dev.omnesis.android.transport.http.postJson
+import dev.omnesis.android.transport.http.postJsonDiscarding
 import dev.omnesis.android.transport.http.postJsonSegments
 import dev.omnesis.android.transport.http.postJsonSegmentsDiscarding
 import dev.omnesis.android.transport.http.putJson
@@ -899,8 +903,28 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
     }
 
     /**
+     * `POST /admin/sources/:id/resync` — read the whole source again in [mode]: in place
+     * deletes nothing, from scratch deletes what the source indexed first. Only a gateway whose
+     * source listing carries `resyncModes` reads the mode; an older one ignores it and deletes.
+     */
+    suspend fun resyncSource(sourceId: String, mode: ResyncMode) =
+        http.postJsonDiscarding("admin/sources/$sourceId/resync", SourceResyncBody(mode.wire))
+
+    /** Send the requests of one resync, in order, stopping at the first that fails. */
+    suspend fun runResync(sourceId: String, steps: List<ResyncStep>) {
+        steps.forEach { step ->
+            when (step) {
+                is ResyncStep.Resync -> resyncSource(sourceId, step.mode)
+                ResyncStep.DeleteAll -> deleteAllForSource(sourceId)
+                ResyncStep.Sync -> syncSource(sourceId)
+            }
+        }
+    }
+
+    /**
      * `POST /documents/delete-all/source/:id` — delete all ingested documents (and analytics
-     * rows) for a source. Phase one of the Resync flow, followed by [syncSource].
+     * rows) for a source. The first step of a resync from scratch on a gateway that predates
+     * resync modes, followed by [syncSource]; newer gateways resync through [resyncSource].
      */
     suspend fun deleteAllForSource(sourceId: String): DeleteAllResponse =
         http.postEmpty("documents/delete-all/source/$sourceId")

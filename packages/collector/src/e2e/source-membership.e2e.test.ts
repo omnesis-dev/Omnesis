@@ -13,6 +13,7 @@
  * own cursor row after adopting the shared one, and detaching leaves the
  * source — and the other member — intact.
  */
+import Database from "better-sqlite3";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import {
   MultiCollectorHarness,
@@ -445,6 +446,7 @@ describe("source membership across collectors", () => {
     );
     expect(reset).toEqual({
       ok: true,
+      mode: "in-place",
       scope: "cursor",
       deviceIds: [linuxbox.deviceId],
       restarting: [],
@@ -470,6 +472,129 @@ describe("source membership across collectors", () => {
     const fresh = (await begin(linuxbox)).wipeEpoch;
     expect(await commit(linuxbox, fresh, 25)).toMatchObject({ ingested: 0 });
     expect((await stateOf(linuxbox)).cursor).toEqual({ page: 25 });
+  });
+
+  test("an in-place resync of the whole source sends every member back to the start and keeps every record", async () => {
+    const path = `/sync-state/${encodeURIComponent(REPLICATED)}`;
+    const begin = async (c: PairedCollector) =>
+      (await asDevice<{ wipeEpoch: number }>(c, `${path}/begin`, { method: "POST", body: "{}" }))
+        .wipeEpoch;
+    const note = (externalId: string, content: string) => ({
+      providerId: REPLICATED,
+      sourceId: REPLICATED,
+      externalId,
+      title: `Note ${externalId}`,
+      content,
+      contentHash: `hash:${content}`,
+      metadata: {},
+      sourceCreatedAt: "2026-03-02T09:30:00Z",
+      sourceUpdatedAt: "2026-03-02T09:30:00Z",
+    });
+    /** One member reads its whole replica as a single page under a fresh claim. */
+    const walk = async (c: PairedCollector, documents: ReturnType<typeof note>[], page: number) =>
+      asDevice<{ ingested: number; rejected?: boolean }>(c, "/documents/with-cursor", {
+        method: "POST",
+        body: JSON.stringify({
+          providerId: REPLICATED,
+          sourceId: REPLICATED,
+          documents,
+          hasMore: false,
+          cursor: { page },
+          wipeEpoch: await begin(c),
+        }),
+      });
+    const cursorOf = async (c: PairedCollector) =>
+      (await asDevice<{ cursor: { page: number } | null }>(c, path)).cursor;
+    const records = (): Record<string, { id: string; content: string }> => {
+      const db = new Database(harness.getDbPath(), { readonly: true });
+      try {
+        return Object.fromEntries(
+          db
+            .prepare<[string], { id: string; external_id: string; content: string }>(
+              "SELECT id, external_id, content FROM documents WHERE source_id = ?",
+            )
+            .all(REPLICATED)
+            .map((row) => [row.external_id, { id: row.id, content: row.content }]),
+        );
+      } finally {
+        db.close();
+      }
+    };
+    const replica = [
+      note("standup", "Standup notes, first draft."),
+      note("retro", "Retro notes."),
+      note("scratch", "A scratch note."),
+    ];
+    for (const [member, page] of [
+      [macbook, 31],
+      [linuxbox, 32],
+    ] as const) {
+      expect(await walk(member, replica, page)).not.toMatchObject({ rejected: true });
+    }
+    // The owner deletes one note for good.
+    await harness.json(`/documents/${records().scratch!.id}`, { method: "DELETE" });
+    const before = records();
+    expect(Object.keys(before).sort()).toEqual(["retro", "standup"]);
+    // A sync each member has in flight when the resync lands.
+    const stale = { macbook: await begin(macbook), linuxbox: await begin(linuxbox) };
+    macbook.receivedCommands.length = 0;
+    linuxbox.receivedCommands.length = 0;
+
+    const reset = await harness.json<{
+      ok: boolean;
+      mode: string;
+      scope: string;
+      deviceIds: string[];
+    }>(`/admin/sources/${encodeURIComponent(REPLICATED)}/resync`, {
+      method: "POST",
+      body: JSON.stringify({ mode: "in-place" }),
+    });
+
+    expect(reset).toMatchObject({ ok: true, mode: "in-place", scope: "source" });
+    expect([...reset.deviceIds].sort()).toEqual([macbook.deviceId, linuxbox.deviceId].sort());
+    for (const member of [macbook, linuxbox]) {
+      expect(
+        member.receivedCommands.find((cmd) => cmd.type === "source.sync")?.payload,
+      ).toMatchObject({ sourceId: REPLICATED, restart: true });
+      expect(await cursorOf(member)).toBeNull();
+    }
+    // Nothing was deleted, and the syncs that were in flight lost their claim.
+    expect(records()).toEqual(before);
+    for (const [member, wipeEpoch] of [
+      [macbook, stale.macbook],
+      [linuxbox, stale.linuxbox],
+    ] as const) {
+      expect(
+        await asDevice<{ rejected?: boolean }>(member, "/documents/with-cursor", {
+          method: "POST",
+          body: JSON.stringify({
+            providerId: REPLICATED,
+            sourceId: REPLICATED,
+            documents: [],
+            hasMore: false,
+            cursor: { page: 99 },
+            wipeEpoch,
+          }),
+        }),
+      ).toMatchObject({ rejected: true });
+    }
+
+    // Each member reads its replica again: an edited note, the deleted one
+    // and a new one.
+    const reread = [
+      note("standup", "Standup notes, final."),
+      note("retro", "Retro notes."),
+      note("scratch", "A scratch note."),
+      note("roadmap", "Roadmap notes."),
+    ];
+    expect(await walk(macbook, reread, 41)).not.toMatchObject({ rejected: true });
+    expect(await walk(linuxbox, reread, 42)).not.toMatchObject({ rejected: true });
+    const after = records();
+    expect(Object.keys(after).sort()).toEqual(["retro", "roadmap", "standup"]);
+    expect(after.standup).toEqual({ id: before.standup!.id, content: "Standup notes, final." });
+    expect(after.retro).toEqual(before.retro);
+    expect(await cursorOf(macbook)).toEqual({ page: 41 });
+    expect(await cursorOf(linuxbox)).toEqual({ page: 42 });
   });
 
   test("detaching a member leaves the source intact; detaching the owner passes ownership on", async () => {
