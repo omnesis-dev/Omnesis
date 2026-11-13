@@ -246,7 +246,7 @@ describe("chat and person filters over MCP, from chat lists to what an agent rea
           status: "ready",
           tooOld: 0,
           unmatched: 1,
-          unmatchedText: "1 record can't be matched to a person and stays hidden.",
+          unmatchedText: "1 record can’t be matched to a person and stays hidden.",
         },
       });
       const chats = editor.fields.find((field) => field.field === source.field);

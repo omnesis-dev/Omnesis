@@ -300,7 +300,7 @@ describe("person and chat filters on chat records stored by the first builds", (
       visible: 1,
       tooOld: 0,
       unmatched: 1,
-      unmatchedText: "1 record can't be matched to a person and stays hidden.",
+      unmatchedText: "1 record can’t be matched to a person and stays hidden.",
     });
     const level = async (key: string) =>
       (await documentAudit(harness, whatsapp.get(key)!)).levels.find(

@@ -23,7 +23,7 @@ export const PERSON_NOUN: FilterNoun = { one: "person", many: "people" };
 
 /** Shown on the page that says who can read a document, under the Answer verdicts. */
 export const ACCESS_AUDIT_ANSWER_NOTE =
-  'For Answer, "readable" means the document is within what Omnesis may use when answering that agent. Whether a given answer is then released is decided separately, by the privacy policy\'s review.';
+  "“Can read” under Answer means Omnesis may use this document when answering that agent. Whether an answer is then released is decided by the privacy policy’s review.";
 
 /** Shown on the page that says who can read a document. */
 export const ACCESS_AUDIT_OWNER_NOTE =
@@ -49,24 +49,26 @@ export function accessReasonText(reason: AccessReason, capability: AccessCapabil
       return "This account is not shared";
     case "readable":
       return reason.via
-        ? `Readable: ${reason.via.noun} ${reason.via.label} lets it through`
-        : "Readable";
+        ? `Included by: ${reason.via.noun} ${reason.via.label}`
+        : reason.filtered
+          ? "Not hidden by this level’s filter"
+          : "This account is shared with all content";
     case "hidden-by-item":
       return reason.item
         ? `Hidden by: ${reason.item.noun} ${reason.item.label}`
-        : "Hidden by this level's filter";
+        : "Hidden by this level’s filter";
     case "not-included":
-      return "Not included by this level's share-only filter";
+      return "Not included by this level’s share-only filter";
     case "record-too-old":
       return "This record is too old for this filter and has not been resynced";
     case "detail-unknown":
       switch (reason.cause) {
         case "filter-unusable":
-          return "This level's filter cannot be applied by this version of Omnesis";
+          return "This level’s filter cannot be applied by this version of Omnesis";
         case "not-listed":
           return reason.noun
-            ? `Its ${reason.noun.one} is not in this account's list of ${reason.noun.many}`
-            : "Where it belongs is not in this account's list";
+            ? `Its ${reason.noun.one} is not in this account’s list of ${reason.noun.many}`
+            : "Where it belongs is not in this account’s list";
         case "person-unreadable":
           return "Someone it involves cannot be identified";
         case "device-unknown":
@@ -93,11 +95,11 @@ export function tooOldCountText(records: number): string {
 /** How many records cannot be placed for a field, as the filter review says it. */
 export function unmatchedCountText(records: number, noun: FilterNoun): string {
   return records === 1
-    ? `1 record can't be matched to ${withArticle(noun.one)} and stays hidden.`
-    : `${count(records)} records can't be matched to ${withArticle(noun.one)} and stay hidden.`;
+    ? `1 record can’t be matched to ${withArticle(noun.one)} and stays hidden.`
+    : `${count(records)} records can’t be matched to ${withArticle(noun.one)} and stay hidden.`;
 }
 
-/** Why an account's filter can only be read, not changed. */
+/** Why an account’s filter can only be read, not changed. */
 export const DISCONNECTED_ACCOUNT_TEXT =
   "This account is no longer connected. Its saved filter entries are kept until you remove them.";
 

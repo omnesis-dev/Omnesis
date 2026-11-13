@@ -261,7 +261,7 @@ describe("who can read a document, against what agents really read", () => {
       sourceVersion: 2,
       notes: {
         answer:
-          'For Answer, "readable" means the document is within what Omnesis may use when answering that agent. Whether a given answer is then released is decided separately, by the privacy policy\'s review.',
+          "“Can read” under Answer means Omnesis may use this document when answering that agent. Whether an answer is then released is decided by the privacy policy’s review.",
         owner: "This page is for you, the owner. It is never available to an external agent.",
       },
     });
@@ -375,12 +375,12 @@ describe("who can read a document, against what agents really read", () => {
     expect(await level("atlas-issue", "Hide personal")).toEqual({
       readable: true,
       code: "readable",
-      text: "Readable",
+      text: "Not hidden by this level’s filter",
     });
     expect(await level("atlas-issue", "Work only")).toEqual({
       readable: true,
       code: "readable",
-      text: "Readable: owner northstar-labs lets it through",
+      text: "Included by: owner northstar-labs",
     });
     expect(await level("garden-issue", "Hide personal")).toEqual({
       readable: false,
@@ -395,7 +395,7 @@ describe("who can read a document, against what agents really read", () => {
     expect(await level("garden-issue", "Work only")).toEqual({
       readable: false,
       code: "not-included",
-      text: "Not included by this level's share-only filter",
+      text: "Not included by this level’s share-only filter",
     });
     expect(await level(tooOld.key, "Work only")).toEqual({
       readable: false,
@@ -422,7 +422,7 @@ describe("who can read a document, against what agents really read", () => {
     expect(await answer("atlas-issue", "Answers only")).toEqual({
       readable: true,
       code: "readable",
-      text: "Readable: owner northstar-labs lets it through",
+      text: "Included by: owner northstar-labs",
     });
     expect(await answer("garden-issue", "Hide personal")).toEqual({
       readable: false,

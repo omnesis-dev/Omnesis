@@ -8,6 +8,7 @@ import {
   folder,
   label,
   openFilterFixture,
+  person,
   publishList,
   publishProfile,
   shareOnly,
@@ -117,7 +118,11 @@ describe("an account that is gone while a saved filter names it", () => {
     const preview = readSourceFilterPreview(
       db,
       GONE,
-      shareOnly(GONE, [folder("invoices"), label("L-gone")]),
+      shareOnly(GONE, [
+        folder("invoices"),
+        label("L-gone"),
+        person("fictional sender", ["email", "sender@example.org"]),
+      ]),
     );
     expect(preview).toMatchObject({
       ok: true,
@@ -128,6 +133,7 @@ describe("an account that is gone while a saved filter names it", () => {
         items: [
           { label: "Invoices", depth: 2, count: 0 },
           { label: "L-gone", missing: true, reason: "not-in-list", count: 0 },
+          { label: "fictional sender", count: 0 },
         ],
       },
     });

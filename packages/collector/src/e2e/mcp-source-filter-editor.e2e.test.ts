@@ -130,7 +130,7 @@ describe("the filter editor, refused saves, owner-only routes and saved filters 
         tooOld: 0,
         unmatched: 1,
         tooOldText: null,
-        unmatchedText: "1 record can't be matched to a repository and stays hidden.",
+        unmatchedText: "1 record can’t be matched to a repository and stays hidden.",
       },
     });
   });

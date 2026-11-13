@@ -210,31 +210,31 @@ describe("one document per reason", () => {
       document: "finance-mail",
       readable: true,
       reason: { code: "readable" },
-      direct: "Readable",
+      direct: "This account is shared with all content",
     },
     {
       name: "a hide filter leaves it readable",
       access: () => grant([hide(LEDGER, [label("L-finance")])]),
       document: "clients-mail",
       readable: true,
-      reason: { code: "readable" },
-      direct: "Readable",
+      reason: { code: "readable", filtered: true },
+      direct: "Not hidden by this level’s filter",
     },
     {
       name: "a share-only filter lets it through, naming the label",
       access: () => grant([shareOnly(LEDGER, [label("L-clients"), label("L-finance")])]),
       document: "clients-mail",
       readable: true,
-      reason: { code: "readable", via: { noun: "label", label: "Clients" } },
-      direct: "Readable: label Clients lets it through",
+      reason: { code: "readable", via: { noun: "label", label: "Clients" }, filtered: true },
+      direct: "Included by: label Clients",
     },
     {
       name: "a share-only filter lets it through by a folder above its own",
       access: () => grant([shareOnly(LEDGER, [folder("finance")])]),
       document: "finance-mail",
       readable: true,
-      reason: { code: "readable", via: { noun: "folder", label: "Finance" } },
-      direct: "Readable: folder Finance lets it through",
+      reason: { code: "readable", via: { noun: "folder", label: "Finance" }, filtered: true },
+      direct: "Included by: folder Finance",
     },
     {
       name: "a hide filter hides it, naming the label",
@@ -298,7 +298,7 @@ describe("one document per reason", () => {
       document: "finance-mail",
       readable: false,
       reason: { code: "not-included" },
-      direct: "Not included by this level's share-only filter",
+      direct: "Not included by this level’s share-only filter",
     },
     {
       name: "the record is too old for the filter",
@@ -340,7 +340,7 @@ describe("one document per reason", () => {
         person: false,
         cause: "not-listed",
       },
-      direct: "Its folder is not in this account's list of folders",
+      direct: "Its folder is not in this account’s list of folders",
     },
     {
       name: "the record does not say which device it came from",
@@ -411,7 +411,7 @@ describe("one document per reason", () => {
         person: false,
         cause: "filter-unusable",
       },
-      direct: "This level's filter cannot be applied by this version of Omnesis",
+      direct: "This level’s filter cannot be applied by this version of Omnesis",
     },
     {
       name: "the document does not exist",
@@ -458,7 +458,7 @@ describe("what a grant shares besides its filters", () => {
     ]);
     expect(decide(both, "clients-mail")).toEqual({
       readable: true,
-      reason: { code: "readable", via: { noun: "label", label: "Clients" } },
+      reason: { code: "readable", via: { noun: "label", label: "Clients" }, filtered: true },
     });
     expect(decide(both, "finance-mail").reason).toEqual({
       code: "hidden-by-item",
@@ -534,19 +534,19 @@ describe("wording", () => {
 
   it("counts the records that cannot be placed, with the source's own noun", () => {
     expect(unmatchedCountText(1, { one: "folder", many: "folders" })).toBe(
-      "1 record can't be matched to a folder and stays hidden.",
+      "1 record can’t be matched to a folder and stays hidden.",
     );
     expect(unmatchedCountText(4, { one: "project folder", many: "project folders" })).toBe(
-      "4 records can't be matched to a project folder and stay hidden.",
+      "4 records can’t be matched to a project folder and stay hidden.",
     );
     expect(unmatchedCountText(2, { one: "owner", many: "owners" })).toBe(
-      "2 records can't be matched to an owner and stay hidden.",
+      "2 records can’t be matched to an owner and stay hidden.",
     );
   });
 
   it("falls back to a plain sentence when the matching entry or the detail cannot be named", () => {
     expect(accessReasonText({ code: "hidden-by-item", item: null }, "direct")).toBe(
-      "Hidden by this level's filter",
+      "Hidden by this level’s filter",
     );
     expect(
       accessReasonText(
@@ -559,7 +559,7 @@ describe("wording", () => {
         { code: "detail-unknown", field: null, noun: null, person: false, cause: "not-listed" },
         "answer",
       ),
-    ).toBe("Where it belongs is not in this account's list");
+    ).toBe("Where it belongs is not in this account’s list");
   });
 
   it("carries the two notes of the page that says who can read a document", () => {

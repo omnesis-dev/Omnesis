@@ -71,7 +71,11 @@ export type AccessReason =
   /** The document's account is not among those the level shares. */
   | { code: "account-not-shared" }
   /** `via` names the entry of a share-only filter that lets the document through. */
-  | { code: "readable"; via?: FilterItemLabel }
+  /**
+   * `via` names the entry of a share-only filter that lets the document
+   * through; `filtered` says a filter of the account applied and did not hide it.
+   */
+  | { code: "readable"; via?: FilterItemLabel; filtered?: true }
   /** `item` is `null` when the entry that matched can no longer be named. */
   | { code: "hidden-by-item"; item: FilterItemLabel | null }
   | { code: "not-included" }
@@ -176,8 +180,10 @@ export function decideDocumentAccess(
       return hidden({ code: "account-not-shared" });
     }
     let via: FilterItemLabel | undefined;
+    let filtered = false;
     for (const filter of grant.filters) {
       if (filter.sourceId !== row.source_id) continue;
+      filtered = true;
       const compiled = forFewRecords(
         compileSourceFilter(filter, filterFieldsFor(db, sourceTypeOf(filter.sourceId))),
       );
@@ -185,7 +191,14 @@ export function decideDocumentAccess(
       if (!decision.readable) return decision;
       if (decision.reason.code === "readable" && decision.reason.via) via ??= decision.reason.via;
     }
-    return { readable: true, reason: { code: "readable", ...(via ? { via } : {}) } };
+    return {
+      readable: true,
+      reason: {
+        code: "readable",
+        ...(via ? { via } : {}),
+        ...(filtered ? { filtered: true as const } : {}),
+      },
+    };
   })();
 }
 
