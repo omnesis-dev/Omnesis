@@ -12,7 +12,12 @@
  * (`NODE_EXTRA_CA_CERTS`, `OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE`), a resolver
  * that answers `*.example.test` with the loopback address, and a launcher
  * that refuses to open a desktop browser so the printed connect code is the
- * way in. Every name, certificate and account is invented.
+ * way in. A world created with `google: true` adds a stand-in for Google's
+ * sign-in (`FakeGoogle`): the browser's visit to Google's authorization page
+ * is answered by the test, and the relay's and gateways' requests to Google's
+ * token and key endpoints reach a local server. Tokens are real RS256 JWTs
+ * that the product verifies unchanged. Every name, certificate and account is
+ * invented.
  */
 
 import {
@@ -35,6 +40,7 @@ import {
   gatewayKeyAccount,
   hostedGatewayHostname,
 } from "@omnesis/cloud-relay";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import {
   chromium,
   type Browser,
@@ -265,6 +271,8 @@ export async function writeNoBrowserLauncher(directory: string): Promise<string>
 
 export interface WorldOptions {
   signupPolicy: "invitation" | "allowlist" | "open";
+  /** Offer Google sign-in, answered by `FakeGoogle` (see the file comment). */
+  google?: boolean;
   /** Accounts the `allowlist` policy admits. The file is re-read on every check. */
   allowlist?: { accounts?: string[]; googleSubjects?: string[] };
   /** More relay settings, applied last (for example lower per-client sign-in limits). */
@@ -280,6 +288,8 @@ export class EnrollmentWorld {
   readonly allowlistFile: string;
   readonly logs: string[] = [];
   relay?: ChildProcess;
+  /** Google's stand-in, when the world offers Google sign-in. */
+  google?: FakeGoogle;
   /** DNS-01 values the relay published, by record id: what a local ACME authority checks. */
   readonly dnsRecords = new Map<string, string>();
   private dnsFixture?: { url: string; close(): Promise<void> };
@@ -327,6 +337,7 @@ export class EnrollmentWorld {
     );
     await world.setAllowlist(options.allowlist ?? {});
     world.dnsFixture = await startDnsFixture(world.dnsRecords);
+    if (options.google) world.google = await FakeGoogle.start(directory, pki);
     await writeFile(
       join(directory, "relay-dns-token.json"),
       JSON.stringify({ token: "fixture-relay-dns-token" }),
@@ -338,13 +349,26 @@ export class EnrollmentWorld {
 
   /** Environment for any spawned Node process that talks to the fixture relay and gateways. */
   clientEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    const preloads = [this.preload, ...(this.google ? [this.google.preload] : [])];
     return {
-      NODE_OPTIONS:
-        `${process.env.NODE_OPTIONS ?? ""} --require ${JSON.stringify(this.preload)}`.trim(),
+      NODE_OPTIONS: [
+        process.env.NODE_OPTIONS ?? "",
+        ...preloads.map((file) => `--require ${JSON.stringify(file)}`),
+      ]
+        .join(" ")
+        .trim(),
       NODE_EXTRA_CA_CERTS: this.pki.caCertFile,
       ...(this.dnsFixture ? { OMNESIS_E2E_FIXTURE_DNS_URL: this.dnsFixture.url } : {}),
+      ...(this.google ? { OMNESIS_E2E_FIXTURE_GOOGLE_URL: this.google.url } : {}),
       ...extra,
     };
+  }
+
+  /** What a relay and a gateway are configured with to accept the stand-in's Google sign-ins. */
+  googleEnv(): NodeJS.ProcessEnv {
+    return this.google
+      ? { OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID: FIXTURE_GOOGLE_CLIENT_ID }
+      : {};
   }
 
   async setAllowlist(list: { accounts?: string[]; googleSubjects?: string[] }): Promise<void> {
@@ -392,6 +416,10 @@ export class EnrollmentWorld {
         OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_LOGINS_PER_CLIENT: "32",
         ...(this.options.signupPolicy === "allowlist"
           ? { OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE: this.allowlistFile }
+          : {}),
+        ...this.googleEnv(),
+        ...(this.google
+          ? { OMNESIS_CLOUD_RELAY_GOOGLE_WEB_SECRET_FILE: this.google.secretFile }
           : {}),
         ...this.options.extraEnv,
       },
@@ -450,6 +478,157 @@ export class EnrollmentWorld {
   async close(): Promise<void> {
     await this.stopRelay();
     await this.dnsFixture?.close();
+    await this.google?.close();
+  }
+}
+
+// ── Google's stand-in ────────────────────────────────────────────────────────
+
+/** The relay's web OAuth client in the fixture world; invented. */
+export const FIXTURE_GOOGLE_CLIENT_ID = "fixture-web.apps.googleusercontent.com";
+
+/**
+ * A `--require` preload that sends a process's requests for Google's token and
+ * key endpoints to the stand-in. Nothing else is touched.
+ */
+const FAKE_GOOGLE_PRELOAD = `
+const real = globalThis.fetch;
+const hosts = new Set(["oauth2.googleapis.com", "www.googleapis.com"]);
+globalThis.fetch = function fetch(input, init) {
+  const fixture = process.env.OMNESIS_E2E_FIXTURE_GOOGLE_URL;
+  const url = new URL(input instanceof Request ? input.url : String(input));
+  if (!fixture || !hosts.has(url.hostname)) return real.call(this, input, init);
+  const target = fixture + url.pathname + url.search;
+  return real.call(this, input instanceof Request ? new Request(target, input) : target, init);
+};
+`;
+
+/**
+ * Google, as far as Omnesis sees it: an authorization page that signs the
+ * browser in as whichever Google account the test chose and sends it back to
+ * the relay's callback with a code, a token endpoint that hands the relay that
+ * account's ID token for the code, and the key set the relay and gateways
+ * verify tokens against. The browser reaches the authorization page through
+ * its resolver rules (`browserHostRule`), the processes reach the rest
+ * through the preload; nothing leaves the machine.
+ */
+export class FakeGoogle {
+  private constructor(
+    readonly url: string,
+    readonly preload: string,
+    readonly secretFile: string,
+    /** Where the browser's requests for accounts.google.com land. */
+    readonly authorizePort: number,
+    /** Whom the authorization page signs in as; shared with the page's handler. */
+    private readonly chosen: { person?: string },
+    private readonly servers: readonly (import("node:http").Server | import("node:https").Server)[],
+  ) {}
+
+  static async start(directory: string, pki: TestPki): Promise<FakeGoogle> {
+    const { createServer: createHttpServer } = await import("node:http");
+    const { createServer: createHttpsServer } = await import("node:https");
+    const pair = await generateKeyPair("RS256", { extractable: true });
+    const jwk = { ...(await exportJWK(pair.publicKey)), kid: "fixture-google-key", alg: "RS256" };
+    const preload = join(directory, "fake-google.cjs");
+    await writeFile(preload, FAKE_GOOGLE_PRELOAD);
+    const secretFile = join(directory, "relay-google-web.json");
+    await writeFile(
+      secretFile,
+      JSON.stringify({
+        web: { client_id: FIXTURE_GOOGLE_CLIENT_ID, client_secret: "fixture-google-secret" },
+      }),
+      { mode: 0o600 },
+    );
+    const codes = new Map<string, string>();
+    const chosen: { person?: string } = {};
+    const api = createHttpServer((req, res) => {
+      void (async () => {
+        const url = new URL(req.url ?? "/", "http://fixture.invalid");
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const send = (status: number, value: unknown) => {
+          res.writeHead(status, { "content-type": "application/json" });
+          res.end(JSON.stringify(value));
+        };
+        if (req.method === "GET" && url.pathname === "/oauth2/v3/certs")
+          return send(200, { keys: [jwk] });
+        if (req.method === "POST" && url.pathname === "/token") {
+          const form = new URLSearchParams(Buffer.concat(chunks).toString());
+          const code = form.get("code") ?? "";
+          const token = codes.get(code);
+          codes.delete(code);
+          if (!token || form.get("client_id") !== FIXTURE_GOOGLE_CLIENT_ID)
+            return send(400, { error: "invalid_grant" });
+          return send(200, { id_token: token, token_type: "Bearer" });
+        }
+        send(404, {});
+      })().catch(() => {
+        res.writeHead(500);
+        res.end();
+      });
+    });
+    const leaf = await pki.leaf("google", ["accounts.google.com"]);
+    const authorize = createHttpsServer(
+      { cert: leaf.cert, key: await readFile(leaf.keyFile) },
+      (req, res) => {
+        void (async () => {
+          const query = new URL(req.url ?? "/", "https://accounts.google.com").searchParams;
+          const redirect = new URL(query.get("redirect_uri") ?? "");
+          if (!chosen.person || !/\.example\.test$/.test(redirect.hostname))
+            throw new Error("No Google account chosen for this sign-in");
+          const issuedAt = Math.floor(Date.now() / 1000);
+          const token = await new SignJWT({ nonce: query.get("nonce") ?? undefined })
+            .setProtectedHeader({ alg: "RS256", kid: "fixture-google-key" })
+            .setIssuer("https://accounts.google.com")
+            .setAudience(query.get("client_id") ?? "")
+            .setSubject(chosen.person)
+            .setIssuedAt(issuedAt)
+            .setExpirationTime(issuedAt + 3600)
+            .sign(pair.privateKey);
+          const code = randomBytes(24).toString("base64url");
+          codes.set(code, token);
+          redirect.searchParams.set("state", query.get("state") ?? "");
+          redirect.searchParams.set("code", code);
+          res.writeHead(303, { location: redirect.href });
+          res.end();
+        })().catch(() => {
+          res.writeHead(400);
+          res.end();
+        });
+      },
+    );
+    for (const server of [api, authorize]) {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+    }
+    return new FakeGoogle(
+      `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
+      preload,
+      secretFile,
+      (authorize.address() as AddressInfo).port,
+      chosen,
+      [api, authorize],
+    );
+  }
+
+  /** The digest a relay lists and a gateway pins for a Google account. */
+  static digest(subject: string): string {
+    return sha256Hex(JSON.stringify(["https://accounts.google.com", subject]));
+  }
+
+  /** A Chromium resolver rule that sends the browser's visits to Google here. */
+  browserHostRule(): string {
+    return `MAP accounts.google.com 127.0.0.1:${this.authorizePort}`;
+  }
+
+  /** From now on, Google signs the browser in as `subject`. */
+  signInAs(subject: string): void {
+    this.chosen.person = subject;
+  }
+
+  async close(): Promise<void> {
+    for (const server of this.servers)
+      await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }
 
@@ -609,6 +788,7 @@ export class EnrollmentGateway {
       OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "0",
       OMNESIS_TLS_CERT: gateway.leaf.certFile,
       OMNESIS_TLS_KEY: gateway.leaf.keyFile,
+      ...world.googleEnv(),
     };
     const cli = e2eTsxCommand("packages/cli/src/index.ts");
     try {
@@ -852,7 +1032,11 @@ export class PasskeyBrowser {
       headless: true,
       args: [
         "--no-proxy-server",
-        `--host-resolver-rules=MAP ${RELAY_HOST} 127.0.0.1, MAP *.${RELAY_HOST} 127.0.0.1`,
+        `--host-resolver-rules=${[
+          `MAP ${RELAY_HOST} 127.0.0.1`,
+          `MAP *.${RELAY_HOST} 127.0.0.1`,
+          ...(world.google ? [world.google.browserHostRule()] : []),
+        ].join(", ")}`,
         "--ignore-certificate-errors",
       ],
     });
@@ -1257,7 +1441,9 @@ export async function passkeyIds(session: PasskeySession): Promise<string[]> {
   );
 }
 
-/** The account page's panel after a new passkey is created and before a sign-in vouches for it. */
+/** The account page's panel right after a new passkey is created, before it has signed. */
+export const COUNTERSIGN_HEADING = "Use your new passkey once";
+/** The account page's panel after a new passkey signed and before a sign-in vouches for it. */
 export const ENDORSEMENT_HEADING = "Confirm it's you to finish";
 export const PASSKEY_ADDED = "Passkey added. You can now use it to sign in.";
 
@@ -1291,7 +1477,10 @@ export async function addSecondPasskey(
   const remove = page.getByRole("button", { name: "Remove", exact: true });
   const before = await remove.count();
   await clickFirst(page, ["Add a passkey"]);
-  // The browser has made the passkey; the account keeps it only once a sign-in vouches for it.
+  // The browser has made the passkey, which signs once for the account's other sign-ins; the
+  // account keeps it only once one of those vouches for it.
+  await page.getByRole("heading", { name: COUNTERSIGN_HEADING, exact: true }).waitFor();
+  await clickFirst(page, ["Use new passkey"]);
   await page.getByRole("heading", { name: ENDORSEMENT_HEADING, exact: true }).waitFor();
   if ((await remove.count()) !== before)
     throw new Error("The new passkey was listed before anyone confirmed it");

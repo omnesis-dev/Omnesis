@@ -3,7 +3,13 @@
 
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import { signInProofSchema, type SignInProof } from "./device-enrollment.js";
+import {
+  passkeyCountersignatureSchema,
+  signInDigest,
+  signInProofSchema,
+  type PasskeyCountersignature,
+  type SignInProof,
+} from "./device-enrollment.js";
 import { ACCOUNT_SESSION_SECONDS } from "./identity.js";
 import { RelayError } from "./tunnels.js";
 import type { AccountAdmission } from "./account-admission.js";
@@ -77,6 +83,9 @@ export class OmnesisAccounts {
     );
     CREATE TABLE IF NOT EXISTS omnesis_passkey_endorsements (
       credential_id TEXT PRIMARY KEY, proof TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS omnesis_passkey_countersignatures (
+      credential_id TEXT PRIMARY KEY, countersignature TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS omnesis_passkeys_account ON omnesis_passkeys(account_id);`);
   }
@@ -167,6 +176,8 @@ export class OmnesisAccounts {
     admission?: AccountAdmission,
     /** The sign-in that vouched for this passkey, kept for gateways to verify themselves. */
     endorsement?: SignInProof,
+    /** This passkey's own signature over the account's other sign-ins, likewise. */
+    countersignature?: PasskeyCountersignature,
   ): void {
     this.db.transaction(() => {
       if (newAccount) this.create(account, admission);
@@ -205,6 +216,13 @@ export class OmnesisAccounts {
         this.db
           .prepare("INSERT OR REPLACE INTO omnesis_passkey_endorsements VALUES (?,?)")
           .run(input.credential.id, JSON.stringify(signInProofSchema.parse(endorsement)));
+      if (countersignature && this.namesOnlyCurrent(account, countersignature, input.credential.id))
+        this.db
+          .prepare("INSERT OR REPLACE INTO omnesis_passkey_countersignatures VALUES (?,?)")
+          .run(
+            input.credential.id,
+            JSON.stringify(passkeyCountersignatureSchema.parse(countersignature)),
+          );
     })();
   }
 
@@ -313,20 +331,36 @@ export class OmnesisAccounts {
 
   /**
    * Each passkey's id and public key: what a gateway pins and checks a pin against. A passkey
-   * added to an existing account also carries the sign-in that vouched for it.
+   * added to an existing account also carries the sign-in that vouched for it, and its own
+   * countersignature of the sign-ins the account had then.
    */
-  passkeyKeys(account: string): { id: string; publicKey: string; endorsement?: SignInProof }[] {
+  passkeyKeys(account: string): {
+    id: string;
+    publicKey: string;
+    endorsement?: SignInProof;
+    countersignature?: PasskeyCountersignature;
+  }[] {
     this.requireAccount(account);
     return (
       this.db
         .prepare(
-          "SELECT p.credential_id AS id, p.public_key, e.proof FROM omnesis_passkeys AS p LEFT JOIN omnesis_passkey_endorsements AS e USING(credential_id) WHERE p.account_id=? ORDER BY p.created_at,p.credential_id",
+          "SELECT p.credential_id AS id, p.public_key, e.proof, c.countersignature FROM omnesis_passkeys AS p LEFT JOIN omnesis_passkey_endorsements AS e USING(credential_id) LEFT JOIN omnesis_passkey_countersignatures AS c USING(credential_id) WHERE p.account_id=? ORDER BY p.created_at,p.credential_id",
         )
-        .all(account) as { id: string; public_key: Buffer; proof: string | null }[]
+        .all(account) as {
+        id: string;
+        public_key: Buffer;
+        proof: string | null;
+        countersignature: string | null;
+      }[]
     ).map((row) => ({
       id: row.id,
       publicKey: row.public_key.toString("base64url"),
       ...(row.proof ? { endorsement: signInProofSchema.parse(JSON.parse(row.proof)) } : {}),
+      ...(row.countersignature
+        ? {
+            countersignature: passkeyCountersignatureSchema.parse(JSON.parse(row.countersignature)),
+          }
+        : {}),
     }));
   }
 
@@ -493,11 +527,22 @@ export class OmnesisAccounts {
     expectedVersion?: number,
   ): void {
     this.remove(account, providers, expectedVersion, () => {
+      const key = this.db
+        .prepare("SELECT public_key FROM omnesis_passkeys WHERE account_id=? AND credential_id=?")
+        .get(account, id) as { public_key: Buffer } | undefined;
       const removed = this.db
         .prepare("DELETE FROM omnesis_passkeys WHERE account_id=? AND credential_id=?")
         .run(account, id).changes;
+      if (key)
+        this.forgetCountersignaturesNaming(
+          account,
+          signInDigest({ type: "passkey", id, publicKey: key.public_key.toString("base64url") }),
+        );
       // A removal that matched nothing throws below, which rolls this back too.
       this.db.prepare("DELETE FROM omnesis_passkey_endorsements WHERE credential_id=?").run(id);
+      this.db
+        .prepare("DELETE FROM omnesis_passkey_countersignatures WHERE credential_id=?")
+        .run(id);
       return removed;
     });
   }
@@ -509,17 +554,58 @@ export class OmnesisAccounts {
     providers: readonly string[],
     expectedVersion?: number,
   ): void {
-    this.remove(
-      account,
-      providers,
-      expectedVersion,
-      () =>
+    this.remove(account, providers, expectedVersion, () => {
+      if (provider === "google")
+        this.forgetCountersignaturesNaming(
+          account,
+          signInDigest({ type: "google", id: subjectDigest }),
+        );
+      return this.db
+        .prepare(
+          "DELETE FROM omnesis_federated_credentials WHERE account_id=? AND provider=? AND subject_digest=?",
+        )
+        .run(account, provider, subjectDigest).changes;
+    });
+  }
+
+  /**
+   * Whether every sign-in a countersignature names is still on the account. One was signed for
+   * the account as it stood when the passkey was created; a sign-in removed before the passkey
+   * is stored must not be named by evidence stored after the removal, so the countersignature is
+   * dropped and the passkey is stored with its endorsement only.
+   */
+  private namesOnlyCurrent(
+    account: string,
+    countersignature: PasskeyCountersignature,
+    except: string,
+  ): boolean {
+    const current = new Set([
+      ...this.federatedDigests(account, "google").map((id) => signInDigest({ type: "google", id })),
+      ...this.passkeyKeys(account)
+        .filter(({ id }) => id !== except)
+        .map(({ id, publicKey }) => signInDigest({ type: "passkey", id, publicKey })),
+    ]);
+    return countersignature.signIns.every((name) => current.has(name));
+  }
+
+  /**
+   * A countersignature that names a removed sign-in would let a relay compromised later list that
+   * sign-in again and have a gateway that never saw the removal trust it, so it goes with the
+   * sign-in. The passkeys that made it keep their other trust; one signature can't be edited.
+   */
+  private forgetCountersignaturesNaming(account: string, name: string): void {
+    const rows = this.db
+      .prepare(
+        "SELECT c.credential_id AS id, c.countersignature FROM omnesis_passkey_countersignatures AS c JOIN omnesis_passkeys AS p USING(credential_id) WHERE p.account_id=?",
+      )
+      .all(account) as { id: string; countersignature: string }[];
+    for (const row of rows)
+      if (
+        passkeyCountersignatureSchema.parse(JSON.parse(row.countersignature)).signIns.includes(name)
+      )
         this.db
-          .prepare(
-            "DELETE FROM omnesis_federated_credentials WHERE account_id=? AND provider=? AND subject_digest=?",
-          )
-          .run(account, provider, subjectDigest).changes,
-    );
+          .prepare("DELETE FROM omnesis_passkey_countersignatures WHERE credential_id=?")
+          .run(row.id);
   }
 
   private remove(
@@ -579,6 +665,7 @@ export class OmnesisAccounts {
   private discard(account: string): void {
     for (const table of [
       "omnesis_passkey_endorsements WHERE credential_id IN (SELECT credential_id FROM omnesis_passkeys WHERE account_id=?)",
+      "omnesis_passkey_countersignatures WHERE credential_id IN (SELECT credential_id FROM omnesis_passkeys WHERE account_id=?)",
       "omnesis_passkeys WHERE account_id=?",
       "omnesis_federated_credentials WHERE account_id=?",
       "omnesis_account_sessions WHERE account_id=?",

@@ -337,14 +337,26 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
     };
     const original = await swap();
     expect(original).toHaveLength(1);
-    // Adding asks for nothing first, even on a session this old: the passkey is created at once...
+    // Adding asks for nothing first, even on a session this old: the passkey is created at once,
+    // then signs once with its own key for the account's other sign-ins...
     await page.getByRole("button", { name: "Add a passkey", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Use your new passkey once", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "Your new passkey is ready. Use it once now, so that your gateways can tell it belongs with the sign-in methods you already have.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Confirm with passkey" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Use new passkey", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "Confirm it's you to finish", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByText(
-        "Your new passkey is ready. Confirm with a sign-in you already use, so that someone else using this browser can't add their own passkey. Your gateways check this confirmation and then trust the new passkey.",
+        "Now confirm with a sign-in you already use, so that someone else using this browser can't add their own passkey. Your gateways check both steps themselves before they trust a sign-in.",
         { exact: true },
       ),
     ).toBeVisible();
@@ -368,6 +380,7 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
     await swap();
     // Again, this time confirmed with the first passkey.
     await page.getByRole("button", { name: "Add a passkey", exact: true }).click();
+    await page.getByRole("button", { name: "Use new passkey", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "Confirm it's you to finish", exact: true }),
     ).toBeVisible();
@@ -386,6 +399,11 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
     expect(listed).toHaveLength(2);
     expect(listed[0]).not.toHaveProperty("endorsement");
     expect(listed[1]!.endorsement).toMatchObject({ type: "passkey" });
+    // And the new passkey's own signature naming the one the account already had.
+    expect(listed[1]!.countersignature).toMatchObject({
+      proof: { type: "passkey", credential: { id: listed[1]!.id } },
+      signIns: [expect.any(String)],
+    });
     // From here on this browser holds only the new passkey.
     await swap(added);
     await expect(page.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);

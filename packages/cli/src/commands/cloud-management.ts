@@ -230,7 +230,8 @@ export const cloudManagementCommands = {
   "remove-sign-in": defineCommand({
     meta: {
       name: "remove-sign-in",
-      description: "Stop trusting a sign-in, by its id from `omnesis cloud trusted-sign-ins`",
+      description:
+        "Stop trusting a sign-in, by its id from `omnesis cloud trusted-sign-ins` here or on another gateway; one this gateway doesn't trust is refused in advance",
     },
     args: { id: { type: "positional", required: true } },
     run: ({ args }) =>

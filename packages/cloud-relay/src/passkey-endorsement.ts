@@ -2,7 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { passkeyEndorsementNonce } from "./device-enrollment.js";
+import {
+  passkeyCountersignatureNonce,
+  passkeyEndorsementNonce,
+  passkeySignInProofSchema,
+  signInDigest,
+  type PasskeyCountersignature,
+} from "./device-enrollment.js";
 import {
   OperationProof,
   type AccountOperationBroker,
@@ -18,6 +24,8 @@ interface Parked {
   registration: PasskeyRegistration;
   browserHash: Buffer;
   proof: OperationProof;
+  /** The new passkey's own signature over the account's other sign-ins, as they were when parked. */
+  countersignature: { signIns: string[]; proof: OperationProof };
   expiresAt: number;
 }
 
@@ -26,6 +34,11 @@ interface Parked {
  * vouches for it. That sign-in commits to the new passkey's id and public key, so each gateway can
  * check the vouching itself and trust the passkey without taking the relay's word for it. It also
  * shows the person is present, which is why adding needs no earlier confirmation.
+ *
+ * The new passkey also signs once, committing to the account's other sign-ins: its
+ * countersignature. A gateway that trusts the new passkey checks that signature against its own
+ * pin and trusts those sign-ins too. The vouching can't do this in reverse: anyone can make a
+ * sign-in that names a passkey they saw listed, but only the passkey's holder can sign with it.
  */
 export class PasskeyEndorsements implements AccountOperationBroker {
   private readonly parked = new Map<string, Parked>();
@@ -49,6 +62,14 @@ export class PasskeyEndorsements implements AccountOperationBroker {
       if (value.expiresAt <= this.now()) this.parked.delete(id);
     if (this.parked.size >= this.maxPending) throw new RelayError(429, "Too many passkey requests");
     const id = randomUUID();
+    const signIns = [
+      ...this.accounts
+        .federatedDigests(accountId, "google")
+        .map((id) => signInDigest({ type: "google", id })),
+      ...this.accounts
+        .passkeyKeys(accountId)
+        .map(({ id, publicKey }) => signInDigest({ type: "passkey", id, publicKey })),
+    ];
     this.parked.set(id, {
       accountId,
       registration,
@@ -59,6 +80,10 @@ export class PasskeyEndorsements implements AccountOperationBroker {
           Buffer.from(registration.credential.publicKey).toString("base64url"),
         ),
       ),
+      countersignature: {
+        signIns,
+        proof: new OperationProof(passkeyCountersignatureNonce(accountId, signIns)),
+      },
       expiresAt: this.now() + this.ttl,
     });
     return id;
@@ -66,7 +91,37 @@ export class PasskeyEndorsements implements AccountOperationBroker {
 
   describe(id: string, cookieHeader: string) {
     const parked = this.current(id, cookieHeader);
-    return { label: parked.registration.label, needsProof: parked.proof.needed() };
+    return {
+      label: parked.registration.label,
+      needsProof: parked.proof.needed(),
+      needsCountersignature: parked.countersignature.proof.needed(),
+    };
+  }
+  /** What the new passkey signs, and the stored credential its signature is checked against. */
+  countersigning(id: string, cookieHeader: string) {
+    const parked = this.current(id, cookieHeader);
+    return {
+      accountId: parked.accountId,
+      credential: parked.registration.credential,
+      commitment: parked.countersignature.proof.commitment(),
+    };
+  }
+  /** Keeps the new passkey's verified signature, and the counter it reached, for storing with it. */
+  recordCountersignature(
+    id: string,
+    cookieHeader: string,
+    evidence: { challenge: string; credential: unknown; counter: number },
+  ): void {
+    const parked = this.current(id, cookieHeader),
+      { credential } = parked.registration;
+    parked.countersignature.proof.record({
+      type: "passkey",
+      accountId: parked.accountId,
+      challenge: evidence.challenge,
+      credential: evidence.credential,
+      credentialPublicKey: Buffer.from(credential.publicKey).toString("base64url"),
+    });
+    credential.counter = Math.max(credential.counter, evidence.counter);
   }
   proofCommitment(id: string, cookieHeader: string) {
     return this.current(id, cookieHeader).proof.commitment();
@@ -104,6 +159,7 @@ export class PasskeyEndorsements implements AccountOperationBroker {
       account.version,
       undefined,
       parked.proof.take().signInProof,
+      this.countersignature(parked),
     );
     return { id: parked.registration.credential.id };
   }
@@ -115,6 +171,18 @@ export class PasskeyEndorsements implements AccountOperationBroker {
   close(): void {
     this.closed = true;
     this.parked.clear();
+  }
+
+  /** Absent when the page skipped it: the passkey is then trusted only in the forward direction. */
+  private countersignature(parked: Parked): PasskeyCountersignature | undefined {
+    const { proof, signIns } = parked.countersignature;
+    if (proof.needed()) return undefined;
+    // Recorded as a passkey assertion, so this parse only narrows it. The key it offers is the
+    // passkey's own, which every gateway that can use this has pinned, so it is left out.
+    const { credentialPublicKey: _key, ...signed } = passkeySignInProofSchema.parse(
+      proof.take().signInProof,
+    );
+    return { proof: signed, signIns: [...signIns] };
   }
 
   private current(id: string, cookieHeader: string): Parked {

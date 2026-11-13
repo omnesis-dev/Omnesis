@@ -16,6 +16,7 @@ import { cloudRelayEnabled } from "@omnesis/core";
 import {
   ACCOUNT_BROWSER_PATH,
   ACCOUNT_BROWSER_PROTOCOL,
+  ACCOUNT_CREDENTIALS_EVIDENCE,
   accountBrowserStarted,
   accountBrowserRedeemed,
   accountBrowserRedemption,
@@ -27,7 +28,12 @@ import {
   AccountEnrollmentVerifier,
   AccountGatewayLinkVerifier,
 } from "./account-enrollment-proof.js";
-import { signInProofSchema, type SignInProof } from "./device-enrollment.js";
+import {
+  passkeyCountersignatureSchema,
+  signInProofSchema,
+  type PasskeyCountersignature,
+  type SignInProof,
+} from "./device-enrollment.js";
 import { bindingOrigin } from "./gateway-binding.js";
 import {
   gatewayBrowserCallback,
@@ -105,7 +111,12 @@ export interface AccountBrowserPort {
   credentials?(signal?: AbortSignal): Promise<
     | {
         google: string[];
-        passkeys: Array<{ id: string; publicKey: string; endorsement?: SignInProof }>;
+        passkeys: Array<{
+          id: string;
+          publicKey: string;
+          endorsement?: SignInProof;
+          countersignature?: PasskeyCountersignature;
+        }>;
       }
     | undefined
   >;
@@ -118,6 +129,43 @@ export interface AccountBrowserPort {
     expiresAt: number;
   }>;
 }
+
+/**
+ * An account holds at most 16 sign-ins. A passkey id can take 1365 characters and an RSA key
+ * about 400, and each passkey entry repeats its endorser's id and key, so a full account's
+ * listing outgrows the 64 KiB other relay answers are held to.
+ */
+const MAX_CREDENTIALS_LISTING_BYTES = 262_144;
+/**
+ * A piece of evidence this version can read, or nothing. Dropping one only means trusting less,
+ * whereas refusing it would refuse the whole listing, and with it every removal it reports.
+ */
+const evidence = <T extends z.ZodTypeAny>(schema: T) =>
+  z
+    .unknown()
+    .optional()
+    .transform((value): z.infer<T> | undefined => {
+      const parsed = schema.safeParse(value);
+      return parsed.success ? parsed.data : undefined;
+    });
+/**
+ * The account's sign-ins as the relay lists them. Fields this version does not know are dropped,
+ * not refused, so the relay can add one without cutting off gateways that predate it.
+ */
+export const accountCredentialsListing = z.object({
+  accountId: z.string(),
+  google: z.array(z.string().max(128)).max(64),
+  passkeys: z
+    .array(
+      z.object({
+        id: z.string().max(2048),
+        publicKey: z.string().max(4096),
+        endorsement: evidence(signInProofSchema),
+        countersignature: evidence(passkeyCountersignatureSchema),
+      }),
+    )
+    .max(64),
+});
 
 /** The account service coordinates identity; gateway owner keys authorize handoffs and gateway approval still governs data access. */
 export class ManagedAccountBrowser implements AccountBrowserPort {
@@ -344,7 +392,10 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
     };
   }
 
-  /** The account's current sign-ins, used only to drop pins the owner has since removed. */
+  /**
+   * The account's current sign-ins, with the evidence each passkey carries. A gateway drops pins
+   * the account no longer lists and pins only what that evidence proves to it.
+   */
   async credentials(callerSignal?: AbortSignal) {
     const signal = this.signal(callerSignal),
       env = this.environment();
@@ -353,33 +404,19 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
     signal.throwIfAborted();
     const response = await this.request(
       this.origin(env),
-      "/_relay/v3/account-browser/credentials",
+      ACCOUNT_BROWSER_PATH + "/credentials",
       undefined,
       session.token,
       signal,
+      { [ACCOUNT_CREDENTIALS_EVIDENCE.header]: ACCOUNT_CREDENTIALS_EVIDENCE.countersignatures },
     );
     if (!response.ok) {
       await response.body?.cancel();
       return undefined;
     }
-    return z
-      .object({
-        accountId: z.string(),
-        google: z.array(z.string().max(128)).max(64),
-        passkeys: z
-          .array(
-            z
-              .object({
-                id: z.string().max(2048),
-                publicKey: z.string().max(4096),
-                endorsement: signInProofSchema.optional(),
-              })
-              .strict(),
-          )
-          .max(64),
-      })
-      .strict()
-      .parse(await readBoundedJson(response));
+    return accountCredentialsListing.parse(
+      await readBoundedJson(response, MAX_CREDENTIALS_LISTING_BYTES),
+    );
   }
 
   async unlink(callerSignal?: AbortSignal): Promise<void> {
@@ -500,6 +537,7 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
     body: unknown,
     token: string | undefined,
     signal: AbortSignal,
+    headers: Record<string, string> = {},
   ) {
     signal.throwIfAborted();
     return (this.options.fetch ?? fetch)(new URL(path, origin), {
@@ -507,6 +545,7 @@ export class ManagedAccountBrowser implements AccountBrowserPort {
       redirect: "error",
       signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
       headers: {
+        ...headers,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },

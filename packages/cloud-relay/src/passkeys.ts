@@ -80,7 +80,9 @@ const committedChallenge = (commitment: ProofCommitment | undefined) =>
       }
     : {};
 interface Ceremony {
-  purpose: "registration" | "authentication";
+  purpose: "registration" | "authentication" | "countersignature";
+  /** For a countersignature: the parked passkey that signs. */
+  endorse?: string;
   challenge: string;
   browser: string;
   expiresAt: number;
@@ -290,6 +292,77 @@ export class Passkeys {
     } catch {
       throw new RelayError(401, "Passkey sign-in did not complete; try again");
     }
+  }
+
+  /**
+   * The passkey being added signs once, before it is stored, committing to the account's other
+   * sign-ins. Only that passkey is offered, and its signature is checked against the key it was
+   * just registered with.
+   */
+  async beginCountersignature(browser: string, endorse: string, cookieHeader: string) {
+    this.admit(browser);
+    const { credential, commitment } = this.endorsements.countersigning(endorse, cookieHeader);
+    const options = await generateAuthenticationOptions({
+      ...committedChallenge(commitment),
+      allowCredentials: [{ id: credential.id }],
+      rpID: this.rpID,
+      userVerification: "required",
+      timeout: this.ttl,
+    });
+    const ceremonyId = this.save({
+      purpose: "countersignature",
+      endorse,
+      browser,
+      challenge: options.challenge,
+      expiresAt: this.now() + this.ttl,
+    });
+    return { ceremonyId, options };
+  }
+
+  async finishCountersignature(
+    ceremonyId: string,
+    browser: string,
+    endorse: string,
+    cookieHeader: string,
+    response: unknown,
+  ): Promise<void> {
+    const pending = this.consume(ceremonyId, browser, "countersignature");
+    if (pending.endorse !== endorse)
+      throw new RelayError(400, "This signature was asked for another new passkey");
+    const signing = this.endorsements.countersigning(endorse, cookieHeader);
+    const parsed = authenticationSchema.safeParse(response);
+    if (!parsed.success || parsed.data.id !== parsed.data.rawId)
+      throw new RelayError(400, "Passkey response is malformed");
+    const credential = parsed.data;
+    if (credential.id !== signing.credential.id)
+      throw new RelayError(400, "Use the passkey you are adding, not another one");
+    const expectedHandle = Buffer.from(signing.accountId, "hex").toString("base64url");
+    const actualHandle = credential.response.userHandle;
+    if (
+      actualHandle.length !== expectedHandle.length ||
+      !timingSafeEqual(Buffer.from(actualHandle), Buffer.from(expectedHandle))
+    )
+      throw new RelayError(400, "That passkey belongs to another Omnesis account");
+    let result: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
+    try {
+      result = await verifyAuthenticationResponse({
+        response: credential,
+        expectedChallenge: pending.challenge,
+        expectedOrigin: this.expectedOrigins,
+        expectedRPID: this.rpID,
+        credential: signing.credential,
+        requireUserVerification: true,
+      });
+    } catch {
+      throw new RelayError(400, "The new passkey's signature did not verify");
+    }
+    if (!result.verified) throw new RelayError(400, "The new passkey's signature did not verify");
+    this.fresh(pending);
+    this.endorsements.recordCountersignature(endorse, cookieHeader, {
+      challenge: pending.challenge,
+      credential,
+      counter: result.authenticationInfo.newCounter,
+    });
   }
 
   close(): void {

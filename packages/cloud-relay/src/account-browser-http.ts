@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
-import { ACCOUNT_BROWSER_PATH, type AccountBrowserOwner } from "./account-browser-contract.js";
+import {
+  ACCOUNT_BROWSER_PATH,
+  ACCOUNT_CREDENTIALS_EVIDENCE,
+  type AccountBrowserOwner,
+} from "./account-browser-contract.js";
 import { RelayError } from "./tunnels.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AccountBrowserBroker } from "./account-browser-broker.js";
@@ -59,6 +63,11 @@ export class AccountBrowserHttp {
       if (url.search) throw new RelayError(400, "Account credentials take no query parameters");
       const credentials = this.options.broker.credentials(
         await this.options.authenticateOwner(req),
+        {
+          countersignatures:
+            req.headers[ACCOUNT_CREDENTIALS_EVIDENCE.header] ===
+            ACCOUNT_CREDENTIALS_EVIDENCE.countersignatures,
+        },
       );
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(credentials));

@@ -59,7 +59,7 @@ export class AccountBrowserBroker implements AccountOperationBroker {
       unlinkAccount(owner: string): void;
       accountCredentials(account: string): {
         google: string[];
-        passkeys: { id: string; publicKey: string }[];
+        passkeys: { id: string; publicKey: string; countersignature?: unknown }[];
       };
       maxOperations?: number;
       maxPerOwner?: number;
@@ -247,13 +247,24 @@ export class AccountBrowserBroker implements AccountOperationBroker {
     };
   }
 
-  /** The account's current sign-ins; what a gateway checks its pinned sign-ins against. */
-  credentials(owner: AccountBrowserOwner) {
+  /**
+   * The account's current sign-ins; what a gateway checks its pinned sign-ins against. Passkeys'
+   * countersignatures go only to a gateway that asked for them (`ACCOUNT_CREDENTIALS_EVIDENCE`):
+   * a gateway from before them parses this listing strictly and would refuse the whole of it.
+   */
+  credentials(owner: AccountBrowserOwner, options: { countersignatures?: boolean } = {}) {
     if (this.closed) throw new RelayError(503, "Account browser is unavailable");
     this.assertOwner(owner);
     const accountId = this.options.linkedAccount(owner.ownerAccountId);
     if (!accountId) throw new RelayError(404, "This gateway is not linked to an account");
-    return { accountId, ...this.options.accountCredentials(accountId) };
+    const { google, passkeys } = this.options.accountCredentials(accountId);
+    return {
+      accountId,
+      google,
+      passkeys: options.countersignatures
+        ? passkeys
+        : passkeys.map(({ countersignature: _, ...passkey }) => passkey),
+    };
   }
 
   cancel(owner: AccountBrowserOwner, id: string): void {

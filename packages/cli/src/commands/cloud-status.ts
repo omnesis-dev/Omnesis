@@ -35,6 +35,8 @@ const SIGN_IN_SOURCES: Record<string, string> = {
   approval: "signed in on the Omnesis account page, trusted when a device was approved",
   "native-app": "signed in in the app, trusted when a device was approved",
   endorsed: "passkey added to the account, confirmed by a sign-in trusted here",
+  countersigned:
+    "already on the account when a passkey trusted here was added, signed for by that passkey",
 };
 
 /** One line per trusted sign-in. The id is what `omnesis cloud remove-sign-in` takes. */

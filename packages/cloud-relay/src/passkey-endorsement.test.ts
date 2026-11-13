@@ -62,6 +62,7 @@ describe("a new passkey waiting on the relay", () => {
     expect(f.endorsements.describe(id, f.cookie)).toEqual({
       label: "Fictional passkey",
       needsProof: true,
+      needsCountersignature: true,
     });
     // The sign-in commits to this passkey's id and public key, and to nothing else.
     const commitment = f.endorsements.proofCommitment(id, f.cookie),

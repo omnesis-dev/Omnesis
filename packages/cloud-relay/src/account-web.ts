@@ -468,6 +468,26 @@ export class AccountWeb {
         ),
       );
     }
+    if (path === "/_relay/account/api/passkeys/countersign/options") {
+      parse(emptyBody, body);
+      if (target?.kind !== "endorse") throw new RelayError(400, "No passkey is being added");
+      return respond(
+        res,
+        await this.options.passkeys.beginCountersignature(browser, target.id, cookieHeader),
+      );
+    }
+    if (path === "/_relay/account/api/passkeys/countersign/complete") {
+      const value = parse(completionBody, body);
+      if (target?.kind !== "endorse") throw new RelayError(400, "No passkey is being added");
+      await this.options.passkeys.finishCountersignature(
+        value.ceremonyId,
+        browser,
+        target.id,
+        cookieHeader,
+        value.credential,
+      );
+      return respond(res, { ok: true });
+    }
     if (
       path === "/_relay/account/api/passkeys/register/confirm" ||
       path === "/_relay/account/api/passkeys/register/cancel"

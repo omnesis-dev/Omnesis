@@ -65,6 +65,37 @@ export function passkeyEndorsementNonce(credentialId: string, publicKey: string)
   return digestUrl(["omnesis-passkey-endorsement-v1", credentialId, publicKey]);
 }
 
+/** One sign-in of an account, as a pin and a listing name it. */
+export type AccountSignIn =
+  { type: "google"; id: string } | { type: "passkey"; id: string; publicKey: string };
+
+/**
+ * A fixed-size name for one sign-in: a Google subject digest, or a passkey id with its public key
+ * (base64url COSE). A countersignature commits to these, so its size does not grow with the size
+ * of each passkey's id and key, and a gateway remembers withdrawn sign-ins by them.
+ */
+export function signInDigest(signIn: AccountSignIn): string {
+  return digestUrl(
+    signIn.type === "google"
+      ? ["omnesis-sign-in-v1", "google", signIn.id]
+      : ["omnesis-sign-in-v1", "passkey", signIn.id, signIn.publicKey],
+  );
+}
+
+/**
+ * What a passkey added to an account signs about the account's other sign-ins: that they belong
+ * to the same owner as it does. An endorsement runs from an existing sign-in to the new passkey;
+ * this runs the other way, so a gateway that trusts only the new passkey can trust the rest.
+ * `signIns` are their `signInDigest`s, in any order. The account id keeps it from saying anything
+ * about another account.
+ */
+export function passkeyCountersignatureNonce(
+  accountId: string,
+  signIns: readonly string[],
+): string {
+  return digestUrl(["omnesis-passkey-countersignature-v2", accountId, ...[...signIns].sort()]);
+}
+
 /**
  * The gateway's challenge is its commitment to the nonce behind a request's comparison code:
  * the gateway is bound to the nonce before the device reveals its secret, and reveals it after.
@@ -248,6 +279,19 @@ export const passkeyRegistrationProofSchema = z
       .strict(),
   })
   .strict();
+
+/**
+ * A passkey's own signature, made while it was being added, over the sign-ins its account
+ * already had (`passkeyCountersignatureNonce`). The relay keeps it beside the passkey.
+ */
+export const passkeyCountersignatureSchema = z
+  .object({
+    proof: passkeySignInProofSchema,
+    /** `signInDigest` of each sign-in the account had; an account holds at most 16. */
+    signIns: z.array(enrollmentOpaque).max(64),
+  })
+  .strict();
+export type PasskeyCountersignature = z.infer<typeof passkeyCountersignatureSchema>;
 
 export const signInProofSchema = z.discriminatedUnion("type", [
   googleSignInProofSchema,

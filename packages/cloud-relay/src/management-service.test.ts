@@ -1295,7 +1295,12 @@ test(
     expect(automatic.deviceEnrollment).toMatchObject({ policy: "automatic" });
     const removed = await manager.removeTrustedSignIn(f.relay.authenticator.id);
     expect(removed.deviceEnrollment?.trustedSignIns).toEqual([]);
-    await expect(manager.removeTrustedSignIn(f.relay.authenticator.id)).rejects.toMatchObject({
+    // Removing it again keeps it declined; an id that is no id is refused.
+    expect(
+      (await manager.removeTrustedSignIn(f.relay.authenticator.id)).deviceEnrollment
+        ?.trustedSignIns,
+    ).toEqual([]);
+    await expect(manager.removeTrustedSignIn("not an id")).rejects.toMatchObject({
       code: "configuration-invalid",
     });
     expect(removed.revision).toBeGreaterThan(automatic.revision);

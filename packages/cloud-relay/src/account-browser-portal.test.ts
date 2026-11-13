@@ -366,7 +366,11 @@ test("changes to the sign-in methods never ride on the handoff", async () => {
   installAccountUI();
   await f.wait("Your gateways");
   f.button("Add a passkey").click();
-  // The new passkey waits for a sign-in to vouch for it, which is not the handoff's sign-in.
+  // The new passkey signs for the account's sign-ins, and that is no sign-in for the handoff.
+  await f.wait("Use your new passkey once");
+  await vi.waitFor(() => expect(f.button("Use new passkey").disabled).toBe(false));
+  f.button("Use new passkey").click();
+  // It then waits for a sign-in to vouch for it, which is not the handoff's sign-in either.
   await f.wait("Confirm it's you");
   f.button("Confirm with Google").click();
   expect(f.location.assign).toHaveBeenCalledWith(
@@ -383,6 +387,7 @@ test("changes to the sign-in methods never ride on the handoff", async () => {
   ).toEqual([]);
   expect(f.requests()).toContain("passkeys/register/options");
   expect(f.requests()).toContain(`passkeys/authenticate/options?endorse=${ENDORSE}`);
+  expect(f.requests()).toContain(`passkeys/countersign/complete?endorse=${ENDORSE}`);
 
   const linking = setup({ session: ready, stored });
   installAccountUI();
