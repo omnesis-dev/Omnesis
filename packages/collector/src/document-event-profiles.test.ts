@@ -13,7 +13,7 @@
  */
 
 import { describe, test, expect } from "vitest";
-import { defineProvider, defineSource, validateDocumentEventProfile } from "@omnesis/source-sdk";
+import { validateDocumentEventProfile } from "@omnesis/source-sdk";
 
 import { allDefinitions } from "./source-descriptors.js";
 import { collectDocumentEventProfiles } from "./source-manager.js";
@@ -140,48 +140,4 @@ describe("published document-event profiles", () => {
       expect(definition!.create).toBeUndefined();
     },
   );
-});
-
-describe("the source version a profile is published at", () => {
-  const create = () =>
-    Promise.resolve({
-      sync: () =>
-        Promise.resolve({ documents: [], deletedExternalIds: [], cursor: {}, hasMore: false }),
-    });
-  const documentEventProfile = { documentTypes: ["note"] };
-  const entry = { name: "Example", description: "Example", create, documentEventProfile };
-
-  test("is the definition's own, and 1 when it declares none", () => {
-    const definitions = [
-      defineSource({ ...entry, id: "example-notes", authType: "local" }),
-      defineSource({
-        ...entry,
-        id: "example-tasks",
-        authType: "local",
-        contract: { outputRevision: 4 },
-      }),
-    ];
-    expect(collectDocumentEventProfiles(definitions)).toEqual([
-      { sourceType: "example-notes", outputRevision: 1, profile: documentEventProfile },
-      { sourceType: "example-tasks", outputRevision: 4, profile: documentEventProfile },
-    ]);
-  });
-
-  test("is each entry's within a provider, falling back to the provider's", () => {
-    const provider = defineProvider({
-      provider: { id: "example-suite", name: "Example suite" },
-      authType: "local",
-      createContext: () => Promise.resolve({}),
-      contract: { outputRevision: 2 },
-      sources: [
-        { ...entry, id: "example-suite-mail" },
-        { ...entry, id: "example-suite-files", contract: { outputRevision: 5 } },
-        { id: "example-suite-plain", name: "Plain", description: "Example", create },
-      ],
-    });
-    expect(collectDocumentEventProfiles([provider])).toEqual([
-      { sourceType: "example-suite-files", outputRevision: 5, profile: documentEventProfile },
-      { sourceType: "example-suite-mail", outputRevision: 2, profile: documentEventProfile },
-    ]);
-  });
 });

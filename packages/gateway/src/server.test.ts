@@ -12100,6 +12100,107 @@ describe("filter lists on a sync page", () => {
     ).toEqual([expect.objectContaining({ outcome: "current" })]);
   });
 
+  test("a device's own list is filed under the stream its page's documents are written to, at the page's version", async () => {
+    const { createSource } = await import("./data/repositories/SourceRepository.js");
+    const type = SourceType("visits-synth");
+    upsertSourceDocumentProfiles(
+      db,
+      [
+        {
+          sourceType: type,
+          outputRevision: 2,
+          profile: {
+            documentTypes: ["visit"],
+            personRoles: [],
+            metadataFields: [
+              {
+                path: "extra.directory",
+                type: "string",
+                description: "Directory id.",
+                filter: {
+                  capability: "membership",
+                  minVersion: 2,
+                  scope: "device",
+                  noun: { one: "directory", many: "directories" },
+                  picker: "search",
+                },
+              },
+            ],
+          },
+        },
+      ],
+      1000,
+    );
+    const host = (name: string) =>
+      createDevice(db, {
+        name: `${name}-${randomUUID()}`,
+        kind: "collector",
+        capabilities: {
+          hostableSourceTypes: [type],
+          multiDeviceModes: { [type]: "partitioned" as const },
+          memberScopedParams: { [type]: [] },
+          syncLease: true,
+        },
+      });
+    const laptop = host("laptop");
+    const desktop = host("desktop");
+    const source = createSource(db, {
+      type,
+      accountId: AccountId("local"),
+      deviceId: laptop.id,
+      multiDeviceMode: "partitioned",
+    });
+    addSourceMember(db, source.id, desktop.id);
+
+    for (const device of [laptop, desktop]) {
+      const res = await app.request("/documents/with-cursor", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${createToken(db, device.id, [SCOPE_WRITE_ALL, SCOPE_READ]).token}`,
+        },
+        body: JSON.stringify({
+          providerId: "visits-synth",
+          sourceId: source.id,
+          documents: [makeDocPayload("day-1", "visits-synth", source.id)],
+          hasMore: false,
+          cursor: { page: 1 },
+          sourceVersion: 2,
+          filterLists: [
+            {
+              field: "extra.directory",
+              digest: digest(device.name),
+              part: 0,
+              final: true,
+              items: [{ id: "dir-1", label: "Atlas" }],
+            },
+          ],
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        ingested: 1,
+        filterLists: [{ field: "extra.directory", outcome: "published" }],
+      });
+    }
+
+    const streams = [laptop.id, desktop.id].sort();
+    expect(
+      db
+        .prepare<[string], { stream_id: string; source_version: number }>(
+          "SELECT stream_id, source_version FROM documents WHERE source_id = ? ORDER BY stream_id",
+        )
+        .all(source.id),
+    ).toEqual(streams.map((stream_id) => ({ stream_id, source_version: 2 })));
+    expect(
+      db
+        .prepare<[string], { device_id: string }>(
+          "SELECT device_id FROM source_filter_lists WHERE source_id = ? AND field = 'extra.directory' ORDER BY device_id",
+        )
+        .all(source.id),
+    ).toEqual(streams.map((device_id) => ({ device_id })));
+  });
+
   test("a page without lists answers without the key", async () => {
     const res = await post({ ...page(undefined) });
     expect(res.status).toBe(200);
