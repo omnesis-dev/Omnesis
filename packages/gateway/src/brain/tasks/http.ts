@@ -7,7 +7,7 @@
  * edit, accept or ignore a suggestion, confirm or keep a proposed change,
  * reopen, delete, undo), and opening a conversation about a task.
  *
- * Tasks are available on every install: a user can keep their own tasks with
+ * Tasks require their Omnesis Lab opt-in: a user can keep their own tasks with
  * no model assigned. Suggestions and proposals only appear when the Brain
  * runs.
  */
@@ -212,6 +212,7 @@ export function mountTaskRoutes(app: RouteApp, opts: MountTaskRoutesOpts): void 
   // task in the state it was in before its last change.
   for (const path of ["/tasks", "/tasks/*"])
     app.use(path, async (c, next) => {
+      if (!tasks.isEnabled()) throw new NotFoundError("Tasks are disabled in Omnesis Lab");
       await next();
       c.header("Cache-Control", "no-store");
     });

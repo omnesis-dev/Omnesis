@@ -118,6 +118,43 @@ describe("EnableBankingClient", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  test("a bank-side ASPSP_ERROR is transient with a remediation, whatever its status", async () => {
+    for (const status of [400, 422, 502]) {
+      const fetchImpl = vi.fn(async () =>
+        jsonResponse(
+          { error: "ASPSP_ERROR", error_description: "invented upstream detail" },
+          { status },
+        ),
+      );
+      const client = makeClient(fetchImpl as unknown as typeof fetch);
+      const err = await client.getBalances("uid-secret-2").catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(SyncError);
+      expect(err).toMatchObject({ kind: "transient", scope: "source" });
+      expect((err as SyncError).message).toContain("ASPSP_ERROR");
+      expect((err as SyncError).message).toContain(String(status));
+      expect((err as SyncError).message).not.toContain("uid-secret-2");
+      expect((err as SyncError).message).not.toContain("invented upstream detail");
+      expect((err as SyncError).remediation).toEqual({
+        summary: "Your bank returned an error",
+        steps: [
+          "This usually clears on its own; the next sync retries.",
+          "If it keeps happening, reconnect the bank from its source in the portal.",
+        ],
+        restartRequired: false,
+      });
+    }
+  });
+
+  test("another 4xx code stays unknown, with no remediation", async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({ error: "WRONG_REQUEST_PARAMETERS" }, { status: 400 }),
+    );
+    const client = makeClient(fetchImpl as unknown as typeof fetch);
+    const err = await client.getBalances("uid-1").catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: "unknown" });
+    expect((err as SyncError).remediation).toBeUndefined();
+  });
+
   test("5xx maps to transient", async () => {
     const fetchImpl = vi.fn(async () => new Response("oops", { status: 503 }));
     const client = makeClient(fetchImpl as unknown as typeof fetch);

@@ -114,6 +114,29 @@
             </intent-filter>
         </service>
 
+        <!-- The phone side of the watch relay. Google Play services binds it to deliver what a
+             paired watch sends: requests and messages on the relay's paths, the DataItems the
+             watch puts (recordings and queued relays), and the watch app coming into reach.
+             Paths and the capability name are WearDataLayer's. -->
+        <service
+            android:name=".wear.WearRelayService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <action android:name="com.google.android.gms.wearable.REQUEST_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/omnesis/" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/omnesis/recording/" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/omnesis/queued/" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.CAPABILITY_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:path="/omnesis_watch" />
+            </intent-filter>
+        </service>
+
         <!-- Omnesis Quick Settings tile: opens the capture screen directly
              (after a keyguard unlock on a locked device — see TellBrainTileService). -->
         <service

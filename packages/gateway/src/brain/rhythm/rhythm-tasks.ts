@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Cognition Steward's time-driven background tasks, on the same
+ * The Brain's time-driven background tasks, on the same
  * `PeriodicTask` shape as the run drainer:
  *
  *   - `cognition.dailyRhythm` — a coarse tick whose due-gate fires the
@@ -87,6 +87,7 @@ export interface CognitionRhythmOpts {
   log: Logger;
   /** Live kill-switch — the Briefs feature-gate verdict, re-read per tick. */
   isEnabled: () => boolean;
+  tasksEnabled?: () => boolean;
   /** Live settings slices (config is hot-reloadable). */
   getDailyRunHour: () => number;
   /** Sources the Brain never processes (`brain.excludedSources`). */
@@ -274,7 +275,8 @@ export function createCognitionRhythmTasks(
     initialArgs: undefined,
     isIdle: isIdleResult,
     async run(): Promise<TaskOutcome<unknown, IdleResult>> {
-      if (!opts.isEnabled()) return { kind: "done", value: { idle: true } };
+      if (!opts.isEnabled() || opts.tasksEnabled?.() === false)
+        return { kind: "done", value: { idle: true } };
       try {
         const result = await runWithPriority("background", () =>
           runDecaySweepPass({
@@ -388,6 +390,7 @@ export function createCognitionRhythmTasks(
             getSelfPersonId: opts.getSelfPersonId ?? (() => null),
             getTimeHorizonDays: opts.getCollisionTimeHorizonDays ?? (() => 60),
             getLoopCollisionsEnabled: () => opts.getCollisionEnabled?.() ?? false,
+            tasksEnabled: opts.tasksEnabled ?? (() => true),
             getAnnotationContradictionsEnabled: () =>
               opts.getAnnotationContradictionsEnabled?.() ?? false,
             getAnnotationContradictionsMaxPerSweep:
@@ -565,6 +568,7 @@ export function createCognitionRhythmTasks(
       try {
         const result = await runWithPriority("background", () =>
           runProvenanceRecheckSweepPass({
+            tasksEnabled: opts.tasksEnabled ?? (() => true),
             db: opts.db,
             writeGate: opts.writeGate,
             clock,
@@ -632,21 +636,21 @@ export function createCognitionRhythmTasks(
   const jobs: BackgroundJob[] = [
     periodicJob(dailyTask, {
       scheduler,
-      displayName: "Cognition Steward daily rhythm",
+      displayName: "Brain daily rhythm",
       description:
-        "Enqueues the once-per-day Cognition Steward runs at the configured hour: one batch review per source that produced high-throughput structured data during the previous day.",
+        "Enqueues the once-per-day Brain runs at the configured hour: one batch review per source that produced high-throughput structured data during the previous day.",
       category: "briefs",
       tracker: new StatelessTracker(),
       isDisabled: () => !opts.isEnabled(),
     }),
     periodicJob(decayTask, {
       scheduler,
-      displayName: "Cognition Steward decay sweep",
+      displayName: "Brain decay sweep",
       description:
         "Schedules status-check runs on stale open loops with exponential back-off, so the agent revisits, demotes, and eventually deletes loops no new data has touched.",
       category: "briefs",
       tracker: new StatelessTracker(),
-      isDisabled: () => !opts.isEnabled(),
+      isDisabled: () => !opts.isEnabled() || opts.tasksEnabled?.() === false,
     }),
     periodicJob(observationRetentionTask, {
       scheduler,
@@ -659,7 +663,7 @@ export function createCognitionRhythmTasks(
     }),
     periodicJob(digestTask, {
       scheduler,
-      displayName: "Cognition Steward morning digest",
+      displayName: "Brain morning digest",
       description:
         "Starts the once-a-morning brief run after the overnight batches settle (readiness barrier + grace deadline). Off unless brain.digest.enabled.",
       category: "briefs",
@@ -668,7 +672,7 @@ export function createCognitionRhythmTasks(
     }),
     periodicJob(synthesisTask, {
       scheduler,
-      displayName: "Cognition Steward synthesis (Noticing)",
+      displayName: "Brain synthesis (Noticing)",
       description:
         "Fires the periodic generative 'Noticing' pass — ranges over the whole corpus to originate a non-obligation connection, trend, or gap. Off unless brain.synthesis.enabled.",
       category: "briefs",
@@ -677,7 +681,7 @@ export function createCognitionRhythmTasks(
     }),
     periodicJob(collisionTask, {
       scheduler,
-      displayName: "Cognition Steward collision sweep",
+      displayName: "Brain collision sweep",
       description:
         "Finds distinct loops sharing a person, document, or deadline day — and live annotations disagreeing on one subject + claim type — and seeds synthesis runs to judge them. Off unless brain.collision.enabled or brain.collision.annotationContradictions.enabled.",
       category: "briefs",
@@ -691,7 +695,7 @@ export function createCognitionRhythmTasks(
     }),
     periodicJob(sweepTask, {
       scheduler,
-      displayName: "Cognition Steward scheduled sweeps",
+      displayName: "Brain scheduled sweeps",
       description:
         "Fires the built-in prompt-steered sweep themes (finances, waiting-on-others, relationships, health, horizon, subscriptions) on their cadences. Off unless brain.sweepsEnabled.",
       category: "briefs",
@@ -700,7 +704,7 @@ export function createCognitionRhythmTasks(
     }),
     periodicJob(mergeAdjudicationTask, {
       scheduler,
-      displayName: "Cognition Steward merge adjudication",
+      displayName: "Brain merge adjudication",
       description:
         "Enqueues a merge_adjudication run for each pending person-merge candidate the deterministic auto-approve tier left undecided — the background agent then records merge / distinct / unsure with a user-visible reason. Self-touching candidates are never enqueued. Off unless brain.mergeAdjudication.enabled.",
       category: "briefs",
@@ -709,7 +713,7 @@ export function createCognitionRhythmTasks(
     }),
     periodicJob(bootstrapTask, {
       scheduler,
-      displayName: "Cognition Steward bootstrap",
+      displayName: "Brain bootstrap",
       description:
         "Retrospective lane: reviews PAST documents that still carry a future-dated semantic time (recent→oldest), seeding temporal annotations and open loops from history. Goes quiet when nothing is left and reopens when a source is added or a new day begins. Lowest queue priority; off unless brain.bootstrap.enabled.",
       category: "briefs",
@@ -718,7 +722,7 @@ export function createCognitionRhythmTasks(
     }),
     periodicJob(reverificationTask, {
       scheduler,
-      displayName: "Cognition Steward re-verification sweep",
+      displayName: "Brain re-verification sweep",
       description:
         "Once a day, enqueues verification runs that re-ground the stalest live annotations against their cited evidence (self-person facts first) — re-affirming, weakening, superseding, or retracting each. Off unless brain.reverification.enabled and the annotations layer it re-grounds (brain.annotations.enabled).",
       category: "briefs",
@@ -727,7 +731,7 @@ export function createCognitionRhythmTasks(
     }),
     periodicJob(provenanceRecheckTask, {
       scheduler,
-      displayName: "Cognition Steward provenance recheck",
+      displayName: "Brain provenance recheck",
       description:
         "When an annotation prior is invalidated or superseded, enqueues a re-examination of each brief/loop that was built on it (one folded run per dependent). Kept to a small per-pass budget because the rechecks execute strictly serialized in the run drainer; the budget is a soft cap — dependents of priors that died at the same instant always enqueue together, overshooting by at most that one group. Off unless brain.provenanceRecheck.enabled and the annotations layer (brain.annotations.enabled).",
       category: "briefs",

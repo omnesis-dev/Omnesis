@@ -2501,7 +2501,7 @@ const agent = z
   .strict();
 
 // ── brain ─────────────────────────────────────────────────────────────────
-// Omnesis Brain / Cognition Steward tunables (experimental — the feature is active
+// Omnesis Brain tunables (experimental — the feature is active
 // only when experimental mode is on AND a background-agent model is assigned
 // via `inference.assignments["background-agent"]`). Every duration knob is
 // deliberately floor-less so tests can compress hour/month-scale behaviour
@@ -3578,7 +3578,7 @@ const inferenceAssignmentsObject = z
     // "apple-vision", "tesseract", and "gguf" — see `ocr` below for the GGUF
     // model paths.
     ocr: assignmentValue.optional(),
-    // The note agent and the Brain's Cognition Steward. Keyed by the capability
+    // The note agent and the Brain. Keyed by the capability
     // role id — assignment keys always equal their `CapabilityRole`, which
     // is what lets the registry, the portal picker, and `/admin/models`
     // treat every role generically. Never assigned by default: unset means
@@ -4050,7 +4050,7 @@ export const omnesisConfigSchema = z
       .optional(),
     multiDevice: multiDevice.describe("Sources hosted by several devices.").optional(),
     agent: agent.describe("Agent tunables.").optional(),
-    brain: brain.describe("Omnesis Brain / Cognition Steward tunables (experimental).").optional(),
+    brain: brain.describe("Omnesis Brain tunables (experimental).").optional(),
     enrichment: enrichment.describe("Omnesis-derived enrichment signals.").optional(),
   })
   .strict();

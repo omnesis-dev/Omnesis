@@ -5,6 +5,7 @@ import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { createLogger, normalizeEmail } from "@omnesis/core";
 import { resolvePersonId, CONTACT_NAME_FLOOR } from "../../domain/PeopleResolutionService.js";
+import { DOCUMENTS_ID_TYPE_INDEX } from "../migration-216-documents-id-type-index.js";
 import {
   MATCH_RANK,
   MATCH_RANK_NONE,
@@ -1024,6 +1025,48 @@ export function listMergedAliasesForPerson(
   return out;
 }
 
+interface PersonInteractionCounts {
+  email?: number;
+  chat?: number;
+  meeting?: number;
+}
+
+/**
+ * Distinct documents per `metadata.documentType` across a person's merge
+ * class.
+ *
+ * The merge-class CTE walks the full `merged_into` graph down from the
+ * queried person, so the counts include documents attached to every loser in
+ * the equivalence class — even a multi-level chain (A→B→C) that exists
+ * transiently before `collapseTransitiveChains` flattens it. A one-hop
+ * expansion (direct losers only) would drop the deepest member's docs.
+ *
+ * The cost is one index probe per linked document, never a row read: the type
+ * comes from `DOCUMENTS_ID_TYPE_INDEX`. Reading `metadata` from the table
+ * walks each document's whole content first, so for a person linked to most
+ * of the corpus, such as the owner, a row read would read the whole corpus on
+ * every lookup that matches them. Two things keep the read on the index: the
+ * `INDEXED BY` pin, since the planner never chooses an expression index as
+ * covering, and the materialized CTE, since SQLite gives up the covering read
+ * when the indexed expression is also grouped in the same SELECT. `IN`
+ * visits each document once however many links and roles join it to the
+ * class, so `COUNT(*)` counts distinct documents.
+ */
+export const PERSON_CHANNEL_COUNTS_SQL = `WITH RECURSIVE merge_class(id) AS (
+     SELECT id FROM people WHERE id = ?
+     UNION
+     SELECT p.id FROM people p JOIN merge_class mc ON p.merged_into = mc.id
+   ),
+   linked(document_type) AS MATERIALIZED (
+     SELECT json_extract(d.metadata, '$.documentType')
+     FROM documents d INDEXED BY ${DOCUMENTS_ID_TYPE_INDEX}
+     WHERE d.id IN (
+       SELECT dp.document_id FROM document_people dp
+       WHERE dp.person_id IN (SELECT id FROM merge_class)
+     )
+   )
+   SELECT document_type, COUNT(*) AS n FROM linked GROUP BY document_type`;
+
 /**
  * Split a person's distinct-document count across three interaction
  * channels: emails, chats, meetings. Counts include every doc
@@ -1036,40 +1079,12 @@ export function listMergedAliasesForPerson(
  * document type outside this enum simply doesn't roll into any of the
  * three buckets (graceful degradation).
  */
-interface PersonInteractionCounts {
-  email?: number;
-  chat?: number;
-  meeting?: number;
-}
-
 export function getPersonInteractionCountsByChannel(
   db: Db,
   personId: string,
 ): PersonInteractionCounts {
-  // `documentType` lives inside the `metadata` JSON blob on every
-  // document row (set by the source's normaliser via `defineSource`).
-  // No dedicated column — `json_extract` is fine because the predicate
-  // filters down to one person's documents first, then groups.
-  //
-  // The merge-class CTE walks the full `merged_into` graph down from the
-  // queried person, so the counts include documents attached to every loser
-  // in the equivalence class — even a multi-level chain (A→B→C) that exists
-  // transiently before `collapseTransitiveChains` flattens it. A one-hop
-  // expansion (direct losers only) would drop the deepest member's docs.
   const rows = db
-    .prepare<[string], { document_type: string | null; n: number }>(
-      `WITH RECURSIVE merge_class(id) AS (
-         SELECT id FROM people WHERE id = ?
-         UNION
-         SELECT p.id FROM people p JOIN merge_class mc ON p.merged_into = mc.id
-       )
-       SELECT json_extract(d.metadata, '$.documentType') AS document_type,
-              COUNT(DISTINCT d.id) AS n
-       FROM document_people dp
-       JOIN documents d ON d.id = dp.document_id
-       WHERE dp.person_id IN (SELECT id FROM merge_class)
-       GROUP BY document_type`,
-    )
+    .prepare<[string], { document_type: string | null; n: number }>(PERSON_CHANNEL_COUNTS_SQL)
     .all(personId);
   const out: PersonInteractionCounts = {};
   for (const r of rows) {

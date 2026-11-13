@@ -1,4 +1,4 @@
-# Feature-subtree allowlist for the Cognition Steward feature: the Brain, the
+# Feature-subtree allowlist for the Brain feature: the Brain, the
 # morning brief, Tasks and the note agent.
 #
 # One path per line; a trailing "/" marks a directory prefix, otherwise the

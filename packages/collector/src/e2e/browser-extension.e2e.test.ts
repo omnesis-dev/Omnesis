@@ -97,6 +97,7 @@ describe.skipIf(!browserAvailable)("Browser-capture extension in headless Chromi
   beforeAll(async () => {
     harness = new SyntheticE2EHarness({
       gatewayMode: "synthetic-experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       embedderBackend: "fake",
     });
     await harness.start();

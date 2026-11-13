@@ -530,7 +530,12 @@ IN (…)`, `LENGTH(content)`) does work proportional to the table, not to the
 batch, however small the batch is. Resolve the batch to concrete ids first and
 read through an index. Where the plan is load-bearing, pin it (`CROSS JOIN`,
 `INDEXED BY`) and assert it in a test: both shapes return the same rows, and
-only the plan says what it cost.
+only the plan says what it cost. A column stored after a document's `content`
+(`metadata` and every later one) costs a walk through that content's overflow
+pages; when a query needs only such a value for many rows, keep it in an
+index on an expression. SQLite reads an expression index as covering only
+when the query names it with `INDEXED BY` and does not also group by the
+expression in the same `SELECT` (`PERSON_CHANNEL_COUNTS_SQL`).
 
 The gateway can keep `sqlite_stat1` current (`data/planner-statistics.ts`, off
 unless `gateway.backfill.plannerStatistics.interval` is set): `PRAGMA optimize`
@@ -545,8 +550,9 @@ and sorts the whole match. For mixed directions, bound the leading column and
 exclude the cursor's tie: `ts <= ? AND NOT (ts = ? AND id <= ?)`.
 
 **A long read holds the WAL open.** The writer checkpoints between ops once
-about 2,000 frames wait and rewinds the WAL once it passes `journal_size_limit`
-(`workers/wal-checkpoint.ts`), but SQLite gives a checkpoint no frame limit, and
+about 2,000 frames wait, rewinds the WAL once it passes its 64 MiB size limit,
+and cuts the file back to that limit in slices between ops, never in a commit
+(`workers/wal-checkpoint.ts`). SQLite gives a checkpoint no frame limit, and
 a reader holding an old snapshot pins every frame written after it. A
 statement or open iterator that runs for a minute on an `omnesis.db` read
 handle therefore lets a minute of writes pile up uncopied, and the first
@@ -1407,3 +1413,13 @@ consumers ask the registry and fail closed when a required projection is missing
 They preserve attributed speech as indivisible witnesses and never expand a
 partial read. The semantic `evidenceAuthority` metadata digest participates in
 normal Knowledge source invalidation; its value alone does not grant authority.
+
+### Omnesis Lab is runtime state, separate from configuration
+
+Brain, Tasks and Watches read their live opt-ins through `labFeatureEnabled(db, id)`.
+Persisted choices use the single writer and are advertised by `/status`; settings only
+control feature behavior. Agent tool discovery, prompts, context reads, invocation admission,
+and background producers must all respect the matching feature flag. Task automation
+requires both Brain and Tasks. Preserve cleanup and evidence invalidation when a feature
+is disabled. The canonical names, descriptions and original SVGs live in
+`packages/gateway/src/lab/catalog.ts` and are served to every client by `/admin/lab`.

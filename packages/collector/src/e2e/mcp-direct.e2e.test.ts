@@ -351,10 +351,17 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
     }
   }, 90_000);
 
-  test("exposes the experimental Direct extensions only in experimental mode", async () => {
+  test("exposes Direct extensions only after Brain and Tasks are opted into the Lab", async () => {
     let authorized: AuthorizedMcpClient | undefined;
+    let labAvailable = false;
+    const setLab = (feature: "brain" | "tasks", enabled: boolean) =>
+      harness.gatewayJson(`/admin/lab/${feature}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      });
     try {
       await harness.restartGateway({ gatewayMode: "experimental" });
+      labAvailable = true;
       authorized = await oauthClient({
         principalName: "Experimental retrieval assistant",
         grantName: "Experimental retrieval access",
@@ -362,7 +369,22 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
         capabilities: ["direct"],
       });
 
-      const listed = await authorized.client.listTools();
+      const client = authorized.client;
+      const toolNames = async () =>
+        (await client.listTools(undefined, { cacheMode: "refresh" })).tools.map(
+          (tool) => tool.name,
+        );
+      const status = await harness.gatewayJson<{ lab: { brain: boolean; tasks: boolean } }>(
+        "/status",
+      );
+      expect(status.lab).toMatchObject({ brain: false, tasks: false });
+      // Experimental mode opens the Lab; it does not grant task awareness.
+      expect(await toolNames()).toEqual(STABLE_DIRECT_TOOL_NAMES);
+      await setLab("brain", true);
+      expect(await toolNames()).toEqual(STABLE_DIRECT_TOOL_NAMES);
+      await setLab("tasks", true);
+
+      const listed = await client.listTools(undefined, { cacheMode: "refresh" });
       expect(listed.tools.map((tool) => tool.name)).toEqual(DIRECT_TOOL_NAMES);
       const schemas = new Map(listed.tools.map((tool) => [tool.name, tool.inputSchema]));
       expect(schemas.get("entity_context")?.required).toEqual(
@@ -425,11 +447,26 @@ describe("Direct MCP OAuth — synthetic-corpus gateway", () => {
         kind: "error",
         code: "loop_not_found",
       });
+
+      // Already-authorized clients lose the extension inventory immediately
+      // when either dependency is disabled; the ordinary Direct tools remain.
+      await setLab("tasks", false);
+      expect(await toolNames()).toEqual(STABLE_DIRECT_TOOL_NAMES);
+      await setLab("tasks", true);
+      await setLab("brain", false);
+      expect(await toolNames()).toEqual(STABLE_DIRECT_TOOL_NAMES);
     } finally {
       try {
         if (authorized) await closeAuthorized(authorized);
       } finally {
-        await harness.restartGateway({ gatewayMode: "stable" });
+        try {
+          if (labAvailable) {
+            await setLab("tasks", false);
+            await setLab("brain", false);
+          }
+        } finally {
+          await harness.restartGateway({ gatewayMode: "stable" });
+        }
       }
     }
   }, 120_000);

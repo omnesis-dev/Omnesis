@@ -26,10 +26,13 @@ dependencyResolutionManagement {
 rootProject.name = "OmnesisAndroid"
 
 include(":app")
+include(":wear")
 include(":core-transport")
 include(":core-pairing")
 include(":core-designsystem")
 include(":core-setup")
+include(":core-wear-protocol")
+include(":wear-core")
 include(":feature-health")
 include(":feature-call-log")
 include(":feature-app-usage")

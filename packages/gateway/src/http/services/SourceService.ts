@@ -103,6 +103,7 @@ import {
 import { epochScope } from "../../source-write-epoch-fence.js";
 import { listSourceSyncIssues } from "../../data/repositories/SourceSyncIssueRepository.js";
 import { withActivity } from "../../observability/main-activity.js";
+import { getSourceFamilyMeta } from "../../data/repositories/SourceFamilyMetaRepository.js";
 import { assertSourceJoinDiscoverable } from "./source-join-preflight.js";
 import { SourceStreamCleanupCoordinator } from "./SourceStreamCleanupCoordinator.js";
 import {
@@ -2694,6 +2695,15 @@ export class SourceService {
   /** Source-meta map keyed by both full sourceId and source-type. */
   getMeta() {
     return getSourceMeta(this.deps.db);
+  }
+
+  /**
+   * Only the families' own declarations, keyed by source type: no account's
+   * id, label or icon. What an unauthenticated caller on the open internet
+   * is shown.
+   */
+  getFamilyMeta() {
+    return getSourceFamilyMeta(this.deps.db);
   }
 
   /** Current write epoch of one cursor row (`""` = shared, else a member device's own). */

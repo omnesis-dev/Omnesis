@@ -22,8 +22,8 @@ export const OmnesisSparkle = html`
 export function dependentHref(dependent) {
   const id = encodeURIComponent(dependent.id);
   return dependent.kind === "observation"
-    ? `/portal/debug/cognition/observations/${id}`
-    : `/portal/debug/cognition/knowledge/${id}?kind=loop`;
+    ? `/portal/debug/brain/observations/${id}`
+    : `/portal/debug/brain/knowledge/${id}?kind=loop`;
 }
 
 // Consumption provenance for one annotation: the observations/loops the agent
@@ -123,7 +123,13 @@ export function AnnotationList({ annotations = [], store }) {
         ${a.claimBasis && html`
           <span class="meta-annotation-basis" title="Claim basis — quoted: the evidence states it; inferred: one deduction from the source; synthesized: assembled across sources">${a.claimBasis}</span>
         `}
-        ${a.verificationState && html`
+        ${a.notRechecked === "source_excluded"
+          ? html`
+          <span class="meta-annotation-verify" title=${`Not re-checked: it rests on a source excluded from the Brain, so the background re-check skips it. Stored state: ${a.verificationState ?? "none"}${a.lastVerifiedAt ? `, ${timeAgo(a.lastVerifiedAt)}` : ""}.`}>
+            not re-checked · source excluded
+          </span>
+        `
+          : a.verificationState && html`
           <span class="meta-annotation-verify" title="Entailment check — whether the evidence quote was last judged to establish the claim">
             ${a.verificationState}${a.lastVerifiedAt ? ` · ${timeAgo(a.lastVerifiedAt)}` : ""}
           </span>

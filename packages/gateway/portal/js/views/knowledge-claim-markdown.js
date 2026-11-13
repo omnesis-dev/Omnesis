@@ -34,7 +34,7 @@ export function internalKnowledgeHref(value) {
   const path =
     match[1] === "source"
       ? `/portal/doc/${encodeURIComponent(match[2])}`
-      : `/portal/debug/cognition/knowledge/${encodeURIComponent(match[2])}`;
+      : `/portal/debug/brain/knowledge/${encodeURIComponent(match[2])}`;
   const query = new URLSearchParams();
   if (match[1] === "loop") query.set("kind", "loop");
   if (match[3]) query.set(match[3], match[4]);

@@ -23,7 +23,9 @@ import {
   type EntailmentCompleter,
   type EntailmentPromptStyle,
   type EntailmentUsage,
+  type LoadEntailmentDeps,
 } from "./entailment-loader.js";
+import { VERIFIER_CALL_LIMIT_MS } from "./verifier-limits.js";
 import type { ResolvedAssignment } from "@omnesis/core";
 
 const INPUT = {
@@ -298,6 +300,56 @@ describe("loadEntailmentFromResolved", () => {
         deps,
       ),
     ).toBeNull();
+  });
+});
+
+describe("Codex verifier call limit", () => {
+  test("a call outlives the agent-turn default and ends at the verifier call limit", async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted: unknown;
+      const backend = {
+        name: "codex",
+        model: "gpt-5.4",
+        async *runTurn(_input: unknown, signal?: AbortSignal) {
+          await new Promise<void>((_resolve, reject) =>
+            signal?.addEventListener("abort", () => {
+              aborted = signal.reason;
+              reject(signal.reason);
+            }),
+          );
+          yield* [];
+        },
+      };
+      const verifier = await loadEntailmentFromResolved(
+        {
+          role: "entailment-verifier",
+          kind: "codex",
+          model: "gpt-5.4",
+          allowRemoteInference: true,
+          available: true,
+        },
+        {
+          configDir: "/tmp/omnesis-entailment-loader-test-nonexistent",
+          getPromptStyle: () => "judge" as const,
+          codexRuntimeService: {
+            createBackend: () => backend,
+          } as unknown as NonNullable<LoadEntailmentDeps["codexRuntimeService"]>,
+        },
+      );
+      expect(verifier).not.toBeNull();
+      const verdict = verifier!.verify({ claim: "c", evidence: "e" });
+      const settled = verdict.then(
+        () => "resolved",
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      );
+      await vi.advanceTimersByTimeAsync(45_001);
+      expect(aborted).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(VERIFIER_CALL_LIMIT_MS - 45_001);
+      expect(await settled).toMatch(/timed out/i);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

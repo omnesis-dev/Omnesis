@@ -1344,6 +1344,8 @@ public struct StatusSnapshot: Decodable, Sendable {
     /// gateway that omits the field reads as `false`, so the experimental UI
     /// stays hidden rather than crashing the decode.
     public let experimental: Bool
+    public let lab: LabFlags?
+    public let labAvailable: Bool
     /// Whether the gateway runs in developer mode (`OMNESIS_DEV_MODE`). Separate
     /// from experimental; gates the developer-annotation capture affordance
     /// (shake-to-annotate). Decoded leniently — an older gateway that omits the
@@ -1369,6 +1371,8 @@ public struct StatusSnapshot: Decodable, Sendable {
         diskUsage: DiskUsage? = nil,
         latestActivityBySource: [String: LatestActivity]?,
         experimental: Bool = false,
+        lab: LabFlags? = nil,
+        labAvailable: Bool = false,
         developer: Bool = false,
         tasks: TasksStatus? = nil,
         noteAgent: NoteAgentStatus? = nil,
@@ -1384,6 +1388,8 @@ public struct StatusSnapshot: Decodable, Sendable {
         self.diskUsage = diskUsage
         self.latestActivityBySource = latestActivityBySource
         self.experimental = experimental
+        self.lab = lab
+        self.labAvailable = labAvailable
         self.developer = developer
         self.tasks = tasks
         self.noteAgent = noteAgent
@@ -1402,6 +1408,8 @@ public struct StatusSnapshot: Decodable, Sendable {
         case diskUsage
         case latestActivityBySource
         case experimental
+        case lab
+        case labAvailable
         case developer
         case tasks
         case noteAgent
@@ -1422,6 +1430,8 @@ public struct StatusSnapshot: Decodable, Sendable {
             [String: LatestActivity].self, forKey: .latestActivityBySource
         )
         experimental = try c.decodeIfPresent(Bool.self, forKey: .experimental) ?? false
+        lab = c.contains(.lab) ? ((try? c.decode(LabFlags.self, forKey: .lab)) ?? LabFlags()) : nil
+        labAvailable = try c.decodeIfPresent(Bool.self, forKey: .labAvailable) ?? false
         developer = try c.decodeIfPresent(Bool.self, forKey: .developer) ?? false
         // A shape this app cannot read reads as absent rather than failing
         // the whole snapshot.

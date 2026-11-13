@@ -61,6 +61,7 @@ interface CheckpointSample {
   ts: number;
   ms: number;
   outcome: WalCheckpointRun["outcome"];
+  cutBytes: number;
 }
 
 export interface WriterTaskRunnerOptions {
@@ -128,6 +129,8 @@ export class WriterTaskRunner implements TaskRunner {
     rewinds: 0,
     deferredRewinds: 0,
     maxDeferredStreak: 0,
+    cuts: 0,
+    cutBytes: 0,
   };
   private readonly checkpointSamples: CheckpointSample[] = [];
   private lastCheckpoint: WalCheckpointRun | null = null;
@@ -304,6 +307,8 @@ export class WriterTaskRunner implements TaskRunner {
       rewinds: recent.filter((s) => s.outcome === "rewound").length,
       deferredRewinds: recent.filter((s) => s.outcome === "deferred").length,
       maxDeferredStreak,
+      cuts: recent.filter((s) => s.outcome === "cut").length,
+      cutBytes: recent.reduce((sum, s) => sum + s.cutBytes, 0),
       lastLogFrames: this.lastCheckpoint?.log ?? null,
       lastCheckpointedFrames: this.lastCheckpoint?.checkpointed ?? null,
       lifetime: { ...this.checkpointLifetime },
@@ -322,6 +327,7 @@ export class WriterTaskRunner implements TaskRunner {
       ts: Date.now(),
       ms: run.ms,
       outcome: run.outcome,
+      cutBytes: run.cutBytes ?? 0,
     });
     if (this.checkpointSamples.length > CHECKPOINT_SAMPLES) this.checkpointSamples.shift();
     if (run.outcome === "rewound") {
@@ -331,6 +337,9 @@ export class WriterTaskRunner implements TaskRunner {
           `WAL rewound from ${run.rewoundFrames ?? 0} frames after ${this.deferredSinceRewind} deferred attempts`,
         );
       this.deferredSinceRewind = 0;
+    } else if (run.outcome === "cut") {
+      stats.cuts += 1;
+      stats.cutBytes += run.cutBytes ?? 0;
     } else if (run.outcome === "deferred") {
       stats.deferredRewinds += 1;
       this.deferredSinceRewind += 1;
@@ -338,7 +347,9 @@ export class WriterTaskRunner implements TaskRunner {
     }
     if (run.ms > SLOW_CHECKPOINT_MS)
       log.info(
-        `wal_checkpoint(${run.mode}) log=${run.log} checkpointed=${run.checkpointed} in ${run.ms.toFixed(0)}ms`,
+        run.mode === "CUT"
+          ? `WAL file cut by ${run.cutBytes ?? 0} bytes in ${run.ms.toFixed(0)}ms`
+          : `wal_checkpoint(${run.mode}) log=${run.log} checkpointed=${run.checkpointed} in ${run.ms.toFixed(0)}ms`,
       );
   }
 

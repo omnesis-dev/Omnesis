@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { initializeLabFlags, setLabFlag, type LabFeatureId, type LabFlags } from "./lab/store.js";
+
 import {
   reserveNoteHandoff,
   claimNoteHandoff,
@@ -466,6 +468,7 @@ import {
   type CreatePairingOptions,
   type PendingPairing,
   type DevicePairingRedemption,
+  type DeviceTokenRotation,
   bootstrapSelfFromDevices,
   clearApnsToken,
   clearFcmToken,
@@ -486,6 +489,7 @@ import {
   createPairing,
   consumePairing,
   redeemDevicePairing,
+  rotateDeviceToken,
   revokePairing,
   redeemAgentIntegrationPairing,
   cleanupExpiredPairings,
@@ -727,6 +731,8 @@ import type {
 } from "./transcribe/vocabulary/types.js";
 
 export interface WriteGate extends KnowledgeWriteGate {
+  initializeLabFlags(flags: Partial<LabFlags>): Promise<void>;
+  setLabFlag(id: LabFeatureId, enabled: boolean): Promise<void>;
   advanceTranscriptionVocabularyRebuild(
     settings: VocabularySettings,
   ): Promise<{ ready: boolean; worked: boolean }>;
@@ -1283,16 +1289,16 @@ export interface WriteGate extends KnowledgeWriteGate {
     browserHandle: string,
   ): Promise<
     AccessMutationResult<
-      | { status: "denied"; redirectUri: string; state: string }
-      | { status: "approved"; redirectUri: string; state: string; code: string }
+      | { status: "denied"; redirectUri: string; state: string; resource: string }
+      | { status: "approved"; redirectUri: string; state: string; code: string; resource: string }
     >
   >;
   issueAuthorizationCodeById(
     requestId: string,
   ): Promise<
     AccessMutationResult<
-      | { status: "denied"; redirectUri: string; state: string }
-      | { status: "approved"; redirectUri: string; state: string; code: string }
+      | { status: "denied"; redirectUri: string; state: string; resource: string }
+      | { status: "approved"; redirectUri: string; state: string; code: string; resource: string }
     >
   >;
   exchangeOAuthToken(input: OAuthTokenExchangeInput): Promise<AccessMutationResult<OAuthTokenSet>>;
@@ -1479,6 +1485,7 @@ export interface WriteGate extends KnowledgeWriteGate {
     idempotencyKey?: string;
   }): Promise<DevicePairingRedemption>;
   revokePairing(pairingCode: string): Promise<boolean>;
+  rotateDeviceToken(input: Parameters<typeof rotateDeviceToken>[1]): Promise<DeviceTokenRotation>;
   redeemAgentIntegrationPairing(
     input: Parameters<typeof redeemAgentIntegrationPairing>[1],
   ): Promise<AgentIntegrationPairingResult>;
@@ -1666,8 +1673,8 @@ export interface WriteGate extends KnowledgeWriteGate {
     publishedAt: number,
   ): Promise<{ stored: number }>;
 
-  // ── briefs (the Cognition Steward run queue) ─────────────────────────────
-  /** Enqueue one Cognition Steward run (or fold into a pending row by dedupe key). */
+  // ── briefs (the Brain run queue) ─────────────────────────────
+  /** Enqueue one Brain run (or fold into a pending row by dedupe key). */
   enqueueCognitionRun(
     input: EnqueueCognitionRunInput,
     now: number,
@@ -1714,7 +1721,7 @@ export interface WriteGate extends KnowledgeWriteGate {
    * Returns the number dropped.
    */
   cancelScheduledRunsForLoop(loopId: string): Promise<number>;
-  /** Upsert one Cognition Steward engine-state row (daily marker, sweep versions). */
+  /** Upsert one Brain engine-state row (daily marker, sweep versions). */
   setCognitionEngineState(key: string, value: string): Promise<void>;
   /** Record that the re-verification sweep queued these annotations. */
   markAnnotationsRecheckQueued(
@@ -1746,7 +1753,7 @@ export interface WriteGate extends KnowledgeWriteGate {
   recordLiveVoiceUsage(input: LiveVoiceUsageSample): Promise<void>;
   /** Append one decision-model answer to the decision ledger (idempotent on id). */
   recordCognitionDecision(record: CognitionDecisionRecord): Promise<void>;
-  // Open-loop / brief / notes mutations — the Cognition Steward's tool layer is
+  // Open-loop / brief / notes mutations — the Brain's tool layer is
   // the only production caller (only the agent mutates loops/briefs in
   // V1). The mirror-document upsert is a separate `upsertDocuments` call.
   /** Atomically create an open loop and record its live annotation dependencies. */
@@ -2640,6 +2647,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     consumePairing: (pairingCode, expectedKind) =>
       call("devices.consumePairing", [pairingCode, expectedKind]),
     redeemDevicePairing: (input) => call("devices.redeemDevicePairing", [input]),
+    rotateDeviceToken: (input) => call("devices.rotateDeviceToken", [input]),
     revokePairing: (pairingCode) => call("devices.revokePairing", [pairingCode]),
     redeemAgentIntegrationPairing: (input) =>
       call("devices.redeemAgentIntegrationPairing", [input]),
@@ -2808,6 +2816,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("conversationReadState.agentContentArrived", [conversationId, now]),
     forgetConversationReadState: (conversationIds) =>
       call("conversationReadState.forget", [conversationIds]),
+    initializeLabFlags: (flags) => call("lab.initialize", [flags]),
+    setLabFlag: (id, enabled) => call("lab.set", [id, enabled]),
     createDevAnnotation: (input, now) => call("devAnnotations.create", [input, now]),
     resolveDevAnnotation: (id, now, resolvedNote) =>
       call("devAnnotations.resolve", [id, now, resolvedNote]),
@@ -3277,6 +3287,7 @@ export function directWriteGate(db: Db): WriteGate {
     consumePairing: async (pairingCode, expectedKind) =>
       consumePairing(db, pairingCode, expectedKind),
     redeemDevicePairing: async (input) => redeemDevicePairing(db, input),
+    rotateDeviceToken: async (input) => rotateDeviceToken(db, input),
     revokePairing: async (pairingCode) => revokePairing(db, pairingCode),
     redeemAgentIntegrationPairing: async (input) => redeemAgentIntegrationPairing(db, input),
     cleanupExpiredPairings: async () => cleanupExpiredPairings(db),
@@ -3525,6 +3536,8 @@ export function directWriteGate(db: Db): WriteGate {
     createDevAnnotation: async (input, now) => createDevAnnotation(db, input, now),
     resolveDevAnnotation: async (id, now, resolvedNote) =>
       resolveDevAnnotation(db, id, now, resolvedNote),
+    initializeLabFlags: async (flags) => initializeLabFlags(db, flags),
+    setLabFlag: async (id, enabled) => setLabFlag(db, id, enabled),
     deleteDevAnnotation: async (id) => deleteDevAnnotation(db, id),
     beginAnswerTask: async (input) => beginAnswerTask(db, input),
     completeAnswerTask: async (input) => completeAnswerTask(db, input),

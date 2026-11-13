@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createLogger } from "@omnesis/core";
+import { cloudRelayEnabled, createLogger } from "@omnesis/core";
 import { type DeviceCapability, type DeviceId, type Scope, type TokenId } from "@omnesis/types";
 import { GATEWAY_VERSION } from "../../version.js";
+import { peekPairing } from "../../data/repositories/DeviceRepository.js";
 import { lookupSession } from "../../data/repositories/TokenRepository.js";
 import { applyPendingSelfInfo } from "../../write-gate.js";
 import type Database from "better-sqlite3";
 import type { WriteGate } from "../../write-gate.js";
+import type { PairingServiceResult } from "./PairingService.js";
 import type { StatusCache } from "./StatusCache.js";
 
 type Db = Database.Database;
@@ -40,6 +42,15 @@ export interface AuthServiceDeps {
     kind: "portal",
     capabilities: DeviceCapability,
   ) => Promise<{ device: { id: DeviceId; name: string } } | { error: string; status: 409 }>;
+  /**
+   * Redeems a portal code from a sign-in. That path alone may pick the row, since
+   * it matches the device key the sign-in proved and ignores what the browser
+   * claims about its name or install id.
+   */
+  redeemEnrollmentPairing?: (
+    pairingCode: string,
+    capabilities: DeviceCapability,
+  ) => Promise<PairingServiceResult>;
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -117,6 +128,24 @@ export class AuthService {
     let tokenId: TokenId;
     let scopes: readonly Scope[];
     if (/^[0-9a-fA-F]{10}$/.test(raw)) {
+      const code = raw.toUpperCase();
+      // Sign-in codes exist only with the cloud relay; otherwise nothing is looked up.
+      const preview = cloudRelayEnabled() ? peekPairing(this.deps.db, code) : null;
+      if (preview?.kind === "portal" && preview.enrollment) {
+        const redeemed = await this.deps.redeemEnrollmentPairing?.(
+          code,
+          this.portalCapabilities(opts),
+        );
+        if (redeemed?.outcome === "conflict") {
+          return { ok: false, error: redeemed.error, status: 409 };
+        }
+        if (redeemed?.outcome !== "paired-device") {
+          return { ok: false, error: "Invalid or expired pairing code", status: 401 };
+        }
+        const ttlMs = this.deps.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
+        const sessionId = await w.createSession(redeemed.tokenId, redeemed.scopes, ttlMs);
+        return { ok: true, scopes: redeemed.scopes, sessionId };
+      }
       // Consume the code only if it was minted for the portal. A device code
       // (cli/ios/…) is left intact and reported as a generic miss, so a portal
       // login attempt can't burn a non-portal pairing code.
@@ -124,23 +153,7 @@ export class AuthService {
       if (!pending) {
         return { ok: false, error: "Invalid or expired pairing code", status: 401 };
       }
-      // The portal is static files this gateway serves, so its build is this
-      // build. Stamping it here is what keeps a portal row from reading as
-      // "unknown" forever — it never opens a device socket of its own.
-      const portalCaps: DeviceCapability = { platform: "web", version: GATEWAY_VERSION };
-      // A nameless portal pairing (no admin name on the code) would otherwise
-      // resolve to the shared canonical `portal` device name and collapse every
-      // browser onto one row — each new login then replaces that row and
-      // cascade-deletes the previous browser's session. The browser-supplied
-      // stable name becomes the device's `suggestedName` so distinct browsers
-      // keep distinct rows; `resolveDeviceName` still lets an explicit admin
-      // name on the code win over it.
-      const suggestedName = opts.deviceName?.trim();
-      if (suggestedName) portalCaps.suggestedName = suggestedName;
-      // The browser's install identity is the adoption key on re-login, so
-      // a renamed portal device keeps its row.
-      const installId = opts.installId?.trim();
-      if (installId) portalCaps.installId = installId;
+      const portalCaps = this.portalCapabilities(opts);
       const result = await createOrReplaceDeviceForPair(pending.name, "portal", portalCaps);
       if ("error" in result) return { ok: false, error: result.error, status: result.status };
       const device = result.device;
@@ -163,6 +176,27 @@ export class AuthService {
     const ttlMs = this.deps.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
     const sessionId = await w.createSession(tokenId, scopes, ttlMs);
     return { ok: true, scopes, sessionId };
+  }
+
+  private portalCapabilities(opts: { deviceName?: string; installId?: string }): DeviceCapability {
+    // The portal is static files this gateway serves, so its build is this
+    // build. Stamping it here is what keeps a portal row from reading as
+    // "unknown" forever — it never opens a device socket of its own.
+    const portalCaps: DeviceCapability = { platform: "web", version: GATEWAY_VERSION };
+    // A nameless portal pairing (no admin name on the code) would otherwise
+    // resolve to the shared canonical `portal` device name and collapse every
+    // browser onto one row — each new login then replaces that row and
+    // cascade-deletes the previous browser's session. The browser-supplied
+    // stable name becomes the device's `suggestedName` so distinct browsers
+    // keep distinct rows; `resolveDeviceName` still lets an explicit admin
+    // name on the code win over it.
+    const suggestedName = opts.deviceName?.trim();
+    if (suggestedName) portalCaps.suggestedName = suggestedName;
+    // The browser's install identity is the adoption key on re-login, so
+    // a renamed portal device keeps its row.
+    const installId = opts.installId?.trim();
+    if (installId) portalCaps.installId = installId;
+    return portalCaps;
   }
 
   async logout(sessionId: string | undefined): Promise<void> {

@@ -70,6 +70,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omnesis.android.AppVersionInfo
+import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.components.OmnesisCard
 import dev.omnesis.android.designsystem.theme.OmSpacing
@@ -108,14 +109,17 @@ fun SettingsScreen(
     onUnpaired: () -> Unit,
     focusedSourceId: String? = null,
     onRepair: () -> Unit = {},
+    onOpenLab: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenDevices: () -> Unit = {},
     onOpenPolicies: () -> Unit = {},
+    onOpenOmnesisAccount: () -> Unit = {},
     onOpenAccessAuthorization: () -> Unit = {},
     onOpenPhoneSetup: () -> Unit = {},
     onOpenPhoneSetupStep: (String) -> Unit = {},
     vm: SettingsViewModel = hiltViewModel(),
 ) {
+    val labAvailable by vm.labAvailable.collectAsStateWithLifecycle()
     val mode by vm.appearanceMode.collectAsStateWithLifecycle()
     val gateway by vm.gateway.collectAsStateWithLifecycle()
     val connection by vm.connection.collectAsStateWithLifecycle()
@@ -129,6 +133,7 @@ fun SettingsScreen(
     val pushRegistrationFailed by vm.pushRegistrationFailed.collectAsStateWithLifecycle()
     val voice by vm.voice.collectAsStateWithLifecycle()
     val modelHealth by vm.modelHealth.collectAsStateWithLifecycle()
+    val omnesisAccountOffered by vm.omnesisAccountOffered.collectAsStateWithLifecycle()
     val notificationIssue = notificationSetupIssue(vm.pushConfigured, pushPlan, notificationHealth, pushRegistrationFailed)
     val context = LocalContext.current
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshPermissions() }
@@ -153,6 +158,8 @@ fun SettingsScreen(
             // repair() wipes the token and flips SessionManager to Unpaired; RootScreen then swaps
             // the pairing surface forward. onRepair lets the host dismiss any settings overlay.
             onRepair = { vm.repair(); onRepair() },
+            labAvailable = labAvailable,
+            onOpenLab = onOpenLab,
             onOpenModels = onOpenModels,
             modelsNeedAttention = modelHealth.needsAttention,
             onOpenDevices = onOpenDevices,
@@ -161,6 +168,8 @@ fun SettingsScreen(
             onOpenPrivacyPolicy = { openMobilePrivacyPolicy(context) },
             voice = voice,
             onSetTranscribeOnGateway = vm::setTranscribeOnGateway,
+            omnesisAccountOffered = omnesisAccountOffered,
+            onOpenOmnesisAccount = onOpenOmnesisAccount,
             // Undelivered data from this phone's own sources. The section is drawn
             // here rather than by the banner so a healthy phone shows no chrome at
             // all — no heading over an empty card.
@@ -235,6 +244,7 @@ fun SettingsScreen(
                 )
             },
             // All health specifics live in :feature-health; the app just mounts the section.
+            watchSection = { WatchSettingsSection() },
             healthSection = { HealthSettingsSection() },
             // Distribution-specific sources are supplied only by the artifact that ships them.
             distributionSection = { DistributionSettingsSection() },
@@ -272,6 +282,8 @@ fun SettingsContent(
     onSaveUrl: (String) -> String?,
     onUnpair: () -> Unit,
     onRepair: () -> Unit = {},
+    labAvailable: Boolean = false,
+    onOpenLab: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     modelsNeedAttention: Boolean = false,
     onOpenDevices: () -> Unit = {},
@@ -281,6 +293,11 @@ fun SettingsContent(
     /** The gateway-dictation switch; null hides the Voice section. */
     voice: VoiceSettingsState? = null,
     onSetTranscribeOnGateway: (Boolean) -> Unit = {},
+    /** The gateway has Omnesis account settings; shows the row that opens them. */
+    omnesisAccountOffered: Boolean = false,
+    onOpenOmnesisAccount: () -> Unit = {},
+    /** Everything sign-in enrollment adds to this screen; off, it matches a build without cloud connectivity. */
+    cloudFeatures: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
     /**
      * Undelivered data from this phone's own sources. A slot rather than a set
      * of fields, so this screen carries no knowledge of what "undelivered" means.
@@ -288,6 +305,8 @@ fun SettingsContent(
     deliveryBanner: @Composable () -> Unit = {},
     /** The top of the phone-source area: reopening phone setup, and background syncing. */
     phoneSection: @Composable () -> Unit = {},
+    /** A paired Wear OS watch, drawn under Voice because its recordings follow the same gateway dictation. */
+    watchSection: @Composable () -> Unit = {},
     healthSection: @Composable () -> Unit = {},
     distributionSection: @Composable () -> Unit = {},
     appUsageSection: @Composable () -> Unit = {},
@@ -366,8 +385,12 @@ fun SettingsContent(
                     KeyValue("Name", gateway.name)
                     UrlEditor(gateway.url, onSaveUrl)
                     Spacer(Modifier.height(OmSpacing.sm))
-                    ConnectionRowLabel(connection)
+                    ConnectionRowLabel(connection, gateway?.usesDirectRouting == true, cloudFeatures)
                     RowDivider()
+                    if (labAvailable) {
+                        NavigationRow("Omnesis Lab", onOpenLab)
+                        HorizontalDivider(color = c.border)
+                    }
                     NavigationRow("Configure Models", onOpenModels, warning = modelsNeedAttention)
                     RowDivider()
                     NavigationRow("Configure Devices", onOpenDevices)
@@ -375,6 +398,10 @@ fun SettingsContent(
                     // The rules an answer is judged by sit beside the grants that name them.
                     NavigationRow("Policies", onOpenPolicies)
                     RowDivider()
+                    if (cloudFeatures && omnesisAccountOffered) {
+                        NavigationRow("Omnesis account", onOpenOmnesisAccount)
+                        RowDivider()
+                    }
                     NavigationRow("Authorize an MCP connection", onOpenAccessAuthorization)
                     RowDivider()
                     ActionRow("Re-pair with gateway", c.accent) { showRepairConfirm = true }
@@ -400,6 +427,7 @@ fun SettingsContent(
                 VoiceSection(voice, onSetTranscribeOnGateway, onOpenModels)
             }
 
+            watchSection()
             phoneSection()
             healthSection()
             distributionSection()
@@ -631,7 +659,7 @@ internal fun AboutSection(appVersion: AppVersionInfo) {
  * 12sp semibold, 0.5sp tracking. Ports the iOS grouped-Form section header.
  */
 @Composable
-private fun SectionLabel(text: String) {
+internal fun SectionLabel(text: String) {
     Text(
         text.uppercase(),
         style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.5.sp),
@@ -653,7 +681,7 @@ private fun KeyValue(key: String, value: String) {
 
 /** Hairline separator between grouped card rows, echoing an iOS Form row divider. */
 @Composable
-private fun RowDivider() {
+internal fun RowDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(vertical = OmSpacing.xs),
         thickness = 1.dp,
@@ -715,7 +743,7 @@ private fun NavigationRow(label: String, onClick: () -> Unit, warning: Boolean =
  * temporary state says recovery is automatic; the wording comes from [GatewayConnectionStatus].
  */
 @Composable
-private fun ConnectionRowLabel(connection: ConnectionState) {
+private fun ConnectionRowLabel(connection: ConnectionState, routed: Boolean, cloudFeatures: Boolean) {
     val c = OmTheme.colors
     val status = GatewayConnectionStatus.of(connection)
     val titleColor = when (status.tone) {
@@ -742,6 +770,14 @@ private fun ConnectionRowLabel(connection: ConnectionState) {
                     Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = titleColor, modifier = Modifier.size(18.dp))
             }
             Text(status.title, style = MaterialTheme.typography.bodyMedium, color = titleColor)
+            if (!cloudFeatures) {
+                // A build without cloud connectivity has no route to show.
+            } else if (connection is ConnectionState.Connected) {
+                connection.connectionPath?.let { dev.omnesis.android.ui.common.GatewayConnectionPill(it) }
+            } else if (routed && (connection is ConnectionState.Reconnecting ||
+                    connection == ConnectionState.Connecting || connection == ConnectionState.Authenticating)) {
+                dev.omnesis.android.ui.common.GatewayConnectionPill(dev.omnesis.android.transport.routing.GatewayConnectionPath.RECONNECTING)
+            }
         }
         status.explanation?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = c.textMuted)

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { fork, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,7 @@ import {
   STDERR_CAPTURE_CHARS,
   type ProcessLauncher,
 } from "./index.js";
+import type { LauncherRequest } from "../workers/process-launcher-host.js";
 
 const hosts: HostedProcessLauncher[] = [];
 afterEach(() => {
@@ -63,6 +65,21 @@ function processState(pid: number): string {
   const ps = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
   return ps.stdout.trim().slice(0, 1);
 }
+/**
+ * The process ID a program wrote to `path` with `echo $$`, or 0 until the whole
+ * line is there. The shell creates the file before it writes to it, so a file
+ * that exists can still be empty, and `Number("")` is 0, a process ID that
+ * `kill(0, 0)` reports alive whatever happened to the program.
+ */
+function pidIn(path: string): number {
+  try {
+    const line = readFileSync(path, "utf8");
+    return /^[1-9]\d*\n$/.test(line) ? Number(line) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function eventually(check: () => boolean, ms = 5_000): Promise<boolean> {
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -181,8 +198,8 @@ describe("hosted launcher", () => {
     const hostPid = Number(text(first.stdout));
     const marker = join(mkdtempSync(join(tmpdir(), "omnesis-launcher-")), "pid");
     const pending = host.run("sh", ["-c", `echo $$ > ${marker}; sleep 30`], { timeoutMs: 30_000 });
-    expect(await eventually(() => readdirSync(join(marker, "..")).includes("pid"))).toBe(true);
-    const programPid = Number(readFileSync(marker, "utf8").trim());
+    expect(await eventually(() => pidIn(marker) > 0)).toBe(true);
+    const programPid = pidIn(marker);
     process.kill(hostPid, "SIGKILL");
     expect(await pending).toMatchObject({
       failure: "spawn",
@@ -224,8 +241,8 @@ describe("hosted launcher", () => {
     const host = hosted();
     const marker = join(mkdtempSync(join(tmpdir(), "omnesis-launcher-")), "pid");
     const pending = host.run("sh", ["-c", `echo $$ > ${marker}; sleep 30`], { timeoutMs: 30_000 });
-    expect(await eventually(() => readdirSync(join(marker, "..")).includes("pid"))).toBe(true);
-    const programPid = Number(readFileSync(marker, "utf8").trim());
+    expect(await eventually(() => pidIn(marker) > 0)).toBe(true);
+    const programPid = pidIn(marker);
     host.dispose();
     expect(await pending).toMatchObject({ failure: "spawn" });
     expect(
@@ -235,6 +252,48 @@ describe("hosted launcher", () => {
     // Disposed: later programs start from the caller, and no host is forked again.
     const after = await host.run("sh", ["-c", "echo $PPID"], { timeoutMs: 10_000 });
     expect(Number(text(after.stdout))).toBe(process.pid);
+  });
+
+  it("kills a program it could not report because the caller had already disconnected", async () => {
+    const entry = resolveWorkerEntry(
+      "../workers/process-launcher-host.ts",
+      import.meta.url,
+      "../workers/register-tsx.mjs",
+    );
+    const child = fork(fileURLToPath(entry.url), [], {
+      execArgv: entry.execArgv,
+      serialization: "advanced",
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+    await new Promise<void>((resolve) => child.once("message", () => resolve()));
+    // The program is found by its name ($0), not by a pid it writes down: the
+    // host may kill it before it has run a single command.
+    const name = `omnesis-launcher-test-${randomUUID()}`;
+    const programs = (): number[] =>
+      spawnSync("pgrep", ["-f", name], { encoding: "utf8" })
+        .stdout.split("\n")
+        .filter(Boolean)
+        .map(Number)
+        .filter(running);
+    const run: LauncherRequest = {
+      type: "run",
+      id: 1,
+      command: "sh",
+      args: ["-c", "sleep 30", name],
+      opts: { timeoutMs: 30_000 },
+    };
+    // Disconnecting in the same tick closes the channel before the host can
+    // report the program it starts: its "started" reply meets a closed pipe.
+    child.send(run);
+    child.disconnect();
+    expect(await exited, stderr).toBe(0);
+    expect(
+      await eventually(() => programs().length === 0),
+      `programs still running: ${programs().join(", ")}`,
+    ).toBe(true);
   });
 
   it("starts programs from the caller while a failed host waits out its back-off", async () => {

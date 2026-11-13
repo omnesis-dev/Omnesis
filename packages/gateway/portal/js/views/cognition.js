@@ -5,6 +5,8 @@
 // synthesis and evidence; operational views expose runs, lifecycle and controls.
 
 import { html } from "htm/preact";
+import { JsonCode } from "../components/json-code.js";
+import { AssistantMarkdown } from "../components/agent/assistant-markdown.js";
 import { runUsageLabel, TranscriptUsage } from "./cognition-run-usage.js";
 import { loopDeadlineLabel } from "./knowledge-loop-library.js";
 import { KnowledgeIcon } from "../lib/knowledge-link-icons.js";
@@ -82,10 +84,10 @@ export function resolveSection(subTab) {
 }
 
 export function cognitionPath(section, id) {
-  if (section === "loops") return `/portal/debug/cognition/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop`;
+  if (section === "loops") return `/portal/debug/brain/knowledge${id ? `/${encodeURIComponent(id)}` : ""}?kind=loop`;
   return id
-    ? `/portal/debug/cognition/${section}/${encodeURIComponent(id)}`
-    : `/portal/debug/cognition/${section}`;
+    ? `/portal/debug/brain/${section}/${encodeURIComponent(id)}`
+    : `/portal/debug/brain/${section}`;
 }
 
 // ── Shared bits ──────────────────────────────────────────────────────
@@ -689,7 +691,7 @@ function RunHealthSummary({ pulse }) {
 
 function KnowledgeOwnerLink({ id }) {
   const page = useLoader(() => getKnowledgeNode(id), [id]);
-  return page.data && !page.error ? html`<p><a href=${`/portal/debug/cognition/knowledge/${encodeURIComponent(id)}`}><${KnowledgeIcon} kind=${page.data.kind} /> Read synthesis and claim evidence</a></p>` : null;
+  return page.data && !page.error ? html`<p><a href=${`/portal/debug/brain/knowledge/${encodeURIComponent(id)}`}><${KnowledgeIcon} kind=${page.data.kind} /> Read synthesis and claim evidence</a></p>` : null;
 }
 
 export function LoopDetail({ id, embedded = false, synthesisText = null }) {
@@ -1130,13 +1132,13 @@ function RawTranscriptBody({ t }) {
       <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
         ${t.events.map((ev, i) => html`
           <div key=${i} class="cognition-transcript-raw-line">
-            <span style="color:var(--accent);">${ev.type}</span> ${ev.payload ? JSON.stringify(ev.payload) : ""}
+            <span style="color:var(--accent);">${ev.type}</span> ${ev.payload ? html`<${JsonCode} text=${JSON.stringify(ev.payload)} />` : ""}
           </div>
         `)}
       </div>
     `}
     <div class="cognition-transcript-final-label">Final text</div>
-    <div style="white-space:pre-wrap; font-size:13px;">${t.finalText || "—"}</div>
+    <${AssistantMarkdown} text=${t.finalText || "—"} />
   `;
 }
 
@@ -1165,7 +1167,7 @@ function TranscriptUnknownPart({ type, payload }) {
   if (preview.length > 120) preview = preview.slice(0, 117) + "…";
   return html`
     <div class="cognition-transcript-unknown" style="font-family:var(--font-mono,monospace); font-size:11px; color:var(--text-secondary); opacity:0.7; padding:2px 0;">
-      <span style="color:var(--accent);">${type}</span>${preview ? ` ${preview}` : ""}
+      <span style="color:var(--accent);">${type}</span>${preview ? html` ${" "}<${JsonCode} text=${preview} />` : ""}
     </div>
   `;
 }
@@ -1227,7 +1229,7 @@ function FormattedTranscript({ t }) {
             <div class="cognition-transcript-final-label">Final answer</div>
             <div class="agent-msg agent-msg-assistant">
               <div class="agent-msg-body">
-                <div class="agent-part-text" style="white-space:pre-wrap;">${finalText}</div>
+                <${AssistantMarkdown} text=${finalText} />
               </div>
             </div>
           </div>`
@@ -1277,7 +1279,7 @@ function BehavioralNotesTab() {
           ${annotate({ targetType: "agent_notes", label: "Agent notes" })}
         </div>
         <p class="debug-sub" style="margin:0 0 10px;">
-          Standing preferences and lessons that guide how the agent works. Grounded subject knowledge belongs in the <a href="/portal/debug/cognition/knowledge">Library</a>.
+          Standing preferences and lessons that guide how the agent works. Grounded subject knowledge belongs in the <a href="/portal/debug/brain/knowledge">Library</a>.
         </p>
         <${LoadState} loading=${notes.loading} error=${notes.error} />
         ${!notes.loading && !notes.error && html`

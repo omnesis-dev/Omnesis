@@ -7,7 +7,7 @@ import SwiftUI
 import WidgetKit
 
 struct TaskWidgetEntry: TimelineEntry {
-    enum Status { case ready, unpaired, offline, completionFailed }
+    enum Status { case ready, unpaired, offline, completionFailed, disabled }
     var date: Date
     var configuration: TaskWidgetConfigurationIntent
     var navigation: TaskWidgetNavigation
@@ -33,7 +33,8 @@ struct TaskWidgetEntry: TimelineEntry {
     }
 
     var tasks: [TaskWidgetTask] {
-        schedule.tasks(from: snapshot?.tasks ?? [])
+        guard status != .disabled else { return [] }
+        return schedule.tasks(from: snapshot?.tasks ?? [])
     }
 
     var listURL: URL {
@@ -86,12 +87,17 @@ struct TaskWidgetProvider: AppIntentTimelineProvider {
                 entry.snapshot = try TaskWidgetStorage.snapshot()
                 entry.status = .ready
             } catch {
-                if (try? TaskWidgetStorage.credential()) != credential || error as? TaskWidgetClientError == .unauthorized {
+                if error as? TaskWidgetClientError == .featureDisabled {
+                    entry.snapshot = nil
+                    entry.status = .disabled
+                    try? TaskWidgetStorage.save(snapshot: TaskWidgetSnapshot(tasks: []), credential: credential)
+                } else if (try? TaskWidgetStorage.credential()) != credential || error as? TaskWidgetClientError == .unauthorized {
                     entry.snapshot = nil
                     entry.status = .unpaired
                 } else { entry.status = .offline }
             }
-            if entry.status != .unpaired, (try? TaskWidgetStorage.keychain().get("task-widget.action-error")) != nil {
+            if entry.status != .unpaired, entry.status != .disabled,
+               (try? TaskWidgetStorage.keychain().get("task-widget.action-error")) != nil {
                 entry.status = .completionFailed
             }
         } catch { entry.status = .offline }

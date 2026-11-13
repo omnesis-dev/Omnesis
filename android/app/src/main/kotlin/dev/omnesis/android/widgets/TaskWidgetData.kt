@@ -14,7 +14,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class TaskWidgetPeriod { DAY, WEEK, MONTH }
 
-enum class TaskWidgetStatus { READY, LOADING, UNPAIRED, OFFLINE, COMPLETION_FAILED }
+enum class TaskWidgetStatus { READY, LOADING, UNPAIRED, OFFLINE, COMPLETION_FAILED, DISABLED }
 
 @Serializable
 data class TaskWidgetState(

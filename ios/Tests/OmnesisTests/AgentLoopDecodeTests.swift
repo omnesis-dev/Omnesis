@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// Decode contract for the steward read surface the chat agent renders
+/// Decode contract for the Brain read surface the chat agent renders
 /// (experimental): the `loops.searched` / `loop.fetched` tool-result kinds and
 /// the `openLoops` / `annotations` hints attached inline to a `DocRef`. Mirrors
 /// the wire shapes locked in `@omnesis/core/agent-protocol.ts`. All fixtures are

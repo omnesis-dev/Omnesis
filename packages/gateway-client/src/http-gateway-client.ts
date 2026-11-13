@@ -4,6 +4,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import {
+  AudioRejectedError,
   AudioUnreadableError,
   MAX_TRANSCRIPTION_MS,
   TRANSCRIBE_AUDIO_UNREADABLE_CODE,
@@ -90,6 +91,16 @@ class GatewayResponseError extends Error {}
 
 /** The status `/inference/transcribe` answers for audio that decodes to no audio. */
 const UNPROCESSABLE_CONTENT = 422;
+/** The status `/inference/transcribe` answers for a malformed request, such as an empty body. */
+const BAD_REQUEST = 400;
+/** The status `/inference/transcribe` answers for audio over its size cap. */
+const PAYLOAD_TOO_LARGE = 413;
+/** The 4xx answers to `/inference/transcribe` that concern the one recording, not the transcriber. */
+const TRANSCRIBE_ITEM_STATUSES: readonly number[] = [
+  UNPROCESSABLE_CONTENT,
+  BAD_REQUEST,
+  PAYLOAD_TOO_LARGE,
+];
 
 /** A transient `/inference/*` failure, with the HTTP status that reported it. */
 class InferenceBackendError extends SyncError {
@@ -356,9 +367,17 @@ export class HttpGatewayClient implements GatewayClient {
     mimeType: string,
     opts?: Parameters<AudioTranscribeFn>[2],
   ): Promise<TranscriptionResult | null> {
-    // Permanent "no transcript" (a 4xx response, the backend reporting
-    // `available: false`, or no speech detected) returns null — the source
-    // renders a plain placeholder and the page advances as normal.
+    // No transcriber to run (the backend reporting `available: false`, or a
+    // 4xx such as the 404 of a gateway without the route) returns null — the
+    // source records the item as waiting for a transcriber and the page
+    // advances as normal.
+    //
+    // A recording the gateway will not transcribe throws an item-scoped,
+    // non-transient `AudioRejectedError` naming why, so the source records the
+    // real reason instead of "no transcriber": no bytes at all (never sent; a
+    // gateway answers 400 for them), more bytes than the gateway accepts (413),
+    // or a request it refused as malformed (400). Every gateway version
+    // answers these statuses, so they need no opt-in header.
     //
     // A *transient* backend failure (5xx, or the gateway momentarily
     // unreachable) instead throws a `SyncError("transient")`. That propagates
@@ -375,6 +394,9 @@ export class HttpGatewayClient implements GatewayClient {
     // owns the transcription deadline, which for a long recording on a slow
     // host runs to hours; the client waits past it and only cuts the
     // request off itself when the gateway does not answer at all.
+    if (audio.byteLength === 0) {
+      throw new AudioRejectedError("empty", "the audio file is empty");
+    }
     const qs = opts?.language ? `?language=${encodeURIComponent(opts.language)}` : "";
     let contextHeader = opts?.context
       ? encodeURIComponent(JSON.stringify(opts.context))
@@ -403,13 +425,24 @@ export class HttpGatewayClient implements GatewayClient {
           [TRANSCRIBE_REPORT_UNREADABLE_HEADER]: "1",
           ...(contextHeader ? { "x-omnesis-transcription-context": contextHeader } : {}),
         },
-        UNPROCESSABLE_CONTENT,
+        TRANSCRIBE_ITEM_STATUSES,
       );
       if (res === null) return null;
       if (res.status === UNPROCESSABLE_CONTENT) {
         const refusal = (await res.json().catch(() => ({}))) as { code?: unknown };
         if (refusal.code === TRANSCRIBE_AUDIO_UNREADABLE_CODE) throw new AudioUnreadableError();
         return null;
+      }
+      if (res.status === PAYLOAD_TOO_LARGE) {
+        throw new AudioRejectedError(
+          "too-large",
+          `the audio (${audio.byteLength} bytes) is larger than the gateway transcribes`,
+        );
+      }
+      if (res.status === BAD_REQUEST) {
+        const refusal = (await res.json().catch(() => ({}))) as { error?: unknown };
+        const detail = typeof refusal.error === "string" ? `: ${refusal.error}` : "";
+        throw new AudioRejectedError("refused", `the gateway refused the audio (400)${detail}`);
       }
       const data = (await res.json()) as {
         available?: boolean;
@@ -549,8 +582,8 @@ export class HttpGatewayClient implements GatewayClient {
    * - 4xx (e.g. 404 = backend not enabled, 415 = unsupported type) → returns
    *   `null`. The gateway permanently cannot process this input; successful
    *   extraction with no content is represented by a non-null empty result.
-   *   `passStatus` is a 4xx returned to the caller instead, for one whose body
-   *   the caller reads.
+   *   `passStatuses` are 4xx returned to the caller instead, for ones whose
+   *   meaning the caller reads.
    * - 5xx, or `fetch` rejecting (gateway unreachable, connection reset,
    *   timeout) → throws `SyncError("transient")`; the caller decides whether
    *   its operation is durable/retryable or optional enrichment.
@@ -567,7 +600,7 @@ export class HttpGatewayClient implements GatewayClient {
     label: string,
     signal?: AbortSignal,
     extraHeaders?: Record<string, string>,
-    passStatus?: number,
+    passStatuses: readonly number[] = [],
   ): Promise<Response | null> {
     let res: Response;
     try {
@@ -589,7 +622,7 @@ export class HttpGatewayClient implements GatewayClient {
       const msg = err instanceof Error ? err.message : String(err);
       throw new SyncError("transient", `${label} backend unreachable: ${msg}`, { cause: err });
     }
-    if (res.ok || res.status === passStatus) return res;
+    if (res.ok || passStatuses.includes(res.status)) return res;
     // 5xx, 429 (rate limited) and 408 (request timeout) are transient — the
     // backend is momentarily overloaded or stalled, not permanently unable to
     // extract this input. Surface them so the caller applies its durability

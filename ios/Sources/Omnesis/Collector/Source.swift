@@ -81,6 +81,8 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
     /// tell a pinned phone apart before its certificate renews. Absent from
     /// the pairing exchange, where the gateway itself chose the mode.
     public let tls: TLS?
+    /// Advertises support without requiring older paired phones to understand a new reminder kind.
+    public var pairingNotifications: Bool?
 
     /// Wire shape of ``tls``: `{"mode": "system" | "pinned-leaf" | "legacy"}`.
     public struct TLS: Codable, Equatable, Sendable {
@@ -94,7 +96,8 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
         previousDeviceId: String? = nil,
         pushAppId: String? = Bundle.main.bundleIdentifier,
         version: String = omnesisAppVersion(),
-        tlsMode: PairingTlsMode? = nil
+        tlsMode: PairingTlsMode? = nil,
+        pairingNotifications: Bool = CloudRelayFeature.enabled
     )
         -> PairingCapabilities {
         let contracts = NativeHostedSourceRegistry.ios
@@ -117,7 +120,9 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
                 contract.replicaVersionPolicy.map { (contract.sourceType, $0) }
             }),
             syncLease: contracts.contains { $0.multiDeviceMode == .replicated },
-            tls: tlsMode.map { TLS(mode: $0.rawValue) }
+            tls: tlsMode.map { TLS(mode: $0.rawValue) },
+            // Absent, not false, off the cloud build flag: the wire body stays as it was.
+            pairingNotifications: pairingNotifications ? true : nil
         )
     }
 
@@ -130,6 +135,7 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
             "replicaVersionPolicies": .object(replicaVersionPolicies.mapValues(JSONValue.string)),
             "syncLease": .bool(syncLease),
         ]
+        if let pairingNotifications { result["pairingNotifications"] = .bool(pairingNotifications) }
         if let hostname { result["hostname"] = .string(hostname) }
         if let version { result["version"] = .string(version) }
         if let suggestedName { result["suggestedName"] = .string(suggestedName) }

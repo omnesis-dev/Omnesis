@@ -117,7 +117,7 @@ export function NoteDayReferences({ day, revision, experimental = false, onDocum
       (loop) => html`<div class="note-reference-row" key=${loop.id}>
         <div class="note-reference-body">
           <${ReferenceLink}
-            href=${`/portal/debug/cognition/knowledge/${encodeURIComponent(loop.id)}?kind=loop`}
+            href=${`/portal/debug/brain/knowledge/${encodeURIComponent(loop.id)}?kind=loop`}
             label=${html`<${KnowledgeIcon} kind="loop" />${loop.title}`}
           />
           <span class="note-reference-heading">Open loop</span>

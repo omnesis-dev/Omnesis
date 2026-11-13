@@ -97,8 +97,17 @@ abstract class VerifyPlayReleasePolicy : DefaultTask() {
     @get:Input
     abstract val runtimeConfigurationName: Property<String>
 
+    /** The release variant's generated BuildConfig sources. */
+    @get:InputFiles
+    abstract val buildConfigSources: ConfigurableFileCollection
+
     @TaskAction
     fun verify() {
+        val buildConfig = buildConfigSources.asFileTree.matching { include("**/BuildConfig.java") }.files
+        check(buildConfig.size == 1) { "Expected one generated BuildConfig.java, found ${buildConfig.size}" }
+        check(Regex("""\bboolean CLOUD_RELAY_PUBLIC_CERT_CHECK = true;""").containsMatchIn(buildConfig.single().readText())) {
+            "A release build must never skip the cloud relay public-certificate check"
+        }
         val manifest = mergedManifest.get().asFile.readText()
         check("android.permission.READ_CALL_LOG" !in manifest) {
             "Play release manifest must not request android.permission.READ_CALL_LOG"
@@ -123,6 +132,8 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
+apply(from = rootProject.file("logic-coverage.gradle.kts"))
+
 val localPushProperties = Properties().apply {
     val file = rootProject.file("local.push.properties")
     if (file.isFile) file.inputStream().use(::load)
@@ -137,6 +148,9 @@ fun firebaseBuildValue(name: String): String =
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
 
+// One value drives BuildConfig.CLOUD_RELAY_ENABLED, the sign-in libraries and the sources using them.
+val cloudRelayEnabled = firebaseBuildValue("OMNESIS_CLOUD_RELAY_ENABLED") == "1"
+
 val appPackageId = (localPushProperties.getProperty("OMNESIS_ANDROID_APPLICATION_ID")
     ?: providers.gradleProperty("OMNESIS_ANDROID_APPLICATION_ID")
         .orElse(providers.environmentVariable("OMNESIS_ANDROID_APPLICATION_ID"))
@@ -149,6 +163,15 @@ require(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+").matches(appPac
 android {
     namespace = "dev.omnesis.android"
     compileSdk = 36
+
+    // src/cloudRelay holds the code that needs the sign-in libraries. A build without cloud
+    // connectivity leaves it out of the app and compiles it with the tests, which still cover it.
+    sourceSets {
+        getByName("main").kotlin.srcDirs(
+            if (cloudRelayEnabled) listOf("src/cloudRelay/kotlin", "src/cloudRelayOn/kotlin") else listOf("src/cloudRelayOff/kotlin"),
+        )
+        if (!cloudRelayEnabled) getByName("test").kotlin.srcDir("src/cloudRelay/kotlin")
+    }
 
     defaultConfig {
         applicationId = appPackageId
@@ -168,6 +191,13 @@ android {
         buildConfigField("String", "FIREBASE_API_KEY", "\"${firebaseBuildValue("OMNESIS_FIREBASE_API_KEY")}\"")
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseBuildValue("OMNESIS_FIREBASE_PROJECT_ID")}\"")
         buildConfigField("String", "FIREBASE_SENDER_ID", "\"${firebaseBuildValue("OMNESIS_FIREBASE_SENDER_ID")}\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${firebaseBuildValue("OMNESIS_GOOGLE_WEB_CLIENT_ID")}\"")
+        buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"${firebaseBuildValue("OMNESIS_GOOGLE_ANDROID_CLIENT_ID")}\"")
+        buildConfigField("boolean", "CLOUD_RELAY_ENABLED", cloudRelayEnabled.toString())
+        buildConfigField("String", "CLOUD_RELAY_URL", "\"${firebaseBuildValue("OMNESIS_CLOUD_RELAY_URL")}\"")
+        // A test gateway has no publicly logged certificate. "0" stops that alone from holding its
+        // requests, in a debug build only: the release build type below always checks.
+        buildConfigField("boolean", "CLOUD_RELAY_PUBLIC_CERT_CHECK", (firebaseBuildValue("OMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK") != "0").toString())
     }
 
     flavorDimensions += "distribution"
@@ -182,6 +212,9 @@ android {
 
     buildTypes {
         release {
+            // A release build never skips the public-certificate check, whatever
+            // OMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK says; verifyPlayReleasePolicy proves it.
+            buildConfigField("boolean", "CLOUD_RELAY_PUBLIC_CERT_CHECK", "true")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -227,10 +260,18 @@ roborazzi {
 }
 
 dependencies {
+    implementation(libs.androidsvg)
+    // Sign-in libraries add permissions, services and activities to the manifest, so only a
+    // build with cloud connectivity packages them. Otherwise they are test-only.
+    val signInLibraries = if (cloudRelayEnabled) "implementation" else "testImplementation"
+    add(signInLibraries, libs.androidx.credentials)
+    add(signInLibraries, libs.androidx.credentials.play.services.auth)
+    add(signInLibraries, libs.google.identity)
     implementation(project(":core-designsystem"))
     implementation(project(":core-transport"))
     implementation(project(":core-pairing"))
     implementation(project(":core-setup"))
+    implementation(project(":core-wear-protocol"))
     implementation(project(":feature-health"))
     // Restricted call-log APIs are intentionally absent from the Google Play
     // artifact. The full flavor remains available to people who build/sideload
@@ -264,6 +305,8 @@ dependencies {
 
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
+    // The watch relay speaks to a paired Wear OS watch over the Data Layer, in every flavor.
+    implementation(libs.play.services.wearable)
 
     // QR pairing: CameraX preview + ML Kit on-device barcode scanning (bundled
     // model) to *scan*; zxing-core to *generate* a QR when pairing a new device.
@@ -274,6 +317,9 @@ dependencies {
 
     // Screenshot + unit testing (Roborazzi renders Compose to PNGs off-emulator).
     testImplementation(libs.junit)
+    // The real watch logic and its fakes, for the loopback tests that run it against the relay.
+    testImplementation(project(":wear-core"))
+    testImplementation(testFixtures(project(":wear-core")))
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
@@ -289,6 +335,8 @@ dependencies {
     testImplementation(libs.hilt.android.testing)
     kspTest(libs.hilt.compiler)
     testImplementation(libs.okhttp.tls)
+    // The background note drain is scheduled against WorkManager's synchronous test instance.
+    testImplementation(libs.androidx.work.testing)
 
     // UI journeys on an emulator against a synthetic gateway (scripts/run-mobile-journeys.sh).
     androidTestImplementation(platform(libs.androidx.compose.bom))
@@ -334,8 +382,11 @@ androidComponents {
     ) { variant ->
         tasks.register<VerifyPlayReleasePolicy>("verifyPlayReleasePolicy") {
             group = "verification"
-            description = "Proves the Play artifact excludes Call Log code and permission, and that its shortcuts name the package literally."
+            description = "Proves the Play artifact excludes Call Log code and permission, that its shortcuts name the package literally, " +
+                "and that it always checks a cloud gateway's certificate is publicly logged."
             mergedManifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
+            buildConfigSources.from(layout.buildDirectory.dir("generated/source/buildConfig/play/release"))
+            dependsOn("generatePlayReleaseBuildConfig")
             runtimeConfigurationName.set("${variant.name}RuntimeClasspath")
             dependsOn("verifyPlayReleaseShortcuts")
         }

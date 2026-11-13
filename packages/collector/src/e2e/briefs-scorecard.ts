@@ -593,7 +593,7 @@ async function deliverArcSet(
   // leaves future-dated pending rows behind (schedule_agent_run follow-ups,
   // decay status checks) — those are agent output, not unfinished delivery.
   await waitFor(
-    "steward run queue to settle",
+    "Brain run queue to settle",
     () => {
       const pending = db
         .prepare<[number], { n: number }>(
@@ -1225,7 +1225,7 @@ async function dumpScorecardArtifacts(harness: SyntheticE2EHarness, dir: string)
 // ── the full run ────────────────────────────────────────────────────────────
 
 /**
- * Worker-side synth discovery plus the compressed steward cadences the
+ * Worker-side synth discovery plus the compressed Brain cadences the
  * spawned gateway needs. Its feature mode is selected separately by the
  * harness rather than inherited from this process.
  */
@@ -1309,6 +1309,7 @@ export async function runScorecard(opts: {
 
   const harness = new SyntheticE2EHarness({
     gatewayMode: opts.gatewayMode,
+    labFeatures: { brain: true, tasks: true },
     universe: "loops-test-life",
     embedderBackend: "fake",
     extraInference: {

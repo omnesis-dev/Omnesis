@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Migration 72 renames the steward's tables into the cognition vocabulary.
+ * Migration 72 renames the Brain's tables into the cognition vocabulary.
  *
  * The hazard is ordering, not naming: `runSchemaSetup` runs the current DDL on
  * every boot BEFORE migrations, so an upgrading install reaches this migration

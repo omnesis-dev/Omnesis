@@ -5,7 +5,7 @@
  * Person references on open loops (`actors[]` / `involved[]`) — the
  * resolution boundary that keeps those fields canonical person ids.
  *
- * The Cognition Steward learns about people from document metadata, where they
+ * The Brain learns about people from document metadata, where they
  * appear as email addresses, so left unchecked it writes emails into the
  * person fields — values no person surface can link to. Every write path
  * funnels through {@link partitionPersonRefs}: a ref that is a known

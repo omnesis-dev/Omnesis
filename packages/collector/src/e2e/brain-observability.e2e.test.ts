@@ -4,7 +4,7 @@
 /**
  * Brain Bench — area J: the operator-facing surface, and the golden snapshot.
  *
- * Everything an operator can see about the Cognition Steward is a projection
+ * Everything an operator can see about the Brain is a projection
  * over rows the engine wrote: the pulse summarises the queue and the stores,
  * the decision view folds a transcript down to "what did it decide", spend and
  * attribution say what each run cost and which workflow produced it, coverage
@@ -89,7 +89,7 @@ const ROOM_DOC = email({
   ].join("\n"),
 });
 
-/** A datum the scripted steward deliberately does nothing about. */
+/** A datum the scripted Brain deliberately does nothing about. */
 const QUIET_DOC = email({
   externalId: "brain-obs-quiet",
   title: "Cedar Grove Supplies depot hours this week",

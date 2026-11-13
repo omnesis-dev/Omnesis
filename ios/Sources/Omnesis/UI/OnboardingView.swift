@@ -30,7 +30,8 @@ struct OnboardingView: View {
                 }
                 .padding()
             }
-            .navigationTitle("Omnesis")
+            .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showingPairing) {
                 PairingView(initialGatewayURL: store.pairingRecovery?.gatewayURL)
             }
@@ -115,9 +116,24 @@ struct OnboardingView: View {
 
 #if DEBUG
 @available(iOS 17.0, *)
-#Preview("Onboarding") {
+#Preview("Onboarding — dark") {
     OnboardingView()
         .environment(AppStore.preview())
+        .preferredColorScheme(.dark)
+}
+
+@available(iOS 17.0, *)
+#Preview("Onboarding — light") {
+    OnboardingView()
+        .environment(AppStore.preview())
+        .preferredColorScheme(.light)
+}
+
+@available(iOS 17.0, *)
+#Preview("Onboarding — large text") {
+    OnboardingView()
+        .environment(AppStore.preview())
+        .dynamicTypeSize(.accessibility3)
 }
 
 @available(iOS 17.0, *)

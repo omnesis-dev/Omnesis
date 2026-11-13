@@ -302,6 +302,7 @@ extension NoteEntry {
         case "android-app": return "Android app"
         case "android-widget": return "Android widget"
         case "android-shortcut": return "Android shortcut"
+        case "android-watch": return "Wear OS watch"
         case "portal": return "Web portal"
         case "cli": return "Command line"
         case "browser-extension": return "Browser extension"

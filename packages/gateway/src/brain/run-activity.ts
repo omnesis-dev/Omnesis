@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * In-memory registry of the Cognition Steward runs executing RIGHT NOW.
+ * In-memory registry of the Brain runs executing RIGHT NOW.
  *
  * The queue keeps no `running` status on disk (an in-flight row stays
  * `pending` with a bumped `attempts` so a crash is naturally re-claimed),

@@ -54,6 +54,8 @@ function makeService(knowledgeReads = true) {
   const seen: TurnInput[] = [];
   let n = 0;
   const service = new AgentService({
+    // Manual task conversations retain their context while background Brain is off.
+    labEnabled: (id) => id === "tasks",
     useBrainKnowledgeMode: knowledgeReads ? "check_stale_claims" : "off",
     backendFactory: () => capturingBackend(seen),
     ports: { search: stubSearch, document: stubDocument },

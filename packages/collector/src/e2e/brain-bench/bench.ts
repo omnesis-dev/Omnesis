@@ -12,7 +12,7 @@
  * same code path an operator's gateway does.
  *
  * Four things are scriptable:
- *  - the steward's mind: the puppet model (`puppet.ts`) decides each turn
+ *  - the Brain's mind: the puppet model (`puppet.ts`) decides each turn
  *    from the run prompt and a behavior table, emitting real tool calls —
  *    cognition runs and note-agent turns alike;
  *  - the interactive agent: the conversation puppet
@@ -109,14 +109,14 @@ export interface BrainBenchOptions {
   extraInference?: SyntheticHarnessOptions["extraInference"];
   /**
    * Synthetic universe supplying the ambient corpus. Defaults to
-   * `loops-test-life` — the Cognition Steward's fictional ambient corpus.
+   * `loops-test-life` — the Brain's fictional ambient corpus.
    * Its source arrivals also pass through maintenance discovery. Scenarios
    * match their own evidence explicitly; use initialInventory for a corpus
    * that was already present before cognition started.
    */
   universe?: string;
   /**
-   * The steward's scripted mind. Behaviors are matched per run kind; see
+   * The Brain's scripted mind. Behaviors are matched per run kind; see
    * `puppet-plan.ts` for the DSL. Omit for a bench that only asserts on
    * enqueue-side behavior (the puppet then finishes every run with a
    * no-op final turn).
@@ -162,6 +162,8 @@ export interface BrainBenchOptions {
   clock?: "real" | "virtual";
   /** Experimental gate. Must be explicit because without it the whole engine is inert. */
   experimental: boolean;
+  /** Lab selection; experimental benches otherwise enable all three features. */
+  labFeatures?: SyntheticHarnessOptions["labFeatures"];
   /**
    * Merged into the spawned gateway's `brain` config block, over the bench's
    * quiet baseline — so a suite naming a producer here is the only way that
@@ -310,6 +312,9 @@ export class BrainBench {
 
     const harness = new SyntheticE2EHarness({
       gatewayMode: opts.experimental && !opts.initialInventory ? "experimental" : "stable",
+      ...(opts.experimental && !opts.initialInventory
+        ? { labFeatures: opts.labFeatures ?? { brain: true, tasks: true, watches: true } }
+        : {}),
       universe: opts.universe ?? "loops-test-life",
       ...(opts.embedder ? { embedderBackend: "fake" as const } : {}),
       ...(opts.apns ? { apnsBackend: "fake" as const } : {}),
@@ -360,6 +365,7 @@ export class BrainBench {
       if (opts.initialInventory) {
         await harness.restartGateway({
           gatewayMode: "experimental",
+          labFeatures: opts.labFeatures ?? { brain: true, tasks: true, watches: true },
           whileStopped: () => {
             const db = new Database(harness.getDbPath(), { fileMustExist: true });
             try {

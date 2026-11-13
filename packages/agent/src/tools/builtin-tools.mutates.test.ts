@@ -17,7 +17,7 @@
  *
  * Scope is exactly that catalog, which is what `AgentService.listTools()`
  * returns and therefore what every delegated selection starts from. Tools built
- * per session elsewhere — the Cognition Steward's own handles — never enter it,
+ * per session elsewhere — the Brain's own handles — never enter it,
  * and are guarded where they are built.
  */
 

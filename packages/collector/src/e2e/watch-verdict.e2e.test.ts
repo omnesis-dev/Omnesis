@@ -170,6 +170,7 @@ beforeEach(async () => {
   judge = await alwaysDeclines();
   harness = new SyntheticE2EHarness({
     gatewayMode: "experimental",
+    labFeatures: { brain: true, tasks: true, watches: true },
     universe: "e2e-minimal",
     extraInference: {
       backends: { judgestub: { type: "http", url: judge.url } },

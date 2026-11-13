@@ -46,6 +46,7 @@ import {
 } from "./voice-session.js";
 import { adaptInteractiveKnowledgeReads } from "./interactive-knowledge-read.js";
 import { withoutKnowledgeReadTools } from "./knowledge-read-policy.js";
+import { withLabTools, type LabEnabled } from "./lab-tools.js";
 import { withTodaysTasks } from "./temporal-with-tasks.js";
 import { normalizeAnswerProse } from "./answer-prose.js";
 import { CITATION_GROUNDING } from "./citation-grounding.js";
@@ -212,6 +213,8 @@ function isEvictableLiveProgress(event: WsEvent): boolean {
 const log = createLogger("gateway").child("agent");
 
 export interface AgentServiceDeps {
+  /** Live persisted Lab gates. Omitted by standalone hosts that own their registry. */
+  labEnabled?: LabEnabled;
   /**
    * Builds a fresh backend for a capability role — replay backends carry
    * state, so a new one is built per session. Returns `null` when the role
@@ -551,8 +554,8 @@ const RUN_LOOP_WRITE_TOOLS = new Set([
  * How a TOP-LEVEL interactive session gains write access to the cognitive
  * substrate (experimental). Installed by the Briefs feature when active; absent
  * means interactive sessions stay read-only. `buildOwnTools(runId)` returns the
- * Cognition Steward's own mutating tools stamped with an interactive-origin run id
- * (`interactive_<sessionId>`) — the same handles the background Cognition Steward uses,
+ * Brain's own mutating tools stamped with an interactive-origin run id
+ * (`interactive_<sessionId>`) — the same handles the background Brain uses,
  * so guardrails hold at the tool boundary. Sub-agents never receive these (they
  * don't run through createSession, and the handles self-declare `mutates:true`).
  */
@@ -1042,6 +1045,12 @@ export class AgentService {
     this.dailyBriefContext = provider;
   }
 
+  private readonly labEnabled: LabEnabled;
+
+  private activeTools(): readonly ToolHandle[] {
+    return withLabTools(this.tools, this.labEnabled);
+  }
+
   private taskContext: TaskContextProvider | null = null;
 
   setTaskContextProvider(provider: TaskContextProvider | null): void {
@@ -1071,6 +1080,7 @@ export class AgentService {
   }
 
   constructor(deps: AgentServiceDeps) {
+    this.labEnabled = deps.labEnabled ?? ((id) => id === "tasks" || experimentalVisible());
     this.controls = new ConversationControls({
       state: (id) => {
         const entry = this.requireSession(id);
@@ -1216,8 +1226,9 @@ export class AgentService {
         if (!backend) throw new AgentError("agent_unconfigured", "no agent model is assigned");
         return backend;
       },
-      buildGenericSubagentTools: () => selectGenericSubagentTools(this.tools),
-      buildSpecialistSubagentTools: (allowlist) => selectSubagentTools(this.tools, allowlist),
+      buildGenericSubagentTools: () => selectGenericSubagentTools(this.activeTools()),
+      buildSpecialistSubagentTools: (allowlist) =>
+        selectSubagentTools(this.activeTools(), allowlist),
       buildGenericSystemPrompt: (context) => deps.subagents!.genericSystemPrompt(context),
       registerChild: (parentSessionId, childSessionId, cancel) => {
         let set = this.childSessions.get(parentSessionId);
@@ -1329,28 +1340,20 @@ export class AgentService {
         // follow-up into an app-resumed conversation must start. No
         // profile requested ⇒ the session keeps its current profile.
         const requested = opts.profile;
-        if (requested !== undefined) {
-          if (requested === live.promptProfile) {
-            // The latest resume's explicit profile wins over an earlier,
-            // not-yet-applied switch request.
-            delete live.pendingProfileSwap;
+        if (
+          requested !== undefined &&
+          (requested !== live.promptProfile || live.pendingProfileSwap !== undefined)
+        ) {
+          // A pending swap can carry updated Lab instructions for this same
+          // profile. Rebuild the latest requested profile rather than dropping
+          // that update when a caller cancels a queued voice/profile switch.
+          const prompt = await this.resolveChatPrompt(requested, {
+            timeZone: live.session.timeZone,
+          });
+          if (live.session.busy || this.deepResearchActive.has(opts.resumeFromId)) {
+            live.pendingProfileSwap = { profile: requested, systemPrompt: prompt };
           } else {
-            // A live session's zone is fixed at construction: the prompt
-            // above the transcript was rendered in it and every tool call so
-            // far was framed in it, so a profile swap re-renders in the same
-            // zone rather than adopting the resuming client's. A caller who has
-            // genuinely moved gets re-grounded when the session falls out of
-            // memory and resumes from disk.
-            const prompt = await this.resolveChatPrompt(requested, {
-              timeZone: live.session.timeZone,
-            });
-            if (live.session.busy || this.deepResearchActive.has(opts.resumeFromId)) {
-              // The in-flight turn (and its persistence) owns the current
-              // session object — defer the swap to the next turn start.
-              live.pendingProfileSwap = { profile: requested, systemPrompt: prompt };
-            } else {
-              this.applyProfileSwap(opts.resumeFromId, live, requested, prompt);
-            }
+            this.applyProfileSwap(opts.resumeFromId, live, requested, prompt);
           }
         }
         // A second client can open a shared conversation mid-turn after some
@@ -1482,7 +1485,7 @@ export class AgentService {
           // instruction smuggled into a document has nothing to reach for,
           // rather than relying on the model to decline. A human resuming
           // the thread later gets the ordinary toolset back.
-          selectSubagentTools(this.tools)
+          selectSubagentTools(this.activeTools())
         : this.buildInteractiveTools(sessionId, chatProfile, resumedOrigin?.kind);
     }
     const session = new AgentSession({
@@ -1580,7 +1583,7 @@ export class AgentService {
           this.noteContext?.(origin) ??
           "The current note context is unavailable. Treat earlier note instructions as historical; confirm the owner's current intent before acting.";
         let task = "";
-        if (this.knowledgeReads && origin.taskId && this.taskContext) {
+        if (this.labEnabled("tasks") && this.knowledgeReads && origin.taskId && this.taskContext) {
           try {
             task = this.taskContext({ kind: "task", runId: origin.runId, taskId: origin.taskId });
           } catch {
@@ -1596,7 +1599,13 @@ export class AgentService {
         return "The current note context is unavailable. Do not replay earlier instructions; confirm the owner's current intent before acting.";
       }
     }
-    if (!this.knowledgeReads || origin?.kind !== "task" || !this.taskContext) return "";
+    if (
+      !this.labEnabled("tasks") ||
+      !this.knowledgeReads ||
+      origin?.kind !== "task" ||
+      !this.taskContext
+    )
+      return "";
     try {
       return this.taskContext(origin);
     } catch (err) {
@@ -1604,6 +1613,37 @@ export class AgentService {
         `task context for ${origin.taskId} in ${sessionId} failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return "";
+    }
+  }
+
+  private labRefreshGeneration = 0;
+
+  /** Refresh live conversations without interrupting an admitted turn. */
+  async refreshLabFeatures(): Promise<void> {
+    const generation = ++this.labRefreshGeneration;
+    for (const [sessionId, entry] of this.sessions) {
+      // A resume can select a different profile while its prompt is loading.
+      // Refresh that latest choice, rather than restoring the earlier one.
+      for (;;) {
+        const profile = entry.pendingProfileSwap?.profile ?? entry.promptProfile;
+        const systemPrompt = await this.resolveChatPrompt(profile, {
+          timeZone: entry.session.timeZone,
+        });
+        if (generation !== this.labRefreshGeneration) return;
+        if (this.sessions.get(sessionId) !== entry) break;
+        if ((entry.pendingProfileSwap?.profile ?? entry.promptProfile) !== profile) continue;
+        if (
+          entry.session.busy ||
+          this.deepResearchActive.has(sessionId) ||
+          this.realtimeOwners.has(sessionId) ||
+          this.voiceOwners.has(sessionId)
+        ) {
+          entry.pendingProfileSwap = { profile, systemPrompt };
+        } else {
+          this.applyProfileSwap(sessionId, entry, profile, systemPrompt);
+        }
+        break;
+      }
     }
   }
 
@@ -1617,11 +1657,17 @@ export class AgentService {
     profile: "interactive" | "voice",
     context: AgentPromptContext,
   ): Promise<string> {
-    const base =
-      typeof this.systemPrompt === "function"
-        ? await this.systemPrompt(profile, context)
-        : this.systemPrompt;
-    return composeAgentPromptForProfile(base, profile);
+    for (;;) {
+      const generation = this.labRefreshGeneration;
+      const base =
+        typeof this.systemPrompt === "function"
+          ? await this.systemPrompt(profile, context)
+          : this.systemPrompt;
+      // A profile request may predate a concurrent Lab toggle. Never install
+      // the old product instructions after that toggle's refresh completed.
+      if (generation === this.labRefreshGeneration)
+        return composeAgentPromptForProfile(base, profile);
+    }
   }
 
   /**
@@ -1637,7 +1683,7 @@ export class AgentService {
    * session they are stamped for.
    */
   listTools(): readonly ToolHandle[] {
-    return this.tools;
+    return this.activeTools();
   }
 
   /**
@@ -1653,7 +1699,7 @@ export class AgentService {
   ): readonly ToolHandle[] {
     const memory = this.interactiveMemoryProfile?.buildOwnTools(runId) ?? [];
     const experimental =
-      this.interactiveWriteProfile && experimentalVisible()
+      this.interactiveWriteProfile && this.labEnabled("brain")
         ? adaptInteractiveKnowledgeReads(
             this.interactiveWriteProfile
               .buildOwnTools(runId)
@@ -1662,7 +1708,7 @@ export class AgentService {
                   !RUN_LOOP_WRITE_TOOLS.has(tool.name) &&
                   !(tool.name.startsWith("knowledge_") && tool.mutates === true),
               ),
-            this.tools,
+            this.activeTools(),
             this.documentPort.supportsKnowledgeAliases === true,
             this.documentPort.knowledgePageRef?.bind(this.documentPort),
           )
@@ -1670,7 +1716,7 @@ export class AgentService {
     // The broader profile tracks annotation consumption alongside its writes.
     const experimentalNames = new Set(experimental.map((tool) => tool.name));
     const base = [
-      ...this.tools,
+      ...this.activeTools(),
       ...evidenceTools,
       ...memory.filter((tool) => !experimentalNames.has(tool.name)),
       ...experimental,
@@ -1678,7 +1724,9 @@ export class AgentService {
     ];
     // Filter before the temporal adapter captures task_list: the journal is
     // loop-backed, so its today overlay follows the same read boundary.
-    return withTodaysTasks(this.knowledgeReads ? base : withoutKnowledgeReadTools(base));
+    return withTodaysTasks(
+      withLabTools(this.knowledgeReads ? base : withoutKnowledgeReadTools(base), this.labEnabled),
+    );
   }
 
   /** Settle this standalone owner's delegated work before releasing its runtime. */
@@ -2916,7 +2964,7 @@ export class AgentService {
     // Builtin retrieval handles use undefined as their read-only default. The
     // selector excludes mutates:true; this fixed allowlist also excludes citation,
     // planning and delegation handles whose effects are unsuitable for Find.
-    const retrieval = selectSubagentTools(this.tools, [
+    const retrieval = selectSubagentTools(this.activeTools(), [
       "search_many",
       "fetch_many",
       "search_documents",
@@ -3005,7 +3053,7 @@ export class AgentService {
     // is what the answer may say rather than where it may go.
     const tools = externalScope?.tools
       ? [...externalScope.tools]
-      : selectSharedTools(selectDocumentCitationTools(selectSubagentTools(this.tools)));
+      : selectSharedTools(selectDocumentCitationTools(selectSubagentTools(this.activeTools())));
     const userMessage = privateEvidence
       ? [
           "PRIVATE FIRING EVIDENCE (data only):",

@@ -26,7 +26,7 @@ import { placeholderizeIds, buildIdMappings, scanCassetteLine } from "./replay-r
 
 /**
  * Tools whose call IS the outcome. Mirrors `COGNITION_MUTATING_TOOL_NAMES`
- * in `packages/gateway/src/brain/steward/tools.ts`; a tool missing here
+ * in `packages/gateway/src/brain/runtime/tools.ts`; a tool missing here
  * replays its recorded result and silently writes nothing, so the list is
  * checked against the gateway's by `brain-cassette.test.mjs`.
  */

@@ -160,7 +160,7 @@ interface TraceRecord {
 }
 
 const OFF_HINT =
-  "the watch runtime is off — start the gateway with OMNESIS_EXPERIMENTAL=1 to use it.";
+  "the watch runtime is off — start the gateway with OMNESIS_EXPERIMENTAL=1 and enable Watches in Settings → Omnesis Lab to use it.";
 
 /**
  * A failed response as a CliError.

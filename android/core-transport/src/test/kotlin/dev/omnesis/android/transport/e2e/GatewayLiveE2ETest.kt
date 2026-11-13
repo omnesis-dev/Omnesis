@@ -8,10 +8,12 @@ import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.client.AdminClient
 import dev.omnesis.android.transport.client.AgentClient
 import dev.omnesis.android.transport.client.GatewayClient
+import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.client.SearchClient
 import dev.omnesis.android.transport.client.TaskAction
 import dev.omnesis.android.transport.client.TaskView
 import dev.omnesis.android.transport.client.TasksClient
+import dev.omnesis.android.transport.dto.CreateNoteBody
 import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.dto.TaskMutationDto
 import dev.omnesis.android.transport.http.GatewayHttp
@@ -41,6 +43,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -53,8 +56,10 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
+import java.time.Instant
 import java.time.LocalDate
 import java.util.Collections
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
@@ -389,22 +394,28 @@ class GatewayLiveE2ETest {
     /** Widgets use these same journal reads and completion command, without model inference. */
     @Test
     fun widget_task_reads_and_completion_round_trip() = runBlocking {
-        val day = LocalDate.now().toString()
-        val created = http.postJson<JsonObject, TaskMutationDto>("tasks", buildJsonObject {
-            put("title", "Sketch a new trail map")
-            put("scheduledFor", day)
-        })
-        val id = requireNotNull(created.task).id
-        val tasks = TasksClient(http)
+        val previouslyEnabled = admin.lab().features.first { it.id == "tasks" }.enabled
+        admin.setLabFeature("tasks", true)
         try {
-            val owned = listOf(TaskView.TODAY, TaskView.MONTH, TaskView.FUTURE, TaskView.ANYTIME)
-                .flatMap { tasks.view(it, day).tasks }
-            assertTrue(owned.any { it.id == id && !it.isResolved })
-            tasks.act(id, TaskAction.Complete())
-            assertTrue(tasks.detail(id).task.isDone)
-            assertTrue(tasks.view(TaskView.TODAY, day).tasks.none { it.id == id && !it.isResolved })
+            val day = LocalDate.now().toString()
+            val created = http.postJson<JsonObject, TaskMutationDto>("tasks", buildJsonObject {
+                put("title", "Sketch a new trail map")
+                put("scheduledFor", day)
+            })
+            val id = requireNotNull(created.task).id
+            val tasks = TasksClient(http)
+            try {
+                val owned = listOf(TaskView.TODAY, TaskView.MONTH, TaskView.FUTURE, TaskView.ANYTIME)
+                    .flatMap { tasks.view(it, day).tasks }
+                assertTrue(owned.any { it.id == id && !it.isResolved })
+                tasks.act(id, TaskAction.Complete())
+                assertTrue(tasks.detail(id).task.isDone)
+                assertTrue(tasks.view(TaskView.TODAY, day).tasks.none { it.id == id && !it.isResolved })
+            } finally {
+                tasks.act(id, TaskAction.Delete)
+            }
         } finally {
-            tasks.act(id, TaskAction.Delete)
+            admin.setLabFeature("tasks", previouslyEnabled)
         }
     }
 
@@ -511,6 +522,74 @@ class GatewayLiveE2ETest {
             assertTrue("document detail id should be non-blank", doc.id.isNotBlank())
             assertTrue("document sourceId should be non-blank", doc.sourceId.isNotBlank())
         }
+    }
+
+    // --- Watch relay ---
+    //
+    // The gateway calls the phone makes on a paired watch's behalf. None of them runs a model:
+    // the synthetic gateway has no decision model, so routing takes its documented fallback.
+
+    /** A note relayed from the watch keeps its surface, its capture time and its idempotency key. */
+    @Test
+    fun watch_note_is_stored_under_the_watch_surface_once() = runBlocking {
+        val notes = NotesClient(http)
+        val body = CreateNoteBody(
+            text = "Renew the allotment key deposit",
+            id = UUID.randomUUID().toString(),
+            capturedAt = "2026-03-14T09:30:00.000Z",
+            surface = "android-watch",
+        )
+        val created = notes.create(body)
+        try {
+            assertEquals("android-watch", created.surface)
+            assertEquals("Renew the allotment key deposit", created.text)
+            assertEquals(Instant.parse("2026-03-14T09:30:00Z"), Instant.parse(created.capturedAt))
+            // The copy a watch queued after its live send landed carries the same key.
+            assertEquals(created.id, notes.create(body).id)
+            assertEquals(1, notes.day(created.day).entries.count { it.id == created.id })
+        } finally {
+            notes.delete(created.id)
+        }
+    }
+
+    /**
+     * The watch's decision-gate setting round-trips through `/status`, and routing answers in both
+     * positions. With the gate off, or on without a decision model, a watch recording is a question.
+     */
+    @Test
+    fun watch_decision_gate_setting_round_trips_and_routing_falls_back_to_ask() = runBlocking {
+        val notes = NotesClient(http)
+        val initial = requireNotNull(gateway.status().watchCapture) { "status should carry watchCapture" }
+        assertTrue("the gateway serves watch capture", initial.supported)
+        assertTrue("the gateway announces capture answers itself", initial.completionNotifications)
+        try {
+            admin.setWatchDecisionGate(false)
+            val off = requireNotNull(gateway.status().watchCapture)
+            assertFalse(off.enabled)
+            assertFalse("a gate switched off is never active", off.active)
+            assertEquals("ask", notes.routeCapture("Where did I leave the trail map?").route)
+
+            admin.setWatchDecisionGate(true)
+            val on = requireNotNull(gateway.status().watchCapture)
+            assertTrue(on.enabled)
+            val route = notes.routeCapture("Where did I leave the trail map?").route
+            if (on.active) {
+                assertTrue("an active gate decides between the two", route == "ask" || route == "note")
+            } else {
+                assertEquals("without a decision model the capture is a question", "ask", route)
+            }
+        } finally {
+            admin.setWatchDecisionGate(initial.enabled)
+        }
+        assertEquals(initial.enabled, gateway.status().watchCapture?.enabled)
+    }
+
+    /** Telling the gateway the watch showed an answer is accepted with the message it names. */
+    @Test
+    fun watch_displayed_answer_is_reported_seen_by_message() = runBlocking {
+        assertTrue(
+            agent.markConversationSeen("conversation-e2e-watch", viewing = false, messageId = "message-e2e-watch"),
+        )
     }
 
     private companion object {

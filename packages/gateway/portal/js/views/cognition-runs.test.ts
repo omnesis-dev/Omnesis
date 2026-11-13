@@ -90,7 +90,7 @@ describe("resolveSection", () => {
 
 describe("runFilterChangePath", () => {
   test("returns to the runs list when a selected run's filters actually change", () => {
-    const listPath = "/portal/debug/cognition/runs";
+    const listPath = "/portal/debug/brain/runs";
     expect(cognition.runFilterChangePath("run_1", "all", "sweep")).toBe(listPath);
     expect(cognition.runFilterChangePath("run_1", "all", "completed")).toBe(listPath);
   });
@@ -120,7 +120,7 @@ describe("applyRunFilterChange", () => {
 
     expect(cognition.applyRunFilterChange("run_1", "all", "sweep", setValue)).toBe(true);
     expect(setValue).toHaveBeenCalledWith("sweep");
-    expect(replaceState).toHaveBeenCalledWith(null, "", "/portal/debug/cognition/runs");
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/portal/debug/brain/runs");
     expect(dispatchEvent.mock.calls[0]?.[0]).toMatchObject({ type: "route-change" });
   });
 
@@ -185,6 +185,6 @@ describe("live running filter", () => {
     expect(selected.map((entry: { id: string }) => entry.id)).toEqual(["active-b"]);
     expect(cognition.runViewFilterOptions(selected.length)[1].label).toBe("Running (1)");
     expect(cognition.runningRunsForKind([], "sweep")).toEqual([]);
-    expect(cognition.runFilterChangePath("active-a", "all", "running")).toBe("/portal/debug/cognition/runs");
+    expect(cognition.runFilterChangePath("active-a", "all", "running")).toBe("/portal/debug/brain/runs");
   });
 });

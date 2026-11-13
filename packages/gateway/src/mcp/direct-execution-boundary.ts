@@ -58,6 +58,10 @@ export class DirectMcpExecutionBoundary {
       options.invocationTimeoutMs ?? DEFAULT_DIRECT_MCP_INVOCATION_TIMEOUT_MS;
   }
 
+  catalogRevision(): string {
+    return this.service.catalogRevision();
+  }
+
   manifest(authorization?: CorpusAuthorization) {
     return this.service.manifest(authorization);
   }

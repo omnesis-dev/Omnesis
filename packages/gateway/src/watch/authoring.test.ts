@@ -1209,3 +1209,42 @@ describe("one intent arriving more than once while it compiles", () => {
     expect(compiles).toBe(2);
   });
 });
+
+describe("Watches Lab opt-out", () => {
+  it("does not compile when Watches is already disabled", async () => {
+    const compile = vi.fn();
+    const d = deps({ enabled: () => false, compile });
+    expect(
+      await authorWatch(d.deps, {
+        request: "Notify me of a fictional shipment",
+        authoredBy: "operator",
+      }),
+    ).toMatchObject({ status: "conflict" });
+    expect(compile).not.toHaveBeenCalled();
+    expect(d.stored).toEqual([]);
+  });
+  it("does not install a compile that finishes after opt-out", async () => {
+    let enabled = true;
+    const d = deps({
+      enabled: () => enabled,
+      compile: async () => {
+        enabled = false;
+        return {
+          status: "compiled",
+          document: WATCH_DSL,
+          diagnostics: [],
+          backtest: null,
+          compileRunId: "lab-compile",
+        };
+      },
+    });
+    expect(
+      await authorWatch(d.deps, {
+        request: "Notify me of a fictional shipment",
+        authoredBy: "operator",
+      }),
+    ).toMatchObject({ status: "conflict" });
+    expect(d.stored).toEqual([]);
+    expect(d.order).toEqual([]);
+  });
+});

@@ -3,7 +3,7 @@
 
 /**
  * Shared-diff footprint: how many changed lines live OUTSIDE the Briefs /
- * Cognition Steward feature subtrees (`evals/briefs/feature-paths.txt`).
+ * Brain feature subtrees (`evals/briefs/feature-paths.txt`).
  *
  * Encapsulation for this feature is judged by rebase cost, so every diff is
  * measured against the stack base with the feature-owned paths excluded; the

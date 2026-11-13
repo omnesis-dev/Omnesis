@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Storage-layer types for the Cognition Steward: open loops (the user's
+ * Storage-layer types for the Brain: open loops (the user's
  * tasks), observations, the agent run queue, spend tracking, and the
  * agent-notes blob.
  *
@@ -442,7 +442,7 @@ export const COGNITION_RUN_KINDS: readonly CognitionRunKind[] = COGNITION_RUN_KI
 export type CognitionRunStatus = "pending" | "completed" | "failed";
 
 /**
- * One queued (or finished) Cognition Steward run. Payload shape is per-kind and
+ * One queued (or finished) Brain run. Payload shape is per-kind and
  * owned by the run-driver layer — the queue stores it opaquely.
  */
 export interface CognitionRunRow {

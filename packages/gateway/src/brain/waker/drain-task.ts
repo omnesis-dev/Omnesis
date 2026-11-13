@@ -400,7 +400,7 @@ export function briefsWakerDrainTask(
     scheduler,
     displayName: "Briefs waker drain",
     description:
-      "Drains buffered document wakes into debounced Cognition Steward data runs (per-document fold, event-time diffs).",
+      "Drains buffered document wakes into debounced Brain data runs (per-document fold, event-time diffs).",
     category: "briefs",
     tracker,
   });

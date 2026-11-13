@@ -26,7 +26,12 @@ vi.mock("../api.js", () => ({
 vi.mock("./graph.js", () => ({ GraphView: () => h("div", { class: "stub-graph" }) }));
 vi.mock("./cognition.js", () => ({ CognitionView: () => h("div", { class: "stub-cognition" }) }));
 vi.mock("./doctor.js", () => ({ DoctorTab: () => h("div", { class: "stub-doctor" }) }));
-vi.mock("./watch-debug.js", () => ({ WatchDebugTab: () => h("div", { class: "stub-watch" }) }));
+vi.mock("./data.js", () => ({ DataView: () => h("div", { class: "stub-data" }) }));
+vi.mock("./sql.js", () => ({ SqlView: () => h("div", { class: "stub-sql" }) }));
+vi.mock("./watch-debug.js", () => ({
+  WatchDebugTab: ({ watchId }: { watchId: string }) =>
+    h("div", { class: "stub-watch", "data-watch-id": watchId }),
+}));
 
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { DebugView } from "./debug.js";
@@ -56,6 +61,9 @@ describe("Debug tab bar", () => {
   async function mount(props: Record<string, unknown>) {
     await act(async () => {
       render(h(DebugView, props), host);
+    });
+    await act(async () => {
+      await vi.dynamicImportSettled();
     });
   }
 
@@ -101,7 +109,7 @@ describe("Debug tab bar", () => {
 
   test("a Cognition route falls back to the default tab until experimental arrives", async () => {
     // The flag resolves async, so a cold deep link mounts with it still false.
-    await mount({ tab: "cognition", experimental: false });
+    await mount({ tab: "brain", experimental: false });
     expect(host.querySelector(".stub-cognition")).toBeNull();
     expect(activeTabLabel()).toBe("Tables");
 
@@ -114,7 +122,7 @@ describe("Debug tab bar", () => {
   });
 
   test("the same route resolves to Cognition once experimental is on", async () => {
-    await mount({ tab: "cognition", experimental: true });
+    await mount({ tab: "brain", experimental: true });
     expect(activeTabLabel()).toBe("Agent runs");
     expect(host.querySelector(".stub-cognition")).not.toBeNull();
   });
@@ -126,7 +134,7 @@ describe("Debug tab bar", () => {
 
     await mount({ tab: "watch", experimental: true, watchDebugId: "watch-01" });
     expect(activeTabLabel()).toBe("Watch runtime");
-    expect(host.querySelector(".stub-watch")).not.toBeNull();
+    expect(host.querySelector(".stub-watch")?.getAttribute("data-watch-id")).toBe("watch-01");
   });
 
   test("an unrenderable tab shows the default without claiming to be it", async () => {

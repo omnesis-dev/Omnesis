@@ -138,7 +138,13 @@ class AssistantActionActivity : ComponentActivity() {
                         -> Unit
                     }
                 }
-                AssistantActionContent(state = state, onClose = ::finish, onConfirm = viewModel::confirm)
+                val preparing by viewModel.preparing.collectAsStateWithLifecycle()
+                AssistantActionContent(
+                    state = state,
+                    onClose = ::finish,
+                    onConfirm = viewModel::confirm,
+                    preparing = preparing,
+                )
             }
         }
     }
@@ -348,6 +354,8 @@ fun AssistantActionContent(
     state: AssistantActionUiState,
     onClose: () -> Unit,
     onConfirm: () -> Unit = {},
+    /** Listening is about to start: the microphone is not open yet, so nothing invites speech. */
+    preparing: Boolean = false,
 ) {
     val colors = OmTheme.colors
     Scaffold(containerColor = colors.bgPrimary) { padding ->
@@ -421,7 +429,17 @@ fun AssistantActionContent(
                         Spacer(Modifier.height(OmSpacing.xl))
                         Button(onClick = onConfirm) { Text("Continue") }
                     }
-                    is AssistantActionUiState.Listening -> {
+                    is AssistantActionUiState.Listening -> if (preparing) {
+                        OmSpinner(modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.height(OmSpacing.lg))
+                        Text("Getting ready…", color = colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(OmSpacing.sm))
+                        Text(
+                            "The microphone will turn on in a moment.",
+                            color = colors.textSecondary,
+                            textAlign = TextAlign.Center,
+                        )
+                    } else {
                         Box(
                             Modifier.size(88.dp).clip(CircleShape).background(colors.accent.copy(alpha = 0.14f)),
                             contentAlignment = Alignment.Center,

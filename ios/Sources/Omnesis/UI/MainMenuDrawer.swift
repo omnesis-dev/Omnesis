@@ -236,9 +236,7 @@ struct MainMenuDrawer: View {
             row(id: "search", icon: "magnifyingglass", label: "Search", isActive: selection == .search) {
                 select(.search)
             }
-            // Tasks is a standard surface: shown whenever the gateway serves
-            // it, never gated on experimental mode. Its label carries today's
-            // open count, "Tasks (4)".
+            // Lab gates come from the paired gateway.
             if store.tasksAvailable {
                 row(
                     id: "tasks",
@@ -272,7 +270,7 @@ struct MainMenuDrawer: View {
                 select(.privacy)
             }
 
-            if store.experimentalEnabled {
+            if store.watchesEnabled {
                 row(
                     id: "watches",
                     // An eye rather than a bell: a watch is a standing question

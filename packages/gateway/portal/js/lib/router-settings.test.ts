@@ -217,6 +217,12 @@ describe("Settings page tabs", () => {
     // to render — so the only thing that must differ is what the bar offers.
     const shown = (experimental: boolean) =>
       (settingsTabs({ experimental }) as Array<{ key: string }>).map((t) => t.key);
+    expect(shown(true)).not.toContain("account");
+    expect(
+      (settingsTabs({ experimental: false, cloudRelay: true }) as Array<{ key: string }>).map((tab) => tab.key),
+    ).toContain("account");
+    expect(shown(false)).not.toContain("account");
+    expect(SETTINGS_TAB_KEYS).toContain("account");
     expect(shown(true)).toContain("sweeps");
     expect(shown(false)).not.toContain("sweeps");
     expect(SETTINGS_TAB_KEYS).toContain("sweeps");
@@ -284,4 +290,11 @@ describe("Settings page tabs", () => {
       pair: "browser",
     });
   });
+});
+
+test("Lab follows Config and Sweeps requires the Brain", () => {
+  const tabs = settingsTabs({ experimental: true, brain: false, labAvailable: true });
+  expect(tabs.slice(0, 2).map((tab: {key: string}) => tab.key)).toEqual(["config", "lab"]);
+  expect(tabs.map((tab: {key: string}) => tab.key)).not.toContain("sweeps");
+  expect(settingsTabs({ experimental: false }).map((tab: {key: string}) => tab.key)).not.toContain("lab");
 });

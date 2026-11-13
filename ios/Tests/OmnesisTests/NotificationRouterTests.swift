@@ -7,6 +7,31 @@ import XCTest
 @available(iOS 17.0, *)
 @MainActor
 final class NotificationRouterTests: XCTestCase {
+    func testPairingReminderOnlyNavigatesToTheTrustedDeviceList() throws {
+        XCTAssertEqual(
+            PushTarget.fromUserInfo(["omnesis": ["kind": "device-pairing", "targetId": "pairing"]], cloudRelayEnabled: true),
+            .pairingRequests
+        )
+        XCTAssertNil(PushTarget.fromUserInfo(
+            ["omnesis": ["kind": "device-pairing", "targetId": "untrusted-request"]],
+            cloudRelayEnabled: true
+        ))
+        XCTAssertEqual(PushTarget.pairingRequests.kindName, "device-pairing")
+        let route = try JSONDecoder().decode(ClaimedNotificationRoute.self, from: Data(#"{"kind":"device-pairing"}"#.utf8))
+        XCTAssertEqual(route, .devicePairing)
+        let notification = ClaimedNotification(
+            id: "fixture",
+            kind: "device-pairing",
+            targetId: "pairing",
+            title: "Pairing request",
+            body: "Review device pairing",
+            collapseId: "pairing:fixture",
+            remaining: 0,
+            route: route
+        )
+        XCTAssertEqual(notification.routingPayload, ["kind": "device-pairing", "targetId": "pairing"])
+    }
+
     private let policyNow = Date(timeIntervalSince1970: 1_800_000_000)
 
     /// A destination view consumes a target during someone else's wait. The
@@ -453,6 +478,7 @@ extension NotificationRouterTests {
         XCTAssertEqual(homeTab(for: .watchFiring(watchId: "wat_1", firingKey: "wat_1:7")), .watches)
         XCTAssertEqual(homeTab(for: .watch(watchId: "wat_1")), .watches)
         XCTAssertEqual(homeTab(for: .privacyApproval(approvalId: "approval-1")), .privacy)
+        XCTAssertEqual(homeTab(for: .pairingRequests), .agent)
         XCTAssertEqual(homeTab(for: .agentAnswer(conversationId: "conv-9")), .agent)
         XCTAssertEqual(
             homeTab(for: .sourcePermission(

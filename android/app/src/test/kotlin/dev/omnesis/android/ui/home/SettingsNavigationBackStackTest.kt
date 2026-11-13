@@ -31,6 +31,7 @@ class SettingsNavigationBackStackTest {
         NavHost(navController = nav, startDestination = "agent") {
             composable("agent") { Text("Agent") }
             composable(SETTINGS_ROUTE) { Text("Settings") }
+            composable(LAB_ROUTE) { Text("Omnesis Lab") }
             composable(MODELS_ROUTE) { Text("Models") }
             composable("models/backends") { Text("Backends") }
             composable("models/backends/provider") { Text("Backend provider") }
@@ -71,6 +72,17 @@ class SettingsNavigationBackStackTest {
         }
         assertRoute(DEVICES_ROUTE)
         compose.runOnIdle { nav.popBackStack() }
+        assertRoute(SETTINGS_ROUTE)
+        compose.runOnIdle { nav.popBackStack() }
+        assertRoute("agent")
+    }
+
+    @Test
+    fun labIsASettingsChildWithSettingsBeneathIt() {
+        startGraph()
+        compose.runOnIdle { nav.navigateToSettingsChild(LAB_ROUTE) }
+        assertRoute(LAB_ROUTE)
+        compose.runOnIdle { nav.returnToSettings() }
         assertRoute(SETTINGS_ROUTE)
         compose.runOnIdle { nav.popBackStack() }
         assertRoute("agent")

@@ -95,7 +95,7 @@ jobs:
           context: .
           target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
-          build-args: NPM_CI_REQUIRE_FFMPEG=1
+          build-args: NPM_CI_REQUIRE_OPTIONAL=1
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

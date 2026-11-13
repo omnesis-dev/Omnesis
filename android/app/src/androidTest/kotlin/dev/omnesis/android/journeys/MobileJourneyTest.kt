@@ -29,6 +29,7 @@ import androidx.test.rule.GrantPermissionRule
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import dev.omnesis.android.DebugPairingSeed
 import dev.omnesis.android.MainActivity
 import java.util.UUID
 import java.util.regex.Pattern
@@ -193,13 +194,14 @@ class MobileJourneyTest {
         device.executeShellCommand("cmd connectivity airplane-mode ${if (enabled) "enable" else "disable"}")
     }
 
-    /** Launches the app paired through the DEBUG seam, which runs the real code exchange. */
+    /**
+     * Launches the app paired through the DEBUG seam, which runs the real code exchange. The
+     * seed is handed over in the app's own process, where this instrumentation runs.
+     */
     private fun launchPaired() {
         val pairing = gateway.mintPairing("Journey Android ${UUID.randomUUID().toString().take(8)}")
+        DebugPairingSeed.offer(gateway.url, pairing.code, gateway.fingerprint)
         val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
-            .putExtra("seed_url", gateway.url)
-            .putExtra("seed_code", pairing.code)
-            .putExtra("seed_fingerprint", gateway.fingerprint)
         scenario = ActivityScenario.launch(intent)
         waitFor(hasText("Connection verified"), "the seeded pairing never reached phone setup", PAIRING_TIMEOUT_MS)
         skipPhoneSetup()

@@ -375,6 +375,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "devices.createPairing", priority: "user" },
   { name: "devices.consumePairing", priority: "user" },
   { name: "devices.redeemDevicePairing", priority: "user" },
+  { name: "devices.rotateDeviceToken", priority: "user" },
   { name: "devices.revokePairing", priority: "user" },
   { name: "devices.redeemAgentIntegrationPairing", priority: "user" },
   { name: "devices.cleanupExpiredPairings", priority: "background" },
@@ -439,7 +440,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // small transaction over a table with one row per installed source type.
   { name: "sources.upsertDocumentProfiles", priority: "realtime" },
 
-  // ── the Cognition Steward run queue ───────────────────────────────────────
+  // ── the Brain run queue ───────────────────────────────────────
   // Agent runs are asynchronous background work that must never contend
   // with ingest or interactive writes.
   { name: "cognition.enqueue", priority: "background" },
@@ -458,7 +459,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "live.recordVoiceUsage", priority: "background" },
   { name: "cognition.recordCognitionSpend", priority: "background" },
   { name: "cognition.recordDecision", priority: "background" },
-  // Loop/observation/notes mutations issued by the Cognition Steward's tools mid-run —
+  // Loop/observation/notes mutations issued by the Brain's tools mid-run —
   // background like the rest: agent runs never contend with ingest.
   { name: "cognition.openLoopCreate", priority: "background" },
   { name: "cognition.openLoopUpdate", priority: "background" },
@@ -469,7 +470,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // and queue them for review. Background: it trails a deletion the operator
   // has already been told completed; an HTTP delete raises it to user.
   { name: "cognition.sourceDeletionReview", priority: "background" },
-  // Durable doc-annotation ops: ordinary background steward writes.
+  // Durable doc-annotation ops: ordinary background Brain writes.
   { name: "cognition.annotationCreate", priority: "background" },
   { name: "cognition.annotationCreateSuperseding", priority: "background" },
   { name: "cognition.annotationSupersede", priority: "background" },
@@ -477,7 +478,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "cognition.annotationDelete", priority: "background" },
   { name: "cognition.annotationInvalidate", priority: "background" },
   // Durable person-annotation ops — the person-keyed sibling of the doc ones.
-  // create/revise/retract/invalidate are ordinary background steward writes.
+  // create/revise/retract/invalidate are ordinary background Brain writes.
   { name: "cognition.personAnnotationCreate", priority: "background" },
   { name: "cognition.personAnnotationCreateSuperseding", priority: "background" },
   { name: "cognition.personAnnotationSupersede", priority: "background" },
@@ -494,6 +495,8 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "conversationReadState.markSeen", priority: "user" },
   { name: "conversationReadState.agentContentArrived", priority: "user" },
   { name: "conversationReadState.forget", priority: "user" },
+  { name: "lab.initialize", priority: "user" },
+  { name: "lab.set", priority: "user" },
   { name: "devAnnotations.create", priority: "user" },
   { name: "devAnnotations.resolve", priority: "user" },
   { name: "devAnnotations.delete", priority: "user" },
@@ -552,7 +555,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // Carries annotation links across projection ids an analytics table rekey
   // changed; replayed from the analytics move ledger, so never on a page path.
   { name: "temporalAnnotations.relinkProjections", priority: "background" },
-  // Observations and the morning brief: background steward writes.
+  // Observations and the morning brief: background Brain writes.
   { name: "cognition.observationCreate", priority: "background" },
   { name: "cognition.observationTransition", priority: "background" },
   { name: "cognition.observationScores", priority: "background" },

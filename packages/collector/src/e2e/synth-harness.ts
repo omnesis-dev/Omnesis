@@ -205,6 +205,8 @@ export interface SyntheticHarnessOptions {
    * reports `/health.experimental=true`; use `stable` for the ungated path.
    */
   gatewayMode: SyntheticGatewayMode;
+  /** Persist explicit Lab opt-ins before ingesting any fixture documents. Requires experimental mode. */
+  labFeatures?: Partial<Record<"brain" | "tasks" | "watches", boolean>>;
   /** Collector locale context to persist on every source-emitted document. */
   ingestionContext?: DocumentIngestionContext;
   /**
@@ -312,7 +314,7 @@ export interface SyntheticHarnessOptions {
   /**
    * Extra top-level `omnesis.json` blocks written verbatim into the spawned
    * gateway's config (e.g. `{ brain: { conversationDebounce: "2s" } }` to
-   * compress the Cognition Steward's durations for an E2E). The harness-assembled
+   * compress the Brain's durations for an E2E). The harness-assembled
    * `inference` / `gateway` blocks win over same-named keys here — use
    * `extraInference` / the dedicated backend flags for those two. A callback
    * receives the allocated Gateway URL when a test needs a port-dependent value.
@@ -458,6 +460,7 @@ export class SyntheticE2EHarness {
   private allDescriptors: SourceDescriptor[] = [];
   private universe: string;
   private gatewayMode: SyntheticGatewayMode;
+  private readonly labFeatures: Partial<Record<"brain" | "tasks" | "watches", boolean>>;
   private agentBackend: "off" | "replay";
   private embedderBackend: "off" | "fake";
   private transcriberBackend: "off" | "replay";
@@ -478,6 +481,12 @@ export class SyntheticE2EHarness {
   constructor(opts: SyntheticHarnessOptions) {
     if (!opts) requireSyntheticGatewayMode(undefined);
     this.gatewayMode = requireSyntheticGatewayMode(opts.gatewayMode);
+    this.labFeatures = opts.labFeatures ?? {};
+    if (
+      Object.keys(this.labFeatures).length > 0 &&
+      !["experimental", "synthetic-experimental"].includes(this.gatewayMode)
+    )
+      throw new Error("Lab feature fixtures require an experimental gateway mode");
     for (const key of ["OMNESIS_SYNTHETIC", "OMNESIS_EXPERIMENTAL"] as const) {
       if (opts.extraGatewayEnv && Object.hasOwn(opts.extraGatewayEnv, key)) {
         throw new Error(
@@ -582,6 +591,11 @@ export class SyntheticE2EHarness {
     this.gatewayPort = await getFreePort();
     this.gatewayUrl = `https://localhost:${this.gatewayPort}`;
     await this.startGateway();
+    for (const [id, enabled] of Object.entries(this.labFeatures))
+      await this.gatewayJson(`/admin/lab/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      });
     if (this.initialDocuments.length > 0) {
       await this.pushDocuments([...this.initialDocuments]);
     }
@@ -1096,7 +1110,7 @@ export class SyntheticE2EHarness {
 
   /**
    * Absolute path to the spawned gateway's config dir. Tests that seed
-   * filesystem artifacts the gateway reads from there (e.g. Cognition Steward
+   * filesystem artifacts the gateway reads from there (e.g. Brain
    * run transcripts under `briefs/transcripts/`) build paths off this.
    */
   getConfigDir(): string {
@@ -1202,6 +1216,7 @@ export class SyntheticE2EHarness {
       | {
           whileStopped?: () => void | Promise<void>;
           gatewayMode?: SyntheticGatewayMode;
+          labFeatures?: Partial<Record<"brain" | "tasks" | "watches", boolean>>;
         }
       | (() => void | Promise<void>) = {},
   ): Promise<void> {
@@ -1228,6 +1243,11 @@ export class SyntheticE2EHarness {
     await options.whileStopped?.();
     this.gatewayMode = gatewayMode;
     await this.startGateway();
+    for (const [id, enabled] of Object.entries(options.labFeatures ?? {}))
+      await this.gatewayJson(`/admin/lab/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      });
     this.gateway = new HttpGatewayClient(this.gatewayUrl, this.apiKey);
   }
 

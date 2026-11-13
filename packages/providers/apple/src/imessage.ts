@@ -16,13 +16,21 @@ import {
   assignAttachmentSeqs,
   computeContentHash,
   transcriptionSyncIssues,
+  AUDIO_TOO_LARGE,
+  AUDIO_UNREADABLE,
+  MAX_TRANSCRIBE_AUDIO_BYTES,
   TRANSCRIBER_UNAVAILABLE,
-  AudioUnreadableError,
+  AudioRejectedError,
+  assertNever,
 } from "@omnesis/core";
 import { SourceId, ProviderId, isTransientSyncError } from "@omnesis/types";
 import { unavailableStorePage } from "./store-unavailable.js";
 import { parseAttributedBody } from "./imessage-attributed-body.js";
-import { IMessageTranscriptCache } from "./imessage-transcript-cache.js";
+import {
+  AUDIO_NOT_DOWNLOADED,
+  IMessageTranscriptCache,
+  type RejectedClipReason,
+} from "./imessage-transcript-cache.js";
 import {
   imessageDateToDate,
   isoToImessageNs,
@@ -230,10 +238,10 @@ export class AppleIMessageSource {
     }
     const lastRowId = state?.lastRowId ?? 0;
     const isBootstrap = lastRowId === 0;
-    // A sync from no cursor is a bootstrap or a resync: clips found unreadable
-    // before are sent again, in case the gateway's decoder now reads them.
+    // A sync from no cursor is a bootstrap or a resync: clips the gateway
+    // would not take before are sent again, in case it now reads them.
     if (state === null && this.transcribeAudio && this.hasTranscriptSidecar()) {
-      this.getTranscriptCache().forgetUnreadable();
+      this.getTranscriptCache().forgetRejected();
     }
 
     // Convert dataCutoff to iMessage nanosecond timestamp for filtering
@@ -1038,8 +1046,12 @@ export class AppleIMessageSource {
    * transcriber assigned, the backend down, a read that failed — is recorded
    * there as pending with a backoff, is left alone until it is due, and has
    * its day re-rendered then; the page it is on completes either way. A clip
-   * whose bytes decode to no audio is recorded there as unreadable and is not
-   * sent again while the file is unchanged.
+   * whose file is empty has not been downloaded to this Mac: it is not sent,
+   * shows as `audio-missing`, and is looked at again on the same schedule —
+   * or sooner, when its day re-renders once the bytes have arrived. A clip
+   * whose bytes decode to no audio, or that is larger than the gateway
+   * transcribes, is recorded there as rejected and is not sent again while the
+   * file is unchanged.
    */
   private async transcribeDayAudio(
     dayParsed: ParsedIMessage[],
@@ -1061,8 +1073,8 @@ export class AppleIMessageSource {
     const now = Date.now();
     /** Clips this pass left pending; the rest of the day's pending rows are stale. */
     const stillPending: string[] = [];
-    /** Clips this pass found unreadable; the rest of the day's unreadable rows are stale. */
-    const stillUnreadable: string[] = [];
+    /** Clips this pass found rejected; the rest of the day's rejected rows are stale. */
+    const stillRejected: string[] = [];
     let sawAudio = false;
 
     for (const msg of dayParsed) {
@@ -1086,8 +1098,11 @@ export class AppleIMessageSource {
         }
 
         let mtimeMs: number | undefined;
+        let sizeOnDisk: number | undefined;
         try {
-          mtimeMs = statSync(filePath).mtimeMs;
+          const stat = statSync(filePath);
+          mtimeMs = stat.mtimeMs;
+          sizeOnDisk = stat.size;
         } catch {
           // The read below will surface the real failure if the file vanished.
         }
@@ -1108,16 +1123,38 @@ export class AppleIMessageSource {
           continue;
         }
 
-        // The same bytes decode the same way: not sent again until the file
+        // The same bytes get the same answer: not sent again until the file
         // changes or the source is resynced.
-        if (cache.isUnreadable(cacheKey, att.totalBytes, mtimeMs)) {
-          att.transcription = "audio-unreadable";
-          stillUnreadable.push(cacheKey);
+        const rejected = cache.rejectedAs(cacheKey, att.totalBytes, mtimeMs);
+        if (rejected) {
+          att.transcription = rejected;
+          stillRejected.push(cacheKey);
           continue;
         }
 
         const pending = cache.pending(cacheKey);
-        if (pending && pending.nextAttemptMs > now) {
+        // An empty file's bytes have not arrived on this Mac (offloaded to
+        // iCloud, or a download that stopped). Sending nothing gets nothing
+        // back, so it is checked again on the backoff instead.
+        if (sizeOnDisk === 0) {
+          if (!pending || pending.nextAttemptMs <= now) {
+            cache.recordFailure(cacheKey, dayKey, AUDIO_NOT_DOWNLOADED, now);
+          }
+          att.transcription = "audio-missing";
+          stillPending.push(cacheKey);
+          continue;
+        }
+        // The gateway refuses more bytes than it transcribes; the file is not
+        // read or sent while it is unchanged.
+        if (sizeOnDisk !== undefined && sizeOnDisk > MAX_TRANSCRIBE_AUDIO_BYTES) {
+          log.debug(`Audio ${att.filename} is ${sizeOnDisk} bytes, too large to transcribe`);
+          cache.recordRejected(cacheKey, dayKey, att.totalBytes, mtimeMs, AUDIO_TOO_LARGE);
+          att.transcription = "audio-too-large";
+          stillRejected.push(cacheKey);
+          continue;
+        }
+        // A clip that waited for its bytes is tried as soon as they are here.
+        if (pending && pending.nextAttemptMs > now && pending.lastError !== AUDIO_NOT_DOWNLOADED) {
           att.transcription =
             pending.lastError === TRANSCRIBER_UNAVAILABLE ? "transcriber-unavailable" : "awaiting";
           stillPending.push(cacheKey);
@@ -1156,12 +1193,21 @@ export class AppleIMessageSource {
             durationSec: result.durationSec,
           });
         } catch (err) {
-          if (err instanceof AudioUnreadableError) {
-            log.debug(`Audio ${att.filename} could not be decoded; not sending it again`);
-            cache.recordUnreadable(cacheKey, dayKey, att.totalBytes, mtimeMs);
-            att.transcription = "audio-unreadable";
-            stillUnreadable.push(cacheKey);
-            continue;
+          if (err instanceof AudioRejectedError) {
+            const outcome = rejectedClipOutcome(err);
+            if (outcome === "audio-missing") {
+              cache.recordFailure(cacheKey, dayKey, AUDIO_NOT_DOWNLOADED, now);
+              att.transcription = "audio-missing";
+              stillPending.push(cacheKey);
+              continue;
+            }
+            if (outcome !== undefined) {
+              log.debug(`Audio ${att.filename} was refused (${err.reason}); not sending it again`);
+              cache.recordRejected(cacheKey, dayKey, att.totalBytes, mtimeMs, outcome);
+              att.transcription = outcome;
+              stillRejected.push(cacheKey);
+              continue;
+            }
           }
           // A transcription-backend blip (gateway unreachable / 5xx) or a
           // file that could not be read: the page goes on with the
@@ -1180,7 +1226,7 @@ export class AppleIMessageSource {
     // sidecar; a due day without any audio left is cleared through the
     // sidecar the sweep already opened.
     const sidecar = sawAudio ? this.getTranscriptCache() : this.transcriptCache;
-    sidecar?.retainForDay(dayKey, stillPending, stillUnreadable);
+    sidecar?.retainForDay(dayKey, stillPending, stillRejected);
   }
 
   /** Lazily open the transcript sidecar on first use. */
@@ -1389,6 +1435,29 @@ function normalizeAssociatedMessageGuid(guid: string | null): string | null {
 
 function isRenderableMessageRow(row: RawIMessage): boolean {
   return !isTapback(row.associatedMessageType) && !isTapbackRemoval(row.associatedMessageType);
+}
+
+/**
+ * How a clip the gateway would not transcribe is recorded: as rejected for as
+ * long as its bytes are unchanged, as not downloaded when there were no bytes
+ * to send, or — for a request refused as malformed — not at all, so it is
+ * retried on the backoff like any other failure.
+ */
+function rejectedClipOutcome(
+  err: AudioRejectedError,
+): RejectedClipReason | "audio-missing" | undefined {
+  switch (err.reason) {
+    case "unreadable":
+      return AUDIO_UNREADABLE;
+    case "too-large":
+      return AUDIO_TOO_LARGE;
+    case "empty":
+      return "audio-missing";
+    case "refused":
+      return undefined;
+    default:
+      return assertNever(err.reason);
+  }
 }
 
 function dayKeyForRow(row: RawIMessage): string {

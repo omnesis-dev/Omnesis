@@ -1003,7 +1003,7 @@ describe("watches the runtime is running", () => {
       onRemove: vi.fn(),
     }));
     const link = nodes.find((node) => node.text?.trim() === "View compilation transcript");
-    expect(link?.props.href).toBe("/portal/debug/cognition/runs/run-example");
+    expect(link?.props.href).toBe("/portal/debug/brain/runs/run-example");
     // On the header's own subtitle line, beside the name and the date added.
     expect(link).toBeTruthy();
     expect(nodes.find((node) => node.tag === "p" && node.text.includes("Added"))?.text)
@@ -1032,20 +1032,16 @@ describe("watches the runtime is running", () => {
     expect(nodes.some((node) => node.tag === "span" && node.text === "2")).toBe(true);
   });
 
-  test("offers the definition without loading it, and shows it once asked", () => {
-    // The definition is the largest field a watch has, and this screen is
-    // about what the watch does. So the disclosure is offered closed and the
-    // read only happens when somebody opens it — the same reasoning that keeps
-    // the definition out of the polled listing.
+  test("opens the definition by default and preserves its source text", () => {
     const closed = expandToHostNodes(InstalledWatchDetail({
       watch: INSTALLED_WATCH,
       firings: [],
       onRemove: vi.fn(),
     }));
-    expect(closed.some((node) => node.tag === "details")).toBe(true);
+    expect(closed.some((node) => node.tag === "details" && node.props.open === true)).toBe(true);
     const closedText = closed.map((node) => node.text).join(" ");
     expect(closedText).toContain("Definition");
-    expect(closedText, "the definition was rendered before anyone asked").not.toContain(
+    expect(closedText, "the definition is still loading").not.toContain(
       "source.document_event",
     );
 
@@ -1059,7 +1055,9 @@ describe("watches the runtime is running", () => {
     const openText = open.map((node) => node.text).join(" ");
     expect(openText).toContain("source.document_event");
     // Verbatim, not reformatted: the shape is how a definition is read.
-    expect(open.some((node) => node.tag === "pre" && node.text === dsl)).toBe(true);
+    expect(open.filter((node) => node.tag === "span").some((node) => node.class === "cm-tok-property")).toBe(true);
+    const parts = open.filter((node) => node.tag === "span" && node.class.startsWith("cm-tok-"));
+    expect(parts.map((node) => node.text).join("")).toContain("source.document_event");
   });
 
   test("says why the definition could not be read, instead of showing nothing", () => {

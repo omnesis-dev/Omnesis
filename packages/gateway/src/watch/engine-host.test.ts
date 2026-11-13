@@ -151,6 +151,7 @@ const NO_ANALYTICS: AnalyticsPort = {
 
 function host(
   overrides: {
+    enabled?: () => boolean;
     eventsPerWatch?: number;
     now?: () => number;
     writes?: WriteLease;
@@ -2228,4 +2229,14 @@ describe("a host with a journal history reader", () => {
     expect(result.paused).toBe(0);
     expect(definitions.get("w-1")?.status).toBe("active");
   });
+});
+
+it("parks watch evaluation while Lab is off and resumes from its journal when enabled", async () => {
+  journal.commit({ events: [mail(1, "d1111111-0000-4000-8000-000000000001", "first")] });
+  addWatch(fromAlice(await fingerprint()), 0);
+  let enabled = false;
+  const running = host({ enabled: () => enabled });
+  expect(await running.evaluate()).toMatchObject({ watches: 0, events: 0, firings: 0, idle: true });
+  enabled = true;
+  expect(await running.evaluate()).toMatchObject({ watches: 1, firings: 1 });
 });

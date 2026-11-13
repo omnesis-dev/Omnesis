@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Local-time daily-boundary math for the Cognition Steward's daily rhythm.
+ * Local-time daily-boundary math for the Brain's daily rhythm.
  *
  * There is no cron / wall-clock / timezone facility in the scheduler, so
  * the rhythm is a coarse periodic tick that asks "what was the most

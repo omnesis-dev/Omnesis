@@ -107,6 +107,17 @@ final class DeviceSocketTests: XCTestCase {
     /// caller that supplies one must see exactly it — never the ambient
     /// bundle's — and the bundle read must yield something rather than
     /// crashing on a host that declares no version.
+    func testPairingRemindersAreAdvertisedAndOlderCapabilitiesRemainDecodable() throws {
+        let current = PairingCapabilities.ios(pairingNotifications: true)
+        XCTAssertEqual(current.jsonObject["pairingNotifications"], .bool(true))
+        let encoded = try JSONEncoder().encode(current)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(legacy.removeValue(forKey: "pairingNotifications") as? Bool, true)
+        let restored = try JSONDecoder().decode(PairingCapabilities.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(restored.pairingNotifications)
+        XCTAssertNil(restored.jsonObject["pairingNotifications"])
+    }
+
     func testAppVersionIsCarriedByTheCapabilityStruct() {
         XCTAssertEqual(PairingCapabilities.ios(version: "1.2.3").version, "1.2.3")
         XCTAssertFalse(omnesisAppVersion().isEmpty)

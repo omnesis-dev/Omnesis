@@ -4,11 +4,11 @@
 /**
  * `entity_context` — a READ-ONLY reap of the cognitive graph. Given one seed
  * entity (a document, a person, or a tracked loop), it returns the connected
- * loops / documents / people / temporal annotations the background Cognition Steward has
+ * loops / documents / people / temporal annotations the background Brain has
  * linked around it — the neighbourhood the agent would otherwise reconstruct by
  * stitching many `search_loops` / `fetch_loop` / `fetch_document` calls
  * together. Available in experimental mode to BOTH the interactive (chat) agent
- * and the background Cognition Steward.
+ * and the background Brain.
  *
  * Pointer-only: it returns ids + labels + light attributes, not bodies. The
  * agent follows the ids with its existing fetch tools when it needs detail.

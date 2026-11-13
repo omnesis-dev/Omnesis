@@ -39,6 +39,7 @@ describe("managed agent integration enrollment — spawned gateway", () => {
   beforeAll(async () => {
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "default",
       // Keep the draft cassette shared, but pin this reviewer to a fixture
       // that explicitly withholds its citation link. No model inference runs.

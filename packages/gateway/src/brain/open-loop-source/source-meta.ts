@@ -28,7 +28,7 @@ export const OPEN_LOOP_SOURCE_ID = "open-loops";
 export const OPEN_LOOP_PROVIDER_ID = "system";
 export const OPEN_LOOP_DOCUMENT_TYPE = "open-loop";
 
-export const OPEN_LOOP_SOURCE_LABEL = "Omnesis Cognition Steward";
+export const OPEN_LOOP_SOURCE_LABEL = "Omnesis Brain";
 /** Brand blue — matches the omnesis-chat system source. */
 const OPEN_LOOP_SOURCE_ACCENT_COLOR = "#1F6FEB";
 const OPEN_LOOP_SOURCE_BG_COLOR = "#0D1117";

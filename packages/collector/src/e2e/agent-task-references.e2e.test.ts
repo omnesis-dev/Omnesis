@@ -17,7 +17,8 @@ describe("conversation references on agent-created tasks", () => {
 
   beforeAll(async () => {
     bench = await BrainBench.start({
-      experimental: false,
+      experimental: true,
+      labFeatures: { tasks: true, brain: false, watches: false },
       brainAgent: false,
       universe: "e2e-minimal",
       syncSources: false,

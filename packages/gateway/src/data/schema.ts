@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createLabTable } from "../lab/store.js";
+
 import { createKnowledgeTables } from "../brain/knowledge/schema.js";
 import { createKnowledgeDecisionTable } from "../brain/knowledge/decision-storage.js";
 import { installKnowledgeOwnerTriggers } from "../brain/knowledge/owner-triggers.js";
@@ -33,9 +35,11 @@ import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
+import { DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX } from "./migration-214-device-enrollment.js";
 import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
+import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
@@ -184,6 +188,8 @@ function runSchemaSetupInTxn(db: Db): void {
   );
   // Declared-edge endpoints resolve by source and external id.
   indexDocumentsBySourceExternalId(db);
+  // A document's type by id, read without the row (see the migration).
+  indexDocumentsByIdAndType(db);
 
   // Partial index supporting cross-source dedup — duplicate
   // -content detection between binary-extracted docs (attachments and
@@ -398,7 +404,11 @@ function runSchemaSetupInTxn(db: Db): void {
       desired_version TEXT,
       update_state TEXT,
       update_detail TEXT,
-      update_state_at INTEGER
+      update_state_at INTEGER,
+      enrollment_public_key TEXT,
+      enrollment_method TEXT,
+      enrollment_sign_in TEXT,
+      enrolled_at INTEGER
     )
   `);
 
@@ -414,6 +424,16 @@ function runSchemaSetupInTxn(db: Db): void {
     db.exec(
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_install ON devices(kind, install_id) WHERE install_id IS NOT NULL",
     );
+  }
+  // Like the install index: an older database gets this column from migration
+  // 214, which runs after schema setup and creates the index with it.
+  if (
+    db
+      .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('devices')")
+      .all()
+      .some((r) => r.name === "enrollment_public_key")
+  ) {
+    db.exec(DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX);
   }
 
   createDeviceDoctorRunsTable(db);
@@ -432,7 +452,9 @@ function runSchemaSetupInTxn(db: Db): void {
       -- Optional expiry (unix ms). NULL = never expires (the default for
       -- pairing-minted device tokens). Short-lived callback credentials set
       -- this so an abandoned token cannot be replayed past its window.
-      expires_at INTEGER
+      expires_at INTEGER,
+      -- The token a rotation replaced; see rotateDeviceToken.
+      rotated_from TEXT
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_tokens_device ON tokens(device_id)");
@@ -469,7 +491,12 @@ function runSchemaSetupInTxn(db: Db): void {
       repair_device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
       -- The access level an integration paired with this code is put on,
       -- chosen from a portal session when the code was minted.
-      access_level_id TEXT
+      access_level_id TEXT,
+      -- A sign-in pairing. A non-NULL method means the row
+      -- this redeems onto is chosen only by its proven device key.
+      enrollment_public_key TEXT,
+      enrollment_method TEXT,
+      enrollment_sign_in TEXT
     )
   `);
 
@@ -1449,7 +1476,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // the collector reconnects doesn't read as "the source was removed".
   createSourceDocumentProfilesTable(db);
 
-  // Briefs / Cognition Steward storage (experimental): open loops, briefs,
+  // Briefs / Brain storage (experimental): open loops, briefs,
   // the agent run queue, spend tracking, agent notes.
   createBriefsStorageTables(db);
   createSourceInventoryTables(db);
@@ -1471,6 +1498,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // Developer-annotations store (OMNESIS_DEV_MODE): the operator → engineer
   // data-quality feedback channel.
   createDevAnnotationsTables(db);
+  createLabTable(db);
   // Which agent conversations hold something the operator has not seen.
   createConversationReadStateTables(db);
 

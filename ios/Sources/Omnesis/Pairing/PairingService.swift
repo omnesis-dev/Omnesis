@@ -3,168 +3,6 @@
 
 import Foundation
 
-/// Why the app is showing onboarding after previously appearing paired.
-///
-/// Only the gateway URL is retained, as an untrusted convenience hint for
-/// manual entry. The inherited token and device identity are always removed.
-public struct PairingRecovery: Equatable, Sendable {
-    public let gatewayURL: URL?
-
-    public init(gatewayURL: URL?) {
-        self.gatewayURL = gatewayURL
-    }
-}
-
-/// Result of loading the device's pairing state.
-public enum PairingLoadState: Equatable, Sendable {
-    case unpaired
-    case paired(Pairing)
-    case legacyPairingRequiresRepair(PairingRecovery)
-}
-
-/// A paired gateway, materialized from Keychain.
-///
-/// `accountId` is the per-source-instance suffix in source ids like
-/// `apple-health:<accountId>`. Hardcoded to `"local"`: Omnesis is
-/// single-user / single-iPhone, so a constant suffices and survives
-/// re-pair, reinstall, and full device wipe. The field stays a
-/// string so a future multi-persona world can route via
-/// `<persona-id>` from this same site.
-///
-/// `deviceId` is the gateway-issued device row UUID, used for the
-/// device registry / source ownership. Under V1 pairings (legacy)
-/// this falls back to the V1 payload's `accountId` field.
-///
-/// `fingerprint` is the lowercase-hex SHA-256 of the gateway's
-/// self-signed leaf cert when the pairing came from a V3 QR. Nil for
-/// V1/V2 legacy pairings (no TLS pinning was negotiated). Downstream
-/// `URLSession` users should plumb this through `PinnedSession` to
-/// pin the gateway cert on every connection.
-public struct Pairing: Equatable, Sendable {
-    public let url: URL
-    public let token: String
-    /// Gateway-issued token id. Unlike `deviceId`, this changes on every
-    /// successful pair and therefore fences durable work from an older pairing.
-    public let pairingGeneration: String?
-    public let accountId: String
-    public let deviceId: String
-    public let gatewayName: String
-    /// Granted scopes as returned by the gateway at pair time. Empty for
-    /// V1 pairings that predate scoped tokens.
-    public let scopes: [String]
-    /// Pinned-cert fingerprint (lowercase hex SHA-256) for V3 pairings;
-    /// nil for V1/V2 legacy pairings.
-    public let fingerprint: String?
-    public let tlsMode: PairingTlsMode
-
-    public init(
-        url: URL,
-        token: String,
-        pairingGeneration: String? = nil,
-        accountId: String,
-        deviceId: String,
-        gatewayName: String,
-        scopes: [String] = [],
-        fingerprint: String? = nil,
-        tlsMode: PairingTlsMode? = nil
-    ) {
-        self.url = url
-        self.token = token
-        self.pairingGeneration = pairingGeneration
-        self.accountId = accountId
-        self.deviceId = deviceId
-        self.gatewayName = gatewayName
-        self.scopes = scopes
-        self.fingerprint = fingerprint
-        self.tlsMode = tlsMode ?? (fingerprint == nil ? .legacy : .pinnedLeaf)
-    }
-}
-
-/// Response from `POST /devices/pair`. Decoded verbatim from the gateway.
-public struct DevicePairResponse: Decodable, Sendable {
-    public struct Device: Decodable, Sendable {
-        public let id: String
-        public let name: String
-        public let kind: String
-    }
-
-    public let device: Device
-    public let tokenId: String
-    public let token: String
-    public let scopes: [String]
-}
-
-/// Thin HTTP wrapper used by PairingService to exchange a pairing code
-/// for a device token. Mockable in tests.
-public protocol PairingExchangeHTTP: Sendable {
-    /// POST `{gatewayUrl}/devices/pair` with `{pairingCode, capabilities}`.
-    /// Throws on non-2xx or decoding failure.
-    func exchange(
-        gatewayUrl: URL,
-        pairingCode: String,
-        capabilities: PairingCapabilities
-    ) async throws
-        -> DevicePairResponse
-}
-
-/// Default URLSession-backed exchange client.
-///
-/// Accepts an optional `URLSessionLike` so the V3 path can hand it a
-/// `PinnedSession.session` that pins the gateway's self-signed cert
-/// fingerprint on every challenge. Defaults to `URLSession.shared`
-/// for V1/V2 legacy paths where pinning isn't negotiated.
-public struct URLSessionPairingExchange: PairingExchangeHTTP {
-    private let session: URLSessionLike
-
-    public init(session: URLSessionLike = URLSession.shared) {
-        self.session = session
-    }
-
-    public func exchange(
-        gatewayUrl: URL,
-        pairingCode: String,
-        capabilities: PairingCapabilities
-    ) async throws
-        -> DevicePairResponse {
-        guard var components = URLComponents(url: gatewayUrl, resolvingAgainstBaseURL: false) else {
-            throw PairingPayloadError.invalidURL
-        }
-        // Append `/devices/pair` to whatever path the base URL already has.
-        let basePath = components.path.hasSuffix("/") ? components.path : (components.path + "/")
-        components.path = basePath + "devices/pair"
-        components.percentEncodedQuery = nil
-        guard let requestURL = components.url else {
-            throw PairingPayloadError.invalidURL
-        }
-
-        var request = URLRequest(url: requestURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        struct Body: Encodable {
-            let pairingCode: String
-            let capabilities: PairingCapabilities
-        }
-        let body = Body(pairingCode: pairingCode, capabilities: capabilities)
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw GatewayClient.Error.invalidResponse
-        }
-        if !(200 ... 299).contains(http.statusCode) {
-            let text = String(data: data, encoding: .utf8) ?? ""
-            throw GatewayClient.Error.serverError(status: http.statusCode, body: text)
-        }
-        do {
-            return try JSONDecoder().decode(DevicePairResponse.self, from: data)
-        } catch {
-            throw GatewayClient.Error.decoding("\(error)")
-        }
-    }
-}
-
 /// Stores / retrieves / clears the active pairing.
 ///
 /// A pairing is usable only when all required device-local values are present
@@ -190,7 +28,8 @@ public final class PairingService: Sendable {
         static let recoveryGatewayURL = "gateway.recoveryGatewayURL"
     }
 
-    private let store: PairingStore
+    let mutations = PairingMutationFence()
+    let store: PairingStore
     private let exchange: PairingExchangeHTTP
     private let revocationJournal: PairingRevocationJournal
     /// Builds the V3-path exchange given a fingerprint. Returns `nil`
@@ -201,19 +40,37 @@ public final class PairingService: Sendable {
     /// `URLSessionPairingExchange` whose `URLSession` is pinned to the
     /// fingerprint via `PinnedSession`.
     private let pinnedExchangeBuilder: @Sendable (String) -> PairingExchangeHTTP?
+    private let strictPinnedExchangeBuilder: @Sendable (String) -> PairingExchangeHTTP?
+    private let keyPinnedExchangeBuilder: @Sendable (String, String) -> PairingExchangeHTTP?
+    private let directDiscovery: any GatewayDirectDiscovering
+    /// Off, QR pairing stores every redeemed code and the strict trust modes do not exist.
+    let cloudRelayEnabled: Bool
 
     public init(
         store: PairingStore = Keychain(),
         exchange: PairingExchangeHTTP = URLSessionPairingExchange(),
         pinnedExchangeBuilder: @escaping @Sendable (String) -> PairingExchangeHTTP? = { fingerprint in
             let pinned = PinnedSession(fingerprintHex: fingerprint)
-            return URLSessionPairingExchange(session: pinned.session)
-        }
+            return URLSessionPairingExchange(ownedSession: pinned.session)
+        },
+        strictPinnedExchangeBuilder: @escaping @Sendable (String) -> PairingExchangeHTTP? = { fingerprint in
+            let pinned = PinnedSession(fingerprintHex: fingerprint, requireCertificateValidity: true)
+            return URLSessionPairingExchange(ownedSession: pinned.session)
+        },
+        keyPinnedExchangeBuilder: @escaping @Sendable (String, String) -> PairingExchangeHTTP? = { spki, host in
+            URLSessionPairingExchange(ownedSession: PinnedSession(spkiFingerprint: spki, host: host).session)
+        },
+        directDiscovery: any GatewayDirectDiscovering = GatewayDirectDiscovery(),
+        cloudRelayEnabled: Bool = CloudRelayFeature.enabled
     ) {
         self.store = store
         self.exchange = exchange
         revocationJournal = PairingRevocationJournal(store: store)
         self.pinnedExchangeBuilder = pinnedExchangeBuilder
+        self.strictPinnedExchangeBuilder = strictPinnedExchangeBuilder
+        self.keyPinnedExchangeBuilder = keyPinnedExchangeBuilder
+        self.directDiscovery = directDiscovery
+        self.cloudRelayEnabled = cloudRelayEnabled
     }
 
     /// Pair from a raw QR payload.
@@ -228,14 +85,15 @@ public final class PairingService: Sendable {
     /// non-V1 payloads.
     @discardableResult
     public func pair(raw: String) throws -> Pairing {
-        let payload = try PairingPayload.decode(from: raw)
+        let payload = try PairingPayload.decode(from: raw, cloudRelayEnabled: cloudRelayEnabled)
+        let operation = mutations.begin()
         switch payload {
         case .v4:
             throw PairingPayloadError.invalidShape(
                 "V4 pairing requires async exchange; call pairAsync(raw:)"
             )
         case .v1(let v1):
-            return try persistV1(v1)
+            return try persistV1(v1, operation: operation)
         case .v2:
             // V2 requires a network round-trip; callers must use pairAsync.
             throw PairingPayloadError.invalidShape(
@@ -253,58 +111,61 @@ public final class PairingService: Sendable {
     /// (exchange + pinned `URLSession` for the cert fingerprint).
     @discardableResult
     public func pairAsync(raw: String) async throws -> Pairing {
-        let payload = try PairingPayload.decode(from: raw)
+        let payload = try PairingPayload.decode(from: raw, cloudRelayEnabled: cloudRelayEnabled)
+        let operation = mutations.begin()
         switch payload {
         case .v4(let v4):
-            return try await exchangeAndPersist(v4)
+            return try await exchangeAndPersist(v4, operation: operation)
         case .v1(let v1):
-            return try persistV1(v1)
+            return try persistV1(v1, operation: operation)
         case .v2(let v2):
-            return try await exchangeAndPersist(v2)
+            return try await exchangeAndPersist(v2, operation: operation)
         case .v3(let v3):
-            return try await exchangeAndPersist(v3)
+            return try await exchangeAndPersist(v3, operation: operation)
         }
     }
 
-    private func persistV1(_ v1: PairingPayload.V1) throws -> Pairing {
-        guard let url = URL(string: v1.url) else {
-            throw PairingPayloadError.invalidURL
-        }
-        try commit(
-            PairingCredentialBundle(
-                url: v1.url,
+    private func persistV1(_ v1: PairingPayload.V1, operation: UUID) throws -> Pairing {
+        try mutations.commit(operation, fenced: cloudRelayEnabled) {
+            guard let url = URL(string: v1.url) else {
+                throw PairingPayloadError.invalidURL
+            }
+            try commit(
+                PairingCredentialBundle(
+                    url: v1.url,
+                    token: v1.token,
+                    pairingGeneration: nil,
+                    accountId: "local",
+                    // V1 has no gateway-issued deviceId — reuse its account id as
+                    // the opaque legacy device-row identifier.
+                    deviceId: v1.accountId,
+                    name: v1.name,
+                    scopes: [],
+                    tlsMode: PairingTlsMode.legacy.rawValue,
+                    fingerprint: nil
+                )
+            )
+            try? clearRecovery()
+            // Lifecycle hook — invalidate the cached `OmnesisURLSession.shared`
+            // so the next transport-client construction re-reads the keychain
+            // for the (now-empty-for-V1) TLS fingerprint. AppStore.rebuildAdmin()
+            // reconstructs dependent transport clients after this returns.
+            OmnesisURLSession.reset()
+            return Pairing(
+                url: url,
                 token: v1.token,
                 pairingGeneration: nil,
                 accountId: "local",
-                // V1 has no gateway-issued deviceId — reuse its account id as
-                // the opaque legacy device-row identifier.
                 deviceId: v1.accountId,
-                name: v1.name,
+                gatewayName: v1.name,
                 scopes: [],
-                tlsMode: PairingTlsMode.legacy.rawValue,
-                fingerprint: nil
+                fingerprint: nil,
+                tlsMode: .legacy
             )
-        )
-        try? clearRecovery()
-        // Lifecycle hook — invalidate the cached `OmnesisURLSession.shared`
-        // so the next transport-client construction re-reads the keychain
-        // for the (now-empty-for-V1) TLS fingerprint. AppStore.rebuildAdmin()
-        // reconstructs dependent transport clients after this returns.
-        OmnesisURLSession.reset()
-        return Pairing(
-            url: url,
-            token: v1.token,
-            pairingGeneration: nil,
-            accountId: "local",
-            deviceId: v1.accountId,
-            gatewayName: v1.name,
-            scopes: [],
-            fingerprint: nil,
-            tlsMode: .legacy
-        )
+        }
     }
 
-    private func exchangeAndPersist(_ v2: PairingPayload.V2) async throws -> Pairing {
+    private func exchangeAndPersist(_ v2: PairingPayload.V2, operation: UUID) async throws -> Pairing {
         guard let url = URL(string: v2.gatewayUrl) else {
             throw PairingPayloadError.invalidURL
         }
@@ -314,15 +175,15 @@ public final class PairingService: Sendable {
             capabilities: defaultCapabilities()
         )
         return try await persistExchanged(
-            gatewayUrlString: v2.gatewayUrl,
-            url: url,
+            operation: operation,
+            gateway: (v2.gatewayUrl, url),
             response: response,
             fingerprint: nil,
             tlsMode: .legacy
         )
     }
 
-    private func exchangeAndPersist(_ v3: PairingPayload.V3) async throws -> Pairing {
+    private func exchangeAndPersist(_ v3: PairingPayload.V3, operation: UUID) async throws -> Pairing {
         guard let url = URL(string: v3.gatewayUrl) else {
             throw PairingPayloadError.invalidURL
         }
@@ -345,19 +206,20 @@ public final class PairingService: Sendable {
             capabilities: defaultCapabilities()
         )
         return try await persistExchanged(
-            gatewayUrlString: v3.gatewayUrl,
-            url: url,
+            operation: operation,
+            gateway: (v3.gatewayUrl, url),
             response: response,
             fingerprint: v3.fingerprint.lowercased(),
             tlsMode: .pinnedLeaf
         )
     }
 
-    private func exchangeAndPersist(_ v4: PairingPayload.V4) async throws -> Pairing {
+    private func exchangeAndPersist(_ v4: PairingPayload.V4, operation: UUID) async throws -> Pairing {
         guard let url = URL(string: v4.gatewayUrl) else {
             throw PairingPayloadError.invalidURL
         }
         let fingerprint: String?
+        var spkiFingerprint: String?
         let tlsMode: PairingTlsMode
         let exchangeToUse: PairingExchangeHTTP
         switch v4.tls {
@@ -369,6 +231,15 @@ public final class PairingService: Sendable {
             fingerprint = value.lowercased()
             tlsMode = .pinnedLeaf
             exchangeToUse = pinnedExchangeBuilder(value) ?? exchange
+        case .pinnedKeyStrict(let value):
+            fingerprint = nil
+            spkiFingerprint = value.lowercased()
+            tlsMode = .pinnedKeyStrict
+            exchangeToUse = keyPinnedExchangeBuilder(value, url.host!) ?? exchange
+        case .pinnedLeafStrict(let value):
+            fingerprint = value.lowercased()
+            tlsMode = .pinnedLeafStrict
+            exchangeToUse = strictPinnedExchangeBuilder(value) ?? exchange
         }
         let response = try await exchangeToUse.exchange(
             gatewayUrl: url,
@@ -376,11 +247,12 @@ public final class PairingService: Sendable {
             capabilities: defaultCapabilities()
         )
         return try await persistExchanged(
-            gatewayUrlString: v4.gatewayUrl,
-            url: url,
+            operation: operation,
+            gateway: (v4.gatewayUrl, url),
             response: response,
             fingerprint: fingerprint,
-            tlsMode: tlsMode
+            tlsMode: tlsMode,
+            spkiFingerprint: spkiFingerprint
         )
     }
 
@@ -399,7 +271,7 @@ public final class PairingService: Sendable {
             // iPhones would otherwise suggest the same name.
             suggestedName: "\(host)-\(installId.prefix(6))",
             installId: installId,
-            previousDeviceId: nil
+            pairingNotifications: cloudRelayEnabled
         )
         // A re-pair names the row this install was paired as before, so the
         // gateway adopts it even if the operator renamed it.
@@ -413,65 +285,88 @@ public final class PairingService: Sendable {
     /// survives an app reinstall). Falls back to a fresh value when the Keychain
     /// is unavailable — the pairing still works, it just can't be adopted later.
     private func installIdentity() -> String {
-        if let existing = try? store.get(Keys.installId), !existing.isEmpty {
-            return existing
+        mutations.serialized {
+            if let existing = try? store.get(Keys.installId), !existing.isEmpty {
+                return existing
+            }
+            let fresh = UUID().uuidString.lowercased()
+            try? store.set(fresh, forKey: Keys.installId)
+            return fresh
         }
-        let fresh = UUID().uuidString.lowercased()
-        try? store.set(fresh, forKey: Keys.installId)
-        return fresh
     }
 
     /// Common persistence path for exchanged pairings. Credentials and TLS
     /// trust are committed as one Keychain item so interrupted replacement
     /// cannot combine a new token with an older trust contract.
     private func persistExchanged(
-        gatewayUrlString: String,
-        url: URL,
+        operation: UUID,
+        gateway: (raw: String, url: URL),
         response: DevicePairResponse,
         fingerprint: String?,
-        tlsMode: PairingTlsMode
+        tlsMode: PairingTlsMode,
+        spkiFingerprint: String? = nil
     ) async throws
         -> Pairing {
+        let gatewayUrlString = gateway.raw
+        let url = gateway.url
         let deviceId = response.device.id
         let name = response.device.name
 
-        // See the `Pairing` doc comment for why this is hardcoded.
-        let accountId = "local"
+        // Optional routing metadata cannot change the already authenticated TLS authority.
+        var directCandidates: [GatewayDirectCandidate]?
+        if tlsMode == .pinnedKeyStrict, let spkiFingerprint {
+            do {
+                let candidates = try await directDiscovery.fetch(origin: url, token: response.token, spkiFingerprint: spkiFingerprint)
+                _ = try GatewayDirectRoute(origin: url, candidates: candidates)
+                directCandidates = candidates.isEmpty ? nil : candidates
+            } catch {
+                guard GatewayDirectDiscovery.isTemporary(error) else { throw error }
+                directCandidates = nil
+            }
+        }
+        return try mutations.commit(operation, fenced: cloudRelayEnabled) {
+            // See the `Pairing` doc comment for why this is hardcoded.
+            let accountId = "local"
 
-        try commit(
-            PairingCredentialBundle(
-                url: gatewayUrlString,
+            try commit(
+                PairingCredentialBundle(
+                    url: gatewayUrlString,
+                    token: response.token,
+                    pairingGeneration: response.tokenId,
+                    accountId: accountId,
+                    deviceId: deviceId,
+                    name: name,
+                    scopes: response.scopes,
+                    tlsMode: tlsMode.rawValue,
+                    fingerprint: fingerprint,
+                    spkiFingerprint: spkiFingerprint,
+                    directCandidates: directCandidates
+                )
+            )
+            // Recovery hints are non-authoritative. Once the credential bundle is
+            // committed, cleanup failure must not make a redeemed code look failed.
+            try? clearRecovery()
+            // Lifecycle hook — invalidate the cached `OmnesisURLSession.shared`
+            // so the next transport-client construction re-reads the (possibly
+            // newly-set) TLS fingerprint and pins via PinnedSession. Legacy HTTPS
+            // paths leave the key absent and the rebuilt session falls through to
+            // URLSession.shared with normal system trust evaluation.
+            OmnesisURLSession.reset()
+
+            return Pairing(
+                url: url,
                 token: response.token,
                 pairingGeneration: response.tokenId,
                 accountId: accountId,
                 deviceId: deviceId,
-                name: name,
+                gatewayName: name,
                 scopes: response.scopes,
-                tlsMode: tlsMode.rawValue,
-                fingerprint: fingerprint
+                fingerprint: fingerprint,
+                spkiFingerprint: spkiFingerprint,
+                directCandidates: directCandidates,
+                tlsMode: tlsMode
             )
-        )
-        // Recovery hints are non-authoritative. Once the credential bundle is
-        // committed, cleanup failure must not make a redeemed code look failed.
-        try? clearRecovery()
-        // Lifecycle hook — invalidate the cached `OmnesisURLSession.shared`
-        // so the next transport-client construction re-reads the (possibly
-        // newly-set) TLS fingerprint and pins via PinnedSession. Legacy HTTPS
-        // paths leave the key absent and the rebuilt session falls through to
-        // URLSession.shared with normal system trust evaluation.
-        OmnesisURLSession.reset()
-
-        return Pairing(
-            url: url,
-            token: response.token,
-            pairingGeneration: response.tokenId,
-            accountId: accountId,
-            deviceId: deviceId,
-            gatewayName: name,
-            scopes: response.scopes,
-            fingerprint: fingerprint,
-            tlsMode: tlsMode
-        )
+        }
     }
 
     /// Loads the device pairing and removes credentials written by versions
@@ -483,37 +378,39 @@ public final class PairingService: Sendable {
     /// onboarding receives a durable repair reason and at most a validated
     /// non-secret gateway URL hint.
     public func load() throws -> PairingLoadState {
-        let hadLegacyValues = try store.hasLegacySynchronizableValues()
-        let legacyGatewayURL = try hadLegacyValues
-            ? validatedGatewayURL(store.getLegacySynchronizable(Keys.url))
-            : nil
+        try mutations.serialized {
+            let hadLegacyValues = try store.hasLegacySynchronizableValues()
+            let legacyGatewayURL = try hadLegacyValues
+                ? validatedGatewayURL(store.getLegacySynchronizable(Keys.url))
+                : nil
 
-        if hadLegacyValues {
-            // Journal recovery locally before deleting the only record that
-            // explains why re-pairing is required. If cleanup is interrupted,
-            // a later load can retry without losing the user-facing reason.
-            try store.set("1", forKey: Keys.recoveryRequired)
-            if let legacyGatewayURL {
-                try store.set(legacyGatewayURL.absoluteString, forKey: Keys.recoveryGatewayURL)
-            } else {
-                try store.delete(Keys.recoveryGatewayURL)
+            if hadLegacyValues {
+                // Journal recovery locally before deleting the only record that
+                // explains why re-pairing is required. If cleanup is interrupted,
+                // a later load can retry without losing the user-facing reason.
+                try store.set("1", forKey: Keys.recoveryRequired)
+                if let legacyGatewayURL {
+                    try store.set(legacyGatewayURL.absoluteString, forKey: Keys.recoveryGatewayURL)
+                } else {
+                    try store.delete(Keys.recoveryGatewayURL)
+                }
+                try store.deleteLegacySynchronizableValues()
+                OmnesisURLSession.reset()
             }
-            try store.deleteLegacySynchronizableValues()
-            OmnesisURLSession.reset()
-        }
 
-        try purgePlaintextDeviceLocalPairing()
+            try purgePlaintextDeviceLocalPairing()
 
-        if let pairing = try loadDeviceLocalPairing() {
-            try? clearRecovery()
-            return .paired(pairing)
-        }
+            if let pairing = try loadDeviceLocalPairing() {
+                try? clearRecovery()
+                return .paired(pairing)
+            }
 
-        if try store.get(Keys.recoveryRequired) == "1" {
-            let hint = try validatedGatewayURL(store.get(Keys.recoveryGatewayURL))
-            return .legacyPairingRequiresRepair(PairingRecovery(gatewayURL: hint))
+            if try store.get(Keys.recoveryRequired) == "1" {
+                let hint = try validatedGatewayURL(store.get(Keys.recoveryGatewayURL))
+                return .legacyPairingRequiresRepair(PairingRecovery(gatewayURL: hint))
+            }
+            return .unpaired
         }
-        return .unpaired
     }
 
     /// Safe convenience for background callers that only need a usable
@@ -553,10 +450,8 @@ public final class PairingService: Sendable {
         // invariant `accountId == gateway deviceId`.
         let deviceId = (try? store.get(Keys.deviceId)) ?? nil ?? accountId
         let fingerprint = try store.get(Keys.fingerprint)
-        let tlsMode = try PairingTlsMode(
-            rawValue: (store.get(Keys.tlsMode)) ?? ""
-        ) ?? (fingerprint == nil ? .legacy : .pinnedLeaf)
-        if tlsMode == .pinnedLeaf && !isValidFingerprint(fingerprint) {
+        let tlsMode = try storedTlsMode(store.get(Keys.tlsMode) ?? "") ?? (fingerprint == nil ? .legacy : .pinnedLeaf)
+        if tlsMode == .pinnedKeyStrict || (tlsMode.requiresPin && !isValidFingerprint(fingerprint)) {
             return nil
         }
         if tlsMode == .system && url.scheme?.lowercased() != "https" {
@@ -579,14 +474,19 @@ public final class PairingService: Sendable {
     private func materialize(_ credential: PairingCredentialBundle) -> Pairing? {
         guard let url = validatedGatewayURL(credential.url),
               !credential.token.isEmpty,
-              let tlsMode = PairingTlsMode(rawValue: credential.tlsMode)
+              let tlsMode = storedTlsMode(credential.tlsMode)
         else { return nil }
-        if tlsMode == .pinnedLeaf, !isValidFingerprint(credential.fingerprint) {
+        let pin = tlsMode == .pinnedKeyStrict ? credential.spkiFingerprint : credential.fingerprint
+        if tlsMode.requiresPin, !isValidFingerprint(pin) {
             return nil
         }
         if tlsMode == .system, url.scheme?.lowercased() != "https" {
             return nil
         }
+        let directCandidates: [GatewayDirectCandidate]? = if tlsMode.isStrict, let candidates = credential.directCandidates,
+                                                             (try? GatewayDirectRoute(origin: url, candidates: candidates)) != nil {
+            candidates
+        } else { nil }
         return Pairing(
             url: url,
             token: credential.token,
@@ -596,11 +496,13 @@ public final class PairingService: Sendable {
             gatewayName: credential.name,
             scopes: credential.scopes,
             fingerprint: tlsMode == .system ? nil : credential.fingerprint,
+            spkiFingerprint: tlsMode == .pinnedKeyStrict ? credential.spkiFingerprint : nil,
+            directCandidates: directCandidates,
             tlsMode: tlsMode
         )
     }
 
-    private func commit(_ credential: PairingCredentialBundle) throws {
+    func commit(_ credential: PairingCredentialBundle) throws {
         try store.set(credential.encoded(), forKey: PairingCredentialBundle.key)
         // The bundle is authoritative after the commit. Split keys are retained
         // only as a read fallback for upgrades from older app versions.
@@ -676,21 +578,23 @@ public final class PairingService: Sendable {
     /// otherwise. AppStore.rebuildAdmin() handles that for the AppStore
     /// lifecycle.
     public func clear() throws {
-        // Preserve install identity and the revocation outbox in place. Delete
-        // legacy split credentials first and the authoritative bundle last:
-        // every interruption therefore leaves either a usable active bundle
-        // (whose matching outbox entry stays dormant) or no active credential
-        // plus the durable revoke entry. There is no post-commit operation that
-        // can lose the journal after the bundle disappears.
-        for key in [
-            Keys.url, Keys.token, Keys.accountId, Keys.deviceId, Keys.name,
-            Keys.scopes, Keys.fingerprint, Keys.tlsMode,
-            Keys.recoveryRequired, Keys.recoveryGatewayURL,
-        ] {
-            try store.delete(key)
+        try mutations.replace {
+            // Preserve install identity and the revocation outbox in place. Delete
+            // legacy split credentials first and the authoritative bundle last:
+            // every interruption therefore leaves either a usable active bundle
+            // (whose matching outbox entry stays dormant) or no active credential
+            // plus the durable revoke entry. There is no post-commit operation that
+            // can lose the journal after the bundle disappears.
+            for key in [
+                Keys.url, Keys.token, Keys.accountId, Keys.deviceId, Keys.name,
+                Keys.scopes, Keys.fingerprint, Keys.tlsMode,
+                Keys.recoveryRequired, Keys.recoveryGatewayURL,
+            ] {
+                try store.delete(key)
+            }
+            try store.delete(PairingCredentialBundle.key)
+            OmnesisURLSession.reset()
         }
-        try store.delete(PairingCredentialBundle.key)
-        OmnesisURLSession.reset()
     }
 
     /// Journal the credential required for remote revocation before removing
@@ -698,50 +602,58 @@ public final class PairingService: Sendable {
     /// without leaving the app paired.
     @discardableResult
     public func stageUnpair() throws -> Pairing? {
-        guard let pairing = try current() else { return nil }
-        try revocationJournal.enqueue(pairing)
-        try clear()
-        return pairing
+        try mutations.replace {
+            guard let pairing = try current() else { return nil }
+            try revocationJournal.enqueue(pairing)
+            try clear()
+            return pairing
+        }
     }
 
     public func pendingRevocation() throws -> Pairing? {
-        let active = try current()
-        guard let credential = try revocationJournal.firstPending(excluding: active) else { return nil }
-        return materialize(credential)
+        try mutations.serialized {
+            let active = try current()
+            guard let credential = try revocationJournal.firstPending(excluding: active) else { return nil }
+            return materialize(credential)
+        }
     }
 
     /// Remove only the exact generation whose network request settled. This
     /// compare-and-delete prevents an older in-flight revoke from erasing a
     /// newly staged pairing (the revoke outbox is FIFO and survives restart).
     public func settlePendingRevocation(_ pairing: Pairing) throws {
-        try revocationJournal.settle(pairing)
+        try mutations.serialized {
+            try revocationJournal.settle(pairing)
+        }
     }
 
     /// Update only the gateway URL — used when the user switches from LAN
     /// to Tailscale / tunnel without re-running the full pairing flow.
     /// Every other field of the pairing stays unchanged.
     public func updateGatewayURL(_ url: URL) throws {
-        guard let next = validatedGatewayURL(url.absoluteString) else {
-            if url.scheme?.lowercased() != "https" {
-                throw PairingPayloadError.invalidScheme(url.scheme ?? "(missing)")
+        try mutations.replace {
+            guard let next = validatedGatewayURL(url.absoluteString) else {
+                if url.scheme?.lowercased() != "https" {
+                    throw PairingPayloadError.invalidScheme(url.scheme ?? "(missing)")
+                }
+                throw PairingPayloadError.invalidURL
             }
-            throw PairingPayloadError.invalidURL
-        }
-        guard let pairing = try current() else {
-            throw PairingPayloadError.invalidShape("no active pairing")
-        }
-        if pairing.tlsMode == .system {
-            guard next.scheme?.lowercased() == "https",
-                  next.path.isEmpty || next.path == "/",
-                  canonicalOrigin(next) == canonicalOrigin(pairing.url)
-            else {
-                throw PairingPayloadError.invalidShape(
-                    "system-trusted gateway authority cannot change without re-pairing"
-                )
+            guard let pairing = try current() else {
+                throw PairingPayloadError.invalidShape("no active pairing")
             }
+            if pairing.tlsMode == .system {
+                guard next.scheme?.lowercased() == "https",
+                      next.path.isEmpty || next.path == "/",
+                      canonicalOrigin(next) == canonicalOrigin(pairing.url)
+                else {
+                    throw PairingPayloadError.invalidShape(
+                        "system-trusted gateway authority cannot change without re-pairing"
+                    )
+                }
+            }
+            try commit(PairingCredentialBundle(pairing, url: next, tlsMode: pairing.tlsMode, fingerprint: pairing.fingerprint))
+            OmnesisURLSession.reset()
         }
-        try commit(PairingCredentialBundle(pairing, url: next, tlsMode: pairing.tlsMode, fingerprint: pairing.fingerprint))
-        OmnesisURLSession.reset()
     }
 
     /// Replace a leaf pin with system trust once the gateway's chain was seen
@@ -754,13 +666,40 @@ public final class PairingService: Sendable {
     /// changed, in which case the caller rebuilds its clients.
     @discardableResult
     public func upgradeTrustToSystem(verifiedHost: String, pinnedFingerprint: String) throws -> Bool {
-        guard let pairing = try current(),
-              pairing.isPinned(to: verifiedHost, fingerprint: pinnedFingerprint),
-              GatewayTrustPolicy.systemTrustQualifies(host: pairing.url.host)
-        else { return false }
-        try commit(PairingCredentialBundle(pairing, url: pairing.url, tlsMode: .system, fingerprint: nil))
-        OmnesisURLSession.reset()
-        return true
+        try mutations.serialized {
+            guard let pairing = try current(),
+                  pairing.isPinned(to: verifiedHost, fingerprint: pinnedFingerprint),
+                  GatewayTrustPolicy.systemTrustQualifies(host: pairing.url.host)
+            else { return false }
+            try commit(PairingCredentialBundle(pairing, url: pairing.url, tlsMode: .system, fingerprint: nil))
+            OmnesisURLSession.reset()
+            return true
+        }
+    }
+
+    /// Refresh only authenticated routing facts for this exact stored authority.
+    /// A route update never resets sessions or interrupts existing uploads.
+    @discardableResult
+    public func updateDirectCandidates(
+        expected: Pairing,
+        candidates: [GatewayDirectCandidate],
+        onUpdated: () throws -> Void = {}
+    ) throws
+        -> Bool {
+        try mutations.serialized {
+            try Task.checkCancellation()
+            guard expected.tlsMode.isStrict, let current = try current(),
+                  current.sameAuthority(as: expected), let raw = try store.get(PairingCredentialBundle.key) else { return false }
+            _ = try GatewayDirectRoute.maintained(origin: current.url, candidates: candidates)
+            let normalized = candidates.isEmpty ? nil : candidates
+            if current.directCandidates == normalized { try onUpdated()
+                return true
+            }
+            let bundle = try PairingCredentialBundle.decode(raw).replacingDirectCandidates(normalized)
+            try commit(bundle)
+            try onUpdated()
+            return true
+        }
     }
 
     // MARK: - Helpers
@@ -774,8 +713,8 @@ public final class PairingService: Sendable {
     }
 
     private func isValidFingerprint(_ value: String?) -> Bool {
-        guard let value, value.count == 64 else { return false }
-        return value.allSatisfy { $0.isHexDigit && !$0.isUppercase }
+        guard let value else { return false }
+        return value.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil
     }
 
     private func canonicalOrigin(_ url: URL) -> String? {
@@ -790,6 +729,14 @@ public final class PairingService: Sendable {
         components.query = nil
         components.fragment = nil
         return components.url?.absoluteString
+    }
+}
+
+extension PairingService {
+    /// Off the cloud build flag a stored strict mode is an unknown mode.
+    private func storedTlsMode(_ rawValue: String) -> PairingTlsMode? {
+        guard let mode = PairingTlsMode(rawValue: rawValue), cloudRelayEnabled || !mode.isStrict else { return nil }
+        return mode
     }
 }
 

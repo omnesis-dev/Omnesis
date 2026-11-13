@@ -685,8 +685,8 @@ export function KnowledgeBootstrapPanel({
       <${PauseControl} status=${status} busy=${pausing} error=${pauseError} onToggle=${onToggle} />
     </div>
     <p>
-      <a href="/portal/debug/cognition/maintenance">Inspect queued maintenance</a> ·
-      <a href="/portal/debug/cognition/knowledge">Read the knowledge library</a>
+      <a href="/portal/debug/brain/maintenance">Inspect queued maintenance</a> ·
+      <a href="/portal/debug/brain/knowledge">Read the knowledge library</a>
     </p>
     <h3 class="cognition-section">Historical discovery admissions</h3>
     <p class="debug-sub">

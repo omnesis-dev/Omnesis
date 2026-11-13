@@ -3,7 +3,7 @@
 
 import type { KnowledgeClaim, KnowledgeNode, KnowledgeReviewMetadata } from "./types.js";
 
-/** Review metadata the steward may set on knowledge_save. Everything else is system-owned. */
+/** Review metadata the Brain may set on knowledge_save. Everything else is system-owned. */
 export const EDITABLE_METADATA_KEYS = [
   "importance",
   "volatility",
@@ -15,7 +15,7 @@ export const EDITABLE_METADATA_KEYS = [
 
 type EditableMetadata = Pick<KnowledgeReviewMetadata, (typeof EDITABLE_METADATA_KEYS)[number]>;
 
-/** Claim state the steward may set on knowledge_save, keyed by claim id. */
+/** Claim state the Brain may set on knowledge_save, keyed by claim id. */
 export interface EditableClaimState {
   id: string;
   supportLogic: KnowledgeClaim["supportLogic"];

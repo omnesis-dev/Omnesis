@@ -107,7 +107,7 @@ class GatewayHttp(
                     val envelope = parseErrorEnvelope(body)
                     throw when (it.code) {
                         401 -> GatewayException.Unauthorized()
-                        403 -> GatewayException.Forbidden()
+                        403 -> GatewayException.Forbidden(envelope?.message, envelope?.code)
                         404 -> GatewayException.NotFound(envelope?.message)
                         else ->
                             GatewayException.ServerError(
@@ -258,13 +258,18 @@ suspend inline fun <reified B, reified T> GatewayHttp.putJsonSegments(segments: 
  * [timeout] replaces the engine's call, read and write timeouts for this one call, for an
  * upload whose size outlasts an ordinary API round trip.
  */
-suspend inline fun <reified T> GatewayHttp.postBody(path: String, body: RequestBody, timeout: Duration): T {
+suspend inline fun <reified T> GatewayHttp.postBody(
+    path: String,
+    body: RequestBody,
+    timeout: Duration,
+    query: Map<String, String> = emptyMap(),
+): T {
     val callClient = client.newBuilder()
         .callTimeout(timeout)
         .readTimeout(timeout)
         .writeTimeout(timeout)
         .build()
-    return decodeBody(execute(newRequest(urlFor(path)).post(body).build(), callClient))
+    return decodeBody(execute(newRequest(urlFor(path, query)).post(body).build(), callClient))
 }
 
 /** DELETE; discards the `{ok:true}` response. */

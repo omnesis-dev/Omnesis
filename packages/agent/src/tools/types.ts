@@ -858,10 +858,10 @@ export interface LoopListPortResult {
 }
 
 /**
- * READ-ONLY access to the background Cognition Steward's tracked obligations, for the
+ * READ-ONLY access to the background Brain's tracked obligations, for the
  * interactive (chat) agent in experimental mode. No mutation surface by design:
  * the chat agent can FIND and READ loops — never create/update/delete them
- * (that stays the background Cognition Steward's job) and never touch briefs. The
+ * (that stays the background Brain's job) and never touch briefs. The
  * implementation lives in the briefs subsystem; the registry gates the two
  * tools (`search_loops`, `fetch_loop`) on this port being wired AND experimental
  * mode. Absent ⇒ neither tool is registered.
@@ -1009,7 +1009,7 @@ export interface ToolPorts {
    * Optional READ-ONLY loop port (experimental). When omitted — or when the
    * gateway is not in experimental mode — the registry does not register
    * `search_loops` / `fetch_loop`. Lets the interactive agent leverage the
-   * background Cognition Steward's tracked obligations without any mutation surface.
+   * background Brain's tracked obligations without any mutation surface.
    */
   loopRead?: LoopReadPort;
   /**
@@ -1017,7 +1017,7 @@ export interface ToolPorts {
    * whenever it is wired; a caller restricted to some sources is never given
    * one, because the port reads every source. Lets BOTH agents query source
    * projections, date mentions and LLM-owned annotations; only annotation
-   * mutation lives on the Cognition Steward.
+   * mutation lives on the Brain.
    */
   temporal?: TemporalReadPort;
   /**

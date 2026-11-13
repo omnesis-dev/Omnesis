@@ -58,8 +58,13 @@ class HomeScaffoldTasksCaptureTest {
 
     @Test
     fun theTasksBarsTellOmnesisButtonOpensCapture() {
+        harness.gateway.statusJson = """{
+            "documents":{"total":0,"bySource":{}},
+            "experimental":true,"labAvailable":true,
+            "lab":{"tasks":true},"tasks":{"available":true}
+        }"""
         harness.composeShell()
-        harness.waitUntil { "/status" in harness.gateway.requestPaths }
+        harness.waitUntil { harness.session.tasksAvailable.value }
         compose.runOnUiThread { harness.nav.navigate("tasks") }
         harness.waitUntil { harness.currentRoute == "tasks" }
 

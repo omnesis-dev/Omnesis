@@ -18,6 +18,12 @@ import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.AccessPendingRequest
 import dev.omnesis.android.ui.access.AccessPendingRequestBanner
+import dev.omnesis.android.ui.access.PairingRequestBanner
+import dev.omnesis.android.access.PairingRequestBannerOffer
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -47,6 +53,45 @@ class AccessPendingBannerScreenshotTest {
     @Test
     @Config(sdk = [34], qualifiers = "w320dp-h240dp-xxhdpi")
     fun banner_narrow_dark() = capture("access_pending_banner_narrow_dark", true) { banner(longNamed) }
+
+    /** A device that signed in waits for approval: the same banner, with the count in its words. */
+    @Test fun pairing_banner_light() = capture("pairing_request_banner_light", false) { pairingBanner(1) }
+    @Test fun pairing_banner_dark() = capture("pairing_request_banner_dark", true) { pairingBanner(1) }
+    @Test fun pairing_banner_several_dark() = capture("pairing_request_banner_several_dark", true) { pairingBanner(3) }
+
+    /** Both kinds of request waiting at once: the banners stack, neither covers the other. */
+    @Test
+    @Config(sdk = [34], qualifiers = "w411dp-h320dp-xxhdpi")
+    fun both_banners_dark() = capture("pending_banners_both_dark", true) { both() }
+
+    @Test
+    @Config(sdk = [34], qualifiers = "w411dp-h320dp-xxhdpi")
+    fun both_banners_light() = capture("pending_banners_both_light", false) { both() }
+
+    @Test
+    @Config(sdk = [34], qualifiers = "w411dp-h420dp-xxhdpi")
+    fun pairing_banner_large_text_dark() = capture("pairing_request_banner_large_dark", true) {
+        val density = LocalDensity.current.density
+        CompositionLocalProvider(LocalDensity provides Density(density, 1.6f)) { pairingBanner(1) }
+    }
+
+    @Composable
+    private fun pairingBanner(count: Int) {
+        Box(Modifier.fillMaxSize().background(OmTheme.colors.bgPrimary).padding(OmSpacing.md)) {
+            PairingRequestBanner(offer = PairingRequestBannerOffer(count), onReview = {}, onDismiss = {})
+        }
+    }
+
+    @Composable
+    private fun both() {
+        Column(
+            Modifier.fillMaxSize().background(OmTheme.colors.bgPrimary).padding(OmSpacing.md),
+            verticalArrangement = Arrangement.spacedBy(OmSpacing.sm),
+        ) {
+            AccessPendingRequestBanner(offer = one, onReview = {}, onDismiss = {})
+            PairingRequestBanner(offer = PairingRequestBannerOffer(2), onReview = {}, onDismiss = {})
+        }
+    }
 
     @Composable
     private fun banner(offer: AccessPendingBannerOffer) {

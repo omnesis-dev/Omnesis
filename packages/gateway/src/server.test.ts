@@ -23,6 +23,8 @@ import {
   SOURCE_CONTRACT_WIRE_RANGE,
   resolveSourceMaxAge,
 } from "@omnesis/core";
+import { setLabFlag } from "./lab/store.js";
+
 import { computeSnapshotAbsencePlan, createDatabase, getSyncState, getWipeEpoch } from "./db.js";
 import { LATEST_SCHEMA_VERSION } from "./data/migrations.js";
 import { createServer } from "./server.js";
@@ -61,6 +63,7 @@ import {
   resetConnectedCollectorDeclarations,
 } from "./collector-declaration-roster.js";
 import { ConfigStore } from "./config-store.js";
+import { portalCsrfToken } from "./http/cookies.js";
 import { authorizeInteractiveAccess } from "./access/test-utils.js";
 import { MCP_ACCESS_SCOPE } from "./access/types.js";
 import { STALE_DEVICE_REVOCATION_IMPACT_ERROR } from "./access/agent-device-authorization.js";
@@ -473,6 +476,8 @@ describe("health endpoint", () => {
       expect(syntheticOnly.capabilities).not.toHaveProperty("browserFeatures");
       expect(syntheticOnly.capabilities).not.toHaveProperty("browserNotesEdit");
       process.env.OMNESIS_EXPERIMENTAL = "1";
+      expect((await (await app.request("/health")).json()).capabilities.subscriptions).toBe(false);
+      setLabFlag(db, "watches", true);
       const on = await (await app.request("/health")).json();
       expect(on.experimental).toBe(true);
       expect(on.capabilities).toEqual({
@@ -3950,6 +3955,82 @@ describe("device management endpoints", () => {
     ).toEqual(["192.168.1.20", "studio-northstar.local"]);
   });
 
+  test("/admin/devices/pair-addresses and pair-qr follow the gateway's Omnesis address as remote access comes and goes", async () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    const relayOrigin = "https://g-fictional1.relay.example.test";
+    const spki = "c".repeat(64);
+    const relay = { enabled: true, ready: true, origin: relayOrigin as string | undefined };
+    const status = vi.fn(async () => ({
+      enabled: relay.enabled,
+      publicOrigin: relay.origin,
+      enrollment: { state: "enrolled" },
+      certificate: { state: "valid" },
+      publicMcp: { ready: relay.ready },
+    }));
+    const options = {
+      tlsFingerprintSha256: "a".repeat(64),
+      cloudTlsSpkiFingerprintSha256: () => spki,
+      cloudRelayManagement: { status },
+    } as unknown as NonNullable<Parameters<typeof createServer>[2]>;
+    const post = (target: ReturnType<typeof createServer>, path: string, body: unknown) =>
+      target.request(path, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    try {
+      const customApp = createServer(db, undefined, options);
+      const pairingCode = await mintPairingCode("ios");
+      const plan = async () =>
+        (await (
+          await post(customApp, "/admin/devices/pair-addresses", { pairingCode })
+        ).json()) as {
+          addresses: Array<{ gatewayUrl: string; label: string; kind?: string; usable: boolean }>;
+        };
+      const qr = () =>
+        post(customApp, "/admin/devices/pair-qr", { pairingCode, gatewayUrl: relayOrigin });
+
+      expect((await plan()).addresses.filter((a) => a.kind === "relay")).toMatchObject([
+        { gatewayUrl: relayOrigin, label: "Omnesis address", usable: true },
+      ]);
+      const encoded = await qr();
+      expect(encoded.status).toBe(200);
+      expect(JSON.parse(((await encoded.json()) as { qrPayload: string }).qrPayload)).toEqual({
+        v: 4,
+        gatewayUrl: relayOrigin,
+        pairingCode,
+        tls: { mode: "pinned-key-strict", spkiFingerprint: spki },
+      });
+
+      // Remote access turned off while the gateway runs.
+      relay.enabled = false;
+      relay.ready = false;
+      expect((await plan()).addresses.map((a) => a.gatewayUrl)).not.toContain(relayOrigin);
+      const refused = await qr();
+      expect(refused.status).toBe(400);
+      expect(JSON.stringify(await refused.json())).toMatch(/Turn on remote access/);
+
+      // The gateway left its account: it has no such address any more.
+      relay.origin = undefined;
+      expect((await plan()).addresses.some((a) => a.kind === "relay")).toBe(false);
+
+      // Without the opt-in the management service is never consulted.
+      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+      relay.enabled = relay.ready = true;
+      relay.origin = relayOrigin;
+      status.mockClear();
+      const offApp = createServer(db, undefined, options);
+      const offPlan = (await (
+        await post(offApp, "/admin/devices/pair-addresses", { pairingCode })
+      ).json()) as { addresses: Array<Record<string, unknown>> };
+      expect(offPlan.addresses.map((a) => a.gatewayUrl)).not.toContain(relayOrigin);
+      expect(offPlan.addresses.every((a) => !("kind" in a))).toBe(true);
+      expect(status).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   test("/admin/devices/pair-addresses refuses a code that is not pending", async () => {
     const res = await req("/admin/devices/pair-addresses", {
       method: "POST",
@@ -4967,6 +5048,45 @@ describe("sync state endpoints", () => {
     expect(meta["example-browser:one"].icon).toMatch(/^data:image\/png;base64,/);
     expect(meta["example-browser"].icon).toMatch(/^data:image\/png;base64,/);
     expect(meta["example-browser"].icon).not.toBe(meta["example-browser:one"].icon);
+  });
+
+  test("attack: a relayed caller that has not signed in cannot read account ids from the public source map", async () => {
+    await req("/sync-state/example-browser:maya@example.com", {
+      method: "POST",
+      body: JSON.stringify({
+        cursor: { phase: "done" },
+        label: "Maya's browser",
+        family: { label: "Browsers" },
+      }),
+    });
+    const full = await (await req("/portal/source-meta.json")).json();
+    expect(full["example-browser:maya@example.com"]).toMatchObject({ label: "Maya's browser" });
+
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    try {
+      const relayed = { "x-omnesis-cloud-relay": "1" };
+      for (const path of ["/portal/source-meta.json", "/portal/icons.json"]) {
+        const res = await app.request(path, { headers: relayed });
+        expect(res.status).toBe(200);
+        const text = await res.text();
+        expect(JSON.parse(text)).toEqual({ "example-browser": { label: "Browsers" } });
+        expect(text).not.toContain("maya@example.com");
+        expect(text).not.toContain("Maya's browser");
+      }
+      // Signed in through the relay, or on the local network: exactly as before.
+      expect(await (await req("/portal/source-meta.json", { headers: relayed })).json()).toEqual(
+        full,
+      );
+      expect(await (await app.request("/portal/source-meta.json")).json()).toEqual(full);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    // Without the cloud relay opt-in a relay header changes nothing.
+    expect(
+      await (
+        await app.request("/portal/source-meta.json", { headers: { "x-omnesis-cloud-relay": "1" } })
+      ).json(),
+    ).toEqual(full);
   });
 
   test("legacy cursor writes cannot regress a claimed source", async () => {
@@ -7810,6 +7930,130 @@ describe("POST /documents/delete-all/provider/:providerId", () => {
     const countRes = await req("/documents/count/whatsapp-messages");
     const countData = await countRes.json();
     expect(countData.count).toBe(1);
+  });
+});
+
+describe("portal session cookies and cross-site writes", () => {
+  const seed = () =>
+    req("/documents", {
+      method: "POST",
+      body: JSON.stringify({ documents: [makeDocPayload("msg-1")] }),
+    });
+  const remaining = async () =>
+    ((await (await req("/documents/count/gmail")).json()) as { count: number }).count;
+  const adminSession = () => {
+    const dev = createDevice(db, { name: `portal-${randomUUID()}`, kind: "portal" });
+    const { id: tokenId } = createToken(db, dev.id, [SCOPE_ADMIN, SCOPE_READ]);
+    const sessionId = createSession(db, tokenId, [SCOPE_ADMIN, SCOPE_READ]);
+    return { cookie: `__omnesis_session=${sessionId}`, csrf: portalCsrfToken(sessionId) };
+  };
+  const wipe = (headers: Record<string, string>) =>
+    app.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: { Host: "gateway.example.test", ...headers },
+    });
+
+  test("attack: a page on a sibling gateway cannot make the owner's signed-in browser wipe a provider", async () => {
+    // The owner is signed in to their gateway's portal. They open a page on
+    // another gateway served under the same parent domain, which runs
+    //   fetch("https://g-owner.relay.example.test/documents/delete-all/provider/google",
+    //         { method: "POST", mode: "no-cors", credentials: "include" })
+    // `SameSite=Lax` does not stop it (same site), and a no-cors request needs
+    // no preflight. These are the headers the browser sends with it.
+    await seed();
+    const { cookie } = adminSession();
+    const res = await app.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Host: "g-owner.relay.example.test",
+        Cookie: cookie,
+        Origin: "https://g-attacker.relay.example.test",
+        "Sec-Fetch-Site": "same-site",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Dest": "empty",
+        "Content-Length": "0",
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(await remaining()).toBe(1);
+  });
+
+  test("a body-less request another page makes with the session cookie is refused and deletes nothing", async () => {
+    await seed();
+    const { cookie } = adminSession();
+    for (const headers of [
+      // A sibling gateway under the same parent domain: same site, other origin.
+      { "Sec-Fetch-Site": "same-site", Origin: "https://g-other.relay.example.test" },
+      { "Sec-Fetch-Site": "cross-site", Origin: "https://attacker.example.test" },
+      // A browser that sends no fetch metadata still names the page's origin.
+      { Origin: "https://g-other.relay.example.test" },
+      { Origin: "null" },
+      // No proof of origin at all.
+      {},
+      // Neither a stale nor a guessed synchronizer token proves anything.
+      { "X-Omnesis-CSRF": "0".repeat(64), "Sec-Fetch-Site": "same-site" },
+    ]) {
+      const res = await wipe({ Cookie: cookie, ...headers });
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { code: string }).code).toBe("FORBIDDEN");
+    }
+    expect(await remaining()).toBe(1);
+  });
+
+  test("the portal's own writes pass: synchronizer token, same-origin fetch metadata, or its own Origin", async () => {
+    const { cookie, csrf } = adminSession();
+    for (const headers of [
+      { "X-Omnesis-CSRF": csrf },
+      { "Sec-Fetch-Site": "same-origin" },
+      { "Sec-Fetch-Site": "none" },
+      { Origin: "https://gateway.example.test" },
+      { Origin: "https://gateway.example.test", Host: "gateway.example.test:443" },
+    ]) {
+      await seed();
+      const res = await wipe({ Cookie: cookie, ...headers });
+      expect(res.status).toBe(200);
+      expect(await remaining()).toBe(0);
+    }
+  });
+
+  test("reads with the session cookie and bearer-token writes are unaffected", async () => {
+    await seed();
+    const { cookie } = adminSession();
+    const read = await app.request("/portal/api/session", {
+      headers: { Cookie: cookie, "Sec-Fetch-Site": "same-site" },
+    });
+    expect(((await read.json()) as { authenticated: boolean }).authenticated).toBe(true);
+    // A bearer token is never attached by the browser on another page's behalf.
+    const bearer = await req("/documents/delete-all/provider/google", { method: "POST" });
+    expect(bearer.status).toBe(200);
+    expect(await remaining()).toBe(0);
+  });
+
+  test("an origin the operator allowed for credentialed CORS may write with the cookie", async () => {
+    const cors = { allowedOrigins: ["https://app.example.test"], allowCredentials: true };
+    const corsApp = createServer(db, undefined, {
+      configStore: { get: () => ({ gateway: { cors } }) } as unknown as ConfigStore,
+    });
+    await seed();
+    const { cookie } = adminSession();
+    const allowed = await corsApp.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        "Sec-Fetch-Site": "same-site",
+        Origin: "https://app.example.test",
+      },
+    });
+    expect(allowed.status).toBe(200);
+    const other = await corsApp.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        "Sec-Fetch-Site": "same-site",
+        Origin: "https://other.example.test",
+      },
+    });
+    expect(other.status).toBe(403);
   });
 });
 

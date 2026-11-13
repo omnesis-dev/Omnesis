@@ -25,6 +25,18 @@ export const DEFAULT_MAX_BACKPRESSURE_WAITS = 10;
 export const DEFAULT_WS_HEARTBEAT_TIMEOUT_MS = 90_000;
 
 /**
+ * The same silence limit for a device whose socket goes through the paired
+ * gateway transport, which reaches the gateway over the home network or a
+ * relay and changes between them as the machine moves. A relay connection that
+ * died with the network sends no close, and Node reports no network change, so
+ * silence is the only signal: one missed 30-second heartbeat plus half an
+ * interval of slack for a gateway that sends it late. A false alarm costs one
+ * reconnect; a device that talks to its gateway directly keeps the longer
+ * default.
+ */
+export const PAIRED_TRANSPORT_WS_HEARTBEAT_TIMEOUT_MS = 45_000;
+
+/**
  * How long past the OCR deadline the client keeps waiting. The gateway stops
  * the backend at the deadline and answers 504; the grace lets that answer
  * arrive instead of the client cutting the request off first.

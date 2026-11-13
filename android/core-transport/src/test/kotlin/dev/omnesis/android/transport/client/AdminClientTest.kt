@@ -37,6 +37,25 @@ import org.junit.Test
 
 /** Route/shape contract for the mutating source actions (OkHttp MockWebServer). */
 class AdminClientTest {
+    @Test fun lab_load_and_toggle_use_authenticated_admin_routes() = runTest {
+        val response = """{"experimental":true,"features":[{"id":"brain","name":"Brain","description":"Background processing","enabled":true,"iconSvg":"<svg/>"}]}"""
+        server.enqueue(MockResponse().setBody(response))
+        val catalogue = client().lab()
+        assertEquals("<svg/>", catalogue.features.single().iconSvg)
+        server.takeRequest().also {
+            assertEquals("GET", it.method)
+            assertEquals("/admin/lab", it.path)
+            assertEquals("Bearer tok", it.getHeader("Authorization"))
+        }
+        server.enqueue(MockResponse().setBody(response))
+        assertTrue(client().setLabFeature("brain", true).features.single().enabled)
+        server.takeRequest().also {
+            assertEquals("PUT", it.method)
+            assertEquals("/admin/lab/brain", it.path)
+            assertEquals("{\"enabled\":true}", it.body.readUtf8())
+        }
+    }
+
 
     private lateinit var server: MockWebServer
 
@@ -697,6 +716,41 @@ class AdminClientTest {
             """{"pairingCode":"7K3M-9QX2","gatewayUrl":"https://host.example:7600"}""",
             server.takeRequest().body.readUtf8(),
         )
+    }
+
+    @Test
+    fun pair_addresses_posts_the_code_and_decodes_the_gateways_plan() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"platform":"ios","recommendedUrl":"https://gateway.tail1234.ts.net:7600","awayFromHome":null,"addresses":[
+                  {"gatewayUrl":"https://gateway.tail1234.ts.net:7600","host":"gateway.tail1234.ts.net","label":"Tailscale name","usable":true,"reach":"tailnet","systemTrust":true,"summary":"Works at home and away, as long as Tailscale is connected on the phone."},
+                  {"gatewayUrl":"https://g-7f3a91.relay.example.com","host":"g-7f3a91.relay.example.com","label":"Omnesis address","kind":"relay","usable":true,"reach":"anywhere","systemTrust":false,"summary":"Works from anywhere. Needs remote access to stay on.","futureField":1},
+                  {"gatewayUrl":"https://100.64.0.7:7600","host":"100.64.0.7","label":"Tailscale IP","usable":false,"reason":"iPhones can't use the gateway's Tailscale IP address."}]}""",
+            ),
+        )
+        server.enqueue(MockResponse().setBody("""{"platform":"android","addresses":[],"recommendedUrl":null,"awayFromHome":{"onTailnet":true,"tailscaleName":null}}"""))
+        val plan = client().pairAddresses("7K3M-9QX2")
+        val req = server.takeRequest()
+        assertEquals("POST", req.method)
+        assertEquals("/admin/devices/pair-addresses", req.path)
+        assertEquals("""{"pairingCode":"7K3M-9QX2"}""", req.body.readUtf8())
+        assertEquals("ios", plan.platform)
+        assertEquals(listOf("Tailscale name", "Omnesis address"), plan.usable.map { it.label })
+        assertEquals("relay", plan.usable[1].kind)
+        assertEquals(null, plan.usable[0].kind)
+        assertTrue(plan.usable[0].systemTrust)
+        assertEquals(false, plan.usable[1].systemTrust)
+        assertEquals("Works from anywhere. Needs remote access to stay on.", plan.usable[1].summary)
+        assertEquals("iPhones can't use the gateway's Tailscale IP address.", plan.refused.single().reason)
+        assertEquals(null, plan.awayFromHome)
+        // The recommendation is what opens selected; a refused or unknown address never is.
+        assertEquals("gateway.tail1234.ts.net", plan.selected(plan.recommendedUrl)?.host)
+        assertEquals(null, plan.selected("https://100.64.0.7:7600"))
+        assertEquals(null, plan.selected(null))
+        val none = client().pairAddresses("7K3M-9QX2")
+        assertEquals(null, none.selected(none.recommendedUrl))
+        assertEquals(true, none.awayFromHome?.onTailnet)
+        assertEquals(null, none.awayFromHome?.tailscaleName)
     }
 
     @Test
@@ -1700,4 +1754,27 @@ class AdminClientTest {
         assertTrue(internal.isEmpty())
     }
 
+
+    @Test
+    fun watch_decision_gate_patch_sends_only_its_own_setting() = runTest {
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        client().setWatchDecisionGate(false)
+        val request = server.takeRequest()
+        assertEquals("PATCH", request.method)
+        assertEquals("/admin/config", request.path)
+        assertEquals(
+            """{"inference":{"dictation":{"useDecisionGateForWatch":false}}}""",
+            request.body.readUtf8(),
+        )
+    }
+
+    @Test
+    fun gateway_dictation_patch_leaves_the_watch_setting_out() = runTest {
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        client().setTranscribeOnGateway(true)
+        assertEquals(
+            """{"inference":{"dictation":{"transcribeOnGateway":true}}}""",
+            server.takeRequest().body.readUtf8(),
+        )
+    }
 }

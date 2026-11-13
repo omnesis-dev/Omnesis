@@ -35,7 +35,7 @@ public struct DevAnnotationTarget: Equatable, Sendable {
         .init(type: "retired_loop", id: id, label: label ?? "Retired loop \(id)")
     }
 
-    /// The singleton steward notes blob — no row id.
+    /// The singleton Brain notes blob — no row id.
     public static func agentNotes(label: String = "Agent notes") -> DevAnnotationTarget {
         .init(type: "agent_notes", id: nil, label: label)
     }

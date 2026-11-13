@@ -11,23 +11,30 @@ ENV DEBIAN_FRONTEND=noninteractive
 # systemd and dbus for the service manager; git to fetch releases; a compiler
 # toolchain for native modules without a prebuilt binary; sudo, because an
 # operator runs the admin command through it; curl and procps for the
-# scenario's probes.
-RUN apt-get update \
+# scenario's probes. apt retries a failed mirror request instead of failing
+# the build on one dropped connection.
+RUN printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries \
+  && apt-get update \
   && apt-get install -y --no-install-recommends \
     systemd systemd-sysv dbus ca-certificates curl git python3 make g++ procps sudo \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+COPY --from=node /usr/local/include/node /usr/local/include/node
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
   && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
   && node --version && npm --version
 
 # The login account's own checkout, with its dependencies, for its collector.
-# Installing it also fills the npm cache the release builds start from.
+# Installing it also fills the npm cache the release builds start from. The CI
+# wrapper builds native modules against Node's headers, copied above, and fails
+# the build when npm drops an optional package such as DuckDB's binary, which
+# neither the checkout nor the cache could then supply.
 COPY . /src
 RUN cd /src \
-  && npm ci --no-audit --no-fund --cache /var/cache/omnesis-npm-seed \
+  && NPM_CI_REQUIRE_OPTIONAL=1 sh scripts/ci/npm-ci.sh --no-audit --no-fund \
+    --cache /var/cache/omnesis-npm-seed \
   && chmod -R a+rX /src /var/cache/omnesis-npm-seed
 
 # The repository root fetches releases from:

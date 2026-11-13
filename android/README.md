@@ -22,6 +22,23 @@ The app uses the shared `omnesis://` URI scheme for some links. When two Omnesis
 
 See the [Notifications guide](https://omnesis.dev/docs/notifications#setup) for FCM setup, status and repair.
 
+## Wear OS app
+
+The `:wear` module is the watch app, and `:wear-core` its logic, a plain JVM
+library whose tests (`./gradlew :wear-core:test`) need no Android toolchain. The
+app relays through the phone app, so build and install both from the same
+checkout with the same package id and signing key; the watch app reads its
+package id and version from the phone app's build.
+
+```sh
+cd android
+./gradlew :wear:assembleDebug
+adb -s <watch-serial> install -r wear/build/outputs/apk/debug/wear-debug.apk
+```
+
+Open Omnesis from the watch's app list, or add the **Omnesis** tile or
+complication to open the recorder from the watch face.
+
 ## Task widgets
 
 Add **Omnesis → Tasks** from the launcher's widget picker, then resize it to fit.
@@ -40,3 +57,82 @@ inputs. A failed completion leaves the task open.
 
 `TaskWidgetScreenshotTest` renders the actual RemoteViews in compact, medium,
 large and tablet sizes, including light/dark and offline/empty/error states.
+
+## Wear OS watch relay
+
+A paired Wear OS watch running Omnesis holds no gateway credentials. It hands
+questions, notes and recordings to this phone app over the Wearable Data Layer,
+and the phone app asks the gateway with its own pairing. The contract both apps
+share (paths, messages and the policies each end applies) is the plain-JVM
+`:core-wear-protocol` module.
+
+`app/.../wear/` is the phone side. `WearRelayService` receives what the watch
+sends, with the app not running if need be, and hands it to `WearRelay`, which
+routes to one orchestrator per job: publishing the gate that tells the watch
+which buttons to show, answering a text question, saving a text note, acting on
+relays the watch queued, and turning a recording into a note or an answered
+question. A recording is copied into a no-backup inbox before the watch is told
+the phone has it, and stays there until it is processed. Relay work is held
+alive by expedited WorkManager work, since the listener service is bound only
+for its callbacks. Settings → Watch shows the watch's connection, the gateway's
+decision-gate setting and what on-device transcription needs.
+
+The relay needs Google Play services' Wearable API. Without it nothing is
+started and the Watch section is hidden.
+
+The phone app's unit tests include loopback tests (`app/src/test/.../wear/loopback/`)
+that run the watch's real logic against this relay over an in-memory Data Layer,
+so the two sides are tested against each other and not only against the contract.
+
+## Optional Google pairing through the experimental relay
+
+QR and manual pairing remain available without Google. A configured build may
+also offer Google sign-in using Credential Manager. Supply these public Gradle
+properties or environment variables (the ignored `local.push.properties` may
+also hold them):
+
+```properties
+OMNESIS_GOOGLE_WEB_CLIENT_ID=fictional-web.apps.googleusercontent.com
+OMNESIS_GOOGLE_ANDROID_CLIENT_ID=fictional-android.apps.googleusercontent.com
+OMNESIS_CLOUD_RELAY_URL=https://relay.example.test
+```
+
+Register the Android OAuth client for the application ID and signing-certificate
+fingerprint. The web client is the ID-token audience; the Android client is an
+explicitly trusted authorized presenter. Configure both on the gateway and relay
+as well. The app uses public identifiers and contains no OAuth client secret.
+
+Google identifies the requesting account and discovers a gateway candidate.
+The app independently verifies Google's signature and computes a six-digit
+comparison code locally (shown as `465 774`). The gateway commits to its random
+part of the code before the phone sends its secret, and the phone shows a code
+only when the gateway's reply opens that commitment and carries the same code
+the phone computed; otherwise pairing stops without showing one. Compare it on
+the gateway's **local** portal or trusted terminal, or under Devices → Pairing
+requests on a phone that is already paired, then approve the device there and
+confirm the match on the phone.
+An operator-controlled public hostname is not an independent place to compare
+codes against that operator. A relay approval alone never persists a device
+credential; only the gateway's own checks can skip the comparison (below).
+
+The initial certificate comparison authenticates a separate SHA-256 pin of the
+gateway's complete DER SubjectPublicKeyInfo. That key stays strictly pinned
+across HTTP, WebSocket, notifications and task widgets. Current certificate
+validity and the canonical hostname are checked; same-key certificate renewal
+works without adopting public certificate trust. A changed gateway key requires
+a fresh trusted pairing. Existing exact certificate pins retain their original
+behavior and are never silently reinterpreted as key pins.
+
+Sign-in enrollment (`docs/device-enrollment.md`) also lets a trusted sign-in join a
+device without the comparison, when the gateway's own setting allows it. On first
+contact the app checks that the proposed certificate is publicly trusted and logged;
+a certificate that isn't asks the gateway to hold the request for approval. Set
+`OMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0` to skip that check for a test gateway in a
+debug build; a release build always checks, and `:app:verifyPlayReleasePolicy` fails if
+it would not.
+Without `OMNESIS_CLOUD_RELAY_ENABLED=1` none of this exists in the build: no key,
+settings, device details, notifications or token rotation.
+The same value decides whether the sign-in libraries are packaged: the code that
+needs them lives in `app/src/cloudRelay` and joins the app only when it is set.
+Otherwise the app's manifest gains nothing from them, a QR naming a strict trust
+mode is refused as unknown, and the tests alone compile that code.

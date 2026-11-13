@@ -189,7 +189,7 @@ describe("Brain cassettes (background-agent and agent replay)", () => {
       "observation_note",
     ]);
     // Every live call succeeded: the document read is a batch, the rest are
-    // the steward's structured results.
+    // the Brain's structured results.
     expect(calls.map((call) => call.result?.kind)).toEqual([
       "document.batch",
       ...Array<string>(6).fill("structured"),
@@ -282,12 +282,13 @@ describe("Brain cassettes (background-agent and agent replay)", () => {
   }, 60_000);
 });
 
-describe("Brain cassettes (the note agent on a stable install)", () => {
+describe("Brain cassettes (the note agent with Tasks enabled and Brain off)", () => {
   let bench: BrainBench;
 
   beforeAll(async () => {
     bench = await BrainBench.start({
-      experimental: false,
+      experimental: true,
+      labFeatures: { tasks: true, brain: false, watches: false },
       agent: "replay",
       brainAgent: false,
       cassetteDir: CASSETTE_DIR,

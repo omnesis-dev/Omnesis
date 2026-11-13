@@ -2,37 +2,16 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Brain feature gate — the single answer to "is the Brain on?".
- *
- * The feature has no per-source enable/disable and no config switch of its
- * own; it is governed by exactly two levers:
- *
- *   - **experimental mode** (`OMNESIS_EXPERIMENTAL`), like every other
- *     experimental surface, and
- *   - **a `background-agent` model assignment**
- *     (`inference.assignments["background-agent"]`) — never assigned by
- *     default, so a fresh install has no proactive intelligence until the
- *     operator deliberately picks a model.
- *
- * Three distinct predicates fall out of that, mirroring the repo-wide
- * enabled-vs-visible split:
- *
- *   - `active` — the engine may execute work. Requires `enabled` AND an
- *     assigned model. With either missing every installed background task
- *     remains idle.
- *   - `enabled` — the operator switched the feature on
- *     (`experimentalEnabled()`). Reported separately from `active` because it
- *     is the predicate that says whether a missing model is worth telling the
- *     operator about: with the feature off, an unassigned model is not a fault.
- *   - `visible` — surfaces (entry points, the `/status` advertisement) may
- *     show the feature. `experimentalVisible()`, so synthetic lanes
- *     (`OMNESIS_SYNTHETIC=1`) light the surfaces up for snapshots and demos
- *     without flipping the experimental switch.
+ * The Brain's live runtime gate. The host supplies its persisted Lab opt-in,
+ * which requires experimental mode. A runnable background-agent assignment is
+ * additionally required for autonomous work. Visibility follows the opt-in;
+ * a missing model is explained only on a surface that owns that repair.
+ * Preparing the scheduler under experimental mode allows hot Lab changes to
+ * start and park work without duplicate registrations or a gateway restart.
  */
 
 import {
   experimentalEnabled,
-  experimentalVisible,
   type CapabilityRole,
   type EntailCapability,
   type ResolvedAssignment,
@@ -42,6 +21,7 @@ import {
 import { fetchSelfPersonId } from "../domain/InteractionScoreService.js";
 import { chatRoleReadiness } from "../models/chat-role-readiness.js";
 import { DERIVATION_STAGES, type DerivationStage } from "../domain/DocumentDerivation.js";
+import { labFeatureEnabled } from "../lab/store.js";
 import { knowledgeFrontierPreflight } from "./knowledge/engine-frontier.js";
 import { cognitionBudgetVerdict } from "./cognition/budget.js";
 import { parseCognitionSynthesisRunPayload } from "./run-payloads.js";
@@ -84,7 +64,7 @@ import type {
 } from "./run-driver.js";
 import type { ClaimedCognitionRun, Clock } from "./storage/types.js";
 
-/** The capability role the Cognition Steward runs on. */
+/** The capability role the Brain runs on. */
 export const BACKGROUND_AGENT_ROLE: CapabilityRole = "background-agent";
 
 /** The slice of the inference registry the gate consumes. */
@@ -136,11 +116,12 @@ export interface BriefsFeatureStatus {
 export function briefsFeatureStatus(
   registry: BackgroundAgentResolver,
   deps: ChatRoleReadinessDeps,
+  isEnabled: () => boolean = () => false,
 ): BriefsFeatureStatus {
   const readiness = chatRoleReadiness(registry.resolve(BACKGROUND_AGENT_ROLE), deps);
-  const enabled = experimentalEnabled();
+  const enabled = isEnabled();
   return {
-    visible: experimentalVisible(),
+    visible: enabled,
     enabled,
     modelAssigned: readiness.runnable,
     active: enabled && readiness.runnable,
@@ -224,7 +205,7 @@ export interface BriefsRunQueueBootDeps {
   rhythmIdleMs?: number;
   rhythmStartDelayMs?: number;
   /**
-   * Collaborators the real Cognition Steward runtime (tools + per-kind prompts,
+   * Collaborators the real Brain runtime (tools + per-kind prompts,
    * `loop-agent/runtime.ts`) is assembled from. When present and no
    * explicit seams are passed, `bootBriefs` lazy-loads the runtime and
    * fills the three driver seams with it.
@@ -236,7 +217,7 @@ export interface BriefsRunQueueBootDeps {
     /** index.db handle for the deleted-mirror chunk cascade. Optional. */
     indexDb?: Database.Database;
     /**
-     * Read-worker gate for `lookup_people`. When wired the Cognition Steward runs the
+     * Read-worker gate for `lookup_people`. When wired the Brain runs the
      * heavy person assembly off the main event loop (at background priority);
      * absent, it falls back to a synchronous main-thread read.
      */
@@ -253,7 +234,7 @@ export interface BriefsRunQueueBootDeps {
     collisionSweepReads?: CollisionSweepReads;
     /**
      * Read worker for the store half of the background agent's temporal reads,
-     * which the steward enqueues at background priority. Absent, they run
+     * which the Brain enqueues at background priority. Absent, they run
      * synchronously on the main handle.
      */
     temporalStoreReads?: TemporalStoreReads;
@@ -263,7 +244,7 @@ export interface BriefsRunQueueBootDeps {
      * writes unchanged.
      */
     getEntailmentVerifier?: (signal?: AbortSignal) => Promise<EntailCapability | null>;
-    validateAnnotationEvidence?: import("./steward/tools.js").AnnotationToolDeps["validateAnnotationEvidence"];
+    validateAnnotationEvidence?: import("./runtime/tools.js").AnnotationToolDeps["validateAnnotationEvidence"];
     /** Live privacy policy used by the mandatory subscription precision barrier. */
     policyStore?: { get(): Promise<{ revision: string }> };
   };
@@ -287,6 +268,7 @@ export interface BriefsRunQueueBootDeps {
  */
 export async function bootBriefs(deps: {
   registry: BackgroundAgentResolver;
+  isEnabled?: () => boolean;
   /** Runtime-readiness probes for the background-agent backend. */
   readiness: ChatRoleReadinessDeps;
   writeGate: WriteGate;
@@ -317,7 +299,7 @@ export async function bootBriefs(deps: {
    */
   getLegacySweepOverrides?: () => Record<string, import("./sweeps/service.js").LegacySweepOverride>;
 }): Promise<BriefsFeatureStatus> {
-  const status = briefsFeatureStatus(deps.registry, deps.readiness);
+  const status = briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled);
   if (deps.runQueue) {
     const { knowledgeCascadeTask } = await import("./knowledge/tasks.js");
     const { createKnowledgeMirror } = await import("./knowledge/mirror.js");
@@ -379,7 +361,7 @@ export async function bootBriefs(deps: {
       import("./transcripts.js"),
     ]);
     const transcripts = new FsCognitionTranscriptStore(rq.transcriptsDir);
-    // The real Cognition Steward (tools + per-kind prompts + notes injection),
+    // The real Brain (tools + per-kind prompts + notes injection),
     // unless a test passed explicit seam overrides. Lazy-loaded like the
     // drainer so inert builds never pull the agent-ports graph.
     let runtimeSeams: {
@@ -473,17 +455,17 @@ export async function bootBriefs(deps: {
       const maintenance = knowledgeMaintenanceTask({
         engine,
         scheduler: rq.scheduler,
-        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
+        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
         intervalMs: rq.wakerIntervalMs,
         idleMs: rq.wakerIdleMs,
         startDelayMs: rq.wakerStartDelayMs,
       });
       rq.scheduler.schedule(maintenance.task);
       rq.backgroundJobs.registerAll([maintenance.job]);
-      const { createCognitionRuntime } = await import("./steward/runtime.js");
+      const { createCognitionRuntime } = await import("./runtime/runtime.js");
       const taskChecks = rq.getDecision
         ? new TaskChecks({
-            getDecision: rq.getDecision,
+            getDecision: () => (labFeatureEnabled(rq.db, "tasks") ? rq.getDecision!() : null),
             getThresholds: () => rq.getSettings().thresholds,
             recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
             capturePayload: (input) => taskCheckPayloadCapture(rq.db, input),
@@ -504,7 +486,7 @@ export async function bootBriefs(deps: {
       const taskPropose =
         rq.getDecision && rq.interest
           ? new TaskProposeGate({
-              getDecision: rq.getDecision,
+              getDecision: () => (labFeatureEnabled(rq.db, "tasks") ? rq.getDecision!() : null),
               getMode: () => rq.getSettings().tasks.proposeGate,
               getThresholds: () => rq.getSettings().thresholds,
               interest: rq.interest,
@@ -589,6 +571,7 @@ export async function bootBriefs(deps: {
         db: rq.db,
         writeGate: deps.writeGate,
         autoApply: rq.getSettings().tasks.autoApply,
+        isEnabled: () => labFeatureEnabled(rq.db, "tasks"),
         ...(taskChecks ? { taskChecks } : {}),
         clock: rq.clock ?? Date.now,
         log: log.child("tasks"),
@@ -620,7 +603,7 @@ export async function bootBriefs(deps: {
       : runtimeSeams.validateRun;
 
     // Top-level interactive-session substrate write access: hand the agent
-    // lifecycle a builder for the Cognition Steward's own mutating tools, stamped with
+    // lifecycle a builder for the Brain's own mutating tools, stamped with
     // an interactive-origin run id. Only wired on the production path (where
     // buildOwnTools is populated) — test seam-override boots leave interactive
     // read-only, which is correct.
@@ -689,7 +672,7 @@ export async function bootBriefs(deps: {
         log,
         getBudgetVerdict: () =>
           cognitionBudgetVerdict(rq.db, rq.getSettings().budget, (rq.clock ?? Date.now)()),
-        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
+        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
         ...(rq.activity ? { activity: rq.activity } : {}),
         getWorkerConcurrency: () => rq.getSettings().workerConcurrency,
         getMaxStalledHandoffs: () => rq.getSettings().knowledge.maxStalledHandoffs,
@@ -729,9 +712,7 @@ export async function bootBriefs(deps: {
     );
     for (const task of bundle.tasks) rq.scheduler.schedule(task);
     rq.backgroundJobs.registerAll(bundle.jobs);
-    deps.log.info(
-      `Cognition Steward run-queue drainer started (transcripts at ${rq.transcriptsDir})`,
-    );
+    deps.log.info(`Brain run-queue drainer started (transcripts at ${rq.transcriptsDir})`);
 
     // One-shot: convert any `brain.sweeps` config overrides — the pre-file
     // authoring surface — into sweep files, so the operator has one place to
@@ -765,7 +746,9 @@ export async function bootBriefs(deps: {
           db: rq.db,
           writeGate: deps.writeGate,
           log: log.child("rhythm"),
-          isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
+          isEnabled: () =>
+            briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
+          tasksEnabled: () => labFeatureEnabled(rq.db, "tasks"),
           getDailyRunHour: () => rq.getSettings().dailyRunHour,
           getExcludedSources: () => rq.getSettings().excludedSources,
           getDecayBackoff: () => {
@@ -848,7 +831,7 @@ export async function bootBriefs(deps: {
       );
       for (const task of rhythmBundle.tasks) rq.scheduler.schedule(task);
       rq.backgroundJobs.registerAll(rhythmBundle.jobs);
-      deps.log.info(`Cognition Steward daily rhythm + decay sweep started`);
+      deps.log.info(`Brain daily rhythm + decay sweep started`);
     }
 
     if (rq.eventBus) {
@@ -895,7 +878,7 @@ export async function bootBriefs(deps: {
         db: rq.db,
         eventBus: rq.eventBus,
         invalidate: (docId, now) => deps.writeGate.invalidateTemporalAnnotationsForDoc(docId, now),
-        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness).active,
+        isEnabled: () => briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
         clock: rq.clock ?? (() => Date.now()),
         log: log.child("temporal-annotations"),
       });
@@ -905,7 +888,8 @@ export async function bootBriefs(deps: {
           writeGate: deps.writeGate,
           buffer,
           log: wakerLog,
-          isEnabled: () => !knowledge && briefsFeatureStatus(deps.registry, deps.readiness).active,
+          isEnabled: () =>
+            !knowledge && briefsFeatureStatus(deps.registry, deps.readiness, deps.isEnabled).active,
           derivationBarrierMs: () => rq.getSettings().derivationBarrierMs,
           ...(rq.contentPending
             ? {
@@ -945,7 +929,7 @@ async function observationRuntimeDeps(
     };
   },
   log: Logger,
-): Promise<NonNullable<import("./steward/runtime.js").CognitionRuntimeDeps["observations"]>> {
+): Promise<NonNullable<import("./runtime/runtime.js").CognitionRuntimeDeps["observations"]>> {
   const [
     { createObservationScorer },
     { OBSERVATION_SALIENCE_SPEND_MECHANISM },
@@ -968,6 +952,7 @@ async function observationRuntimeDeps(
   const thresholds = () => rq.getSettings().observations;
   return {
     recheck: {
+      tasksEnabled: () => labFeatureEnabled(rq.db, "tasks"),
       writes: deps.writeGate,
       getDecision,
       recordSpend,

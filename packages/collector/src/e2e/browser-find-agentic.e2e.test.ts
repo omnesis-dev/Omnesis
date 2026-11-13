@@ -197,6 +197,7 @@ describe("Browser Find agentic destinations through scripted production backends
     });
     harness = new SyntheticE2EHarness({
       gatewayMode: "synthetic-experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "e2e-minimal",
       extraGatewayEnv: { OMNESIS_TYPESAFE_API_KEY: "scripted_find_key_0123456789" },
       extraInference: {

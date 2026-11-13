@@ -8,7 +8,7 @@
  * The user is a person like any other: their roles, standing preferences, and
  * life-context are `person_annotations` on the self person, grounded and
  * lifecycled the same way. This resolves the injectable block from those
- * annotations, behind the feature gate. Shared by the background Cognition Steward
+ * annotations, behind the feature gate. Shared by the background Brain
  * (gated on `annotations.enabled`) and authorized interactive agents in every
  * gateway mode, so both surfaces compute it identically.
  */

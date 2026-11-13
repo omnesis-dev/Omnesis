@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,7 +20,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import dev.omnesis.android.access.accessAuthorizationIdentity
-import dev.omnesis.android.access.consumedAccessAuthorizationIntent
 import dev.omnesis.android.access.routeAccessAuthorizationDeepLink
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
@@ -66,45 +66,20 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var taskFocusBus: TaskFocusBus
 
-    /**
-     * The tile stamp of the last capture intent already handled, restored across
-     * recreations so a re-delivered intent isn't re-posted. 0 = none handled yet.
-     */
-    private var lastHandledLaunchStamp = 0L
-    private var lastHandledApprovalLaunchStamp = 0L
-    private var lastHandledAccessAuthorizationLaunchStamp = 0L
-    private var lastHandledConversationLaunchStamp = 0L
-    private var lastHandledWatchLaunchStamp = 0L
-    private var lastHandledSourcePermissionLaunchStamp = 0L
-    private var lastHandledRemoteSourcePermissionLaunchStamp = 0L
+    /** Which launch intents were already acted on; kept across recreations. */
+    private lateinit var launches: OneShotLaunches
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        lastHandledLaunchStamp = savedInstanceState?.getLong(STATE_LAUNCH_STAMP) ?: 0L
-        lastHandledApprovalLaunchStamp = savedInstanceState?.getLong(STATE_APPROVAL_LAUNCH_STAMP) ?: 0L
-        lastHandledAccessAuthorizationLaunchStamp =
-            savedInstanceState?.getLong(STATE_ACCESS_AUTHORIZATION_LAUNCH_STAMP) ?: 0L
-        lastHandledConversationLaunchStamp =
-            savedInstanceState?.getLong(STATE_CONVERSATION_LAUNCH_STAMP) ?: 0L
-        lastHandledWatchLaunchStamp = savedInstanceState?.getLong(STATE_WATCH_LAUNCH_STAMP) ?: 0L
-        lastHandledSourcePermissionLaunchStamp =
-            savedInstanceState?.getLong(STATE_SOURCE_PERMISSION_LAUNCH_STAMP) ?: 0L
-        lastHandledRemoteSourcePermissionLaunchStamp =
-            savedInstanceState?.getLong(STATE_REMOTE_SOURCE_PERMISSION_LAUNCH_STAMP) ?: 0L
-        maybeHandleCaptureIntent(intent, firstCreation = savedInstanceState == null)
-        maybeHandlePrivacyApprovalIntent(intent, firstCreation = savedInstanceState == null)
-        maybeHandleAccessAuthorizationIntent(intent, firstCreation = savedInstanceState == null)
-        maybeHandleAccessAuthorizationDeepLink(intent)
-        maybeHandleAgentConversationIntent(intent, firstCreation = savedInstanceState == null)
-        maybeHandleWatchFiringIntent(intent, firstCreation = savedInstanceState == null)
-        maybeHandleSourcePermissionIntent(intent, firstCreation = savedInstanceState == null)
-        maybeHandleRemoteSourcePermissionIntent(intent, firstCreation = savedInstanceState == null)
-        maybeHandleSearchIntent(intent, freshDelivery = savedInstanceState == null)
-        maybeHandleTaskWidgetDeepLink(intent)
+        launches = OneShotLaunches(savedInstanceState)
+        handleLaunch(
+            intent,
+            if (savedInstanceState == null) LaunchDelivery.CREATED else LaunchDelivery.RECREATED,
+        )
         // Draw edge-to-edge so the themed app background paints behind the status + navigation
         // bars (the bars themselves are coloured + their icons toned from the active theme below).
         enableEdgeToEdge()
-        if (BuildConfig.DEBUG) maybeSeedPairing(intent)
+        if (BuildConfig.DEBUG) maybeSeedPairing()
         setContent {
             val mode by appearance.mode.collectAsStateWithLifecycle()
             val dark = when (mode) {
@@ -134,57 +109,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun maybeHandleSourcePermissionIntent(launchIntent: Intent?, firstCreation: Boolean = false) {
-        if (launchIntent?.action != ACTION_SOURCE_PERMISSION) return
-        val sourceId = launchIntent.getStringExtra(EXTRA_SOURCE_ID)?.takeIf { it.isNotBlank() } ?: return
-        val stamp = launchIntent.getLongExtra(EXTRA_SOURCE_PERMISSION_LAUNCH_STAMP, 0L)
-        if (!firstCreation && stamp != 0L && stamp == lastHandledSourcePermissionLaunchStamp) return
-        lastHandledSourcePermissionLaunchStamp = stamp
-        notificationLaunchBus.postSourcePermission(sourceId)
-    }
-
-    private fun maybeHandleRemoteSourcePermissionIntent(launchIntent: Intent?, firstCreation: Boolean = false) {
-        if (launchIntent?.action != ACTION_REMOTE_SOURCE_PERMISSION) return
-        val sourceId = launchIntent.getStringExtra(EXTRA_SOURCE_ID)?.takeIf { it.isNotBlank() } ?: return
-        val deviceId = launchIntent.getStringExtra(EXTRA_AFFECTED_DEVICE_ID)?.takeIf { it.isNotBlank() } ?: return
-        val sourceName = launchIntent.getStringExtra(EXTRA_SOURCE_NAME)?.takeIf { it.isNotBlank() }
-        val deviceName = launchIntent.getStringExtra(EXTRA_AFFECTED_DEVICE_NAME)?.takeIf { it.isNotBlank() }
-        val stamp = launchIntent.getLongExtra(EXTRA_REMOTE_SOURCE_PERMISSION_LAUNCH_STAMP, 0L)
-        if (!firstCreation && stamp != 0L && stamp == lastHandledRemoteSourcePermissionLaunchStamp) return
-        lastHandledRemoteSourcePermissionLaunchStamp = stamp
-        notificationLaunchBus.postRemoteSourcePermission(sourceId, deviceId, sourceName, deviceName)
-    }
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // singleTask: a tile / app-shortcut launch while the app is alive lands here.
-        // setIntent so a later recreation compares its stamp against this intent,
-        // not the original launch one.
+        // singleTask: a tile, shortcut, widget or notification launch while the task exists
+        // lands here.
         setIntent(intent)
-        maybeHandleCaptureIntent(intent)
-        maybeHandlePrivacyApprovalIntent(intent)
-        maybeHandleAccessAuthorizationIntent(intent)
-        maybeHandleAccessAuthorizationDeepLink(intent)
-        maybeHandleAgentConversationIntent(intent)
-        maybeHandleWatchFiringIntent(intent)
-        maybeHandleSourcePermissionIntent(intent)
-        maybeHandleRemoteSourcePermissionIntent(intent)
-        maybeHandleSearchIntent(intent, freshDelivery = true)
-        maybeHandleTaskWidgetDeepLink(intent)
+        handleLaunch(intent, LaunchDelivery.NEW_INTENT)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putLong(STATE_LAUNCH_STAMP, lastHandledLaunchStamp)
-        outState.putLong(STATE_APPROVAL_LAUNCH_STAMP, lastHandledApprovalLaunchStamp)
-        outState.putLong(
-            STATE_ACCESS_AUTHORIZATION_LAUNCH_STAMP,
-            lastHandledAccessAuthorizationLaunchStamp,
-        )
-        outState.putLong(STATE_CONVERSATION_LAUNCH_STAMP, lastHandledConversationLaunchStamp)
-        outState.putLong(STATE_WATCH_LAUNCH_STAMP, lastHandledWatchLaunchStamp)
-        outState.putLong(STATE_SOURCE_PERMISSION_LAUNCH_STAMP, lastHandledSourcePermissionLaunchStamp)
-        outState.putLong(STATE_REMOTE_SOURCE_PERMISSION_LAUNCH_STAMP, lastHandledRemoteSourcePermissionLaunchStamp)
+        launches.save(outState)
     }
 
     override fun onStart() {
@@ -206,25 +141,43 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * The Omnesis tile and shortcut launch [ACTION_VOICE_INPUT]; the explicit Tell
-     * shortcut uses [ACTION_TELL_BRAIN]. The carried surface slug rides through
-     * the [CaptureLaunchBus] into the nav graph, which opens the capture route.
-     *
-     * The tile stamps each tap with [EXTRA_LAUNCH_STAMP]: a stamped intent is
-     * handled whenever its stamp differs from the last-handled one, which covers
-     * both a fresh tap AND a singleTask relaunch after process death (where the
-     * still-unhandled intent arrives with non-null saved state). A recreation
-     * (rotation, theme change) re-delivers an already-handled stamp and is
-     * skipped. The static shortcut can't carry a dynamic extra, so it keeps the
-     * first-creation check — a shortcut launch restored after process death is
-     * dropped (the user lands in the app, one tap from capture).
+     * Route [launchIntent] to the screen it asks for, when it is a request to act on (see
+     * [OneShotLaunches]). A request acted on is then taken off the activity, so nothing
+     * that reads the activity's intent later finds it again.
      */
-    private fun maybeHandleCaptureIntent(launchIntent: Intent?, firstCreation: Boolean = true) {
-        if (launchIntent?.action != ACTION_TELL_BRAIN && launchIntent?.action != ACTION_VOICE_INPUT) return
+    private fun handleLaunch(launchIntent: Intent?, delivery: LaunchDelivery) {
+        if (launchIntent == null) return
+        val handled = when (launchIntent.action) {
+            ACTION_VOICE_INPUT, ACTION_TELL_BRAIN -> handleCapture(launchIntent, delivery)
+            ACTION_PRIVACY_APPROVAL -> handlePrivacyApproval(launchIntent, delivery)
+            ACTION_ACCESS_AUTHORIZATION -> handleAccessAuthorization(launchIntent, delivery)
+            ACTION_AGENT_CONVERSATION -> handleAgentConversation(launchIntent, delivery)
+            ACTION_WATCH_FIRING -> handleWatchFiring(launchIntent, delivery)
+            ACTION_SOURCE_PERMISSION -> handleSourcePermission(launchIntent, delivery)
+            ACTION_REMOTE_SOURCE_PERMISSION -> handleRemoteSourcePermission(launchIntent, delivery)
+            ACTION_DEVICES -> handleDevices(launchIntent, delivery)
+            ACTION_SEARCH -> handleSearch(launchIntent, delivery)
+            Intent.ACTION_VIEW ->
+                handleTaskWidgetDeepLink(launchIntent, delivery) || handleAccessAuthorizationDeepLink(launchIntent)
+            else -> false
+        }
+        if (handled) setIntent(consumedLaunchIntent(launchIntent))
+    }
+
+    /**
+     * The Omnesis tile and the voice shortcut launch [ACTION_VOICE_INPUT]; the Tell shortcut
+     * launches [ACTION_TELL_BRAIN]. The surface slug rides through the [CaptureLaunchBus]
+     * into the nav graph, which opens the capture screen, and with it the microphone.
+     *
+     * The tile stamps each tap with the time it was made ([EXTRA_LAUNCH_STAMP]), so a tap
+     * is also refused once it is older than [CAPTURE_LAUNCH_FRESHNESS_MS]: the microphone
+     * never opens for a tap made long ago, however the intent comes back. A static
+     * shortcut cannot carry a stamp.
+     */
+    private fun handleCapture(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
         val stamp = launchIntent.getLongExtra(EXTRA_LAUNCH_STAMP, 0L)
-        val shouldHandle = if (stamp != 0L) stamp != lastHandledLaunchStamp else firstCreation
-        if (!shouldHandle) return
-        lastHandledLaunchStamp = stamp
+        if (stamp != 0L && SystemClock.elapsedRealtime() - stamp !in 0..CAPTURE_LAUNCH_FRESHNESS_MS) return false
+        if (!launches.accept(KIND_CAPTURE, launchIntent, stamp, delivery)) return false
         val surface = if (launchIntent.action == ACTION_VOICE_INPUT) {
             launchIntent.getStringExtra(EXTRA_SURFACE)?.takeIf { it == CaptureSurface.TILE }
                 ?: CaptureSurface.VOICE_SHORTCUT
@@ -232,120 +185,116 @@ class MainActivity : ComponentActivity() {
             launchIntent.getStringExtra(EXTRA_SURFACE) ?: CaptureSurface.APP
         }
         captureLaunchBus.post(surface)
+        return true
     }
 
-    private fun maybeHandleTaskWidgetDeepLink(launchIntent: Intent?) {
-        if (launchIntent?.action != Intent.ACTION_VIEW) return
-        val link = TaskWidgetDeepLink.parse(launchIntent.dataString) ?: return
+    private fun handleTaskWidgetDeepLink(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
+        val link = TaskWidgetDeepLink.parse(launchIntent.dataString) ?: return false
+        if (!launches.accept(KIND_TASK_WIDGET, launchIntent, stamp = 0L, delivery)) return false
         taskFocusBus.postLaunch(link)
-        // A theme change or Activity recreation must not replay a consumed destination.
-        setIntent(Intent(launchIntent).apply { action = null; data = null })
+        return true
     }
 
-    private fun maybeHandleSearchIntent(launchIntent: Intent?, freshDelivery: Boolean) {
-        if (!freshDelivery || launchIntent?.action != ACTION_SEARCH) return
+    private fun handleSearch(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
+        if (!launches.accept(KIND_SEARCH, launchIntent, stamp = 0L, delivery)) return false
         searchLaunchBus.post(launchIntent.getStringExtra(EXTRA_SEARCH_QUERY))
+        return true
     }
 
-    private fun maybeHandlePrivacyApprovalIntent(
-        launchIntent: Intent?,
-        firstCreation: Boolean = true,
-    ) {
-        if (launchIntent?.action != ACTION_PRIVACY_APPROVAL) return
-        val approvalId = launchIntent.getStringExtra(EXTRA_APPROVAL_ID)?.takeIf { it.isNotBlank() } ?: return
+    private fun handlePrivacyApproval(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
+        val approvalId = launchIntent.getStringExtra(EXTRA_APPROVAL_ID)?.takeIf { it.isNotBlank() } ?: return false
         val stamp = launchIntent.getLongExtra(EXTRA_APPROVAL_LAUNCH_STAMP, 0L)
-        val shouldHandle = if (stamp != 0L) {
-            stamp != lastHandledApprovalLaunchStamp
-        } else {
-            firstCreation
-        }
-        if (!shouldHandle) return
-        lastHandledApprovalLaunchStamp = stamp
+        if (!launches.accept(KIND_PRIVACY_APPROVAL, launchIntent, stamp, delivery)) return false
         notificationLaunchBus.postPrivacyApproval(approvalId)
+        return true
     }
 
-    private fun maybeHandleAccessAuthorizationIntent(
-        launchIntent: Intent?,
-        firstCreation: Boolean = true,
-    ) {
-        if (launchIntent?.action != ACTION_ACCESS_AUTHORIZATION) return
+    private fun handleAccessAuthorization(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
         val stamp = launchIntent.getLongExtra(EXTRA_ACCESS_AUTHORIZATION_LAUNCH_STAMP, 0L)
-        val shouldHandle = if (stamp != 0L) {
-            stamp != lastHandledAccessAuthorizationLaunchStamp
-        } else {
-            firstCreation
-        }
-        if (!shouldHandle) return
-        lastHandledAccessAuthorizationLaunchStamp = stamp
+        if (!launches.accept(KIND_ACCESS_AUTHORIZATION, launchIntent, stamp, delivery)) return false
         notificationLaunchBus.postAccessAuthorization()
+        return true
     }
 
-    private fun maybeHandleAccessAuthorizationDeepLink(launchIntent: Intent?) {
+    /**
+     * The code-only handoff from the OAuth consent page. A canonical link is consumed even
+     * on an unpaired phone, so a recreation cannot route that code after a later pairing.
+     */
+    private fun handleAccessAuthorizationDeepLink(launchIntent: Intent): Boolean {
         val pairingIdentity = (sessionManager.state.value as? SessionManager.AppState.Paired)
             ?.pairing
             ?.accessAuthorizationIdentity()
-        val handled = routeAccessAuthorizationDeepLink(
+        return routeAccessAuthorizationDeepLink(
             launchIntent,
             freshDelivery = true,
             pairingIdentity = pairingIdentity,
             onLaunch = notificationLaunchBus::postAccessAuthorization,
         )
-        if (!handled || launchIntent == null) return
-
-        // Consume every canonical public URI, including one received while unpaired. A
-        // configuration recreation must not route that stale code after a later pairing,
-        // while a genuinely new ACTION_VIEW still works in a restored killed task.
-        setIntent(consumedAccessAuthorizationIntent(launchIntent))
     }
 
-    private fun maybeHandleAgentConversationIntent(
-        launchIntent: Intent?,
-        firstCreation: Boolean = true,
-    ) {
-        if (launchIntent?.action != ACTION_AGENT_CONVERSATION) return
+    private fun handleAgentConversation(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
         val conversationId =
-            launchIntent.getStringExtra(EXTRA_CONVERSATION_ID)?.takeIf { it.isNotBlank() } ?: return
+            launchIntent.getStringExtra(EXTRA_CONVERSATION_ID)?.takeIf { it.isNotBlank() } ?: return false
         val stamp = launchIntent.getLongExtra(EXTRA_CONVERSATION_LAUNCH_STAMP, 0L)
-        val shouldHandle = if (stamp != 0L) {
-            stamp != lastHandledConversationLaunchStamp
-        } else {
-            firstCreation
-        }
-        if (!shouldHandle) return
-        lastHandledConversationLaunchStamp = stamp
+        if (!launches.accept(KIND_AGENT_CONVERSATION, launchIntent, stamp, delivery)) return false
         notificationLaunchBus.postAgentConversation(conversationId)
+        return true
     }
 
-    private fun maybeHandleWatchFiringIntent(
-        launchIntent: Intent?,
-        firstCreation: Boolean = true,
-    ) {
-        if (launchIntent?.action != ACTION_WATCH_FIRING) return
-        val watchId = launchIntent.getStringExtra(EXTRA_WATCH_ID)?.takeIf { it.isNotBlank() } ?: return
-        val firingKey = launchIntent.getStringExtra(EXTRA_WATCH_FIRING_KEY)
-            ?.takeIf { it.isNotBlank() } ?: return
+    private fun handleWatchFiring(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
+        val watchId = launchIntent.getStringExtra(EXTRA_WATCH_ID)?.takeIf { it.isNotBlank() } ?: return false
+        val firingKey = launchIntent.getStringExtra(EXTRA_WATCH_FIRING_KEY)?.takeIf { it.isNotBlank() } ?: return false
         val stamp = launchIntent.getLongExtra(EXTRA_WATCH_LAUNCH_STAMP, 0L)
-        val shouldHandle = if (stamp != 0L) stamp != lastHandledWatchLaunchStamp else firstCreation
-        if (!shouldHandle) return
-        lastHandledWatchLaunchStamp = stamp
+        if (!launches.accept(KIND_WATCH_FIRING, launchIntent, stamp, delivery)) return false
         notificationLaunchBus.postWatchFiring(watchId, firingKey)
+        return true
+    }
+
+    private fun handleSourcePermission(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
+        val sourceId = launchIntent.getStringExtra(EXTRA_SOURCE_ID)?.takeIf { it.isNotBlank() } ?: return false
+        val stamp = launchIntent.getLongExtra(EXTRA_SOURCE_PERMISSION_LAUNCH_STAMP, 0L)
+        if (!launches.accept(KIND_SOURCE_PERMISSION, launchIntent, stamp, delivery)) return false
+        notificationLaunchBus.postSourcePermission(sourceId)
+        return true
+    }
+
+    private fun handleRemoteSourcePermission(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
+        val sourceId = launchIntent.getStringExtra(EXTRA_SOURCE_ID)?.takeIf { it.isNotBlank() } ?: return false
+        val deviceId = launchIntent.getStringExtra(EXTRA_AFFECTED_DEVICE_ID)?.takeIf { it.isNotBlank() } ?: return false
+        val sourceName = launchIntent.getStringExtra(EXTRA_SOURCE_NAME)?.takeIf { it.isNotBlank() }
+        val deviceName = launchIntent.getStringExtra(EXTRA_AFFECTED_DEVICE_NAME)?.takeIf { it.isNotBlank() }
+        val stamp = launchIntent.getLongExtra(EXTRA_REMOTE_SOURCE_PERMISSION_LAUNCH_STAMP, 0L)
+        if (!launches.accept(KIND_REMOTE_SOURCE_PERMISSION, launchIntent, stamp, delivery)) return false
+        notificationLaunchBus.postRemoteSourcePermission(sourceId, deviceId, sourceName, deviceName)
+        return true
     }
 
     /**
-     * Debug-only: pair non-interactively from `am start` extras so the paired flow
-     * can be exercised on an emulator or in CI without driving the pairing UI. It
-     * runs the REAL [SessionManager.pairManually] exchange against the gateway.
-     *
-     *   adb shell am start -n dev.omnesis.android/.MainActivity \
-     *     --es seed_url https://10.0.2.2:17700 --es seed_code <CODE> \
-     *     --es seed_fingerprint <SHA256_HEX>
+     * A device-joined or pairing-request notification opens Devices. It exists only in a
+     * cloud-relay build; without the flag the action is not handled at all, as on a build
+     * without the feature.
      */
-    private fun maybeSeedPairing(launchIntent: Intent?) {
-        val url = launchIntent?.getStringExtra("seed_url") ?: return
-        val code = launchIntent.getStringExtra("seed_code") ?: return
-        val fingerprint = launchIntent.getStringExtra("seed_fingerprint")
+    private fun handleDevices(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
+        if (!BuildConfig.CLOUD_RELAY_ENABLED) return false
+        val stamp = launchIntent.getLongExtra(EXTRA_DEVICES_LAUNCH_STAMP, 0L)
+        if (!launches.accept(KIND_DEVICES, launchIntent, stamp, delivery)) return false
+        if (launchIntent.getBooleanExtra(EXTRA_DEVICES_PAIRING_REQUESTS, false)) {
+            notificationLaunchBus.postPairingRequests()
+        } else {
+            notificationLaunchBus.postDevices(launchIntent.getStringExtra(EXTRA_DEVICES_DEVICE_ID))
+        }
+        return true
+    }
+
+    /**
+     * Debug-only: runs the pairing the instrumented journeys offered through [DebugPairingSeed],
+     * the REAL [SessionManager.pairManually] exchange, without driving the pairing UI. Never from
+     * intent extras: this activity is exported, so any app on the phone could send them.
+     */
+    private fun maybeSeedPairing() {
+        val seed = DebugPairingSeed.take() ?: return
         lifecycleScope.launch {
-            runCatching { sessionManager.pairManually(url, code, fingerprint) }
+            runCatching { sessionManager.pairManually(seed.url, seed.code, seed.fingerprint) }
         }
     }
 
@@ -359,7 +308,7 @@ class MainActivity : ComponentActivity() {
         /** String extra naming the capture surface slug ("android-tile", "android-shortcut"). */
         const val EXTRA_SURFACE = "surface"
 
-        /** Long extra: per-tap `elapsedRealtime()` stamp the tile sets so re-delivered intents are detectable. */
+        /** Long extra: the `elapsedRealtime()` of the tile tap that made the intent. */
         const val EXTRA_LAUNCH_STAMP = "launch_stamp"
 
         const val ACTION_AGENT_CONVERSATION = "dev.omnesis.android.action.AGENT_CONVERSATION"
@@ -382,18 +331,30 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_SOURCE_NAME = "remote_source_permission_source_name"
         const val EXTRA_AFFECTED_DEVICE_NAME = "remote_source_permission_device_name"
         const val EXTRA_REMOTE_SOURCE_PERMISSION_LAUNCH_STAMP = "remote_source_permission_launch_stamp"
+        const val ACTION_DEVICES = "dev.omnesis.android.action.DEVICES"
+        const val EXTRA_DEVICES_DEVICE_ID = "devices_device_id"
+        const val EXTRA_DEVICES_PAIRING_REQUESTS = "devices_pairing_requests"
+        const val EXTRA_DEVICES_LAUNCH_STAMP = "devices_launch_stamp"
 
-        /** Saved-state key for [lastHandledLaunchStamp]. */
-        private const val STATE_LAUNCH_STAMP = "last_handled_launch_stamp"
-        private const val STATE_APPROVAL_LAUNCH_STAMP = "last_handled_approval_launch_stamp"
-        private const val STATE_ACCESS_AUTHORIZATION_LAUNCH_STAMP =
-            "last_handled_access_authorization_launch_stamp"
-        private const val STATE_CONVERSATION_LAUNCH_STAMP =
-            "last_handled_conversation_launch_stamp"
-        private const val STATE_WATCH_LAUNCH_STAMP = "last_handled_watch_launch_stamp"
-        private const val STATE_SOURCE_PERMISSION_LAUNCH_STAMP =
-            "last_handled_source_permission_launch_stamp"
-        private const val STATE_REMOTE_SOURCE_PERMISSION_LAUNCH_STAMP =
-            "last_handled_remote_source_permission_launch_stamp"
+        /** How long after a tile tap the capture screen may still open for it. */
+        const val CAPTURE_LAUNCH_FRESHNESS_MS = 30_000L
+
+        private const val KIND_CAPTURE = "capture"
+        private const val KIND_TASK_WIDGET = "task_widget"
+        private const val KIND_SEARCH = "search"
+        private const val KIND_PRIVACY_APPROVAL = "privacy_approval"
+        private const val KIND_ACCESS_AUTHORIZATION = "access_authorization"
+        private const val KIND_AGENT_CONVERSATION = "agent_conversation"
+        private const val KIND_WATCH_FIRING = "watch_firing"
+        private const val KIND_SOURCE_PERMISSION = "source_permission"
+        private const val KIND_REMOTE_SOURCE_PERMISSION = "remote_source_permission"
+        private const val KIND_DEVICES = "devices"
+
+        /** [intent] with the request it carried removed: no action, no link, no extras. */
+        internal fun consumedLaunchIntent(intent: Intent): Intent = Intent(intent).apply {
+            action = null
+            data = null
+            replaceExtras(null as Bundle?)
+        }
     }
 }

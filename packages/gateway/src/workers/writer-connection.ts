@@ -12,7 +12,7 @@ type Db = Database.Database;
 
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { useImmediateTransactions } from "../sqlite-transactions.js";
-import { DEFAULT_WAL_CHECKPOINT_POLICY, WAL_SIZE_LIMIT_BYTES } from "./wal-checkpoint.js";
+import { DEFAULT_WAL_CHECKPOINT_POLICY } from "./wal-checkpoint.js";
 
 export function openWriteConn(
   path: string,
@@ -47,10 +47,10 @@ export function openWriteConn(
     // mode it uses truncates or resizes `-shm`. NEVER use a TRUNCATE
     // checkpoint here — that's the SIGBUS-prone op.
     db.exec("PRAGMA wal_autocheckpoint = 0");
-    // A rewound WAL is cut back to this size at its first commit; without a
-    // limit the file keeps its largest size forever. The WAL is read with
-    // pread, never mapped.
-    db.exec(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES}`);
+    // No limit: SQLite would cut the file back in the commit that starts the
+    // WAL over, charging that write for freeing every block past the limit.
+    // The checkpointer cuts it between ops, a slice at a time.
+    db.exec("PRAGMA journal_size_limit = -1");
     // On macOS a plain fsync leaves writes in the drive's cache. A rewind lets
     // new frames overwrite copied ones, so the copy must be on the medium
     // first: F_FULLFSYNC for checkpoint syncs (a no-op elsewhere).

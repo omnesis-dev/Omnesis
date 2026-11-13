@@ -7,6 +7,8 @@
  * same cascades a Brain run applies to a loop it changes.
  */
 
+import { labFeatureEnabled } from "../../lab/store.js";
+
 import { getNoteEntry } from "../../sources/omnesis-notes/storage.js";
 import {
   TaskQueryService,
@@ -66,6 +68,10 @@ export class TaskService {
     private readonly notes?: () => Pick<OmnesisNotesRuntime, "capture">,
   ) {
     this.queries = new TaskQueryService(db);
+  }
+
+  isEnabled(): boolean {
+    return labFeatureEnabled(this.db, "tasks");
   }
 
   now(): number {
@@ -150,6 +156,8 @@ export class TaskService {
   }
 
   async apply(command: TaskCommand): Promise<TaskCommandResult> {
+    if (!this.isEnabled())
+      return { ok: false, reason: "invalid", message: "Tasks are disabled in Omnesis Lab" };
     const now = this.clock();
     const result = await this.writeGate.applyTaskCommand(command, now, {
       recordInterest: this.effects?.interestEnabled?.() ?? true,

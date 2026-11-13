@@ -93,7 +93,7 @@ function happyScript(input: TurnInput): AgentEvent[] {
   ];
 }
 
-describe("steward run drainer", () => {
+describe("Brain run drainer", () => {
   let dbPath: string;
   let db: Db;
   let dir: string;

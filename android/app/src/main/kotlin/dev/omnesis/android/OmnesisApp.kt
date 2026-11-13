@@ -9,6 +9,7 @@ import coil.ImageLoaderFactory
 import coil.decode.SvgDecoder
 import dev.omnesis.android.designsystem.image.DataUriFetcher
 import dev.omnesis.android.transport.MembershipRefusalCoordinator
+import dev.omnesis.android.wear.WearRelayRuntime
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -16,7 +17,8 @@ import javax.inject.Inject
  * Application entry point and Hilt root. Starts the
  * [MembershipRefusalCoordinator] — the app-scoped consumer of the gateway's
  * refusals to have this phone host a source, which has to act on one whether
- * or not a screen is open. Supplies a Coil [ImageLoader] for source /
+ * or not a screen is open — and the [WearRelayRuntime], which serves a paired
+ * watch in any process the system starts. Supplies a Coil [ImageLoader] for source /
  * provider icons. The gateway delivers icons as inline `data:image/...;base64,…`
  * URIs (PNG from source-meta, SVG from descriptors). Coil 2.x can't fetch `data:`
  * URIs out of the box, so a [DataUriFetcher] base64-decodes them in memory; the
@@ -28,11 +30,15 @@ class OmnesisApp : Application(), ImageLoaderFactory {
     @Inject
     lateinit var membershipRefusals: MembershipRefusalCoordinator
 
+    @Inject
+    lateinit var wearRelay: WearRelayRuntime
+
     override fun onCreate() {
         super.onCreate()
         // Nothing else resolves this holder, and a refusal that arrives with
         // no settings screen open still has to put the phone's switch back.
         membershipRefusals.start()
+        wearRelay.start()
     }
 
     override fun newImageLoader(): ImageLoader =

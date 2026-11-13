@@ -3,6 +3,7 @@
 
 import Foundation
 #if canImport(SwiftUI) && canImport(UIKit)
+import AuthenticationServices
 import SwiftUI
 
 /// Environment handler that opens Settings at Configure Models, where a
@@ -283,12 +284,46 @@ struct GatewayErrorView: View {
         }
     }
 
+    private static func classifyPairingCode(_ error: CloudPairingError) -> Kind {
+        switch error {
+        case .httpStatus(401): .unauthorized
+        case .httpStatus(403), .refused: .forbidden
+        case .httpStatus(let status): .server(status: status, body: "")
+        case .codeMismatch: .certificate
+        case .cancelled: .unknown("Sign-in was cancelled. Try again or scan a QR code.")
+        case .expired: .unknown("The pairing request expired. Start again or scan a new QR code.")
+        case .confirmationRequired: .unknown("Compare the codes before pairing.")
+        case .configuration: .unknown("Google pairing is not configured on this device. Scan a QR code instead.")
+        case .response: .unknown("The gateway returned an invalid pairing response.")
+        }
+    }
+
+    /// A cancelled task reads as a cancelled sign-in on the sign-in screens only.
+    static func signInError(_ error: Error?) -> Error? {
+        error is CancellationError ? CloudPairingError.cancelled : error
+    }
+
+    private static func classifyPairing(_ error: Error) -> Kind? {
+        if let pairing = error as? CloudPairingError {
+            return classifyPairingCode(pairing)
+        }
+        if let identity = error as? CloudIdentityError { return identity == .gateway ? .certificate : .unauthorized }
+        let platformError = error as NSError
+        if platformError.domain == ASWebAuthenticationSessionErrorDomain {
+            return .unknown(platformError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue
+                ? "Sign-in was cancelled. Try again or scan a QR code."
+                : "Couldn’t open Google sign-in. Try again or scan a QR code.")
+        }
+        return nil
+    }
+
     /// Map any `Error` into one of the friendly `Kind`s above. `nil`
     /// collapses to `gatewayUnreachable` so callers that just want to
     /// signal "we couldn't reach the gateway" without an exception can
     /// pass `nil`.
     static func classify(_ error: Error?) -> Kind {
         guard let error else { return .gatewayUnreachable }
+        if let pairingError = classifyPairing(error) { return pairingError }
         if let failure = error as? RealtimeCallFailure { return .voice(failure) }
         if let urlError = error as? URLError { return classify(urlError) }
         if let gw = error as? GatewayClient.Error {

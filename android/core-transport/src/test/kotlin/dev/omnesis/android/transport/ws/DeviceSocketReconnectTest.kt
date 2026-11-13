@@ -51,9 +51,20 @@ private class FakeWebSocket(
 
     override fun request() = request
     override fun queueSize() = 0L
+    var refusesSends = false
+
     override fun send(text: String): Boolean {
+        if (refusesSends) return false
         sent += text
         return true
+    }
+
+    /** The gateway answers every command with its id; an unknown one gets an error, which is still an answer. */
+    fun answerProbe() {
+        val probe = Json.parseToJsonElement(sent.last()).jsonObject
+        check(probe["type"]!!.jsonPrimitive.content == "ping")
+        val id = probe["id"]!!.jsonPrimitive.content
+        listener.onMessage(this, """{"kind":"response","correlationId":"$id","ok":false,"error":{"code":"unsupported","message":"no handler for ping"}}""")
     }
 
     override fun send(bytes: ByteString) = false
@@ -116,16 +127,23 @@ private class FakeFactory : WebSocket.Factory {
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class DeviceSocketReconnectTest {
+class DeviceSocketReconnectTest : DeviceSocketReconnectCases(cloudRelay = false)
+
+/** The same reconnect contract with cloud connectivity enabled. */
+class DeviceSocketReconnectCloudTest : DeviceSocketReconnectCases(cloudRelay = true)
+
+abstract class DeviceSocketReconnectCases(private val cloudRelay: Boolean) {
     private val factory = FakeFactory()
     private val paths = MutableSharedFlow<NetworkPathSnapshot>(extraBufferCapacity = 512)
 
-    private fun TestScope.socket() = DeviceSocket(
+    private fun TestScope.socket(onRouteEvent: (DeviceSocket.RouteEvent) -> Unit = {}) = DeviceSocket(
         client = factory,
         gatewayUrl = "https://gateway.example.com:7600/",
         token = "omn_test",
         scope = backgroundScope,
+        cloudRelay = cloudRelay,
         pathObserver = { paths },
+        onRouteEvent = onRouteEvent,
         nowMs = { testScheduler.currentTime },
         randomUnit = { 0.0 },
     )
@@ -386,6 +404,7 @@ class DeviceSocketReconnectTest {
             gatewayUrl = "https://gateway.example.com:7600/",
             token = "omn_test",
             scope = backgroundScope,
+            cloudRelay = cloudRelay,
             pathObserver = { kotlinx.coroutines.flow.flow { throw SecurityException("too many callbacks") } },
             nowMs = { testScheduler.currentTime },
             randomUnit = { 0.0 },
@@ -406,8 +425,10 @@ class DeviceSocketReconnectTest {
         assertEquals(2, factory.opened.size)
     }
 
+    /** Without cloud connectivity nothing about an open socket changed: the client's ping interval watches it. */
     @Test
-    fun wake_signals_leave_an_open_socket_alone() = runTest {
+    fun wake_signals_leave_an_open_socket_alone_without_cloud_connectivity() = runTest {
+        if (cloudRelay) return@runTest
         val socket = started(wifi)
         connectNewest()
 
@@ -419,6 +440,84 @@ class DeviceSocketReconnectTest {
 
         assertEquals(1, factory.opened.size)
         assertFalse(factory.opened.single().cancelled)
+        assertEquals("only the hello was sent", 1, factory.opened.single().sent.size)
+    }
+
+    @Test
+    fun a_network_change_asks_an_open_socket_to_answer_and_an_answer_keeps_it() = runTest {
+        if (!cloudRelay) return@runTest
+        val events = mutableListOf<DeviceSocket.RouteEvent>()
+        val socket = socket(events::add)
+        socket.start(); runCurrent(); send(wifi)
+        connectNewest()
+        val open = factory.opened.single()
+
+        send(noNetwork)
+        assertEquals("losing the network asks nothing: there is nothing to ask over", 1, open.sent.size)
+        assertTrue("a path report alone does not end a session", socket.state.value is ConnectionState.Connected)
+        send(cellular)
+        assertEquals("one question on the open socket", 2, open.sent.size)
+        assertEquals(listOf(DeviceSocket.RouteEvent.NETWORK_CHANGED, DeviceSocket.RouteEvent.NETWORK_CHANGED), events)
+        // A second signal while the first question is open does not ask twice.
+        socket.appDidBecomeActive()
+        assertEquals(2, open.sent.size)
+
+        advance(4_000)
+        open.answerProbe()
+        advance(120_000)
+        assertEquals("answered in time: the connection stays", 1, factory.opened.size)
+        assertFalse(open.cancelled)
+        assertTrue(socket.state.value is ConnectionState.Connected)
+
+        // Each later signal asks again.
+        socket.appDidBecomeActive()
+        assertEquals(3, open.sent.size)
+        open.answerProbe()
+        advance(10_000)
+        assertEquals(1, factory.opened.size)
+    }
+
+    @Test
+    fun an_open_socket_that_does_not_answer_within_five_seconds_is_replaced_at_once() = runTest {
+        if (!cloudRelay) return@runTest
+        val socket = started(wifi)
+        connectNewest()
+        val dead = factory.opened.single()
+
+        send(cellular)
+        advance(4_999)
+        assertEquals("still inside the answer deadline", 1, factory.opened.size)
+        advance(1)
+        assertTrue("the silent connection is dropped", dead.cancelled)
+        assertEquals("and replaced without waiting out a backoff", 2, factory.opened.size)
+        connectNewest()
+        assertTrue(socket.state.value is ConnectionState.Connected)
+        // An answer that arrives on the dropped connection changes nothing.
+        dead.answerProbe()
+        advance(10_000)
+        assertEquals(2, factory.opened.size)
+    }
+
+    @Test
+    fun returning_to_the_app_checks_an_open_socket_too() = runTest {
+        if (!cloudRelay) return@runTest
+        val socket = started(wifi)
+        connectNewest()
+        socket.appDidEnterBackground()
+        socket.appDidBecomeActive()
+        assertEquals(2, factory.opened.single().sent.size)
+        advance(5_000)
+        assertEquals("unanswered on return: reconnect", 2, factory.opened.size)
+    }
+
+    @Test
+    fun a_socket_that_cannot_even_send_the_question_is_replaced_without_waiting() = runTest {
+        if (!cloudRelay) return@runTest
+        started(wifi)
+        connectNewest()
+        factory.opened.single().refusesSends = true
+        send(cellular)
+        assertEquals(2, factory.opened.size)
     }
 
     // --- stale callbacks ---

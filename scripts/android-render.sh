@@ -134,7 +134,7 @@ fi
 # sees exactly what CI's verify step sees; --module narrows it to one.
 # Keep GOLDEN_MODULES in step with the verify step in .github/workflows/android.yml
 # and with `find android -type d -name roborazzi -not -path '*/build/*'`.
-GOLDEN_MODULES=(app feature-health feature-call-log feature-app-usage feature-activity-segments feature-photos)
+GOLDEN_MODULES=(app feature-health feature-call-log feature-app-usage feature-activity-segments feature-photos wear)
 if [[ "$MODE" == "verify" ]]; then
   TASK_SUFFIX="verifyRoborazziDebug"
   APP_TASK_SUFFIX="verifyRoborazziPlayDebug"

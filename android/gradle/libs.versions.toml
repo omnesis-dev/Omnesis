@@ -11,9 +11,14 @@ composeBom = "2024.12.01"
 navigationCompose = "2.8.5"
 coroutines = "1.9.0"
 serializationJson = "1.7.3"
+credentials = "1.6.0"
+# Google ID 1.2 uses Kotlin metadata newer than this project's Kotlin compiler.
+# 1.1.1 supplies the nonce-bound Credential Manager button flow.
+googleId = "1.1.1"
 okhttp = "4.12.0"
 securityCrypto = "1.1.0-alpha06"
 coil = "2.7.0"
+androidsvg = "1.4"
 camerax = "1.4.1"
 mlkitBarcode = "17.3.0"
 # Pure-JVM QR encoder for device-pairing QR *generation* (ML Kit only decodes).
@@ -27,15 +32,26 @@ healthConnectTesting = "1.0.0-alpha03"
 workManager = "2.10.0"
 # ActivityRecognitionClient (feature-activity-segments only, never project-wide).
 playServicesLocation = "21.3.0"
+# Wearable Data Layer, which the phone app and the Wear OS app relay over.
+playServicesWearable = "19.0.0"
 # feature-photos: on-device OCR + scene labels.
 mlkitTextRecognition = "16.0.1"
 mlkitImageLabeling = "17.0.9"
 exifinterface = "1.4.2"
+# Wear OS app (:wear only). Wear Compose 1.4 is the line built on the Compose
+# 1.7 runtime this build's BOM pins; Wear Material 3 needs Compose 1.8.
+wearCompose = "1.4.1"
+wearTiles = "1.4.1"
+wearProtolayout = "1.2.1"
+wearWatchface = "1.2.1"
+wearInput = "1.1.0"
+# Raises the Fragment library that Play services brings into :wear to one whose
+# activities work with the Activity Result APIs the watch app's screen uses.
+wearFragment = "1.8.5"
 # test
 junit = "4.13.2"
 robolectric = "4.14.1"
 roborazzi = "1.40.1"
-composablePreviewScanner = "0.4.0"
 turbine = "1.2.0"
 # instrumented (androidTest)
 androidxTestRunner = "1.6.2"
@@ -47,6 +63,9 @@ androidxTestOrchestrator = "1.5.1"
 androidxTestServices = "1.5.0"
 
 [libraries]
+androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
+androidx-credentials-play-services-auth = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
+google-identity = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleId" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
@@ -79,6 +98,7 @@ okhttp-tls = { module = "com.squareup.okhttp3:okhttp-tls", version.ref = "okhttp
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "securityCrypto" }
 coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 coil-svg = { module = "io.coil-kt:coil-svg", version.ref = "coil" }
+androidsvg = { module = "com.caverock:androidsvg-aar", version.ref = "androidsvg" }
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "camerax" }
 androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
@@ -98,14 +118,24 @@ health-connect-testing = { module = "androidx.health.connect:connect-testing", v
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "workManager" }
 androidx-work-testing = { module = "androidx.work:work-testing", version.ref = "workManager" }
 play-services-location = { module = "com.google.android.gms:play-services-location", version.ref = "playServicesLocation" }
+# Wear OS app (:wear only).
+androidx-wear-compose-material = { module = "androidx.wear.compose:compose-material", version.ref = "wearCompose" }
+androidx-wear-compose-foundation = { module = "androidx.wear.compose:compose-foundation", version.ref = "wearCompose" }
+androidx-wear-tiles = { module = "androidx.wear.tiles:tiles", version.ref = "wearTiles" }
+androidx-wear-tiles-renderer = { module = "androidx.wear.tiles:tiles-renderer", version.ref = "wearTiles" }
+androidx-wear-protolayout = { module = "androidx.wear.protolayout:protolayout", version.ref = "wearProtolayout" }
+androidx-wear-protolayout-material = { module = "androidx.wear.protolayout:protolayout-material", version.ref = "wearProtolayout" }
+androidx-wear-watchface-complications-data-source = { module = "androidx.wear.watchface:watchface-complications-data-source", version.ref = "wearWatchface" }
+androidx-wear-watchface-complications-rendering = { module = "androidx.wear.watchface:watchface-complications-rendering", version.ref = "wearWatchface" }
+androidx-wear-input = { module = "androidx.wear:wear-input", version.ref = "wearInput" }
+androidx-fragment = { module = "androidx.fragment:fragment", version.ref = "wearFragment" }
+play-services-wearable = { module = "com.google.android.gms:play-services-wearable", version.ref = "playServicesWearable" }
 # test
 junit = { module = "junit:junit", version.ref = "junit" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
 roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
 roborazzi-junit-rule = { module = "io.github.takahirom.roborazzi:roborazzi-junit-rule", version.ref = "roborazzi" }
-roborazzi-compose-preview-scanner-support = { module = "io.github.takahirom.roborazzi:roborazzi-compose-preview-scanner-support", version.ref = "roborazzi" }
-composable-preview-scanner = { module = "io.github.sergio-sastre.ComposablePreviewScanner:android", version.ref = "composablePreviewScanner" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 # instrumented (androidTest)
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
@@ -120,6 +150,7 @@ androidx-test-services = { module = "androidx.test.services:test-services", vers
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

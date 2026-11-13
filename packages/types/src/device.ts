@@ -468,7 +468,8 @@ export function hasPerDeviceCursor(mode: MultiDeviceMode): boolean {
  * replaces what it trusts as surely as under `pinned-leaf`. Readers treat any
  * other value as unreported.
  */
-export type DeviceTlsTrustMode = "system" | "pinned-leaf" | "pinned-ca" | "legacy";
+export type DeviceTlsTrustMode =
+  "system" | "pinned-leaf" | "pinned-leaf-strict" | "pinned-key-strict" | "pinned-ca" | "legacy";
 
 /**
  * Declared capabilities of a device. Sent in the `hello` message when
@@ -529,6 +530,8 @@ export interface DeviceCapability {
   platform?: string;
   /** Application identity used to select this phone's push transport. */
   pushAppId?: string;
+  /** Understands generic device-enrollment reminders; absent on older phones. */
+  pairingNotifications?: boolean;
   /** BCP 47 locale captured from the operating system. */
   locale?: string;
   /** ISO 3166-1 alpha-2 default region for national-format phone numbers. */
@@ -616,7 +619,20 @@ export function isNotificationDeliveryHealth(value: string): value is Notificati
 }
 
 /** Record representing a device row. Dates serialized as numbers (unix ms). */
+export const DEVICE_ENROLLMENT_METHODS = ["automatic", "approved"] as const;
+export type DeviceEnrollmentMethod = (typeof DEVICE_ENROLLMENT_METHODS)[number];
+export type DeviceEnrollmentSignIn = "google" | "passkey";
+
+/** How a device joined by signing in. Absent for every other device. */
+export interface DeviceEnrollment {
+  method: DeviceEnrollmentMethod;
+  signIn: DeviceEnrollmentSignIn | null;
+  joinedAt: number;
+}
+
 export interface DeviceRecord {
+  /** Present only for a device that joined by signing in. */
+  enrollment?: DeviceEnrollment;
   id: DeviceId;
   name: string;
   kind: DeviceKind;

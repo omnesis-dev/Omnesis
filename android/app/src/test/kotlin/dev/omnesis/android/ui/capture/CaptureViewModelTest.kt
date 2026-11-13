@@ -13,9 +13,13 @@ import dev.omnesis.android.notes.PendingNote
 import dev.omnesis.android.notes.QueueReason
 import dev.omnesis.android.notes.VoiceNoteFiles
 import dev.omnesis.android.voice.FakeVoiceNoteSession
+import dev.omnesis.android.voice.SpeechReadiness
+import dev.omnesis.android.voice.SpeechWarmUp
 import dev.omnesis.android.voice.VoiceNoteSession
+import dev.omnesis.android.voice.VoiceNoteSessions
 import java.io.File
 import java.time.Instant
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import dev.omnesis.android.transport.client.NotesClient
 import dev.omnesis.android.transport.http.GatewayHttp
@@ -53,7 +57,11 @@ class CaptureViewModelTest {
         var startCount = 0
         var audioStarts = 0
         var available = true
+        var prepareCount = 0
         override fun isAvailable(): Boolean = available
+        override suspend fun prepare() {
+            prepareCount++
+        }
         override fun start(listener: Listener) {
             this.listener = listener
             startCount++
@@ -105,6 +113,8 @@ class CaptureViewModelTest {
         vararg voiceNotes: VoiceNoteSession,
         savedStateHandle: SavedStateHandle = SavedStateHandle(),
         routing: CaptureRouting? = null,
+        speechReadiness: SpeechReadiness = SpeechReadiness {},
+        voiceNoteSessions: VoiceNoteSessions? = null,
     ): CaptureViewModel {
         val context = ApplicationProvider.getApplicationContext<Context>()
         transcriber = FakeTranscriber(context)
@@ -118,12 +128,13 @@ class CaptureViewModelTest {
                 audioFiles = VoiceNoteFiles(File(context.noBackupFilesDir, "voice-notes")),
                 now = { NOW },
             ),
-            voiceNotes = {
+            voiceNotes = voiceNoteSessions ?: VoiceNoteSessions {
                 beginCount++
                 sessions.removeFirstOrNull()
             },
             savedStateHandle = savedStateHandle,
             routing = routing,
+            speechReadiness = speechReadiness,
         )
     }
 
@@ -139,6 +150,87 @@ class CaptureViewModelTest {
     private fun awaitQueued(): PendingNote {
         assertEquals(SaveState.Done(queued = QueueReason.UNPAIRED), awaitSaveSettled(vm))
         return runBlocking { store.readAll().single() }
+    }
+
+    // A capture opened right after a cold start, before the gateway's status is known.
+
+    private val fromTile = SavedStateHandle(mapOf("surface" to CaptureSurface.TILE))
+
+    @Test fun a_cold_start_capture_waits_for_readiness_and_becomes_a_voice_note() {
+        // What the gateway's status decides is unknown until readiness: asked earlier, the
+        // capture would be a phone-transcribed note without its recording.
+        val ready = CompletableDeferred<Unit>()
+        val recording = recordingSession("cold-start.wav")
+        vm = makeVm(
+            { null },
+            savedStateHandle = fromTile,
+            speechReadiness = { ready.await() },
+            voiceNoteSessions = { recording.takeIf { ready.isCompleted } },
+        )
+
+        vm.onMicPermission(true)
+        // The screen says it is getting ready; the microphone is not open.
+        assertEquals(SpeechState.PREPARING, vm.state.value.speech)
+        assertEquals(0, transcriber.startCount + transcriber.audioStarts)
+        assertEquals(0, transcriber.prepareCount)
+
+        ready.complete(Unit)
+
+        assertEquals(1, transcriber.prepareCount)
+        assertEquals(SpeechState.RECORDING, vm.state.value.speech)
+        assertTrue(vm.state.value.voiceNote?.recording == true)
+    }
+
+    @Test fun a_gateway_slow_to_answer_holds_the_microphone_for_a_bounded_time_only() {
+        val dispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(dispatcher)
+        vm = makeVm({ null }, savedStateHandle = fromTile, speechReadiness = { CompletableDeferred<Unit>().await() })
+
+        vm.onMicPermission(true)
+        dispatcher.scheduler.advanceTimeBy(SpeechWarmUp.TIMEOUT_MS - 1)
+        assertEquals(SpeechState.PREPARING, vm.state.value.speech)
+
+        dispatcher.scheduler.advanceTimeBy(2)
+        // It goes ahead as a note dictated on the phone.
+        assertEquals(SpeechState.LISTENING, vm.state.value.speech)
+        assertEquals(1, transcriber.startCount)
+    }
+
+    @Test fun stopping_or_typing_while_getting_ready_never_opens_the_microphone() {
+        for (interrupt in listOf<(CaptureViewModel) -> Unit>({ it.stopListening() }, { it.onTextEdited("Typed instead") })) {
+            val ready = CompletableDeferred<Unit>()
+            vm = makeVm({ null }, savedStateHandle = fromTile, speechReadiness = { ready.await() })
+            vm.onMicPermission(true)
+            assertEquals(SpeechState.PREPARING, vm.state.value.speech)
+
+            interrupt(vm)
+            assertEquals(SpeechState.IDLE, vm.state.value.speech)
+            ready.complete(Unit)
+
+            assertEquals(SpeechState.IDLE, vm.state.value.speech)
+            assertEquals(0, transcriber.startCount)
+        }
+    }
+
+    @Test fun asking_again_while_getting_ready_still_starts_once() {
+        val ready = CompletableDeferred<Unit>()
+        vm = makeVm({ null }, savedStateHandle = fromTile, speechReadiness = { ready.await() })
+        vm.onMicPermission(true)
+        vm.stopListening()
+        vm.startListening()
+        vm.startListening()
+        assertEquals(SpeechState.PREPARING, vm.state.value.speech)
+
+        ready.complete(Unit)
+
+        assertEquals(SpeechState.LISTENING, vm.state.value.speech)
+        assertEquals(1, transcriber.startCount)
+    }
+
+    @Test fun a_warm_app_starts_listening_at_once() {
+        vm = makeVm({ null }, savedStateHandle = fromTile)
+        vm.onMicPermission(true)
+        assertEquals(SpeechState.LISTENING, vm.state.value.speech)
     }
 
     @Test fun externalCaptureListensAndManualAskPreservesPartialWordsWithoutSavingNote() {

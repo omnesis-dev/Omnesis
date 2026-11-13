@@ -41,4 +41,63 @@ class TaskWidgetTransportTest {
             assertEquals("""{"action":"complete"}""", complete.body.readUtf8())
         }
     }
+    @Test fun key_paired_widget_keeps_strict_key_host_and_bearer_on_real_https() = runTest {
+        val certificate = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+        MockWebServer().use { server ->
+            server.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
+            server.enqueue(MockResponse().setBody("{\"tasks\":[]}"))
+            server.start()
+            val paired = Pairing(url = server.url("/").toString(), token = "widget-test-token", pairingGeneration = "widget-generation",
+                deviceId = "widget-device", gatewayName = "Test gateway", tlsMode = PairingTlsMode.PINNED_KEY_STRICT,
+                spkiFingerprint = LeafCertPinner.sha256Hex(certificate.certificate.publicKey.encoded))
+            assertTrue(PairedWidgetTasksGateway(paired).tasks(TaskView.TODAY, "2026-10-14").isEmpty())
+            assertEquals("Bearer widget-test-token", server.takeRequest().getHeader("Authorization"))
+            try {
+                PairedWidgetTasksGateway(paired.copy(spkiFingerprint = "0".repeat(64))).tasks(TaskView.TODAY, "2026-10-14")
+                fail("Replacement key released a widget credential")
+            } catch (_: Exception) { }
+            assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test fun legacy_status_keeps_widget_tasks_and_explicit_lab_off_clears_its_cache() = runTest {
+        val certificate = HeldCertificate.Builder().addSubjectAlternativeName("localhost").build()
+        MockWebServer().use { server ->
+            server.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
+            server.enqueue(MockResponse().setBody("""{"experimental":false,"tasks":{"available":true}}"""))
+            repeat(4) { server.enqueue(MockResponse().setBody("""{"tasks":[{"id":"one","title":"Read a new chapter"}]}""")) }
+            server.enqueue(MockResponse().setBody("""{"experimental":true,"tasks":{"available":true},"lab":{"brain":false,"tasks":false,"watches":false}}"""))
+            server.enqueue(MockResponse().setBody("""{"experimental":true,"tasks":{"available":true},"lab":{"tasks":false}}"""))
+            server.start()
+            val paired = Pairing(url = server.url("/").toString(), token = "widget-test-token", pairingGeneration = "widget-generation",
+                deviceId = "widget-device", gatewayName = "Test gateway", tlsMode = PairingTlsMode.PINNED_LEAF,
+                fingerprint = LeafCertPinner.sha256Hex(certificate.certificate.encoded))
+            var saved: TaskWidgetSnapshot? = null
+            val cache = object : WidgetSnapshotStore {
+                override fun read(authority: String) = saved
+                override fun save(authority: String, snapshot: TaskWidgetSnapshot) { saved = snapshot }
+                override fun clear() { saved = null }
+            }
+            val repository = TaskWidgetRepository({ paired }, cache)
+            val legacy = repository.refresh()
+            assertEquals(TaskWidgetStatus.READY, legacy.status)
+            assertEquals(listOf("one"), legacy.snapshot!!.tasks.map { it.id })
+            repeat(5) { server.takeRequest() }
+
+            val disabled = repository.refresh()
+            assertEquals(TaskWidgetStatus.DISABLED, disabled.status)
+            assertNull(disabled.snapshot)
+            assertNull(saved)
+            assertEquals("/status", server.takeRequest().path)
+            try {
+                repository.complete("one", TaskWidgetRepository.authority(paired))
+                fail("Disabled Tasks accepted a widget completion")
+            } catch (_: WidgetTasksDisabled) { }
+            val denied = server.takeRequest()
+            assertEquals("/status", denied.path)
+            assertEquals("Bearer widget-test-token", denied.getHeader("Authorization"))
+            assertEquals(7, server.requestCount)
+        }
+    }
+
 }

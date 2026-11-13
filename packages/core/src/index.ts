@@ -713,6 +713,9 @@ export {
   pairingHost,
   pairingPlatformForKind,
   pairingReachRank,
+  relayPairingAddressOption,
+  RELAY_PAIRING_ADDRESS_LABEL,
+  RELAY_PAIRING_ADDRESS_SUMMARY,
   type AwayFromHomeHint,
   type PairingAddressContext,
   type PairingAddressOption,
@@ -880,8 +883,11 @@ export type {
   TranscriptionVocabularyEntry,
 } from "./transcription.js";
 export {
+  AUDIO_TOO_LARGE,
   AUDIO_UNREADABLE,
+  AudioRejectedError,
   AudioUnreadableError,
+  MAX_TRANSCRIBE_AUDIO_BYTES,
   MAX_TRANSCRIPTION_MS,
   TRANSCRIBE_AUDIO_UNREADABLE_CODE,
   TRANSCRIBE_REPORT_UNREADABLE_HEADER,
@@ -889,7 +895,11 @@ export {
   transcriptionPlaceholderNote,
   transcriptionSyncIssues,
 } from "./transcription.js";
-export type { TranscriptionBacklog, TranscriptionPlaceholderState } from "./transcription.js";
+export type {
+  AudioRejectionReason,
+  TranscriptionBacklog,
+  TranscriptionPlaceholderState,
+} from "./transcription.js";
 
 export type { OcrFn, OcrResult } from "./ocr.js";
 
@@ -1396,3 +1406,8 @@ export { oauthCallbackHost } from "./oauth-callback-host.js";
 
 export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./models/speech-to-speech.js";
 export { CLI_COMMAND_ENV, operatorCommand } from "./operator-command.js";
+
+export { connectionPathSchema, parseConnectionPath } from "./connection-path.js";
+export type { ConnectionPath } from "./connection-path.js";
+
+export { cloudRelayEnabled } from "./cloud-relay-enabled.js";

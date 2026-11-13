@@ -61,9 +61,9 @@ it("hydrates exact annotation kinds without guessing ownership from an identifie
     metadata,
   );
   expect(knowledgeIconHtml({ reference, ...metadata })).toContain("kn-link-icon-badge--user");
-  expect(knowledgeLinkReference("/portal/debug/cognition/loops/loop_invented")).toBe(
+  expect(knowledgeLinkReference("/portal/debug/brain/loops/loop_invented")).toBe(
     "loop:loop_invented",
   );
   expect(knowledgeLinkReference("anno_invented")).toBe("annotation:anno_invented");
-  expect(knowledgeLinkReference("https://example.org/portal/debug/cognition/loops/private")).toBeNull();
+  expect(knowledgeLinkReference("https://example.org/portal/debug/brain/loops/private")).toBeNull();
 });

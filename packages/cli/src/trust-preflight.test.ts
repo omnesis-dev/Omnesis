@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, it } from "vitest";
-import { isDefaultGatewayTrustExempt } from "./trust-preflight.js";
+import { describe, expect, it, vi } from "vitest";
+import { isDefaultGatewayTrustExempt, bootstrapCliGatewayTransport } from "./trust-preflight.js";
 
 describe("default gateway trust preflight", () => {
   it("lets connect establish trust against its selected target instead", () => {
@@ -68,4 +68,66 @@ describe("default gateway trust preflight", () => {
       ]),
     ).toBe(true);
   });
+});
+
+it("broken saved cloud transport cannot block offline maintenance or explicit new gateway pairing", async () => {
+  const broken = vi.fn().mockRejectedValue(new Error("saved device pin is invalid"));
+  for (const args of [
+    [],
+    ["service", "status"],
+    ["gateway"],
+    ["uninstall"],
+    ["update"],
+    ["restore"],
+    ["keyring"],
+    ["secure"],
+    ["agent"],
+    ["connect", "--gateway-url", "https://new.example"],
+    ["pair", "SYNTHETIC"],
+    ["devices", "redeem", "SYNTHETIC"],
+    ["devices", "discover"],
+    ["tls"],
+    ["tls", "trust"],
+    ["tls", "provision"],
+    ["tls", "refresh"],
+    ["cloud", "pair"],
+    ["cloud", "login"],
+    ["cloud", "register-key"],
+    ["--version"],
+    ["-V"],
+    ["--help"],
+    ["status", "--help"],
+    ["help"],
+  ])
+    await bootstrapCliGatewayTransport(args, broken);
+  expect(broken).not.toHaveBeenCalled();
+  for (const args of [
+    ["search", "help"],
+    ["search", "--", "--help"],
+    ["status"],
+    ["doctor"],
+    ["cloud", "requests"],
+    ["devices", "list"],
+    ["collector"],
+  ])
+    await expect(bootstrapCliGatewayTransport(args, broken)).rejects.toThrow("saved device pin");
+  expect(broken).toHaveBeenCalledTimes(7);
+});
+
+it("offline recovery operations do not bootstrap a broken or unavailable gateway transport", async () => {
+  const start = vi.fn(async () => {
+    throw new Error("gateway unavailable");
+  });
+  for (const operation of [
+    "recovery-create-authority",
+    "recovery-sign-receipt",
+    "recovery-sign-policy",
+    "recovery-policy-digest",
+    "recovery-rotate-session-key",
+    "recovery-request",
+  ]) {
+    expect(isDefaultGatewayTrustExempt(["cloud", operation])).toBe(true);
+    await bootstrapCliGatewayTransport(["cloud", operation], start);
+  }
+  expect(start).not.toHaveBeenCalled();
 });

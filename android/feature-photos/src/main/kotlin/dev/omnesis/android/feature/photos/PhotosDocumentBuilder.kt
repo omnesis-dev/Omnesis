@@ -44,7 +44,7 @@ object PhotosDocumentBuilder {
         val extractedContentHash = extractedText.ifEmpty { null }?.let { sha256Hex(it) }
         // A casual photo with no extracted text, no labels, and
         // no place name — little for the agent to reason about on its own,
-        // so it shouldn't wake the Cognition Steward (the generic `lowSignal`
+        // so it shouldn't wake the Brain (the generic `lowSignal`
         // waker marker). A place name alone (folded into title/content
         // above) IS substantive signal — a geotagged photo with no other
         // analysis is still worth waking on.

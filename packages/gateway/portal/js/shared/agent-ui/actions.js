@@ -21,7 +21,7 @@ export function actionToolLabel(tool) {
 /**
  * Generic ephemeral card for background and memory actions: names the action
  * while it runs, rolls a single outcome line (the humanized structured
- * resultType — steward results are `{kind:"structured", resultType,
+ * resultType — brain results are `{kind:"structured", resultType,
  * data}` on the wire — or the error message), then dismisses — same
  * lifecycle contract as the bespoke ephemeral cards, including the
  * causality-gate flush. Mirrors iOS's AgentEphemeralActionCard.

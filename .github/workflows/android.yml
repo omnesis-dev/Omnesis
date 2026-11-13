@@ -92,6 +92,9 @@ jobs:
 
       # Unit tests (JVM / Robolectric): the ported transport / pairing / reducer
       # / DTO-decode suites. Fast deterministic logic signal.
+      # `testDebugUnitTest` reaches every Android module, the Wear OS app among
+      # them, which is also named so a rename cannot drop it silently; a plain
+      # Kotlin/JVM module has only a `test` task, so each one is named.
       # This lane compiles both app flavours in parallel in one Kotlin daemon, which runs out of
       # heap now and then at the 2g it inherits from gradle.properties.
       - name: lane [android-jvm]
@@ -100,6 +103,9 @@ jobs:
             :app:testPlayDebugUnitTest \
             :app:testFullDebugUnitTest \
             testDebugUnitTest \
+            :wear:testDebugUnitTest \
+            :core-wear-protocol:test \
+            :wear-core:test \
             -Pkotlin.daemon.jvmargs=-Xmx3g \
             --no-daemon --max-workers=2
 
@@ -115,15 +121,19 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # The public-certificate check is switched off here on purpose: a release build must ignore
+      # that switch, and the policy check fails if the generated release BuildConfig honoured it.
       - name: lane [android-policy]
-        run: ./gradlew :app:verifyPlayReleasePolicy --no-daemon --max-workers=2
+        run: ./gradlew :app:verifyPlayReleasePolicy -POMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0 --no-daemon --max-workers=2
 
       - name: lane [android-build]
         # Each flavor gets a fresh bounded Gradle process so release dexing
-        # cannot overlap or retain the preceding flavor's build heap.
+        # cannot overlap or retain the preceding flavor's build heap. The Wear
+        # OS app follows: its installable debug APK and its release bundle.
         run: |
           ./gradlew :app:bundlePlayRelease --no-daemon --max-workers=2
           ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
+          ./gradlew :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
 
   render:
     # An arm64 macOS runner: the Roborazzi goldens under src/test/roborazzi/
@@ -213,6 +223,7 @@ jobs:
             :feature-app-usage:verifyRoborazziDebug \
             :feature-activity-segments:verifyRoborazziDebug \
             :feature-photos:verifyRoborazziDebug \
+            :wear:verifyRoborazziDebug \
             --no-daemon --max-workers=2
 
       # On a verify failure, surface the diff/actual images so a reviewer/agent

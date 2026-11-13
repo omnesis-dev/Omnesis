@@ -9,8 +9,9 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { vi, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, ProviderId, SourceId, type Scope } from "@omnesis/types";
+import { setLabFlag } from "../../lab/store.js";
 import { createDatabase, upsertDocuments } from "../../db.js";
 import { createServer } from "../../server.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
@@ -67,6 +68,8 @@ beforeEach(() => {
   clock.set(NOW);
   dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(dbPath);
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+  setLabFlag(db, "tasks", true);
   admin = mintToken([SCOPE_ADMIN]);
   reader = mintToken([SCOPE_READ]);
   // No Brain status: tasks must not depend on it.
@@ -79,6 +82,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   statusCache.stop();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"])
@@ -583,5 +587,31 @@ describe("/tasks", () => {
     res = await call("GET", "/status", undefined, reader);
     expect(res.json.tasks).toEqual({ available: true, noteAgent: true });
     expect(res.json.noteAgent).toEqual(noteAgent);
+  });
+});
+
+describe("Tasks Lab boundary", () => {
+  test("Brain can be off while task commands remain available", async () => {
+    setLabFlag(db, "brain", false);
+    await addTask("Pack a telescope cover");
+    const status = await call("GET", "/status", undefined, reader);
+    expect(status.status).toBe(200);
+    expect(status.json.lab).toEqual({ brain: false, tasks: true, watches: false });
+    expect(status.json.labAvailable).toBe(true);
+    expect(status.json.tasks.available).toBe(true);
+  });
+
+  test("turning Tasks off hides direct routes and status without deleting tasks", async () => {
+    const saved = await addTask("Sort fictional star charts");
+    setLabFlag(db, "tasks", false);
+    setLabFlag(db, "brain", true);
+    expect((await call("GET", "/tasks?view=today&date=2026-03-10")).status).toBe(404);
+    expect((await call("POST", "/tasks", { title: "Must remain absent" })).status).toBe(404);
+    const status = await call("GET", "/status", undefined, reader);
+    expect(status.status).toBe(200);
+    expect(status.json.tasks.available).toBe(false);
+    expect(status.json.lab).toEqual({ brain: true, tasks: false, watches: false });
+    setLabFlag(db, "tasks", true);
+    expect((await call("GET", `/tasks/${saved.task.id}`)).status).toBe(200);
   });
 });

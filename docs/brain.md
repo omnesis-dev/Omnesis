@@ -44,8 +44,8 @@ than additional copies of supporting source text. The check runs after drafting,
 so its token benefit is downstream; the preflight discovery gate avoids whole runs.
 
 The autonomous Brain is experimental and unstable. Enable
-`OMNESIS_EXPERIMENTAL=1` and assign a reachable `background-agent` model to
-start it. Either alone leaves autonomous work inactive. Settings labels this experimental role
+`OMNESIS_EXPERIMENTAL=1`, turn on Brain in **Settings → Omnesis Lab**, and assign a reachable `background-agent` model to
+start it. All three are required for autonomous work. Tasks is an independent Lab opt-in: task suggestions and updates require both; the Brain runs without task tools or instructions when Tasks is off. Settings labels this experimental role
 **Brain agent**; its internal key remains `background-agent`. Chat and Tell Omnesis
 notes instead share the ordinary `agent` assignment. Each note gets a separate
 bounded session and needs no open chat. Assignments are never copied or used as
@@ -378,7 +378,7 @@ any source of it is installed. Every consumer reads the list live
   turn. A queued datum, bootstrap or daily run for an excluded subject completes
   in preflight without a model call.
 - **Reading.** A background run's read ports are wrapped
-  (`brain/steward/source-fence.ts`): search drops excluded hits, their
+  (`brain/runtime/source-fence.ts`): search drops excluded hits, their
   breadcrumbs and any graph-context provenance that touches one, a fetch or URL lookup of an excluded document reads as
   not found, connection traces, time-index results and entity context omit
   excluded documents and sources, and `run_sql` is scoped to the tables of the
@@ -418,7 +418,10 @@ any source of it is installed. Every consumer reads the list live
 The interactive agent and its own memory tools are unaffected. Existing
 knowledge derived from an excluded source is kept and stays visible to Brain
 runs as knowledge (annotation evidence quotes, loop document ids, page claims);
-its doc and person annotations are skipped by the re-verification sweep. Source edits and deletions still invalidate
+its doc and person annotations are skipped by the re-verification sweep. Their stored
+verification state is therefore never refreshed, so the annotation routes mark them
+`notRechecked: "source_excluded"` by the sweep's own rule, read from the live list,
+and the portal shows that label instead of the stored state. Source edits and deletions still invalidate
 dependent knowledge as usual. Journal entries acknowledged while a source was
 excluded are not replayed; historical review within `brain.bootstrap.horizon`
 admits those documents once the exclusion is removed. Bootstrap status reports
@@ -1162,7 +1165,7 @@ examples are kept as history but no longer count.
 The ledger exists only in experimental mode, where the gates that read it
 run; a stable gateway records nothing.
 
-Debug → Cognition → Interest shows the ledger: every example with its
+Debug → Brain → Interest shows the ledger: every example with its
 polarity, source, text and note, whether its vector is ready, and whether it
 was superseded; the suggestions the gate withheld, each with an **Offer
 again** that undoes the withholding; the `task-propose` verdicts; and a
@@ -1474,9 +1477,14 @@ a positive proof requires complete textual and semantic coverage plus authorized
 This preserves one synthesized note rather than creating a record per clause. Textual coverage
 is mechanically checked; semantic decomposition and entailment remain fallible model judgments.
 The annotation protocol makes one inference call, with bounded output and no malformed-response
-repair call. Verifier acquisition now has its own 45-second bound in Knowledge writes,
-followed by the existing separate 45-second bound for each claim check. Canonical
-annotation gates share their existing deadline across acquisition and checking;
+repair call. One verification may run for `VERIFIER_CALL_LIMIT_MS` (90 s) once admitted,
+and every transport timer is set to that limit, so the Codex agent-turn default cannot end
+a call its caller still allows (`inference/verifier-limits.ts`). Foreground callers
+(annotation gates, Knowledge claim checks, the morning recheck) allow
+`VERIFIER_FOREGROUND_DEADLINE_MS`, a 30 s wait for a verifier slot plus one call, shared
+across acquisition and checking; background re-checks wait up to five minutes for a
+slot and then get one call. In Knowledge writes, verifier acquisition and each claim
+check have separate bounds of that length;
 Answer uses its caller cancellation signal without adding a deadline. Cancellation
 removes expired work before inference admission and reaches remote transports.
 The service retains each active operation through capability-operation settlement, including
@@ -1489,7 +1497,7 @@ operation cancellation boundaries. Contended, canceled and failed operations log
 at INFO; routine uncontended successes use DEBUG. These timings do not isolate
 model generation from transport or pool waiting inside a capability.
 
-The existing 45-second limit remains: an unavailable configured verifier still
+Whatever the limit, an unavailable configured verifier still
 saves an explicitly unverified annotation, never a verified stamp. More detailed assessments
 can cost more output tokens and can time out. Wiki proof policies are unchanged.
 Old annotation proof-policy markers lose support authority and enter existing bounded policy
@@ -1555,7 +1563,7 @@ unavailable verdict is auditable under existing fail-open semantics; unchanged
 ordinary proof refreshes still avoid a new value assessment.
 
 During a wiki review, a refused synthesis-value proposal need not cause repeated cosmetic rewrites.
-After reviewing every offered claim against current evidence, the steward may retain the exact
+After reviewing every offered claim against current evidence, the Brain may retain the exact
 existing title and visible Markdown with `knowledge_save.curationDeferral` (reason code
 `insufficient_useful_context`). This defers editorial improvement to the existing routine review
 schedule without recording completed curation. It does not admit a new page, change prose, bypass

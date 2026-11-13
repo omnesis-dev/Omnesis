@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
-  AudioUnreadableError,
+  AudioRejectedError,
   charsetOfContentType,
   createLogger,
   type OcrFn,
@@ -184,9 +184,10 @@ export function createAttachmentExtractor(deps: AttachmentExtractorDeps = {}) {
           try {
             result = await transcribe(data, base);
           } catch (err) {
-            // Audio that decodes to nothing has no text to extract; a retry
-            // would decode the same bytes the same way.
-            if (err instanceof AudioUnreadableError) return null;
+            // Audio the gateway will not transcribe (empty, too large, or
+            // decoding to nothing) has no text to extract; a retry would get
+            // the same answer for the same bytes.
+            if (err instanceof AudioRejectedError) return null;
             throw err;
           }
           if (!result) return null;

@@ -19,7 +19,7 @@ import {
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
 import { assertKnowledgeRunFence, type KnowledgeRunFence } from "./run-fence.js";
 import { KnowledgeStorageError, type SaveKnowledgeNodeInput } from "./types.js";
-import type { PersonProfileReads } from "../steward/person-profile-reads.js";
+import type { PersonProfileReads } from "../runtime/person-profile-reads.js";
 import type { CheckRecord } from "../record-check/check.js";
 import type Database from "better-sqlite3";
 

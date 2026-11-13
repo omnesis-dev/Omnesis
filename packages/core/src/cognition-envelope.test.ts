@@ -81,7 +81,7 @@ describe("cognition run envelope", () => {
 
   test("text that is not a run prompt parses as nothing, rather than a default kind", () => {
     expect(parseCognitionRunEnvelope("")).toBeNull();
-    expect(parseCognitionRunEnvelope("Background Cognition Steward run.\nRun id: x")).toBeNull();
+    expect(parseCognitionRunEnvelope("Background Brain run.\nRun id: x")).toBeNull();
     expect(parseCognitionRunEnvelope("Loop agent run r1 (kind: data)")).toBeNull();
   });
 });

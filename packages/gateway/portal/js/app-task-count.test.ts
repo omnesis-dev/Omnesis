@@ -27,7 +27,7 @@ vi.mock("./api.js", () => ({
     json: async () => ({ conversations: [], nextCursor: null }),
   })),
   checkSession: vi.fn(async () => ({ authenticated: true })),
-  getStatus: vi.fn(async () => ({ experimental: false, developer: false, tasks: { available: true } })),
+  getStatus: vi.fn(async () => ({ experimental: false, developer: false, lab: { tasks: true }, tasks: { available: true } })),
   getTaskCounts,
   getHostFleetUpdate: vi.fn(async () => ({ plan: null, operation: null })),
   isAuthenticated: vi.fn(() => true),

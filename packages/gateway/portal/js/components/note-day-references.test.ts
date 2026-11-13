@@ -106,7 +106,7 @@ describe("daily note references", () => {
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/portal/debug/calendar/dm_example%2F1",
       "/portal/debug/calendar/ta_example",
-      "/portal/debug/cognition/knowledge/loop_example?kind=loop",
+      "/portal/debug/brain/knowledge/loop_example?kind=loop",
     ]);
     await act(async () => {
       links[0].click();

@@ -4,12 +4,17 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
 type Db = Database.Database;
-import { AudioUnreadableError, resolveAttachmentConfig } from "@omnesis/core";
+import {
+  AudioRejectedError,
+  AudioUnreadableError,
+  MAX_TRANSCRIBE_AUDIO_BYTES,
+  resolveAttachmentConfig,
+} from "@omnesis/core";
 import { SourceId, ProviderId, SyncError } from "@omnesis/types";
 import { AppleProvider } from "./provider.js";
 import { AppleIMessageSource } from "./imessage.js";
 import type { AttachmentExtractFn, AudioTranscribeFn } from "@omnesis/core";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, truncateSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 
@@ -883,6 +888,157 @@ describe("AppleIMessageSource", () => {
       } finally {
         src.dispose();
         vi.useRealTimers();
+      }
+    });
+
+    test("an empty clip is not sent, says it is not downloaded, and is sent once its bytes arrive", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath);
+      writeFileSync(audioPath, Buffer.alloc(0));
+      const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => ({
+        text: "arrived at last",
+        durationSec: 5,
+      }));
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const first = await src.sync(null);
+        expect(transcribeAudio).not.toHaveBeenCalled();
+        expect(first.documents[0].content).toContain(
+          "[Audio: Audio Message.caf — audio not downloaded on this device]",
+        );
+        // Not "waiting for a transcriber", and not a backlog at all.
+        expect(first.issues).toEqual([]);
+
+        // Once due, the day is looked at again; still empty, still not sent.
+        vi.setSystemTime(new Date("2026-02-01T12:00:30Z"));
+        const due = await src.sync(first.cursor);
+        expect(due.documents).toHaveLength(1);
+        expect(transcribeAudio).not.toHaveBeenCalled();
+        expect(due.documents[0].content).toContain("audio not downloaded on this device");
+
+        // The bytes arrive; the next render of the day sends the clip
+        // without waiting out the backoff.
+        writeFileSync(audioPath, Buffer.from("fake-audio-bytes"));
+        insertMessage(testDb, 2, 1, {
+          text: "later that day",
+          handleId: 1,
+          date: DATE_2024_03_08_11AM,
+        });
+        const arrived = await src.sync(due.cursor);
+        expect(transcribeAudio).toHaveBeenCalledTimes(1);
+        expect(arrived.documents[0].content).toContain("[Audio, 0:05]: arrived at last");
+        expect(arrived.issues).toEqual([]);
+      } finally {
+        src.dispose();
+        vi.useRealTimers();
+      }
+    });
+
+    test("a clip over the gateway's size cap is not sent and is reported as too large", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath);
+      truncateSync(audioPath, MAX_TRANSCRIBE_AUDIO_BYTES + 1);
+      const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => ({ text: "never" }));
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const first = await src.sync(null);
+        expect(transcribeAudio).not.toHaveBeenCalled();
+        expect(first.documents[0].content).toContain(
+          "[Audio: Audio Message.caf — audio too large to transcribe]",
+        );
+        expect(first.issues).toEqual([
+          expect.objectContaining({
+            code: "transcription-audio-too-large",
+            count: 1,
+            severity: "warning",
+          }),
+        ]);
+
+        // Days later, with its day re-rendered, it is still not sent.
+        vi.setSystemTime(new Date("2026-02-03T12:00:00Z"));
+        insertMessage(testDb, 2, 1, {
+          text: "later that day",
+          handleId: 1,
+          date: DATE_2024_03_08_11AM,
+        });
+        const later = await src.sync(first.cursor);
+        expect(transcribeAudio).not.toHaveBeenCalled();
+        expect(later.documents[0].content).toContain("audio too large to transcribe");
+        expect(later.issues).toEqual([
+          expect.objectContaining({ code: "transcription-audio-too-large" }),
+        ]);
+      } finally {
+        src.dispose();
+        vi.useRealTimers();
+      }
+    });
+
+    test("a clip the gateway refuses as too large is recorded so, not as waiting for a transcriber", async () => {
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath);
+      const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => {
+        throw new AudioRejectedError("too-large", "too large");
+      });
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const first = await src.sync(null);
+        expect(first.documents[0].content).toContain("audio too large to transcribe");
+        expect(first.issues).toEqual([
+          expect.objectContaining({ code: "transcription-audio-too-large" }),
+        ]);
+        insertMessage(testDb, 2, 1, {
+          text: "later that day",
+          handleId: 1,
+          date: DATE_2024_03_08_11AM,
+        });
+        await src.sync(first.cursor);
+        expect(transcribeAudio).toHaveBeenCalledTimes(1);
+      } finally {
+        src.dispose();
+      }
+    });
+
+    test("a request the gateway refused as malformed awaits a retry, not a transcriber", async () => {
+      const audioPath = join(tmpDir, "clip.caf");
+      insertAudioMessage(audioPath);
+      const transcribeAudio = vi.fn<AudioTranscribeFn>(async () => {
+        throw new AudioRejectedError("refused", "the gateway refused the audio (400)");
+      });
+      const src = new AppleIMessageSource(provider, {
+        sourceId: "apple-imessage:test@icloud.com",
+        providerId: "apple:test@icloud.com",
+        transcribeAudio,
+        configDir: tmpDir,
+      });
+      try {
+        const result = await src.sync(null);
+        expect(result.documents[0].content).toContain(
+          "[Audio: Audio Message.caf — awaiting transcription]",
+        );
+        expect(result.issues).toEqual([
+          expect.objectContaining({ code: "transcription-awaiting", severity: "info" }),
+        ]);
+      } finally {
+        src.dispose();
       }
     });
 

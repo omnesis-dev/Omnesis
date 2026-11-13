@@ -21,6 +21,7 @@ export function mountOAuthAccessProtocolRoutes(
     /** Actual same-machine gateway origin advertised for local-only setup. */
     loopbackBaseUrl?: string;
     mcpResourceUrls?: readonly string[];
+    additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
     clientAssertionVerifier?: Pick<ClientAssertionVerifier, "verify">;

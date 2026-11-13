@@ -12,10 +12,13 @@ import dev.omnesis.android.notes.CaptureOutcome
 import dev.omnesis.android.notes.NotesRepository
 import dev.omnesis.android.notes.VoiceNoteAudio
 import dev.omnesis.android.ui.common.classifyGatewayError
+import dev.omnesis.android.voice.SpeechReadiness
+import dev.omnesis.android.voice.SpeechWarmUp
 import dev.omnesis.android.voice.VoiceNoteSession
 import dev.omnesis.android.voice.VoiceNoteSessions
 import dev.omnesis.android.voice.audioLevel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,6 +49,7 @@ class CaptureViewModel @Inject constructor(
     private val voiceNotes: VoiceNoteSessions,
     private val savedStateHandle: SavedStateHandle,
     private val routing: CaptureRouting? = null,
+    private val speechReadiness: SpeechReadiness = SpeechReadiness {},
 ) : ViewModel() {
 
     private val surface: String = savedStateHandle.get<String>("surface") ?: CaptureSurface.APP
@@ -64,6 +68,17 @@ class CaptureViewModel @Inject constructor(
     fun closeHistory() {
         savedStateHandle["historyOpen"] = false
     }
+
+    /**
+     * Started with the model, so the wait overlaps the screen's own start-up. A capture
+     * opened from the tile or a shortcut right after a cold start holds its first
+     * dictation for it, and so becomes a gateway voice note with vocabulary hints rather
+     * than race the first status read.
+     */
+    private val speechWarmUp = SpeechWarmUp(viewModelScope, speechReadiness, transcriber::prepare)
+
+    /** A [startListening] held back until [speechWarmUp] ends. */
+    private var deferredListening: Job? = null
 
     init {
         if (CaptureSurface.unified(surface)) {
@@ -173,6 +188,10 @@ class CaptureViewModel @Inject constructor(
         transcriber.setPurpose("dictation")
         if (_state.value.save !is SaveState.Idle) return
         if (pendingAudio != null) return
+        if (speechWarmUp.isActive) {
+            holdListening()
+            return
+        }
         val existing = voiceNote
         if (existing != null) {
             recordMore(existing)
@@ -195,6 +214,23 @@ class CaptureViewModel @Inject constructor(
         // first partial would otherwise replace the words on screen.
         _state.update { it.copy(text = it.textWithPartial(), partialText = "", speech = SpeechState.LISTENING) }
         transcriber.start(visibleListener)
+    }
+
+    /**
+     * Shows that dictation is about to start and starts it once the warm-up is over,
+     * unless the person stopped it, typed, or left the screen meanwhile: anything that
+     * takes the screen out of [SpeechState.PREPARING] calls the start off.
+     */
+    private fun holdListening() {
+        _state.update { it.copy(speech = SpeechState.PREPARING) }
+        if (deferredListening?.isActive == true) return
+        deferredListening = viewModelScope.launch {
+            speechWarmUp.join()
+            deferredListening = null
+            if (_state.value.speech != SpeechState.PREPARING) return@launch
+            _state.update { it.copy(speech = SpeechState.IDLE) }
+            startListening()
+        }
     }
 
     fun stopListening() {
@@ -593,4 +629,4 @@ internal fun joinUtterances(base: String, addition: String): String = when {
 
 /** LISTENING falls back to IDLE; the terminal states stick. */
 private fun SpeechState.demotedToIdle(): SpeechState =
-    if (this == SpeechState.LISTENING) SpeechState.IDLE else this
+    if (this == SpeechState.LISTENING || this == SpeechState.PREPARING) SpeechState.IDLE else this

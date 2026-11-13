@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import {
   WalCheckpointer,
   WAL_SIZE_LIMIT_BYTES,
@@ -22,24 +23,35 @@ const POLICY: WalCheckpointPolicy = {
   restartRetryMinMs: 5_000,
   restartRetryMaxMs: 20_000,
   busyTimeoutMs: 5_000,
+  sizeLimitBytes: WAL_SIZE_LIMIT_BYTES,
+  cutSliceBytes: 16 * 1024 * 1024,
 };
+
+const MIB = 1024 * 1024;
 
 const opened: Database.Database[] = [];
 const workers: Worker[] = [];
 let path = "";
+let key: Buffer | undefined;
 
-function writer(journalMode: "WAL" | "TRUNCATE" = "WAL"): Database.Database {
+function writer(
+  journalMode: "WAL" | "TRUNCATE" = "WAL",
+  encryptionKey?: Buffer,
+): Database.Database {
   path = `/tmp/omnesis-test-${randomUUID()}.db`;
-  const seed = new Database(path);
+  key = encryptionKey;
+  const seed = key ? (openEncryptedSqlite(path, { key }) as Database.Database) : new Database(path);
   seed.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body BLOB NOT NULL)");
   seed.close();
-  const db = openWriteConn(path, journalMode);
+  const db = openWriteConn(path, journalMode, key?.toString("hex"));
   opened.push(db);
   return db;
 }
 
 function reader(): Database.Database {
-  const db = new Database(path, { readonly: true });
+  const db = key
+    ? (openEncryptedSqlite(path, { key, readonly: true }) as Database.Database)
+    : new Database(path, { readonly: true });
   opened.push(db);
   return db;
 }
@@ -54,12 +66,80 @@ function write(db: Database.Database, rows: number): void {
   }
 }
 
+/** Commit about `bytes` of new pages, in transactions of about 1 MiB. */
+function writeBytes(db: Database.Database, bytes: number): void {
+  const insert = db.prepare("INSERT INTO notes (body) VALUES (randomblob(64000))");
+  for (let done = 0; done < bytes; done += 16 * 64_000) {
+    db.transaction(() => {
+      for (let i = 0; i < 16; i++) insert.run();
+    })();
+  }
+}
+
+function walBytes(): number {
+  return statSync(`${path}-wal`).size;
+}
+
 function wal(db: Database.Database): { log: number; checkpointed: number } {
   const rows = db.pragma("wal_checkpoint(NOOP)", { simple: false }) as Array<{
     log: number;
     checkpointed: number;
   }>;
   return rows[0];
+}
+
+/**
+ * The writer as the checkpointer sees it, with a clock only its copies move:
+ * each PASSIVE statement advances it by 1 ms, and `advance` moves it by hand.
+ * The copies run for real, but every copy costs the same on this clock however
+ * long the disk takes, so whether a rewind's RESTART has time left depends on
+ * the checkpointer's logic and not on the machine's speed. While a reader
+ * keeps the copy incomplete, the checkpointer retries it after each real 2 ms
+ * poll, so `restartWaitMs` on this clock gives readers about twice that long
+ * in real time. `busyTimeouts` lists each busy timeout the checkpointer
+ * sets on the connection, in order.
+ */
+function copyClock(db: Database.Database): {
+  db: Database.Database;
+  now: () => number;
+  advance: (ms: number) => void;
+  busyTimeouts: number[];
+} {
+  let ms = 0;
+  const busyTimeouts: number[] = [];
+  const counted = new Proxy(db, {
+    get(target, prop) {
+      if (prop === "prepare") {
+        return (sql: string) => {
+          const statement = target.prepare(sql);
+          if (!sql.includes("(PASSIVE)")) return statement;
+          return {
+            get: () => {
+              ms += 1;
+              return statement.get();
+            },
+          };
+        };
+      }
+      if (prop === "pragma") {
+        return (source: string, options?: Database.PragmaOptions) => {
+          const set = /^busy_timeout = (\d+)$/.exec(source);
+          if (set) busyTimeouts.push(Number(set[1]));
+          return target.pragma(source, options);
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: counted,
+    now: () => ms,
+    advance: (by) => {
+      ms += by;
+    },
+    busyTimeouts,
+  };
 }
 
 /** A thread that runs short read statements back to back until told to stop. */
@@ -133,10 +213,14 @@ describe("WalCheckpointer", () => {
     expect(new WalCheckpointer(db, POLICY).maintain(1)).toBeNull();
   });
 
-  it("rewinds a long WAL and the next commit cuts the file to the size limit", () => {
+  it("rewinds a long WAL and the next commit starts it over", () => {
     const db = writer();
-    expect(db.pragma("journal_size_limit", { simple: true })).toBe(WAL_SIZE_LIMIT_BYTES);
-    const checkpointer = new WalCheckpointer(db, { ...POLICY, pendingFrames: 1_000_000 });
+    const clock = copyClock(db);
+    const checkpointer = new WalCheckpointer(
+      clock.db,
+      { ...POLICY, pendingFrames: 1_000_000 },
+      clock.now,
+    );
     write(db, 1_200);
     expect(wal(db).log).toBeGreaterThanOrEqual(POLICY.restartFrames);
 
@@ -148,24 +232,124 @@ describe("WalCheckpointer", () => {
     expect(db.pragma("busy_timeout", { simple: true })).toBe(POLICY.busyTimeoutMs);
   });
 
-  it("truncates a rewound WAL past the limit", () => {
+  it("leaves the commit after a rewind the file's size, and cuts it back between ops a slice at a time", () => {
     const db = writer();
-    db.pragma("journal_size_limit = 1048576");
-    const checkpointer = new WalCheckpointer(db, { ...POLICY, pendingFrames: 1_000_000 });
-    write(db, 1_200);
-    expect(statSync(`${path}-wal`).size).toBeGreaterThan(4 * 1024 * 1024);
+    const clock = copyClock(db);
+    const slice = 8 * MIB;
+    const checkpointer = new WalCheckpointer(
+      clock.db,
+      { ...POLICY, pendingFrames: 1_000_000, cutSliceBytes: slice },
+      clock.now,
+    );
+    writeBytes(db, WAL_SIZE_LIMIT_BYTES + 3 * slice);
+    const longest = walBytes();
+    expect(longest).toBeGreaterThan(WAL_SIZE_LIMIT_BYTES + 2 * slice);
     expect(checkpointer.maintain()).toMatchObject({ outcome: "rewound" });
+
     write(db, 1);
-    expect(statSync(`${path}-wal`).size).toBeLessThanOrEqual(1024 * 1024);
+    expect(wal(db).log).toBeLessThan(10);
+    expect(walBytes()).toBe(longest);
+
+    const cuts: number[] = [];
+    for (let run = checkpointer.maintain(); run; run = checkpointer.maintain()) {
+      const before = walBytes() + run.cutBytes!;
+      expect(run).toMatchObject({ mode: "CUT", outcome: "cut" });
+      expect(run.cutBytes).toBeGreaterThan(0);
+      expect(run.cutBytes).toBeLessThanOrEqual(slice);
+      expect(before - walBytes()).toBe(run.cutBytes);
+      cuts.push(run.cutBytes!);
+      write(db, 1);
+    }
+    expect(cuts.length).toBeGreaterThan(2);
+    expect(cuts.reduce((sum, b) => sum + b, 0)).toBe(longest - WAL_SIZE_LIMIT_BYTES);
+    expect(walBytes()).toBe(WAL_SIZE_LIMIT_BYTES);
+    expect(checkpointer.maintain()).toBeNull();
+
+    const rows = db.prepare<[], { n: number }>("SELECT count(*) AS n FROM notes").get()!.n;
+    write(db, 50);
+    expect(checkpointer.maintain(1)).toMatchObject({ mode: "PASSIVE", outcome: "copied" });
+    expect(reader().prepare<[], { n: number }>("SELECT count(*) AS n FROM notes").get()!.n).toBe(
+      rows + 50,
+    );
+    expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
   });
+
+  it("cuts the file back after a WAL that starts over by itself, with no rewind", () => {
+    const db = writer();
+    const slice = 16 * MIB;
+    const checkpointer = new WalCheckpointer(db, {
+      ...POLICY,
+      pendingFrames: 1_000_000,
+      restartFrames: 1_000_000,
+      cutSliceBytes: slice,
+    });
+    write(db, 10);
+    expect(checkpointer.maintain(1)).toMatchObject({ outcome: "copied" });
+    expect(checkpointer.maintain(1)).toBeNull();
+
+    writeBytes(db, WAL_SIZE_LIMIT_BYTES + 2 * slice);
+    const longest = walBytes();
+    expect(longest).toBeGreaterThan(WAL_SIZE_LIMIT_BYTES + slice);
+    expect(checkpointer.maintain(1)).toMatchObject({ mode: "PASSIVE", outcome: "copied" });
+    write(db, 1);
+    expect(wal(db).log).toBeLessThan(10);
+    expect(walBytes()).toBe(longest);
+
+    let cut = 0;
+    for (let run = checkpointer.maintain(); run; run = checkpointer.maintain()) {
+      expect(run).toMatchObject({ mode: "CUT", outcome: "cut" });
+      cut += run.cutBytes!;
+    }
+    expect(cut).toBe(longest - WAL_SIZE_LIMIT_BYTES);
+    expect(walBytes()).toBe(WAL_SIZE_LIMIT_BYTES);
+    expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
+  });
+
+  it.each([
+    ["a plaintext", undefined],
+    ["an encrypted", randomBytes(32)],
+  ])(
+    "cuts nothing before the commit after a rewind, and never into the frames %s WAL holds",
+    (_, encryptionKey) => {
+      const db = writer("WAL", encryptionKey);
+      const clock = copyClock(db);
+      const limit = MIB;
+      const checkpointer = new WalCheckpointer(
+        clock.db,
+        { ...POLICY, pendingFrames: 1_000_000, sizeLimitBytes: limit, cutSliceBytes: 64 * MIB },
+        clock.now,
+      );
+      write(db, 1_200);
+      const longest = walBytes();
+      expect(longest).toBeGreaterThan(4 * MIB);
+      expect(checkpointer.maintain()).toMatchObject({ outcome: "rewound" });
+      expect(checkpointer.maintain()).not.toMatchObject({ outcome: "cut" });
+      expect(walBytes()).toBe(longest);
+
+      write(db, 600);
+      const { log } = wal(db);
+      const frames = 32 + log * ((db.pragma("page_size", { simple: true }) as number) + 24);
+      expect(frames).toBeGreaterThan(limit);
+      expect(checkpointer.maintain()).toMatchObject({ outcome: "cut", cutBytes: longest - frames });
+      expect(walBytes()).toBe(frames);
+      expect(checkpointer.maintain()).toBeNull();
+
+      const held = reader();
+      expect(held.prepare<[], { n: number }>("SELECT count(*) AS n FROM notes").get()!.n).toBe(
+        1_800,
+      );
+      expect(checkpointer.maintain(1)).toMatchObject({ mode: "PASSIVE", outcome: "copied" });
+      expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
+    },
+  );
 
   it("gives up within its wait while a reader holds an old snapshot, and retries after the interval", () => {
     const db = writer();
-    let clock = 0;
+    const clock = copyClock(db);
     const checkpointer = new WalCheckpointer(
-      db,
+      clock.db,
       { ...POLICY, pendingFrames: 1_000_000 },
-      () => clock + performance.now(),
+      clock.now,
     );
     write(db, 600);
     const held = reader();
@@ -173,22 +357,28 @@ describe("WalCheckpointer", () => {
     held.prepare("SELECT count(*) FROM notes").get();
     write(db, 600);
 
-    const started = performance.now();
     const blocked = checkpointer.maintain();
-    expect(performance.now() - started).toBeLessThan(POLICY.restartWaitMs + 150);
     expect(blocked).toMatchObject({ mode: "RESTART", outcome: "deferred" });
+    expect(blocked!.ms).toBeGreaterThanOrEqual(POLICY.restartWaitMs);
+    expect(blocked!.ms).toBeLessThan(POLICY.restartWaitMs + 2);
+    expect(clock.busyTimeouts).toEqual([]);
     expect(wal(db).log).toBeGreaterThanOrEqual(POLICY.restartFrames);
     expect(checkpointer.maintain()).toBeNull();
 
     held.exec("COMMIT");
-    clock += POLICY.restartRetryMinMs;
+    clock.advance(POLICY.restartRetryMinMs);
     expect(checkpointer.maintain()).toMatchObject({ mode: "RESTART", outcome: "rewound" });
     expect(db.pragma("busy_timeout", { simple: true })).toBe(POLICY.busyTimeoutMs);
   });
 
   it("rewinds while another thread reads back to back", async () => {
     const db = writer();
-    const checkpointer = new WalCheckpointer(db, { ...POLICY, pendingFrames: 1_000_000 });
+    const clock = copyClock(db);
+    const checkpointer = new WalCheckpointer(
+      clock.db,
+      { ...POLICY, pendingFrames: 1_000_000 },
+      clock.now,
+    );
     const readers = [busyReader(), busyReader()] as Array<
       ReturnType<typeof busyReader> & { started: Promise<unknown> }
     >;
@@ -197,7 +387,10 @@ describe("WalCheckpointer", () => {
 
     const run = checkpointer.maintain();
     expect(run).toMatchObject({ mode: "RESTART", outcome: "rewound" });
-    expect(run!.ms).toBeLessThan(POLICY.restartWaitMs + 150);
+    const [restartWait, restored] = clock.busyTimeouts;
+    expect(restartWait).toBeGreaterThan(0);
+    expect(restartWait).toBeLessThanOrEqual(POLICY.restartWaitMs);
+    expect(restored).toBe(POLICY.busyTimeoutMs);
     write(db, 1);
     expect(wal(db).log).toBeLessThan(10);
     for (const r of readers) expect(await r.stop()).toBeGreaterThan(0);
@@ -213,6 +406,7 @@ describe("WalCheckpointer", () => {
       const calls: string[] = [];
       let busyTimeout = POLICY.busyTimeoutMs;
       const db = {
+        name: `/tmp/omnesis-test-${randomUUID()}.db`,
         prepare: (sql: string) => ({
           get: (): Row => {
             const mode = /\((\w+)\)/.exec(sql)![1]!;
@@ -222,9 +416,11 @@ describe("WalCheckpointer", () => {
             return script.restart!();
           },
         }),
-        pragma: (text: string) => {
+        pragma: (text: string): number | undefined => {
+          if (text === "page_size") return 4096;
           const set = /busy_timeout = (\d+)/.exec(text);
           if (set) busyTimeout = Number(set[1]);
+          return undefined;
         },
       } as unknown as Database.Database;
       return { db, calls, busyTimeout: () => busyTimeout };

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFileSync } from "node:child_process";
-import { X509Certificate } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -264,6 +264,11 @@ describe("refresh", () => {
       rotatedAt: new Date(rig.clock.now).toISOString(),
     });
     expect(rig.service.fingerprintSha256()).toBe(fingerprintOf(fresh.cert));
+    expect(rig.service.spkiFingerprintSha256()).toBe(
+      createHash("sha256")
+        .update(new X509Certificate(fresh.cert).publicKey.export({ type: "spki", format: "der" }))
+        .digest("hex"),
+    );
     expect(existsSync(join(configDir, "tls", ".renew.lock"))).toBe(false);
   });
 
@@ -616,4 +621,18 @@ describe("nextRenewalAt", () => {
     const off = build({ initial: tailscale, env: tier(), settings: { autoRenew: false } });
     expect(off.service.nextRenewalAt()).toBeNull();
   });
+});
+
+test("separate public SNI setup can inspect actual default leaf aliases and wildcard coverage", () => {
+  const material = mint(90, [
+    "DNS:direct.example.test",
+    "DNS:alias.example.test",
+    "DNS:*.private.example.test",
+  ]);
+  rig = build({ initial: material });
+  expect(rig.service.coversHostname("direct.example.test")).toBe(true);
+  expect(rig.service.coversHostname("ALIAS.example.test")).toBe(true);
+  expect(rig.service.coversHostname("phone.private.example.test")).toBe(true);
+  expect(rig.service.coversHostname("deep.phone.private.example.test")).toBe(false);
+  expect(rig.service.coversHostname("gateway.relay.example.test")).toBe(false);
 });

@@ -8,7 +8,7 @@ import XCTest
 /// What a conversation's origin changes on screen: a watch thread hides the
 /// folded run transcript behind its card, the Morning brief thread is
 /// undeletable and scopes its citation timeline to the latest brief, and the
-/// steward toolset never rebuilds cards into resumed history.
+/// Brain toolset never rebuilds cards into resumed history.
 @available(iOS 17.0, *)
 final class AgentConversationOriginTests: XCTestCase {
     private let seedMessages: [ChatMessage] = [
@@ -317,7 +317,7 @@ final class AgentConversationOriginTests: XCTestCase {
         XCTAssertEqual(AgentCoordinator.visibleMessages(messages, origin: origin).count, 3)
     }
 
-    /// The steward toolset is ephemeral: resumed history must rebuild
+    /// The Brain toolset is ephemeral: resumed history must rebuild
     /// no tool part for any of its calls (mirrors the drop the builder
     /// already does for search/fetch/sql).
     func testLoopAgentToolUsesDroppedFromHistory() {
@@ -364,7 +364,7 @@ final class AgentConversationOriginTests: XCTestCase {
         )
     }
 
-    /// The whole steward toolset is enrolled — a missing name would
+    /// The whole Brain toolset is enrolled — a missing name would
     /// leave a persistent card in past conversations for that tool.
     func testLoopAgentToolsetEnrolledInEphemeralSet() {
         let loopAgentTools = [

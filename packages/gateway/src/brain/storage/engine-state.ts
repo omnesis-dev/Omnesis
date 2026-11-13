@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Tiny key-value state store for the Cognition Steward's background engines —
+ * Tiny key-value state store for the Brain's background engines —
  * the daily rhythm's last-run day marker and the decay engine's
  * dirty-mark bookkeeping. One row per key in `cognition_engine_state`.
  *

@@ -5,7 +5,15 @@ package dev.omnesis.android.assistant
 
 import dev.omnesis.android.transport.dto.AgentEvent
 
-/** Folds only the watched assistant message from the caller-wide agent event stream. */
+/**
+ * Folds the watched turn of the caller-wide agent event stream into the answer a voice
+ * surface shows and speaks: the text of the turn's final assistant message.
+ *
+ * A turn that calls tools is several assistant messages under one message id. What the
+ * agent writes before a tool call ("Let me check your calendar.") is narration, not the
+ * answer, so a tool call opening discards the text gathered so far. This is the reply the
+ * gateway persists as the turn's last assistant message, which is what the iOS app speaks.
+ */
 data class VoiceAnswerCollector(
     val sessionId: String,
     val messageId: String,
@@ -25,6 +33,8 @@ data class VoiceAnswerCollector(
             } else {
                 Result.Continue(this)
             }
+            is AgentEvent.ToolInputStart -> Result.Continue(if (event.messageId == messageId) copy(text = "") else this)
+            is AgentEvent.ToolStart -> Result.Continue(if (event.messageId == messageId) copy(text = "") else this)
             is AgentEvent.MessageEnd -> if (event.messageId == messageId) {
                 event.failure?.let { Result.Failed(it.code, it.message) } ?: when (event.stopReason) {
                     "end_turn" -> Result.Answered(text)

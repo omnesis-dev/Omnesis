@@ -4,7 +4,7 @@
 /**
  * Brain Bench — area G: the rhythm engine.
  *
- * The rhythm lanes are the parts of the Cognition Steward nothing but the
+ * The rhythm lanes are the parts of the Brain nothing but the
  * clock drives: the per-source daily batches, the morning digest, the
  * retrospective bootstrap, the generative synthesis/collision producers, and
  * the scheduled sweeps. Each is a due-gated pass that reads a marker out of

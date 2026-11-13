@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { UnsupportedSearchFilterError } from "@omnesis/agent";
+import { setLabFlag } from "../lab/store.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
 
 type Db = Database.Database;
@@ -63,6 +64,7 @@ let db: Db;
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omnesis-ports-test-"));
   db = createDatabase(join(tmpDir, "test.db"));
+  for (const id of ["brain", "tasks", "watches"] as const) setLabFlag(db, id, true);
 });
 
 afterEach(() => {
@@ -1095,4 +1097,86 @@ test("search coverage is captured before asynchronous retrieval changes publicat
   });
   const port = createGatewaySearchPort({ search, retrievalCoverage } as unknown as SearchPipeline);
   expect(await port.search({ query: "workshop" })).toMatchObject({ coverage });
+});
+
+test("disabled Tasks withholds task mirrors from fetch, URL lookup, search and graph neighbors", async () => {
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+  try {
+    setLabFlag(db, "tasks", false);
+    insertGatewayAuthoredDocument({
+      id: "task-native",
+      sourceId: "open-loops",
+      content: "A personal task",
+      sourceUrl: "https://example.org/task",
+    });
+    insertGatewayAuthoredDocument({
+      id: "task-knowledge",
+      sourceId: "brain-knowledge",
+      content: "A mirrored task",
+      sourceUrl: "https://example.org/task-mirror",
+    });
+    db.prepare(
+      `INSERT INTO knowledge_nodes (id,kind,title,markdown,plain_text,revision,meaning_revision,meaning_hash,validity,metadata_json,fields_json,created_at,updated_at)
+      VALUES ('task-knowledge','loop','A task','A task','A task',1,1,'test-hash','current','{}','{}',1,1)`,
+    ).run();
+    insertDocument({
+      id: "original",
+      sourceId: "files:test",
+      title: "Original document",
+      content: "Source content",
+    });
+    seedLink("original", "outbound", "task-native");
+    seedLink("original", "outbound", "task-knowledge");
+    const docs = createGatewayDocumentPort(db);
+    expect(await docs.fetch("task-native")).toBeNull();
+    expect(await docs.fetch("task-knowledge")).toBeNull();
+    const original = await docs.fetch("original", { includeNeighbors: true });
+    expect(original?.neighbors ?? []).toEqual([]);
+    expect(
+      (await createGatewayDocumentByUrlPort(db).lookup("https://example.org/task-mirror")).ref,
+    ).toBeUndefined();
+    const search = vi.fn(async () => ({
+      timing: { totalMs: 1 },
+      results: [
+        {
+          documentId: "task-native",
+          sourceId: "open-loops",
+          documentType: "task",
+          title: "Task",
+          chunkText: "Private task",
+          score: 1,
+        },
+        {
+          documentId: "task-knowledge",
+          sourceId: "brain-knowledge",
+          documentType: "knowledge",
+          title: "Task",
+          chunkText: "Private task",
+          score: 1,
+        },
+        {
+          documentId: "original",
+          sourceId: "files:test",
+          documentType: "file",
+          title: "Original document",
+          chunkText: "Source content",
+          score: 1,
+        },
+      ],
+    }));
+    const result = await createGatewaySearchPort(
+      { search } as unknown as SearchPipeline,
+      undefined,
+      db,
+    ).search({ query: "task" });
+    expect(result.results.map((row) => row.documentId)).toEqual(["original"]);
+    expect(result.results[0]?.breadcrumb).toBeUndefined();
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({ cognitiveProjection: false }),
+      undefined,
+      expect.objectContaining({ agentContext: true }),
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

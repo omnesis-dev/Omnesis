@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Settings view — everything that configures this gateway, on one page with
-// tabs: the config file itself, the standing instructions its agent runs under,
+// tabs: the config file itself, Lab opt-ins, the standing instructions its agent runs under,
 // the models that power its capabilities, the scheduled sweeps it makes over
 // the corpus (experimental only), delegated agent access, the privacy policies
 // that access is reviewed under, and the devices allowed to operate it.
@@ -23,12 +23,14 @@ import {
   EXPERIMENTAL_SETTINGS_TABS,
 } from "../lib/settings-tabs.js";
 
+const LabView = lazy(() => import("./lab.js").then((m) => m.LabView));
 const ConfigView = lazy(() => import("./config.js").then((m) => m.ConfigView));
 const OmnesisMdView = lazy(() => import("./omnesis-md.js").then((m) => m.OmnesisMdView));
 const ModelsView = lazy(() => import("./models.js").then((m) => m.ModelsView));
 const AccessView = lazy(() => import("./access.js").then((m) => m.AccessView));
 const PoliciesView = lazy(() => import("./policies.js").then((m) => m.PoliciesView));
 const DevicesView = lazy(() => import("./devices.js").then((m) => m.DevicesView));
+const RelayView = lazy(() => import("./relay.js").then((m) => m.RelayView));
 const SweepsView = lazy(() => import("./sweeps.js").then((m) => m.SweepsView));
 
 const SUN_ICON = html`<svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.25"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.05 1.05M11.9 11.9l1.05 1.05M3.05 12.95l1.05-1.05M11.9 4.1l1.05-1.05"/></svg>`;
@@ -39,6 +41,7 @@ export function SettingsView({
   modelsSection,
   modelHealth,
   onModelsRefresh,
+  onLabChange,
   accessAuthorizationId,
   accessLevelId,
   accessNewLevel,
@@ -48,6 +51,9 @@ export function SettingsView({
   policyId,
   completeAccessInPortal,
   experimental = false,
+  lab = { brain: experimental },
+  labAvailable = false,
+  cloudRelay = false,
   theme = "dark",
   onThemeToggle,
   onLogout,
@@ -57,10 +63,9 @@ export function SettingsView({
   // sidebar item, an agent error's "Configure the agent" link, a bookmark)
   // lands where it points.
   const requested = SETTINGS_TAB_KEYS.includes(tab) ? tab : DEFAULT_SETTINGS_TAB;
-  // A link into an experimental tab on a gateway that is not in experimental
-  // mode lands on the default tab rather than an empty page.
+  // A link into a disabled feature lands on the default tab.
   const activeTab =
-    !experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)
+    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || (requested === "account" && !cloudRelay)
       ? DEFAULT_SETTINGS_TAB
       : requested;
 
@@ -90,7 +95,7 @@ export function SettingsView({
   };
 
   return html`
-    <div class="settings-view">
+    <div class=${cloudRelay ? "settings-view relay-on" : "settings-view"}>
       <div class="settings-header">
         <div>
           <h1 class="settings-title">Settings</h1>
@@ -121,12 +126,14 @@ export function SettingsView({
         style="margin-bottom:16px;"
         active=${activeTab}
         onSelect=${switchTab}
-        tabs=${settingsTabs({ experimental }).map((item) => item.key === "models" && modelHealth?.warnings?.length
+        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay }).map((item) => item.key === "models" && modelHealth?.warnings?.length
           ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` } : item)}
       />
+      ${activeTab === "lab" && html`<${LabView} onChange=${onLabChange} />`}
       ${activeTab === "config" && html`<${ConfigView} />`}
       ${activeTab === "omnesis-md" && html`<${OmnesisMdView} />`}
       ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} onModelsRefresh=${onModelsRefresh} />`}
+      ${activeTab === "account" && html`<${RelayView} />`}
       ${activeTab === "sweeps" && html`<${SweepsView} />`}
       ${activeTab === "access" && html`<${AccessView}
         authorizationId=${accessAuthorizationId ?? null}
@@ -134,9 +141,10 @@ export function SettingsView({
         newLevel=${accessNewLevel ?? false}
         connectOpen=${accessConnect ?? false}
         completeInPortal=${completeAccessInPortal ?? false}
+        cloudRelay=${cloudRelay}
       />`}
       ${activeTab === "policies" && html`<${PoliciesView} policyId=${policyId ?? null} />`}
-      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} />`}
+      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} cloudRelay=${cloudRelay} />`}
     </div>
   `;
 }

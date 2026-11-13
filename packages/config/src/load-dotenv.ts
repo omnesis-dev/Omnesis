@@ -261,8 +261,8 @@ const DOTENV_TEMPLATE = `# Omnesis environment file — loaded on startup from $
 # OMNESIS_TRUST_PROXY=0
 
 # ── Experimental features ─────────────────────────────────────────────────
-# Enable not-yet-battle-tested features (experimental sources, Deep
-# Research). A single on/off switch: unset/0 = off, 1 = everything on.
+# Reveal Omnesis Lab for individual Brain, Tasks and Watches opt-ins, and
+# experimental sources and other gated surfaces. Unset/0 = off, 1 = on.
 # OMNESIS_EXPERIMENTAL=1
 `;
 

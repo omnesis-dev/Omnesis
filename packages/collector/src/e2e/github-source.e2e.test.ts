@@ -124,17 +124,21 @@ describe("GitHub source (threads + commits, default universe)", () => {
       () => "no person carries the account's github lid yet",
     );
 
-    // 3. linkBackfill extracted the `references` edges AND the resolution pass
-    //    pointed them at their targets.
+    // 3. Both PRs asserted below need their async link backfill and resolution.
+    //    The merged PR can settle before the open PR has any references.
     await waitFor(
-      () => {
-        const prId = docByExternalId(db, MERGED_PR)?.id;
-        if (!prId) return false;
-        const rows = referencesOf(db, prId);
-        return rows.length >= 2 && rows.every((r) => r.target_doc_id !== null);
-      },
+      () =>
+        [
+          { externalId: MERGED_PR, minimumReferences: 2 },
+          { externalId: `${REPO}/pull/5`, minimumReferences: 1 },
+        ].every(({ externalId, minimumReferences }) => {
+          const prId = docByExternalId(db, externalId)?.id;
+          if (!prId) return false;
+          const rows = referencesOf(db, prId);
+          return rows.length >= minimumReferences && rows.every((r) => r.target_doc_id !== null);
+        }),
       120_000,
-      () => "the merged PR's `references` edges are not resolved yet",
+      () => "the merged and open PRs' `references` edges are not resolved yet",
     );
   }, 300_000);
 

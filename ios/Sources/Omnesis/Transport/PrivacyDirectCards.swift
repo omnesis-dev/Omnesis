@@ -128,7 +128,7 @@ let directCardMaxSqlRows = 10
 /// card mapping below.
 enum DirectDecodedResult: Equatable, Sendable {
     case typed(AgentToolResult)
-    /// `{kind:"structured", resultType, data}` — the steward loop/memory
+    /// `{kind:"structured", resultType, data}` — the Brain loop/memory
     /// tools, which have no bespoke iOS result type. Parsed from raw JSON.
     case structured(resultType: String, data: JSONValue)
     case missing
@@ -643,7 +643,7 @@ private func directLoopFetchedCard(decoded: DirectDecodedResult) -> DirectCardCo
     )
 }
 
-// MARK: - Structured steward tools
+// MARK: - Structured Brain tools
 
 private func directStructuredCard(tool: String, args: JSONValue?, decoded: DirectDecodedResult) -> DirectCardContent {
     let label = directStructuredLabel(tool: tool)

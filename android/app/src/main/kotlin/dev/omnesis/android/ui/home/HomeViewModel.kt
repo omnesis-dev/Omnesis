@@ -12,8 +12,13 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.AppVersionInfo
 import dev.omnesis.android.notes.NotesRepository
 import dev.omnesis.android.access.AccessAuthorizationPairingIdentity
+import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.access.AccessPendingRequests
 import dev.omnesis.android.access.AccessPendingRequestsState
+import dev.omnesis.android.access.PairingPendingRequests
+import dev.omnesis.android.access.PairingPendingRequestsState
+import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
+import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.access.accessAuthorizationIdentity
 import dev.omnesis.android.access.accessAuthorizationPairingMatches
 import dev.omnesis.android.notes.PendingNote
@@ -66,6 +71,7 @@ class HomeViewModel @Inject constructor(
     private val permissionHealth: PermissionHealthCoordinator,
     private val sourceCatalog: SourceCatalog,
     private val accessPendingRequests: AccessPendingRequests,
+    private val pairingPendingRequests: PairingPendingRequests,
     private val taskCounts: TaskCountsStore,
     private val taskFocus: TaskFocusBus,
     phoneSetupGate: PhoneSetupGate,
@@ -87,6 +93,8 @@ class HomeViewModel @Inject constructor(
      */
     val modelHealth = session.modelHealth
     val experimentalEnabled: StateFlow<Boolean> = session.experimentalEnabled
+    val lab = session.lab
+    val labAvailable = session.labAvailable
 
     /**
      * Whether the gateway runs in developer mode — reveals the
@@ -205,6 +213,48 @@ class HomeViewModel @Inject constructor(
 
     fun dismissAccessPending() = accessPendingRequests.dismiss()
 
+    /**
+     * The devices that signed in and wait for approval, for the banner at the top of the main
+     * screen. Read while the app is in front; a failed read shows nothing rather than a
+     * request that may be gone.
+     */
+    val pairingPending: StateFlow<PairingPendingRequestsState> = pairingPendingRequests.state
+
+    /** Bumped when a pairing notification arrives, to read again at once. */
+    val pairingPendingNudge: StateFlow<Int> = PairingPendingRequests.refreshRequests
+
+    private var pairingPendingGeneration = 0L
+
+    /** The gateway's pairing requests, for an administrator's phone in a build with the Omnesis account. */
+    fun pairingApprovalClient(cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED): GatewayPairingApproving? =
+        session.session?.takeIf { PairingPendingRequests.eligible(cloudEnabled, it.pairing.scopes) }?.admin
+
+    /** Reads can overlap, and only the latest one started lands. Any other phone never asks. */
+    fun refreshPairingPending() {
+        val generation = ++pairingPendingGeneration
+        val client = pairingApprovalClient()
+        if (client == null) {
+            pairingPendingRequests.replace(emptyList())
+            return
+        }
+        viewModelScope.launch {
+            val requests = attempt { client.pairingApprovalRequests() }
+            if (generation != pairingPendingGeneration) return@launch
+            pairingPendingRequests.replace(requests.orEmpty())
+        }
+    }
+
+    /** What the Pairing requests sheet last listed is what the banner counts. */
+    fun pairingPendingListed(requests: List<GatewayPairingApprovalRequest>) {
+        pairingPendingGeneration++
+        pairingPendingRequests.replace(requests)
+    }
+
+    fun dismissPairingPending() = pairingPendingRequests.dismiss()
+
+    val pairingRequestsRequest: StateFlow<NotificationLaunchBus.PairingRequests?> = notificationLaunchBus.pairingRequests
+    fun consumePairingRequestsRequest() = notificationLaunchBus.consumePairingRequests()
+
     /** The pairing a banner tap opens the wizard for, so a re-pair in between is refused. */
     fun accessAuthorizationPairing(): AccessAuthorizationPairingIdentity? =
         session.session?.pairing?.accessAuthorizationIdentity()
@@ -226,7 +276,7 @@ class HomeViewModel @Inject constructor(
             val approvals = admin?.let { attempt { it.privacyApprovals(limit = 1) } }
             // Watch requests are resolved on an experimental surface, so they are counted
             // only where that surface is itself reachable.
-            val watchRequests = if (experimentalEnabled.value) {
+            val watchRequests = if (lab.value.watches) {
                 admin?.let { attempt { it.privacySubscriptionApprovals(limit = 1) } }
             } else {
                 null
@@ -247,7 +297,7 @@ class HomeViewModel @Inject constructor(
             _privacyPendingCount.value = privacyDecisionsWaiting(
                 heldAnswers = approvals?.totalCount,
                 watchRequests = watchRequests?.totalCount,
-                experimental = experimentalEnabled.value,
+                experimental = lab.value.watches,
             )
             if (approvalId != null) _pendingApprovalToPresent.value = approvalId
         }
@@ -290,6 +340,8 @@ class HomeViewModel @Inject constructor(
     val sourcePermissionRequest: StateFlow<NotificationLaunchBus.SourcePermission?> = notificationLaunchBus.sourcePermission
     val remoteSourcePermissionRequest: StateFlow<NotificationLaunchBus.RemoteSourcePermission?> =
         notificationLaunchBus.remoteSourcePermission
+
+    val devicesRequest: StateFlow<NotificationLaunchBus.Devices?> = notificationLaunchBus.devices
 
     val pushConfigured: Boolean get() = pushManager.configured
     val pushPlan = session.pushPlan
@@ -343,6 +395,7 @@ class HomeViewModel @Inject constructor(
     fun consumeWatchFiringRequest() = notificationLaunchBus.consumeWatchFiring()
     fun consumeSourcePermissionRequest() = notificationLaunchBus.consumeSourcePermission()
     fun consumeRemoteSourcePermissionRequest() = notificationLaunchBus.consumeRemoteSourcePermission()
+    fun consumeDevicesRequest() = notificationLaunchBus.consumeDevices()
 
     fun newConversation() = coordinator.newConversation()
 

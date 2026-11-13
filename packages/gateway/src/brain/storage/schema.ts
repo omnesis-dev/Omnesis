@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * DDL for the Briefs / Cognition Steward tables. Idempotent (`CREATE TABLE IF
+ * DDL for the Briefs / Brain tables. Idempotent (`CREATE TABLE IF
  * NOT EXISTS` throughout) — invoked from `runSchemaSetup` on every boot
  * AND from the numbered migration that introduced the tables, so both a
  * fresh install and an upgrading one converge on the same shape from a

@@ -36,6 +36,7 @@ public enum OmnesisURLSession {
 
     private static let lock = NSLock()
     private static var cached: URLSession?
+    private static var cachedCredential: PairingCredentialBundle?
     private static var systemTrustUpgradeHandler: PinnedSession.SystemTrustVerified?
 
     /// The session handed out for every access made while the store is
@@ -80,8 +81,9 @@ public enum OmnesisURLSession {
         // overtaken: a resolve that read pre-change state would otherwise
         // install it after the reset meant to discard it.
         switch resolve(from: store) {
-        case .contract(let session):
+        case .contract(let session, let credential):
             cached = session
+            cachedCredential = credential
             return session
         case .unreadable:
             return unreadableFallback
@@ -91,12 +93,36 @@ public enum OmnesisURLSession {
     /// Discard the cached session so the next access re-reads the store.
     /// Call from `PairingService` after the pairing bundle changes.
     ///
-    /// See #75 — the dropped session is not invalidated; live clients may
-    /// still hold it.
+    /// Legacy sessions stay valid for live clients (#75). Routed sessions are
+    /// scoped to one pairing generation and retire their listener and streams.
     public static func reset() {
         lock.lock()
         defer { lock.unlock() }
+        if let pinned = cached?.delegate as? PinnedSession, pinned.hasDirectRoute { pinned.retireRouting() }
         cached = nil
+        cachedCredential = nil
+    }
+
+    /// Checks the cached routed session's local endpoint, which iOS can close while the app is
+    /// suspended. Never resolves a session; without a routed one this does nothing.
+    public static func verifyRouting() {
+        lock.lock()
+        let pinned = cached?.delegate as? PinnedSession
+        lock.unlock()
+        pinned?.verifyRoutingInBackground()
+    }
+
+    /// Replace route facts on the currently cached authority without retiring
+    /// its existing HTTP uploads. Old/new pairing generations cannot cross.
+    public static func updateDirectCandidates(expected authority: PairingCredentialBundle, candidates: [GatewayDirectCandidate]) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let cachedCredential, cachedCredential.sameAuthority(as: authority),
+              let raw = try store.get(PairingCredentialBundle.key),
+              let current = try? PairingCredentialBundle.decode(raw), current.sameAuthority(as: authority),
+              let owner = cached?.delegate as? PinnedSession else { return }
+        try owner.updateCandidates(candidates)
+        self.cachedCredential = current
     }
 
     /// Install what a pinned session calls, with its host and pin, when the
@@ -128,7 +154,9 @@ public enum OmnesisURLSession {
         tlsMode rawMode: String?,
         fingerprint: String?,
         host: String?,
-        systemTrust: @escaping PinnedSession.SystemTrustEvaluator = PinnedSession.systemRoots
+        systemTrust: @escaping PinnedSession.SystemTrustEvaluator = PinnedSession.systemRoots,
+        spkiFingerprint: String? = nil,
+        directRoute: GatewayDirectRoute? = nil
     )
         -> URLSession {
         let mode = PairingTlsMode(rawValue: rawMode ?? "") ??
@@ -136,7 +164,13 @@ public enum OmnesisURLSession {
         switch mode {
         case .system, .legacy:
             return URLSession.shared
-        case .pinnedLeaf:
+        case .pinnedKeyStrict:
+            guard let host, !host.isEmpty, let spkiFingerprint,
+                  spkiFingerprint.range(of: fingerprintPattern, options: .regularExpression) != nil else {
+                return RejectingTrustSession.make()
+            }
+            return PinnedSession(spkiFingerprint: spkiFingerprint, host: host, directRoute: directRoute).session
+        case .pinnedLeaf, .pinnedLeafStrict:
             guard let fp = fingerprint,
                   !fp.isEmpty,
                   fp.range(of: fingerprintPattern, options: .regularExpression) != nil
@@ -145,11 +179,13 @@ public enum OmnesisURLSession {
             }
             return PinnedSession(
                 fingerprintHex: fp,
-                host: host,
+                host: mode == .pinnedLeafStrict ? nil : host,
                 onSystemTrustVerified: { host, fingerprintHex in
                     notifySystemTrustVerified(host: host, fingerprintHex: fingerprintHex)
                 },
-                systemTrust: systemTrust
+                systemTrust: systemTrust,
+                requireCertificateValidity: mode == .pinnedLeafStrict,
+                directRoute: mode == .pinnedLeafStrict ? directRoute : nil
             ).session
         }
     }
@@ -158,7 +194,7 @@ public enum OmnesisURLSession {
     private enum Resolution {
         /// The stored contract was read. Authoritative, and it stands until
         /// the pairing changes and `reset()` clears it.
-        case contract(URLSession)
+        case contract(URLSession, PairingCredentialBundle?)
         /// The store could not be read, so no contract is known yet.
         case unreadable
     }
@@ -171,20 +207,32 @@ public enum OmnesisURLSession {
                     // changes that, and a re-pair calls `reset()`, so rejecting
                     // trust is this pairing's contract rather than a transient
                     // verdict.
-                    return .contract(RejectingTrustSession.make())
+                    return .contract(RejectingTrustSession.make(), nil)
                 }
+                let mode = PairingTlsMode(rawValue: credential.tlsMode)
+                let url = URL(string: credential.url)
+                if mode?.isStrict == true, url?.scheme?.lowercased() != "https" || url?.host == nil {
+                    return .contract(RejectingTrustSession.make(), nil)
+                }
+                let route: GatewayDirectRoute? = if mode == .pinnedKeyStrict, let url {
+                    try? GatewayDirectRoute.maintained(origin: url, candidates: credential.directCandidates ?? [])
+                } else if mode?.isStrict == true, let url, let candidates = credential.directCandidates {
+                    try? GatewayDirectRoute(origin: url, candidates: candidates)
+                } else { nil }
                 return .contract(resolveSession(
                     tlsMode: credential.tlsMode,
                     fingerprint: credential.fingerprint,
-                    host: URL(string: credential.url)?.host
-                ))
+                    host: URL(string: credential.url)?.host,
+                    spkiFingerprint: credential.spkiFingerprint,
+                    directRoute: route
+                ), credential)
             }
             let session = try resolveSession(
                 tlsMode: store.get(tlsModeKeychainKey),
                 fingerprint: store.get(fingerprintKeychainKey),
                 host: store.get(urlKeychainKey).flatMap { URL(string: $0)?.host }
             )
-            return .contract(session)
+            return .contract(session, nil)
         } catch {
             return .unreadable
         }
@@ -200,6 +248,7 @@ extension OmnesisURLSession {
         lock.lock()
         defer { lock.unlock() }
         cached = session
+        cachedCredential = nil
     }
 
     /// Test-only override: read the trust contract from a substitute store, so
@@ -210,7 +259,9 @@ extension OmnesisURLSession {
         lock.lock()
         defer { lock.unlock() }
         store = substitute ?? Keychain()
+        if let pinned = cached?.delegate as? PinnedSession, pinned.hasDirectRoute { pinned.retireRouting() }
         cached = nil
+        cachedCredential = nil
     }
 }
 #endif

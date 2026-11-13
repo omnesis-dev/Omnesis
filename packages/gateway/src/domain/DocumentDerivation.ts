@@ -18,7 +18,7 @@
  *     holds a `data` run until its datum is fully derived so the agent reasons
  *     about a document that already has its edges, people and dates — the
  *     deterministic layer settles before the stochastic one reads it;
- *   - the datum-neighbourhood prompt block (`brain/steward/prompts.ts`), which
+ *   - the datum-neighbourhood prompt block (`brain/runtime/prompts.ts`), which
  *     states which stages were still pending when a run went ahead anyway.
  *
  * Registering a stage here therefore enrolls it in the barrier and in the

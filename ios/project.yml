@@ -29,7 +29,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID)
     MARKETING_VERSION: "0.7.8"
-    CURRENT_PROJECT_VERSION: "346"
+    CURRENT_PROJECT_VERSION: "349"
     TARGETED_DEVICE_FAMILY: "1,2" # iPhone + iPad
     # The pinned WebRTC binary has an arm64 simulator slice. Apply this
     # consistently to apps, hosted tests and their embedded iOS targets;
@@ -39,7 +39,8 @@ settings:
     # Point at our custom Info.plist + entitlements (instead of letting
     # XcodeGen regenerate defaults).
     INFOPLIST_FILE: Info.plist
-    CODE_SIGN_ENTITLEMENTS: Omnesis.entitlements
+    OMNESIS_ENTITLEMENTS_FILE: Omnesis.entitlements
+    CODE_SIGN_ENTITLEMENTS: $(OMNESIS_ENTITLEMENTS_FILE)
     # Skip the auto-generated launch screen — we rely on Info.plist's
     # UILaunchScreen key instead.
     GENERATE_INFOPLIST_FILE: NO
@@ -57,6 +58,9 @@ configFiles:
   Release: Config.xcconfig
 
 packages:
+  SwiftASN1:
+    url: https://github.com/apple/swift-asn1.git
+    exactVersion: 1.7.4
   WebRTC:
     path: Vendor/WebRTC
   SwiftDraw:
@@ -182,7 +186,20 @@ targets:
         embed: true
       # No WebRTC: realtime voice ships in OmnesisDemo only, so this app
       # carries no non-Apple encryption (see TESTFLIGHT.md § Export compliance).
+      - package: SwiftASN1
       - package: SwiftDraw
+    # A cloud relay build adds its Info.plist entries here (the local network
+    # usage text, the sign-in callback scheme). The default build runs nothing, so its
+    # Info.plist carries neither.
+    postBuildScripts:
+      - name: Cloud relay Info.plist entries
+        script: |
+          if [ "$OMNESIS_CLOUD_RELAY_ENABLED" = 1 ]; then
+            /usr/bin/python3 "$SRCROOT/scripts/cloud-relay-info-plist.py" --callback-scheme
+          fi
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        basedOnDependencyAnalysis: false
     settings:
       configs:
         Release:
@@ -222,6 +239,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources/Omnesis
+      - path: Tests/OmnesisTests/Fixtures/cloud-ui-gateway.json
+        buildPhase: resources
       - path: Resources/Assets.xcassets
       - path: Resources/BrandSymbols.xcassets
       - path: Resources/Fonts
@@ -233,8 +252,20 @@ targets:
       # than with production Omnesis.
       - target: OmnesisDemoWatch
         embed: true
+      - package: SwiftASN1
       - package: SwiftDraw
       - package: WebRTC
+    # Same build phase as production: a cloud relay build adds the local network
+    # usage text and the sign-in callback scheme. The default build runs nothing.
+    postBuildScripts:
+      - name: Cloud relay Info.plist entries
+        script: |
+          if [ "$OMNESIS_CLOUD_RELAY_ENABLED" = 1 ]; then
+            /usr/bin/python3 "$SRCROOT/scripts/cloud-relay-info-plist.py" --callback-scheme
+          fi
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).demo
@@ -242,7 +273,8 @@ targets:
         # Realtime voice and its WebRTC transport build into this app only.
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) OMNESIS_REALTIME_VOICE
         INFOPLIST_FILE: Info-Demo.plist
-        CODE_SIGN_ENTITLEMENTS: Omnesis-Demo.entitlements
+        OMNESIS_ENTITLEMENTS_FILE: Omnesis-Demo.entitlements
+        CODE_SIGN_ENTITLEMENTS: $(OMNESIS_ENTITLEMENTS_FILE)
         # Picks the hue-shifted (orange) icon from the shared asset catalog
         # so the demo app is visually distinct from the blue/cyan production
         # app on the home screen at a glance.
@@ -258,6 +290,8 @@ targets:
 
   OmnesisNotificationService:
     type: app-extension
+    dependencies:
+      - package: SwiftASN1
     platform: iOS
     sources:
       - path: Sources/OmnesisNotificationService
@@ -267,12 +301,34 @@ targets:
       # These files are deliberately dual-target members: app and extension
       # share one wire client, one Keychain posture and one TLS pinning path.
       - path: Sources/Omnesis/Notifications/NotificationClaimer.swift
+      - path: Sources/Omnesis/Pairing/CloudRelayFeature.swift
       - path: Sources/Omnesis/Pairing/GatewayTrustPolicy.swift
       - path: Sources/Omnesis/Pairing/Keychain.swift
       - path: Sources/Omnesis/Pairing/PairingCredentialBundle.swift
       - path: Sources/Omnesis/Pairing/PairingTlsMode.swift
       - path: Sources/Omnesis/Pairing/PinnedSession.swift
+      - path: Sources/Omnesis/Pairing/PinnedTrustPlatformOperations.swift
+      - path: Sources/Omnesis/Pairing/GatewayKeyFingerprint.swift
+      - path: Sources/Omnesis/Transport/GatewayDirectRoute.swift
+      - path: Sources/Omnesis/Transport/GatewayDirectProbe.swift
+      - path: Sources/Omnesis/Transport/GatewaySOCKSHandshake.swift
+      - path: Sources/Omnesis/Transport/GatewayRoutingProxy.swift
+      - path: Sources/Omnesis/Transport/GatewayNetworkTransport.swift
+      - path: Sources/Omnesis/Transport/GatewayTLSNetworkConnection.swift
+      - path: Sources/Omnesis/Transport/GatewayUnavailableProxy.swift
       - path: Sources/Omnesis/Transport/OmnesisURLSession.swift
+    # A cloud relay build adds its Info.plist entries here (the local network
+    # usage text). The default build runs nothing, so its
+    # Info.plist carries neither.
+    postBuildScripts:
+      - name: Cloud relay Info.plist entries
+        script: |
+          if [ "$OMNESIS_CLOUD_RELAY_ENABLED" = 1 ]; then
+            /usr/bin/python3 "$SRCROOT/scripts/cloud-relay-info-plist.py"
+          fi
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).notification-service
@@ -298,6 +354,8 @@ targets:
   # omnesis://capture; an app-side run flips CaptureRouter directly).
   OmnesisWidgets:
     type: app-extension
+    dependencies:
+      - package: SwiftASN1
     platform: iOS
     sources:
       - path: Sources/OmnesisWidgets
@@ -319,7 +377,28 @@ targets:
       - path: Sources/Omnesis/Tasks/TaskWidgetDeepLink.swift
       - path: Sources/Omnesis/Pairing/Keychain.swift
       - path: Sources/Omnesis/Pairing/PinnedSession.swift
+      - path: Sources/Omnesis/Pairing/PinnedTrustPlatformOperations.swift
+      - path: Sources/Omnesis/Pairing/GatewayKeyFingerprint.swift
+      - path: Sources/Omnesis/Transport/GatewayDirectRoute.swift
+      - path: Sources/Omnesis/Transport/GatewayDirectProbe.swift
+      - path: Sources/Omnesis/Transport/GatewaySOCKSHandshake.swift
+      - path: Sources/Omnesis/Transport/GatewayRoutingProxy.swift
+      - path: Sources/Omnesis/Transport/GatewayNetworkTransport.swift
+      - path: Sources/Omnesis/Transport/GatewayTLSNetworkConnection.swift
+      - path: Sources/Omnesis/Transport/GatewayUnavailableProxy.swift
       - path: Sources/Omnesis/Pairing/GatewayTrustPolicy.swift
+    # A cloud relay build adds its Info.plist entries here (the local network
+    # usage text). The default build runs nothing, so its
+    # Info.plist carries neither.
+    postBuildScripts:
+      - name: Cloud relay Info.plist entries
+        script: |
+          if [ "$OMNESIS_CLOUD_RELAY_ENABLED" = 1 ]; then
+            /usr/bin/python3 "$SRCROOT/scripts/cloud-relay-info-plist.py"
+          fi
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OMNESIS_BUNDLE_ID).widgets
