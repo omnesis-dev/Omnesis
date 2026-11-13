@@ -27,9 +27,14 @@ def main():
                         help='Delete only recognized owned language cache files after that report passes')
     parser.add_argument('--languages', nargs='+')
     parser.add_argument('--sizes', nargs='+', type=int, default=[10000, 100000])
+    parser.add_argument('--stopwords', type=Path)
+    parser.add_argument('--simplemma', action='store_true')
+    parser.add_argument('--supplemental-only', action='store_true')
     for option in ('icu4x', 'charabia-full', 'charabia-lean', 'prototype'):
-        parser.add_argument('--' + option, type=Path, required=True)
+        parser.add_argument('--' + option, type=Path, required=option == 'prototype')
     args = parser.parse_args()
+    if not args.supplemental_only and any(getattr(args, name) is None for name in ('icu4x', 'charabia_full', 'charabia_lean')):
+        parser.error('Primary evaluation requires --icu4x, --charabia-full and --charabia-lean')
     if not 1 <= args.workers <= 3:
         raise ValueError('This bounded research runner supports one to three workers')
     policy = json.loads((HERE / 'policy.json').read_text())
@@ -47,7 +52,16 @@ def main():
     common = ['--data-dir', str(args.data_dir.resolve()), '--cache-dir', str(args.cache_dir.resolve()),
               '--sizes', *map(str, args.sizes)]
     for option in ('icu4x', 'charabia-full', 'charabia-lean', 'prototype'):
-        common.extend(['--' + option, str(getattr(args, option.replace('-', '_')).resolve())])
+        binary = getattr(args, option.replace('-', '_'))
+        if binary is not None:
+            common.extend(['--' + option, str(binary.resolve())])
+
+    if args.stopwords:
+        common.extend(['--stopwords', str(args.stopwords.resolve())])
+    if args.simplemma:
+        common.append('--simplemma')
+    if args.supplemental_only:
+        common.append('--supplemental-only')
 
     def evaluate(language):
         output = args.output_dir / (language + '.json')
@@ -62,7 +76,7 @@ def main():
             owned = cache_root / language
             if owned.is_symlink() or owned.resolve().parent != cache_root:
                 raise ValueError('Unsafe language cache cleanup target')
-            pattern = re.compile(r'(?:(?:icu|full|lean|prototype|exact)-[a-f0-9]{64}\.(?:jsonl|meta\.json|input\.part|response\.part|part)|index-[a-f0-9]{64}\.(?:sqlite|meta\.json|part\.sqlite))')
+            pattern = re.compile(r'(?:(?:icu|full|lean|prototype|exact|lemma)-[a-f0-9]{64}\.(?:jsonl|meta\.json|input\.part|response\.part|part)|index-[a-f0-9]{64}\.(?:sqlite|meta\.json|part\.sqlite))')
             removed = 0
             if owned.is_dir():
                 for path in owned.iterdir():
@@ -88,7 +102,8 @@ def main():
         print(json.dumps({'phase': 'subset-complete', 'languages': languages,
                           'aggregate': 'not produced: complete eligible matrix required'}), flush=True)
         return
-    subprocess.run([sys.executable, str(HERE / 'aggregate.py'), '--reports',
+    aggregate_flags = ['--supplemental-only'] if args.supplemental_only else []
+    subprocess.run([sys.executable, str(HERE / 'aggregate.py'), *aggregate_flags, '--reports',
                     *(str(args.output_dir / (language + '.json')) for language in expected),
                     '--output', str(args.output_dir / 'summary.json')], check=True)
     print(json.dumps({'phase': 'matrix-complete', 'languages': len(languages)}), flush=True)

@@ -21,6 +21,7 @@ import time
 from analysis import analyze, encode, expression, quoted, sha
 from prepare import AMENDMENT, atomic_json, digest
 from scoring import paired_interval, retrieval_metrics, summarize
+from supplements import PROTOCOL, prepare_lemma, prepare_stopwords
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -149,6 +150,20 @@ def report_method(method, queries, rankings, timing):
     return {'method': method, **summarize(rows), 'timing': timing, 'perQuery': rows}
 
 
+def supplemental_results(methods, baseline, policy, seed, profile):
+    baseline_rows = {row['id']: row['metrics'] for row in baseline['perQuery']
+                     if row['split'] == 'test' and row['subset'] == 'relevant'}
+    methods = {method: {**record, 'method': method} for method, record in methods.items()}
+    for method, record in methods.items():
+        selected = {row['id']: row['metrics'] for row in record['perQuery']
+                    if row['split'] == 'test' and row['subset'] == 'relevant'}
+        record['pairedTestDifferenceVsNativeStem'] = paired_interval(
+            selected, baseline_rows, seed + method,
+            policy['uncertainty']['pairedBootstrapReplicates'])
+    return {'status': 'predeclared exploratory supplement, outside the primary nine methods',
+            'profile': profile, 'methods': methods}
+
+
 def evaluate_language(args, policy, language):
     directory = args.data_dir / language
     manifest = json.loads((directory / 'manifest.json').read_text())
@@ -165,8 +180,8 @@ def evaluate_language(args, policy, language):
     if len({row['id'] for row in documents}) != len(documents):
         raise ValueError('Duplicate document IDs')
     result = {'dataManifest': manifest, 'levels': {}}
-    families = ['current', 'icu', 'full', 'prototype', 'exact']
-    if language not in ('zh', 'ja'):
+    families = ['prototype', 'exact'] if args.supplemental_only else ['current', 'icu', 'full', 'prototype', 'exact']
+    if not args.supplemental_only and language not in ('zh', 'ja'):
         families.insert(3, 'lean')
     analyzed, analysis_timing, query_tokens = {}, {}, {}
     # Maximal analyses are cached once and reused by both nested corpus levels.
@@ -178,6 +193,14 @@ def evaluate_language(args, policy, language):
         analyzed[family], analysis_timing[family] = path, timing
         query_tokens[family] = query_records(path, len(documents))
     result['analyzerProfiles'] = analysis_timing
+    filtered_queries = stopword_profile = lemma_path = lemma_queries = lemma_profile = None
+    if args.stopwords:
+        filtered_queries, stopword_profile = prepare_stopwords(
+            args, language, queries, query_tokens['prototype'], analysis_timing['prototype'])
+    if args.simplemma and 10000 in args.sizes:
+        lemma_path, lemma_queries, lemma_profile = prepare_lemma(
+            args, language, documents, queries, analyzed['exact'], query_tokens['exact'])
+        result['lemmaCoverage'] = lemma_profile
     extension = ensure_coverage_extension(args.cache_dir)
     for size in args.sizes:
         started = time.perf_counter()
@@ -185,6 +208,8 @@ def evaluate_language(args, policy, language):
         indexes = {}
         try:
             for family in families:
+                if args.supplemental_only and family == 'exact':
+                    continue
                 path, ids, timing = index(args, language, family, size, documents,
                                           analyzed.get(family), {'data': manifest['files'], 'policy': policy_hash})
                 db = sqlite3.connect(path)
@@ -197,6 +222,8 @@ def evaluate_language(args, policy, language):
                       ('lean-icu-snowball-or', 'icu' if language in ('zh', 'ja') else 'lean'),
                       ('prototype-stem-or', 'prototype'), ('prototype-stem-and', 'prototype'),
                       ('prototype-stem-msm60', 'prototype')]
+            if args.supplemental_only:
+                simple = [('prototype-stem-or', 'prototype')]
             stem_rankings = None
             depth = policy['ranking']['fusionInputDepth']
             for method, family in simple:
@@ -220,31 +247,70 @@ def evaluate_language(args, policy, language):
                 level['methods'][method] = report_method(method, queries, rankings, method_timing)
                 print(json.dumps({'language': language, 'size': size, 'method': method,
                                   **level['methods'][method]['splits']['test']['relevant']}), flush=True)
-            exact_db, ids, timing = indexes['exact']
-            row_order = {docid: rank for rank, docid in enumerate(ids)}
-            fused, tiered = [], []
-            query_started = time.perf_counter()
-            for i, query in enumerate(queries):
-                tokens = query_tokens['exact'][i]
-                is_phrase = quoted(query['text'])
-                exact_or = retrieve(exact_db, ids, expression(tokens, 'OR', is_phrase), depth)
-                exact_and = retrieve(exact_db, ids, expression(tokens, 'AND', is_phrase), depth)
-                exact_phrase = retrieve(exact_db, ids, expression(tokens, phrase=True), depth)
-                fused.append(fuse(stem_rankings[i], exact_or, policy['ranking']['rrfK'], row_order)[:100])
-                tiered.append(tiers(stem_rankings[i], exact_phrase, exact_and, row_order)[:100])
-            fused_timing = {'exactLaneIndex': timing, 'exactLaneAnalysis': analysis_timing['exact'],
-                            'jointAdditionalExactQueriesAndFusionSeconds': time.perf_counter() - query_started,
-                            'requiresStemLane': True}
-            for method, rankings in [('prototype-exact-stem-rrf', fused), ('prototype-exact-tier', tiered)]:
-                level['methods'][method] = report_method(method, queries, rankings, fused_timing)
-            baseline_rows = {row['id']: row['metrics'] for row in level['methods']['current-porter-or']['perQuery']
-                             if row['split'] == 'test' and row['subset'] == 'relevant'}
-            for method, record in level['methods'].items():
-                paired = {row['id']: row['metrics'] for row in record['perQuery']
-                          if row['split'] == 'test' and row['subset'] == 'relevant'}
-                record['pairedTestDifferenceVsBaseline'] = paired_interval(
-                    paired, baseline_rows, policy['seed'] + language + str(size) + method,
-                    policy['uncertainty']['pairedBootstrapReplicates'])
+            row_order = {docid: rank for rank, docid in enumerate(indexes['prototype'][1])}
+            if not args.supplemental_only:
+                exact_db, ids, timing = indexes['exact']
+                row_order = {docid: rank for rank, docid in enumerate(ids)}
+                fused, tiered = [], []
+                query_started = time.perf_counter()
+                for i, query in enumerate(queries):
+                    tokens = query_tokens['exact'][i]
+                    is_phrase = quoted(query['text'])
+                    exact_or = retrieve(exact_db, ids, expression(tokens, 'OR', is_phrase), depth)
+                    exact_and = retrieve(exact_db, ids, expression(tokens, 'AND', is_phrase), depth)
+                    exact_phrase = retrieve(exact_db, ids, expression(tokens, phrase=True), depth)
+                    fused.append(fuse(stem_rankings[i], exact_or, policy['ranking']['rrfK'], row_order)[:100])
+                    tiered.append(tiers(stem_rankings[i], exact_phrase, exact_and, row_order)[:100])
+                fused_timing = {'exactLaneIndex': timing, 'exactLaneAnalysis': analysis_timing['exact'],
+                                'jointAdditionalExactQueriesAndFusionSeconds': time.perf_counter() - query_started,
+                                'requiresStemLane': True}
+                for method, rankings in [('prototype-exact-stem-rrf', fused), ('prototype-exact-tier', tiered)]:
+                    level['methods'][method] = report_method(method, queries, rankings, fused_timing)
+            if args.stopwords or args.simplemma:
+                level['supplements'] = {}
+            if args.stopwords:
+                db, ids, _ = indexes['prototype']
+                records = {'prototype-stem-or-no-stop': level['methods']['prototype-stem-or']}
+                for method in ('prototype-query-stop-or', 'prototype-query-stop-msm60'):
+                    query_started, rankings = time.perf_counter(), []
+                    for query, tokens in zip(queries, filtered_queries, strict=True):
+                        phrase = quoted(query['text'])
+                        coverage = (math.ceil(0.6 * len(set(tokens))) if method.endswith('msm60') and not phrase else None)
+                        rankings.append(retrieve(db, ids, expression(tokens, phrase=phrase), 100, coverage))
+                    records[method] = report_method(method, queries, rankings,
+                        {'querySeconds': time.perf_counter() - query_started, 'reusesPrimaryStemIndex': True})
+                level['supplements']['stopwords'] = supplemental_results(
+                    records, level['methods']['prototype-stem-or'], policy,
+                    policy['seed'] + 'stopwords' + language + str(size), stopword_profile)
+            if args.simplemma and size == 10000 and lemma_path:
+                lemma_index, lemma_ids, lemma_timing = index(args, language, 'lemma', size,
+                    documents, lemma_path, {'data': manifest['files'], 'protocol': sha(PROTOCOL)})
+                with contextlib.closing(sqlite3.connect(lemma_index)) as lemma_db:
+                    query_started, rankings = time.perf_counter(), []
+                    for query, tokens in zip(queries, lemma_queries, strict=True):
+                        rankings.append(retrieve(lemma_db, lemma_ids,
+                            expression(tokens, phrase=quoted(query['text'])), depth))
+                    query_elapsed = time.perf_counter() - query_started
+                native = level['methods']['prototype-stem-or']
+                fused = [fuse(stem, lemma, policy['ranking']['rrfK'], row_order)[:100]
+                         for stem, lemma in zip(stem_rankings, rankings, strict=True)]
+                records = {'prototype-stem-or-no-lemma': native,
+                    'simplemma-lemma-or': report_method('simplemma-lemma-or', queries, rankings,
+                        {**lemma_timing, 'querySeconds': query_elapsed}),
+                    'prototype-stem-lemma-rrf': report_method('prototype-stem-lemma-rrf', queries, fused,
+                        {'reusesStemAndLemmaRankings': True, 'fusionInputDepth': depth})}
+                level['supplements']['lemmatization'] = supplemental_results(
+                    records, native, policy,
+                    policy['seed'] + 'lemma' + language + str(size), lemma_profile)
+            if not args.supplemental_only:
+                baseline_rows = {row['id']: row['metrics'] for row in level['methods']['current-porter-or']['perQuery']
+                                 if row['split'] == 'test' and row['subset'] == 'relevant'}
+                for method, record in level['methods'].items():
+                    paired = {row['id']: row['metrics'] for row in record['perQuery']
+                              if row['split'] == 'test' and row['subset'] == 'relevant'}
+                    record['pairedTestDifferenceVsBaseline'] = paired_interval(
+                        paired, baseline_rows, policy['seed'] + language + str(size) + method,
+                        policy['uncertainty']['pairedBootstrapReplicates'])
             level['wallSeconds'] = time.perf_counter() - started
             result['levels'][str(size)] = level
         finally:
@@ -260,9 +326,16 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--languages', nargs='+')
     parser.add_argument('--sizes', nargs='+', type=int, default=[10000, 100000])
+    parser.add_argument('--stopwords', type=Path)
+    parser.add_argument('--simplemma', action='store_true')
+    parser.add_argument('--supplemental-only', action='store_true')
     for option in ('icu4x', 'charabia-full', 'charabia-lean', 'prototype'):
-        parser.add_argument('--' + option, type=Path, required=True)
+        parser.add_argument('--' + option, type=Path, required=option == 'prototype')
     args = parser.parse_args()
+    if not args.supplemental_only and any(getattr(args, name) is None for name in ('icu4x', 'charabia_full', 'charabia_lean')):
+        parser.error('Primary evaluation requires --icu4x, --charabia-full and --charabia-lean')
+    if args.supplemental_only and not (args.stopwords or args.simplemma):
+        raise ValueError('Supplemental-only mode requires an explicitly enabled supplement')
     policy = json.loads((HERE / 'policy.json').read_text())
     amendment = json.loads(AMENDMENT.read_text())
     args.languages = args.languages or [language for language in policy['languages'] if language not in amendment['excludedPrimaryLanguages']]
@@ -281,7 +354,10 @@ def main():
               'integrityAmendment': amendment, 'amendmentSHA256': sha(AMENDMENT),
               'sourceHashes': {path.name: sha(path) for path in sorted([*HERE.glob('*.py'), HERE / 'match-count.c'])},
               'sqliteVersion': sqlite3.sqlite_version, 'requestedLanguages': args.languages,
-              'requestedSizes': args.sizes, 'languages': {}, 'complete': False}
+              'requestedSizes': args.sizes, 'languages': {}, 'complete': False,
+              'supplementalRequested': {'stopwords': bool(args.stopwords), 'simplemma': args.simplemma},
+              'supplementalOnly': args.supplemental_only,
+              'supplementalPolicySHA256': sha(PROTOCOL) if args.stopwords or args.simplemma else None}
     started = time.perf_counter()
     for language in args.languages:
         report['languages'][language] = evaluate_language(args, policy, language)

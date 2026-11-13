@@ -105,13 +105,13 @@ function refreshTriggers(db) {
 export function installPrototype(db, extension, analysisMode = "stem") {
   registerNative(db, extension);
   mode(analysisMode);
-  if (db.prepare("SELECT 1 FROM chunks WHERE rowid<=0 LIMIT 1").get()) {
-    throw new Error("Research generations require positive chunk rowids");
-  }
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='research_analysis_generation'").get()) {
     throw new Error("Research schema already installed; use the generation API");
   }
   db.transaction(() => {
+    if (db.prepare("SELECT 1 FROM chunks WHERE rowid<=0 LIMIT 1").get()) {
+      throw new Error("Research generations require positive chunk rowids");
+    }
     db.exec(`ALTER TABLE chunks ADD COLUMN research_language TEXT NOT NULL DEFAULT 'und';
       DROP TRIGGER chunks_ai; DROP TRIGGER chunks_ad; DROP TRIGGER chunks_au;
       DROP TABLE chunks_fts_vocab; DROP TABLE chunks_fts;

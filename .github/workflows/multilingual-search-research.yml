@@ -80,6 +80,37 @@ jobs:
         run: |
           node --import tsx evals/multilingual-search/integration/concurrency.mjs \
             "$MULTILINGUAL_EXTENSION" "$RUNNER_TEMP/multilingual-reports/concurrency.json"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Bounded Unicode stress, word-pair trace and shipping footprint
+        shell: bash
+        run: |
+          extension=so
+          if [ "$RUNNER_OS" = macOS ]; then extension=dylib; fi
+          python3 evals/multilingual-search/prototype/robust-input.py \
+            --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --output "$RUNNER_TEMP/multilingual-reports/robust-input.json"
+          python3 evals/multilingual-search/prototype/lexical-trace.py \
+            --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --korean-probe "$CARGO_TARGET_DIR/release/omnesis-korean-mode-probe" \
+            --output "$RUNNER_TEMP/multilingual-reports/lexical-trace.json"
+          python3 evals/multilingual-search/prototype/footprint.py \
+            --cli "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --core "$CARGO_TARGET_DIR/release/libomnesis_multilingual_core.$extension" \
+            --adapter "$MULTILINGUAL_EXTENSION" \
+            --output "$RUNNER_TEMP/multilingual-reports/footprint.json"
+          node --test evals/multilingual-search/integration/jsonl.test.mjs
+      - name: Compare raw Snowball implementations on pinned upstream vocabularies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python3 -m pip install snowballstemmer==3.1.1
+          python3 evals/multilingual-search/prototype/snowball-parity.py \
+            --probe "$CARGO_TARGET_DIR/release/omnesis-snowball-probe" \
+            --cache "$RUNNER_TEMP/snowball-vocab" \
+            --data-commit 019921c3a41c2b70063ee3feb215a00c8e594597 \
+            --output "$RUNNER_TEMP/multilingual-reports/snowball-parity.json"
       - name: Preserve measured results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -102,6 +133,7 @@ jobs:
     name: Independent held-out retrieval · 17 languages
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:public]')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -210,6 +242,18 @@ jobs:
             --official-detector "$RUNNER_TEMP/multilingual-detector/fastText-0.9.2/fasttext" \
             --cache-dir "$RUNNER_TEMP/multilingual-diagnostic-cache" \
             --split all --output "$RUNNER_TEMP/multilingual-diagnostic-reports/diagnostics.json"
+      - name: Annotation-only audit and candidate-universe controlled language lanes
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/diagnostics/audit.py \
+            --input "$RUNNER_TEMP/multilingual-diagnostic-reports/diagnostics.json" \
+            --corrected-output "$RUNNER_TEMP/multilingual-diagnostic-reports/annotation-audit.json" \
+            --fair-output "$RUNNER_TEMP/multilingual-diagnostic-reports/fair-lanes.json" \
+            --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --detector "$CARGO_TARGET_DIR/release/omnesis-fasttext-probe" \
+            --detector-model "$RUNNER_TEMP/multilingual-detector/lid.176.ftz" \
+            --official-detector "$RUNNER_TEMP/multilingual-detector/fastText-0.9.2/fasttext" \
+            --cache-dir "$RUNNER_TEMP/multilingual-diagnostic-cache"
       - name: Preserve aggregate metrics and detector provenance
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -234,6 +278,7 @@ jobs:
     name: Mixed-language encrypted operations · 10k / 100k / 250k
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:operations]')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -299,3 +344,109 @@ jobs:
             ~/.cargo/git
             ${{ runner.temp }}/multilingual-operational-target
           key: multilingual-operations-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+
+  supplemental-retrieval:
+    name: Frozen supplements · stopwords and dictionary word forms
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:supplemental]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/free-runner-disk
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Prepare pinned tools
+        shell: bash
+        run: |
+          python3 -m pip install snowballstemmer==3.1.1 simplemma==2.0.0
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup override set 1.100.0
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multilingual-target" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/multilingual-target
+          key: multilingual-${{ runner.os }}-rust-1.100.0-${{ hashFiles('evals/multilingual-search/prototype/Cargo.lock') }}
+      - name: Build fixed analyzer and default Lucene stopword export
+        shell: bash
+        run: |
+          cargo build --release --locked --manifest-path evals/multilingual-search/prototype/Cargo.toml
+          python3 evals/multilingual-search/lucene-probe/run-batch.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" --cache-dir "$RUNNER_TEMP/lucene-cache" \
+            --output-dir "$RUNNER_TEMP/lucene-export-reports" \
+            --export-stopwords "$RUNNER_TEMP/default-stopwords.json" --stopwords-only
+          python3 -m unittest discover -s evals/multilingual-search/extended-public -p 'test_*.py'
+      - name: Download and audit identical frozen public inputs
+        run: python3 evals/multilingual-search/extended-public/prepare.py --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Run separately frozen supplemental protocols
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/extended-public/run-matrix.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" \
+            --cache-dir "$RUNNER_TEMP/multilingual-cache" \
+            --output-dir "$RUNNER_TEMP/multilingual-supplement-reports" \
+            --prototype "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+            --workers 3 --supplemental-only --stopwords "$RUNNER_TEMP/default-stopwords.json" \
+            --simplemma --prune-successful-cache
+      - name: Preserve supplemental metrics and manifests
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-supplement-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-supplement-reports/*.json
+            ${{ runner.temp }}/multilingual-supplement-reports/*.log
+            ${{ runner.temp }}/multilingual-data/*/manifest.json
+            ${{ runner.temp }}/default-stopwords.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  lucene-reference:
+    name: Mature Lucene reference · identical 17-language pools
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[eval:reference]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/free-runner-disk
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Compile and test the actual graph-aware reference
+        shell: bash
+        run: |
+          classpath=$(python3 evals/multilingual-search/lucene-probe/prepare-batch.py --cache-dir "$RUNNER_TEMP/lucene-cache/jars")
+          LUCENE_TEST_CLASSPATH="$classpath" python3 -m unittest discover -s evals/multilingual-search/lucene-probe -p 'test_batch.py'
+      - name: Download and audit identical frozen public inputs
+        run: python3 evals/multilingual-search/extended-public/prepare.py --data-dir "$RUNNER_TEMP/multilingual-data"
+      - name: Run default language analyzers and BM25 reference
+        shell: bash
+        run: |
+          python3 evals/multilingual-search/lucene-probe/run-batch.py \
+            --data-dir "$RUNNER_TEMP/multilingual-data" --cache-dir "$RUNNER_TEMP/lucene-cache" \
+            --output-dir "$RUNNER_TEMP/multilingual-reference-reports" --workers 2
+      - name: Preserve reference metrics and manifests
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: multilingual-reference-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/multilingual-reference-reports/*.json
+            ${{ runner.temp }}/multilingual-data/*/manifest.json
+          if-no-files-found: warn
+          retention-days: 14

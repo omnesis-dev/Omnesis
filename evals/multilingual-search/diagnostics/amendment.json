@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "status": "Frozen before supplemental control outputs; declared after auditing the original results.",
+  "originalReportSha256": "9e67f33b174e15d702491dacc18bbb203b632e97ae64a5ade0599d232b108353",
+  "fixtureCanonicalSha256": "88c87f0555f91d5a40acf3d57e50921224dd9ce2e836b1afbca1d1012be6cbae",
+  "originalPolicySha256": "f82283d3370d7220344f8a4f963703932692a36b89cedc733a39f57ef050b5e7",
+  "originalDriverSha256": "2e22d7dcbb55387c62ab448d59a822a44ab46bc18fa38c06c69b11ea1af76383",
+  "originalCoreSha256": "ca83035af3facd87d0885fab506d994634388c1257fc4056f4e6d013e30350b6",
+  "originalAnalyzerFingerprintsSha256": "ddaa11263d309b57875b25f98d760d1e4dbe2013603d357a45818fc9335070c0",
+  "detectorModelSha256": "8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83",
+  "control": {
+    "name": "fair-lanes",
+    "reason": "Original physical lanes also restrict candidate languages. A supplemental control searches the same analyzed query union across every physical lane before reciprocal-rank fusion.",
+    "representations": ["exact", "stem"],
+    "routing": ["hard", "context-script", "fanout"],
+    "surfacePriorityModes": ["stem"],
+    "queryCompiler": "Reuse the global arm's union of analyzed terms for OR queries or its union of explicit phrases for quoted queries, without adding or removing terms. Search that identical expression in every physical lane.",
+    "rrfK": 60,
+    "depth": 100,
+    "candidateUniverse": "Equivalent before truncation for OR and supported phrase queries, with the original span-boundary sentinels. Per-lane top-100 truncation and rank fusion can change the returned top-100 universe.",
+    "limitation": "This does not isolate document-frequency statistics alone: partitioned mixed-document lengths, per-lane truncation, and rank fusion still differ from the global index. It is exploratory post-audit evidence."
+  },
+  "annotationCorrection": {
+    "overlay": "annotation-errata.json",
+    "overlaySha256": "9dc196cc3c997847dc1c6ced6121d51f88fca9d971e5ddf235ffa6a83c190110",
+    "operation": "Add only the three listed document IDs to compatible alternatives; never change required targets, query text, ranked IDs, or analysis policy.",
+    "report": "Retain authored and corrected aggregates separately and verify that required-target recall and MRR remain unchanged."
+  },
+  "noTuning": "Original fixtures, original twenty methods, numeric thresholds, detector, analyzer defaults, and required targets remain frozen."
+}

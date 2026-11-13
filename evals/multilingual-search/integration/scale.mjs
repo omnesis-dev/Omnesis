@@ -17,7 +17,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
-import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { createIndexDatabase, openIndexDb } from "../../../packages/gateway/src/indexer/db.js";
@@ -26,6 +25,7 @@ import { LexicalIndex } from "../../../packages/gateway/src/search/lexical-index
 import { lexicalIndexBytes } from "../../../packages/gateway/src/search/lexical-index-data.js";
 import { installPrototype, openPrototype, putChunk } from "./store.mjs";
 import { buildMemory, compileQuery, searchCompiled } from "./query.mjs";
+import { jsonlRecords } from "./jsonl.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -134,11 +134,8 @@ async function trial() {
   )
     throw new Error("Invalid trial bound");
   const documents = [];
-  for await (const line of createInterface({
-    input: createReadStream(values.corpus),
-    crlfDelay: Infinity,
-  })) {
-    if (line) documents.push(JSON.parse(line));
+  for await (const record of jsonlRecords(createReadStream(values.corpus))) {
+    documents.push(record);
     if (documents.length >= count) break;
   }
   assert.equal(documents.length, count, "Prepared corpus must contain requested document count");
@@ -351,10 +348,12 @@ async function main() {
           values.repeats,
         ]);
         trials.push(JSON.parse(readFileSync(output, "utf8")));
+        writeFileSync(values.output, JSON.stringify({ complete: false, trials }, null, 2) + "\n");
         process.stdout.write(`Completed ${method} at ${counts[i]} documents\n`);
       }
     }
     const report = {
+      complete: true,
       corpusSHA256: digest(values.corpus),
       queriesSHA256: digest(values.queries),
       node: process.version,

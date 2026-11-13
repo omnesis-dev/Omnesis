@@ -119,3 +119,46 @@ applies only when an external evaluator uses token-inspection output instead.
 - [Nori KoreanAnalyzer](https://lucene.apache.org/core/9_12_3/analysis/nori/org/apache/lucene/analysis/ko/KoreanAnalyzer.html)
 - [Maven Lucene metadata](https://repo.maven.apache.org/maven2/org/apache/lucene/lucene-core/maven-metadata.xml)
 - [Morfologik module dependency declarations](https://repo.maven.apache.org/maven2/org/apache/lucene/lucene-analysis-morfologik/9.12.3/lucene-analysis-morfologik-9.12.3.pom)
+
+## Matched public-corpus batch reference
+
+`LuceneBatch.java` builds one real FSDirectory per language and corpus level,
+then searches every selected topic using QueryBuilder's graph-aware SHOULD query
+(or a phrase for fully quoted input). Body and title are separate fields; title
+has boost 2. BM25 uses k1=1.2 and b=0.75. Ties use the same deterministic
+SHA-256 document ordering as the SQLite study. This reference retains default
+language stopwords, normalization and morphology; Swahili uses StandardAnalyzer.
+
+`reference-policy.json` freezes this supplemental reference separately from the
+primary nine SQLite methods. The prepared inputs are identical 17-language
+10k/100k judgment-augmented pools, with the same audited query selections. Run:
+
+```sh
+python3 evals/multilingual-search/lucene-probe/run-batch.py \
+  --data-dir /tmp/public-inputs --cache-dir /tmp/lucene-reference-cache \
+  --output-dir /tmp/lucene-reference-results --workers 2
+```
+
+Add `--baseline-dir /tmp/primary-results` for matched paired intervals, after
+verifying both runs use identical input files. Reports retain per-query IDs and
+metrics, not document or query text. Each owned scratch index is removed after
+its measurement. `test_batch.py` requires `LUCENE_TEST_CLASSPATH` from
+`prepare-batch.py` and exercises the actual Java index, phrases, stemming,
+stopword-only queries and deterministic ties.
+
+Lucene's per-field document statistics, compressed length norms, graph handling,
+stopwords and repeated-query-term semantics differ from the primary SQLite
+compiler. A title boost multiplies the saturated field score; SQLite column
+weights affect term frequency before saturation. This is a mature search-system
+reference, not an isolated tokenizer ablation or raw-score parity claim.
+
+`--export-stopwords PATH --stopwords-only` exports default lexical stopword sets
+without running retrieval. Missing APIs are explicitly unsupported; Korean's
+part-of-speech filtering is not represented by a lexical stopword list. The
+separately frozen SQLite stopword experiment uses these words only on queries,
+preserves quoted phrases, and falls back when every token would be removed.
+
+Long research jobs are selected with `[eval:reference]`, `[eval:supplemental]`,
+`[eval:public]`, or `[eval:operations]` in a branch push's commit message. Manual
+workflow dispatch runs all studies. Native and diagnostic contract checks still
+run on every research-branch push, alongside normal repository validation.

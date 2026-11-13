@@ -58,3 +58,7 @@ packages/gateway/src/brain/rhythm/__fixtures__/collision-sweep-parity.*.json
 
 # Frozen evaluation protocol: manifests identify this policy by exact file bytes.
 evals/multilingual-search/extended-public/policy.json
+evals/multilingual-search/extended-public/supplemental-policy.json
+evals/multilingual-search/lucene-probe/reference-policy.json
+evals/multilingual-search/diagnostics/amendment.json
+evals/multilingual-search/diagnostics/annotation-errata.json

@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createInterface } from "node:readline";
+import { jsonlRecords } from "./integration/jsonl.mjs";
 
 const segmenters = new Map();
-for await (const line of createInterface({ input: process.stdin })) {
-  const { text, language = "und" } = JSON.parse(line);
+for await (const { text, language = "und" } of jsonlRecords(process.stdin)) {
   let segmenter = segmenters.get(language);
   if (!segmenter) {
     segmenter = new Intl.Segmenter(language, { granularity: "word" });

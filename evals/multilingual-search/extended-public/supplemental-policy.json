@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "date": "2026-11-13",
+  "status": "Predeclared exploratory supplements, frozen before any held-out retrieval outputs. These do not modify the nine-method primary policy or its aggregate.",
+  "basePolicySHA256": "241976bc687be9716539efff7fa22666ad4f4cfeb46c8457ad84f1b1edac6589",
+  "stopwords": {
+    "enabledBy": "--stopwords FILE; default off",
+    "source": "Default lexical stopword sets exported from pinned Lucene 9.12.3 analyzers. Empty or unsupported sets remain explicitly labeled; POS-based stop filtering is outside this word-list ablation.",
+    "normalization": "Run every source stopword through the prototype exact analyzer for the configured language. Retain only entries yielding exactly one normalized surface token. Ignore empty or multi-token entries and report counts. Analyze queries again in stem mode and assert token texts/fingerprint equal the primary cached analysis.",
+    "filter": "For unquoted queries, remove a token only if its normalized SURFACE is in that language's normalized stopword set. Match surfaces, not stems. Keep all quoted phrases unchanged. If removing stopwords would empty a query, retain its original tokens and record the fallback.",
+    "methods": [
+      "prototype-stem-or-no-stop",
+      "prototype-query-stop-or",
+      "prototype-query-stop-msm60"
+    ],
+    "matching": "OR unique remaining stem terms; MSM requires ceil(0.6 * remaining unique stem terms). Exact lane and indexed documents remain unchanged. Reuse the same primary prototype stem FTS index at both corpus sizes.",
+    "report": "Separate from primary methods: source/protocol hashes, available/empty/unsupported language counts, per-query removed/would-remove/original/remaining token counts, quote/fallback counts, retrieval metrics and development-only calibration, paired uncertainty versus native stem OR. No stopword or query text in reports."
+  },
+  "lemmatization": {
+    "enabledBy": "--simplemma; default off",
+    "version": "simplemma==2.0.0",
+    "corpusSize": 10000,
+    "languages": ["ar", "de", "en", "es", "fa", "fi", "fr", "hi", "id", "ru", "sw"],
+    "unsupportedLanguages": ["bn", "ja", "ko", "te", "th", "zh"],
+    "analysis": "Use the prototype EXACT-token cache for the first 10,000 nested corpus documents and the identical selected queries. NFC each token, apply Simplemma 2.0.0 DefaultStrategy for the known language, then lowercase. Empty or whitespace-bearing lemma outputs fall back to the input token. No Snowball after lemmatization. One flat lemma per input position. Cache repeated word lookups.",
+    "methods": ["prototype-stem-or-no-lemma", "simplemma-lemma-or", "prototype-stem-lemma-rrf"],
+    "ranking": "Separate FTS5 lemma lane, content/title weights 1/2 and identical rowid/hash ties. OR unique lemma terms; explicitly quoted queries retain a phrase. Fuse stem and lemma ranks with fixed RRF k=60, input depth1000, output100; never add raw BM25 scores.",
+    "report": "Only the predeclared 11-language 10k subset is aggregated, separately from primary17. Preserve all judgments and queries, unsupported languages explicit. Per-language and matched-language macro quality/calibration and paired uncertainty versus native stem OR. Analysis/index/timing costs labeled as research costs."
+  },
+  "shared": {
+    "queries": "Exactly the original frozen development/test queries and corpora; no tuning, resampling, or selection on test scores.",
+    "uncertainty": "Same 1000 paired query bootstrap replicates and 95% unadjusted intervals as primary, comparing each supplement against native stem OR on the identical language/query/corpus subset.",
+    "privacy": "Commit metrics, public IDs, hashes and counts only. Text-bearing caches and stopword lists remain external."
+  }
+}

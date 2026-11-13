@@ -44,6 +44,11 @@ def main():
     args = parser.parse_args()
     if not 1000 <= args.count <= 1000000:
         parser.error('count must be between 1000 and 1000000')
+    repository = Path(__file__).resolve().parents[3]
+    args.output_dir = args.output_dir.resolve()
+    args.data_dir = args.data_dir.resolve()
+    if any(path.is_relative_to(repository) for path in (args.output_dir, args.data_dir)):
+        parser.error('Public workload text and prepared inputs must stay outside the checkout')
     args.output_dir.mkdir(parents=True, exist_ok=True)
     quota = math.ceil(args.count / len(args.languages))
     inputs, queries, selected = [], [], []

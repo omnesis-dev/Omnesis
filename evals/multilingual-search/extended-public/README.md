@@ -59,7 +59,7 @@ languages. No global claim of answerability or irrelevance follows from this tes
 
 ## Reproduce
 
-Use Python 3.11+, `snowballstemmer==3.1.1`, a C compiler and SQLite with FTS5/loadable
+Use Python 3.11+, `snowballstemmer==3.1.1`, a C compiler, SQLite development headers, and SQLite with FTS5/loadable
 extension support. Build the pinned ICU4X, full/lean Charabia and prototype probes
 from their neighboring directories. Do not put downloaded text or caches in Git.
 
@@ -122,3 +122,48 @@ process startup and are research measurements, not a production latency promise.
 Cached timings are marked and must not be summed as new elapsed work. SQLite and
 its FTS5 implementation are the offline Python build recorded in every report,
 not the gateway's encrypted SQLite/native adapter.
+
+## Optional predeclared supplements
+
+A separate [supplemental protocol](supplemental-policy.json), frozen before
+held-out outputs, keeps the original nine-method primary study unchanged.
+`--stopwords FILE` accepts the external Lucene 9.12.3 export with a top-level
+`version` and `languages`, each language carrying `words`, `status`, and
+`analyzer`. Query tokens are removed only when their normalized **surface** is a
+single-token normalized stopword. Stems are not used to decide removal. Quoted
+phrases stay intact; an otherwise empty query falls back to its original terms.
+The alternatives are native OR, query-stopword OR, and query-stopword MSM60 on
+the identical stem index. POS-based stop filtering is outside this word-list
+ablation. Reports include availability, normalization and per-query removal
+counts, without the stopword or query strings.
+
+`--simplemma` requires `simplemma==2.0.0` and adds a separate 10k dictionary-lemma
+lane for its 11 predeclared supported languages. It consumes the existing
+prototype exact-token cache, preserves one token per position, and leaves
+unsupported languages explicit. Compare native stem OR, lemma OR, and fixed
+RRF(stem, lemma). The optional lemma aggregate covers only those same 11
+languages and must not be compared to the 17-language primary macro as though
+the cohorts were identical.
+
+Both flags work with `evaluate.py` and `run-matrix.py`, before any successful
+cache pruning. The strict aggregator writes supplemental results separately
+as `summary-supplemental.json` alongside the primary `summary.json`.
+`--supplemental-only` instead computes only prototype stem/surface analyses,
+native OR and the requested supplements; it skips the other analyzer/ranking
+runs and produces a separate supplemental summary, without claiming a new
+primary nine-method result. Its reports cannot be mixed with primary reports.
+The shared frozen queries, judgment-augmented corpora, development-only
+calibration, and paired bootstrap policy all remain in force. No parameter is
+selected on held-out results.
+
+In `--supplemental-only` mode, only `--prototype` is required; the ICU/full/lean
+binary flags may be omitted. The supplemental matrix can therefore use one
+small native build without rebuilding the baseline analyzer packages.
+
+After both independent runs finish, `verify-baseline.py --primary-dir DIR
+--supplemental-dir DIR --output REPORT` checks the identical policy/amendment,
+SQLite version, complete document/query/pool hashes, native semantic fingerprint,
+and every query's native baseline metrics, top-result judgment and result count.
+Top scores must also agree within a small floating-point tolerance. This permits
+a separately rebuilt supplemental run to prove that its baseline reproduces the
+original primary run. It never changes either run's results.

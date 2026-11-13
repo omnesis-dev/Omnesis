@@ -84,8 +84,11 @@ It can collapse distinct Vietnamese, Yoruba, Turkish, or other words and is an
 experimental alternative, not a universally safe default. It does not apply to
 Thai, Indic, Khmer, or Myanmar scripts. The exact lane ignores lossy folding.
 
-Korean script selects Korean segmentation even inside a differently labeled
-document. Stemming other scripts requires a compatible language hint. A single
+ICU word spans whose detected dominant script is Hangul select Korean
+segmentation even inside a differently labeled document. Unspaced mixed-script
+identifiers can remain one ICU word, so a long Latin prefix can influence that
+dominant-script choice; routing is not an exhaustive per-codepoint script split.
+Stemming other scripts requires a compatible language hint. A single
 document-level hint cannot identify multiple languages sharing the Latin or
 Cyrillic script; callers must evaluate span hints, parallel lanes, and query
 fanout. Unsupported stemming languages retain normalized tokens.
@@ -214,3 +217,49 @@ Primary references:
 - <https://github.com/lindera/lindera>
 - <https://docs.rs/icu_segmenter/2.4.0/icu_segmenter/struct.WordSegmenter.html>
 - <https://github.com/Xuanwo/frostem>
+
+## Separate exploratory diagnostics
+
+These helpers do not modify the frozen analyzer or relevance fixtures:
+
+```sh
+python3 evals/multilingual-search/prototype/lexical-trace.py \
+  --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+  --korean-probe "$CARGO_TARGET_DIR/release/omnesis-korean-mode-probe" \
+  --output /path/outside-checkout/lexical-trace.json
+python3 evals/multilingual-search/prototype/robust-input.py \
+  --analyzer "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+  --output /path/outside-checkout/robust-input.json
+python3 evals/multilingual-search/prototype/footprint.py \
+  --cli "$CARGO_TARGET_DIR/release/omnesis-multilingual-prototype" \
+  --core "$CARGO_TARGET_DIR/release/libomnesis_multilingual_core.so" \
+  --adapter "$CARGO_TARGET_DIR/release/libomnesis_multilingual.so" \
+  --model /path/outside-checkout/optional-detector-model.bin \
+  --output /path/outside-checkout/footprint.json
+```
+
+Use `.dylib` for macOS libraries. Omit `--model` when no external detector model
+is deployed. Pass `--detector` to include its executable as well. Footprint totals count the provided CLI, core and adapter together,
+including duplicated embedded data, plus a separately reported optional model.
+A separate FTS-extension total excludes the diagnostic CLI.
+They measure disk bytes and deterministic per-file gzip level-6 bytes, exclude
+RAM and index storage, and do not strip or rewrite the provided artifacts.
+
+The robust-input diagnostic submits 140 synthetic cases twice in one process,
+with a bounded subprocess timeout. It checks valid original UTF-8 byte offsets,
+consecutive positions, deterministic responses, selected canonical Unicode
+equivalence, and long-word/combining-mark inputs. It is not an exhaustive fuzzer
+or a resident-memory measurement.
+
+The lexical trace explicitly labels two previously observed Korean/Greek misses
+and separate fresh word-pair controls. Its optional standalone Korean probe
+compares raw Lindera Normal/Decompose modes, including original positions,
+position lengths, and dictionary details. These traces do not claim a flattened
+multi-token alternative is a valid phrase graph. It reports both analysis lanes with their
+actual algorithm choices; shared-term checks are not retrieval-quality scores.
+A dictionary morphological analyzer can select different segmentation for a
+bare compound and its inflected form. A Snowball stemmer is a heuristic suffix
+algorithm, and related Greek singular/plural forms need not produce identical
+stems. Neither result can be fixed merely by supplying an already-correct
+language hint. See the [Greek Snowball algorithm](https://snowballstem.org/algorithms/greek/stemmer.html)
+and [Charabia's pinned Korean segmenter](https://github.com/meilisearch/charabia/blob/v0.10.0/charabia/src/segmenter/korean.rs).
