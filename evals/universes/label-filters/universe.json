@@ -1,6 +1,6 @@
 {
   "name": "label-filters",
-  "description": "An invented Gmail account whose messages, from two senders, carry a work label, a personal label, both or neither, for the filters that share or hide by label or by person. Every record carries the word zqfilter and a title and body of its own, so a test can state exactly which records a filter leaves.",
+  "description": "An invented Gmail account whose messages, from two senders, carry a work label, a personal label, both or neither, for the filters that share or hide by label or by person, and an invented Drive whose files sit in a tree of folders, in two folders at once or in none, for the filters that share or hide by folder. Every record carries the word zqfilter and a title and body of its own, so a test can state exactly which records a filter leaves.",
   "cast": "cast.json",
   "agentDemos": null,
   "devices": [
@@ -13,6 +13,11 @@
   "sources": [
     {
       "descriptorId": "gmail",
+      "accountIds": ["maya.reeves@example.org"],
+      "device": "laptop"
+    },
+    {
+      "descriptorId": "google-drive",
       "accountIds": ["maya.reeves@example.org"],
       "device": "laptop"
     }

@@ -3176,7 +3176,8 @@
         "packages/providers/immich/src/document-event-profile.test.ts",
         "packages/providers/immich/src/source.test.ts",
         "packages/gateway/src/access/filter-editor-reads.test.ts",
-        "packages/gateway/src/access/filter-sql.test.ts"
+        "packages/gateway/src/access/filter-sql.test.ts",
+        "packages/collector/src/e2e/mcp-source-filter-answer.e2e.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -13259,6 +13260,16 @@
         "packages/gateway/src/access/filter-readiness.test.ts"
       ],
       "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "The Gmail",
+      "paths": ["packages/collector/src/e2e/mcp-source-filter-answer.e2e.test.ts"],
+      "reason": "Prose in an invented test fixture, not a person."
+    },
+    {
+      "value": "Update Omnesis",
+      "paths": ["packages/collector/src/e2e/mcp-source-filter-editor.e2e.test.ts"],
+      "reason": "Product sentence the gateway writes, not a person."
     }
   ],
   "secretFixtures": [

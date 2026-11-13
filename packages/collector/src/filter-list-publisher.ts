@@ -48,6 +48,12 @@ export interface CommittedPage {
   cursor: SyncCursor;
   hasMore: boolean;
   wipeEpoch: number | undefined;
+  /**
+   * The source version the host runs. Every page of a sync carries it, a
+   * list page included: the gateway reads a page without one as written by
+   * a build before versions.
+   */
+  sourceVersion: number | undefined;
   /** Aborts when the source stops or its sync runs out of time. */
   signal: AbortSignal;
   /**
@@ -162,6 +168,7 @@ export class FilterListPublisher {
         hasMore: page.hasMore,
         cursor: page.cursor,
         wipeEpoch: page.wipeEpoch,
+        sourceVersion: page.sourceVersion,
         filterLists: wanted,
       });
       // A refused page, or a gateway that ignored the lists: the next offer

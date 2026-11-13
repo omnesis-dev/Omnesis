@@ -27,6 +27,7 @@ import {
   writeLevelCapabilities,
 } from "./store-level-writes.js";
 import {
+  FilterEntryRefusedError,
   getGrantCapabilities,
   getLevelCapabilities,
   normalizeGrantRules,
@@ -54,7 +55,11 @@ type ActiveGrant = NonNullable<ReturnType<typeof getActiveGrant>>;
 
 /** Thrown inside a level transaction to roll every member write back. */
 class LevelChangeRefusedError extends Error {
-  constructor(readonly code: AccessMutationError) {
+  constructor(
+    readonly code: AccessMutationError,
+    /** The owner's sentence for a refusal they can act on. */
+    readonly detail?: string,
+  ) {
     super(code);
   }
 }
@@ -410,6 +415,7 @@ function applyLevelRules(
   } catch (error) {
     throw new LevelChangeRefusedError(
       error instanceof StaleScopeFilterRevisionError ? "stale-revision" : "invalid-selection",
+      error instanceof FilterEntryRefusedError ? error.message : undefined,
     );
   }
   if (JSON.stringify(storedRuleShape(previous)) === JSON.stringify(rules)) return false;
@@ -647,7 +653,12 @@ function inLevelTransaction<T>(
     return db.transaction(body)();
   } catch (error) {
     if (error instanceof ScopePolicyEditError) return { ok: false, error: "invalid-selection" };
-    if (error instanceof LevelChangeRefusedError) return { ok: false, error: error.code };
+    if (error instanceof LevelChangeRefusedError)
+      return {
+        ok: false,
+        error: error.code,
+        ...(error.detail === undefined ? {} : { message: error.detail }),
+      };
     if (isLevelNameConflict(error)) return { ok: false, error: "level-name-taken" };
     throw error;
   }

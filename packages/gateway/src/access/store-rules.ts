@@ -3,8 +3,7 @@
 
 import * as z from "zod/v4";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
-import type { SourceFilter                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                } from "@omnesis/types";
-import { sourceTypeOf, type FilterRef                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                } from "@omnesis/types";
+import { sourceTypeOf, type FilterRef, type SourceFilter } from "@omnesis/types";
 import { isScopeQuarantined } from "./scope-quarantine.js";
 
 import { filterFieldsFor } from "./filter-fields.js";
@@ -444,6 +443,13 @@ export function parseStringArray(json: string): string[] | null {
 }
 
 /**
+ * A filter entry refused for a reason the owner can act on. Its message is
+ * the sentence the editor shows for the field, and the level routes return
+ * it with the refusal.
+ */
+export class FilterEntryRefusedError extends Error {}
+
+/**
  * Refuse a new filter entry on a field the account cannot filter on yet: its
  * records were not all read by a build that writes the field, a host must be
  * updated, or the field's list has not arrived. An entry the owner already
@@ -468,9 +474,9 @@ function assertFilterEntriesReady(
   for (const ref of fresh) {
     const path = ref.capability === "person" ? FILTER_PEOPLE_FIELD : ref.field;
     const field = readiness?.fields.find((candidate) => candidate.field === path);
-    if (!field) throw new Error("This source does not support that filter.");
+    if (!field) throw new FilterEntryRefusedError("This source does not support that filter.");
     if (field.state.status === "ready") continue;
-    throw new Error(
+    throw new FilterEntryRefusedError(
       filterFieldStateText(field.state, {
         sourceName: filterSourceName(db, sourceId, sourceTypeOf(sourceId)),
         noun: field.noun,

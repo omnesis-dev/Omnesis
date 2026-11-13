@@ -593,7 +593,7 @@ export function mountOAuthAuthorizationRoutes(
         ...c.req.valid("json"),
         actorTokenId: c.get("auth").tokenId!,
       });
-      if (!result.ok) return c.json({ error: result.error }, 409);
+      if (!result.ok) return c.json(accessRefusal(result), 409);
       log.info(`Access level ${result.value.id} created`);
       return c.json({ level: result.value }, 201);
     },
@@ -612,7 +612,7 @@ export function mountOAuthAuthorizationRoutes(
         actorTokenId: c.get("auth").tokenId!,
       });
       if (!result.ok) {
-        return c.json({ error: result.error }, result.error === "not-found" ? 404 : 409);
+        return c.json(accessRefusal(result), result.error === "not-found" ? 404 : 409);
       }
       log.info(
         `Access level ${levelId.data} updated to revision ${result.value.revision} for ${result.value.connectionCount} connections`,
@@ -777,6 +777,17 @@ export function mountOAuthAuthorizationRoutes(
       });
     },
   );
+}
+
+/** A refused access change: its code, and the owner's sentence when it carries one. */
+function accessRefusal(result: { error: string; message?: string }): {
+  error: string;
+  message?: string;
+} {
+  return {
+    error: result.error,
+    ...(result.message === undefined ? {} : { message: result.message }),
+  };
 }
 
 /** An API caller names JSON; a browser navigating from the consent page does not. */

@@ -1,192 +1,210 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+/**
+ * Chat and person filters on WhatsApp and iMessage, through real MCP Direct
+ * and Answer connections and a spawned gateway.
+ *
+ * The `chat-filters` universe gives both sources the same three chats: a
+ * one-to-one chat with Maya, a group in which Jamie is a member who never
+ * writes, and a group with a member the source cannot identify (a WhatsApp
+ * member known only by a LID; an iMessage sender with no number or
+ * address). WhatsApp runs the real provider over a fake server; iMessage is
+ * the fixture twin. Each source writes the chat's id on every day of a
+ * conversation and publishes the list of its chats with their members; its
+ * person filter counts a chat's listed members as involved in every day of
+ * it. Nothing is pushed or written by hand.
+ *
+ * Asserted for both sources, through Direct (search, fetch by id) and Answer:
+ *   - a chat filter shares or hides exactly the days of that chat;
+ *   - a person filter catches a chat through its member list: the silent
+ *     member's group is hidden by "hide Jamie" and shared by "share Jamie"
+ *     (on iMessage no day of it names Jamie; WhatsApp names every member of
+ *     a group on each of its days), and a member who joins later is caught
+ *     on days stored before they joined;
+ *   - a chat whose members are not all known, with no match, is hidden under
+ *     a person filter, whichever its action, while a member it does list
+ *     still matches it; a day that itself names someone the source cannot
+ *     identify is unknown whatever the match; the editor counts those days
+ *     as ones it cannot match;
+ *   - a person typed with spaces and brackets matches the number the source
+ *     stored, and a person picked from the editor's list matches what the
+ *     source declared;
+ *   - a member who joins or leaves a group changes what a saved person filter
+ *     reads at the next sync, with no conversation sent again; a day that
+ *     named the member who left keeps naming them.
+ *
+ * The live WhatsApp controller and the iMessage roster are reached through
+ * dynamic imports: a static one would load the synth packages, and cache the
+ * active universe, before the harness sets `OMNESIS_SYNTH_UNIVERSE`.
+ */
+
 import "./synth-env.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { SourceId } from "@omnesis/core";
-import { whatsappPersonIdentifiers } from "../../../providers/whatsapp/src/normalizer.js";
-import { whatsappScopeMembership } from "../../../providers/whatsapp/src/scope-membership.js";
-import { imessageScopeMembership } from "../../../providers/apple/src/imessage-scope-membership.js";
-import { portalJson } from "./mcp-oauth-helper.js";
-import { SyntheticE2EHarness } from "./synth-harness.js";
 import { startScopeScriptedAgent, type ScopeScriptedAgent } from "./scope-scripted-agent.js";
-import { pushScopeUpdates } from "./source-scope-fixtures.js";
-import { closeScoped } from "./source-scope-external-helpers.js";
 import {
-  createFilterAccount,
-  expectAnswerBoundary,
-  expectDirectBoundary,
-  expectFilterBoundary,
-  filterPolicy,
   closeFilterContext,
-  nextDirect,
-  openFilterConnection,
+  expectFilterBoundary,
+  filterEditor,
+  filterOptions,
   openFilterContext,
   pickPerson,
-  pushFilterRecords,
-  readyFilterAccounts,
-  saveFilters,
-  type FilterAccount,
-  type FilterCapability,
+  readFilterCorpus,
+  startFilterHarness,
+  typedIdentifier,
+  typedPerson,
+  type FilterAccess,
   type FilterContext,
   type FilterCorpus,
-  type FilterRecordInput,
 } from "./source-filter-corpus.js";
-import type { ScopeRef, SourceScopeConversationUpdate } from "@omnesis/types";
+import type { SyntheticE2EHarness } from "./synth-harness.js";
+import type { FilterRef } from "@omnesis/types";
 
-const CAPABILITIES = ["direct", "answer"] as const;
+const WHATSAPP = "whatsapp-messages:+12025550101";
+const IMESSAGE = "apple-imessage:sam.rivera@icloud.example";
+const ACCESSES: FilterAccess[] = ["direct", "answer"];
+
+/** A WhatsApp address: a person's by their number, a group's by its id. */
+const personJid = (phone: string) => `${phone.slice(1)}@s.whatsapp.net`;
+const groupJid = (id: string) => `${id}@g.us`;
+const WA_DIRECT = personJid("+12025550123");
+const WA_CREW = groupJid("120000000000000001");
+const WA_PARTIAL = groupJid("120000000000000002");
+
+interface ChatSource {
+  sourceId: string;
+  field: string;
+  chats: { direct: string; crew: string; partial: string };
+  /** Each day of a conversation, by external id: its key and a sentence only it holds. */
+  days: Record<string, [string, string]>;
+  /**
+   * Whether a group's day names every member of the group as it stood that
+   * day, or only the people who wrote in it.
+   */
+  daysNameRoster: boolean;
+}
+
+const SOURCES: Record<"whatsapp" | "imessage", ChatSource> = {
+  whatsapp: {
+    sourceId: WHATSAPP,
+    field: "extra.chatJid",
+    chats: {
+      direct: WA_DIRECT,
+      crew: WA_CREW,
+      partial: WA_PARTIAL,
+    },
+    days: {
+      [`${WA_DIRECT}:2026-03-08`]: ["direct", "Are you still free for the trail run on Saturday?"],
+      [`${WA_CREW}:2026-03-08`]: ["crew-1", "The rehearsal room is booked for Thursday evening."],
+      [`${WA_CREW}:2026-03-09`]: ["crew-2", "Doors open at six, bring the cables."],
+      [`${WA_PARTIAL}:2026-03-08`]: ["partial", "The street cleaning moved to Monday morning."],
+    },
+    daysNameRoster: true,
+  },
+  imessage: {
+    sourceId: IMESSAGE,
+    field: "extra.chatIdentifier",
+    chats: {
+      direct: "+12025550123",
+      crew: "chat100000000000000001",
+      partial: "chat100000000000000002",
+    },
+    days: {
+      "+12025550123:2026-03-08": [
+        "direct",
+        "Could you send the marathon entry form when you have a minute?",
+      ],
+      "chat100000000000000001:2026-03-08": [
+        "crew-1",
+        "Saturday start is at the north car park, seven sharp.",
+      ],
+      "chat100000000000000001:2026-03-09": ["crew-2", "I can drive two people."],
+      "chat100000000000000002:2026-03-08": ["partial", "The bin collection day changes next week."],
+    },
+    daysNameRoster: false,
+  },
+};
+
 const MAYA = "+12025550123";
-const JAMIE = "+12025550145";
-const DAVID = "+12025550167";
-const jid = (phone: string) => `${phone.slice(1)}@s.whatsapp.net`;
-const JAMIE_LID = "224466880011";
-const STRANGER_LID = "335577990022";
-const GROUP_ALL = "120363000000000001@g.us";
-const GROUP_REST = "120363000000000002@g.us";
-const JAMIE_EMAIL = "Jamie.Lopez@Example.org";
-const IMESSAGE_GROUP = "chat100200300400";
+const JAMIE = "+12025550142";
+const DAVID = "+12025550177";
+const CREW = ["crew-1", "crew-2"];
 
-const person = (typed: string, type: "phone" | "email" = "phone"): ScopeRef => ({
-  kind: "participant",
-  label: typed,
-  identifiers: [{ type, value: typed }],
-});
-const conversationDay = (key: string, conversationId: string): FilterRecordInput => ({
-  key,
-  documentType: "conversation",
-  metadata: { extra: { conversationId, chatId: conversationId, chatName: `Invented ${key}` } },
-});
-
-/**
- * Each source's membership is built by the provider's own code from native
- * addresses, forwarded on the wire a collector uses, and read back over MCP
- * through a filter saved the way an owner types it. Nothing in between is
- * spelled by the test, so a disagreement about how a number or an address is
- * written anywhere on that path withholds or shares the wrong conversation.
- */
-describe("conversation and person filters over MCP, from native addresses to typed filters", () => {
+describe("chat and person filters over MCP, from chat lists to what an agent reads", () => {
   let harness: SyntheticE2EHarness;
   let model: ScopeScriptedAgent;
-  let whatsapp: FilterAccount;
-  let whatsappRecords: FilterCorpus;
-  let imessage: FilterAccount;
-  let imessageRecords: FilterCorpus;
   let context: FilterContext;
+  const corpora = new Map<string, FilterCorpus>();
+  /** The document count each completed sync reported, per source, in order. */
+  const synced: Record<string, number[]> = { [WHATSAPP]: [], [IMESSAGE]: [] };
+  const failures: string[] = [];
+  let jamie: FilterRef;
+  let david: FilterRef;
+
+  const chat = (source: ChatSource, id: string): FilterRef => ({
+    capability: "membership",
+    field: source.field,
+    id,
+  });
+  const sync = (sourceId: string) => harness.triggerSyncAndWait(sourceId, 60_000);
+
+  async function whatsapp() {
+    const mod = await import("@omnesis/provider-whatsapp-synth");
+    const controller = mod.getWhatsAppWrapsRealController(WHATSAPP);
+    if (!controller) throw new Error(`no wraps-real controller registered for ${WHATSAPP}`);
+    return controller;
+  }
+  async function imessageRoster() {
+    const mod = await import("@omnesis/providers-synth-common");
+    const roster = mod.getChatRoster(IMESSAGE);
+    if (!roster) throw new Error(`no chat roster registered for ${IMESSAGE}`);
+    return roster;
+  }
 
   beforeAll(async () => {
     model = await startScopeScriptedAgent();
-    harness = new SyntheticE2EHarness({
-      gatewayMode: "synthetic-experimental",
-      universe: "e2e-minimal",
-      extraInference: {
-        backends: { filterChats: { type: "http", url: model.url } },
-        assignments: {
-          agent: `filterChats/${model.modelId}`,
-          "privacy-reviewer": `filterChats/${model.modelId}`,
-        },
-      },
-    });
+    harness = startFilterHarness("chat-filters", model);
     await harness.start();
-
-    whatsapp = await createFilterAccount(harness, "whatsapp-messages", "12025550199");
-    whatsappRecords = await pushFilterRecords(harness, whatsapp, [
-      {
-        ...conversationDay("maya", jid(MAYA)),
-        metadata: {
-          ...conversationDay("maya", jid(MAYA)).metadata,
-          people: [
-            {
-              role: "participant",
-              name: "Maya Reeves",
-              identifiers: whatsappPersonIdentifiers(
-                jid(MAYA),
-                SourceId(whatsapp.sourceId),
-                new Map(),
-                new Map(),
-              ),
-            },
-          ],
-        },
-      },
-      { key: "maya-photo", documentType: "attachment", attachmentOf: "maya" },
-      conversationDay("jamie", jid(JAMIE)),
-      conversationDay("group-all-monday", GROUP_ALL),
-      conversationDay("group-all-tuesday", GROUP_ALL),
-      { key: "group-all-file", documentType: "attachment", attachmentOf: "group-all-tuesday" },
-      conversationDay("group-rest", GROUP_REST),
-      conversationDay("stranger", `${STRANGER_LID}@lid`),
-      conversationDay("no-roster", "120363000000000003@g.us"),
-      { key: "no-conversation", documentType: "conversation" },
-    ]);
-    const lidPhoneMap = new Map([[JAMIE_LID, JAMIE]]);
-    const membership = (
-      chatJid: string,
-      participants: string[] | undefined,
-      senders: string[],
-    ): SourceScopeConversationUpdate =>
-      whatsappScopeMembership({
-        chatJid,
-        chat: {
-          jid: chatJid,
-          name: "Invented chat",
-          isGroup: chatJid.endsWith("@g.us"),
-          ...(participants ? { participants } : {}),
-        },
-        sourceId: SourceId(whatsapp.sourceId),
-        contacts: new Map(),
-        lidPhoneMap,
-        senders,
-        authoritativeRoster: participants !== undefined,
-        contested: () => false,
-        revision: { epoch: "invented-whatsapp", sequence: 1 },
-        observedAt: "2026-01-05T00:00:00.000Z",
-      });
-    await pushScopeUpdates(harness, whatsapp, {
-      conversations: [
-        membership(jid(MAYA), undefined, [`${MAYA.slice(1)}:7@s.whatsapp.net`]),
-        membership(jid(JAMIE), undefined, []),
-        // Maya never speaks in the group; Jamie is known there only by an
-        // opaque id the source has mapped to a phone number.
-        membership(GROUP_ALL, [jid(MAYA), `${JAMIE_LID}@lid`, jid(DAVID)], [jid(DAVID)]),
-        membership(GROUP_REST, [`${JAMIE_LID}@lid`, jid(DAVID)], []),
-        membership(`${STRANGER_LID}@lid`, undefined, [`${STRANGER_LID}@lid`]),
-      ],
+    harness.onStatusChange((change) => {
+      const sourceId = String(change.sourceId);
+      if (!(sourceId in synced)) return;
+      if (change.event === "sync.completed")
+        synced[sourceId]!.push(change.status.lastSyncStats?.documents ?? -1);
+      if (change.event === "sync.error")
+        failures.push(`${sourceId}: ${change.status.lastError ?? "unknown error"}`);
     });
-
-    imessage = await createFilterAccount(harness, "apple-imessage", "owner@example.org");
-    imessageRecords = await pushFilterRecords(harness, imessage, [
-      conversationDay("maya", MAYA),
-      { key: "maya-photo", documentType: "attachment", attachmentOf: "maya" },
-      conversationDay("jamie", JAMIE_EMAIL),
-      conversationDay("group", IMESSAGE_GROUP),
-      conversationDay("david", DAVID),
-      conversationDay("short-code", "262966"),
-    ]);
-    const chat = (chatIdentifier: string, participantHandles: string[]) =>
-      imessageScopeMembership(
-        {
-          chatIdentifier,
-          displayName: null,
-          isGroup: participantHandles.length > 1,
-          service: "iMessage",
-          participantHandles,
-        },
-        SourceId(imessage.sourceId),
-        [],
-        { epoch: "invented-imessage", sequence: 1, observedAt: "2026-01-05T00:00:00.000Z" },
+    // The real provider fetches every group's whole roster once its history
+    // is sealed; the list is published once it has.
+    const store = (await whatsapp()).provider.getStore();
+    const deadline = Date.now() + 30_000;
+    while (!(
+      store.getChat(SOURCES.whatsapp.chats.crew)?.rosterComplete &&
+      store.getChat(SOURCES.whatsapp.chats.partial)?.rosterComplete
+    )) {
+      if (Date.now() > deadline) throw new Error("WhatsApp group rosters never arrived");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    await sync(WHATSAPP);
+    await sync(IMESSAGE);
+    // A second cycle, so a list first published before the rosters arrived
+    // has been replaced by the settled one.
+    await sync(WHATSAPP);
+    for (const source of Object.values(SOURCES))
+      corpora.set(
+        source.sourceId,
+        readFilterCorpus(harness, source.sourceId, {
+          describe: (row) => {
+            const day = source.days[row.external_id];
+            return day ? { key: day[0], body: day[1] } : null;
+          },
+        }),
       );
-    await pushScopeUpdates(harness, imessage, {
-      conversations: [
-        chat(MAYA, [MAYA]),
-        chat(JAMIE_EMAIL, [JAMIE_EMAIL]),
-        chat(IMESSAGE_GROUP, ["+1 (202) 555-0123", JAMIE_EMAIL.toLowerCase()]),
-        chat(DAVID, [DAVID]),
-        chat("262966", ["262966"]),
-      ],
-    });
-    await readyFilterAccounts(harness, [whatsapp, imessage]);
     context = await openFilterContext(harness, model);
-  }, 240_000);
+    jamie = await typedPerson(harness, context.portal, "Jamie Lopez", [
+      ["phone", "+1 (202) 555-0142"],
+    ]);
+    david = await typedPerson(harness, context.portal, "David", [["phone", "001 202 555 0177"]]);
+  }, 300_000);
 
   afterAll(async () => {
     await closeFilterContext(context);
@@ -194,252 +212,156 @@ describe("conversation and person filters over MCP, from native addresses to typ
     await model?.close();
   }, 30_000);
 
-  const check = (
-    account: () => FilterAccount,
-    corpus: () => FilterCorpus,
-    capability: FilterCapability,
-    action: "share" | "hide",
-    match: ScopeRef[],
-    shared: string[],
-  ) => expectFilterBoundary(context, account(), corpus(), capability, action, match, shared);
-
-  describe.each(CAPABILITIES)("WhatsApp, %s", (capability) => {
-    const run = (action: "share" | "hide", match: ScopeRef[], shared: string[]) =>
-      check(
-        () => whatsapp,
-        () => whatsappRecords,
-        capability,
-        action,
-        match,
-        shared,
+  test("both sources hold the four days of the three chats", () => {
+    expect(failures).toEqual([]);
+    for (const source of Object.values(SOURCES))
+      expect([...corpora.get(source.sourceId)!.records.keys()].sort()).toEqual(
+        ["crew-1", "crew-2", "direct", "partial"].sort(),
       );
-
-    test("share only a person typed with spaces and brackets: their chat and every group they are in", async () => {
-      await run(
-        "share",
-        [person("+1 (202) 555-0123")],
-        ["maya", "maya-photo", "group-all-monday", "group-all-tuesday", "group-all-file"],
-      );
-    }, 420_000);
-
-    test("hide a person typed with an international call prefix: nothing they are part of remains", async () => {
-      await run("hide", [person("0012025550123")], ["jamie", "group-rest"]);
-    }, 420_000);
-
-    test("a member known by an opaque id is matched by the phone number the source mapped", async () => {
-      await run(
-        "share",
-        [person("+1 202-555-0145")],
-        ["jamie", "group-all-monday", "group-all-tuesday", "group-all-file", "group-rest"],
-      );
-      await run("hide", [person("+1.202.555.0145")], ["maya", "maya-photo"]);
-    }, 420_000);
-
-    test("a person picked from the list carries the number the source declared, and counts what it governs", async () => {
-      const picked = await pickPerson(harness, nextDirect(context), whatsapp, "maya", MAYA);
-      expect(picked.count).toBe(5);
-      await run(
-        "share",
-        [picked.ref],
-        ["maya", "maya-photo", "group-all-monday", "group-all-tuesday", "group-all-file"],
-      );
-      await run("hide", [picked.ref], ["jamie", "group-rest"]);
-    }, 420_000);
-
-    test("share only one group conversation, by its native id", async () => {
-      await run(
-        "share",
-        [{ kind: "conversation", id: GROUP_ALL }],
-        ["group-all-monday", "group-all-tuesday", "group-all-file"],
-      );
-    }, 420_000);
-
-    test("hide one group conversation: conversations with unknown members stay readable, a record with no conversation does not", async () => {
-      await run(
-        "hide",
-        [{ kind: "conversation", id: GROUP_ALL }],
-        ["maya", "maya-photo", "jamie", "group-rest", "stranger", "no-roster"],
-      );
-    }, 420_000);
-
-    test("a conversation and a person together share their union, and need both facts known", async () => {
-      await run(
-        "share",
-        [{ kind: "conversation", id: GROUP_REST }, person(MAYA)],
-        [
-          "maya",
-          "maya-photo",
-          "group-all-monday",
-          "group-all-tuesday",
-          "group-all-file",
-          "group-rest",
-        ],
-      );
-      await run("hide", [{ kind: "conversation", id: GROUP_REST }, person(MAYA)], ["jamie"]);
-    }, 420_000);
-
-    test("a number nobody has shares nothing and hides nothing that is known", async () => {
-      await run("share", [person("+12025550188")], []);
-      await run(
-        "hide",
-        [person("+12025550188")],
-        [
-          "maya",
-          "maya-photo",
-          "jamie",
-          "group-all-monday",
-          "group-all-tuesday",
-          "group-all-file",
-          "group-rest",
-        ],
-      );
-    }, 420_000);
   });
 
-  describe.each(CAPABILITIES)("iMessage, %s", (capability) => {
-    const run = (action: "share" | "hide", match: ScopeRef[], shared: string[]) =>
-      check(
-        () => imessage,
-        () => imessageRecords,
-        capability,
-        action,
-        match,
-        shared,
-      );
-
-    test("a phone handle is matched however the number was typed", async () => {
-      await run("share", [person("+1 202 555 0123")], ["maya", "maya-photo", "group"]);
-      await run("hide", [person("001 (202) 555-0123")], ["jamie", "david"]);
-    }, 420_000);
-
-    test("an email handle is matched whatever its capitals", async () => {
-      await run("share", [person("JAMIE.LOPEZ@example.org", "email")], ["jamie", "group"]);
-      await run(
-        "hide",
-        [person("Jamie Lopez <jamie.lopez@EXAMPLE.org>", "email")],
-        ["maya", "maya-photo", "david"],
-      );
-    }, 420_000);
-
-    test("one person saved with both a number and an address is matched by either", async () => {
-      const both: ScopeRef = {
-        kind: "participant",
-        label: "Invented contact with two handles",
-        identifiers: [
-          { type: "phone", value: "+1 (202) 555-0167" },
-          { type: "email", value: JAMIE_EMAIL },
-        ],
-      };
-      await run("share", [both], ["jamie", "group", "david"]);
-      await run("hide", [both], ["maya", "maya-photo"]);
-    }, 420_000);
+  test("a typed number is read into the spelling the sources store, and a number without a country code is refused", async () => {
+    expect(jamie).toEqual({
+      capability: "person",
+      label: "Jamie Lopez",
+      identifiers: [{ type: "phone", value: JAMIE }],
+    });
+    expect(david).toMatchObject({ identifiers: [{ type: "phone", value: DAVID }] });
+    expect(await typedIdentifier(harness, context.portal, "phone", "202 555 0142")).toEqual({
+      error: expect.stringMatching(/country code/),
+    });
   });
 
-  test("a number typed without a country code is refused when the filter is saved, never stored as a filter that matches nothing", async () => {
-    const client = nextDirect(context);
-    const kept = [filterPolicy(whatsapp, "direct", "hide", [person(MAYA)])];
-    await saveFilters(harness, client, [{ capability: "direct", policies: kept }]);
-    for (const typed of ["12025550123", "(202) 555-0123", jid(MAYA), "+44 (0)7700 900123"]) {
-      await expect(
-        saveFilters(harness, client, [
-          {
-            capability: "direct",
-            policies: [filterPolicy(whatsapp, "direct", "hide", [person(typed)])],
-          },
-        ]),
-        typed,
-      ).rejects.toThrow(/HTTP 400/);
+  for (const [name, source] of Object.entries(SOURCES)) {
+    test(`${name}: the editor offers chats and people, and counts the days a person filter cannot match`, async () => {
+      const editor = await filterEditor(harness, context.portal, source.sourceId);
+      expect(editor).toMatchObject({ profile: "declared", showDeviceLevel: false });
+      const people = editor.fields.find((field) => field.field === "$people");
+      expect(people).toMatchObject({
+        capability: "person",
+        picker: "search",
+        state: { status: "ready" },
+        // The group with a member the source cannot name.
+        counts: {
+          status: "ready",
+          tooOld: 0,
+          unmatched: 1,
+          unmatchedText: "1 record can't be matched to a person and stays hidden.",
+        },
+      });
+      const chats = editor.fields.find((field) => field.field === source.field);
+      expect(chats).toMatchObject({
+        capability: "membership",
+        state: { status: "ready" },
+        counts: { status: "ready", tooOld: 0, unmatched: 0 },
+      });
+      const options = await filterOptions(harness, context.portal, source.sourceId, {
+        field: source.field,
+      });
+      expect(
+        Object.fromEntries(
+          options.items.map((item) => [(item.ref as { id: string }).id, item.count]),
+        ),
+      ).toEqual({ [source.chats.direct]: 1, [source.chats.crew]: 2, [source.chats.partial]: 1 });
+    });
+
+    for (const access of ACCESSES) {
+      const corpus = () => corpora.get(source.sourceId)!;
+
+      test(`${name} ${access}: share only one group — its days, nothing else`, async () => {
+        await expectFilterBoundary(
+          context,
+          corpus(),
+          access,
+          "share",
+          [chat(source, source.chats.crew)],
+          CREW,
+        );
+      });
+
+      test(`${name} ${access}: hide one group — every other chat stays`, async () => {
+        await expectFilterBoundary(
+          context,
+          corpus(),
+          access,
+          "hide",
+          [chat(source, source.chats.crew)],
+          ["direct", "partial"],
+        );
+      });
+
+      test(`${name} ${access}: hide a member who never writes — their group goes through its member list, the chat with an unknown member goes too`, async () => {
+        await expectFilterBoundary(context, corpus(), access, "hide", [jamie], ["direct"]);
+      });
+
+      test(`${name} ${access}: share only a member who never writes — their group, and not the chat whose members are not all known`, async () => {
+        await expectFilterBoundary(context, corpus(), access, "share", [jamie], CREW);
+      });
+
+      test(`${name} ${access}: share a person picked from the editor — every chat she is in, unless the day itself names someone the source cannot identify`, async () => {
+        const maya = await pickPerson(harness, context.portal, source.sourceId, "Maya", MAYA);
+        // A member only the list cannot name leaves her match standing; a
+        // person named on the day itself whom the source cannot identify
+        // makes the day unknown, whatever else it names.
+        await expectFilterBoundary(
+          context,
+          corpus(),
+          access,
+          "share",
+          [maya.ref],
+          source.daysNameRoster ? ["direct", ...CREW] : ["direct", ...CREW, "partial"],
+        );
+      });
+
+      test(`${name} ${access}: a chat and a person together share their union`, async () => {
+        await expectFilterBoundary(
+          context,
+          corpus(),
+          access,
+          "share",
+          [chat(source, source.chats.direct), jamie],
+          ["direct", ...CREW],
+        );
+      });
     }
-    // A refused save leaves the filter that was already enforced.
-    await expectDirectBoundary(harness, client, whatsapp, whatsappRecords, ["jamie", "group-rest"]);
-  }, 420_000);
+  }
 
-  test("a filter is stored in one spelling whatever was typed, and its preview counts what it enforces", async () => {
-    const client = nextDirect(context);
-    await saveFilters(harness, client, [
-      {
-        capability: "direct",
-        policies: [filterPolicy(whatsapp, "direct", "share", [person("00 1 202 555 0123")])],
-      },
-    ]);
-    const overview = await portalJson<{
-      levels?: Array<{ rules: Array<{ scopePolicies?: unknown }> }>;
-    }>(harness.gatewayUrl, client.portal, "/admin/access");
-    const saved = JSON.stringify(overview.levels?.flatMap((level) => level.rules));
-    expect(saved).toContain(`"value":"${MAYA}"`);
-    expect(saved).not.toContain(`"value":"00`);
-    const preview = await portalJson<{ visible: number; unknown: number; total: number }>(
-      harness.gatewayUrl,
-      client.portal,
-      `/admin/access/source-filters/${encodeURIComponent(whatsapp.sourceId)}/preview`,
-      { policy: filterPolicy(whatsapp, "direct", "share", [person("+1 (202) 555-0123")]) },
-    );
-    expect(preview).toMatchObject({ visible: 5, unknown: 3, total: whatsappRecords.size });
-  }, 420_000);
+  test("a member who leaves and one who joins change a saved person filter at the next sync, and no conversation is sent again", async () => {
+    const live = await whatsapp();
+    live.fake.emitter.emit("group-participants.update", {
+      id: SOURCES.whatsapp.chats.crew,
+      participants: [personJid(JAMIE)],
+      action: "remove",
+    });
+    live.fake.emitter.emit("group-participants.update", {
+      id: SOURCES.whatsapp.chats.crew,
+      participants: [personJid(DAVID)],
+      action: "add",
+    });
+    const roster = await imessageRoster();
+    roster.removeMember(SOURCES.imessage.chats.crew, "p_jamie");
+    roster.addMember(SOURCES.imessage.chats.crew, "p_david");
+    await sync(WHATSAPP);
+    await sync(IMESSAGE);
+    expect(failures).toEqual([]);
+    expect(synced[WHATSAPP]!.at(-1)).toBe(0);
+    expect(synced[IMESSAGE]!.at(-1)).toBe(0);
 
-  test("Answer and Direct on one level each keep their own filter, and two levels read at once do not bleed", async () => {
-    const split = await openFilterConnection(harness, ["direct", "answer"]);
-    const other = nextDirect(context);
-    try {
-      await saveFilters(harness, split, [
-        {
-          capability: "direct",
-          policies: [filterPolicy(whatsapp, "direct", "hide", [person(MAYA)])],
-        },
-        {
-          capability: "answer",
-          policies: [filterPolicy(whatsapp, "answer", "share", [person(MAYA)])],
-        },
-      ]);
-      await saveFilters(harness, other, [
-        {
-          capability: "direct",
-          policies: [
-            filterPolicy(whatsapp, "direct", "share", [{ kind: "conversation", id: GROUP_ALL }]),
-            filterPolicy(imessage, "direct", "hide", [person(JAMIE_EMAIL, "email")]),
-          ],
-        },
-      ]);
-      const tools = await split.client.listTools();
-      const names = tools.tools.map((tool) => tool.name);
-      for (const unfiltered of ["lookup_people", "trace_connections", "temporal_query"])
-        expect(names).not.toContain(unfiltered);
-      await Promise.all([
-        expectDirectBoundary(harness, split, whatsapp, whatsappRecords, ["jamie", "group-rest"]),
-        expectAnswerBoundary(model, split, whatsapp, whatsappRecords, [
-          "maya",
-          "maya-photo",
-          "group-all-monday",
-          "group-all-tuesday",
-          "group-all-file",
-        ]),
-        expectDirectBoundary(harness, other, whatsapp, whatsappRecords, [
-          "group-all-monday",
-          "group-all-tuesday",
-          "group-all-file",
-        ]),
-        expectDirectBoundary(harness, other, imessage, imessageRecords, [
-          "maya",
-          "maya-photo",
-          "david",
-        ]),
-      ]);
-      // Removing a level's filters returns the whole account on the next request.
-      await saveFilters(harness, other, []);
-      await expectDirectBoundary(harness, other, whatsapp, whatsappRecords, [
-        ...whatsappRecords.keys(),
-      ]);
-    } finally {
-      await closeScoped(split);
-    }
-  }, 420_000);
-
-  // Open product questions. Each names behaviour the suite deliberately does
-  // not pin, because the intended rule has not been decided.
-  test.todo(
-    "should one phone number written under two national conventions (a mobile prefix some countries insert after the country code) be one identifier, so a filter typed the way a contact card shows it meets the address a messaging source declares?",
-  );
-  test.todo(
-    "should a member whose number the phone-number library does not recognize still be addressable by its digits, instead of leaving every conversation they are in unknown under a person filter?",
-  );
+    for (const source of Object.values(SOURCES))
+      for (const access of ACCESSES) {
+        const corpus = corpora.get(source.sourceId)!;
+        // A day that names the group as it stood still names Jamie; a day
+        // that names its writers only no longer reaches Jamie through the list.
+        await expectFilterBoundary(
+          context,
+          corpus,
+          access,
+          "hide",
+          [jamie],
+          source.daysNameRoster ? ["direct"] : ["direct", ...CREW],
+        );
+        // No stored day names David; the list does.
+        await expectFilterBoundary(context, corpus, access, "share", [david], CREW);
+      }
+  });
 });

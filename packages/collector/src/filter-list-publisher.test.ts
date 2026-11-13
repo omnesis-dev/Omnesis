@@ -52,6 +52,7 @@ interface Sent {
   hasMore: boolean;
   cursor: unknown;
   wipeEpoch: number | undefined;
+  sourceVersion: number | undefined;
   documents: unknown;
   filterLists: FilterListPublication[];
 }
@@ -74,6 +75,7 @@ class FakeGateway {
     hasMore: boolean;
     cursor: unknown;
     wipeEpoch?: number;
+    sourceVersion?: number;
     documents?: unknown;
     filterLists?: FilterListPublication[];
   }) => {
@@ -83,6 +85,7 @@ class FakeGateway {
       hasMore: args.hasMore,
       cursor: args.cursor,
       wipeEpoch: args.wipeEpoch,
+      sourceVersion: args.sourceVersion,
       documents: args.documents,
       filterLists,
     });
@@ -118,6 +121,7 @@ const page = (overrides: Partial<CommittedPage> = {}): CommittedPage => ({
   cursor: { offset: 5 },
   hasMore: true,
   wipeEpoch: 7,
+  sourceVersion: 3,
   signal: new AbortController().signal,
   holder: true,
   ...overrides,
@@ -132,7 +136,7 @@ beforeEach(() => {
 });
 
 describe("FilterListPublisher", () => {
-  it("sends every list the gateway does not hold, on one page that carries no documents", async () => {
+  it("sends every list the gateway does not hold, on one page that carries no documents and the host's version", async () => {
     await publisher.publish(
       sourceWith({ [FOLDERS]: () => folders, [GROUPS]: () => groups }),
       page(),
@@ -144,6 +148,8 @@ describe("FilterListPublisher", () => {
       cursor: { offset: 5 },
       hasMore: true,
       wipeEpoch: 7,
+      // A page without a version would read as written by a build before versions.
+      sourceVersion: 3,
     });
     expect(sent?.filterLists.map((list) => [list.field, list.part, list.final])).toEqual([
       [FOLDERS, 0, true],

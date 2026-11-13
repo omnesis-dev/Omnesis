@@ -1,190 +1,152 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+/**
+ * Folder filters on the sources that read directories — local files and the
+ * coding sessions of claude-code, codex and pi — through real MCP Direct and
+ * Answer connections and a spawned gateway.
+ *
+ * The `folder-filters` universe has two computers. Both host the claude-code
+ * sessions and the local files, at the same paths; Codex and Pi run on the
+ * laptop only. The real sources read files materialized on disk: every
+ * record carries the directory it belongs to, and each computer publishes its
+ * own list of folders. A path only means something on the machine it is on,
+ * so a folder is a device and a path together. Nothing is pushed or written
+ * by hand; folders are picked the way the editor's tree offers them.
+ *
+ * Asserted, for Direct (search, fetch by id) and Answer:
+ *   - the editor of a source on two computers starts its tree at the
+ *     computers; with one computer it starts at that computer's folders, and
+ *     the entries still name the computer;
+ *   - a folder covers everything beneath it, and `/srv/work` does not cover
+ *     `/srv/workshop`;
+ *   - the same path on two computers is two folders: sharing a laptop folder
+ *     shares none of the desktop's records at that path;
+ *   - picking a computer covers everything read on it.
+ */
+
 import "./synth-env.js";
-import { renameSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { portalJson } from "./mcp-oauth-helper.js";
-import { SyntheticE2EHarness } from "./synth-harness.js";
 import { startScopeScriptedAgent, type ScopeScriptedAgent } from "./scope-scripted-agent.js";
 import {
   closeFilterContext,
+  describeMarkedRow,
   expectFilterBoundary,
+  filterEditor,
+  filterOptions,
   openFilterContext,
-  type FilterAccount,
+  pickTreePath,
+  readFilterCorpus,
+  startFilterHarness,
+  type FilterAccess,
   type FilterContext,
   type FilterCorpus,
+  type FilterOption,
 } from "./source-filter-corpus.js";
-import type { ScopeRef, SourceScopeOptions } from "@omnesis/types";
+import type { HarnessDevice, SyntheticE2EHarness } from "./synth-harness.js";
+import type { FilterRef } from "@omnesis/types";
+
+const SESSIONS = "claude-code:claude-maya";
+const CODEX = "codex:codex-maya";
+const PI = "pi:pi-maya";
+const FILES = "local-files:files-maya";
+const PROJECT_FOLDER = "extra.projectFolder";
+const FOLDER = "extra.folder";
+const ACCESSES: FilterAccess[] = ["direct", "answer"];
 
 /**
- * The folder filters of the sources that read directories, from the files a
- * collector reads to what an external agent is given. Nothing is pushed: the
- * `folder-filters` universe is read by the real coding-agent session sources
- * and the real local-files source, which file every document and publish
- * every folder themselves; the test picks folders the way the editor's tree
- * offers them.
+ * The sessions of each folder. "retries" started in /srv/work/billing and
+ * stepped into a subfolder, "roaming" started in a work project and moved
+ * to a personal one: a session stays with the folder it started in.
  */
+const SESSION_WORK = ["atlas", "guide", "billing", "retries", "roaming"];
+const PI_WORK = ["atlas", "guide", "billing"];
+const FILE_WORK = ["atlas", "guide", "billing"];
+const FILE_REST = ["garden", "bench", "inbox"];
 
-const CAPABILITIES = ["direct", "answer"] as const;
-const SESSION_TYPES = ["claude-code", "codex", "pi"] as const;
-const PATH_TYPES = [...SESSION_TYPES, "local-files"] as const;
-type PathSourceType = (typeof PATH_TYPES)[number];
-const folder = (id: string): ScopeRef => ({ kind: "folder", id });
-
-/** What each source holds, by the marker its fixtures carry. */
-const IN_WORK = ["atlas", "guide", "billing"];
-const HELD: Record<PathSourceType, { work: string[]; other: string[]; unknown: string[] }> = {
-  // "retries" started in work/billing and stepped into a subdirectory;
-  // "roaming" went from a work project to a personal one.
-  "claude-code": {
-    work: [...IN_WORK, "retries"],
-    other: ["garden", "bench"],
-    unknown: ["roaming"],
-  },
-  codex: { work: [...IN_WORK, "retries"], other: ["garden", "bench"], unknown: ["roaming"] },
-  pi: { work: IN_WORK, other: ["garden", "bench"], unknown: [] },
-  "local-files": { work: IN_WORK, other: ["garden", "bench", "inbox"], unknown: [] },
-};
-
-interface PathSource {
-  account: FilterAccount<PathSourceType>;
-  corpus: FilterCorpus;
-}
-
-describe("folder filters over MCP, from directories on disk to what an agent is given", () => {
+describe("folder filters over MCP, from directories on disk to what an agent reads", () => {
   let harness: SyntheticE2EHarness;
   let model: ScopeScriptedAgent;
   let context: FilterContext;
-  const sources = new Map<PathSourceType, PathSource>();
+  let laptop: HarnessDevice;
+  let desktop: HarnessDevice;
+  const corpora = new Map<string, FilterCorpus>();
+  const failures: string[] = [];
 
-  /** Every document of a source, keyed by the marker in its text. */
-  function readCorpus(type: PathSourceType): PathSource {
-    const sourceId = harness.getSourceIds().find((id) => id.startsWith(`${type}:`));
-    if (!sourceId) throw new Error(`Missing synthetic source ${type}`);
-    const reader = new Database(harness.getDbPath(), { readonly: true });
-    try {
-      const rows = reader
-        .prepare<
-          [string],
-          {
-            id: string;
-            external_id: string;
-            provider_id: string;
-            content: string;
-          }
-        >(
-          "SELECT id,external_id,provider_id,content FROM documents WHERE source_id=? ORDER BY external_id",
-        )
-        .all(sourceId);
-      const corpus: FilterCorpus = new Map();
-      for (const row of rows) {
-        const marker = /(?:PROMPT|BODY)_([A-Z_]+)/.exec(row.content)?.[1];
-        if (!marker) throw new Error(`A ${type} document carries no marker`);
-        const key = marker.toLowerCase().replaceAll("_", "-");
-        if (corpus.has(key)) throw new Error(`Two ${type} documents carry the marker ${marker}`);
-        corpus.set(key, {
-          key,
-          id: row.id,
-          externalId: row.external_id,
-          // Session titles name the project, which sessions share; the answer's marker is the
-          // second text only this document holds.
-          title: type === "local-files" ? `TITLE_${marker}` : `ANSWER_${marker}`,
-          body: type === "local-files" ? `BODY_${marker}` : `PROMPT_${marker}`,
-        });
-      }
-      return { account: { type, sourceId, providerId: rows[0]!.provider_id }, corpus };
-    } finally {
-      reader.close();
-    }
-  }
+  const corpus = (sourceId: string) => corpora.get(sourceId)!;
+  const on = (device: "laptop" | "desktop", keys: readonly string[]) =>
+    keys.map((key) => `${key}@${device}`);
+  const allOn = (sourceId: string, device: "laptop" | "desktop") =>
+    [...corpus(sourceId).records.keys()].filter((key) => key.endsWith(`@${device}`));
 
-  /** The editor's folder list for a source: its top folders, a folder's children, or a search. */
-  async function folders(
-    type: PathSourceType,
-    query: { parentId?: string; q?: string } = {},
-  ): Promise<SourceScopeOptions> {
-    const { account } = sources.get(type)!;
-    const params = new URLSearchParams({ kind: "folder", ...query });
-    return portalJson<SourceScopeOptions>(
-      harness.gatewayUrl,
-      context.answer.portal,
-      `/admin/access/source-filters/${encodeURIComponent(account.sourceId)}/options?${params}`,
-    );
-  }
-  /** Walk the tree from its top folder down the given names, as a person clicking through it would. */
-  async function pick(type: PathSourceType, ...names: string[]): Promise<ScopeRef> {
-    const top = (await folders(type)).items;
-    expect(top, `${type} top folders`).toHaveLength(1);
-    let current = top[0]!;
+  /** A folder of one computer's tree, picked by its path below the computer's top folder. */
+  async function pick(
+    sourceId: string,
+    field: string,
+    device: HarnessDevice,
+    names: readonly string[],
+  ): Promise<FilterOption> {
+    const top = await filterOptions(harness, context.portal, sourceId, {
+      field,
+      device: device.deviceId,
+    });
+    expect(top.items, `${sourceId} top folders on ${device.deviceId}`).toHaveLength(1);
+    const root = top.items[0]!;
+    if (names.length === 0) return root;
+    let current = root;
+    let parentId = (root.ref as { id: string }).id;
     for (const name of names) {
-      expect(current.hasChildren, `${current.label} has folders`).toBe(true);
-      const children = (await folders(type, { parentId: (current.ref as { id: string }).id }))
-        .items;
-      const next = children.find((item) => item.label === `${current.label}/${name}`);
+      const page = await filterOptions(harness, context.portal, sourceId, {
+        field,
+        parentId,
+        device: device.deviceId,
+      });
+      const next = page.items.find((item) => item.shortLabel === name);
       if (!next)
         throw new Error(
-          `${current.label} holds no ${name}: ${children.map((item) => item.label).join(", ")}`,
+          `${current.label} holds no ${name}: ${page.items.map((item) => item.label).join(", ")}`,
         );
       current = next;
+      parentId = (next.ref as { id: string }).id;
     }
-    return current.ref;
-  }
-
-  /** Let the gateway's background pass file stored documents under their folders, then index. */
-  async function settleFolders(): Promise<void> {
-    const settled = (): boolean => {
-      const reader = new Database(harness.getDbPath(), { readonly: true });
-      try {
-        return (
-          !reader.prepare("SELECT 1 FROM scope_hierarchy_dirty LIMIT 1").get() &&
-          PATH_TYPES.every((type) => {
-            const sourceId = harness.getSourceIds().find((id) => id.startsWith(`${type}:`))!;
-            return (
-              !!reader
-                .prepare("SELECT 1 FROM scope_fact_backfill WHERE source_id=? AND ready=1")
-                .get(sourceId) &&
-              !!reader
-                .prepare(
-                  "SELECT 1 FROM source_scope_kind_readiness WHERE source_id=? AND kind='folder' AND ready=1",
-                )
-                .get(sourceId)
-            );
-          })
-        );
-      } finally {
-        reader.close();
-      }
-    };
-    for (let tick = 0; tick < 120 && !settled(); tick++)
-      await harness.gatewayJson("/admin/background/run/backfill.scopeFacts", { method: "POST" });
-    expect(settled(), "folder facts settled").toBe(true);
-    await harness.reindexMissing();
-    await harness.refreshSearchSnapshot();
+    return current;
   }
 
   beforeAll(async () => {
     model = await startScopeScriptedAgent();
-    harness = new SyntheticE2EHarness({
-      gatewayMode: "synthetic-experimental",
-      universe: "folder-filters",
-      extraInference: {
-        backends: { filterFolders: { type: "http", url: model.url } },
-        assignments: {
-          agent: `filterFolders/${model.modelId}`,
-          "privacy-reviewer": `filterFolders/${model.modelId}`,
-        },
-      },
-    });
+    harness = startFilterHarness("folder-filters", model);
     await harness.start();
-    for (const sourceId of harness.getSourceIds()) await harness.triggerSyncAndWait(sourceId);
+    harness.onStatusChange((change) => {
+      if (change.event === "sync.error")
+        failures.push(`${change.sourceId}: ${change.status.lastError ?? "unknown error"}`);
+    });
+    [laptop, desktop] = harness.devicesForSource(SESSIONS) as [HarnessDevice, HarnessDevice];
+    expect(harness.devicesForSource(FILES)).toEqual([laptop, desktop]);
+    for (const sourceId of [SESSIONS, FILES])
+      for (const device of [laptop, desktop])
+        await harness.triggerSyncAndWait(sourceId, 90_000, device);
+    for (const sourceId of [CODEX, PI]) await harness.triggerSyncAndWait(sourceId, 90_000);
 
-    await settleFolders();
-
-    for (const type of PATH_TYPES) sources.set(type, readCorpus(type));
+    const deviceName = new Map([
+      [laptop.deviceId, "laptop"],
+      [desktop.deviceId, "desktop"],
+    ]);
+    for (const sourceId of [SESSIONS, FILES, CODEX, PI])
+      corpora.set(
+        sourceId,
+        readFilterCorpus(harness, sourceId, {
+          describe: (row) => {
+            const described = describeMarkedRow(row);
+            if (!described) return null;
+            const device = deviceName.get(row.stream_id ?? "");
+            if (!device) throw new Error(`A ${sourceId} record was read on no known computer`);
+            // Codex and Pi run on the laptop only; their keys name no computer.
+            return sourceId === CODEX || sourceId === PI
+              ? described
+              : { ...described, key: `${described.key}@${device}` };
+          },
+        }),
+      );
     context = await openFilterContext(harness, model);
   }, 300_000);
 
@@ -194,188 +156,185 @@ describe("folder filters over MCP, from directories on disk to what an agent is 
     await model?.close();
   }, 30_000);
 
-  test("every source filed what it read: one document per session or file", () => {
-    for (const [type, held] of Object.entries(HELD) as Array<
-      [PathSourceType, (typeof HELD)[PathSourceType]]
-    >)
-      expect([...sources.get(type)!.corpus.keys()].sort(), `${type} documents`).toEqual(
-        [...held.work, ...held.other, ...held.unknown].sort(),
-      );
+  test("every source read every session or file, on every computer that hosts it", () => {
+    expect(failures).toEqual([]);
+    const sessions = [...SESSION_WORK, "garden", "bench"];
+    expect([...corpus(SESSIONS).records.keys()].sort()).toEqual(
+      [...on("laptop", sessions), ...on("desktop", sessions)].sort(),
+    );
+    expect([...corpus(CODEX).records.keys()].sort()).toEqual([...sessions].sort());
+    expect([...corpus(PI).records.keys()].sort()).toEqual([...PI_WORK, "garden", "bench"].sort());
+    const files = [...FILE_WORK, ...FILE_REST];
+    expect([...corpus(FILES).records.keys()].sort()).toEqual(
+      [...on("laptop", files), ...on("desktop", files)].sort(),
+    );
   });
 
-  test("the editor's tree is the folders the sources read: a top folder, then each level beneath it", async () => {
-    for (const type of SESSION_TYPES) {
-      const top = (await folders(type)).items;
-      expect(top.map((item) => item.label)).toEqual(["/srv"]);
-      const srv = (await folders(type, { parentId: (top[0]!.ref as { id: string }).id })).items;
-      expect(srv.map((item) => item.label)).toEqual([
-        "/srv/personal",
-        "/srv/work",
-        "/srv/workshop",
-      ]);
-      const held = HELD[type];
-      // A folder counts what a filter on it governs: everything beneath it.
-      expect(srv.find((item) => item.label === "/srv/work")!.count).toBe(held.work.length);
-      expect(srv.find((item) => item.label === "/srv/workshop")!.count).toBe(1);
-      expect(top[0]!.count).toBe(held.work.length + held.other.length);
-    }
-    // A session that started in work/billing and stepped into billing/api is
-    // filed under billing alone: no folder exists for the subdirectory, so no
-    // filter can name it, and hiding billing is what hides the session.
-    for (const type of ["claude-code", "codex"] as const) {
-      const billing = await pick(type, "work", "billing");
-      const beneath = await folders(type, { parentId: (billing as { id: string }).id });
-      expect(beneath.items, `${type} folders beneath billing`).toEqual([]);
-    }
-    // local-files starts at the configured folder, never above it.
-    const top = (await folders("local-files")).items;
-    expect(top).toHaveLength(1);
-    expect(top[0]!.label.endsWith("/synthetic-local-files")).toBe(true);
-    expect(top[0]!.count).toBe(6);
-    const children = (
-      await folders("local-files", { parentId: (top[0]!.ref as { id: string }).id })
-    ).items;
-    expect(children.map((item) => item.label.slice(top[0]!.label.length))).toEqual([
-      "/personal",
-      "/work",
-      "/workshop",
+  test("on two computers the tree starts at the computers; on one it starts at its folders, and every entry names the computer", async () => {
+    const shared = await filterEditor(harness, context.portal, SESSIONS);
+    expect(shared).toMatchObject({
+      showDeviceLevel: true,
+      devices: [
+        { id: laptop.deviceId, name: "Invented laptop collector" },
+        { id: desktop.deviceId, name: "Invented desktop collector" },
+      ],
+    });
+    expect(shared.fields).toEqual([
+      expect.objectContaining({
+        field: PROJECT_FOLDER,
+        capability: "tree",
+        scope: "device",
+        noun: { one: "project folder", many: "project folders" },
+        state: { status: "ready" },
+      }),
     ]);
-    // Typing part of a path finds a folder at any depth.
-    const found = (await folders("codex", { q: "atlas-api/d" })).items;
-    expect(found.map((item) => item.label)).toEqual(["/srv/work/atlas-api/docs"]);
-  }, 120_000);
+    const computers = await filterOptions(harness, context.portal, SESSIONS, {
+      field: PROJECT_FOLDER,
+    });
+    // Listed by name.
+    expect(computers.items.map((item) => [item.ref, item.label, item.count])).toEqual([
+      [
+        { capability: "tree", field: PROJECT_FOLDER, id: "", device: desktop.deviceId },
+        "Invented desktop collector",
+        7,
+      ],
+      [
+        { capability: "tree", field: PROJECT_FOLDER, id: "", device: laptop.deviceId },
+        "Invented laptop collector",
+        7,
+      ],
+    ]);
+    const viaComputer = await pickTreePath(harness, context.portal, SESSIONS, PROJECT_FOLDER, [
+      "Invented desktop collector",
+      "/srv",
+      "work",
+    ]);
+    expect(viaComputer).toMatchObject({
+      ref: { id: "/srv/work", device: desktop.deviceId },
+      label: "/srv/work",
+      count: 5,
+    });
 
-  describe.each(CAPABILITIES)("%s", (capability) => {
-    const run = (
-      type: PathSourceType,
-      action: "share" | "hide",
-      match: ScopeRef[],
-      markers: readonly string[],
-    ) => {
-      const source = sources.get(type)!;
-      return expectFilterBoundary(
-        context,
-        source.account,
-        source.corpus,
-        capability,
-        action,
-        match,
-        [...source.corpus.keys()].filter((key) => markers.includes(key)),
-      );
-    };
-
-    test.each(SESSION_TYPES)(
-      "%s, share only the work folder: sessions run in it at any depth, not the workshop beside it, not one that also left it",
-      async (type) => {
-        await run(type, "share", [await pick(type, "work")], HELD[type].work);
-      },
-      420_000,
+    const single = await filterEditor(harness, context.portal, CODEX);
+    expect(single).toMatchObject({
+      showDeviceLevel: false,
+      devices: [{ id: laptop.deviceId, name: "Invented laptop collector" }],
+    });
+    const top = await filterOptions(harness, context.portal, CODEX, { field: PROJECT_FOLDER });
+    expect(top.items.map((item) => [item.ref, item.label])).toEqual([
+      [{ capability: "tree", field: PROJECT_FOLDER, id: "/srv", device: laptop.deviceId }, "/srv"],
+    ]);
+    const children = await filterOptions(harness, context.portal, CODEX, {
+      field: PROJECT_FOLDER,
+      parentId: "/srv",
+    });
+    expect(Object.fromEntries(children.items.map((item) => [item.shortLabel, item.count]))).toEqual(
+      { work: 5, personal: 1, workshop: 1 },
     );
-
-    test.each(SESSION_TYPES)(
-      "%s, hide the personal folder: everything else stays, and a session with no single folder stays withheld",
-      async (type) => {
-        const held = HELD[type];
-        await run(type, "hide", [await pick(type, "personal")], [...held.work, "bench"]);
-      },
-      420_000,
-    );
-
-    test("local-files, share only the work folder: files beneath it at any depth", async () => {
-      await run("local-files", "share", [await pick("local-files", "work")], IN_WORK);
-    }, 420_000);
-
-    test("local-files, hide the personal folder: the rest stays, including a file at the top of the configured folder", async () => {
-      await run(
-        "local-files",
-        "hide",
-        [await pick("local-files", "personal")],
-        [...IN_WORK, "bench", "inbox"],
-      );
-    }, 420_000);
-
-    test("a nested folder shares only itself and what is beneath it; the configured folder shares everything", async () => {
-      await run("codex", "share", [await pick("codex", "work", "atlas-api")], ["atlas", "guide"]);
-      await run(
-        "local-files",
-        "share",
-        [await pick("local-files", "work", "atlas-api", "docs")],
-        ["guide"],
-      );
-      await run(
-        "local-files",
-        "share",
-        [await pick("local-files")],
-        [...IN_WORK, "garden", "bench", "inbox"],
-      );
-    }, 420_000);
-
-    test("a session that stepped into a subdirectory goes with the folder it started in", async () => {
-      const held = HELD.codex;
-      const billing = [await pick("codex", "work", "billing")];
-      await run("codex", "share", billing, ["billing", "retries"]);
-      await run(
-        "codex",
-        "hide",
-        billing,
-        [...held.work, ...held.other].filter((key) => key !== "billing" && key !== "retries"),
-      );
-    }, 420_000);
-
-    test("two folders together share their union and hide their union", async () => {
-      const match = [await pick("pi", "work", "billing"), await pick("pi", "workshop")];
-      await run("pi", "share", match, ["billing", "bench"]);
-      await run("pi", "hide", match, ["atlas", "guide", "garden"]);
-    }, 420_000);
-
-    test("a folder that does not exist shares nothing and hides nothing that has a folder", async () => {
-      const held = HELD["claude-code"];
-      await run("claude-code", "share", [folder("dir:never")], []);
-      await run("claude-code", "hide", [folder("dir:never")], [...held.work, ...held.other]);
-    }, 420_000);
   });
 
-  test("a file moved to another folder follows it at the next sync, with the identity it had", async () => {
-    const { account, corpus } = sources.get("local-files")!;
-    // The top folder's label is the configured folder's path, home-relative when it is inside home.
-    const label = (await folders("local-files")).items[0]!.label;
-    const root = label.startsWith("~") ? join(homedir(), label.slice(1)) : label;
-    const work = await pick("local-files", "work");
-    const personal = await pick("local-files", "personal");
-    renameSync(
-      join(root, "work/billing/zqfilter-billing.md"),
-      join(root, "personal/zqfilter-billing.md"),
-    );
-    await harness.triggerSyncAndWait(account.sourceId);
-    await settleFolders();
-    expect(readCorpus("local-files").corpus.get("billing")!.id).toBe(corpus.get("billing")!.id);
-    const keys = (markers: string[]) => [...corpus.keys()].filter((key) => markers.includes(key));
-    await expectFilterBoundary(
-      context,
-      account,
-      corpus,
-      "direct",
-      "share",
-      [work],
-      keys(["atlas", "guide"]),
-    );
-    await expectFilterBoundary(
-      context,
-      account,
-      corpus,
-      "direct",
-      "hide",
-      [personal],
-      keys(["atlas", "guide", "bench", "inbox"]),
-    );
-    await expectFilterBoundary(
-      context,
-      account,
-      corpus,
-      "answer",
-      "share",
-      [personal],
-      keys(["garden", "billing"]),
-    );
-  }, 420_000);
+  for (const access of ACCESSES) {
+    test(`claude-code ${access}: share only a laptop folder — its sessions at any depth, not /srv/workshop, nothing at that path on the desktop`, async () => {
+      const work = await pick(SESSIONS, PROJECT_FOLDER, laptop, ["work"]);
+      await expectFilterBoundary(
+        context,
+        corpus(SESSIONS),
+        access,
+        "share",
+        [work.ref],
+        [...on("laptop", SESSION_WORK)],
+      );
+    });
+
+    test(`claude-code ${access}: hide a desktop folder — the rest of the desktop and the whole laptop stay`, async () => {
+      const work = await pick(SESSIONS, PROJECT_FOLDER, desktop, ["work"]);
+      await expectFilterBoundary(
+        context,
+        corpus(SESSIONS),
+        access,
+        "hide",
+        [work.ref],
+        [...on("desktop", ["garden", "bench"]), ...allOn(SESSIONS, "laptop")],
+      );
+    });
+
+    test(`claude-code ${access}: share a computer — everything read on it`, async () => {
+      const ref: FilterRef = {
+        capability: "tree",
+        field: PROJECT_FOLDER,
+        id: "",
+        device: desktop.deviceId,
+      };
+      await expectFilterBoundary(
+        context,
+        corpus(SESSIONS),
+        access,
+        "share",
+        [ref],
+        [...allOn(SESSIONS, "desktop")],
+      );
+    });
+
+    test(`local files ${access}: share only a desktop folder; hide a laptop folder`, async () => {
+      const work = await pick(FILES, FOLDER, desktop, ["work"]);
+      await expectFilterBoundary(
+        context,
+        corpus(FILES),
+        access,
+        "share",
+        [work.ref],
+        [...on("desktop", FILE_WORK)],
+      );
+      const personal = await pick(FILES, FOLDER, laptop, ["personal"]);
+      await expectFilterBoundary(
+        context,
+        corpus(FILES),
+        access,
+        "hide",
+        [personal.ref],
+        [...on("laptop", [...FILE_WORK, "bench", "inbox"]), ...allOn(FILES, "desktop")],
+      );
+    });
+
+    test(`local files ${access}: the folder the source reads covers every file, the one at its top included`, async () => {
+      const top = await pick(FILES, FOLDER, laptop, []);
+      await expectFilterBoundary(
+        context,
+        corpus(FILES),
+        access,
+        "share",
+        [top.ref],
+        [...allOn(FILES, "laptop")],
+      );
+    });
+
+    test(`Codex ${access}: share only /srv/work on the one computer — not /srv/workshop`, async () => {
+      const work = await pickTreePath(harness, context.portal, CODEX, PROJECT_FOLDER, [
+        "/srv",
+        "work",
+      ]);
+      expect(work.ref).toEqual({
+        capability: "tree",
+        field: PROJECT_FOLDER,
+        id: "/srv/work",
+        device: laptop.deviceId,
+      });
+      await expectFilterBoundary(context, corpus(CODEX), access, "share", [work.ref], SESSION_WORK);
+    });
+
+    test(`Pi ${access}: hide /srv/workshop — /srv/work stays`, async () => {
+      const workshop = await pickTreePath(harness, context.portal, PI, PROJECT_FOLDER, [
+        "/srv",
+        "workshop",
+      ]);
+      await expectFilterBoundary(
+        context,
+        corpus(PI),
+        access,
+        "hide",
+        [workshop.ref],
+        [...PI_WORK, "garden"],
+      );
+    });
+  }
 });

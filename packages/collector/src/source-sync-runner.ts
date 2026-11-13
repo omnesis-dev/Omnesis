@@ -728,6 +728,7 @@ export class SourceSyncRunner {
             cursor: committed.cursor,
             hasMore: committed.hasMore,
             wipeEpoch,
+            sourceVersion: source.sourceVersion,
             signal,
             holder: mode !== "replicated" || this.heldLeases.has(source.id),
           },

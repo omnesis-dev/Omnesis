@@ -24,5 +24,9 @@ export type AccessMutationError =
   | "invalid-grant"
   | "invalid-secret";
 
+/**
+ * The outcome of an access change. A refusal may carry `message`, a sentence
+ * for the owner, when the reason is one they can act on.
+ */
 export type AccessMutationResult<T> =
-  { ok: true; value: T } | { ok: false; error: AccessMutationError };
+  { ok: true; value: T } | { ok: false; error: AccessMutationError; message?: string };
