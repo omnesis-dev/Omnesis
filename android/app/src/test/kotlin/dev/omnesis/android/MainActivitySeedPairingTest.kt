@@ -16,6 +16,7 @@ import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.ui.home.MockGateway
 import javax.inject.Inject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -80,6 +81,24 @@ class MainActivitySeedPairingTest {
 
             assertEquals("the phone must not offer a pairing code to the sender's gateway", 0, pairingRequests(attacker))
             assertEquals(SessionManager.AppState.Unpaired, sessions.state.value)
+        }
+    }
+
+    @Test
+    fun `the in-process seed pairs a debug build once, through the real exchange`() {
+        MockGateway().use { gateway ->
+            DebugPairingSeed.offer(gateway.url.trimEnd('/'), "JOURNEY-CODE", gateway.fingerprint)
+
+            Robolectric.buildActivity(MainActivity::class.java, Intent(context, MainActivity::class.java))
+                .create().start().resume()
+            settle(10_000) { sessions.state.value is SessionManager.AppState.Paired }
+
+            assertEquals(1, pairingRequests(gateway))
+            val paired = sessions.state.value as SessionManager.AppState.Paired
+            assertEquals(gateway.url.trimEnd('/'), paired.pairing.url.trimEnd('/'))
+            assertTrue(gateway.recordedRequests.first { it.path == "/devices/pair" }.body.readUtf8().contains("JOURNEY-CODE"))
+            // The seed is used up, so a later start of the activity cannot pair again.
+            assertNull(DebugPairingSeed.take())
         }
     }
 }

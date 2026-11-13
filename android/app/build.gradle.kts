@@ -97,8 +97,17 @@ abstract class VerifyPlayReleasePolicy : DefaultTask() {
     @get:Input
     abstract val runtimeConfigurationName: Property<String>
 
+    /** The release variant's generated BuildConfig sources. */
+    @get:InputFiles
+    abstract val buildConfigSources: ConfigurableFileCollection
+
     @TaskAction
     fun verify() {
+        val buildConfig = buildConfigSources.asFileTree.matching { include("**/BuildConfig.java") }.files
+        check(buildConfig.size == 1) { "Expected one generated BuildConfig.java, found ${buildConfig.size}" }
+        check(Regex("""\bboolean CLOUD_RELAY_PUBLIC_CERT_CHECK = true;""").containsMatchIn(buildConfig.single().readText())) {
+            "A release build must never skip the cloud relay public-certificate check"
+        }
         val manifest = mergedManifest.get().asFile.readText()
         check("android.permission.READ_CALL_LOG" !in manifest) {
             "Play release manifest must not request android.permission.READ_CALL_LOG"
@@ -186,7 +195,8 @@ android {
         buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"${firebaseBuildValue("OMNESIS_GOOGLE_ANDROID_CLIENT_ID")}\"")
         buildConfigField("boolean", "CLOUD_RELAY_ENABLED", cloudRelayEnabled.toString())
         buildConfigField("String", "CLOUD_RELAY_URL", "\"${firebaseBuildValue("OMNESIS_CLOUD_RELAY_URL")}\"")
-        // A test gateway has no publicly logged certificate. "0" stops that alone from holding its requests.
+        // A test gateway has no publicly logged certificate. "0" stops that alone from holding its
+        // requests, in a debug build only: the release build type below always checks.
         buildConfigField("boolean", "CLOUD_RELAY_PUBLIC_CERT_CHECK", (firebaseBuildValue("OMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK") != "0").toString())
     }
 
@@ -202,6 +212,9 @@ android {
 
     buildTypes {
         release {
+            // A release build never skips the public-certificate check, whatever
+            // OMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK says; verifyPlayReleasePolicy proves it.
+            buildConfigField("boolean", "CLOUD_RELAY_PUBLIC_CERT_CHECK", "true")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -369,8 +382,11 @@ androidComponents {
     ) { variant ->
         tasks.register<VerifyPlayReleasePolicy>("verifyPlayReleasePolicy") {
             group = "verification"
-            description = "Proves the Play artifact excludes Call Log code and permission, and that its shortcuts name the package literally."
+            description = "Proves the Play artifact excludes Call Log code and permission, that its shortcuts name the package literally, " +
+                "and that it always checks a cloud gateway's certificate is publicly logged."
             mergedManifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
+            buildConfigSources.from(layout.buildDirectory.dir("generated/source/buildConfig/play/release"))
+            dependsOn("generatePlayReleaseBuildConfig")
             runtimeConfigurationName.set("${variant.name}RuntimeClasspath")
             dependsOn("verifyPlayReleaseShortcuts")
         }

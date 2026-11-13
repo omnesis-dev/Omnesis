@@ -79,7 +79,7 @@ class MainActivity : ComponentActivity() {
         // Draw edge-to-edge so the themed app background paints behind the status + navigation
         // bars (the bars themselves are coloured + their icons toned from the active theme below).
         enableEdgeToEdge()
-        if (BuildConfig.DEBUG) maybeSeedPairing(intent)
+        if (BuildConfig.DEBUG) maybeSeedPairing()
         setContent {
             val mode by appearance.mode.collectAsStateWithLifecycle()
             val dark = when (mode) {
@@ -287,20 +287,14 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Debug-only: pair non-interactively from `am start` extras so the paired flow
-     * can be exercised on an emulator or in CI without driving the pairing UI. It
-     * runs the REAL [SessionManager.pairManually] exchange against the gateway.
-     *
-     *   adb shell am start -n dev.omnesis.android/.MainActivity \
-     *     --es seed_url https://10.0.2.2:17700 --es seed_code <CODE> \
-     *     --es seed_fingerprint <SHA256_HEX>
+     * Debug-only: runs the pairing the instrumented journeys offered through [DebugPairingSeed],
+     * the REAL [SessionManager.pairManually] exchange, without driving the pairing UI. Never from
+     * intent extras: this activity is exported, so any app on the phone could send them.
      */
-    private fun maybeSeedPairing(launchIntent: Intent?) {
-        val url = launchIntent?.getStringExtra("seed_url") ?: return
-        val code = launchIntent.getStringExtra("seed_code") ?: return
-        val fingerprint = launchIntent.getStringExtra("seed_fingerprint")
+    private fun maybeSeedPairing() {
+        val seed = DebugPairingSeed.take() ?: return
         lifecycleScope.launch {
-            runCatching { sessionManager.pairManually(url, code, fingerprint) }
+            runCatching { sessionManager.pairManually(seed.url, seed.code, seed.fingerprint) }
         }
     }
 
