@@ -9,7 +9,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { runSchemaSetup } from "../../../src/data/schema.js";
 import { createDevice } from "../../../src/data/repositories/DeviceRepository.js";
 import { createAccessLevel } from "../../../src/access/store-levels.js";
-import { upsertSourceScopes } from "../../../src/access/scope-descriptors.js";
+import { publishList, publishProfile } from "../../../src/access/filter-test-utils.js";
+import type { DocumentEventProfile } from "@omnesis/source-sdk";
 const api = vi.hoisted(() => ({
   decideAccessAuthorization: vi.fn(),
   previewSourceFilter: vi.fn(),
@@ -24,7 +25,12 @@ import { serializeNewAuthorityRules, newAuthorityFilterError } from "./grant-bui
 const policy = {
   sourceId: "fictional:one",
   audience: { accessLevel: "previous-level", capability: "direct" },
-  rules: [{ action: "share", match: [{ kind: "conversation", id: "stable-room" }] }],
+  rules: [
+    {
+      action: "share",
+      match: [{ capability: "membership", field: "extra.chatId", id: "stable-room" }],
+    },
+  ],
   otherwise: "hide",
 };
 const saved = {
@@ -43,20 +49,28 @@ beforeEach(() => {
   db.prepare(
     "INSERT INTO sources(id,type,account_id,device_id,created_at,updated_at) VALUES('fictional:one','fictional','one',?,1,1)",
   ).run(device);
-  const scopes = {
-    items: [
+  const profile = {
+    documentTypes: ["day"],
+    personRoles: ["participant"],
+    metadataFields: [
       {
-        kind: "conversation" as const,
-        noun: { one: "room", many: "rooms" },
-        picker: "search" as const,
-        link: "fixed" as const,
+        path: "extra.chatId",
+        type: "string",
+        description: "Room id.",
+        filter: {
+          capability: "membership",
+          minVersion: 0,
+          scope: "global",
+          noun: { one: "room", many: "rooms" },
+          picker: "search",
+        },
       },
     ],
-  };
-  upsertSourceScopes(db, [{ sourceType: "fictional", scopes }], 1);
-  db.prepare(
-    "INSERT INTO scope_fact_backfill(source_id,source_type,descriptor_json,ready) VALUES('fictional:one','fictional',?,1)",
-  ).run(JSON.stringify(scopes));
+  } as unknown as DocumentEventProfile;
+  publishProfile(db, "fictional", 1, profile);
+  publishList(db, { sourceId: "fictional:one", field: "extra.chatId" }, [
+    { id: "stable-room", label: "Stable room" },
+  ]);
 });
 afterEach(() => {
   if (host) act(() => render(null, host!));

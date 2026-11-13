@@ -248,8 +248,11 @@ through the registry. Verify:
   declares its own, starting at 1, and a change to what the source writes raises
   it in the same change; it never goes down. The host sends it with every sync
   page and the gateway stores it on each document. It does not schedule
-  reprocessing; prove the explicit re-emission/backfill mechanism if output
-  changes must affect already indexed records.
+  reprocessing: records already stored keep their version until the account
+  is resynced. For a filterable field an ordinary resync in place is the only
+  remedy; no source adds a pass of its own for filters (§ 11.1). Prove any
+  other re-emission mechanism if an output change must reach records already
+  indexed.
 - `contract.state.decode` accepts every settled, pending, empty-store and legacy
   state the source can produce. Supply a complete major migration chain and
   classify bare installed cursors with `legacyVersion` where needed. Minor
@@ -597,33 +600,76 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   agent's `count_messages` counts each document as one message.
 - Two sources must be distinguishable by profile alone (the catalog hides
   source names).
-- A field marked `filter`, and a `personFilter`, are optional. When declared:
-  the field holds the source's own ids, never display names; a
-  `string-array` field writes `[]` for "none" and omits the field for "not
-  known", and a `string` field is used only where every record has a value;
-  `minVersion` is the `outputRevision` of the change that started writing
-  the field (0 only if records stored before versions were recorded carry
-  it), and that change raises `outputRevision`; `scope: "device"` is used
-  exactly when an id only means something on the device that produced it.
-  A parity test proves the normalizer writes what is declared.
-- Every field marked `filter` has a list producer attached with
-  `withFilterLists`, keyed by the field's path. A producer lists everything
-  that exists in the account for the field (also what no record belongs to)
-  and nothing about individual records; it returns the whole list or throws,
-  never a part of it, and throws `FilterListNotReadyError` while a list built
-  from the sync's own pages is not whole yet; ids are unique, every `parentId` names an item of the
-  same list, and an item whose parent the source cannot see is a root;
-  `members` appear only where the field declares `listsMembers`, and an item
-  with a member the source cannot name by a declared identifier, or whose
-  roster it does not hold whole, sets `membersIncomplete`. Its cost
-  grows with the number of labels or folders, never with the number of
-  records. A test covers a rename, a move, a deletion and a failed listing.
+- A field marked `filter`, or a `personFilter`, follows § 11.1.
 - `documentTemporalProjections` use only the closed field set
   (`$semanticTime`, `scheduledAt`, `dueAt`, `endsAt`, `timeZone`, `status`);
   `temporalProjection` on analytics tables anchors on `$semanticTime` and
   references declared columns of the right type.
 - `semanticallyIndexed` reflects reality; a semantic-match watch on an
   unindexed source is refused.
+
+### 11.1 Filterable fields (when declared)
+
+A field marked `filter` in the profile, and the profile's `personFilter`, are
+optional. They let an access level share or hide part of an account from
+external agents. The gateway checks every record on its own source version
+and its own details at each read, so a record that does not carry what a
+field promises is hidden, never guessed at. When a source declares either:
+
+- **Version.** The change that starts writing a field raises `outputRevision`
+  and sets the field's `minVersion` to the new value. `minVersion: 0` is only
+  for a field that records stored before versions were recorded already carry
+  in the same form; prove that against the stored form, not the new
+  normalizer. No earlier `outputRevision` of the source writes the field's
+  path, with any meaning.
+- **None versus unknown.** A `string-array` field writes `[]` when the item
+  belongs to nothing and is absent when the source does not know. A `string`
+  field is used only where every record has a value, and is absent when it is
+  not known. Never write a placeholder for "unknown".
+- **Ids, not names.** The field holds the upstream's stable ids (a label id,
+  a folder id, a numeric repository id), never display names, so a rename
+  keeps a saved filter. A tree field holds the record's immediate container
+  only, never its path, and only ids that are in the published list; the list
+  names every parent up to a root, so a move is one changed list entry.
+- **People.** `personFilter.roles` lists only roles the profile declares,
+  never `mentioned`. Each person in those roles carries a readable email or an
+  international phone number of a declared identifier kind; someone the source
+  cannot identify carries no identifier rather than a guess. A source that
+  stops listing people at a cap declares it as `maxPeople`.
+- **Lists.** Every filterable field has a producer attached with
+  `withFilterLists`, keyed by the field's path. It lists everything that
+  exists in the account for the field, including what no record belongs to,
+  and nothing about individual records. It returns the whole list or throws,
+  never a part of it, and throws `FilterListNotReadyError` while a list built
+  from the cycle's own pages is not whole yet. Ids are unique; an item whose
+  parent the source cannot see is a root. `members` appear only where the
+  field declares `listsMembers`, and an item with a member the source cannot
+  name by a declared identifier, or whose roster it does not hold whole, sets
+  `membersIncomplete`. The list's cost grows with the number of labels or
+  folders, never with the number of records.
+- **Device scope.** `scope: "device"` is used exactly when an id only means
+  something on the device that produced it (a path on disk), and only on a
+  `partitioned` source; the definition refuses it otherwise.
+- **Change.** A record is emitted again whenever its filterable detail
+  changes upstream (a label added, an item moved), even when its text did
+  not. An attachment carries `extra.parentExternalId`, the external id of its
+  parent in the same stream, and is decided through it.
+- **Resync.** A sync that starts with no cursor emits every record the source
+  holds, unchanged ones included, so a resync in place stamps the current
+  version on each of them. `onResync()` prepares that full pass (§ 5).
+- **Staged history.** A source that imports its history over several cycles
+  returns `fullReadComplete: false` on the last page of a cycle that leaves
+  history for later and `true` on the one that finishes it; otherwise the
+  first cycle reads as a full read of the account.
+- **Resync cost.** The definition has a `resyncCost` sentence (one line, at
+  most 200 characters) saying what reading the account again takes, in the
+  user's terms: "This reads about 95,000 messages a day."
+- **Tests.** The parity test (§ 11) covers each filterable path. Normalizer
+  tests cover a record that belongs to nothing (`[]`), one whose detail is not
+  known (absent), and that ids, not names, are written. List tests cover a
+  rename, a move, a deletion, a failed listing and, for members, an incomplete
+  roster. A test proves an unchanged record is emitted again by a pass from an
+  empty cursor.
 
 ## 12. Multiple instances of the same source
 
@@ -816,44 +862,3 @@ confirms before merge, each with the exact steps:
 - Finish with the ranked report, the list of files you changed, and the
   manual validation list. Do not declare the source ready: that is the
   author's and maintainers' call once § 17 is done.
-
-## Source scope facts (when declared)
-
-- `scopes.items` declares only source-native, stable item kinds and accepted
-  identifier types. Display names never decide access, and shared consumers
-  never branch on the source name.
-- A legacy projection recipe reads only source-owned metadata. Native people
-  identifiers are captured independently of mutable person merges; body-only
-  mentions do not count. Unknown or unresolved identifiers remain incomplete.
-- Conversation membership applies to every stored day, including silent
-  members, and membership changes invalidate historical facts. Labels use
-  stable IDs and follow label-only changes. Folder facts include ancestors;
-  moves invalidate affected descendants before any bounded recompute.
-- A source that reads directories from disk files its documents by folder
-  through `withPathScopes` (`packages/source-sdk/src/path-scope-sync.ts`) and
-  names folders with `pathScopeFolders`; it does not build ids, labels or
-  ancestor chains of its own. Its cursor records each document's directory, a
-  document with no directory is reported unknown, and it publishes no folder
-  hierarchy besides the helper's.
-- A tree whose levels are different things (an owner, then its repositories)
-  declares a noun per level in `levels`, roots first, and keeps `noun` as the
-  word for the kind as a whole; no client then calls an item by another
-  level's name or by "folder". Every document type the source produces carries
-  the fact, and a document the source cannot place says so (`complete: false`)
-  rather than omitting it. Items are named by the upstream's stable ids, so a
-  rename keeps a saved filter and a move changes one node.
-- New fact payloads are negotiated with the gateway compatibility manifest.
-  A source with no scope declaration keeps its existing behavior. A filtered
-  read fails closed on absent or stale facts; attachments inherit their parent.
-- Required native refresh cuts bind durable cursor progress to the native
-  store, registered actor and holder/member role. A restart request keeps its
-  nonce across retries and follows a replacement epoch only after the gateway
-  acknowledges that nonce; an unrelated epoch change is not an acknowledgement.
-  Members never rotate or release the source-wide refresh fence.
-- A required epoch is echoed only after fresh authoritative native observation,
-  never by relabelling cached metadata. Unreachable or malformed native rows
-  stay unknown. Full refreshes paginate aggregate work, survive lost cursors,
-  and omit unsupported wire fields after a gateway downgrade.
-- Tests cover both list modes, missing facts, identifier stability and each
-  declared link's update behavior. Refresh readiness is explicit, not inferred
-  from a display tag or from one document having complete facts.

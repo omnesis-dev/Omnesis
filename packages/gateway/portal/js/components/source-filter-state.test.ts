@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { expect, test } from "vitest";
-import { canonicalScopeIdentifier } from "@omnesis/source-sdk";
+import { canonicalFilterIdentifier } from "@omnesis/core";
 // @ts-expect-error — portal modules are plain JavaScript.
 import * as filters from "./source-filter-state.js";
 // @ts-expect-error — portal modules are plain JavaScript.
@@ -187,7 +187,7 @@ const TYPED: Array<["phone" | "email" | "domain", string]> = [
 ];
 
 test.each(TYPED)("a typed %s written as %j is read exactly as the gateway reads it", (type, raw) => {
-  expect(typedValue(type, raw)).toBe(canonicalScopeIdentifier(type, raw)?.value ?? null);
+  expect(typedValue(type, raw)).toBe(canonicalFilterIdentifier(type, raw)?.value ?? null);
 });
 
 test.each([
@@ -195,7 +195,7 @@ test.each([
   ["domain", "b\u00FCcher.example"],
 ] as const)("a typed %s the gateway respells, %j, is still accepted", (type, raw) => {
   expect(typedValue(type, raw)).toBe(raw);
-  expect(canonicalScopeIdentifier(type, raw)).not.toBeNull();
+  expect(canonicalFilterIdentifier(type, raw)).not.toBeNull();
 });
 
 test("newly proposed person identifiers are added only by an explicit immutable update", () => {

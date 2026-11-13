@@ -3,21 +3,6 @@
   "comment": "Reviewed fixture/example identifiers allowed in the repository. Identity entries are path-scoped; add only invented or deliberately public values and never live corpus data.",
   "emails": [
     {
-      "value": "scope-fixture@g.us",
-      "paths": ["packages/providers/whatsapp/src/scope-membership.test.ts"],
-      "reason": "Invented native group or reserved 555-01xx phone JID for membership scope tests."
-    },
-    {
-      "value": "12025550101@s.whatsapp.net",
-      "paths": ["packages/providers/whatsapp/src/scope-membership.test.ts"],
-      "reason": "Invented native group or reserved 555-01xx phone JID for membership scope tests."
-    },
-    {
-      "value": "12025550102@s.whatsapp.net",
-      "paths": ["packages/providers/whatsapp/src/scope-membership.test.ts"],
-      "reason": "Invented native group or reserved 555-01xx phone JID for membership scope tests."
-    },
-    {
       "value": "fictional.scope.check+filter@gmail.com",
       "paths": ["packages/gateway/src/access/scope-policy.test.ts"],
       "reason": "Invented address exercising Gmail dot and plus-alias canonicalization against native source identifiers."
@@ -1795,74 +1780,6 @@
       "reason": "reviewed existing fixture"
     },
     {
-      "value": "fictional-scope-group@g.us",
-      "paths": ["packages/providers/whatsapp/src/normalizer.test.ts"],
-      "reason": "Invented group identifier exercising the WhatsApp scope projection."
-    },
-    {
-      "value": "12025550124@s.whatsapp.net",
-      "paths": ["packages/providers/whatsapp/src/normalizer.test.ts"],
-      "reason": "Invented WhatsApp scope-filter fixture; phone JID uses NANP reserved 555-01xx range."
-    },
-    {
-      "value": "12025550123@s.whatsapp.net",
-      "paths": [
-        "packages/gateway/src/access/scope-identifier-agreement.test.ts",
-        "packages/source-sdk/src/scope-identifiers.test.ts"
-      ],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "fictional.scope.check+filter@gmail.com",
-      "paths": ["packages/gateway/src/access/scope-identifier-agreement.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "FictionalScopeCheck@gmail.com",
-      "paths": ["packages/gateway/src/access/scope-identifier-agreement.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "fictionalscopecheck@googlemail.com",
-      "paths": ["packages/gateway/src/access/scope-identifier-agreement.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "fictional.scope.check@gmail.com",
-      "paths": ["packages/gateway/src/access/scope-identifier-agreement.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "maya@notexample.org",
-      "paths": ["packages/gateway/src/access/scope-identifier-agreement.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "120363000000000001@g.us",
-      "paths": ["packages/source-sdk/src/scope-identifiers.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "Fictional.Scope.Check+Filter@gmail.com",
-      "paths": ["packages/source-sdk/src/scope-identifiers.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "fictionalscopecheck@gmail.com",
-      "paths": ["packages/source-sdk/src/scope-identifiers.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "fictional.scope.check@googlemail.com",
-      "paths": ["packages/source-sdk/src/scope-identifiers.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
-      "value": "Fictional.Scope.Check+Filter@GoogleMail.com",
-      "paths": ["packages/source-sdk/src/scope-identifiers.test.ts"],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
-    },
-    {
       "value": "120363000000000001@g.us",
       "paths": ["packages/collector/src/e2e/mcp-source-filter-chats.e2e.test.ts"],
       "reason": "Invented native addresses and fictional names for the source-filter end-to-end suites; the product name is a describe title, not a person."
@@ -2833,23 +2750,35 @@
       "paths": [
         "evals/universes/sacha-bellamy/_build/scenario-commitments.mjs",
         "evals/universes/sacha-bellamy/_build/scenario-gifts.mjs",
-        "evals/universes/sacha-bellamy/_build/shared.mjs"
+        "evals/universes/sacha-bellamy/_build/shared.mjs",
+        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
       ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
       "value": "The Lantern Room",
-      "paths": ["evals/universes/sacha-bellamy/_build/scenario-gifts.mjs"],
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-gifts.mjs",
+        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
+        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
+      ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
       "value": "Example Lane",
-      "paths": ["evals/universes/sacha-bellamy/_build/scenario-homes.mjs"],
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-homes.mjs",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
       "value": "Sample Terrace",
-      "paths": ["evals/universes/sacha-bellamy/_build/scenario-homes.mjs"],
+      "paths": [
+        "evals/universes/sacha-bellamy/_build/scenario-homes.mjs",
+        "evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"
+      ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
@@ -12998,7 +12927,10 @@
     },
     {
       "value": "Rate Limit Exceeded",
-      "paths": ["packages/providers/google/src/broker.test.ts"],
+      "paths": [
+        "packages/providers/google/src/broker.test.ts",
+        "packages/providers/google/src/drive.test.ts"
+      ],
       "reason": "Google API error message text."
     },
     {
@@ -13125,8 +13057,6 @@
         "evals/universes/japan-trip/sources/google-drive/folders.json",
         "evals/universes/loops-test-life/sources/google-drive/folders.json",
         "evals/universes/sacha-bellamy/sources/google-drive/folders.json",
-        "packages/providers-synth/google/src/drive-source.test.ts",
-        "packages/providers/google/src/drive-scope-folders.test.ts",
         "packages/collector/src/e2e/filter-details-google.e2e.test.ts"
       ],
       "reason": "Invented root-folder display label shared by synthetic folder-tree fixtures; not a person or corpus data."
@@ -13135,14 +13065,6 @@
       "value": "Fictional Person",
       "paths": ["packages/gateway/portal/js/components/source-filter-state.test.ts"],
       "reason": "Invented invalid identifier input proving that a display name is not an accepted typed address."
-    },
-    {
-      "value": "Maya Reeves",
-      "paths": [
-        "packages/gateway/src/access/scope-identifier-agreement.test.ts",
-        "packages/source-sdk/src/scope-identifiers.test.ts"
-      ],
-      "reason": "Invented identifier spellings for source-filter canonicalization tests; reserved domains do not exercise provider alias folding or messaging-address shapes."
     },
     {
       "value": "Fictional Contact",
