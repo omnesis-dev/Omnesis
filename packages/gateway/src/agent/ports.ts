@@ -271,9 +271,12 @@ export function createGatewaySearchPort(
         query: input.query,
         ...(coverage ? { coverage } : {}),
         durationMs: response.timing.totalMs ?? Date.now() - t0,
-        totalCandidates:
-          (response.timing.bm25Candidates ?? 0) + (response.timing.vectorCandidates ?? 0) ||
-          undefined,
+        // A filtered search's candidate counts are taken before its results
+        // are checked against the corpus, so they are not reported.
+        totalCandidates: authorization?.scopePolicies.length
+          ? undefined
+          : (response.timing.bm25Candidates ?? 0) + (response.timing.vectorCandidates ?? 0) ||
+            undefined,
         results,
       };
     },
