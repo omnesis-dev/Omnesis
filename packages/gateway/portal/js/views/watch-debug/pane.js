@@ -22,6 +22,8 @@
  */
 
 import { html } from "htm/preact";
+import { format } from "sql-formatter";
+import { highlightSqlToHtml } from "../../lib/sql-editor.js";
 
 import { navigate } from "../../lib/router.js";
 import {
@@ -266,13 +268,15 @@ function NodePane({ node, dag, state, selectedKeyHash }) {
         : html`<ul class="watch-pane-list">
             ${inbound.map(
               (edge) => html`<li key=${edge.from}>
-                <code>${edge.from}</code>
-                <span class=${`watch-dag-note ${edge.role === "cancel" ? "cancel" : "arm"}`}>
-                  ${edge.role}
-                </span>
-                ${edge.broadcast
-                  ? html`<span class="watch-dag-note broadcast">broadcast</span>`
-                  : null}
+                <div class="watch-pane-input-heading">
+                  <code>${edge.from}</code>
+                  <span class=${`watch-dag-note ${edge.role === "cancel" ? "cancel" : "arm"}`}>
+                    ${edge.role}
+                  </span>
+                  ${edge.broadcast
+                    ? html`<span class="watch-dag-note broadcast">broadcast</span>`
+                    : null}
+                </div>
                 ${edge.key
                   ? html`<${ExpressionMap} map=${edge.key} caption="Keyed by" />`
                   : html`<p class="watch-pane-note">
@@ -414,7 +418,7 @@ const NODE_DETAILS = {
   `,
   "stateless.transform": (node) => html`
     <${Section} title="Query">
-      <${Code} text=${node.query} />
+      <${SqlQuery} text=${node.query} />
     <//>
   `,
   "stateful.wait": (node) => html`
@@ -463,7 +467,7 @@ const NODE_DETAILS = {
   `,
   sql: (node) => html`
     <${Section} title="Query">
-      <${Code} text=${node.query} />
+      <${SqlQuery} text=${node.query} />
       <${Rows}
         rows=${[
           ["Fires on", node.fire_on],
@@ -611,6 +615,24 @@ function SchemaTable({ schema }) {
     </p>`;
   }
   return html`<${ExpressionMap} map=${schema} caption="Answers in" />`;
+}
+
+/** DuckDB uses the SQL tab's PostgreSQL formatter, with Watch DSL references. */
+function SqlQuery({ text }) {
+  if (typeof text !== "string" || text.length === 0) return null;
+  let display = text;
+  try {
+    display = format(text, {
+      language: "postgresql",
+      paramTypes: { custom: [{ regex: "\\$[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*" }] },
+    });
+  } catch {
+    // Unsupported SQL remains readable verbatim rather than hiding the query.
+  }
+  return html`<pre
+    class="watch-pane-code sql-static"
+    dangerouslySetInnerHTML=${{ __html: highlightSqlToHtml(display) }}
+  ></pre>`;
 }
 
 function Code({ text }) {

@@ -504,6 +504,37 @@ describe("Watch definition canvas", () => {
     expect(pane).toContain("$e.metadata.extra.threadId");
   });
 
+  test.each(["sql", "stateless.transform"])("formats and highlights a %s query with Watch references", async (type) => {
+    const query = "SELECT $n.invoice_arrived.thread_id AS thread_id, '<example>' AS label, 7 AS days WHERE $key.thread_id IS NOT NULL AND $today > $now";
+    const dsl = structuredClone(DELIVERING_DSL);
+    Object.assign(dsl.watch.nodes[2], { type, query });
+    await open(dsl);
+    await click(box("unpaid_a_week"));
+
+    const sql = host.querySelector("pre.sql-static")!;
+    expect(sql.textContent).toContain("\n");
+    expect(sql.textContent).toContain("$n.invoice_arrived.thread_id");
+    expect(sql.textContent).toContain("$key.thread_id");
+    expect(sql.textContent).toContain("'<example>'");
+    expect(sql.querySelector(".cm-tok-keyword")!.textContent).toMatch(/SELECT/i);
+    expect(sql.querySelector(".cm-tok-string")!.textContent).toBe("'<example>'");
+    expect(sql.querySelector("example")).toBeNull();
+    const raw = JSON.parse(host.querySelector(".watch-dag-raw pre")!.textContent!);
+    expect(raw.query).toBe(query);
+  });
+
+  test("keeps an unformattable query visible and safely escaped", async () => {
+    const query = "SELECT '<img src=x onerror=alert(1)>";
+    const dsl = structuredClone(DELIVERING_DSL);
+    Object.assign(dsl.watch.nodes[2], { type: "sql", query });
+    await open(dsl);
+    await click(box("unpaid_a_week"));
+
+    const sql = host.querySelector("pre.sql-static")!;
+    expect(sql.textContent).toBe(query);
+    expect(sql.querySelector("img")).toBeNull();
+  });
+
   test("keeps the raw JSON one toggle away", async () => {
     await open(DELIVERING_DSL);
     await click(box("invoice_arrived"));
