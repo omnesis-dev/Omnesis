@@ -1681,8 +1681,11 @@ final class PreviewSnapshotTests: XCTestCase {
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         let rendered = pixels.withUnsafeMutableBytes { bytes -> Bool in
             guard let context = CGContext(
-                data: bytes.baseAddress, width: width, height: height,
-                bitsPerComponent: 8, bytesPerRow: width * 4,
+                data: bytes.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
                 space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             ) else { return false }
