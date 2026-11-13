@@ -11515,10 +11515,7 @@
     },
     {
       "value": "The Direct",
-      "paths": [
-        "packages/gateway/src/agent/direct-mcp.test.ts",
-        "packages/collector/src/e2e/filter-access-audit.e2e.test.ts"
-      ],
+      "paths": ["packages/gateway/src/agent/direct-mcp.test.ts"],
       "reason": "reviewed test description fragment"
     },
     {
@@ -13260,11 +13257,6 @@
         "packages/collector/src/e2e/filter-resync-ready.e2e.test.ts"
       ],
       "reason": "Product sentence the gateway writes, not a person."
-    },
-    {
-      "value": "Accounts Direct",
-      "paths": ["packages/collector/src/e2e/filter-access-audit.e2e.test.ts"],
-      "reason": "Invented test data or a product sentence in a filter test, never corpus data."
     },
     {
       "value": "For Answer",
