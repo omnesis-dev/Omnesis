@@ -169,8 +169,9 @@ export function isLoopbackClient(header: HeaderReader, env: unknown): boolean {
 /**
  * Whether this request came through the gateway's cloud relay: its socket is
  * one the relay tunnel in this process dialled, or it carries the relay's
- * forwarding header. Unlike the exposure marker, this is false for a local
- * or home-network request while remote access is on, so it can gate what only
+ * forwarding header. Unlike `isRelayedRequest`, which also counts every
+ * request while the gateway is exposed, this is false for a local or
+ * home-network request while remote access is on, so it can gate what only
  * the owner on the gateway itself may do. A relay can't make its requests
  * look local: the tunnel's sockets are recorded here, not by the relay.
  */

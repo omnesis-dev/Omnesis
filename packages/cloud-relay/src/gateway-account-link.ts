@@ -362,8 +362,9 @@ export class GatewayAccountLink {
   }
   /**
    * While someone else may hold a certificate for this gateway's name, a page on that name may
-   * not be the gateway's. A sign-in proof made on the gateway's own origin (the planned
-   * `gateway-passkey` proof) must call this first and refuse the proof when it is true.
+   * not be the gateway's. A `gateway-passkey` assertion made on the gateway's own origin must be
+   * refused while this is true: the verifier's `gatewayOrigin` option, once this link sets it,
+   * returns undefined then, which leaves only the official Android app's origin.
    */
   gatewayOriginAssertionsRefused(): boolean {
     return this.hold !== undefined;
