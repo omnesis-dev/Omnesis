@@ -127,6 +127,29 @@ describe("publishing a list", () => {
     expect(db.prepare("SELECT * FROM source_filter_items").all()).toEqual(items);
   });
 
+  it("keeps, per item, whether it has members the list does not name", () => {
+    publish(GROUPS, "v1", [
+      ["item", "g-team", null, "Atlas team", true],
+      ["member", "g-team", "phone", "+15550100142"],
+      ["item", "g-household", null, "Household"],
+    ]);
+    const entries = getFilterListItems(db, GROUPS, ["g-team", "g-household"]);
+    expect(entries.get("g-team")?.membersIncomplete).toBe(true);
+    expect(entries.get("g-household")?.membersIncomplete).toBe(false);
+    expect(
+      listFilterListItemsByParent(db, GROUPS, null, { limit: 10 }).map((entry) => [
+        entry.id,
+        entry.membersIncomplete,
+      ]),
+    ).toEqual([
+      ["g-household", false],
+      ["g-team", true],
+    ]);
+    // The next version names everyone, and the flag goes with the old one.
+    publish(GROUPS, "v2", [["item", "g-team", null, "Atlas team"]]);
+    expect(getFilterListItems(db, GROUPS, ["g-team"]).get("g-team")?.membersIncomplete).toBe(false);
+  });
+
   it("stores an empty list as published and empty, not as never published", () => {
     expect(publish(FOLDERS, "empty", [])).toBe("published");
     expect(getFilterListVersion(db, FOLDERS)).toMatchObject({ generation: 1, itemCount: 0 });
@@ -141,7 +164,12 @@ describe("publishing a list", () => {
       TREE.filter((row) => row[1] !== "f-budget"),
     );
     expect(getFilterListItems(db, FOLDERS, ["f-budget", "f-atlas"])).toEqual(
-      new Map([["f-atlas", { id: "f-atlas", label: "Atlas API", parentId: "f-work" }]]),
+      new Map([
+        [
+          "f-atlas",
+          { id: "f-atlas", label: "Atlas API", parentId: "f-work", membersIncomplete: false },
+        ],
+      ]),
     );
     expect(getFilterListVersion(db, FOLDERS)).toMatchObject({ generation: 2, itemCount: 5 });
   });
@@ -155,8 +183,11 @@ describe("publishing a list", () => {
     ]);
     expect(getFilterListItems(db, FOLDERS, ["f-work", "f-atlas"])).toEqual(
       new Map([
-        ["f-work", { id: "f-work", label: "Office", parentId: null }],
-        ["f-atlas", { id: "f-atlas", label: "Atlas API", parentId: "f-home" }],
+        ["f-work", { id: "f-work", label: "Office", parentId: null, membersIncomplete: false }],
+        [
+          "f-atlas",
+          { id: "f-atlas", label: "Atlas API", parentId: "f-home", membersIncomplete: false },
+        ],
       ]),
     );
   });
@@ -380,11 +411,11 @@ describe("reading a list", () => {
 
   it("lists the items under a parent in id order, a page at a time", () => {
     expect(listFilterListItemsByParent(db, FOLDERS, "f-work", { limit: 1 })).toEqual([
-      { id: "f-atlas", label: "Atlas API", parentId: "f-work" },
+      { id: "f-atlas", label: "Atlas API", parentId: "f-work", membersIncomplete: false },
     ]);
     expect(
       listFilterListItemsByParent(db, FOLDERS, "f-work", { limit: 10, after: "f-atlas" }),
-    ).toEqual([{ id: "f-budget", label: "Budget", parentId: "f-work" }]);
+    ).toEqual([{ id: "f-budget", label: "Budget", parentId: "f-work", membersIncomplete: false }]);
     expect(listFilterListItemsByParent(db, FOLDERS, "f-atlas", { limit: 10 })).toEqual([]);
   });
 

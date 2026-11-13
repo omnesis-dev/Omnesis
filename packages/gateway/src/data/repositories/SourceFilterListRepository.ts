@@ -54,6 +54,7 @@ export function createSourceFilterListTables(db: Db): void {
       item_id TEXT NOT NULL,
       parent_id TEXT,
       label TEXT NOT NULL,
+      members_incomplete INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (source_id, field, device_id, generation, item_id)
     ) WITHOUT ROWID;
     CREATE INDEX IF NOT EXISTS idx_source_filter_items_parent
@@ -93,6 +94,12 @@ export interface FilterListEntry {
   label: string;
   /** `null` on a root, and on every item of a list that is not a tree. */
   parentId: string | null;
+  /**
+   * Whether the item has members its member rows do not name, so that who
+   * belongs to it is not fully known. Always false where the field lists no
+   * members.
+   */
+  membersIncomplete: boolean;
 }
 
 /**
@@ -100,7 +107,13 @@ export interface FilterListEntry {
  * Built off the writer, so the writer only inserts.
  */
 export type FilterListStagedRow =
-  | [kind: "item", itemId: string, parentId: string | null, label: string]
+  | [
+      kind: "item",
+      itemId: string,
+      parentId: string | null,
+      label: string,
+      membersIncomplete?: boolean,
+    ]
   | [kind: "member", itemId: string, type: FilterIdentifierType, value: string];
 
 export interface StageFilterListPartArgs {
@@ -226,8 +239,8 @@ export function stageFilterListPart(
 
   const insertItem = db.prepare(
     `INSERT OR REPLACE INTO source_filter_items
-       (source_id, field, device_id, generation, item_id, parent_id, label)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (source_id, field, device_id, generation, item_id, parent_id, label, members_incomplete)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertMember = db.prepare(
     `INSERT OR IGNORE INTO source_filter_item_members
@@ -256,6 +269,7 @@ export function stageFilterListPart(
           staged[1],
           staged[2],
           staged[3],
+          staged[4] === true ? 1 : 0,
         );
       } else {
         insertMember.run(
@@ -456,6 +470,14 @@ export function listFilterListDigests(
     .all(sourceId);
 }
 
+type FilterListEntryRow = Omit<FilterListEntry, "membersIncomplete"> & {
+  membersIncomplete: number;
+};
+
+function entryFromRow(row: FilterListEntryRow): FilterListEntry {
+  return { ...row, membersIncomplete: row.membersIncomplete === 1 };
+}
+
 /**
  * The items directly under `parentId`, or the roots when it is `null`, in id
  * order. `after` continues a listing from the last id of the previous page.
@@ -467,8 +489,9 @@ export function listFilterListItemsByParent(
   page: { after?: string; limit: number },
 ): FilterListEntry[] {
   return db
-    .prepare<[string, string, string, string | null, string], FilterListEntry>(
-      `SELECT i.item_id AS id, i.label AS label, i.parent_id AS parentId
+    .prepare<[string, string, string, string | null, string], FilterListEntryRow>(
+      `SELECT i.item_id AS id, i.label AS label, i.parent_id AS parentId,
+              i.members_incomplete AS membersIncomplete
          FROM source_filter_lists l
          JOIN source_filter_items i INDEXED BY idx_source_filter_items_parent
            ON i.source_id = l.source_id AND i.field = l.field AND i.device_id = l.device_id
@@ -479,7 +502,8 @@ export function listFilterListItemsByParent(
         ORDER BY i.item_id
         LIMIT ${Math.max(1, Math.floor(page.limit))}`,
     )
-    .all(key.sourceId, key.field, key.deviceId, parentId, page.after ?? "");
+    .all(key.sourceId, key.field, key.deviceId, parentId, page.after ?? "")
+    .map(entryFromRow);
 }
 
 /** The entries of a list with the given ids, keyed by id. Ids the list does not hold are absent. */
@@ -489,8 +513,9 @@ export function getFilterListItems(
   ids: readonly string[],
 ): Map<string, FilterListEntry> {
   const found = new Map<string, FilterListEntry>();
-  const statement = db.prepare<[string, string, string, string], FilterListEntry>(
-    `SELECT i.item_id AS id, i.label AS label, i.parent_id AS parentId
+  const statement = db.prepare<[string, string, string, string], FilterListEntryRow>(
+    `SELECT i.item_id AS id, i.label AS label, i.parent_id AS parentId,
+              i.members_incomplete AS membersIncomplete
        FROM source_filter_lists l
        JOIN source_filter_items i
          ON i.source_id = l.source_id AND i.field = l.field AND i.device_id = l.device_id
@@ -506,7 +531,7 @@ export function getFilterListItems(
       key.deviceId,
       JSON.stringify(chunk),
     )) {
-      found.set(entry.id, entry);
+      found.set(entry.id, entryFromRow(entry));
     }
   }
   return found;

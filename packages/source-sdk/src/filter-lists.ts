@@ -142,14 +142,15 @@ export function filterListDigest(canonicalItems: readonly FilterListItem[]): str
   const hash = createHash("sha256");
   hash.update("omnesis-filter-list-v1\n");
   for (const item of canonicalItems) {
-    hash.update(
-      JSON.stringify([
-        item.id,
-        item.label,
-        item.parentId ?? null,
-        (item.members ?? []).map((member) => [member.type, member.value]),
-      ]),
-    );
+    const entry: unknown[] = [
+      item.id,
+      item.label,
+      item.parentId ?? null,
+      (item.members ?? []).map((member) => [member.type, member.value]),
+    ];
+    // Added only when set, so a list without the flag keeps its digest.
+    if (item.membersIncomplete) entry.push("members-incomplete");
+    hash.update(JSON.stringify(entry));
     hash.update("\n");
   }
   return hash.digest("hex");
@@ -236,7 +237,7 @@ function canonicalItem(raw: FilterListItem): FilterListItem {
   if (typeof raw !== "object" || raw === null) {
     throw new FilterListError("a list item must be an object");
   }
-  const { id, label, parentId, members } = raw;
+  const { id, label, parentId, members, membersIncomplete } = raw;
   if (typeof id !== "string" || id.length === 0 || id.length > FILTER_LIST_LIMITS.idLength) {
     throw new FilterListError(
       `an item id must be a string of 1 to ${FILTER_LIST_LIMITS.idLength} characters`,
@@ -262,6 +263,12 @@ function canonicalItem(raw: FilterListItem): FilterListItem {
   };
   if (parentId !== undefined) item.parentId = parentId;
   if (members !== undefined) item.members = canonicalMembers(id, members);
+  if (membersIncomplete !== undefined) {
+    if (typeof membersIncomplete !== "boolean") {
+      throw new FilterListError(`item "${id}" has a membersIncomplete that is not a boolean`);
+    }
+    if (membersIncomplete) item.membersIncomplete = true;
+  }
   return item;
 }
 
