@@ -226,9 +226,10 @@ describe("each way a read set ends incomplete is refused", () => {
 
   test("inheriting an incomplete turn", () => {
     const capture = createScopeReleaseCapture(db, authorization);
-    capture.observer.inherit({ documentIds: ["input"], complete: false });
-    capture.observer.markComplete();
-    expect(capture.observer.snapshot().complete).toBe(false);
+    const observer = capture.observer as ReturnType<typeof createAnswerScopeReadObserver>;
+    observer.inherit({ documentIds: ["input"], complete: false });
+    observer.markComplete();
+    expect(observer.snapshot().complete).toBe(false);
     expect(() => capture.assertCurrent()).toThrow(INCOMPLETE);
   });
 
