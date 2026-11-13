@@ -48,7 +48,9 @@ import {
   type CDPSession,
   type Page,
 } from "playwright";
+import { createWindowsPrivateFile } from "@omnesis/core";
 import { E2EHarness } from "./harness.js";
+import { writeNoBrowserPreload } from "./enrollment-browser-fixture.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 
@@ -254,19 +256,6 @@ export async function writeLoopbackDnsPreload(directory: string): Promise<string
   return file;
 }
 
-/** A desktop launcher that opens nothing, so a CLI must print its connect code. */
-export async function writeNoBrowserLauncher(directory: string): Promise<string> {
-  const bin = join(directory, "no-browser-bin");
-  await mkdir(bin, { recursive: true });
-  const script = join(bin, "xdg-open");
-  await writeFile(
-    script,
-    `#!/bin/sh\necho "$1" >> ${JSON.stringify(join(directory, "launches.txt"))}\nexit 1\n`,
-  );
-  await chmod(script, 0o755);
-  return bin;
-}
-
 // ── World: PKI, preload, relay ───────────────────────────────────────────────
 
 export interface WorldOptions {
@@ -298,7 +287,7 @@ export class EnrollmentWorld {
     readonly directory: string,
     readonly pki: TestPki,
     readonly preload: string,
-    readonly noBrowserBin: string,
+    readonly noBrowserPreload: string,
     readonly relayLeaf: Leaf,
     ports: { relay: number; data: number },
     private options: WorldOptions,
@@ -324,17 +313,19 @@ export class EnrollmentWorld {
       directory,
       pki,
       await writeLoopbackDnsPreload(directory),
-      await writeNoBrowserLauncher(directory),
+      await writeNoBrowserPreload(directory),
       relayLeaf,
       { relay: await freePort(), data: await freePort() },
       options,
     );
     await writeFile(world.relayKeyFile, randomBytes(32), { mode: 0o600 });
-    await writeFile(
-      world.accountKeyFile,
-      generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }),
-      { mode: 0o600 },
-    );
+    const authorityKey = generateKeyPairSync("ed25519").privateKey.export({
+      type: "pkcs8",
+      format: "pem",
+    });
+    if (process.platform === "win32")
+      await createWindowsPrivateFile(world.accountKeyFile, Buffer.from(authorityKey));
+    else await writeFile(world.accountKeyFile, authorityKey, { mode: 0o600 });
     await world.setAllowlist(options.allowlist ?? {});
     world.dnsFixture = await startDnsFixture(world.dnsRecords);
     if (options.google) world.google = await FakeGoogle.start(directory, pki);
@@ -349,7 +340,11 @@ export class EnrollmentWorld {
 
   /** Environment for any spawned Node process that talks to the fixture relay and gateways. */
   clientEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-    const preloads = [this.preload, ...(this.google ? [this.google.preload] : [])];
+    const preloads = [
+      this.preload,
+      this.noBrowserPreload,
+      ...(this.google ? [this.google.preload] : []),
+    ];
     return {
       NODE_OPTIONS: [
         process.env.NODE_OPTIONS ?? "",
@@ -426,7 +421,7 @@ export class EnrollmentWorld {
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    registerSubprocessGroup(proc);
+    await registerSubprocessGroup(proc);
     this.relay = proc;
     this.relayOutput = "";
     await new Promise<void>((resolve, reject) => {
@@ -1172,7 +1167,6 @@ export function runCli(
     env: {
       ...e2eGatewayEnv(),
       ...world.clientEnv(),
-      PATH: `${world.noBrowserBin}:${process.env.PATH ?? ""}`,
       OMNESIS_LOG_LEVEL: "error",
       OMNESIS_GATEWAY_URL: undefined,
       OMNESIS_TOKEN: undefined,
@@ -1197,7 +1191,9 @@ export function runCli(
 
 /** The connect URL and code a CLI prints when no browser opens. */
 export async function printedConnectCode(
-  run: CliRun,
+  run: Pick<CliRun, "stdout" | "stderr" | "closed"> & {
+    proc: { readonly exitCode: number | null };
+  },
 ): Promise<{ connectUrl: string; code: string }> {
   return waitFor(
     () => {

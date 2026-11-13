@@ -1235,6 +1235,14 @@ crash containment. New owned executable launches use kernel jobs instead.
 - Bounded probes: `packages/core/src/windows-job-exec.ts`
 - Existing-child shutdown: `packages/core/src/child-termination.ts`
 
+Private Windows key files use `createWindowsPrivateFile` and
+`readWindowsPrivateFile`: creation applies a protected DACL before writing secret
+bytes, and reads validate the owner, every allow ACE, reparse status and bounded
+size on the same open handle. Only the current user, SYSTEM and Administrators
+may receive access. POSIX mode bits do not describe Windows ACL confidentiality.
+
+- Private Windows key files: `packages/core/src/windows-private-file.ts`
+
 Spawned gateways accept graceful shutdown through an inherited Node parent IPC
 channel, using the same coordinator as SIGINT/SIGTERM. Standalone processes add
 no listener. This avoids Windows' forceful signal emulation without exposing a

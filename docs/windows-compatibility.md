@@ -21,11 +21,11 @@ that a provider explicitly restricts to another platform.
 
 | Area                   | Finding                                                                              | Current evidence                                                                                                                                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gateway startup        | The claim guard only implemented Linux and macOS locking.                            | Windows guard implemented; existing Linux lifecycle tests pass. Actual Windows execution pending.                                                                                                       |
+| Gateway startup        | The claim guard only implemented Linux and macOS locking.                            | Windows guard implemented; the lock unit suite passes on Windows and Linux. Full Windows gateway lifecycle verification remains pending.                                                                |
 | External processes     | Cancellation used Unix negative-PID process groups on Windows.                       | Windows tree termination implemented; launcher fixtures now use Node so the same tests can run on Windows. Linux launcher suite passes. Windows execution pending.                                      |
 | Hosted widgets         | Registration required an absolute path beginning with `/`.                           | Validation uses the host path implementation; host-filesystem regression test passes on Linux. Windows execution pending.                                                                               |
 | JavaScript executables | Windows cannot execute a JavaScript shebang or an npm batch shim through `execFile`. | Node/npm argv helpers and Codex/CLI call sites updated. The complete 70-test Codex backend suite passes on Linux, including its managed runtime. Windows execution pending.                             |
-| Browser authorization  | Windows browser opening treated `start` as an executable.                            | Literal URI handling through PowerShell, with regression coverage for shell metacharacters. Windows execution pending.                                                                                  |
+| Browser authorization  | Windows browser opening treated `start` as an executable.                            | Literal URI handling through PowerShell, with regression coverage for shell metacharacters. Native Windows CLI and enrollment coverage is still being extended.                                         |
 | Local paths            | Home expansion depended on `HOME`; vault link keys used native separators.           | Native home resolution, Windows home prefixes, slash-based Obsidian identities and Windows browser-profile discovery implemented. Focused Linux provider and CLI tests pass. Windows execution pending. |
 | Encrypted analytics    | Bundled DuckDB extension pins omitted Windows.                                       | Upstream Windows x64 `httpfs` binary pinned; all nine extension-download tests pass on Linux. Native Windows ARM64 extension availability remains under investigation.                                  |
 
@@ -47,3 +47,27 @@ The audit is in progress. Passing Linux tests and inspecting Windows-specific
 branches do not establish Windows compatibility. Native dependency installation,
 the broader runtime surface, Windows lifecycle tests and macOS regression checks
 remain to be completed.
+
+## Native execution findings
+
+The first GitHub-hosted Windows focused run reported 638 passing tests, 61
+failures and 78 skips; a launcher worker also exited before completing its
+suite. This is a failing baseline, not a Windows compatibility verdict. It
+identified a real startup blocker: Windows file flushing requires a writable
+handle, while atomic writes reopened their scratch files read-only. Atomic
+writes now retain the creation handle through the flush. The corresponding
+Linux regression slice passes 87 tests; the Windows rerun is required.
+
+Additional fixes cover native path spelling, watcher polling keys, portable
+temporary directories and Unix-only permission assertions. Unix mode bits do
+not establish Windows confidentiality: native owner/DACL checks and private
+creation are being added, including atomic secret replacement and honest doctor
+results. The first Windows native job suite passed 12 of 13 cases; the remaining
+fixture needed a detached descendant to survive Node's own Windows child-job
+cleanup. That corrected case still requires a passing native rerun.
+
+The real pinned reference embedding model loaded and completed readiness
+inference on Windows. Its Linux sanity check also produced two finite
+1,024-dimensional vectors. The initial broad Windows sweep was stopped after
+the common atomic-write startup failure was established, to avoid spending
+runner time on the same failure across the remaining gateway suites.

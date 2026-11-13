@@ -1416,3 +1416,5 @@ export type { ConnectionPath } from "./connection-path.js";
 export { cloudRelayEnabled } from "./cloud-relay-enabled.js";
 
 export { execWindowsJob } from "./windows-job-exec.js";
+
+export { readWindowsPrivateFile, createWindowsPrivateFile } from "./windows-private-file.js";

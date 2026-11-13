@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { recoveryFixture } from "../test/recovery-fixture.js";
 import { assertRecoveryArtifactDestination } from "./recovery-artifact-paths.js";
@@ -178,7 +178,7 @@ test("signing outputs preserve key/public/input files through aliases while deli
         privateKeyFile,
         publicKeyFile,
         inputFile,
-        outputFile: join(alias, path.split("/").at(-1)!),
+        outputFile: join(alias, basename(path)),
       }),
     ).rejects.toThrow("cannot replace");
     expect(await readFile(path)).toEqual(before);
@@ -275,4 +275,22 @@ test("canonical output paths support new directory trees and sanitize filesystem
       );
     }
   }
+});
+
+test("case aliases of existing protected entries are refused without folding distinct entries", async () => {
+  const key = join(directory, "mixed-private.key"),
+    alias = join(directory, "MIXED-PRIVATE.KEY");
+  await writeFile(key, "invented private material");
+  try {
+    await readFile(alias);
+  } catch (error) {
+    if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT"))
+      throw error;
+    // This filesystem supports distinct case-sensitive entries; keep them usable.
+    await writeFile(alias, "invented independent material");
+    expect(assertRecoveryArtifactDestination(alias, [key])).toBe(alias);
+    return;
+  }
+  expect(() => assertRecoveryArtifactDestination(alias, [key])).toThrow("cannot replace");
+  expect(await readFile(key, "utf8")).toBe("invented private material");
 });

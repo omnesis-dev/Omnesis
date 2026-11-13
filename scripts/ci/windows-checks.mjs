@@ -28,6 +28,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/core/src/npm-command.test.ts",
   "packages/core/src/windows-job.test.ts",
   "packages/core/src/windows-job-stream.test.ts",
+  "packages/core/src/windows-private-file.test.ts",
   "packages/core/src/parent-shutdown.test.ts",
   "packages/core/src/windows-process-tree.test.ts",
   "packages/core/src/child-termination.test.ts",
@@ -35,6 +36,8 @@ export const FOCUSED_UNIT_FILES = [
   "packages/source-sdk/src/path-probe-node.test.ts",
   "packages/collector/src/e2e/gateway-env.test.ts",
   "packages/collector/src/e2e/subprocess-reaper.test.ts",
+  "packages/collector/src/e2e/enrollment-browser-fixture.test.ts",
+  "packages/collector/src/e2e/enrollment-terminal-fixture.test.ts",
   "packages/collector/src/file-watcher-manager.test.ts",
   "packages/collector/src/source-descriptors.test.ts",
   "packages/gateway-client/src",
@@ -48,6 +51,11 @@ export const FOCUSED_UNIT_FILES = [
   "packages/providers/obsidian",
   "packages/providers/local-files",
   "packages/providers/browser-history/src/paths.test.ts",
+  "packages/cloud-relay/src/account-authority-key.test.ts",
+  "packages/cloud-relay/src/recovery-artifact-paths.test.ts",
+  "packages/cloud-relay/src/proxy-protocol.test.ts",
+  "packages/cloud-relay/src/proxy-protocol-relay.test.ts",
+  "packages/cloud-relay/src/cdn-front-relay.test.ts",
 ];
 
 export const FOCUSED_E2E_FILES = [

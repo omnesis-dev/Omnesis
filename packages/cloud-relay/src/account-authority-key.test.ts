@@ -32,7 +32,7 @@ test("concurrent relay starts publish one stable private account attestation key
       Array.from({ length: 8 }, () => loadAccountEnrollmentAuthority(origin, path)),
     );
     expect(new Set(authorities.map((authority) => authority.kid)).size).toBe(1);
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect(await readdir(join(directory, "private"))).toEqual(["authority.pem"]);
     const material = await readFile(path);
     expect((await loadAccountEnrollmentAuthority(origin, path)).kid).toBe(authorities[0]!.kid);
@@ -54,6 +54,12 @@ test("publication failures clean private temporary material and files that grow 
     );
     expect(await readdir(directory)).toEqual([]);
     await writeFile(path, "x".repeat(16_385), { mode: 0o600 });
+    if (process.platform === "win32") {
+      await expect(loadAccountEnrollmentAuthority(origin, path)).rejects.toThrow(
+        "private regular file",
+      );
+      return;
+    }
     const reader = await open(path, "r");
     const beforeGrowth = await reader.stat();
     beforeGrowth.size = 0;
@@ -71,11 +77,13 @@ test("unsafe permissions, symlinks, oversized material and other key algorithms 
   try {
     await loadAccountEnrollmentAuthority(origin, path);
     const original = await readFile(path);
-    await chmod(path, 0o644);
-    await expect(loadAccountEnrollmentAuthority(origin, path)).rejects.toThrow(
-      "private regular file",
-    );
-    await chmod(path, 0o600);
+    if (process.platform !== "win32") {
+      await chmod(path, 0o644);
+      await expect(loadAccountEnrollmentAuthority(origin, path)).rejects.toThrow(
+        "private regular file",
+      );
+      await chmod(path, 0o600);
+    }
     const alias = join(directory, "alias.pem");
     await symlink(path, alias);
     await expect(loadAccountEnrollmentAuthority(origin, alias)).rejects.toThrow();

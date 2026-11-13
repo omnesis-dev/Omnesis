@@ -140,12 +140,15 @@ export function defaultWizardHost(): WizardHost {
  * a `~` that would name the container's home. A collector elsewhere keeps its
  * own directory and keyring, which this CLI cannot see.
  */
-export async function credentialsDestinationLines(input: {
-  fileKey: string;
-  perAccount: boolean;
-  sameHost: boolean;
-  host: WizardHost;
-}): Promise<string[]> {
+export async function credentialsDestinationLines(
+  input: {
+    fileKey: string;
+    perAccount: boolean;
+    sameHost: boolean;
+    host: WizardHost;
+  },
+  platform: NodeJS.Platform = process.platform,
+): Promise<string[]> {
   const { fileKey, perAccount, sameHost, host } = input;
   const inDocker =
     sameHost &&
@@ -163,7 +166,9 @@ export async function credentialsDestinationLines(input: {
   } else {
     where = "They'll be saved to the collector's config dir";
   }
-  const lines = [`${where} (mode 0600).`];
+  // POSIX mode bits do not describe Windows ACL permissions.
+  const permissions = platform === "win32" ? "" : " (mode 0600)";
+  const lines = [`${where}${permissions}.`];
   if (!sameHost) return lines;
   lines.push(
     (await host.secretsEncrypted())

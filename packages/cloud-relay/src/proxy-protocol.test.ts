@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { connect, createServer, type AddressInfo, type Server, type Socket } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, test } from "vitest";
+import { addIpv6Loopback } from "../test/loopback-peers.js";
 import {
   acceptProxyProtocol,
   connectionClientAddress,
@@ -200,13 +201,12 @@ describe("trusted front-layer peers", () => {
 });
 
 // ── Listener behaviour, over real loopback sockets ──────────────────────────
-// Linux routes all of 127/8 to loopback, so 127.0.0.9 stands in for the front layer. Other
-// systems have only 127.0.0.1, so these run where the relay does.
-
-const FRONT = "127.0.0.9";
+const FRONT = "::1";
 const servers: Server[] = [];
+const aliases: Awaited<ReturnType<typeof addIpv6Loopback>>[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  for (const alias of aliases.splice(0)) await alias.close();
   for (const server of servers.splice(0)) server.close();
 });
 
@@ -240,7 +240,7 @@ async function frontedServer(options: { timeoutMs?: number; maxPending?: number 
       socket.end("ok");
     });
   });
-  const front = acceptProxyProtocol(server, ProxyProtocolPeers.parse(`${FRONT}, 127.0.0.10`)!, {
+  const front = acceptProxyProtocol(server, ProxyProtocolPeers.parse(FRONT)!, {
     timeoutMs: 200,
     ...options,
   });
@@ -248,6 +248,7 @@ async function frontedServer(options: { timeoutMs?: number; maxPending?: number 
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const port = (server.address() as AddressInfo).port;
+  aliases.push(await addIpv6Loopback(server));
   return { seen, front, port };
 }
 
@@ -258,7 +259,7 @@ async function exchange(
   parts: Buffer[],
   pauseMs = 0,
 ): Promise<{ reply: string; socket: Socket }> {
-  const socket = connect({ host: "127.0.0.1", port, localAddress: from });
+  const socket = connect({ host: from, port, localAddress: from });
   socket.on("error", () => {});
   await once(socket, "connect");
   socket.setNoDelay(true);
@@ -273,7 +274,7 @@ async function exchange(
   return { reply: Buffer.concat(chunks).toString(), socket };
 }
 
-describe.runIf(process.platform === "linux")("reading the header before any listener", () => {
+describe("reading the header before any listener", () => {
   test("a trusted front's header names the client for this connection only, until it closes", async () => {
     const { seen, port } = await frontedServer();
     const { reply } = await exchange(port, FRONT, [
@@ -288,7 +289,7 @@ describe.runIf(process.platform === "linux")("reading the header before any list
     expect(connectionClientAddress(seen[0]!.endpoint)).toBe(FRONT);
 
     // An IPv4-mapped IPv6 source is recorded as plain IPv4.
-    await exchange(port, "127.0.0.10", [
+    await exchange(port, FRONT, [
       proxyV6("00000000000000000000ffffcb007109"),
       Buffer.from("again"),
     ]);
@@ -355,7 +356,7 @@ describe.runIf(process.platform === "linux")("reading the header before any list
   test("waiting connections are bounded, freed when they close or fail, and closed on shutdown", async () => {
     const { seen, front, port } = await frontedServer({ maxPending: 1, timeoutMs: 10_000 });
     const open = async () => {
-      const socket = connect({ host: "127.0.0.1", port, localAddress: FRONT });
+      const socket = connect({ host: FRONT, port, localAddress: FRONT });
       socket.on("error", () => {});
       await once(socket, "connect");
       return socket;
