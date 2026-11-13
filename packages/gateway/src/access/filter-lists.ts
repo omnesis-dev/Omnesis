@@ -161,14 +161,21 @@ export async function publishFilterLists(
 
 /**
  * The rows a page writes, reduced to what the field's declaration gives a
- * meaning to: a parent only in a tree, members only where the field lists them.
+ * meaning to: a parent only in a tree, members and whether they are all named
+ * only where the field lists them.
  */
 function stagedRows(field: ReadyField, publication: FilterListPublication): FilterListStagedRow[] {
   const tree = field.filter.capability === "tree";
   const listsMembers = field.filter.listsMembers === true;
   const rows: FilterListStagedRow[] = [];
   for (const item of publication.items) {
-    rows.push(["item", item.id, tree ? (item.parentId ?? null) : null, item.label]);
+    rows.push([
+      "item",
+      item.id,
+      tree ? (item.parentId ?? null) : null,
+      item.label,
+      listsMembers && item.membersIncomplete === true,
+    ]);
     if (!listsMembers || !item.members) continue;
     for (const member of item.members) rows.push(["member", item.id, member.type, member.value]);
   }

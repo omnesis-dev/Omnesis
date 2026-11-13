@@ -609,7 +609,9 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   and nothing about individual records; it returns the whole list or throws,
   never a part of it; ids are unique, every `parentId` names an item of the
   same list, and an item whose parent the source cannot see is a root;
-  `members` appear only where the field declares `listsMembers`. Its cost
+  `members` appear only where the field declares `listsMembers`, and an item
+  with a member the source cannot name by a declared identifier, or whose
+  roster it does not hold whole, sets `membersIncomplete`. Its cost
   grows with the number of labels or folders, never with the number of
   records. A test covers a rename, a move, a deletion and a failed listing.
 - `documentTemporalProjections` use only the closed field set

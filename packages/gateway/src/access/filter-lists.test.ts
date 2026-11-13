@@ -205,6 +205,33 @@ describe("publishFilterLists", () => {
     expect(getFilterListMembers(db, labels, "l-1")).toEqual([]);
   });
 
+  it("keeps whether an item has unnamed members only where the field lists members", async () => {
+    await publishFilterLists(
+      deps(),
+      SOURCE,
+      [
+        list("extra.chatId", "chats", [
+          { id: "c-1", label: "Chat", membersIncomplete: true },
+          { id: "c-2", label: "Other chat" },
+        ]),
+        list("extra.labelIds", "labels", [{ id: "l-1", label: "Label", membersIncomplete: true }]),
+      ],
+      HOLDER,
+    );
+    const chats = getFilterListItems(
+      db,
+      { sourceId: SOURCE, field: "extra.chatId", deviceId: "" },
+      ["c-1", "c-2"],
+    );
+    expect(chats.get("c-1")?.membersIncomplete).toBe(true);
+    expect(chats.get("c-2")?.membersIncomplete).toBe(false);
+    expect(
+      getFilterListItems(db, { sourceId: SOURCE, field: "extra.labelIds", deviceId: "" }, [
+        "l-1",
+      ]).get("l-1")?.membersIncomplete,
+    ).toBe(false);
+  });
+
   it("files a list whose ids belong to a device under the publishing device", async () => {
     const folders = (name: string, id: string) =>
       list("extra.directory", name, [{ id, label: id }]);

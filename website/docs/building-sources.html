@@ -873,7 +873,9 @@ create: async ({ config }) =>
           Each item has an <code>id</code> (the value records carry), a <code>label</code> for
           display, a <code>parentId</code> in a tree, and <code>members</code> (identifiers of type
           <code>phone</code>, <code>email</code> or <code>domain</code>) when the field declares
-          <code>listsMembers</code>. The rules:
+          <code>listsMembers</code>. Set <code>membersIncomplete</code> on an item that has a member
+          the source cannot name by one of those identifiers, or whose members the source does not
+          hold in full; it says that who belongs to the item is not fully known. The rules:
         </p>
         <ul>
           <li>
