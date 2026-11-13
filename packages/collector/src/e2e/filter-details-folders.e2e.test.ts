@@ -22,7 +22,9 @@
  *     without any stored record being sent again, and the other computer's
  *     list only changes when that computer syncs;
  *   - a folder moved on disk is a different folder: its files follow under the
- *     records they already had.
+ *     records they already had;
+ *   - a read of more session files than one page holds, from an empty cursor
+ *     or not, stores the whole list by the end of that same sync.
  *
  * Files only change on disk while the source is disabled on both computers,
  * and re-enabling a source runs its sync: a source that watches its files
@@ -135,8 +137,8 @@ describe("filter details: the folders of local files and coding sessions", () =>
     expect(await device.engine.enableSource(sourceId, NEVER)).toBe(true);
   };
 
-  /** Send a computer back to the start of a source, keeping every stored record. */
-  const readAgainFromTheStart = async (sourceId: string, device: HarnessDevice): Promise<void> => {
+  /** Empty a computer's cursor for a source, keeping every stored record. */
+  const forgetPosition = async (sourceId: string, device: HarnessDevice): Promise<void> => {
     const headers = {
       Authorization: `Bearer ${device.token}`,
       "Content-Type": "application/json",
@@ -149,7 +151,30 @@ describe("filter details: the folders of local files and coding sessions", () =>
       body: JSON.stringify({ cursor: {}, writeEpoch: state.wipeEpoch }),
     });
     expect(await reset.json()).toEqual({ ok: true });
+  };
+
+  const readAgainFromTheStart = async (sourceId: string, device: HarnessDevice): Promise<void> => {
+    await forgetPosition(sourceId, device);
     await sync(sourceId, device);
+  };
+
+  /** Count the pages a computer's next syncs of a source read, and how many said more follow. */
+  const countPages = (sourceId: string, device: HarnessDevice) => {
+    const instance = device.engine.getSourcesById(sourceId)[0]!.instance;
+    const original = instance.sync;
+    const pages = { read: 0, withMore: 0 };
+    instance.sync = async (...args) => {
+      const result = await original.apply(instance, args);
+      pages.read++;
+      if (result.hasMore) pages.withMore++;
+      return result;
+    };
+    return {
+      pages,
+      restore: () => {
+        instance.sync = original;
+      },
+    };
   };
 
   const fileFolder = (relative: string): string => directoryFilterId(join(filesDir, relative))!;
@@ -462,4 +487,47 @@ describe("filter details: the folders of local files and coding sessions", () =>
     expect(parents(list(FILES, FOLDER, desktop))).toEqual(listed);
     expect(failures).toEqual([]);
   }, 180_000);
+
+  test("a read of more session files than one page holds stores the whole list by the end of that same sync", async () => {
+    const before = list(SESSIONS, PROJECT_FOLDER, laptop);
+    expect(list(SESSIONS, PROJECT_FOLDER, desktop)).toEqual(before);
+
+    await disable(SESSIONS);
+    // More new session files than one page of a sync reads, each in a folder of its own.
+    const added: Record<string, [string, string | null]> = {
+      "/srv/batch": ["/srv/batch", "/srv"],
+    };
+    for (let index = 0; index < 12; index++) {
+      const folder = `/srv/batch/project-${String(index).padStart(2, "0")}`;
+      sessionFile(`ff-claude-code-batch-${String(index).padStart(2, "0")}`, folder, 10 + index);
+      added[folder] = [folder, "/srv/batch"];
+    }
+
+    // The laptop reads the twelve new files from where it was: two pages, one sync.
+    const laptopPages = countPages(SESSIONS, laptop);
+    try {
+      await enable(SESSIONS, laptop);
+    } finally {
+      laptopPages.restore();
+    }
+    expect(laptopPages.pages).toEqual({ read: 2, withMore: 1 });
+    expect(list(SESSIONS, PROJECT_FOLDER, laptop)).toEqual({ ...before, ...added });
+    // The desktop has not synced.
+    expect(list(SESSIONS, PROJECT_FOLDER, desktop)).toEqual(before);
+
+    // The desktop reads every file from an empty cursor: three pages, one sync.
+    await forgetPosition(SESSIONS, desktop);
+    const desktopPages = countPages(SESSIONS, desktop);
+    try {
+      await enable(SESSIONS, desktop);
+    } finally {
+      desktopPages.restore();
+    }
+    expect(desktopPages.pages).toEqual({ read: 3, withMore: 2 });
+    expect(list(SESSIONS, PROJECT_FOLDER, desktop)).toEqual({ ...before, ...added });
+    expect(
+      documents(SESSIONS, desktop).filter((row) => row.folder?.startsWith("/srv/batch/")),
+    ).toHaveLength(12);
+    expect(failures).toEqual([]);
+  }, 240_000);
 });

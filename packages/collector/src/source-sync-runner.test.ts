@@ -3,6 +3,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { LogLevel, setLogLevel } from "@omnesis/core";
 import { SyncError, SourceId, type DocumentInput, type ProviderId } from "@omnesis/types";
+import { collectFilterList, FilterListNotReadyError, filterListDigest } from "@omnesis/source-sdk";
 import { SourceSyncRunner, isGatewayValidationError } from "./source-sync-runner.js";
 import { SourceRegistry } from "./source-registry.js";
 import { SyncScheduler } from "./sync-scheduler.js";
@@ -3748,7 +3749,7 @@ describe("SourceSyncRunner — the lists of a source's filterable fields", () =>
   const run = (gateway: ListGateway, registry: SourceRegistry, source: RegisteredSource) =>
     new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(source);
 
-  test("are published once per sync, after its first page commits and before its next is fetched", async () => {
+  test("are published after the first page commits and before the next is fetched, and not asked for again", async () => {
     const { registry, events } = makeRegistry();
     const gateway = new ListGateway();
     const source = listingSource("filing:first-page", 3, () => [{ id: "f-work", label: "Work" }]);
@@ -3794,9 +3795,77 @@ describe("SourceSyncRunner — the lists of a source's filterable fields", () =>
     await run(gateway, registry, source);
 
     expect(gateway.listPages).toEqual([]);
-    expect(gateway.order).toEqual(["page:1", "digests", "page:1"]);
+    // Asked after the first page and once more after the last.
+    expect(gateway.order).toEqual(["page:1", "digests", "page:1", "digests"]);
     expect(events.at(-1)?.event).toBe("sync.completed");
     expect(registry.getStatus(source.id)?.state).toBe("idle");
+  });
+
+  test("a list that is only whole after the last page is published by the end of the same sync", async () => {
+    const { registry, events } = makeRegistry();
+    const gateway = new ListGateway();
+    let pagesRead = 0;
+    const source = listingSource("filing:late", 3, () => {
+      if (pagesRead < 3) throw new FilterListNotReadyError("the files are still being read");
+      return [{ id: "f-work", label: "Work" }];
+    });
+    const sync = source.instance.sync.bind(source.instance);
+    source.instance.sync = async (...args) => {
+      const result = await sync(...args);
+      pagesRead++;
+      return result;
+    };
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(gateway.order).toEqual(["page:1", "digests", "page:1", "page:1", "digests", "lists"]);
+    // The list page repeats the position of the last page and ends the cycle as it did.
+    expect(gateway.listPages).toEqual([
+      { fields: [FOLDERS], documents: 0, hasMore: false, cursor: { page: 3 }, wipeEpoch: 1 },
+    ]);
+    expect(events.at(-1)?.event).toBe("sync.completed");
+  });
+
+  test("a late list the gateway already holds is sent at neither point", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new ListGateway();
+    const folders = [{ id: "f-work", label: "Work" }];
+    gateway.digests[FOLDERS] = filterListDigest(
+      await collectFilterList(() => folders, { signal: new AbortController().signal }),
+    );
+    let pagesRead = 0;
+    const source = listingSource("filing:late-unchanged", 2, () => {
+      if (pagesRead < 2) throw new FilterListNotReadyError("the files are still being read");
+      return folders;
+    });
+    const sync = source.instance.sync.bind(source.instance);
+    source.instance.sync = async (...args) => {
+      const result = await sync(...args);
+      pagesRead++;
+      return result;
+    };
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(gateway.order).toEqual(["page:1", "digests", "page:1", "digests"]);
+  });
+
+  test("a sync of one page offers its lists once", async () => {
+    const { registry } = makeRegistry();
+    const gateway = new ListGateway();
+    let listed = 0;
+    const source = listingSource("filing:one-page", 1, () => {
+      listed++;
+      throw new FilterListNotReadyError("nothing has been read yet");
+    });
+    registry.registerProvider(makeProvider(source));
+
+    await run(gateway, registry, source);
+
+    expect(listed).toBe(1);
+    expect(gateway.order).toEqual(["page:1", "digests"]);
   });
 
   test("a source with no lists costs no digest read", async () => {

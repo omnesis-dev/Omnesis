@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId, type FilterListItem } from "@omnesis/types";
-import { collectFilterList } from "./filter-lists.js";
+import { collectFilterList, FilterListNotReadyError } from "./filter-lists.js";
 import {
   createLocalAgentSessionDocumentEventProfile,
   createLocalAgentSessionSource,
@@ -341,7 +341,8 @@ describe("the project folder of a coding session", () => {
     const page = await instance.sync(null);
     expect(page.hasMore).toBe(true);
     // A part of the list would read as the rest no longer existing.
-    await expect(list()).rejects.toThrow(/still being read/);
+    // Not a failure: the host asks again once the cycle's last page is read.
+    await expect(list()).rejects.toBeInstanceOf(FilterListNotReadyError);
 
     await cycle(page.cursor);
     expect(Object.keys(await list())).toHaveLength(14);

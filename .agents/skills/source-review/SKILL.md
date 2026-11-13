@@ -607,7 +607,8 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   `withFilterLists`, keyed by the field's path. A producer lists everything
   that exists in the account for the field (also what no record belongs to)
   and nothing about individual records; it returns the whole list or throws,
-  never a part of it; ids are unique, every `parentId` names an item of the
+  never a part of it, and throws `FilterListNotReadyError` while a list built
+  from the sync's own pages is not whole yet; ids are unique, every `parentId` names an item of the
   same list, and an item whose parent the source cannot see is a root;
   `members` appear only where the field declares `listsMembers`, and an item
   with a member the source cannot name by a declared identifier, or whose

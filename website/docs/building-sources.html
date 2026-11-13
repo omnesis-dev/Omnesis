@@ -885,6 +885,11 @@ create: async ({ config }) =>
             sync carries on and the gateway keeps the list it has.
           </li>
           <li>
+            A list built from what the sync itself reads may only be whole once the sync's last page
+            is read. Until then its producer throws <code>FilterListNotReadyError</code>, which is
+            not a failure and is not logged as one.
+          </li>
+          <li>
             List what exists, whether or not any record belongs to it. Say nothing about individual
             records: the list's cost must grow with the number of labels or folders, never with the
             number of records.
@@ -900,12 +905,13 @@ create: async ({ config }) =>
           </li>
         </ul>
         <p>
-          The collector runs the producers once in every sync, after the sync's first page is
-          stored, and sends a list only when it differs from the one the gateway holds. The gateway
-          never asks for a list. It replaces a stored list in one step once it has received all of
-          the new one, and keeps one list per device for a field whose <code>scope</code> is
-          <code>device</code>. A list for a field the profile does not mark with
-          <code>filter</code> is ignored.
+          The collector runs the producers in every sync, after the sync's first page is stored, and
+          sends a list only when it differs from the one the gateway holds. After the sync's last
+          page it runs again the producers whose list was not ready, failed or was not stored, so a
+          list that is whole only at the end is published by the same sync. The gateway never asks
+          for a list. It replaces a stored list in one step once it has received all of the new one,
+          and keeps one list per device for a field whose <code>scope</code> is <code>device</code>.
+          A list for a field the profile does not mark with <code>filter</code> is ignored.
         </p>
 
         <h3 id="analytics-rows">Analytics rows</h3>

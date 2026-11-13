@@ -29,6 +29,7 @@ import {
   syncPage,
   SnapshotEnumeration,
   config as configSchema,
+  FilterListNotReadyError,
   withFilterLists,
   type SourceInstance,
   type SyncProgress,
@@ -1022,7 +1023,9 @@ export default defineSource({
       // Listed from what the sync's own scan found, so listing reads nothing
       // from the disk and costs one step per directory.
       [LOCAL_FILES_FOLDER_FIELD]: () => {
-        if (knownDirectories === undefined) throw new Error("the folders have not been read yet");
+        if (knownDirectories === undefined) {
+          throw new FilterListNotReadyError("the folders have not been read yet");
+        }
         return directoryFilterList(knownDirectories, { roots, home: homedir() });
       },
     });

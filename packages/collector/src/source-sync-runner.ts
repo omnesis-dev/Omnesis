@@ -60,7 +60,7 @@ import { SourceLifecycle } from "./source-lifecycle.js";
 import { ProgressTracker } from "./progress-tracker.js";
 import { FeedProcessSupervisor } from "./feed-process-supervisor.js";
 import { runWithSyncTimeout } from "./source-sync-attempt.js";
-import { FilterListPublisher } from "./filter-list-publisher.js";
+import { FilterListPublisher, newFilterListCycle } from "./filter-list-publisher.js";
 import type {
   DocumentIngestionContext,
   DocumentInput,
@@ -707,20 +707,27 @@ export class SourceSyncRunner {
           }
         }
       }
-      // The source's lists are refreshed once per cycle, after its first page
-      // has committed: the gateway then knows the source, and a long first
-      // read does not keep the lists waiting for its last page.
+      // The source's lists are offered after its first page has committed:
+      // the gateway then knows the source, and a long first read does not
+      // keep the lists waiting for its last page. They are offered once more
+      // after the last page, for the lists the first offer left open, such as
+      // one that is only whole once every page has been read.
+      const listCycle = newFilterListCycle();
       let listsOffered = false;
       const offerFilterLists = async (committed: { cursor: typeof cursor; hasMore: boolean }) => {
-        if (listsOffered || committed.cursor === null) return;
+        if (committed.cursor === null || (listsOffered && committed.hasMore)) return;
         listsOffered = true;
-        await this.filterLists.publish(source, {
-          cursor: committed.cursor,
-          hasMore: committed.hasMore,
-          wipeEpoch,
-          signal,
-          holder: mode !== "replicated" || this.heldLeases.has(source.id),
-        });
+        await this.filterLists.publish(
+          source,
+          {
+            cursor: committed.cursor,
+            hasMore: committed.hasMore,
+            wipeEpoch,
+            signal,
+            holder: mode !== "replicated" || this.heldLeases.has(source.id),
+          },
+          listCycle,
+        );
       };
       let hasMore = true;
       // TODO: End the tick with a log.error when a structured page carries no rows, deletes or

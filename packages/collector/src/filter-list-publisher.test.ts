@@ -7,9 +7,10 @@
  * never lets a failed listing reach the sync. All fixture data is invented.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   collectFilterList,
+  FilterListNotReadyError,
   filterListDigest,
   type FilterListProducers,
   type SourceInstance,
@@ -22,7 +23,11 @@ import {
   type FilterListOutcome,
   type FilterListPublication,
 } from "@omnesis/types";
-import { FilterListPublisher, type CommittedPage } from "./filter-list-publisher.js";
+import {
+  FilterListPublisher,
+  newFilterListCycle,
+  type CommittedPage,
+} from "./filter-list-publisher.js";
 
 const SOURCE = SourceId("filing:northstar");
 const FOLDERS = "extra.folderIds";
@@ -256,6 +261,122 @@ describe("FilterListPublisher", () => {
     });
     await publisher.publish(source, page({ signal: abort.signal }));
     expect(gateway.sent).toEqual([]);
+  });
+
+  describe("within one sync cycle", () => {
+    /** A producer that is not ready until `ready` is set, counting its runs. */
+    function lateFolders() {
+      const state = { ready: false, runs: 0 };
+      const producer = () => {
+        state.runs++;
+        if (!state.ready) throw new FilterListNotReadyError("the files are still being read");
+        return folders;
+      };
+      return { state, producer };
+    }
+
+    it("publishes at the end of the cycle a list that was not ready after the first page", async () => {
+      const { state, producer } = lateFolders();
+      let groupRuns = 0;
+      const source = sourceWith({
+        [FOLDERS]: producer,
+        [GROUPS]: () => {
+          groupRuns++;
+          return groups;
+        },
+      });
+      const cycle = newFilterListCycle();
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        await publisher.publish(source, page({ cursor: { offset: 1 } }), cycle);
+        expect(gateway.sent.map((sent) => sent.filterLists.map((list) => list.field))).toEqual([
+          [GROUPS],
+        ]);
+
+        state.ready = true;
+        await publisher.publish(source, page({ cursor: { offset: 9 }, hasMore: false }), cycle);
+        // Waiting for a list to be ready is not a failure.
+        expect(warning).not.toHaveBeenCalled();
+      } finally {
+        warning.mockRestore();
+      }
+
+      expect(gateway.sent).toHaveLength(2);
+      expect(gateway.sent[1]).toMatchObject({ cursor: { offset: 9 }, hasMore: false });
+      expect(gateway.sent[1]?.filterLists.map((list) => list.field)).toEqual([FOLDERS]);
+      expect(gateway.digests?.[FOLDERS]).toBe(await digestOf(folders));
+      // The list published after the first page is not produced again.
+      expect(groupRuns).toBe(1);
+      expect(state.runs).toBe(2);
+    });
+
+    it("sends nothing at the end of the cycle for a late list the gateway already holds", async () => {
+      gateway.digests = { [FOLDERS]: await digestOf(folders) };
+      const { state, producer } = lateFolders();
+      const source = sourceWith({ [FOLDERS]: producer });
+      const cycle = newFilterListCycle();
+
+      await publisher.publish(source, page(), cycle);
+      state.ready = true;
+      await publisher.publish(source, page({ hasMore: false }), cycle);
+
+      expect(gateway.sent).toEqual([]);
+    });
+
+    it("asks for nothing at the end of a cycle whose lists were all found current or published", async () => {
+      gateway.digests = { [FOLDERS]: await digestOf(folders) };
+      let runs = 0;
+      const source = sourceWith({
+        [FOLDERS]: () => {
+          runs++;
+          return folders;
+        },
+        [GROUPS]: () => {
+          runs++;
+          return groups;
+        },
+      });
+      const cycle = newFilterListCycle();
+
+      await publisher.publish(source, page(), cycle);
+      await publisher.publish(source, page({ hasMore: false }), cycle);
+
+      expect(gateway.sent.map((sent) => sent.filterLists.map((list) => list.field))).toEqual([
+        [GROUPS],
+      ]);
+      expect(runs).toBe(2);
+      expect(gateway.digestReads).toBe(1);
+    });
+
+    it("tries again at the end of the cycle a list that failed or was refused, and logs the failure", async () => {
+      let fail = true;
+      const source = sourceWith({
+        [FOLDERS]: () => {
+          if (fail) throw new Error("the account could not be listed");
+          return folders;
+        },
+        [GROUPS]: () => groups,
+      });
+      const cycle = newFilterListCycle();
+      gateway.respond = "rejected";
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        await publisher.publish(source, page(), cycle);
+        expect(warning).toHaveBeenCalledTimes(1);
+        expect(String(warning.mock.calls[0]?.[0])).toContain("the account could not be listed");
+      } finally {
+        warning.mockRestore();
+      }
+      expect(cycle.closed.size).toBe(0);
+
+      fail = false;
+      gateway.respond = "normal";
+      gateway.sent = [];
+      await publisher.publish(source, page({ hasMore: false }), cycle);
+
+      expect(gateway.sent[0]?.filterLists.map((list) => list.field)).toEqual([FOLDERS, GROUPS]);
+      expect([...cycle.closed].sort()).toEqual([FOLDERS, GROUPS].sort());
+    });
   });
 
   describe("a list too long for one page", () => {

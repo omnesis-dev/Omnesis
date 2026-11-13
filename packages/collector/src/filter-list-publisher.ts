@@ -5,22 +5,29 @@
  * Publishes the lists a source produces for its filterable fields, as part of
  * the source's ordinary sync.
  *
- * Once per sync cycle, after the cycle's first page has committed, the
- * publisher runs each of the source's producers, compares the digest of what
- * it got with the digest the gateway reports for that list, and sends only
- * the lists that differ. They travel on sync pages that carry no documents and
- * repeat the cursor just committed, so nothing about the source's position
- * changes. A sync whose lists are unchanged sends nothing.
+ * A sync cycle offers its lists after its first page has committed, and once
+ * more after its last page for the lists the first offer left open. At each
+ * offer the publisher runs the producers of the fields still open, compares
+ * the digest of what it got with the digest the gateway reports for that list,
+ * and sends only the lists that differ. They travel on sync pages that carry
+ * no documents and repeat the cursor just committed, so nothing about the
+ * source's position changes. A sync whose lists are unchanged sends nothing.
+ *
+ * A field is closed for the cycle once the gateway holds the list its
+ * producer returned. A producer that says its list is not ready yet leaves
+ * the field open without a word in the log; that is how a source whose list
+ * is only whole once its last page is read publishes it in the same cycle.
  *
  * Nothing here can fail a sync. A producer that throws, a list that breaks
- * the contract and a gateway that refuses a page are each logged and left for
- * the next cycle; the gateway keeps the list it has, because a list it never
- * finished receiving is never switched to.
+ * the contract and a gateway that refuses a page are each logged and left
+ * open; the gateway keeps the list it has, because a list it never finished
+ * receiving is never switched to.
  */
 
 import { createLogger, toErrorMessage } from "@omnesis/core";
 import {
   collectFilterList,
+  FilterListNotReadyError,
   filterListDigest,
   filterListRefreshDue,
   packFilterListPages,
@@ -51,8 +58,26 @@ export interface CommittedPage {
   holder: boolean;
 }
 
+/**
+ * What one sync cycle has done about its source's lists. The sync creates one
+ * per cycle with {@link newFilterListCycle} and passes it to every offer.
+ */
+export interface FilterListCycle {
+  /** The fields whose list the gateway is known to hold, as of this cycle. */
+  readonly closed: Set<string>;
+  /** Whether this cycle refreshes lists at all; decided at its first offer. */
+  due?: boolean;
+}
+
+export function newFilterListCycle(): FilterListCycle {
+  return { closed: new Set() };
+}
+
 /** Outcomes after which the rest of a list's pages are still wanted. */
 const CONTINUES: ReadonlySet<FilterListReceipt["outcome"]> = new Set(["staged", "published"]);
+
+/** Outcomes that say the gateway now holds the whole list. */
+const HELD: ReadonlySet<FilterListReceipt["outcome"]> = new Set(["published", "current"]);
 
 export class FilterListPublisher {
   /** When each source's producers last all ran to the end. */
@@ -65,15 +90,22 @@ export class FilterListPublisher {
     private readonly options: { now?: () => number; producerTimeoutMs?: number } = {},
   ) {}
 
-  /** Refresh the lists of `source` if they are due. Never throws. */
+  /**
+   * Refresh the lists of `source` that `cycle` has not closed yet, if they
+   * are due. Never throws.
+   */
   async publish(
     source: Pick<RegisteredSource, "id" | "providerId" | "instance">,
     page: CommittedPage,
+    cycle: FilterListCycle = newFilterListCycle(),
   ): Promise<void> {
     const producers = source.instance.filterLists;
     if (!producers || !page.holder || !this.gateway.getFilterListDigests) return;
     const now = (this.options.now ?? Date.now)();
-    if (!filterListRefreshDue(this.lastRefreshedAt.get(source.id), now)) return;
+    cycle.due ??= filterListRefreshDue(this.lastRefreshedAt.get(source.id), now);
+    if (!cycle.due) return;
+    const open = Object.entries(producers).filter(([field]) => !cycle.closed.has(field));
+    if (open.length === 0) return;
     try {
       const held = await this.gateway.getFilterListDigests(source.id);
       // A gateway that reports no digests does not store lists.
@@ -81,7 +113,7 @@ export class FilterListPublisher {
 
       const publications: FilterListPublication[] = [];
       let everyProducerRan = true;
-      for (const [field, producer] of Object.entries(producers)) {
+      for (const [field, producer] of open) {
         try {
           const signal = AbortSignal.any([
             page.signal,
@@ -89,16 +121,21 @@ export class FilterListPublisher {
           ]);
           const items = await collectFilterList(producer, { signal });
           const digest = filterListDigest(items);
-          if (held[field] !== digest) publications.push(...splitFilterList(field, items, digest));
+          if (held[field] === digest) cycle.closed.add(field);
+          else publications.push(...splitFilterList(field, items, digest));
         } catch (error) {
           everyProducerRan = false;
           if (page.signal.aborted) return;
+          if (error instanceof FilterListNotReadyError) {
+            log.debug(`The list of ${source.id} for "${field}" is not ready yet: ${error.message}`);
+            continue;
+          }
           log.warn(
             `Could not list "${field}" for ${source.id}; the gateway keeps the list it has: ${toErrorMessage(error)}`,
           );
         }
       }
-      await this.send(source, page, publications);
+      await this.send(source, page, publications, cycle);
       if (everyProducerRan) this.lastRefreshedAt.set(source.id, now);
     } catch (error) {
       if (page.signal.aborted) return;
@@ -110,6 +147,7 @@ export class FilterListPublisher {
     source: Pick<RegisteredSource, "id" | "providerId">,
     page: CommittedPage,
     publications: FilterListPublication[],
+    cycle: FilterListCycle,
   ): Promise<void> {
     /** Fields whose remaining pages are no longer wanted. */
     const settled = new Set<string>();
@@ -126,10 +164,11 @@ export class FilterListPublisher {
         wipeEpoch: page.wipeEpoch,
         filterLists: wanted,
       });
-      // A refused page, or a gateway that ignored the lists: the next cycle
+      // A refused page, or a gateway that ignored the lists: the next offer
       // compares digests again and sends whatever is still missing.
       if (response.rejected || response.rejectedAsRemoved || !response.filterLists) return;
       for (const receipt of response.filterLists) {
+        if (HELD.has(receipt.outcome)) cycle.closed.add(receipt.field);
         if (CONTINUES.has(receipt.outcome)) continue;
         settled.add(receipt.field);
         this.report(source.id, receipt);

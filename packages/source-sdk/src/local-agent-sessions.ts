@@ -19,7 +19,7 @@ import {
   type LocalAgentSessionParseOptions,
   type LocalAgentSessionRoot,
 } from "./local-agent-session-files.js";
-import { withFilterLists } from "./filter-lists.js";
+import { FilterListNotReadyError, withFilterLists } from "./filter-lists.js";
 import { directoryFilterId, directoryFilterList, normalizeDirectoryPath } from "./filter-paths.js";
 import { LOCAL_AGENT_SESSION_PROJECT_FOLDER_FIELD } from "./local-agent-session-profile.js";
 import { SnapshotEnumeration } from "./snapshot.js";
@@ -823,10 +823,14 @@ export function createLocalAgentSessionSource(
     // Built from what the cursor already holds: one entry per session file,
     // no file read, and nothing that grows with the days a session spans.
     [LOCAL_AGENT_SESSION_PROJECT_FOLDER_FIELD]: () => {
-      if (projectFolders === undefined) throw new Error("no session has been read yet");
+      if (projectFolders === undefined) {
+        throw new FilterListNotReadyError("no session has been read yet");
+      }
       // Publishing the folders read so far would drop every folder still to
-      // come from the gateway's list until the next sync.
-      if (projectFolders === null) throw new Error("the session files are still being read");
+      // come from the gateway's list; the list is whole after the last page.
+      if (projectFolders === null) {
+        throw new FilterListNotReadyError("the session files are still being read");
+      }
       return directoryFilterList(projectFolders, {
         home: options.homeDirectory ?? homedir(),
       });

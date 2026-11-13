@@ -31,8 +31,8 @@ import type { SourceInstance } from "./define-source.js";
  * When a host refreshes the lists of a source. This constant is the one place
  * that decides it; {@link filterListRefreshDue} is the one place that reads it.
  *
- * - `every-sync-when-changed` — the producers run once in every sync cycle,
- *   and a list is sent only when it differs from the one the gateway holds.
+ * - `every-sync-when-changed` — the producers run in every sync cycle, and a
+ *   list is sent only when it differs from the one the gateway holds.
  * - `at-most-every` — the same, but the producers run no more often than
  *   `intervalMs`, for when listing upstream on every sync costs too much.
  */
@@ -71,6 +71,12 @@ export interface FilterListContext {
  * finish (a failed page, a rate limit) throws, and the gateway keeps the list
  * it has.
  *
+ * The host runs a producer after the first page of a sync cycle has
+ * committed. A producer whose list is only whole later in the cycle (it is
+ * built from what the sync itself reads) throws
+ * {@link FilterListNotReadyError} until then; the host runs it again after
+ * the cycle's last page and logs nothing for the wait.
+ *
  * In a tree, an item whose parent is not itself listed is a root: leave
  * `parentId` out rather than naming something the list does not contain.
  */
@@ -86,6 +92,18 @@ export class FilterListError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "FilterListError";
+  }
+}
+
+/**
+ * Thrown by a producer whose list is not whole yet in this sync cycle and will
+ * be once the cycle has read more. It is not a failure: the host keeps the
+ * list the gateway has and asks again when the cycle ends.
+ */
+export class FilterListNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FilterListNotReadyError";
   }
 }
 
