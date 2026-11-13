@@ -3,7 +3,7 @@
 
 import { fork, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,6 +65,21 @@ function processState(pid: number): string {
   const ps = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
   return ps.stdout.trim().slice(0, 1);
 }
+/**
+ * The process ID a program wrote to `path` with `echo $$`, or 0 until the whole
+ * line is there. The shell creates the file before it writes to it, so a file
+ * that exists can still be empty, and `Number("")` is 0, a process ID that
+ * `kill(0, 0)` reports alive whatever happened to the program.
+ */
+function pidIn(path: string): number {
+  try {
+    const line = readFileSync(path, "utf8");
+    return /^[1-9]\d*\n$/.test(line) ? Number(line) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function eventually(check: () => boolean, ms = 5_000): Promise<boolean> {
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -183,8 +198,8 @@ describe("hosted launcher", () => {
     const hostPid = Number(text(first.stdout));
     const marker = join(mkdtempSync(join(tmpdir(), "omnesis-launcher-")), "pid");
     const pending = host.run("sh", ["-c", `echo $$ > ${marker}; sleep 30`], { timeoutMs: 30_000 });
-    expect(await eventually(() => readdirSync(join(marker, "..")).includes("pid"))).toBe(true);
-    const programPid = Number(readFileSync(marker, "utf8").trim());
+    expect(await eventually(() => pidIn(marker) > 0)).toBe(true);
+    const programPid = pidIn(marker);
     process.kill(hostPid, "SIGKILL");
     expect(await pending).toMatchObject({
       failure: "spawn",
@@ -226,8 +241,8 @@ describe("hosted launcher", () => {
     const host = hosted();
     const marker = join(mkdtempSync(join(tmpdir(), "omnesis-launcher-")), "pid");
     const pending = host.run("sh", ["-c", `echo $$ > ${marker}; sleep 30`], { timeoutMs: 30_000 });
-    expect(await eventually(() => readdirSync(join(marker, "..")).includes("pid"))).toBe(true);
-    const programPid = Number(readFileSync(marker, "utf8").trim());
+    expect(await eventually(() => pidIn(marker) > 0)).toBe(true);
+    const programPid = pidIn(marker);
     host.dispose();
     expect(await pending).toMatchObject({ failure: "spawn" });
     expect(
