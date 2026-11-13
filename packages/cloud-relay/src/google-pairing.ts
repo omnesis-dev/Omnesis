@@ -39,6 +39,8 @@ export type EnrollmentPolicy = "automatic" | "ask";
 export interface PairingEnrollment {
   method: "automatic" | "approved";
   signIn?: "google" | "passkey";
+  /** The verified sign-in's id, as the gateway's trusted sign-ins name it. */
+  signInId?: string;
   devicePublicKey: string;
 }
 
@@ -92,6 +94,8 @@ interface Pending {
   /** Decided once the request is held: approving may also pin `signIn`. */
   trustable?: boolean;
   approvedByPerson?: boolean;
+  /** Its device key belongs to a device the owner revoked. */
+  revokedDevice?: boolean;
 }
 interface HeldProof {
   identityToken: string;
@@ -126,6 +130,11 @@ export class GooglePairingRequests {
         enrollment?: PairingEnrollment;
       }): Promise<{ pairingCode: string; expiresAt: number }>;
       onPending?(request: { requestId: string; expiresAt: number }): void | Promise<void>;
+      /**
+       * Whether the owner revoked a device that signed in with this key. Such a request never
+       * joins automatically; a person approves it again.
+       */
+      revokedDeviceKey?(devicePublicKey: string): boolean | Promise<boolean>;
       ttlMs?: number;
       maxPending?: number;
       maxAwaitingApproval?: number;
@@ -228,9 +237,16 @@ export class GooglePairingRequests {
           nonce,
           held?.credentialPublicKey,
         );
+      // Revoking a device must stick: its key waits for a person, even with a trusted sign-in.
+      // A check that fails counts as revoked.
+      if (devicePublicKey && this.options.revokedDeviceKey)
+        request.revokedDevice = await Promise.resolve()
+          .then(() => this.options.revokedDeviceKey!(devicePublicKey))
+          .catch(() => true);
       if (request.expiresAt <= Date.now() || this.requests.get(value.requestId) !== request)
         throw new RelayError(404, "Pairing request expired");
       if (
+        !request.revokedDevice &&
         request.signIn?.trusted &&
         this.options.enrollment!.policy() === "automatic" &&
         !value.requireApproval
@@ -312,7 +328,7 @@ export class GooglePairingRequests {
           ? {
               enrollment: {
                 method: row.approvedByPerson ? ("approved" as const) : ("automatic" as const),
-                ...(row.signIn ? { signIn: row.signIn.type } : {}),
+                ...(row.signIn ? { signIn: row.signIn.type, signInId: row.signIn.id } : {}),
                 devicePublicKey: row.devicePublicKey,
               },
             }
@@ -362,6 +378,7 @@ export class GooglePairingRequests {
     expiresAt: number;
     signIn?: "google" | "passkey";
     canTrustSignIn: boolean;
+    revokedDevice?: true;
   }> {
     this.prune();
     return [...this.requests.values()]
@@ -375,6 +392,7 @@ export class GooglePairingRequests {
         expiresAt: row.expiresAt,
         ...(row.signIn ? { signIn: row.signIn.type } : {}),
         canTrustSignIn: row.trustable === true,
+        ...(row.revokedDevice ? { revokedDevice: true as const } : {}),
       }));
   }
 

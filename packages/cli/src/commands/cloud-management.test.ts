@@ -269,7 +269,29 @@ test("the page's remaining actions each have a command: unlink, policy, and list
     { method: "DELETE" },
   );
   expect(printed()).toContain("Trusted sign-in removed.");
+  expect(printed()).toContain("--revoke-devices");
   output.mockClear();
+  // With --revoke-devices the gateway also revokes the devices that joined with it.
+  for (const [revokedDevices, line] of [
+    [["fictional-device"], "1 device that joined with it was revoked."],
+    [["one", "two"], "2 devices that joined with it were revoked."],
+    [[], "No paired device had joined with it."],
+  ] as const) {
+    gatewayJson.mockImplementation(async (path: string) =>
+      path.startsWith("/admin/cloud-relay/trusted-sign-ins/")
+        ? { deviceEnrollment: { policy: "automatic" }, revokedDevices }
+        : {},
+    );
+    await runCommand(cloudManagementCommands["remove-sign-in"], {
+      rawArgs: ["passkey-id", "--revoke-devices"],
+    });
+    expect(gatewayJson).toHaveBeenCalledWith(
+      "/admin/cloud-relay/trusted-sign-ins/passkey-id?revokeDevices=true",
+      { method: "DELETE" },
+    );
+    expect(printed()).toContain(line);
+    output.mockClear();
+  }
   gatewayJson.mockImplementation(async () => ({ deviceEnrollment: { policy: "automatic" } }));
   await listTrustedSignIns();
   expect(printed()).toBe("No trusted sign-ins. New devices wait for your approval.\n");
