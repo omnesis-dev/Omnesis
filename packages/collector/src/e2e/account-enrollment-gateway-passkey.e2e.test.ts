@@ -309,4 +309,68 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     // The one approved request becomes a device only when its pairing code is redeemed.
     expect((await gateway.devices()).length).toBe(before);
   }, 180_000);
+
+  test("a held request is approved on the gateway's public approval page with the owner's passkey", async () => {
+    await gateway.setPolicy("ask");
+    const { response, body } = await passkeyRequest(gateway.publicOrigin);
+    const held = await response.json();
+    expect(held.status).toBe("pending");
+    // No portal login: the page is public and the confirmed passkey is the credential.
+    const visitor = await browser.session();
+    const copied = await copyPasskey(owner, visitor);
+    const page = visitor.page;
+    await page.goto(`${gateway.publicOrigin}/portal/approve#${body.requestId}`);
+    await expectText(page, "Approve a new device");
+    await expectText(page, held.verificationCode);
+    await shot(page, "approval-page");
+    await clickFirst(page, ["Approve with passkey"]);
+    await expectText(page, "can finish joining now");
+    await syncPasskey(visitor, owner, copied);
+    const polled = await (
+      await gateway.fetch("/devices/account/poll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId: body.requestId, secret: body.secret }),
+      })
+    ).json();
+    expect(polled).toMatchObject({ status: "approved", pairingCode: expect.any(String) });
+    expect(visitor.errors).toEqual([]);
+    await visitor.context.close();
+  }, 180_000);
+
+  test("TM-01 (approval): an approval assertion steered by a relay page approves nothing", async () => {
+    await gateway.setPolicy("ask");
+    const { body } = await passkeyRequest(gateway.publicOrigin);
+    const ceremony = await (
+      await gateway.fetch("/devices/account/approval/options", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId: body.requestId }),
+      })
+    ).json();
+    const credential = await assertionOn(
+      owner,
+      world.relayOrigin,
+      gatewayPasskeyChallenge(
+        "approve-request",
+        world.relayOrigin,
+        ceremony.challenge,
+        ceremony.binding,
+      ),
+    );
+    const refused = await gateway.fetch("/devices/account/approval", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        requestId: body.requestId,
+        proof: { type: "gateway-passkey", challenge: ceremony.challenge, credential },
+      }),
+    });
+    expect(refused.status).toBe(403);
+    expect(
+      (await gateway.pendingRequests()).find((request) => request.requestId === body.requestId),
+    ).toMatchObject({ status: "pending" });
+    await gateway.decide(body.requestId, false);
+    await gateway.setPolicy("automatic");
+  }, 180_000);
 });

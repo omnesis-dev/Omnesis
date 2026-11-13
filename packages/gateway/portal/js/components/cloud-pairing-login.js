@@ -21,6 +21,7 @@ import { adoptDeviceKey, loadDeviceKey } from "../lib/device-key-store.js";
 import { parseAccountSignIn, takeAccountSignIn } from "../lib/cloud-pairing-handoff.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import {
+  approveWithPasskey,
   gatewayPasskeyProof,
   onGatewayOrigin,
   passkeysSupported,
@@ -73,6 +74,8 @@ export function CloudPairingLogin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [joining, setJoining] = useState(false);
+  // Set once the owner approved this browser's own request here: it then logs in by itself.
+  const approvedHere = useRef(false);
   const attempt = useRef({ controller: new AbortController(), polling: false });
   function invalidate() {
     attempt.current.controller.abort();
@@ -414,6 +417,31 @@ export function CloudPairingLogin() {
     setResult(null);
     setCode("");
   }
+  /**
+   * Approves this browser's own held request with the owner's passkey, here on the gateway's
+   * page. The browser signs for its request too, so only the browser that asked can do this.
+   */
+  async function approveHere() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const key = await loadDeviceKey();
+      if (!key || key.publicKey !== request.devicePublicKey)
+        throw new Error("This browser's sign-in key changed. Start again.");
+      await approveWithPasskey({ requestId: request.requestId, deviceKey: key.privateKey });
+      approvedHere.current = true;
+      setBusy(false);
+      await poll();
+    } catch (failure) {
+      setError(failure.message);
+      setBusy(false);
+    }
+  }
+  useEffect(() => {
+    if (approvedHere.current && result?.status === "approved") pair();
+  }, [result]);
+
   async function pair() {
     if (
       busy ||
@@ -510,6 +538,20 @@ export function CloudPairingLogin() {
               This browser trusts the HTTPS certificate for this address. The domain administrator
               remains part of that trust.
             </p>
+            ${
+              gatewayPasskeyHere(config) &&
+              request.devicePublicKey &&
+              result?.status !== "approved" &&
+              result?.status !== "denied" &&
+              html`<button
+                type="button"
+                class="login-button"
+                disabled=${busy}
+                onClick=${approveHere}
+              >
+                ${busy ? "Waiting for your passkey…" : "Approve with your passkey"}
+              </button>`
+            }
             <button
               type="button"
               class="login-button"

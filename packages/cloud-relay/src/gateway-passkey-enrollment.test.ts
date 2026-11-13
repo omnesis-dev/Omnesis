@@ -5,13 +5,16 @@ import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
 import {
+  approvalDeviceTranscript,
   enrollmentNonce,
   enrollmentSignatureTranscript,
+  gatewayPasskeyApprovalBinding,
   gatewayPasskeyChallenge,
   passkeyProofChallenge,
   signDeviceTranscript,
 } from "./device-enrollment.js";
 import { EnrollmentChallenges } from "./enrollment-challenges.js";
+import { GatewayPasskeyCeremonies } from "./gateway-passkey-ceremonies.js";
 import { GatewaySignInVerifier } from "./gateway-sign-in-proof.js";
 import { GooglePairingRequests, type GatewayEnrollment } from "./google-pairing.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
@@ -27,7 +30,13 @@ const OWNER = accountId({
 });
 const opaque = () => randomBytes(32).toString("base64url");
 
-function setup(options: { key?: "trusted" | "listed" | "none"; origin?: string | undefined } = {}) {
+function setup(
+  options: {
+    key?: "trusted" | "listed" | "none";
+    origin?: string | undefined;
+    revoked?: boolean;
+  } = {},
+) {
   const owner = passkeyAuthenticator();
   const verifier = new GatewaySignInVerifier({
     google: () => undefined,
@@ -81,16 +90,17 @@ function setup(options: { key?: "trusted" | "listed" | "none"; origin?: string |
     gatewayFingerprint: () => "d".repeat(64),
     enrollment,
     createPairing,
+    ...(options.revoked ? { revokedDeviceKey: () => true } : {}),
   });
   return { requests, owner, createPairing, attest, enrollment };
 }
 
-function device() {
+function device(kind: "portal" | "cli" = "portal") {
   const pair = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const publicKey = pair.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
   const value = {
     requestId: randomUUID(),
-    kind: "portal" as const,
+    kind,
     name: "Fictional browser",
     secret: randomBytes(32).toString("hex"),
   };
@@ -98,6 +108,8 @@ function device() {
     value,
     publicKey,
     nonce: enrollmentNonce({ ...value, devicePublicKey: publicKey }),
+    approvalSignature: (challenge: string) =>
+      signDeviceTranscript(pair.privateKey, approvalDeviceTranscript({ ...value, challenge })),
     deviceKey: (challenge: string) => ({
       publicKey,
       challenge,
@@ -273,5 +285,226 @@ describe("a device signs in with a passkey on the gateway's own page", () => {
     });
     expect(bare.gatewayPasskey()).toBeUndefined();
     void passkeyProofChallenge;
+  });
+});
+
+describe("a person approves a held request with a passkey on the gateway's own page", () => {
+  /** A gateway holding requests, whose owner confirmed `owner` here. */
+  function approving(kind: "portal" | "cli" = "cli", revoked = false) {
+    const f = setup({ key: "listed", revoked });
+    const ceremonies = new GatewayPasskeyCeremonies();
+    const verifier = new GatewaySignInVerifier({
+      google: () => undefined,
+      relayOrigin: () => RELAY,
+      passkeyOrigins: () => [],
+      trusted: () => [],
+      gatewayOrigin: () => GATEWAY,
+    });
+    f.enrollment.approvalCeremony = (binding) => {
+      const issued = ceremonies.issue("approve-request", binding);
+      return {
+        purpose: "approve-request",
+        rpId: "relay.example.test",
+        origin: GATEWAY,
+        challenge: issued.challenge,
+        binding,
+        webauthnChallenge: gatewayPasskeyChallenge(
+          "approve-request",
+          GATEWAY,
+          issued.challenge,
+          binding,
+        ),
+        expiresAt: issued.expiresAt,
+      };
+    };
+    f.enrollment.verifyApproval = async (proof, binding) => {
+      const parsed = proof as { challenge: string };
+      if (!ceremonies.take("approve-request", parsed.challenge, binding)) return false;
+      return Boolean(
+        await verifier.verifyGatewayPasskey(proof, {
+          purpose: "approve-request",
+          challenge: parsed.challenge,
+          binding,
+          key: (id) =>
+            id === f.owner.id ? { publicKey: f.owner.publicKey, counter: 0 } : undefined,
+        }),
+      );
+    };
+    return { ...f, d: device(kind), ceremonies };
+  }
+  async function hold(f: ReturnType<typeof approving>) {
+    const ceremony = f.requests.passkeyCeremony({ ...f.d.value, devicePublicKey: f.d.publicKey });
+    const result = await f.requests.start({
+      ...f.d.value,
+      deviceKey: {
+        ...f.d.deviceKey(ceremony.challenge),
+      },
+      proof: {
+        type: "gateway-passkey",
+        challenge: ceremony.challenge,
+        credential: f.owner.authentication(ceremony.webauthnChallenge, "dXNlcg", 0, GATEWAY),
+      },
+    });
+    expect(result.status).toBe("pending");
+    return result;
+  }
+  const approve = (
+    f: ReturnType<typeof approving>,
+    ceremony: { challenge: string; webauthnChallenge: string },
+    extra: Record<string, unknown> = {},
+    from = GATEWAY,
+    authenticator = f.owner,
+  ) =>
+    f.requests.approveWithPasskey({
+      requestId: f.d.value.requestId,
+      proof: {
+        type: "gateway-passkey",
+        challenge: ceremony.challenge,
+        credential: authenticator.authentication(ceremony.webauthnChallenge, "dXNlcg", 0, from),
+      },
+      ...extra,
+    });
+
+  test("a device the owner revoked waits even with a passkey, and the page says it was revoked", async () => {
+    const f = approving("cli", true);
+    await hold(f);
+    expect(f.requests.approvalView(f.d.value.requestId)).toMatchObject({ revokedDevice: true });
+    await approve(f, f.requests.approvalCeremony(f.d.value.requestId));
+    expect(f.createPairing).toHaveBeenCalledOnce();
+  });
+
+  test("the page shows the request, and a confirmed passkey approves exactly it", async () => {
+    const f = approving();
+    const held = await hold(f);
+    expect(f.requests.approvalView(f.d.value.requestId)).toEqual({
+      requestId: f.d.value.requestId,
+      kind: "cli",
+      name: "Fictional browser",
+      verificationCode: held.verificationCode,
+      createdAt: expect.any(Number),
+      expiresAt: held.expiresAt,
+      signIn: "passkey",
+      deviceKeyRequired: false,
+    });
+    const ceremony = f.requests.approvalCeremony(f.d.value.requestId);
+    expect(ceremony.binding).toBe(
+      gatewayPasskeyApprovalBinding({
+        requestId: f.d.value.requestId,
+        devicePublicKey: f.d.publicKey,
+        verificationCode: held.verificationCode,
+      }),
+    );
+    await approve(f, ceremony, { trustSignIn: true });
+    expect(f.requests.poll(f.d.value.requestId, f.d.value.secret)).toMatchObject({
+      status: "approved",
+      pairingCode: "fictional-pairing-code",
+    });
+    expect(f.enrollment.trustSignIn).toHaveBeenCalledOnce();
+    expect(f.createPairing).toHaveBeenCalledWith(
+      expect.objectContaining({ enrollment: expect.objectContaining({ method: "approved" }) }),
+    );
+    // Decided: nothing left to show or approve.
+    expect(() => f.requests.approvalView(f.d.value.requestId)).toThrow(
+      expect.objectContaining({ status: 404 }),
+    );
+  });
+
+  test("TM-01 (approval): a passkey the owner didn't confirm, a relay page or a spent challenge approves nothing", async () => {
+    const f = approving();
+    await hold(f);
+    const stranger = passkeyAuthenticator();
+    for (const [from, authenticator] of [
+      [GATEWAY, stranger],
+      [RELAY, f.owner],
+    ] as const)
+      await expect(
+        approve(f, f.requests.approvalCeremony(f.d.value.requestId), {}, from, authenticator),
+      ).rejects.toMatchObject({ status: 403 });
+    const ceremony = f.requests.approvalCeremony(f.d.value.requestId);
+    await expect(approve(f, { ...ceremony, challenge: opaque() })).rejects.toMatchObject({
+      status: 403,
+    });
+    // That attempt named another challenge, so this one is still unspent and approves.
+    await approve(f, ceremony);
+    expect(f.requests.poll(f.d.value.requestId, f.d.value.secret).status).toBe("approved");
+  });
+
+  test("a portal's request is approved only by the browser that asked, with its own device key", async () => {
+    const f = approving("portal");
+    await hold(f);
+    expect(f.requests.approvalView(f.d.value.requestId)).toMatchObject({ deviceKeyRequired: true });
+    const ceremony = () => f.requests.approvalCeremony(f.d.value.requestId);
+    // Without the requesting browser's signature, or with another key's, it is refused.
+    await expect(approve(f, ceremony())).rejects.toMatchObject({ status: 403 });
+    const other = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const first = ceremony();
+    await expect(
+      approve(f, first, {
+        deviceSignature: signDeviceTranscript(
+          other.privateKey,
+          approvalDeviceTranscript({ requestId: f.d.value.requestId, challenge: first.challenge }),
+        ),
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+    const own = ceremony();
+    await approve(f, own, { deviceSignature: f.d.approvalSignature(own.challenge) });
+    expect(f.requests.poll(f.d.value.requestId, f.d.value.secret).status).toBe("approved");
+  });
+
+  test("a request held on the relay's word alone, with no device key, is shown without a sign-in", async () => {
+    const binding = vi.fn(() => undefined);
+    const requests = new GooglePairingRequests({
+      identity: {
+        verify: async () => ({
+          issuer: `${RELAY}/_relay/account`,
+          subject: "c".repeat(64),
+          expiresAt: Math.floor(Date.now() / 1000) + 60,
+        }),
+      },
+      ownerAccountId: OWNER,
+      gatewayFingerprint: () => "d".repeat(64),
+      enrollment: { ...setup().enrollment, approvalCeremony: binding },
+      createPairing: vi.fn(),
+    });
+    const value = {
+      requestId: randomUUID(),
+      kind: "ios" as const,
+      name: "Fictional phone",
+      secret: randomBytes(32).toString("hex"),
+    };
+    await requests.start({
+      ...value,
+      identityToken: "fictional-attestation",
+      challenge: requests.issueChallenge().challenge,
+    });
+    const view = requests.approvalView(value.requestId);
+    expect(view).not.toHaveProperty("signIn");
+    expect(() => requests.approvalCeremony(value.requestId)).toThrow();
+    expect(binding).toHaveBeenCalledWith(
+      gatewayPasskeyApprovalBinding({
+        requestId: value.requestId,
+        verificationCode: view.verificationCode,
+      }),
+    );
+  });
+
+  test("nothing to approve, or no passkey approval on this gateway, is a plain refusal", async () => {
+    const f = approving();
+    expect(() => f.requests.approvalView(randomUUID())).toThrow(
+      expect.objectContaining({ status: 404 }),
+    );
+    await hold(f);
+    expect(() => f.requests.approvalView("not-a-request")).toThrow();
+    delete f.enrollment.approvalCeremony;
+    expect(() => f.requests.approvalCeremony(f.d.value.requestId)).toThrow(
+      expect.objectContaining({ status: 404 }),
+    );
+    delete f.enrollment.verifyApproval;
+    await expect(
+      approve(f, { challenge: opaque(), webauthnChallenge: opaque() }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      f.requests.approveWithPasskey({ requestId: f.d.value.requestId }),
+    ).rejects.toThrow();
   });
 });

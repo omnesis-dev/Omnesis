@@ -3,7 +3,11 @@
 
 import { cloudRelayEnabled } from "@omnesis/core";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
-import { gatewayPasskeyOptionsSchema, googlePairingRequestSchema } from "@omnesis/cloud-relay";
+import {
+  gatewayPasskeyOptionsSchema,
+  googlePairingRequestSchema,
+  passkeyApprovalSchema,
+} from "@omnesis/cloud-relay";
 import { z } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import { CloudPairingRuntime } from "../services/CloudPairingRuntime.js";
@@ -116,6 +120,12 @@ export function mountCloudPairingRoutes(
     surface: "/devices/google/poll",
     burst: { capacity: 120, windowMs: 60_000 },
     hourly: { capacity: 3600, windowMs: 3_600_000 },
+  });
+  // Approving with a passkey is public: the passkey is the credential. Ten tries a minute.
+  const approvalLimiter = new IpRateLimiter({
+    surface: "/devices/account/approval",
+    burst: { capacity: 10, windowMs: 60_000 },
+    hourly: { capacity: 120, windowMs: 3_600_000 },
   });
   const poll = z
     .object({ requestId: z.string().uuid(), secret: z.string().regex(/^[a-f0-9]{64}$/) })
@@ -245,6 +255,45 @@ export function mountCloudPairingRoutes(
       c.header("Cache-Control", "no-store");
       return c.json(await operate(({ pairing }) => pairing.issueChallenge()));
     });
+    if (base === "/devices/account") {
+      const requestId = z.object({ requestId: z.string().uuid() }).strict();
+      app.get(`${base}/approval/:requestId`, scope.public(), async (c) => {
+        if (approvalLimiter.consume(clientIp(c)))
+          return c.json({ error: "Too many approval attempts" }, 429);
+        c.header("Cache-Control", "no-store");
+        const id = requestId.safeParse({ requestId: c.req.param("requestId") });
+        if (!id.success)
+          throw new HttpError(404, "CLOUD_PAIRING_REFUSED", "Cloud pairing request refused");
+        return c.json(await operate(({ pairing }) => pairing.approvalView(id.data.requestId)));
+      });
+      app.post(
+        `${base}/approval/options`,
+        scope.public(),
+        boundedBody,
+        validateJson(requestId),
+        async (c) => {
+          if (approvalLimiter.consume(clientIp(c)))
+            return c.json({ error: "Too many approval attempts" }, 429);
+          c.header("Cache-Control", "no-store");
+          return c.json(
+            await operate(({ pairing }) => pairing.approvalCeremony(c.req.valid("json").requestId)),
+          );
+        },
+      );
+      app.post(
+        `${base}/approval`,
+        scope.public(),
+        boundedBody,
+        validateJson(passkeyApprovalSchema),
+        async (c) => {
+          if (approvalLimiter.consume(clientIp(c)))
+            return c.json({ error: "Too many approval attempts" }, 429);
+          c.header("Cache-Control", "no-store");
+          await operate(({ pairing }) => pairing.approveWithPasskey(c.req.valid("json")));
+          return c.json({ ok: true });
+        },
+      );
+    }
     if (base === "/devices/account")
       app.post(
         `${base}/passkey/options`,

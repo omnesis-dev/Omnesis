@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   login: vi.fn(),
   loadDeviceKey: vi.fn(),
   proof: vi.fn(),
+  approve: vi.fn(),
   here: vi.fn((origin: unknown) => origin === "https://g-abcdefgh.relay.example.test"),
   supported: vi.fn(() => true),
 }));
@@ -23,6 +24,7 @@ vi.mock("../api.js", () => ({ login: api.login }));
 vi.mock("../lib/storage.js", () => ({ portalDeviceName: () => "Fictional browser" }));
 vi.mock("../lib/gateway-passkey.js", () => ({
   gatewayPasskeyProof: api.proof,
+  approveWithPasskey: api.approve,
   onGatewayOrigin: api.here,
   passkeysSupported: api.supported,
 }));
@@ -65,7 +67,14 @@ beforeEach(() => {
   location.href = `${ORIGIN}/portal/`;
   location.assign.mockClear();
   location.reload.mockClear();
-  for (const mock of [api.cloudPairingConfig, api.login, api.loadDeviceKey, api.proof, transport])
+  for (const mock of [
+    api.cloudPairingConfig,
+    api.login,
+    api.loadDeviceKey,
+    api.proof,
+    api.approve,
+    transport,
+  ])
     mock.mockReset();
   api.cloudPairingConfig.mockResolvedValue(config);
   api.login.mockResolvedValue({ ok: true });
@@ -266,4 +275,82 @@ test("elsewhere, without passkeys or without an origin of its own, sign-in goes 
     api.supported.mockReturnValue(true);
     api.cloudPairingConfig.mockResolvedValue(config);
   }
+});
+
+test("a held request is approved right here with the owner's passkey, and the browser then logs in", async () => {
+  const key = await deviceKey();
+  api.loadDeviceKey.mockResolvedValue(key);
+  await show();
+  let code = "";
+  let approved = false;
+  transport.mockImplementation(async (path, init) => {
+    const body = JSON.parse(init!.body as string);
+    if (path === "/devices/account/passkey/options")
+      return new Response(JSON.stringify({ origin: ORIGIN, challenge: CHALLENGE }));
+    if (path === "/devices/account/request")
+      code = await cloudPairingVerificationCode(body, config.gatewayFingerprint, NONCE);
+    return new Response(
+      JSON.stringify({
+        status: approved ? "approved" : "pending",
+        verificationCode: code,
+        codeNonce: NONCE,
+        expiresAt: Date.now() + 60_000,
+        ...(approved ? { pairingCode: "SYNTHETIC-CODE" } : {}),
+      }),
+    );
+  });
+  await act(async () => button("Sign in with Passkey")!.click());
+  await settle(() => expect(button("Approve with your passkey")).toBeDefined());
+  api.approve.mockImplementationOnce(async () => {
+    approved = true;
+  });
+  await act(async () => button("Approve with your passkey")!.click());
+  await settle(() => expect(api.login).toHaveBeenCalledExactlyOnceWith("SYNTHETIC-CODE"));
+  expect(api.approve).toHaveBeenCalledExactlyOnceWith({
+    requestId: expect.any(String),
+    deviceKey: key.privateKey,
+  });
+  expect(location.reload).toHaveBeenCalled();
+});
+
+test("approving here needs this browser's own key, and a refusal is said in place", async () => {
+  const key = await deviceKey();
+  api.loadDeviceKey.mockResolvedValue(key);
+  await show();
+  answers("pending", async (body) =>
+    cloudPairingVerificationCode(body, config.gatewayFingerprint, NONCE),
+  );
+  await act(async () => button("Sign in with Passkey")!.click());
+  await settle(() => expect(button("Approve with your passkey")).toBeDefined());
+  api.approve.mockRejectedValueOnce(new Error("Your gateway didn't accept that passkey."));
+  await act(async () => button("Approve with your passkey")!.click());
+  await settle(() =>
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      "Your gateway didn't accept that passkey.",
+    ),
+  );
+  api.loadDeviceKey.mockResolvedValue(await deviceKey());
+  await act(async () => button("Approve with your passkey")!.click());
+  await settle(() =>
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      "This browser's sign-in key changed. Start again.",
+    ),
+  );
+  api.loadDeviceKey.mockResolvedValue(null);
+  await act(async () => button("Approve with your passkey")!.click());
+  await settle(() =>
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      "This browser's sign-in key changed. Start again.",
+    ),
+  );
+  expect(api.approve).toHaveBeenCalledOnce();
+  // While it runs, a second press does nothing.
+  api.loadDeviceKey.mockResolvedValue(key);
+  let release!: () => void;
+  api.approve.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)));
+  const pressed = button("Approve with your passkey")!;
+  await act(async () => pressed.click());
+  await act(async () => button("Waiting for your passkey")!.click());
+  expect(api.approve).toHaveBeenCalledTimes(2);
+  await act(async () => release());
 });

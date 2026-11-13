@@ -14,6 +14,7 @@ export {
   GooglePairingRequests,
   googlePairingRequestSchema,
   gatewayPasskeyOptionsSchema,
+  passkeyApprovalSchema,
   googlePairingNonce,
 } from "./google-pairing.js";
 export {

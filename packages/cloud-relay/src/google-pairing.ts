@@ -4,13 +4,17 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
+  approvalDeviceTranscript,
+  deviceSignatureSchema,
   devicePublicKeySchema,
   deviceKeyEvidenceSchema,
   enrollmentNonce,
   enrollmentOpaque,
   enrollmentProofSchema,
   enrollmentSignatureTranscript,
+  gatewayPasskeyApprovalBinding,
   gatewayPasskeyChallenge,
+  gatewayPasskeySignInProofSchema,
   pairingComparisonCode,
   verifyDeviceSignature,
   type GatewayPasskeySignInProof,
@@ -76,7 +80,22 @@ export interface GatewayEnrollment {
    * gateway's own origin. Undefined when the gateway has no origin of its own to vouch for.
    */
   gatewayPasskey?(): { rpId: string; origin: string } | undefined;
+  /** An `approve-request` ceremony for `binding`, or undefined without an origin of its own. */
+  approvalCeremony?(binding: string): GatewayPasskeyCeremony | undefined;
+  /** Whether a passkey the owner confirmed here signed that ceremony. Spends its challenge. */
+  verifyApproval?(proof: unknown, binding: string): Promise<boolean>;
 }
+
+/** A person approving a held request with a passkey on the gateway's own page. */
+export const passkeyApprovalSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    proof: gatewayPasskeySignInProofSchema,
+    trustSignIn: z.boolean().optional(),
+    /** The requesting browser's own signature, required for a portal's request. */
+    deviceSignature: deviceSignatureSchema.optional(),
+  })
+  .strict();
 
 /** What a device sends to start a passkey sign-in on the gateway's own page. */
 export const gatewayPasskeyOptionsSchema = z
@@ -222,6 +241,75 @@ export class GooglePairingRequests {
       ),
       expiresAt: issued.expiresAt,
     };
+  }
+
+  /** A held request as the approval page shows it: what it is, its code and how long it waits. */
+  approvalView(requestId: string) {
+    const row = this.waiting(requestId);
+    return {
+      requestId: row.requestId,
+      kind: row.kind,
+      name: row.name,
+      verificationCode: row.verificationCode,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      ...(row.signIn ? { signIn: row.signIn.type } : {}),
+      ...(row.revokedDevice ? { revokedDevice: true as const } : {}),
+      // A portal's request is approved only in the browser that made it.
+      deviceKeyRequired: row.kind === "portal",
+    };
+  }
+
+  /** Starts approving a held request with a passkey on the gateway's own page. */
+  approvalCeremony(requestId: string): GatewayPasskeyCeremony {
+    const ceremony = this.options.enrollment?.approvalCeremony?.(
+      this.approvalBinding(this.waiting(requestId)),
+    );
+    if (!ceremony) throw new RelayError(404, "Passkey approval on this gateway is unavailable");
+    return ceremony;
+  }
+
+  /**
+   * Approves a held request on a passkey the owner confirmed on this gateway, signed on its own
+   * page for exactly this request, device key and code. A portal's request also needs the
+   * requesting browser's own signature.
+   */
+  async approveWithPasskey(input: unknown): Promise<void> {
+    const value = passkeyApprovalSchema.parse(input);
+    const row = this.waiting(value.requestId);
+    if (
+      row.kind === "portal" &&
+      !(
+        row.devicePublicKey &&
+        value.deviceSignature &&
+        verifyDeviceSignature(
+          row.devicePublicKey,
+          approvalDeviceTranscript({ requestId: row.requestId, challenge: value.proof.challenge }),
+          value.deviceSignature,
+        )
+      )
+    )
+      throw new RelayError(403, "Approve this request in the browser that asked to join");
+    if (!(await this.options.enrollment?.verifyApproval?.(value.proof, this.approvalBinding(row))))
+      throw new RelayError(403, "Passkey approval refused");
+    await this.decide(row.requestId, true, {
+      ...(value.trustSignIn === undefined ? {} : { trustSignIn: value.trustSignIn }),
+    });
+  }
+
+  private waiting(requestId: string): Pending {
+    this.prune();
+    const row = this.requests.get(requestId);
+    if (!row || row.state !== "pending") throw new RelayError(404, "Pairing request not found");
+    return row;
+  }
+
+  private approvalBinding(row: Pending): string {
+    return gatewayPasskeyApprovalBinding({
+      requestId: row.requestId,
+      ...(row.devicePublicKey ? { devicePublicKey: row.devicePublicKey } : {}),
+      verificationCode: row.verificationCode,
+    });
   }
 
   /** The origin and RP ID a page uses for a passkey sign-in on this gateway, when it has one. */
