@@ -22,12 +22,12 @@ enum AccessStepCopy {
     static func subtitle(_ step: AccessFlowStep) -> String? {
         switch step {
         case .directData, .directChoice:
-            "Direct mode allows the agent to read allowed raw records directly without Answer’s privacy review."
+            "Direct allows the agent to read allowed original records directly without Answer’s privacy review."
         default: nil
         }
     }
 
-    static let sameAsAnswer = "Use same sources and filters as Answer mode"
+    static let sameAsAnswer = "Use same sources and filters as Answer"
 }
 
 /// What stops a step from being left, under the controls that fix it.
@@ -54,7 +54,7 @@ struct AccessPermissionsStep: View {
             ).disabled(decisions.answerRequired)
             permission(
                 "direct",
-                detail: "Search and read raw matching records from allowed sources.",
+                detail: "Search and read original matching records from allowed sources.",
                 warning: "Direct is not protected by a privacy policy."
             )
             permission(
@@ -86,7 +86,7 @@ struct AccessPermissionsStep: View {
 }
 
 /// The source accounts one capability reads: a searchable list of accounts, each with what it shares and the way into its filter.
-/// A `frozen` list only shows them: no search, nothing to tick or change, the rows muted.
+/// A `frozen` list only shows them: no search, nothing to tick or change, its checkboxes grey.
 @available(iOS 17.0, *)
 struct AccessSourcesStep: View {
     @Binding var decisions: AccessDraftDecisions
@@ -121,7 +121,6 @@ struct AccessSourcesStep: View {
                     row(source, last: index == visible.count - 1)
                 }
             }
-            .opacity(frozen ? 0.5 : 1)
             .disabled(frozen)
             if visible.isEmpty {
                 Text("No accounts match this search.").accessText(.rowSecondary, color: AccessUI.secondary).padding(.top, 12)
@@ -174,7 +173,7 @@ struct AccessDirectDataStep: View {
     var body: some View {
         if offersLink, decisions.holds("answer") {
             if decisions.directSameAsAnswer {
-                Text("Uses the same sources and filters as Answer mode.")
+                Text("Uses the same sources and filters as Answer.")
                     .accessText(.subtitle)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 12)
@@ -338,7 +337,7 @@ struct AccessDecisionRows: View {
                         if let holdings = line.holdings { AccessCapabilityPills(holdings: holdings).padding(.top, 4) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    if let change { AccessChangeButton(label: "Change \(line.title)") { change(line.step) } }
+                    if let change, !line.fixed { AccessChangeButton(label: "Change \(line.title)") { change(line.step) } }
                 }
             }
         }

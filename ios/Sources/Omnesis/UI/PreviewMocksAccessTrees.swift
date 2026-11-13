@@ -18,7 +18,7 @@ extension PreviewMocks {
         return source
     }
 
-    static let accessSessions = treeAccount("claude-code:studio-laptop", "Claude Code Sessions · studio-laptop", type: "claude-code")
+    static let accessSessions = treeAccount("claude-code:sessions", "Claude Code · Studio Mac, Travel laptop", type: "claude-code")
     static let accessRepositories = treeAccount("github:maya-reeves", "GitHub · maya-reeves", type: "github")
 
     static let accessStudioMac = FilterDevice(id: "device-studio-mac", name: "Studio Mac")
@@ -95,6 +95,7 @@ extension PreviewMocks {
     static let accessHomeFolders = [
         folder("~/work", 31, parent: "~", children: true, depth: 1),
         folder("~/personal", 15, parent: "~", children: true, depth: 1),
+        folder("~/scratch", 0, parent: "~", depth: 1),
     ]
 
     private static func repository(
@@ -131,48 +132,57 @@ extension PreviewMocks {
         return session
     }
 
-    /// The filter of a tree account sharing only `shared`: its choices opened along `path`, or its review.
+    /// The filter of a tree account sharing only `shared`, or a new one that names nothing yet: its choices opened
+    /// along `path`, or its review.
     static func accessTreeFilter(
         _ source: AccessSourceInstance,
         editor: SourceFilterEditor,
-        sharing shared: ScopeOption,
-        total: Int,
+        sharing shared: ScopeOption?,
+        total: Int = 0,
         openAlong path: [ScopeOption]? = nil,
         listing children: [ScopeOption] = []
     )
         -> some View {
         let field = editor.fields[0]
-        let preview = ScopePreview(
-            sourceId: source.id,
-            total: total,
-            visible: shared.count ?? 0,
-            hidden: total - (shared.count ?? 0),
-            items: [.init(ref: shared.ref, label: shared.label, count: shared.count ?? 0)]
-        )
-        let hint = ScopeItemHint(
-            ref: shared.ref, label: shared.label, count: shared.count, noun: scopeFieldNoun(
-                shared.ref,
-                fields: editor.fields,
-                depth: shared.depth
+        let preview = shared.map { shared in
+            ScopePreview(
+                sourceId: source.id,
+                total: total,
+                visible: shared.count ?? 0,
+                hidden: total - (shared.count ?? 0),
+                items: [.init(ref: shared.ref, label: shared.label, count: shared.count ?? 0, depth: shared.depth)]
             )
-        )
+        }
+        let hints = shared.map { shared in
+            [ScopeItemHint(
+                ref: shared.ref,
+                label: shared.label,
+                count: shared.count,
+                noun: scopeFieldNoun(shared.ref, fields: editor.fields, depth: shared.depth)
+            )]
+        } ?? []
         return SourceFilterEditorView(
             source: source,
             levelId: accessCanonicalLevelId,
             capability: "answer",
-            initialPolicy: ScopePolicy(
-                sourceId: source.id,
-                audience: .init(accessLevel: accessCanonicalLevelId, capability: "answer"),
-                rules: [.init(match: [shared.ref], action: "share")],
-                otherwise: "hide"
-            ),
+            initialPolicy: accessSharingPolicy(source, shared.map { [$0.ref] } ?? []),
             authoringEnabled: true,
             editor: editor,
             preview: path == nil ? preview : nil,
             previewStep: path == nil ? .review : .matches,
             previewSession: path.map { treeSession(source, field: field.field, $0, children) } ?? .init(),
-            displayHints: [hint]
+            displayHints: hints
         ) { _ in }
+    }
+
+    /// A filter of `source` that shares only `refs`; with none, a new filter that names nothing yet.
+    static func accessSharingPolicy(_ source: AccessSourceInstance, _ refs: [ScopeRef]) -> ScopePolicy {
+        ScopePolicy(
+            sourceId: source.id,
+            audience: .init(accessLevel: accessCanonicalLevelId, capability: "answer"),
+            rules: [.init(match: refs, action: "share")],
+            otherwise: "hide"
+        )
     }
 
     /// The marks of the two tree accounts, so their renders need no network.

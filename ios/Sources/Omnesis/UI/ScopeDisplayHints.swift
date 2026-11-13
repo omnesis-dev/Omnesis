@@ -60,7 +60,11 @@ func scopeFieldNoun(_ ref: ScopeRef, fields: [FilterEditorField], depth: Int? = 
 func scopeItemHints(_ preview: ScopePreview, fields: [FilterEditorField]) -> [ScopeItemHint] {
     preview.items.map {
         ScopeItemHint(
-            ref: $0.ref, label: $0.label, count: $0.count, noun: scopeFieldNoun($0.ref, fields: fields), missing: $0.missing == true
+            ref: $0.ref,
+            label: $0.label,
+            count: $0.count,
+            noun: scopeFieldNoun($0.ref, fields: fields, depth: $0.depth),
+            missing: $0.missing == true
         )
     }
 }
@@ -133,4 +137,15 @@ func scopePickerRowTitle(_ item: ScopeOption, inTree: Bool, searching: Bool) -> 
 /// What an empty list of a field's items says: "No labels match this search." or "No folders here."
 func scopePickerEmptyText(_ many: String, searching: Bool) -> String {
     searching ? "No \(many) match this search." : "No \(many) here."
+}
+
+/// What a field's search says it looks through: "Search labels", or for a tree whose levels have their own names,
+/// each of them from the deepest up, "Search repositories and owners".
+func scopeSearchPrompt(_ field: FilterEditorField?) -> String {
+    guard let field else { return "Search people" }
+    var names: [String] = []
+    for level in (field.levels ?? []).reversed() where !names.contains(level.many) {
+        names.append(level.many)
+    }
+    return "Search " + (names.count > 1 ? names.joined(separator: " and ") : field.noun.many)
 }

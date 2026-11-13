@@ -417,12 +417,15 @@ public struct ScopePreview: Codable, Equatable, Sendable {
         public var count: Int
         /// The item is gone from the account's list.
         public var missing: Bool?
+        /// How many nodes lie above the item in its tree, for a tree field.
+        public var depth: Int?
 
-        public init(ref: ScopeRef, label: String, count: Int, missing: Bool? = nil) {
+        public init(ref: ScopeRef, label: String, count: Int, missing: Bool? = nil, depth: Int? = nil) {
             self.ref = ref
             self.label = label
             self.count = count
             self.missing = missing
+            self.depth = depth
         }
     }
 

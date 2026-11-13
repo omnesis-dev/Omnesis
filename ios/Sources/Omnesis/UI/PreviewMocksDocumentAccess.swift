@@ -7,23 +7,34 @@ import Foundation
 /// The one WhatsApp day every render of a document's access draws: its record, what a filter can see on it, and
 /// which access levels can read it. Every name is invented.
 extension PreviewMocks {
-    static let accessDocumentId = "doc-workshop-day"
+    static let accessDocumentId = "0f6c2a1e-6b8d-4e43-9c2a-5d1e7b3f9a10"
 
+    /// The WhatsApp account the day comes from, as the gateway lists it.
+    static let accessDocumentSource = SourceRecord(
+        id: "whatsapp-messages:+15550100123",
+        type: "whatsapp-messages",
+        accountId: "+1 (555) 010-0123",
+        deviceId: "device-phone",
+        config: [:],
+        enabled: true,
+        createdAt: 0,
+        updatedAt: 0
+    )
+
+    /// The day's record. Its times carry no zone, so every render reads them the same in any time zone.
     static let accessDocumentDetail: DocumentDetail = {
         let json = """
         {
-          "id": "doc-workshop-day",
+          "id": "0f6c2a1e-6b8d-4e43-9c2a-5d1e7b3f9a10",
           "provider_id": "whatsapp:+15550100123",
           "source_id": "whatsapp-messages:+15550100123",
-          "external_id": "chat-workshop-planning:2026-03-14",
+          "external_id": "day:120363000000000001@g.us:2026-03-14",
           "title": "Workshop planning — 14 March",
           "content": "Maya Reeves: Can we move the workshop to the larger room?\\nJamie Lopez: Yes, I booked it for Thursday.",
           "content_hash": "sha256:workshop",
-          "metadata": "{\\"documentType\\":\\"message\\",\\"extra\\":{\\"chatName\\":\\"Workshop planning\\"}}",
-          "source_created_at": "2026-03-14T09:00:00Z",
-          "source_updated_at": "2026-03-14T18:42:00Z",
-          "ingested_at": "2026-03-14T18:43:00Z",
-          "updated_at": "2026-03-14T18:43:00Z"
+          "metadata": "{\\"documentType\\":\\"conversation\\"}",
+          "source_created_at": "2026-03-14T09:12:00",
+          "source_updated_at": "2026-03-14T18:40:00"
         }
         """
         do {
@@ -57,8 +68,8 @@ extension PreviewMocks {
         sourceName: "WhatsApp · +1 (555) 010-0123",
         sourceVersion: 1,
         notes: .init(
-            answer: "For Answer, \"readable\" means the document is within what Omnesis may use when answering that agent. "
-                + "Whether a given answer is then released is decided separately, by the privacy policy's review.",
+            answer: "“Can read” under Answer means Omnesis may use this document when answering that agent. "
+                + "Whether an answer is then released is decided by the privacy policy’s review.",
             owner: "This page is for you, the owner. It is never available to an external agent."
         ),
         levels: [
@@ -66,7 +77,7 @@ extension PreviewMocks {
                 id: "level-family-helper",
                 name: "Family helper",
                 agents: [],
-                answer: verdict(true, "readable", "Readable: this account is shared with all content"),
+                answer: verdict(true, "readable", "This account is shared with all content"),
                 direct: verdict(false, "permission-not-granted", "Direct is not granted on this level")
             ),
             .init(

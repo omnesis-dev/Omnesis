@@ -183,14 +183,14 @@ struct AccessLevelEditorView: View {
                 let unreadable = recoveryFailure as? GatewayClient.Error == .invalidResponse
                 AccessBanner(
                     message: unreadable
-                        ? "The gateway returned an unreadable response. Your draft is retained."
-                        : "The latest access level could not be loaded. Your draft is retained.",
+                        ? "The gateway returned an unreadable response. Your changes are kept."
+                        : "The latest access level could not be loaded. Your changes are kept.",
                     action: "Try loading latest again"
                 ) { confirmReload = true }
             } else {
                 AccessBanner(
-                    message: "This access level changed elsewhere. Your draft is retained. Reload the latest level before saving.",
-                    action: "Reload latest and discard draft"
+                    message: "This access level changed elsewhere. Your changes are kept. Load the latest version before saving.",
+                    action: "Load the latest version and discard my changes"
                 ) { confirmReload = true }
             }
         } else if levelInUse {

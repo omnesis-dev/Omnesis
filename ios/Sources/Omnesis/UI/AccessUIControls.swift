@@ -84,7 +84,7 @@ struct AccessPill: View {
             .padding(.horizontal, 8)
             .frame(minHeight: 24)
             .background(background, in: .rect(cornerRadius: 6))
-            .overlay { if tone == .outlined { RoundedRectangle(cornerRadius: 6).strokeBorder(AccessUI.divider) } }
+            .overlay { if tone == .outlined { RoundedRectangle(cornerRadius: 6).strokeBorder(AccessUI.muted.opacity(0.6)) } }
     }
 
     private var foreground: Color {
@@ -93,7 +93,7 @@ struct AccessPill: View {
         case .accent: Theme.accent
         case .danger: Theme.danger
         case .success: Theme.success
-        case .outlined: AccessUI.muted
+        case .outlined: AccessUI.secondary
         }
     }
 
@@ -167,7 +167,8 @@ struct AccessAccountRow<Trailing: View>: View {
     private var account: some View {
         let name = accessSourceNameParts(source)
         return HStack(alignment: .center, spacing: AccessUI.iconGap) {
-            if let selected { AccessControlMark(kind: .checkbox, selected: selected) }
+            // A list that only shows its accounts marks them in grey: there is nothing to tick.
+            if let selected { AccessControlMark(kind: .checkbox, selected: selected, tint: toggle == nil ? AccessUI.muted : Theme.accent) }
             AccessSourceIcon(source: source)
             VStack(alignment: .leading, spacing: 4) {
                 Text(name.source).accessText(.rowTitle).lineLimit(1)
@@ -433,6 +434,13 @@ extension AccessFilterItemRow where Trailing == EmptyView {
     }
 }
 
+/// Marks a paired integration among an access level's agents: an outlined pill, the same everywhere it appears.
+struct AccessIntegrationPill: View {
+    var body: some View {
+        AccessPill(text: "INTEGRATION", tone: .outlined).accessibilityLabel("Integration")
+    }
+}
+
 /// The small spinner shown where a count is on its way.
 struct AccessCountingSpinner: View {
     var body: some View {
@@ -463,7 +471,7 @@ struct AccessLevelUsageNames: View {
         ForEach(Array(usage.integrations.enumerated()), id: \.offset) { _, name in
             HStack(spacing: 8) {
                 Text(name).accessText(.subtitle)
-                AccessPill(text: "Integration")
+                AccessIntegrationPill()
             }
         }
     }
@@ -639,7 +647,7 @@ struct AccessMenu: View {
             )
             AccessOptionCard(
                 title: "Direct",
-                detail: "Search and read raw matching records from allowed sources.",
+                detail: "Search and read original matching records from allowed sources.",
                 warning: "Direct is not protected by a privacy policy.",
                 selected: true,
                 control: .checkbox
@@ -657,7 +665,7 @@ struct AccessMenu: View {
             AccessStatPair(shared: 83, hidden: 37)
             AccessCapabilityPills(holdings: .init(answer: true, direct: true))
             AccessUnchangedBlock(rows: [.init(title: "Permissions", value: "", holdings: .init(answer: true, direct: true))])
-            AccessBanner(message: "This access level changed elsewhere.", action: "Reload latest and discard draft")
+            AccessBanner(message: "This access level changed elsewhere.", action: "Load the latest version and discard my changes")
         }
         .padding(AccessUI.inset)
     }

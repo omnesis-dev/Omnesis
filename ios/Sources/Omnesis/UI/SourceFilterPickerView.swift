@@ -244,7 +244,7 @@ struct SourceFilterPickerView: View {
     }
 
     @ViewBuilder private var items: some View {
-        AccessSearchField(prompt: "Search " + (declaration?.noun.many ?? "people"), text: $query, accessibilityLabel: "Search matches")
+        AccessSearchField(prompt: scopeSearchPrompt(declaration), text: $query, accessibilityLabel: "Search matches")
         HStack {
             Text("\(selectedRefs.count) selected").accessText(.label)
             Spacer()
@@ -293,8 +293,8 @@ struct SourceFilterPickerView: View {
         }
     }
 
-    /// Where in the tree the list is: its ancestors lead back up, and the open item itself is plain text. Inside an
-    /// item, its own row selects it, with what that takes in said under it.
+    /// Where in the tree the list is: its ancestors lead back up, and the open item itself is plain text. Under it,
+    /// what choosing an item takes in; inside an item, its own row selects it.
     var folderLocation: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Location").accessText(.caption, color: AccessUI.secondary).fontWeight(.regular)
@@ -315,13 +315,12 @@ struct SourceFilterPickerView: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Current location: " + folderScopeText)
+            if let inside = declaration?.insideText {
+                Text(inside).accessText(.rowSecondary, color: AccessUI.secondary).padding(.top, 4)
+            }
             if let open = ancestors.last {
                 AccessRow(dividerInset: AccessUI.controlSize + AccessUI.iconGap) {
-                    checkButton(
-                        "Select this " + (scopeFieldNoun(open.ref, fields: fields, depth: open.depth) ?? "folder"),
-                        item: open,
-                        detail: open.ref.isDevice ? nil : declaration?.insideText
-                    )
+                    checkButton("Select this " + (scopeFieldNoun(open.ref, fields: fields, depth: open.depth) ?? "folder"), item: open)
                 }
             }
         }
@@ -349,14 +348,11 @@ struct SourceFilterPickerView: View {
     }
 
     /// The part of a row that selects an item: its checkbox, a title, and how many records the item matches.
-    func checkButton(_ title: String, item: ScopeOption, detail: String? = nil) -> some View {
+    func checkButton(_ title: String, item: ScopeOption) -> some View {
         Button { selected(item.ref) } label: {
             HStack(alignment: .center, spacing: AccessUI.iconGap) {
                 AccessControlMark(kind: .checkbox, selected: isSelected(item.ref))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).accessText(.rowTitle).fontWeight(.regular).multilineTextAlignment(.leading)
-                    if let detail { Text(detail).accessText(.rowSecondary, color: AccessUI.secondary) }
-                }
+                Text(title).accessText(.rowTitle).fontWeight(.regular).multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
                 AccessMatchCount(count: item.count, counting: item.count == nil)
             }

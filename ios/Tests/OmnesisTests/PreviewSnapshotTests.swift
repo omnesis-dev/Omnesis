@@ -9377,19 +9377,24 @@ final class PreviewSnapshotTests: XCTestCase {
             )
         }
         accessGallery("filter-needs-resync") {
-            PreviewMocks.accessFilterEditor(PreviewMocks.accessGmail, policy: nil, step: .matches, session: PreviewMocks.accessLabelSession)
+            PreviewMocks.accessFilterEditor(
+                PreviewMocks.accessGmail,
+                policy: PreviewMocks.accessSharingPolicy(PreviewMocks.accessGmail, []),
+                step: .matches,
+                session: PreviewMocks.accessLabelSession
+            )
         }
         accessGallery("filter-resyncing") {
             PreviewMocks.accessFilterEditor(
                 PreviewMocks.accessDrive,
-                policy: nil,
+                policy: PreviewMocks.accessSharingPolicy(PreviewMocks.accessDrive, []),
                 editor: PreviewMocks.accessDriveResyncingEditor,
                 step: .matches,
                 session: PreviewMocks.accessDriveFolderSession
             )
         }
         accessGallery("filter-account-not-connected") {
-            PreviewMocks.accessFilterEditor(PreviewMocks.accessDisconnectedWhatsApp, policy: saved, named: false)
+            PreviewMocks.accessFilterEditor(PreviewMocks.accessDisconnectedWhatsApp, policy: saved)
         }
     }
 

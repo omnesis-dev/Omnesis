@@ -246,6 +246,7 @@ struct AccessAuthorizationSheet: View {
                 connection: choice?.review(overview: overview) ?? .legacy(request: request, reconnect: reconnect),
                 decisions: decisions.wrappedValue,
                 holdings: accessCapabilityHoldings(rules: choice?.existingRules(overview: overview) ?? []),
+                levelLines: choice?.reviewedLevel(overview: overview).map { accessLevelSummaryLines($0, overview: overview) } ?? [],
                 // A decision is changed on its own screen, when this approval asks it.
                 change: { decision in if flow.contains(decision) { step = decision } }
             )
@@ -318,7 +319,6 @@ extension AccessAuthorizationSheet {
                     .accessText(.button, color: first ? Theme.danger : Theme.accent)
                     .padding(.horizontal, 24)
                     .frame(minHeight: AccessUI.buttonHeight)
-                    .overlay { if !first { Capsule().strokeBorder(AccessUI.divider) } }
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)

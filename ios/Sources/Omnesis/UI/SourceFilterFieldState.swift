@@ -4,7 +4,8 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
-/// What the picker shows in place of a field's items while the field cannot be used: the gateway's sentence, a
+/// What the picker shows in place of a field's items while the field cannot be used, on one tinted block: the
+/// gateway's sentence, a
 /// button to resync the account when that is the remedy, progress while it resyncs, and a spinner while the
 /// account's list is on its way. The editor asks the gateway again by itself, so nothing here needs refreshing.
 struct SourceFilterFieldStateView: View {
@@ -45,7 +46,8 @@ struct SourceFilterFieldStateView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 4)
+        .padding(AccessUI.cardPadding)
+        .background(AccessUI.surface, in: .rect(cornerRadius: AccessUI.cardRadius))
     }
 
     private func sentence(_ text: String) -> some View {

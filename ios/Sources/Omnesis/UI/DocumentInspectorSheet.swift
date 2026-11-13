@@ -264,12 +264,13 @@ private struct TimelinePane: View {
 
 @available(iOS 17.0, *)
 private struct MetadataPane: View {
+    @Environment(AppStore.self) private var store
     let doc: DocumentDetail
     let previewFilterDetails: DocumentFilterDetails?
 
     var body: some View {
-        DocumentAccessSection(documentId: doc.id, previewDetails: previewFilterDetails)
         coreFields
+        DocumentAccessSection(documentId: doc.id, previewDetails: previewFilterDetails)
         if !tags.isEmpty {
             tagsCard
         }
@@ -284,7 +285,7 @@ private struct MetadataPane: View {
         FlatSection("Document") {
             VStack(alignment: .leading, spacing: 6) {
                 kv("Type", value: docTypeLabel(doc.documentType) ?? "—")
-                kv("Source", value: humanName(for: sourceTypeFromId(doc.sourceId)))
+                kv("Source", value: documentSourceLine(doc.sourceId, store: store))
                 if let url = doc.sourceUrl, !url.isEmpty {
                     kv("URL", value: url, mono: true)
                 }
@@ -321,12 +322,12 @@ private struct MetadataPane: View {
     private var timestampsCard: some View {
         FlatSection("Timestamps") {
             VStack(alignment: .leading, spacing: 6) {
-                kv("Created", value: doc.sourceCreatedAt, mono: true)
+                kv("Created", value: inspectorTimestamp(doc.sourceCreatedAt))
                 if let u = doc.sourceUpdatedAt {
-                    kv("Updated", value: u, mono: true)
+                    kv("Updated", value: inspectorTimestamp(u))
                 }
                 if let i = doc.ingestedAt {
-                    kv("Ingested", value: i, mono: true)
+                    kv("Ingested", value: inspectorTimestamp(i))
                 }
             }
         }

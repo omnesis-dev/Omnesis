@@ -10,6 +10,8 @@ struct AccessDecisionLine: Identifiable, Equatable {
     var step: AccessFlowStep = .overview
     /// The capabilities to show as pills under the value; a line with no value shows only the pills.
     var holdings: AccessCapabilityHoldings?
+    /// A line that only reports, with no Change: the decisions of an existing level an approval connects to.
+    var fixed = false
 
     var id: String {
         title
@@ -288,12 +290,16 @@ extension AccessDraftDecisions {
             + (filtered > 0 ? " · \(filtered) filtered" : selected.isEmpty ? "" : " · all content")
     }
 
+    /// "Answer: Blocked" and "Direct: Blocked", one line per capability held. Direct that follows Answer gets
+    /// new sources when Answer does.
     var newSourcesSummary: String {
-        let capabilities = newSourceCapabilities
+        let capabilities = ["answer", "direct"].filter(holds)
         guard !capabilities.isEmpty else { return accessNotGrantedText }
-        return capabilities
-            .map { newSourcesHeading($0) + ": " + (allowsNewSources($0) ? "Automatic" : "Blocked") }
-            .joined(separator: "\n")
+        return capabilities.map { capability in
+            let decider = capability == "direct" && directFollowsAnswer ? "answer" : capability
+            return accessCapabilityName(capability) + ": " + (allowsNewSources(decider) ? "Automatic" : "Blocked")
+        }
+        .joined(separator: "\n")
     }
 
     var releaseSummary: String {
@@ -348,4 +354,17 @@ func accessDisconnectedSource(_ id: String, overview: AccessOverview) -> AccessS
     var source = AccessSourceInstance(id: id, name: sibling ?? fallback.prefix(1).uppercased() + fallback.dropFirst(), available: false)
     source.sourceType = type
     return source
+}
+
+/// An existing level's decisions as an approval's review lists them: its data, new sources and release, each
+/// without Change. Its permissions are the pills on the level's own row.
+func accessLevelSummaryLines(_ level: AccessLevelSummary, overview: AccessOverview) -> [AccessDecisionLine] {
+    let draft = AccessLevelDraft(level: level, overview: overview)
+    return AccessDraftDecisions(draft: draft, overview: overview, original: draft).decisionLines
+        .filter { $0.title != AccessDecisionTitle.permissions }
+        .map { line in
+            var fixed = line
+            fixed.fixed = true
+            return fixed
+        }
 }

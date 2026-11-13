@@ -47,12 +47,21 @@ struct AccessAuthorizationConnectionStep: View {
         AccessSectionHeading(AccessConnectionCopy.levelSection)
         helperText(AccessConnectionCopy.levelHelper)
         let levels = choice.orderedLevels(overview: overview)
-        card {
-            ForEach(levels) { level in
-                levelRow(level)
-                AccessDivider().padding(.horizontal, AccessUI.cardPadding)
+        VStack(alignment: .leading, spacing: AccessUI.cardGap) {
+            ForEach(levels) { level in levelRow(level) }
+            radioRow(selected: choice.levelId == nil, unavailable: nil) {
+                choice.levelId = nil
+            } content: {
+                rowTitle(AccessConnectionCopy.newLevel)
             }
-            newLevelRow
+            .accessibilityIdentifier("access-level-new")
+            // The new level's name, asked for under its option once it is picked.
+            if choice.levelId == nil {
+                AccessLevelNameField(
+                    name: $choice.levelName,
+                    problem: choice.levelNameError(overview: overview) ?? (levelNameRefused ? accessLevelNameTakenMessage : nil)
+                )
+            }
         }
         // Nothing to replace means there is no way into replace mode.
         if !connections.isEmpty {
@@ -65,20 +74,10 @@ struct AccessAuthorizationConnectionStep: View {
         let listed = connections
         AccessSectionHeading(AccessConnectionCopy.replaceTitle, first: true)
         helperText(AccessConnectionCopy.replaceHelper)
-        card {
-            ForEach(Array(listed.enumerated()), id: \.element.id) { index, connection in
-                connectionRow(connection)
-                if index < listed.count - 1 { AccessDivider().padding(.horizontal, AccessUI.cardPadding) }
-            }
+        VStack(alignment: .leading, spacing: AccessUI.cardGap) {
+            ForEach(listed, id: \.id) { connection in connectionRow(connection) }
         }
         modeSwitch(AccessConnectionCopy.newConnectionEntry, replacing: false)
-    }
-
-    /// The one tinted surface that holds the rows to pick from.
-    private func card(@ViewBuilder rows: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 0) { rows() }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AccessUI.surface, in: .rect(cornerRadius: AccessUI.cardRadius))
     }
 
     private func levelRow(_ level: AccessLevelSummary) -> some View {
@@ -96,35 +95,6 @@ struct AccessAuthorizationConnectionStep: View {
             }
         }
         .accessibilityIdentifier("access-level-\(level.id)")
-    }
-
-    /// The last row: a new access level, whose name is asked for inside the
-    /// row once it is picked.
-    private var newLevelRow: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            radioRow(selected: choice.levelId == nil, unavailable: nil) {
-                choice.levelId = nil
-            } content: {
-                rowTitle(AccessConnectionCopy.newLevel)
-            }
-            .accessibilityIdentifier("access-level-new")
-            if choice.levelId == nil {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(AccessConnectionCopy.levelNameLabel)
-                        .accessText(.caption, color: AccessUI.secondary)
-                        .fontWeight(.regular)
-                        .accessibilityHidden(true)
-                    AccessLevelNameField(
-                        name: $choice.levelName,
-                        problem: choice.levelNameError(overview: overview) ?? (levelNameRefused ? accessLevelNameTakenMessage : nil),
-                        fill: Theme.bgPrimary
-                    )
-                }
-                .padding(.leading, AccessUI.cardPadding + AccessUI.controlSize + AccessUI.iconGap)
-                .padding(.trailing, AccessUI.cardPadding)
-                .padding(.bottom, AccessUI.cardPadding)
-            }
-        }
     }
 
     private func connectionRow(_ connection: AccessLiveConnection) -> some View {
@@ -178,7 +148,7 @@ struct AccessAuthorizationConnectionStep: View {
         Text(text).accessText(.rowSecondary, color: Theme.accent)
     }
 
-    /// One pickable row. An unavailable one stays listed, faint, with its
+    /// One pickable option, on its own card with an accent outline when picked. An unavailable one stays listed, faint, with its
     /// reason, so the owner sees why it cannot be chosen; VoiceOver reads the
     /// row as one element and gives that reason as its hint.
     private func radioRow(
@@ -202,7 +172,11 @@ struct AccessAuthorizationConnectionStep: View {
             }
             .padding(AccessUI.cardPadding)
             .opacity(unavailable == nil ? 1 : 0.55)
-            .contentShape(Rectangle())
+            .background(AccessUI.surface, in: .rect(cornerRadius: AccessUI.cardRadius))
+            .overlay {
+                if selected { RoundedRectangle(cornerRadius: AccessUI.cardRadius).strokeBorder(Theme.accent, lineWidth: 1.5) }
+            }
+            .contentShape(.rect(cornerRadius: AccessUI.cardRadius))
         }
         .buttonStyle(.plain)
         .disabled(unavailable != nil)

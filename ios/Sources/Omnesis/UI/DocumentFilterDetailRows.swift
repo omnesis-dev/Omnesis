@@ -24,3 +24,21 @@ func documentFilterDetailRows(_ details: DocumentFilterDetails) -> [DocumentFilt
     }
     return rows + [DocumentFilterDetailRow(key: "Source version", value: "\(details.sourceVersion)")]
 }
+
+/// A timestamp as the document inspector shows it: "14 March 2026, 09:12" in the reader's time zone. A time
+/// written without a zone is read as local; anything that is not a timestamp is shown as it came.
+func inspectorTimestamp(_ raw: String, timeZone: TimeZone = .current) -> String {
+    let zoned = ISO8601DateFormatter()
+    zoned.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let plain = ISO8601DateFormatter()
+    let local = DateFormatter()
+    local.locale = Locale(identifier: "en_US_POSIX")
+    local.timeZone = timeZone
+    local.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+    guard let date = zoned.date(from: raw) ?? plain.date(from: raw) ?? local.date(from: raw) else { return raw }
+    let shown = DateFormatter()
+    shown.locale = Locale(identifier: "en_GB")
+    shown.timeZone = timeZone
+    shown.dateFormat = "d MMMM yyyy, HH:mm"
+    return shown.string(from: date)
+}

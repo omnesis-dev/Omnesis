@@ -289,11 +289,7 @@ struct SourceFilterEditorView: View {
         }
     }
 
-    @ViewBuilder private var stepFooter: some View {
-        if step == .matches, !listsSelection, refs.isEmpty {
-            Text(mode == .only ? scopeFilterEmptySelectionMessage : "Nothing selected. All content will be shared.")
-                .accessText(.rowSecondary, color: AccessUI.secondary)
-        }
+    private var stepFooter: some View {
         Button(action: advance) { Text(primaryTitle) }
             .buttonStyle(AccessPrimaryButtonStyle())
             .disabled((step == .mode && mode == .all && commit == .blocked) || (step == .matches && !managing && missingSelection)
@@ -358,7 +354,7 @@ struct SourceFilterEditorView: View {
 
     /// The saved filter of an account that is no longer connected: what it does and what it names, each removable.
     @ViewBuilder private var disconnectedContent: some View {
-        Text("This account is no longer connected. Saved filters can be removed but not added.")
+        Text("This account is no longer connected. You can remove its saved entries.")
             .accessText(.rowSecondary, color: AccessUI.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .padding(AccessUI.cardPadding)
@@ -448,7 +444,7 @@ extension SourceFilterEditorView {
             let lines = preview.undecidedLines
             if !lines.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(lines, id: \.self) { Text($0).accessText(.rowSecondary) }
+                    ForEach(lines, id: \.self) { Text($0).accessText(.rowSecondary, color: AccessUI.secondary) }
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
@@ -507,8 +503,8 @@ extension SourceFilterEditorView {
 #if DEBUG
 @available(iOS 17.0, *)
 extension PreviewMocks {
-    /// The filter editor on one of the canonical accounts, opened at a step. `named: false` leaves the
-    /// saved items without the names a connected account's lists and counts would give them.
+    /// The filter editor on one of the canonical accounts, opened at a step, its saved items named as the gateway
+    /// names them.
     static func accessFilterEditor(
         _ source: AccessSourceInstance,
         policy: ScopePolicy?,
@@ -516,8 +512,7 @@ extension PreviewMocks {
         preview: ScopePreview? = nil,
         step: ScopeFilterStep = .mode,
         session: ScopePickerSession = .init(),
-        authoringEnabled: Bool = true,
-        named: Bool = true
+        authoringEnabled: Bool = true
     )
         -> some View {
         SourceFilterEditorView(
@@ -530,7 +525,7 @@ extension PreviewMocks {
             preview: preview,
             previewStep: step,
             previewSession: session,
-            displayHints: named ? accessCanonicalLabels["answer:" + source.id] ?? [] : []
+            displayHints: accessCanonicalLabels["answer:" + source.id] ?? []
         ) { _ in }
     }
 }
@@ -581,7 +576,7 @@ extension PreviewMocks {
 
 #Preview("Account no longer connected") {
     NavigationStack {
-        PreviewMocks.accessFilterEditor(PreviewMocks.accessDisconnectedWhatsApp, policy: PreviewMocks.accessWhatsAppPolicy, named: false)
+        PreviewMocks.accessFilterEditor(PreviewMocks.accessDisconnectedWhatsApp, policy: PreviewMocks.accessWhatsAppPolicy)
     }.environment(AppStore.preview())
 }
 

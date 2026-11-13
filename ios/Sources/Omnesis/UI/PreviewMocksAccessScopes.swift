@@ -132,17 +132,22 @@ extension PreviewMocks {
         .init(ref: .tree(field: accessFolderField, id: "folder-archive"), label: "Archive", count: 9, depth: 0),
     ]
 
-    static let accessProjectFolders: [ScopeOption] = [("plans", "Plans", 11), ("budgets", "Budgets", 5), ("reference", "Reference", 2)]
-        .map {
-            .init(
-                ref: .tree(field: accessFolderField, id: "folder-" + $0.0),
-                label: "Projects/" + $0.1,
-                shortLabel: $0.1,
-                count: $0.2,
-                parentId: "folder-projects",
-                depth: 1
-            )
-        }
+    static let accessProjectFolders: [ScopeOption] = [
+        ("plans", "Plans", 11),
+        ("budgets", "Budgets", 5),
+        ("reference", "Reference", 2),
+        ("drafts", "Drafts", 0),
+    ]
+    .map {
+        .init(
+            ref: .tree(field: accessFolderField, id: "folder-" + $0.0),
+            label: "Projects/" + $0.1,
+            shortLabel: $0.1,
+            count: $0.2,
+            parentId: "folder-projects",
+            depth: 1
+        )
+    }
 
     private static func policy(
         _ source: AccessSourceInstance,

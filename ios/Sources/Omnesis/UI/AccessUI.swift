@@ -11,8 +11,9 @@ enum AccessUI {
     static let surface = Color(light: 0xF3F5F8, dark: 0x161B22)
     static let divider = Color(light: 0xE3E7EC, dark: 0x232A33)
     static let secondary = Color(light: 0x59636E, dark: 0x9AA4B2)
-    /// Decisions a review lists as unchanged, and controls that are off.
-    static let muted = Color(light: 0x8C959F, dark: 0x5D6673)
+    /// Decisions a review lists as unchanged, and controls that are off: quieter than the secondary text, still
+    /// readable at 4.5:1 on the background and on the surface in both themes.
+    static let muted = Color(light: 0x57606A, dark: 0x8B949E)
 
     /// The one horizontal inset every title, row and button of a screen aligns to.
     static let inset: CGFloat = 20

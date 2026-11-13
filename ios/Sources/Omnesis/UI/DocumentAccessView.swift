@@ -78,7 +78,7 @@ enum DocumentAccessCopy {
     static let noLevels = "There are no access levels, so no agent can read this document."
     static let noConnections = "No connections"
     static let canRead = "Can read"
-    static let cannotRead = "Can't read"
+    static let cannotRead = "Can’t read"
 }
 
 /// The document the page is about: its source's icon, its title, and the account it comes from.
@@ -179,20 +179,19 @@ struct DocumentAccessSection: View {
     }
 
     @ViewBuilder private func owner(_ details: DocumentFilterDetails) -> some View {
-        FlatSection("Access") {
-            NavigationLink { DocumentAccessView(documentId: documentId) } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "person.badge.shield.checkmark").font(.system(size: 15)).accessibilityHidden(true)
-                    Text(DocumentAccessCopy.title).font(.system(size: 15, weight: .medium))
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                }
-                .foregroundStyle(Theme.accent)
-                .frame(minHeight: 44)
-                .contentShape(.rect)
+        NavigationLink { DocumentAccessView(documentId: documentId) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "lock.shield").font(.system(size: 16)).accessibilityHidden(true)
+                Text(DocumentAccessCopy.title).font(.system(size: 15, weight: .medium))
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
             }
-            .buttonStyle(.plain)
+            .foregroundStyle(Theme.accent)
+            .frame(minHeight: 44)
+            .contentShape(.rect)
         }
+        .buttonStyle(.plain)
+        .padding(.top, Theme.Spacing.sm)
         FlatSection("Filter details") {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(documentFilterDetailRows(details), id: \.key) { row in InspectorKeyValue(key: row.key, value: row.value) }
@@ -204,6 +203,14 @@ struct DocumentAccessSection: View {
         guard !previewing, let client = store.access else { return }
         details = try? await client.documentFilterDetails(documentId: documentId)
     }
+}
+
+/// The account a document comes from, as the inspector names it: "WhatsApp · +1 (555) 010-0123".
+@available(iOS 17.0, *)
+func documentSourceLine(_ sourceId: String, store: AppStore) -> String {
+    let name = store.sourceLabel(forSourceId: sourceId) ?? humanName(for: sourceTypeFromId(sourceId))
+    let account = store.sources.first { $0.id == sourceId }?.accountId ?? sourceAccountOf(sourceId)
+    return account.isEmpty ? name : name + " · " + account
 }
 
 /// A name and its value on one line of the document inspector.

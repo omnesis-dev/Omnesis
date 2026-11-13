@@ -54,12 +54,7 @@ extension PreviewSnapshotTests {
         let work = PreviewMocks.accessHomeFolders[0]
         accessTreeGallery("filter-picker-devices") {
             PreviewMocks.accessTreeFilter(
-                sessions,
-                editor: PreviewMocks.accessSessionsEditor,
-                sharing: work,
-                total: 58,
-                openAlong: [],
-                listing: PreviewMocks.accessSessionDevices
+                sessions, editor: PreviewMocks.accessSessionsEditor, sharing: nil, openAlong: [], listing: PreviewMocks.accessSessionDevices
             )
         }
         accessTreeGallery("filter-picker-project-folders") {
@@ -76,9 +71,7 @@ extension PreviewSnapshotTests {
             PreviewMocks.accessTreeFilter(sessions, editor: PreviewMocks.accessSessionsEditor, sharing: work, total: 58)
         }
         accessTreeGallery("filter-collector-behind") {
-            PreviewMocks.accessTreeFilter(
-                sessions, editor: PreviewMocks.accessSessionsBehindEditor, sharing: work, total: 58, openAlong: [], listing: []
-            )
+            PreviewMocks.accessTreeFilter(sessions, editor: PreviewMocks.accessSessionsBehindEditor, sharing: nil, openAlong: [])
         }
         let repositories = PreviewMocks.accessRepositories
         let owner = PreviewMocks.accessOwner
@@ -100,7 +93,7 @@ extension PreviewSnapshotTests {
     /// A WhatsApp day's inspector, with what a filter can see on it and the way to who can read it, and that page.
     func testAccessGalleryDocument() {
         let doc = PreviewMocks.accessDocumentDetail
-        accessTreeGallery("document-details", icons: PreviewMocks.accessGalleryIcons) {
+        accessTreeGallery("document-details", icons: PreviewMocks.accessGalleryIcons, sources: [PreviewMocks.accessDocumentSource]) {
             DocumentInspectorSheet(
                 doc: doc, people: [], refs: nil, attachments: [], previewFilterDetails: PreviewMocks.accessDocumentFilterDetails
             )

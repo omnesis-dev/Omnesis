@@ -94,6 +94,7 @@ final class AccessDecisionsTests: XCTestCase {
         XCTAssertEqual(flow(), [.permissions, .answerData, .directChoice, .future, .release, .review])
         XCTAssertEqual(decisions.newSourceCapabilities, ["answer"])
         XCTAssertEqual(decisions.newSourcesHeading("answer"), "Answer and Direct")
+        XCTAssertEqual(decisions.newSourcesSummary, "Answer: Blocked\nDirect: Blocked", "A summary names each capability")
         XCTAssertEqual(decisions.dataSummary("direct"), "Same sources and filters as Answer")
         XCTAssertEqual(decisions.decisionLines.map(\.step), [.permissions, .answerData, .directChoice, .future, .release])
 
@@ -301,5 +302,55 @@ final class AccessDecisionsTests: XCTestCase {
             "No connected accounts are available. Connect a source before granting data access."
         )
         XCTAssertEqual(scopeFilterLimitMessage, "A filter can include at most 256 items.")
+    }
+
+    func testAnExistingLevelInAnApprovalListsItsOwnDecisionsWithoutChange() {
+        let level = AccessLevelSummary(
+            id: "level-example",
+            name: "Research assistant",
+            revision: 2,
+            rules: [
+                .answer(sources: .init(mode: .allowlist, sourceIds: sources.map(\.id)), release: .unreviewed),
+                .direct(sources: .init(mode: .allowlist, sourceIds: [sources[0].id])),
+            ],
+            connectionCount: 2,
+            createdAt: 1,
+            updatedAt: 2
+        )
+        let lines = accessLevelSummaryLines(level, overview: overview)
+        XCTAssertEqual(lines.map(\.title), ["Answer data", "Direct data", "New sources", "Answer release"])
+        XCTAssertEqual(lines.map(\.value), [
+            "3 accounts selected · all content", "1 account selected · all content", "Answer: Blocked\nDirect: Blocked",
+            "No privacy review",
+        ])
+        XCTAssertTrue(lines.allSatisfy(\.fixed))
+    }
+
+    func testTheInspectorShowsTimesAsDatesAndKeepsAnythingElse() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Europe/Paris"))
+        XCTAssertEqual(inspectorTimestamp("2026-03-14T09:12:00", timeZone: zone), "14 March 2026, 09:12")
+        XCTAssertEqual(inspectorTimestamp("2026-03-14T08:12:00Z", timeZone: zone), "14 March 2026, 09:12")
+        XCTAssertEqual(inspectorTimestamp("2026-03-14T08:12:00.250Z", timeZone: zone), "14 March 2026, 09:12")
+        XCTAssertEqual(inspectorTimestamp("yesterday", timeZone: zone), "yesterday")
+    }
+
+    func testAPickerSearchNamesEveryLevelOfATreeWithNamedLevels() {
+        let repositories = FilterEditorField(
+            field: "extra.repositoryIds",
+            capability: "tree",
+            noun: .init(one: "repository", many: "repositories"),
+            levels: [.init(one: "owner", many: "owners"), .init(one: "repository", many: "repositories")],
+            picker: "tree"
+        )
+        XCTAssertEqual(scopeSearchPrompt(repositories), "Search repositories and owners")
+        let folders = FilterEditorField(
+            field: "extra.folderIds",
+            capability: "tree",
+            noun: .init(one: "folder", many: "folders"),
+            levels: [.init(one: "folder", many: "folders")],
+            picker: "tree"
+        )
+        XCTAssertEqual(scopeSearchPrompt(folders), "Search folders")
+        XCTAssertEqual(scopeSearchPrompt(nil), "Search people")
     }
 }
