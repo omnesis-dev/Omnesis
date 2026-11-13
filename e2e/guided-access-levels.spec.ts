@@ -4,10 +4,8 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect, type Page } from "@playwright/test";
-import { scopeContracts as whatsappContracts } from "@omnesis/provider-whatsapp/scope-contracts";
-import { scopeContracts } from "@omnesis/provider-google/src/scope-contracts";
 
-// Real provider declarations, independently invented account and content data.
+// Invented account and content data.
 const levelId = "00000000-0000-4000-8000-000000000093";
 const policyId = "00000000-0000-4000-8000-000000000094";
 const baseSources = [
@@ -16,7 +14,7 @@ const baseSources = [
     sourceType: "gmail",
     displayName: "Gmail",
     available: true,
-    scopes: scopeContracts.gmail,
+    filterable: true,
     scopeReadiness: [
       { kind: "participant", ready: true },
       { kind: "label", ready: true },
@@ -27,7 +25,7 @@ const baseSources = [
     sourceType: "google-drive",
     displayName: "Google Drive",
     available: true,
-    scopes: scopeContracts["google-drive"],
+    filterable: true,
     scopeReadiness: [{ kind: "folder", ready: true }],
   },
 ];
@@ -948,7 +946,7 @@ for (const theme of ["dark", "light"])
         displayName: "WhatsApp",
         icon: fixtureIcons["whatsapp-messages"],
         available: true,
-        scopes: whatsappContracts["whatsapp-messages"],
+        filterable: true,
         scopeReadiness: [
           { kind: "conversation", ready: true },
           { kind: "participant", ready: true },
