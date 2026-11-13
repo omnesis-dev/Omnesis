@@ -13038,11 +13038,6 @@
       "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
     },
     {
-      "value": "For Answer",
-      "paths": ["packages/gateway/portal/js/views/document-access.test.ts"],
-      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
-    },
-    {
       "value": "Resync Google Drive",
       "paths": ["packages/gateway/portal/js/views/document-access.test.ts"],
       "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
