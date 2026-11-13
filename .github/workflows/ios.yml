@@ -40,6 +40,12 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      # These real-network proxy tests compile only on macOS, so the simulator
+      # suite below cannot exercise their route-selection assertions.
+      - name: lane [ios-proxy-logic]
+        working-directory: ios
+        run: swift test --filter GatewayRoutingProxyTests
+
       - name: Prepare iPhone simulator
         run: |
           udid="$(node scripts/ci/prepare-ios-simulator.mjs)"
