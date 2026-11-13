@@ -2189,11 +2189,7 @@ test("a certificate incident holds every new device until the owner acknowledges
   expect(await again.holdForCertificateIncident([ROGUE, third])).toBe(true);
   expect(again.incidentHold()!.certificates).toEqual([third]);
   await again.acknowledgeIncidentHold();
-  expect(((await f.saved()) as { acknowledgedIncidents: string[] }).acknowledgedIncidents).toEqual([
-    ROGUE,
-    SECOND_ROGUE,
-    third,
-  ]);
+  expect(await f.saved()).toHaveProperty("acknowledgedIncidents", [ROGUE, SECOND_ROGUE, third]);
 });
 
 test("a gateway with no account saves a hold without turning account mode on, and forgetting keeps it", async () => {
