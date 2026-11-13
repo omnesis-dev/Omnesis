@@ -25,7 +25,6 @@
  * fail-closed gate the bundle requires: a route that hasn't declared a
  * policy can never be served.
  */
-import { timingSafeEqual } from "node:crypto";
 import { parseWebSocketAuthProtocolHeader } from "@omnesis/core";
 import {
   parseSourceId,
@@ -48,6 +47,7 @@ import {
 } from "@omnesis/types";
 import { UnauthorizedError, ForbiddenError, BadRequestError } from "./errors.js";
 import { PORTAL_CSRF_HEADER } from "./cookies.js";
+import { csrfTokenMatches } from "./session-origin.js";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import type { AppEnv, AuthContext } from "./routes/types.js";
 
@@ -213,14 +213,7 @@ function requirePortalCsrf(
   c: Context<AppEnv>,
   auth: Extract<AuthContext, { authMethod: "portal-session" }>,
 ): void {
-  const presented = c.req.header(PORTAL_CSRF_HEADER);
-  const expected = auth.csrfToken;
-  const presentedBytes = Buffer.from(presented ?? "", "utf8");
-  const expectedBytes = Buffer.from(expected, "utf8");
-  if (
-    presentedBytes.length !== expectedBytes.length ||
-    !timingSafeEqual(presentedBytes, expectedBytes)
-  ) {
+  if (!csrfTokenMatches(c.req.header(PORTAL_CSRF_HEADER), auth.csrfToken)) {
     forbidden(c, "valid portal CSRF token required");
   }
 }
