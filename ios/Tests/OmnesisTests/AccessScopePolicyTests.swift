@@ -340,7 +340,6 @@ final class AccessScopePolicyTests: XCTestCase {
 
     func testReservedPolicyIsReadOnlyAndRoundtrips() throws {
         var future = policy
-        future.maxAge = "90d"
         future.rules[0].action = "ask"
         XCTAssertFalse(future.editable)
         XCTAssertEqual(try JSONDecoder().decode(ScopePolicy.self, from: JSONEncoder().encode(future)), future)

@@ -251,7 +251,7 @@ final class AccessLevelEditingTests: XCTestCase {
     }
 
     func testAChangedFilterListsWhatItAddsAndRemovesBeforeWhatItKeeps() {
-        let renamed = ScopeRef.person(label: "Maya R.", identifiers: maya.identifiers)
+        let renamed = ScopeRef.person(label: "Maya R.", identifiers: maya.identifiers ?? [])
         let deltas = scopeRefDeltas(before: policy([maya, jamie]), after: policy([renamed, david]))
         XCTAssertEqual(deltas, [
             .init(ref: david, change: .added), .init(ref: jamie, change: .removed), .init(ref: renamed, change: .kept),
@@ -262,7 +262,7 @@ final class AccessLevelEditingTests: XCTestCase {
         var value = policy([maya])
         value.toggleMatch(jamie)
         XCTAssertEqual(value.rules[0].match, [maya, jamie])
-        value.toggleMatch(.person(label: "Renamed", identifiers: maya.identifiers))
+        value.toggleMatch(.person(label: "Renamed", identifiers: maya.identifiers ?? []))
         XCTAssertEqual(value.rules[0].match, [jamie])
         value.toggleMatch(jamie)
 

@@ -265,6 +265,7 @@ struct SourceFilterEditorView: View {
         labelHints = []
         previewedPolicy = nil
         editor = nil
+        editorGeneration += 1
         error = GatewayClient.Error.unauthorized
     }
 
@@ -473,7 +474,10 @@ extension SourceFilterEditorView {
         var attempt = 0
         while !Task.isCancelled {
             if openedClient == nil { openedClient = store.access }
-            guard let client = try? openedClient?.authorized(for: store.access) else { return }
+            guard let client = try? openedClient?.authorized(for: store.access) else {
+                if openedClient != nil, editor == nil { editorError = GatewayClient.Error.unauthorized }
+                return
+            }
             do {
                 let value = try await client.filterEditor(sourceId: source.id)
                 try Task.checkCancellation()
