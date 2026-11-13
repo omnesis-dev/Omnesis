@@ -458,8 +458,8 @@ speakers of recorded conversations apart, adds itself and its seven
 platform-specific native packages (`sherpa-onnx-<platform>`), all Apache-2.0.
 The speaker models it runs are not distributed: the gateway downloads them on
 first use from Hugging Face, pinned by checksum — the pyannote
-segmentation-3.0 model (MIT, CNRS) and the WeSpeaker ResNet34-LM speaker
-embedding model trained on VoxCeleb, both exported to ONNX by the sherpa-onnx
+segmentation-3.0 model (MIT, CNRS) and the 3D-Speaker ERes2Net base speaker
+embedding model (Apache-2.0, Alibaba), both exported to ONNX by the sherpa-onnx
 project.
 
 The experimental Telegram provider adds the MTProto client `@mtcute/*`

@@ -124,11 +124,16 @@ export class LocalVoiceSeparator implements VoiceSeparator {
     return { windows, vectors };
   }
 
-  async group(vectors: readonly Float32Array[]): Promise<number[]> {
+  async group(vectors: readonly Float32Array[], durationsMs: readonly number[]): Promise<number[]> {
     const packed = packVectors(vectors);
     if (!packed) return [];
     const result = await this.request(
-      { op: "group", count: vectors.length, threshold: SAME_SPEAKER_SIMILARITY },
+      {
+        op: "group",
+        count: vectors.length,
+        threshold: SAME_SPEAKER_SIMILARITY,
+        durationsMs: [...durationsMs],
+      },
       packed,
     );
     const labels = result.labels ?? [];
@@ -149,7 +154,7 @@ export class LocalVoiceSeparator implements VoiceSeparator {
   }
 
   private async request(
-    fields: Pick<VoiceRequestHeader, "op" | "count" | "threshold">,
+    fields: Pick<VoiceRequestHeader, "op" | "count" | "threshold" | "durationsMs">,
     tail: ArrayBufferView,
   ): Promise<Result> {
     this.clearIdle();

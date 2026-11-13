@@ -33,12 +33,17 @@ export const SEGMENTATION_MODEL = {
   sha256: "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079",
 };
 
-/** WeSpeaker ResNet34-LM trained on VoxCeleb, exported to ONNX for sherpa-onnx. */
+/**
+ * 3D-Speaker ERes2Net base (Apache-2.0), exported to ONNX for sherpa-onnx.
+ * Chosen over the VoxCeleb-trained WeSpeaker and NeMo TitaNet models because
+ * it tells voices apart best from the one-to-four-second turns of a
+ * conversation recorded by a phone on a table.
+ */
 export const EMBEDDING_MODEL = {
-  filename: "speaker-embedding-wespeaker-resnet34-lm.onnx",
-  downloadUrl: `${HF}/speaker-embedding-models/resolve/0743f301363dec56491a490f6d6cbc9d67f9a3bf/wespeaker_en_voxceleb_resnet34_LM.onnx`,
-  sizeBytes: 26_530_550,
-  sha256: "e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012",
+  filename: "speaker-embedding-3dspeaker-eres2net-base.onnx",
+  downloadUrl: `${HF}/speaker-embedding-models/resolve/0743f301363dec56491a490f6d6cbc9d67f9a3bf/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx`,
+  sizeBytes: 39_593_761,
+  sha256: "1a331345f04805badbb495c775a6ddffcdd1a732567d5ec8b3d5749e3c7a5e4b",
 };
 
 /** Whether the sherpa-onnx native binding loads on this machine. */
