@@ -70,4 +70,22 @@ final class GatewayConnectionStatusTests: XCTestCase {
         XCTAssertNil(connected.explanation)
         XCTAssertNil(connected.diagnostic)
     }
+
+    func testPathIndicatorNeverShowsAStaleSuccessfulRouteDuringRecoveryOrFailure() {
+        let connected = DeviceSocket.ConnectionState.connected(deviceId: "d", deviceName: "n", scopes: [])
+        for path in [GatewayConnectionPath.local, .relay, .reconnecting] {
+            XCTAssertEqual(GatewayConnectionStatus.pathIndicator(state: connected, selected: path), path)
+            for state in [
+                DeviceSocket.ConnectionState.connecting,
+                .authenticating,
+                .reconnecting(.init(network: .unavailable, lastError: nil, failedAttemptsOnNetwork: 0)),
+            ] {
+                XCTAssertEqual(GatewayConnectionStatus.pathIndicator(state: state, selected: path), .reconnecting)
+            }
+            XCTAssertNil(GatewayConnectionStatus.pathIndicator(state: .disconnected, selected: path))
+            XCTAssertNil(GatewayConnectionStatus.pathIndicator(state: .failed(.init(kind: .certificate, detail: "x")), selected: path))
+        }
+        XCTAssertNil(GatewayConnectionStatus.pathIndicator(state: connected, selected: nil))
+        XCTAssertNil(GatewayConnectionStatus.pathIndicator(state: .connecting, selected: nil))
+    }
 }

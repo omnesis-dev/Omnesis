@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { join, extname, sep, resolve as pathResolve } from "node:path";
 import { existsSync, readFileSync, statSync, realpathSync } from "node:fs";
+import { cloudRelayEnabled } from "@omnesis/core";
 import { scope } from "../scope.js";
 import { getWidgetOrigins } from "../../widget-origins.js";
 import {
@@ -343,7 +344,11 @@ export function mountPortalRoutes(app: RouteApp, deps: PortalRoutesDeps): void {
   app.get("/portal/api/session", scope.public(), (c) => {
     const auth = c.get("auth") as AuthContext | undefined;
     if (!auth)
-      return c.json({ authenticated: false }, { headers: { "Cache-Control": "no-store" } });
+      return c.json(
+        // The login page learns of sign-in from the request it already makes.
+        { authenticated: false, ...(cloudRelayEnabled() ? { cloudRelay: true } : {}) },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     return c.json(
       {
         authenticated: true,

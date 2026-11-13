@@ -37,6 +37,7 @@ const EXCLUDED = new Set();
 
 /** Per-package runtime assets to copy in addition to dist/. */
 const EXTRA_ASSETS = {
+  "@omnesis/cloud-relay": [{ from: "src/account-browser.js", to: "dist/account-browser.js" }],
   "@omnesis/agent-integration": [
     { from: "openclaw-entry.mjs", to: "openclaw-entry.mjs" },
     { from: "openclaw.plugin.json", to: "openclaw.plugin.json" },

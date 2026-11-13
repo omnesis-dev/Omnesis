@@ -23,6 +23,8 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { markRelayRequestExposure } from "./http/client-ip.js";
+
 import { labFeatureEnabled } from "./lab/store.js";
 import { LabService } from "./lab/service.js";
 import { mountLabRoutes } from "./http/routes/lab.js";
@@ -108,7 +110,11 @@ import { DeviceService } from "./http/services/DeviceService.js";
 import { PushRegistrationService } from "./http/services/PushRegistrationService.js";
 import { mountStatusRoutes, mountDbSizeRoute } from "./http/routes/status.js";
 import { mountPortalRoutes } from "./http/routes/portal.js";
+import { devicePathObservation } from "./http/device-path-observation.js";
 import { mountAdminRoutes } from "./http/routes/admin.js";
+import { mountDirectCandidateRoutes } from "./http/routes/direct-candidates.js";
+import { mountDeviceEnrollmentRoutes } from "./http/routes/device-enrollment.js";
+import { mountCloudPairingRoutes } from "./http/routes/cloud-pairing.js";
 import { mountBackupRoutes } from "./http/routes/backup.js";
 import { mountExportRoutes } from "./http/routes/export.js";
 import { mountModelCredentialsRoutes } from "./http/routes/model-credentials.js";
@@ -613,8 +619,13 @@ export function createServer(
      * so unit tests that build a server without TLS wiring can omit it.
      */
     tlsFingerprintSha256?: string | (() => string);
+    /** Public SNI leaf used by cloud pairing; direct QR continues to use its default certificate. */
+    cloudTlsFingerprintSha256?: string | (() => string | undefined);
+    tlsSpkiFingerprintSha256?: string | (() => string);
+    cloudTlsSpkiFingerprintSha256?: () => string | undefined;
     /** The served certificate's lifecycle, for `/admin/tls`. */
     tlsLifecycle?: TlsLifecyclePort;
+    cloudRelayManagement?: import("@omnesis/cloud-relay").CloudRelayManagement;
     /** Who minted the served certificate and the file an agent on this machine trusts it by. */
     agentCertificateTrust?: () => AgentCertificateTrust;
     /** HTTPS origins allowed in explicitly system-trusted V4 pairing payloads. */
@@ -645,8 +656,20 @@ export function createServer(
      * `localhost:3003` callback fallback.
      */
     publicBaseUrl?: string;
+    cloudRelayExposure?: () => boolean;
+    cloudIdentitySource?: () =>
+      import("./http/services/CloudPairingConfiguration.js").CloudPairingIdentity | undefined;
+    cloudPairingPublicOrigin?: () => string | undefined;
+    onCloudPairingRequest?: (request: { requestId: string; expiresAt: number }) => void;
+    /** A device joined with nobody approving it; see `PairingServiceDeps`. */
+    onDeviceJoined?: import("./http/services/PairingService.js").PairingServiceDeps["onDeviceJoined"];
+    cloudIdentity?: {
+      identity: import("@omnesis/cloud-relay").IdentityProvider;
+      ownerAccountId: string;
+    };
     /** Exact externally reachable MCP protected-resource URLs. */
     mcpResourceUrls?: readonly string[];
+    additionalOAuthIssuerUrls?: import("./access/oauth-urls.js").OAuthIssuerSource;
     /**
      * Gateway listen port. Advertises the local MCP setup address and scopes the portal session
      * cookie name per-port (see `sessionCookieName(port)` in
@@ -674,6 +697,20 @@ export function createServer(
   },
 ) {
   const app = strictRoute(new Hono<AppEnv>());
+  app.use("*", async (c, next) => {
+    let release: (() => void) | undefined;
+    if (opts?.cloudRelayExposure?.()) {
+      // node-ws writes its upgrade symbol onto this exact original bindings object.
+      const bindings = typeof c.env === "object" && c.env !== null ? c.env : {};
+      c.env = bindings;
+      release = markRelayRequestExposure(bindings);
+    }
+    try {
+      await next();
+    } finally {
+      release?.();
+    }
+  });
 
   if (opts?.requestAdmission) app.use("*", opts.requestAdmission);
   app.use("*", requestIdMiddleware());
@@ -1001,7 +1038,12 @@ export function createServer(
     const authHeader = c.req.header("Authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const rawToken = authHeader.slice(7);
-      const oauthUrls = resolveOAuthUrls(c.req.url, opts?.publicBaseUrl, opts?.mcpResourceUrls);
+      const oauthUrls = resolveOAuthUrls(
+        c.req.url,
+        opts?.publicBaseUrl,
+        opts?.mcpResourceUrls,
+        opts?.additionalOAuthIssuerUrls,
+      );
       const principal =
         c.req.path === "/mcp" && oauthUrls
           ? (() => {
@@ -1107,6 +1149,12 @@ export function createServer(
     return next();
   });
 
+  app.use(
+    "*",
+    devicePathObservation(
+      opts?.wsServer ? (id, path) => opts.wsServer!.noteConnectionPath(id, path) : undefined,
+    ),
+  );
   app.use("*", requestContextMiddleware());
 
   // Per-token / per-endpoint access logging — runs after auth +
@@ -1305,11 +1353,14 @@ export function createServer(
     statusCache,
     sourceService,
     wsServer: opts?.wsServer,
+    onDeviceJoined: opts?.onDeviceJoined,
   });
 
   const authService = new AuthService({
     db,
     writeGate: w,
+    redeemEnrollmentPairing: (pairingCode, capabilities) =>
+      pairingService.redeem({ pairingCode, capabilities }),
     statusCache,
     sessionTtlMs: opts?.timings?.sessionTtlMs,
     sessionRefreshThrottleMs: opts?.timings?.sessionRefreshThrottleMs,
@@ -1425,6 +1476,7 @@ export function createServer(
     publicBaseUrl: opts?.publicBaseUrl,
     ...(opts?.port ? { loopbackBaseUrl: `https://localhost:${opts.port}` } : {}),
     mcpResourceUrls: opts?.mcpResourceUrls,
+    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
     authorizationNotifier: opts?.accessAuthorizationNotifier,
     onAuthorizationPending: opts?.accessCleanupWake,
     onDeviceLevelChanged: () => statusCache.bump(),
@@ -1572,7 +1624,10 @@ export function createServer(
     deviceForSource,
     pairingService,
     tlsFingerprintSha256: opts?.tlsFingerprintSha256,
+    tlsSpkiFingerprintSha256: opts?.tlsSpkiFingerprintSha256,
+    cloudTlsSpkiFingerprintSha256: opts?.cloudTlsSpkiFingerprintSha256,
     tlsLifecycle: opts?.tlsLifecycle,
+    cloudRelayManagement: opts?.cloudRelayManagement,
     systemTrustPairingOrigins:
       opts?.systemTrustPairingOrigins ?? (opts?.publicBaseUrl ? [opts.publicBaseUrl] : []),
     publiclyTrustedPairingHosts: opts?.publiclyTrustedPairingHosts,
@@ -1589,6 +1644,41 @@ export function createServer(
     hostFleetUpdateService: opts?.hostFleetUpdateService,
     watermarkService,
   });
+  mountDirectCandidateRoutes(app, { configDir: opts?.configDir, port: opts?.port });
+  const localSpkiFingerprint = () =>
+    typeof opts?.tlsSpkiFingerprintSha256 === "function"
+      ? opts.tlsSpkiFingerprintSha256()
+      : opts?.tlsSpkiFingerprintSha256;
+  mountDeviceEnrollmentRoutes(app, {
+    db,
+    writeGate: w,
+    spkiFingerprints: () =>
+      [opts?.cloudTlsSpkiFingerprintSha256?.(), localSpkiFingerprint()].filter(
+        (fingerprint): fingerprint is string => !!fingerprint,
+      ),
+  });
+  mountCloudPairingRoutes(
+    app,
+    w,
+    () => {
+      const fingerprint = opts?.cloudTlsFingerprintSha256 ?? opts?.tlsFingerprintSha256;
+      return (typeof fingerprint === "function" ? fingerprint() : fingerprint) ?? "";
+    },
+    opts?.cloudIdentity,
+    opts?.publicBaseUrl,
+    opts?.cloudIdentitySource,
+    opts?.cloudPairingPublicOrigin,
+    opts?.cloudRelayManagement?.managedGoogleBrowser?.bind(opts.cloudRelayManagement),
+    opts?.cloudRelayManagement
+      ? () => ({
+          activated: opts.cloudRelayManagement!.accountModeActivated?.() ?? false,
+          identity: opts.cloudRelayManagement!.accountPairingIdentity?.(),
+          broker: opts.cloudRelayManagement!.managedAccountBrowser?.(),
+        })
+      : undefined,
+    opts?.onCloudPairingRequest,
+    opts?.cloudTlsSpkiFingerprintSha256,
+  );
 
   // Documents core (CRUD, count/stats/recent, list/ids/exists).
   mountDocumentCoreRoutes(app, {
@@ -1690,6 +1780,7 @@ export function createServer(
     },
     publicBaseUrl: opts?.publicBaseUrl,
     mcpResourceUrls: opts?.mcpResourceUrls,
+    additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
     recordMcpToolInvocation: (input) => accessService.recordMcpToolInvocation(input),
     recordDirectAuditEvent: async (input) => {
       await w.appendDirectAuditEvent(input);
@@ -1737,7 +1828,8 @@ export function createServer(
       : {}),
   });
   mountNotificationRoutes(app, {
-    claim: (deviceId) => w.claimNotification({ deviceId, now: Date.now() }),
+    claim: (deviceId, supportsPairingNotifications = false) =>
+      w.claimNotification({ deviceId, now: Date.now(), supportsPairingNotifications }),
     confirm: (deviceId, deliveryId) =>
       w.confirmNotification({ deviceId, deliveryId, now: Date.now() }),
   });

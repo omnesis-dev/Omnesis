@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+// First, so a sign-in handed over in the URL fragment leaves the address bar before anything reads it.
+import { takeAccountSignIn } from "./lib/cloud-pairing-handoff.js";
 import { html, render } from "htm/preact";
 import { Component } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
@@ -38,6 +40,8 @@ import { WarningTriangle } from "./components/model-health.js";
 import { TestInstanceCard } from "./components/test-instance-card.js";
 import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-model.js";
 import { onTaskCounts } from "./lib/task-counts.js";
+import { CloudPairingLogin } from "./components/cloud-pairing-login.js";
+import { CloudPairingBanner } from "./components/cloud-pairing-banner.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
@@ -113,7 +117,8 @@ if (typeof window !== "undefined") {
   });
 }
 
-function LoginView({ reason } = {}) {
+// Sign-in appears only when the gateway advertises the optional cloud relay.
+function LoginView({ reason, cloudRelay = false } = {}) {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -160,6 +165,7 @@ function LoginView({ reason } = {}) {
             ${loading ? "Authenticating..." : "Log in"}
           </button>
         </form>
+        ${cloudRelay && html`<${CloudPairingLogin} />`}
         <p class="login-hint">
           Your default token is in <code>~/.config/omnesis/token</code>, or run
           ${" "}<code>omnesis devices pair</code> with <code>kind=portal</code> for a one-shot code.
@@ -281,6 +287,7 @@ function App() {
   const [experimental, setExperimental] = useState(false);
   const [labAvailable, setLabAvailable] = useState(false);
   const [lab, setLab] = useState({ brain: false, tasks: false, watches: false });
+  const [cloudRelay, setCloudRelay] = useState(false);
 
   // Whether the gateway runs in developer mode (OMNESIS_DEV_MODE=1). Separate
   // from experimental; reveals the floating developer-annotation button. Stays
@@ -372,6 +379,7 @@ function App() {
       setExperimental(status?.experimental === true);
       setLabAvailable(status?.labAvailable === true);
       setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
+      setCloudRelay(status?.cloudRelay === true);
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
       setTestInstance(status?.testInstance ?? null);
@@ -590,7 +598,10 @@ function App() {
   };
 
   if (sessionExpired) {
-    return html`<${LoginView} reason="Your session expired. Log in again to continue." />`;
+    return html`<${LoginView}
+      reason="Your session expired. Log in again to continue."
+      cloudRelay=${cloudRelay}
+    />`;
   }
 
   // A client opened this window to ask one question, so it gets one question.
@@ -782,6 +793,9 @@ function App() {
       </aside>
 
       <main class="app-main">
+        ${cloudRelay && html`<${CloudPairingBanner}
+          paused=${route.view === "settings" && route.tab === "devices"}
+        />`}
         ${route.view === "document"
           ? html`<${DocumentView} id=${route.id} />`
           : route.view === "people"
@@ -805,6 +819,7 @@ function App() {
               device=${route.device ?? null}
               policyId=${route.policyId}
               completeAccessInPortal=${route.completeAccessInPortal}
+              cloudRelay=${cloudRelay}
               experimental=${experimental}
               lab=${lab}
               labAvailable=${labAvailable}
@@ -872,10 +887,12 @@ async function init() {
   const session = await checkSession();
   await loadSourceMeta();
 
+  // Only the cloud relay's sign-in view can use a handed-over sign-in; anywhere else it is dropped.
+  if (session.authenticated || session.cloudRelay !== true) takeAccountSignIn();
   if (session.authenticated) {
     render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));
   } else {
-    render(html`<${ErrorBoundary}><${LoginView} /></${ErrorBoundary}>`, document.getElementById("app"));
+    render(html`<${ErrorBoundary}><${LoginView} cloudRelay=${session.cloudRelay === true} /></${ErrorBoundary}>`, document.getElementById("app"));
   }
 }
 

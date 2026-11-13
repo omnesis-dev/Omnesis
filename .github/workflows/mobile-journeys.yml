@@ -141,6 +141,24 @@ jobs:
           OMNESIS_CONFIG_DIR: ${{ runner.temp }}/mobile-journeys-gateway
         run: scripts/run-mobile-journeys.sh ios
 
+      - name: lane [ios-cloud-pairing-interactions]
+        # The bounded Demo simulator scene uses the production views and models.
+        # These XCUI actions complement the real gateway and TLS journey tests.
+        run: |
+          set -o pipefail
+          mkdir -p "${{ runner.temp }}/mobile-journeys"
+          xcodebuild test \
+            -project ios/Omnesis.xcodeproj \
+            -scheme OmnesisDemoUITests \
+            -destination "platform=iOS Simulator,id=$OMNESIS_JOURNEY_IOS_UDID" \
+            -clonedSourcePackagesDirPath "$PWD/ios/build/packages" \
+            -disableAutomaticPackageResolution \
+            -derivedDataPath "${{ runner.temp }}/cloud-pairing-derived-data" \
+            -enableCodeCoverage YES \
+            -resultBundlePath "${{ runner.temp }}/mobile-journeys/cloud-pairing.xcresult" \
+            -only-testing:OmnesisDemoUITests/CloudPairingInteractionUITests \
+            2>&1 | tee "${{ runner.temp }}/mobile-journeys/cloud-pairing-xcodebuild.log"
+
       - name: Upload journey artifacts
         # The screen recording, xcresult bundle (screenshots of every failure),
         # xcodebuild log and gateway logs. A failed upload must not mask the

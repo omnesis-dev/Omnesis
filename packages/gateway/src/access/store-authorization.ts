@@ -407,8 +407,8 @@ export function issueAuthorizationCode(
   browserHandle: string,
   now = Date.now(),
 ): AccessMutationResult<
-  | { status: "denied"; redirectUri: string; state: string }
-  | { status: "approved"; redirectUri: string; state: string; code: string }
+  | { status: "denied"; redirectUri: string; state: string; resource: string }
+  | { status: "approved"; redirectUri: string; state: string; code: string; resource: string }
 > {
   const row = findAuthorizationRowByBrowserHandle(db, browserHandle);
   return issueAuthorizationCodeForRow(db, row, now);
@@ -419,8 +419,8 @@ export function issueAuthorizationCodeById(
   requestId: string,
   now = Date.now(),
 ): AccessMutationResult<
-  | { status: "denied"; redirectUri: string; state: string }
-  | { status: "approved"; redirectUri: string; state: string; code: string }
+  | { status: "denied"; redirectUri: string; state: string; resource: string }
+  | { status: "approved"; redirectUri: string; state: string; code: string; resource: string }
 > {
   return issueAuthorizationCodeForRow(db, findAuthorizationRowById(db, requestId), now);
 }
@@ -430,15 +430,20 @@ function issueAuthorizationCodeForRow(
   row: AuthorizationRequestRow | null | undefined,
   now: number,
 ): AccessMutationResult<
-  | { status: "denied"; redirectUri: string; state: string }
-  | { status: "approved"; redirectUri: string; state: string; code: string }
+  | { status: "denied"; redirectUri: string; state: string; resource: string }
+  | { status: "approved"; redirectUri: string; state: string; code: string; resource: string }
 > {
   if (!row) return { ok: false, error: "not-found" };
   if (row.expires_at <= now) return { ok: false, error: "expired" };
   if (row.status === "denied") {
     return {
       ok: true,
-      value: { status: "denied", redirectUri: row.redirect_uri, state: row.state },
+      value: {
+        status: "denied",
+        redirectUri: row.redirect_uri,
+        state: row.state,
+        resource: row.resource,
+      },
     };
   }
   if (row.status === "pending") return { ok: false, error: "authorization-pending" };
@@ -455,7 +460,13 @@ function issueAuthorizationCodeForRow(
   if (result.changes !== 1) return { ok: false, error: "already-decided" };
   return {
     ok: true,
-    value: { status: "approved", redirectUri: row.redirect_uri, state: row.state, code },
+    value: {
+      status: "approved",
+      redirectUri: row.redirect_uri,
+      state: row.state,
+      code,
+      resource: row.resource,
+    },
   };
 }
 

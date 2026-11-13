@@ -36,7 +36,9 @@ afterEach(() => {
  * Run the wrapper in a scratch directory against a fake `npm`. Each entry of
  * `installs` scripts one `npm ci`: "ok" installs cleanly, "dropped" exits 0
  * but records two optional packages as failed in its debug log, the way npm
- * treats an optional package it could not fetch or build, and "fail" exits 1.
+ * treats an optional package it could not fetch or build, "uncompiled" records
+ * smart-whisper and the dependency nested under it the way npm does when its
+ * native build fails, "both" records all four, and "fail" exits 1.
  */
 function run({ installs, args = [], env = {} }) {
   const dir = scratch();
@@ -50,11 +52,17 @@ for arg in "$@"; do [ "$prev" = --logs-dir ] && logs="$arg"; prev="$arg"; done
 echo "$*" | sed "s| --logs-dir $logs||" >> calls
 log="$logs/2026-01-01T00_00_00_000Z-debug-0.log"
 echo "1 verbose cli ci" > "$log"
-case "$(sed -n "\${n}p" script)" in
-  dropped)
+kind="$(sed -n "\${n}p" script)"
+case "$kind" in
+  dropped|both)
     echo "2 verbose reify failed optional dependency $PWD/node_modules/@scope/binding-linux-x64" >> "$log"
     echo "3 verbose reify failed optional dependency $PWD/node_modules/ffmpeg-static" >> "$log" ;;
   fail) exit 1 ;;
+esac
+case "$kind" in
+  uncompiled|both)
+    echo "4 verbose reify failed optional dependency $PWD/node_modules/smart-whisper" >> "$log"
+    echo "5 verbose reify failed optional dependency $PWD/node_modules/smart-whisper/node_modules/node-addon-api" >> "$log" ;;
 esac
 `,
   );
@@ -114,6 +122,40 @@ describe("npm-ci.sh", () => {
     });
     expect(status).toBe(0);
     expect(calls).toHaveLength(2);
+  });
+
+  test("a package that failed to compile is reported once and never retried", () => {
+    const { status, calls, stderr } = run({ installs: ["uncompiled"] });
+    expect(status).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(stderr).toBe(
+      "::notice::npm ci could not build smart-whisper on this host; this tree runs without it\n",
+    );
+  });
+
+  test("retries only for the packages that can come back", () => {
+    const { status, calls, stderr } = run({ installs: ["both", "uncompiled"] });
+    expect(status).toBe(0);
+    expect(calls).toHaveLength(2);
+    expect(stderr).toContain(
+      "npm ci dropped optional packages that failed to install: @scope/binding-linux-x64 ffmpeg-static (attempt 1 of 3)",
+    );
+    expect(stderr).not.toContain("node-addon-api");
+    expect(stderr).not.toContain("::warning::");
+    expect(stderr).toContain("::notice::npm ci could not build smart-whisper on this host");
+  });
+
+  test("a build that requires its optional packages requires that one too", () => {
+    const { status, calls, stderr } = run({
+      installs: ["uncompiled", "uncompiled", "uncompiled"],
+      env: { NPM_CI_REQUIRE_OPTIONAL: "1" },
+    });
+    expect(status).toBe(1);
+    expect(calls).toHaveLength(3);
+    expect(stderr).toContain(
+      "node-addon-api smart-whisper, after 3 attempts, and this build requires them",
+    );
+    expect(stderr).not.toContain("::notice::");
   });
 
   test("still fails when npm ci keeps failing", () => {

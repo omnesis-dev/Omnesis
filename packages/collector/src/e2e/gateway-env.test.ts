@@ -62,6 +62,15 @@ describe("e2eGatewayEnv", () => {
     });
   });
 
+  test("keeps a spawned gateway off the public CT provider unless a harness opts in", () => {
+    expect(e2eGatewayEnv({})).toMatchObject({
+      OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "0",
+    });
+    expect(e2eGatewayEnv({ OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1" })).toMatchObject({
+      OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1",
+    });
+  });
+
   test("launches tsx through Node without an npx wrapper", () => {
     const command = e2eTsxCommand("packages/gateway/src/index.ts");
 

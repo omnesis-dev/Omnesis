@@ -57,6 +57,22 @@ describe("pairing-protocol", () => {
       expect(decodePairingPayload(JSON.stringify(built))).toEqual({ ok: true, payload: built });
     });
 
+    it("separately binds a strict public key and never treats a leaf hash as a key hash", () => {
+      const payload = buildPairingPayloadV4({
+        gatewayUrl: "https://gateway.example.test",
+        pairingCode: "fictional-pairing-code",
+        tls: { mode: "pinned-key-strict", spkiFingerprint: FINGERPRINT },
+      });
+      expect(decodePairingPayload(JSON.stringify(payload))).toEqual({ ok: true, payload });
+      for (const tls of [
+        { mode: "pinned-key-strict", fingerprint: FINGERPRINT },
+        { mode: "pinned-key-strict", spkiFingerprint: 2 },
+        { mode: "pinned-key-strict", spkiFingerprint: "bad" },
+      ]) {
+        expect(decodePairingPayload(JSON.stringify({ ...payload, tls })).ok).toBe(false);
+      }
+    });
+
     it("round-trips pinned-leaf trust", () => {
       const built = buildPairingPayloadV4({
         gatewayUrl: "https://gateway.example.com",
@@ -64,6 +80,21 @@ describe("pairing-protocol", () => {
         tls: { mode: "pinned-leaf", fingerprint: FINGERPRINT },
       });
       expect(decodePairingPayload(JSON.stringify(built))).toEqual({ ok: true, payload: built });
+    });
+
+    it("preserves strict relay pins and refuses missing pins or plaintext downgrade", () => {
+      const payload = buildPairingPayloadV4({
+        gatewayUrl: "https://gateway.example.com",
+        pairingCode: "AAAA-BBBB-CCCC",
+        tls: { mode: "pinned-leaf-strict", fingerprint: FINGERPRINT },
+      });
+      expect(decodePairingPayload(JSON.stringify(payload))).toEqual({ ok: true, payload });
+      for (const candidate of [
+        { ...payload, tls: { mode: "pinned-leaf-strict" } },
+        { ...payload, tls: { mode: "pinned-leaf-strict", fingerprint: "invalid" } },
+        { ...payload, gatewayUrl: "http://gateway.example.com" },
+      ])
+        expect(decodePairingPayload(JSON.stringify(candidate)).ok).toBe(false);
     });
 
     it("rejects system trust over plaintext HTTP", () => {
@@ -282,5 +313,90 @@ describe("pairing-protocol", () => {
         throw new Error("expected missing-field token");
       }
     });
+  });
+});
+
+describe("malformed pairing envelopes across retained versions", () => {
+  it("refuses primitive envelopes, absent TLS policies, incomplete exchanges and unsafe schemes", () => {
+    for (const value of [null, true, 42, "text"]) {
+      expect(decodePairingPayload(JSON.stringify(value))).toMatchObject({
+        ok: false,
+        error: { kind: "invalid-shape" },
+      });
+    }
+    const valid = {
+      v: 4,
+      gatewayUrl: "https://gateway.example.test",
+      pairingCode: "fictional",
+      tls: { mode: "system" },
+    };
+    for (const tls of [undefined, null, "system", {}]) {
+      expect(decodePairingPayload(JSON.stringify({ ...valid, tls }))).toEqual({
+        ok: false,
+        error: { kind: "missing-field", field: "tls" },
+      });
+    }
+    for (const field of ["gatewayUrl", "pairingCode"] as const) {
+      for (const invalid of [undefined, ""]) {
+        expect(decodePairingPayload(JSON.stringify({ ...valid, [field]: invalid }))).toEqual({
+          ok: false,
+          error: { kind: "missing-field", field },
+        });
+      }
+    }
+    expect(decodePairingPayload(JSON.stringify({ ...valid, gatewayUrl: "bad" }))).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-url" },
+    });
+    expect(
+      decodePairingPayload(JSON.stringify({ ...valid, gatewayUrl: "ftp://gateway.example.test" })),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-scheme", scheme: "ftp" } });
+  });
+  it("validates every retained legacy envelope before exposing credentials", () => {
+    for (const v of [2, 3]) {
+      const valid = {
+        v,
+        gatewayUrl: "https://gateway.example.test",
+        pairingCode: "fictional",
+        fingerprint: FINGERPRINT,
+      };
+      for (const field of ["gatewayUrl", "pairingCode"] as const) {
+        for (const invalid of [undefined, ""]) {
+          expect(decodePairingPayload(JSON.stringify({ ...valid, [field]: invalid }))).toEqual({
+            ok: false,
+            error: { kind: "missing-field", field },
+          });
+        }
+      }
+      expect(decodePairingPayload(JSON.stringify({ ...valid, gatewayUrl: "bad" }))).toMatchObject({
+        ok: false,
+        error: { kind: "invalid-url" },
+      });
+      expect(
+        decodePairingPayload(
+          JSON.stringify({ ...valid, gatewayUrl: "ftp://gateway.example.test" }),
+        ),
+      ).toMatchObject({ ok: false, error: { kind: "invalid-scheme", scheme: "ftp" } });
+    }
+    const valid = {
+      v: 1,
+      url: "https://gateway.example.test",
+      token: "fictional-token",
+      accountId: "fictional-account",
+      name: "Fictional phone",
+    };
+    for (const field of ["url", "accountId", "name"] as const) {
+      expect(decodePairingPayload(JSON.stringify({ ...valid, [field]: undefined }))).toEqual({
+        ok: false,
+        error: { kind: "missing-field", field },
+      });
+    }
+    expect(decodePairingPayload(JSON.stringify({ ...valid, url: "bad" }))).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-url" },
+    });
+    expect(
+      decodePairingPayload(JSON.stringify({ ...valid, url: "ftp://gateway.example.test" })),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-scheme", scheme: "ftp" } });
   });
 });

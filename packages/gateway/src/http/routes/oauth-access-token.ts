@@ -56,6 +56,7 @@ export function mountOAuthTokenRoutes(
   options: {
     publicBaseUrl?: string;
     mcpResourceUrls?: readonly string[];
+    additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
     clientAssertionVerifier?: Pick<ClientAssertionVerifier, "verify">;
   },
 ): void {
@@ -177,7 +178,12 @@ export function mountOAuthTokenRoutes(
       if (!params.success) {
         return oauthError(c, 400, "invalid_request", "The token request is invalid.");
       }
-      const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
+      const urls = resolveOAuthUrls(
+        c.req.url,
+        options.publicBaseUrl,
+        options.mcpResourceUrls,
+        options.additionalOAuthIssuerUrls,
+      );
       if (!urls) return oauthConfigurationRequired(c);
       const grantType = params.data.grant_type;
       if (grantType !== "authorization_code" && grantType !== "refresh_token") {
@@ -205,7 +211,7 @@ export function mountOAuthTokenRoutes(
         return invalidClientError(c);
       }
       const expectedResource =
-        resource && urls.supportedResources.includes(resource) ? resource : urls.resource;
+        resource && urls.issuerResources.includes(resource) ? resource : urls.resource;
       const result =
         grantType === "authorization_code"
           ? await access.exchangeOAuthToken(
@@ -229,7 +235,7 @@ export function mountOAuthTokenRoutes(
                 ...(resource ? { resource } : {}),
               },
               expectedResource,
-              urls.supportedResources,
+              urls.issuerResources,
             );
       if (!result.ok && result.error === "invalid-client") {
         log.warn(`OAuth client authentication failed for ${grantType} using ${auth.method}`);
@@ -266,7 +272,12 @@ export function mountOAuthTokenRoutes(
           "Use exactly one client authentication method.",
         );
       }
-      const urls = resolveOAuthUrls(c.req.url, options.publicBaseUrl, options.mcpResourceUrls);
+      const urls = resolveOAuthUrls(
+        c.req.url,
+        options.publicBaseUrl,
+        options.mcpResourceUrls,
+        options.additionalOAuthIssuerUrls,
+      );
       if (!urls) return oauthConfigurationRequired(c);
       const auth = await authenticateClient(
         authorizationHeader,

@@ -26,6 +26,7 @@ struct DeviceCard: View {
     var onRepairDevice: () -> Void = {}
     var onRevokeToken: (String) -> Void = { _ in }
     var mutationsDisabled = false
+    var cloudRelayEnabled = CloudRelayFeature.enabled
 
     @State private var expanded: Bool
 
@@ -40,7 +41,8 @@ struct DeviceCard: View {
         onRepairDevice: @escaping () -> Void = {},
         onRevokeToken: @escaping (String) -> Void = { _ in },
         mutationsDisabled: Bool = false,
-        startExpanded: Bool = false
+        startExpanded: Bool = false,
+        cloudRelayEnabled: Bool = CloudRelayFeature.enabled
     ) {
         self.device = device
         self.isThis = isThis
@@ -52,12 +54,17 @@ struct DeviceCard: View {
         self.onRepairDevice = onRepairDevice
         self.onRevokeToken = onRevokeToken
         self.mutationsDisabled = mutationsDisabled
+        self.cloudRelayEnabled = cloudRelayEnabled
         self._expanded = State(initialValue: startExpanded)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if cloudRelayEnabled, let enrollment = device.enrollment {
+                DeviceJoinRow(enrollment: enrollment)
+                    .padding(.top, Theme.Spacing.sm)
+            }
             if let failure {
                 failureBanner(failure)
                     .padding(.top, Theme.Spacing.sm)
@@ -162,30 +169,29 @@ struct DeviceCard: View {
         .buttonStyle(.plain)
     }
 
-    /// Non-portal devices can be repaired while offline. A paired device can
-    /// be revoked; a revoked device can be repaired or forgotten.
+    /// The cloud build names the menu for VoiceOver; with the flag off it reads as it
+    /// always has, from its ellipsis symbol.
+    @ViewBuilder
     private var deviceMenu: some View {
+        if cloudRelayEnabled {
+            deviceActionsMenu
+                .accessibilityLabel("Device actions")
+                .accessibilityIdentifier("devices.actions")
+        } else {
+            deviceActionsMenu
+        }
+    }
+
+    /// Every action on the device, from the one list `DeviceActions.menu` gives.
+    private var deviceActionsMenu: some View {
         Menu {
-            if device.kind != "portal" {
-                Button {
-                    onRepairDevice()
+            ForEach(DeviceActions.menu(for: device, isThis: isThis)) { item in
+                Button(role: item.action.destructive ? .destructive : nil) {
+                    perform(item.action)
                 } label: {
-                    Label("Repair device", systemImage: "arrow.triangle.2.circlepath")
+                    Label(item.action.title, systemImage: item.action.symbol)
                 }
-                .disabled(isThis || device.online == true)
-            }
-            if device.isRevoked {
-                Button(role: .destructive) {
-                    onForgetDevice()
-                } label: {
-                    Label("Forget device", systemImage: "trash")
-                }
-            } else {
-                Button(role: .destructive) {
-                    onRevokeDevice()
-                } label: {
-                    Label("Revoke device", systemImage: "trash")
-                }
+                .disabled(!item.enabled)
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -195,6 +201,14 @@ struct DeviceCard: View {
                 .contentShape(Rectangle())
         }
         .disabled(mutationsDisabled)
+    }
+
+    private func perform(_ action: DeviceAction) {
+        switch action {
+        case .repair: onRepairDevice()
+        case .revoke: onRevokeDevice()
+        case .forget: onForgetDevice()
+        }
     }
 
     private var thisDeviceBadge: some View {
@@ -231,10 +245,14 @@ struct DeviceCard: View {
             Circle()
                 .fill(activeNow ? Theme.success : Theme.textMuted)
                 .frame(width: 6, height: 6)
-            Text(DeviceGrouping.statusLine(device, isCurrent: isThis))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(activeNow ? Theme.success : Theme.textMuted)
-                .lineLimit(1)
+            if cloudRelayEnabled, !device.isRevoked, let value = device.connectionPath, let path = GatewayConnectionPath(rawValue: value) {
+                GatewayConnectionPill(path: path)
+            } else {
+                Text(DeviceGrouping.statusLine(device, isCurrent: isThis))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(activeNow ? Theme.success : Theme.textMuted)
+                    .lineLimit(1)
+            }
         }
         .fixedSize()
     }
@@ -361,6 +379,16 @@ private struct DeviceCardPreview: View {
 @available(iOS 17.0, *)
 #Preview("Device card — revoked") {
     DeviceCardPreview(device: PreviewMocks.deviceRevoked, tokens: [])
+}
+
+@available(iOS 17.0, *)
+#Preview("Device card — joined with Omnesis account") {
+    ScrollView {
+        DeviceCard(device: PreviewMocks.deviceJoinedWithGoogle, tokens: [], cloudRelayEnabled: true)
+            .padding(Theme.Spacing.lg)
+    }
+    .background(Theme.bgPrimary.ignoresSafeArea())
+    .environment(AppStore.preview())
 }
 #endif
 #endif

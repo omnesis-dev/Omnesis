@@ -4,6 +4,7 @@
 package dev.omnesis.android.widgets
 
 import dev.omnesis.android.pairing.Pairing
+import dev.omnesis.android.pairing.PairedGatewayTransport
 import dev.omnesis.android.pairing.PairingTlsMode
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.client.TaskAction
@@ -11,7 +12,6 @@ import dev.omnesis.android.transport.client.TaskView
 import dev.omnesis.android.transport.client.TasksClient
 import dev.omnesis.android.transport.client.GatewayClient
 import dev.omnesis.android.transport.http.GatewayHttp
-import dev.omnesis.android.transport.tls.PinnedOkHttp
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
@@ -30,15 +30,11 @@ interface WidgetTasksGateway {
 class PairedWidgetTasksGateway(pairing: Pairing) : WidgetTasksGateway {
     private val url = pairing.url.toHttpUrl().also { require(it.isHttps) }
     private val http = GatewayHttp(
-            PinnedOkHttp.build(
-                fingerprint = pairing.fingerprint,
-                requirePin = pairing.tlsMode == PairingTlsMode.PINNED_LEAF,
-                host = url.host,
-            ).newBuilder().callTimeout(8, TimeUnit.SECONDS).build(),
-            url,
-            pairing.token,
-            pairing.pairingGeneration,
-        )
+        PairedGatewayTransport.http(pairing).newBuilder().callTimeout(8, TimeUnit.SECONDS).build(),
+        url,
+        pairing.token,
+        pairing.pairingGeneration,
+    )
     private val client = TasksClient(http)
     private val gateway = GatewayClient(http)
 
@@ -133,7 +129,8 @@ class TaskWidgetRepository(
         fun authority(pairing: Pairing): String {
             val fields = listOf(pairing.url, pairing.token, pairing.pairingGeneration.orEmpty(),
                 pairing.deviceId.orEmpty(), pairing.accountId, pairing.tlsMode.name, pairing.fingerprint.orEmpty())
-            val identity = fields.joinToString("") { "${it.length}:$it" }
+            val authority = if (pairing.tlsMode == PairingTlsMode.PINNED_KEY_STRICT) fields + pairing.spkiFingerprint.orEmpty() else fields
+            val identity = authority.joinToString("") { "${it.length}:$it" }
             return MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }

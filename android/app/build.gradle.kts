@@ -123,6 +123,8 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
+apply(from = rootProject.file("logic-coverage.gradle.kts"))
+
 val localPushProperties = Properties().apply {
     val file = rootProject.file("local.push.properties")
     if (file.isFile) file.inputStream().use(::load)
@@ -137,6 +139,9 @@ fun firebaseBuildValue(name: String): String =
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
 
+// One value drives BuildConfig.CLOUD_RELAY_ENABLED, the sign-in libraries and the sources using them.
+val cloudRelayEnabled = firebaseBuildValue("OMNESIS_CLOUD_RELAY_ENABLED") == "1"
+
 val appPackageId = (localPushProperties.getProperty("OMNESIS_ANDROID_APPLICATION_ID")
     ?: providers.gradleProperty("OMNESIS_ANDROID_APPLICATION_ID")
         .orElse(providers.environmentVariable("OMNESIS_ANDROID_APPLICATION_ID"))
@@ -149,6 +154,15 @@ require(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+").matches(appPac
 android {
     namespace = "dev.omnesis.android"
     compileSdk = 36
+
+    // src/cloudRelay holds the code that needs the sign-in libraries. A build without cloud
+    // connectivity leaves it out of the app and compiles it with the tests, which still cover it.
+    sourceSets {
+        getByName("main").kotlin.srcDirs(
+            if (cloudRelayEnabled) listOf("src/cloudRelay/kotlin", "src/cloudRelayOn/kotlin") else listOf("src/cloudRelayOff/kotlin"),
+        )
+        if (!cloudRelayEnabled) getByName("test").kotlin.srcDir("src/cloudRelay/kotlin")
+    }
 
     defaultConfig {
         applicationId = appPackageId
@@ -168,6 +182,12 @@ android {
         buildConfigField("String", "FIREBASE_API_KEY", "\"${firebaseBuildValue("OMNESIS_FIREBASE_API_KEY")}\"")
         buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${firebaseBuildValue("OMNESIS_FIREBASE_PROJECT_ID")}\"")
         buildConfigField("String", "FIREBASE_SENDER_ID", "\"${firebaseBuildValue("OMNESIS_FIREBASE_SENDER_ID")}\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${firebaseBuildValue("OMNESIS_GOOGLE_WEB_CLIENT_ID")}\"")
+        buildConfigField("String", "GOOGLE_ANDROID_CLIENT_ID", "\"${firebaseBuildValue("OMNESIS_GOOGLE_ANDROID_CLIENT_ID")}\"")
+        buildConfigField("boolean", "CLOUD_RELAY_ENABLED", cloudRelayEnabled.toString())
+        buildConfigField("String", "CLOUD_RELAY_URL", "\"${firebaseBuildValue("OMNESIS_CLOUD_RELAY_URL")}\"")
+        // A test gateway has no publicly logged certificate. "0" stops that alone from holding its requests.
+        buildConfigField("boolean", "CLOUD_RELAY_PUBLIC_CERT_CHECK", (firebaseBuildValue("OMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK") != "0").toString())
     }
 
     flavorDimensions += "distribution"
@@ -228,6 +248,12 @@ roborazzi {
 
 dependencies {
     implementation(libs.androidsvg)
+    // Sign-in libraries add permissions, services and activities to the manifest, so only a
+    // build with cloud connectivity packages them. Otherwise they are test-only.
+    val signInLibraries = if (cloudRelayEnabled) "implementation" else "testImplementation"
+    add(signInLibraries, libs.androidx.credentials)
+    add(signInLibraries, libs.androidx.credentials.play.services.auth)
+    add(signInLibraries, libs.google.identity)
     implementation(project(":core-designsystem"))
     implementation(project(":core-transport"))
     implementation(project(":core-pairing"))

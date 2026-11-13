@@ -374,6 +374,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "devices.createPairing", priority: "user" },
   { name: "devices.consumePairing", priority: "user" },
   { name: "devices.redeemDevicePairing", priority: "user" },
+  { name: "devices.rotateDeviceToken", priority: "user" },
   { name: "devices.revokePairing", priority: "user" },
   { name: "devices.redeemAgentIntegrationPairing", priority: "user" },
   { name: "devices.cleanupExpiredPairings", priority: "background" },

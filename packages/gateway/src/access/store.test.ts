@@ -21,6 +21,7 @@ import {
   getAuthorizationRequestByBrowserHandle,
   getAuthorizationRequestByUserCode,
   issueAuthorizationCode,
+  issueAuthorizationCodeById,
   listAccessOverview,
   lookupPrincipalAccessToken,
   refreshPrincipalAccessToken,
@@ -327,7 +328,7 @@ describe("access authorization store", () => {
     ).toEqual({ credential_id: approvedCredential?.id });
 
     const issued = issueAuthorizationCode(db, pending.browserHandle, NOW + 2);
-    expect(issued).toMatchObject({ ok: true, value: { status: "approved" } });
+    expect(issued).toMatchObject({ ok: true, value: { status: "approved", resource: RESOURCE } });
     if (!issued.ok || issued.value.status !== "approved") throw new Error("code not issued");
 
     const exchanged = exchangeAuthorizationCode(
@@ -1125,6 +1126,14 @@ describe("access authorization store", () => {
         NOW + 1,
       ).ok,
     ).toBe(true);
+    expect(issueAuthorizationCode(db, pending.value.browserHandle, NOW + 2)).toMatchObject({
+      ok: true,
+      value: { status: "denied", resource: RESOURCE },
+    });
+    expect(issueAuthorizationCodeById(db, pending.value.id, NOW + 3)).toMatchObject({
+      ok: true,
+      value: { status: "denied", resource: RESOURCE },
+    });
     expect(db.prepare("SELECT COUNT(*) AS count FROM principal_credentials").get()).toEqual({
       count: 0,
     });

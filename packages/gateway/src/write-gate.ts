@@ -467,6 +467,7 @@ import {
   type CreatePairingOptions,
   type PendingPairing,
   type DevicePairingRedemption,
+  type DeviceTokenRotation,
   bootstrapSelfFromDevices,
   clearApnsToken,
   clearFcmToken,
@@ -487,6 +488,7 @@ import {
   createPairing,
   consumePairing,
   redeemDevicePairing,
+  rotateDeviceToken,
   revokePairing,
   redeemAgentIntegrationPairing,
   cleanupExpiredPairings,
@@ -1284,16 +1286,16 @@ export interface WriteGate extends KnowledgeWriteGate {
     browserHandle: string,
   ): Promise<
     AccessMutationResult<
-      | { status: "denied"; redirectUri: string; state: string }
-      | { status: "approved"; redirectUri: string; state: string; code: string }
+      | { status: "denied"; redirectUri: string; state: string; resource: string }
+      | { status: "approved"; redirectUri: string; state: string; code: string; resource: string }
     >
   >;
   issueAuthorizationCodeById(
     requestId: string,
   ): Promise<
     AccessMutationResult<
-      | { status: "denied"; redirectUri: string; state: string }
-      | { status: "approved"; redirectUri: string; state: string; code: string }
+      | { status: "denied"; redirectUri: string; state: string; resource: string }
+      | { status: "approved"; redirectUri: string; state: string; code: string; resource: string }
     >
   >;
   exchangeOAuthToken(input: OAuthTokenExchangeInput): Promise<AccessMutationResult<OAuthTokenSet>>;
@@ -1480,6 +1482,7 @@ export interface WriteGate extends KnowledgeWriteGate {
     idempotencyKey?: string;
   }): Promise<DevicePairingRedemption>;
   revokePairing(pairingCode: string): Promise<boolean>;
+  rotateDeviceToken(input: Parameters<typeof rotateDeviceToken>[1]): Promise<DeviceTokenRotation>;
   redeemAgentIntegrationPairing(
     input: Parameters<typeof redeemAgentIntegrationPairing>[1],
   ): Promise<AgentIntegrationPairingResult>;
@@ -2639,6 +2642,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     consumePairing: (pairingCode, expectedKind) =>
       call("devices.consumePairing", [pairingCode, expectedKind]),
     redeemDevicePairing: (input) => call("devices.redeemDevicePairing", [input]),
+    rotateDeviceToken: (input) => call("devices.rotateDeviceToken", [input]),
     revokePairing: (pairingCode) => call("devices.revokePairing", [pairingCode]),
     redeemAgentIntegrationPairing: (input) =>
       call("devices.redeemAgentIntegrationPairing", [input]),
@@ -3276,6 +3280,7 @@ export function directWriteGate(db: Db): WriteGate {
     consumePairing: async (pairingCode, expectedKind) =>
       consumePairing(db, pairingCode, expectedKind),
     redeemDevicePairing: async (input) => redeemDevicePairing(db, input),
+    rotateDeviceToken: async (input) => rotateDeviceToken(db, input),
     revokePairing: async (pairingCode) => revokePairing(db, pairingCode),
     redeemAgentIntegrationPairing: async (input) => redeemAgentIntegrationPairing(db, input),
     cleanupExpiredPairings: async () => cleanupExpiredPairings(db),

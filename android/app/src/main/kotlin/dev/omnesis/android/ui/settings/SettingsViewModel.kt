@@ -15,12 +15,14 @@ import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.delivery.PushHealthCoordinator
 import dev.omnesis.android.delivery.PushHealthUiState
 import dev.omnesis.android.notifications.FcmPushManager
+import dev.omnesis.android.pairing.cloudAccountOffered
 import dev.omnesis.android.pairing.PairingTlsMode
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.setup.flow.notificationPromptAvailable as notificationPromptAvailableFor
 import dev.omnesis.android.sources.SourceCatalog
 import dev.omnesis.android.transport.PermissionHealthCoordinator
 import dev.omnesis.android.transport.PermissionHealthEntry
+import dev.omnesis.android.transport.dto.CloudRelayManaging
 import dev.omnesis.android.transport.dto.DictationStatusDto
 import dev.omnesis.android.transport.ws.DeviceSocket.ConnectionState
 import dev.omnesis.android.ui.common.classifyGatewayError
@@ -31,8 +33,10 @@ import dev.omnesis.android.ui.phonesetup.UnusedAppRestrictionsReader
 import dev.omnesis.android.ui.phonesetup.backgroundSyncingState
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
@@ -105,10 +109,23 @@ class SettingsViewModel @Inject constructor(
     /** The system screen for "Pause app activity if unused", when this phone has one. */
     fun backgroundSyncingIntent(): Intent? = runCatching { restrictions.manageIntent() }.getOrNull()
 
+    private val _omnesisAccountOffered = MutableStateFlow(false)
+
+    /** Whether the gateway has Omnesis account settings to open. Never asked unless the build enables cloud connectivity. */
+    val omnesisAccountOffered: StateFlow<Boolean> = _omnesisAccountOffered.asStateFlow()
+
     init {
         pushHealthCoordinator.refresh()
         permissionHealthCoordinator.refresh()
+        if (BuildConfig.CLOUD_RELAY_ENABLED) viewModelScope.launch {
+            session.state.collectLatest {
+                _omnesisAccountOffered.value = cloudRelayClient()?.let { cloudAccountOffered(it) } ?: false
+            }
+        }
     }
+
+    private fun cloudRelayClient(): CloudRelayManaging? =
+        session.session?.takeIf { BuildConfig.CLOUD_RELAY_ENABLED && "admin" in it.pairing.scopes }?.admin
 
     fun retryDelivery() = pushHealthCoordinator.retry()
 
@@ -153,19 +170,12 @@ class SettingsViewModel @Inject constructor(
         val deviceId: String,
         val scopes: List<String>,
         val tlsMode: PairingTlsMode = PairingTlsMode.LEGACY,
+        val usesDirectRouting: Boolean = false,
     )
 
     val gateway: StateFlow<GatewayInfo?> = session.state
         .map { state ->
-            (state as? SessionManager.AppState.Paired)?.pairing?.let { p ->
-                GatewayInfo(
-                    name = p.gatewayName?.takeIf { it.isNotBlank() } ?: "Gateway",
-                    url = p.url,
-                    deviceId = p.deviceId ?: "—",
-                    scopes = p.scopes,
-                    tlsMode = p.tlsMode,
-                )
-            }
+            (state as? SessionManager.AppState.Paired)?.pairing?.let(::settingsGatewayInfo)
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -296,3 +306,13 @@ internal fun voiceSettingsState(
 }
 
 private fun asSentence(text: String): String = if (text.last() in ".!?") text else "$text."
+
+/** Settings projects negotiated authority; local endpoint facts never turn an ordinary pairing into a routed one. */
+internal fun settingsGatewayInfo(pairing: dev.omnesis.android.pairing.Pairing) = SettingsViewModel.GatewayInfo(
+    name = pairing.gatewayName?.takeIf { it.isNotBlank() } ?: "Gateway",
+    url = pairing.url,
+    deviceId = pairing.deviceId ?: "—",
+    scopes = pairing.scopes,
+    tlsMode = pairing.tlsMode,
+    usesDirectRouting = dev.omnesis.android.pairing.PairedGatewayTransport.directRoute(pairing) != null,
+)

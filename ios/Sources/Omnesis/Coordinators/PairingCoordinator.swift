@@ -2,8 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Foundation
-
-#if canImport(SwiftUI) && canImport(UIKit)
+import Observation
 
 /// Owns the pairing service + persisted pairing record.
 ///
@@ -43,7 +42,10 @@ final class PairingCoordinator {
     private(set) var isRepairing: Bool = false
 
     @ObservationIgnored
-    private let service: PairingService
+    private var operation = UUID()
+
+    @ObservationIgnored
+    let service: PairingService
 
     @ObservationIgnored
     private var onError: @MainActor (String?) -> Void = { _ in }
@@ -124,6 +126,7 @@ final class PairingCoordinator {
     /// coordinator setup (rebuild collector / admin) without re-reading.
     @discardableResult
     func pair(raw: String) -> Pairing? {
+        operation = UUID()
         do {
             let p = try service.pair(raw: raw)
             pairing = p
@@ -141,16 +144,44 @@ final class PairingCoordinator {
     /// (POST /devices/pair). Also falls back to V1 for legacy QR payloads.
     @discardableResult
     func pairAsync(raw: String) async -> Pairing? {
+        let generation = UUID()
+        operation = generation
         do {
             let p = try await service.pairAsync(raw: raw)
+            guard isCurrent(generation) else { return nil }
             pairing = p
             recovery = nil
             isRepairing = false
             onError(nil)
             return p
         } catch {
+            guard isCurrent(generation) else { return nil }
             onError(PairingErrorMessage.message(for: error, payload: raw))
             return nil
+        }
+    }
+
+    /// Off the cloud build flag a finished pairing is always published.
+    private func isCurrent(_ generation: UUID) -> Bool {
+        !service.cloudRelayEnabled || generation == operation
+    }
+
+    func updateGatewayURL(_ url: URL) throws {
+        operation = UUID()
+        try service.updateGatewayURL(url)
+    }
+
+    func hintRefresher(
+        pairing: Pairing,
+        discovery: any GatewayDirectDiscovering = GatewayDirectDiscovery(),
+        onUpdated: @escaping @MainActor @Sendable (Pairing) throws -> Void
+    )
+        -> GatewayPairedHintRefresher? {
+        guard pairing.tlsMode == .pinnedKeyStrict else { return nil }
+        return GatewayPairedHintRefresher(expected: pairing, service: service, discovery: discovery) { [weak self] updated in
+            guard let self, self.pairing?.sameAuthority(as: pairing) == true else { return }
+            self.pairing = updated
+            try onUpdated(updated)
         }
     }
 
@@ -159,6 +190,7 @@ final class PairingCoordinator {
     /// whether to proceed with the rest of the unpair sequence.
     @discardableResult
     func clear() -> Bool {
+        operation = UUID()
         do {
             try service.clear()
             pairing = nil
@@ -174,6 +206,7 @@ final class PairingCoordinator {
     /// the app as unpaired immediately. The returned pairing is safe to use
     /// for this pass; a later launch can reload the same outbox entry.
     func stageUnpair() -> Pairing? {
+        operation = UUID()
         do {
             let staged = try service.stageUnpair()
             pairing = nil
@@ -197,6 +230,7 @@ final class PairingCoordinator {
     /// after `clear()` from `beginRepair` so the OnboardingView jumps
     /// straight to the QR scanner.
     func enterRepairMode() {
+        operation = UUID()
         isRepairing = true
         onError(nil)
     }
@@ -246,6 +280,4 @@ extension PairingCoordinator {
         self.recovery = recovery
     }
 }
-#endif
-
 #endif

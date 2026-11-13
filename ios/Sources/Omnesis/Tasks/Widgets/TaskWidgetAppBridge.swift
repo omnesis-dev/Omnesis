@@ -18,7 +18,9 @@ public enum TaskWidgetAppBridge {
                 deviceId: $0.deviceId,
                 generation: $0.pairingGeneration,
                 tlsMode: $0.tlsMode.rawValue,
-                fingerprint: $0.fingerprint
+                fingerprint: $0.fingerprint,
+                spkiFingerprint: $0.spkiFingerprint,
+                directCandidates: $0.directCandidates
             )
         }
         do {

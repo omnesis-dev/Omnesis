@@ -60,6 +60,12 @@ export type PairingAddressOption = {
   host: string;
   /** Plain-language name of the address, e.g. "Tailscale name". */
   label: string;
+  /**
+   * Set to `relay` on the gateway's Omnesis address, the one its Omnesis
+   * account gives it, and absent on every other address. A client that words
+   * or draws that address differently reads this rather than the host.
+   */
+  kind?: "relay";
 } & PairingAddressVerdict;
 
 /**
@@ -216,12 +222,42 @@ function summaryFor(reach: PairingAddressReach, host: string): string {
 }
 
 /**
+ * The gateway's Omnesis address as a pairing option. A phone paired with it
+ * pins the gateway's key rather than trusting the certificate alone, so it is
+ * never offered for typing by hand (`systemTrust` is false).
+ */
+export function relayPairingAddressOption(origin: string): PairingAddressOption {
+  const url = new URL(origin);
+  return {
+    gatewayUrl: url.origin,
+    host: pairingHost(url),
+    label: RELAY_PAIRING_ADDRESS_LABEL,
+    kind: "relay",
+    usable: true,
+    reach: "anywhere",
+    systemTrust: false,
+    summary: RELAY_PAIRING_ADDRESS_SUMMARY,
+  };
+}
+
+/** What every client calls the gateway's Omnesis address, and where it works. */
+export const RELAY_PAIRING_ADDRESS_LABEL = "Omnesis address";
+export const RELAY_PAIRING_ADDRESS_SUMMARY = "Works from anywhere. Needs remote access to stay on.";
+
+/**
  * Order usable addresses best first: reach beyond the local network, then the
  * local network, then this computer; within each, platform trust first.
  * Refused addresses sort last.
+ *
+ * The Omnesis address sorts after every other address that reaches beyond
+ * the local network and before the local ones. An address the operator set up
+ * themselves (Tailscale, a public name) keeps working whether or not remote
+ * access stays on, so it stays first; the Omnesis address is the first choice
+ * only when nothing else reaches beyond the local network.
  */
-export function pairingReachRank(verdict: PairingAddressVerdict): number {
+export function pairingReachRank(verdict: PairingAddressVerdict & { kind?: "relay" }): number {
   if (!verdict.usable) return Number.POSITIVE_INFINITY;
+  if (verdict.kind === "relay") return 1.5;
   const reach = { anywhere: 0, tailnet: 0, "local-network": 2, "this-computer": 4 }[verdict.reach];
   return reach + (verdict.systemTrust ? 0 : 1);
 }

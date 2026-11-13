@@ -14,6 +14,16 @@ import org.junit.Test
 
 class NotificationDispatchTest {
     @Test
+    fun pairing_reminders_open_pairing_requests_without_an_enrollment_code_or_authorization() {
+        assertTrue(knownNotificationKind("device-pairing", cloudEnabled = true))
+        assertEquals(ClaimedPushAction("device-pairing", NotificationTarget.PairingRequests), notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing"}"""), cloudEnabled = true))
+        assertNull(notificationAction(notification("device-pairing", "untrusted-request"), cloudEnabled = true))
+        assertTrue(knownNotificationKind("device-joined", cloudEnabled = true))
+        assertEquals(ClaimedPushAction("device-joined", NotificationTarget.Devices(null)), notificationAction(notification("device-joined", "any"), cloudEnabled = true))
+        assertEquals(ClaimedPushAction("device-joined", NotificationTarget.Devices("device-a")), notificationAction(notification("device-joined", "any", """{"kind":"device-joined","deviceId":"device-a"}"""), cloudEnabled = true))
+    }
+
+    @Test
     fun content_free_wake_is_exact_and_contains_no_routing_data() {
         assertTrue(isContentFreeWake(mapOf("wake" to "1")))
         assertFalse(isContentFreeWake(mapOf("wake" to "1", "kind" to "conversation")))

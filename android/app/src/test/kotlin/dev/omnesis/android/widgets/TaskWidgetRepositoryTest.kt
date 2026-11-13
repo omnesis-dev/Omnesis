@@ -23,6 +23,16 @@ class TaskWidgetRepositoryTest {
     private val pairing = Pairing("https://gateway.example.com", "test-token", "generation-one", deviceId = "widget-phone",
         gatewayName = "Example gateway", tlsMode = PairingTlsMode.SYSTEM)
 
+    @Test fun stable_gateway_key_binds_widget_authority_but_authenticated_route_hints_do_not() {
+        val first = pairing.copy(tlsMode = PairingTlsMode.PINNED_KEY_STRICT, spkiFingerprint = "a".repeat(64))
+        val original = TaskWidgetRepository.authority(first)
+        assertNotEquals(original, TaskWidgetRepository.authority(first.copy(spkiFingerprint = "b".repeat(64))))
+        assertNotEquals(original, TaskWidgetRepository.authority(first.copy(spkiFingerprint = null)))
+        assertEquals(original, TaskWidgetRepository.authority(first.copy(directCandidates =
+            listOf(dev.omnesis.android.transport.routing.DirectGatewayCandidate("10.0.0.2", 9443)))))
+        assertEquals(TaskWidgetRepository.authority(pairing), TaskWidgetRepository.authority(pairing.copy(spkiFingerprint = "b".repeat(64))))
+    }
+
     @Test fun future_day_excludes_carry_and_resolved_tasks_and_advances_deadlines() {
         val tasks = listOf(task("carry", "2026-10-10"), task("tomorrow", "2026-10-15"),
             task("due", "2026-11-04", "2026-10-15"), task("done", "2026-10-15").copy(state = "done"),

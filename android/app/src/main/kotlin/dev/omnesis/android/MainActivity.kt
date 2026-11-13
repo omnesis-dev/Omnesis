@@ -155,6 +155,7 @@ class MainActivity : ComponentActivity() {
             ACTION_WATCH_FIRING -> handleWatchFiring(launchIntent, delivery)
             ACTION_SOURCE_PERMISSION -> handleSourcePermission(launchIntent, delivery)
             ACTION_REMOTE_SOURCE_PERMISSION -> handleRemoteSourcePermission(launchIntent, delivery)
+            ACTION_DEVICES -> handleDevices(launchIntent, delivery)
             ACTION_SEARCH -> handleSearch(launchIntent, delivery)
             Intent.ACTION_VIEW ->
                 handleTaskWidgetDeepLink(launchIntent, delivery) || handleAccessAuthorizationDeepLink(launchIntent)
@@ -269,6 +270,23 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * A device-joined or pairing-request notification opens Devices. It exists only in a
+     * cloud-relay build; without the flag the action is not handled at all, as on a build
+     * without the feature.
+     */
+    private fun handleDevices(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
+        if (!BuildConfig.CLOUD_RELAY_ENABLED) return false
+        val stamp = launchIntent.getLongExtra(EXTRA_DEVICES_LAUNCH_STAMP, 0L)
+        if (!launches.accept(KIND_DEVICES, launchIntent, stamp, delivery)) return false
+        if (launchIntent.getBooleanExtra(EXTRA_DEVICES_PAIRING_REQUESTS, false)) {
+            notificationLaunchBus.postPairingRequests()
+        } else {
+            notificationLaunchBus.postDevices(launchIntent.getStringExtra(EXTRA_DEVICES_DEVICE_ID))
+        }
+        return true
+    }
+
+    /**
      * Debug-only: pair non-interactively from `am start` extras so the paired flow
      * can be exercised on an emulator or in CI without driving the pairing UI. It
      * runs the REAL [SessionManager.pairManually] exchange against the gateway.
@@ -319,6 +337,10 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_SOURCE_NAME = "remote_source_permission_source_name"
         const val EXTRA_AFFECTED_DEVICE_NAME = "remote_source_permission_device_name"
         const val EXTRA_REMOTE_SOURCE_PERMISSION_LAUNCH_STAMP = "remote_source_permission_launch_stamp"
+        const val ACTION_DEVICES = "dev.omnesis.android.action.DEVICES"
+        const val EXTRA_DEVICES_DEVICE_ID = "devices_device_id"
+        const val EXTRA_DEVICES_PAIRING_REQUESTS = "devices_pairing_requests"
+        const val EXTRA_DEVICES_LAUNCH_STAMP = "devices_launch_stamp"
 
         /** How long after a tile tap the capture screen may still open for it. */
         const val CAPTURE_LAUNCH_FRESHNESS_MS = 30_000L
@@ -332,6 +354,7 @@ class MainActivity : ComponentActivity() {
         private const val KIND_WATCH_FIRING = "watch_firing"
         private const val KIND_SOURCE_PERMISSION = "source_permission"
         private const val KIND_REMOTE_SOURCE_PERMISSION = "remote_source_permission"
+        private const val KIND_DEVICES = "devices"
 
         /** [intent] with the request it carried removed: no action, no link, no extras. */
         internal fun consumedLaunchIntent(intent: Intent): Intent = Intent(intent).apply {

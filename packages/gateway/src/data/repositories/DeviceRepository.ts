@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
-import { createLogger } from "@omnesis/core";
+import { cloudRelayEnabled, createLogger } from "@omnesis/core";
 import {
   DeviceId,
   SourceType,
@@ -16,6 +16,9 @@ import {
   writeScope,
   type ApnsRegistration,
   type DeviceCapability,
+  type DeviceEnrollment,
+  type DeviceEnrollmentMethod,
+  type DeviceEnrollmentSignIn,
   type DeviceKind,
   type DeviceRecord,
   type FcmRegistration,
@@ -27,7 +30,11 @@ import {
   type SourceId,
   type TokenId,
 } from "@omnesis/types";
-import { devicesCapabilitiesCodec, devicePairingsScopesCodec } from "../json-columns.js";
+import {
+  devicesCapabilitiesCodec,
+  devicePairingsScopesCodec,
+  tokensScopesCodec,
+} from "../json-columns.js";
 import { markPeopleGraphDirty } from "../DirtyMarks.js";
 import { putPairedIntegrationOnLevel } from "../../access/store-levels.js";
 import { extendUnanimousMemberConfigContracts } from "./SourceMemberConfigContractRepository.js";
@@ -278,6 +285,9 @@ interface DeviceRow {
   update_state: string | null;
   update_detail: string | null;
   update_state_at: number | null;
+  enrollment_method: string | null;
+  enrollment_sign_in: string | null;
+  enrolled_at: number | null;
 }
 
 const DEVICE_SELECT_COLS =
@@ -287,7 +297,8 @@ const DEVICE_SELECT_COLS =
   "relay_consent_app_id, relay_consented_at, " +
   "notification_delivery_health, notification_delivery_health_updated_at, " +
   "version, version_seen_at, protocol_version, " +
-  "desired_version, update_state, update_detail, update_state_at";
+  "desired_version, update_state, update_detail, update_state_at, " +
+  "enrollment_method, enrollment_sign_in, enrolled_at";
 
 export function getDevice(db: Db, id: DeviceId): DeviceRecord | null {
   const row = db
@@ -362,7 +373,8 @@ export function renameDevice(db: Db, id: DeviceId, name: string): RenameDeviceRe
  * collisions must be rejected at the call site before we get here. The
  * client's install identity, when it sends one, moves onto this row: any
  * other row of the kind that carried it (a stale remembered device id, a
- * restored backup) releases it.
+ * restored backup) releases it. The row's enrollment record goes too: its holder
+ * has not proven the old device key, so the key cannot speak for it any more.
  */
 export function replaceDeviceForRepair(
   db: Db,
@@ -412,7 +424,9 @@ export function replaceDeviceForRepair(
               notification_delivery_health_updated_at = NULL,
               version = ?, version_seen_at = ?, protocol_version = NULL,
               desired_version = NULL, update_state = NULL,
-              update_detail = NULL, update_state_at = NULL
+              update_detail = NULL, update_state_at = NULL,
+              enrollment_public_key = NULL, enrollment_method = NULL,
+              enrollment_sign_in = NULL, enrolled_at = NULL
         WHERE id = ?`,
     ).run(
       opts.name,
@@ -686,8 +700,22 @@ export function touchDevice(db: Db, id: DeviceId): void {
   }
 }
 
-function rowToDevice(row: DeviceRow): DeviceRecord {
+function rowEnrollment(row: DeviceRow): DeviceEnrollment | null {
+  if (row.enrollment_method === null || row.enrolled_at === null) return null;
   return {
+    method: row.enrollment_method as DeviceEnrollmentMethod,
+    signIn: row.enrollment_sign_in as DeviceEnrollmentSignIn | null,
+    joinedAt: row.enrolled_at,
+  };
+}
+
+function rowToDevice(row: DeviceRow): DeviceRecord {
+  // Without the cloud relay opt-in no record mentions enrollment at all.
+  const enrollment = cloudRelayEnabled() ? rowEnrollment(row) : null;
+  return {
+    // Omitted rather than null, so a device that never used sign-in enrollment
+    // serializes exactly as it always has.
+    ...(enrollment ? { enrollment } : {}),
     id: DeviceId(row.id),
     name: row.name,
     kind: isDeviceKind(row.kind) ? row.kind : ("cli" as DeviceKind),
@@ -1113,6 +1141,19 @@ export interface PendingPairing {
    * pin the cert on first connect (TOFU).
    */
   tlsFingerprint: string;
+  /** Set for a sign-in pairing; see {@link PairingEnrollment}. */
+  enrollment: PairingEnrollment | null;
+}
+
+/**
+ * How the device behind a pairing joined. Its presence means the holder has
+ * proven `devicePublicKey` and nothing else: install ids, previous device ids
+ * and names are claims anyone can make, so they never select a row.
+ */
+export interface PairingEnrollment {
+  method: DeviceEnrollmentMethod;
+  signIn?: DeviceEnrollmentSignIn | null;
+  devicePublicKey: string;
 }
 
 export type CreatePairingOptions = Parameters<typeof createPairing>[1];
@@ -1146,6 +1187,8 @@ export function createPairing(
      * unit tests don't always wire TLS — production always supplies it.
      */
     tlsFingerprintSha256?: string;
+    /** A sign-in pairing; see {@link PairingEnrollment}. */
+    enrollment?: PairingEnrollment;
   },
 ): PendingPairing {
   if (!isDeviceKind(opts.kind)) {
@@ -1169,8 +1212,9 @@ export function createPairing(
   db.prepare(
     `INSERT INTO device_pairings
        (pairing_code, name, kind, scopes, created_at, expires_at, self_emails, self_phones,
-        repair_device_id, access_level_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        repair_device_id, access_level_id,
+        enrollment_public_key, enrollment_method, enrollment_sign_in)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     pairingCode,
     storedName,
@@ -1182,6 +1226,9 @@ export function createPairing(
     JSON.stringify(selfPhones),
     opts.repairDeviceId ?? null,
     opts.accessLevelId ?? null,
+    opts.enrollment?.devicePublicKey ?? null,
+    opts.enrollment?.method ?? null,
+    opts.enrollment?.signIn ?? null,
   );
 
   return {
@@ -1196,6 +1243,9 @@ export function createPairing(
     repairDeviceId: opts.repairDeviceId ?? null,
     accessLevelId: opts.accessLevelId ?? null,
     tlsFingerprint: opts.tlsFingerprintSha256 ?? "",
+    enrollment: opts.enrollment
+      ? { ...opts.enrollment, signIn: opts.enrollment.signIn ?? null }
+      : null,
   };
 }
 
@@ -1317,6 +1367,121 @@ export function createOrAdoptDevice(
  */
 class DevicePairingConflict extends Error {}
 
+/** A name no row holds: `suggested` when it is free, or a suffixed form of it. */
+function freeDeviceName(db: Db, suggested: string): string {
+  let name = suggested;
+  while (findDeviceByName(db, name)) name = `${suggested}-${randomBytes(2).toString("hex")}`;
+  return name;
+}
+
+/** The one row of a kind that stored this device key, if any. */
+function findDeviceByEnrollmentPublicKey(
+  db: Db,
+  kind: DeviceKind,
+  devicePublicKey: string,
+): DeviceRecord | null {
+  const row = db
+    .prepare<[string, string], DeviceRow>(
+      `SELECT ${DEVICE_SELECT_COLS} FROM devices WHERE kind = ? AND enrollment_public_key = ?`,
+    )
+    .get(kind, devicePublicKey);
+  return row ? rowToDevice(row) : null;
+}
+
+/** The device key a row stored when it enrolled, or null for a row that never did. */
+export function getDeviceEnrollmentPublicKey(db: Db, id: DeviceId): string | null {
+  return (
+    db
+      .prepare<[string], { enrollment_public_key: string | null }>(
+        "SELECT enrollment_public_key FROM devices WHERE id = ?",
+      )
+      .get(id)?.enrollment_public_key ?? null
+  );
+}
+
+/**
+ * Land a sign-in pairing on its row. The only row it may adopt
+ * is one of the same kind holding the same device key, which the holder has
+ * proven by signature: that is a reinstall. Everything else in the request is an
+ * unproven claim, so a name collision makes a fresh suffixed row, and an install
+ * id another row holds is dropped rather than taken from it.
+ */
+function writeEnrolledDevice(
+  db: Db,
+  pending: PendingPairing,
+  enrollment: PairingEnrollment,
+  input: { capabilities: DeviceCapability; onlineDeviceIds?: readonly DeviceId[] },
+): { device: DeviceRecord; replacedDeviceId?: DeviceId } {
+  const candidate = findDeviceByEnrollmentPublicKey(db, pending.kind, enrollment.devicePublicKey);
+  if (candidate && input.onlineDeviceIds?.includes(candidate.id)) {
+    throw new DevicePairingConflict(
+      `This ${candidate.kind} device ("${candidate.name}") is currently online. Disconnect or revoke it before pairing it again.`,
+    );
+  }
+  if (!scopesAllowedForDeviceKind(pending.kind, pending.scopes)) {
+    throw new DevicePairingConflict(new DeviceKindScopeError().message);
+  }
+  const claimedInstall = installIdFrom(input.capabilities);
+  const installHolder = claimedInstall
+    ? findDeviceByInstallId(db, pending.kind, claimedInstall)
+    : null;
+  const capabilities =
+    installHolder && installHolder.id !== candidate?.id
+      ? { ...input.capabilities, installId: undefined }
+      : input.capabilities;
+  const device = candidate
+    ? replaceDeviceForRepair(db, candidate.id, {
+        name: candidate.name,
+        kind: pending.kind,
+        capabilities,
+      })
+    : createDevice(db, {
+        name: freeDeviceName(db, resolveDeviceName(pending.name, pending.kind, capabilities)),
+        kind: pending.kind,
+        capabilities,
+      });
+  db.prepare(
+    `UPDATE devices
+        SET enrollment_public_key = ?, enrollment_method = ?, enrollment_sign_in = ?, enrolled_at = ?
+      WHERE id = ?`,
+  ).run(enrollment.devicePublicKey, enrollment.method, enrollment.signIn ?? null, now(), device.id);
+  return { device, ...(candidate ? { replacedDeviceId: candidate.id } : {}) };
+}
+
+/** What every redemption does once its row is chosen and written. */
+function finishRedemption(
+  db: Db,
+  input: { pairingCode: string; idempotencyKey?: string },
+  requestFingerprint: string,
+  pending: PendingPairing,
+  landed: { device: DeviceRecord; replacedDeviceId?: DeviceId },
+): PairedDeviceRedemption {
+  const { device, replacedDeviceId } = landed;
+  if (pending.selfEmails.length > 0 || pending.selfPhones.length > 0) {
+    updateDeviceSelfInfo(db, device.id, {
+      ...(pending.selfEmails.length > 0 ? { selfEmails: pending.selfEmails } : {}),
+      ...(pending.selfPhones.length > 0 ? { selfPhones: pending.selfPhones } : {}),
+    });
+  }
+  if (pending.kind === "integration" && pending.accessLevelId) {
+    putPairedIntegrationOnLevel(db, device.id, pending.accessLevelId, now());
+  }
+  const credential = createToken(db, device.id, pending.scopes, "paired");
+  const result: PairedDeviceRedemption = {
+    outcome: "paired",
+    device: getDevice(db, device.id) ?? device,
+    ...(replacedDeviceId ? { replacedDeviceId } : {}),
+    tokenId: credential.id,
+    token: credential.token,
+    scopes: pending.scopes,
+    replayed: false,
+  };
+  if (input.idempotencyKey) {
+    writePairingReceipt(db, input.pairingCode, input.idempotencyKey, requestFingerprint, result);
+  }
+  return result;
+}
+
 /**
  * Redeem a non-agent pairing as one writer transaction. The pairing code,
  * durable device adoption, old-token invalidation, staged self identity, and
@@ -1364,6 +1529,16 @@ export function redeemDevicePairing(
         if (!input.expectedKind) return { outcome: "invalid" };
         const pending = consumePairing(db, input.pairingCode, input.expectedKind);
         if (!pending) return { outcome: "invalid" };
+
+        if (pending.enrollment) {
+          return finishRedemption(
+            db,
+            input,
+            requestFingerprint,
+            pending,
+            writeEnrolledDevice(db, pending, pending.enrollment, input),
+          );
+        }
 
         // A repair code names its device up front. That target is the only
         // row the redemption may adopt: without this pin, a code minted for
@@ -1437,35 +1612,10 @@ export function redeemDevicePairing(
               kind: pending.kind,
               capabilities: input.capabilities,
             });
-        if (pending.selfEmails.length > 0 || pending.selfPhones.length > 0) {
-          updateDeviceSelfInfo(db, device.id, {
-            ...(pending.selfEmails.length > 0 ? { selfEmails: pending.selfEmails } : {}),
-            ...(pending.selfPhones.length > 0 ? { selfPhones: pending.selfPhones } : {}),
-          });
-        }
-        if (pending.kind === "integration" && pending.accessLevelId) {
-          putPairedIntegrationOnLevel(db, device.id, pending.accessLevelId, now());
-        }
-        const credential = createToken(db, device.id, pending.scopes, "paired");
-        const result: PairedDeviceRedemption = {
-          outcome: "paired",
-          device: getDevice(db, device.id) ?? device,
+        return finishRedemption(db, input, requestFingerprint, pending, {
+          device,
           ...(replacedDeviceId ? { replacedDeviceId } : {}),
-          tokenId: credential.id,
-          token: credential.token,
-          scopes: pending.scopes,
-          replayed: false,
-        };
-        if (input.idempotencyKey) {
-          writePairingReceipt(
-            db,
-            input.pairingCode,
-            input.idempotencyKey,
-            requestFingerprint,
-            result,
-          );
-        }
-        return result;
+        });
       })
       .immediate();
   } catch (error) {
@@ -1474,6 +1624,78 @@ export function redeemDevicePairing(
     }
     throw error;
   }
+}
+
+export type DeviceTokenRotation =
+  | { outcome: "rotated"; tokenId: TokenId; token: string; replayed: boolean }
+  /** A token with its own expiry keeps it: rotation never extends a short-lived credential. */
+  | { outcome: "refused" }
+  | { outcome: "invalid" };
+
+/**
+ * Replace a device's token with a new one of the same scopes, leaving the old
+ * one valid for `overlapMs` so requests in flight still land.
+ *
+ * Retrying the exact request after a lost response returns the same token from
+ * a receipt sealed under that request's signature. A device that lost the
+ * response and starts again with a new challenge presents the old token a second
+ * time, so the unused token from its first try is deleted instead of living on.
+ */
+export function rotateDeviceToken(
+  db: Db,
+  input: {
+    deviceId: DeviceId;
+    tokenId: TokenId;
+    challenge: string;
+    signature: string;
+    /** Whether this request consumed the challenge, as only a replay may skip that. */
+    challengeConsumed: boolean;
+    overlapMs: number;
+  },
+): DeviceTokenRotation {
+  return db
+    .transaction((): DeviceTokenRotation => {
+      const receiptCode = `token-rotation:${input.deviceId}:${input.challenge}`;
+      const fingerprint = hashPairingReceiptValue(`token-rotation\0${receiptCode}`);
+      const receipt = readPairingReceipt<{ tokenId: TokenId; token: string }>(
+        db,
+        receiptCode,
+        input.signature,
+        fingerprint,
+      );
+      if (receipt) {
+        return receipt.kind === "replay"
+          ? { outcome: "rotated", ...receipt.result, replayed: true }
+          : { outcome: "invalid" };
+      }
+      if (!input.challengeConsumed) return { outcome: "invalid" };
+      const current = db
+        .prepare<
+          [string, string],
+          { scopes: string; name: string | null; expires_at: number | null }
+        >("SELECT scopes, name, expires_at FROM tokens WHERE id = ? AND device_id = ?")
+        .get(input.tokenId, input.deviceId);
+      if (!current) return { outcome: "invalid" };
+      const inOverlap = db
+        .prepare<[string], { id: string }>("SELECT id FROM tokens WHERE rotated_from = ? LIMIT 1")
+        .get(input.tokenId);
+      if (current.expires_at !== null && !inOverlap) return { outcome: "refused" };
+      db.prepare("DELETE FROM tokens WHERE rotated_from = ? AND last_used_at IS NULL").run(
+        input.tokenId,
+      );
+      const scopes = tokensScopesCodec.parseWithFallback(current.scopes, { rowId: input.tokenId });
+      const minted = createToken(db, input.deviceId, scopes, current.name);
+      const overlapEnd = now() + input.overlapMs;
+      db.prepare("UPDATE tokens SET rotated_from = ? WHERE id = ?").run(input.tokenId, minted.id);
+      db.prepare("UPDATE tokens SET expires_at = ? WHERE id = ?").run(
+        current.expires_at === null ? overlapEnd : Math.min(current.expires_at, overlapEnd),
+        input.tokenId,
+      );
+      const result = { tokenId: minted.id, token: minted.token };
+      writePairingReceipt(db, receiptCode, input.signature, fingerprint, result);
+      return { outcome: "rotated", ...result, replayed: false };
+    })
+    .immediate();
 }
 
 /** Invalidate one unused pairing code. Returns false after redemption or expiry cleanup. */
@@ -1503,9 +1725,12 @@ export function peekPairing(db: Db, pairingCode: string): PendingPairing | null 
         self_phones: string;
         repair_device_id: string | null;
         access_level_id: string | null;
+        enrollment_public_key: string | null;
+        enrollment_method: string | null;
+        enrollment_sign_in: string | null;
       }
     >(
-      "SELECT pairing_code, name, kind, scopes, created_at, expires_at, self_emails, self_phones, repair_device_id, access_level_id FROM device_pairings WHERE pairing_code = ?",
+      "SELECT pairing_code, name, kind, scopes, created_at, expires_at, self_emails, self_phones, repair_device_id, access_level_id, enrollment_public_key, enrollment_method, enrollment_sign_in FROM device_pairings WHERE pairing_code = ?",
     )
     .get(pairingCode);
 
@@ -1525,6 +1750,14 @@ export function peekPairing(db: Db, pairingCode: string): PendingPairing | null 
     // Not persisted — the fingerprint only matters at issue time (echoed in
     // the /admin/devices/pair response so the CLI can stamp it into the QR).
     tlsFingerprint: "",
+    enrollment:
+      row.enrollment_method && row.enrollment_public_key
+        ? {
+            method: row.enrollment_method as DeviceEnrollmentMethod,
+            signIn: row.enrollment_sign_in as DeviceEnrollmentSignIn | null,
+            devicePublicKey: row.enrollment_public_key,
+          }
+        : null,
   };
 }
 

@@ -11,7 +11,8 @@ package dev.omnesis.android.transport
 sealed class GatewayException(message: String? = null, cause: Throwable? = null) :
     Exception(message, cause) {
     class Unauthorized : GatewayException("unauthorized")
-    class Forbidden : GatewayException("forbidden")
+    /** [body] and [code] are the gateway's error envelope, when the 403 carried one. */
+    class Forbidden(val body: String? = null, val code: String? = null) : GatewayException("forbidden")
     /** [body] is the gateway's error message when the 404 carried its envelope, e.g. "source not found". */
     class NotFound(val body: String? = null) : GatewayException("not found")
     /**

@@ -128,8 +128,8 @@ data class Whoami(
 )
 
 /**
- * Whether the paired gateway serves the Tasks journal (`tasks` on `GET /status`). Tasks work
- * on every install, with or without a model, so this is never gated on experimental mode.
+ * Whether the paired gateway enables the Tasks journal (`tasks` on `GET /status`).
+ * Availability follows its effective Tasks Lab switch; manual tasks do not require a model.
  */
 @Serializable
 data class TasksStatusDto(

@@ -13,6 +13,7 @@ public enum ClaimedNotificationRoute: Equatable, Sendable, Decodable {
     case needsAuth(sourceId: String, providerId: String?)
     case privacyApproval(approvalId: String)
     case accessAuthorization
+    case devicePairing
     case unknown
 
     private enum CodingKeys: String, CodingKey {
@@ -63,6 +64,8 @@ public enum ClaimedNotificationRoute: Equatable, Sendable, Decodable {
             }
         case "access-authorization":
             self = .accessAuthorization
+        case "device-pairing":
+            self = .devicePairing
         default:
             self = .unknown
         }
@@ -129,7 +132,8 @@ public struct ClaimedNotification: Decodable, Equatable, Sendable {
                  ("watch", .watch(_, _, _)),
                  ("needs-auth", .needsAuth(_, _)),
                  ("privacy-approval", .privacyApproval(_)),
-                 ("access-authorization", .accessAuthorization):
+                 ("access-authorization", .accessAuthorization),
+                 ("device-pairing", .devicePairing):
                 route
             default:
                 nil
@@ -155,6 +159,8 @@ public struct ClaimedNotification: Decodable, Equatable, Sendable {
             ["kind": "privacy-approval", "targetId": approvalId]
         case .accessAuthorization:
             ["kind": "access-authorization", "targetId": "access"]
+        case .devicePairing:
+            ["kind": "device-pairing", "targetId": "pairing"]
         case .unknown, nil:
             ["kind": kind, "targetId": targetId]
         }
@@ -400,6 +406,8 @@ public struct NotificationClaimer: Sendable {
     private let baseURL: URL
     private let token: String
     private let request: Request
+    /// Asks for pairing requests in claims; only a cloud build can act on them.
+    private let claimsPairingNotifications: Bool
 
     public init(baseURL: URL, token: String, session: URLSession) {
         self.init(baseURL: baseURL, token: token) { request in
@@ -407,9 +415,20 @@ public struct NotificationClaimer: Sendable {
         }
     }
 
-    public init(baseURL: URL, token: String, request: @escaping Request) {
+    public init(baseURL: URL, token: String, ownedSession: URLSession) {
+        let owner = GatewayOwnedSession(ownedSession)
+        self.init(baseURL: baseURL, token: token) { request in try await owner.data(for: request) }
+    }
+
+    public init(
+        baseURL: URL,
+        token: String,
+        claimsPairingNotifications: Bool = CloudRelayFeature.enabled,
+        request: @escaping Request
+    ) {
         self.baseURL = baseURL
         self.token = token
+        self.claimsPairingNotifications = claimsPairingNotifications
         self.request = request
     }
 
@@ -453,6 +472,9 @@ public struct NotificationClaimer: Sendable {
         urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if claimsPairingNotifications, path == "/notifications/claim" {
+            urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Pairing-Notifications")
+        }
         urlRequest.httpBody = try JSONEncoder().encode(body)
         let (data, response) = try await request(urlRequest)
         guard let http = response as? HTTPURLResponse else {
@@ -504,19 +526,25 @@ public enum NotificationClaimCredentials {
         let deviceId: String
         let tlsMode: String?
         let fingerprint: String?
+        let spkiFingerprint: String?
+        let directCandidates: [GatewayDirectCandidate]?
 
         init(
             url: String,
             token: String,
             deviceId: String,
             tlsMode: String? = nil,
-            fingerprint: String?
+            fingerprint: String?,
+            spkiFingerprint: String? = nil,
+            directCandidates: [GatewayDirectCandidate]? = nil
         ) {
             self.url = url
             self.token = token
             self.deviceId = deviceId
             self.tlsMode = tlsMode
             self.fingerprint = fingerprint
+            self.spkiFingerprint = spkiFingerprint
+            self.directCandidates = directCandidates
         }
     }
 
@@ -546,7 +574,10 @@ public enum NotificationClaimCredentials {
     }
 
     public static func load(keychain: Keychain? = nil) -> NotificationClaimer? {
-        let resolvedKeychain = keychain ?? sharedKeychain()
+        load(store: keychain ?? sharedKeychain())
+    }
+
+    static func load(store resolvedKeychain: any PairingStore) -> NotificationClaimer? {
         let bundled: StoredCredential? = try? stored(keychain: resolvedKeychain)
         let rawURL = bundled?.url ??
             (try? resolvedKeychain.get(Keys.url))
@@ -563,20 +594,35 @@ public enum NotificationClaimCredentials {
         else {
             return nil
         }
+        let route: GatewayDirectRoute? = if tlsMode == .pinnedKeyStrict {
+            try? GatewayDirectRoute.maintained(origin: baseURL, candidates: bundled?.directCandidates ?? [])
+        } else if tlsMode.isStrict, let candidates = bundled?.directCandidates {
+            try? GatewayDirectRoute(origin: baseURL, candidates: candidates)
+        } else { nil }
         let session: URLSession
         switch tlsMode {
         case .system:
             guard baseURL.scheme?.lowercased() == "https" else { return nil }
             session = URLSession.shared
-        case .pinnedLeaf:
+        case .pinnedKeyStrict:
+            guard let spki = bundled?.spkiFingerprint, spki.count == 64, spki.allSatisfy(\.isHexDigit),
+                  baseURL.scheme?.lowercased() == "https" else { return nil }
+            session = PinnedSession(spkiFingerprint: spki, host: baseURL.host, directRoute: route).session
+        case .pinnedLeaf, .pinnedLeafStrict:
             guard let fingerprint,
                   fingerprint.count == 64,
                   fingerprint.allSatisfy(\.isHexDigit)
             else { return nil }
-            session = PinnedSession(fingerprintHex: fingerprint, host: baseURL.host).session
+            session = PinnedSession(
+                fingerprintHex: fingerprint,
+                host: tlsMode == .pinnedLeafStrict ? nil : baseURL.host,
+                requireCertificateValidity: tlsMode == .pinnedLeafStrict,
+                directRoute: route
+            ).session
         case .legacy:
             return nil
         }
+        if tlsMode.requiresPin { return NotificationClaimer(baseURL: baseURL, token: token, ownedSession: session) }
         return NotificationClaimer(baseURL: baseURL, token: token, session: session)
     }
 }

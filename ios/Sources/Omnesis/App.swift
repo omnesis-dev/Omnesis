@@ -67,7 +67,9 @@ public struct OmnesisApp: App {
             // simulator (which the offscreen snapshot harness can't — it
             // reports zero safe area); `scroll-stress` drives the
             // scroll-to-bottom UI test. No-op unless the env var is set.
-            if ProcessInfo.processInfo.environment["DEMO_REALTIME_SCROLL"] == "1" {
+            if let scenario = Self.cloudPairingDemoScenario {
+                cloudPairingDemoRoot(scenario)
+            } else if ProcessInfo.processInfo.environment["DEMO_REALTIME_SCROLL"] == "1" {
                 RealtimeScrollDemoSurface()
             } else if Self.settingsPreview {
                 settingsPreviewRoot
@@ -98,7 +100,7 @@ public struct OmnesisApp: App {
             switch phase {
             case .active:
                 WatchRelayReceiver.shared.retryComplicationCaptures()
-                Task { await store.onActive() }
+                Task { await store.onActiveThenRotateDeviceToken() }
             case .background:
                 Task { await store.onBackground() }
             default:
@@ -176,6 +178,23 @@ public struct OmnesisApp: App {
 
     static var settingsPreview: Bool {
         ProcessInfo.processInfo.environment["DEMO_SETTINGS_PREVIEW"] == "1"
+    }
+
+    static var cloudPairingDemoScenario: String? {
+        #if OMNESIS_REALTIME_VOICE && targetEnvironment(simulator)
+        CloudPairingDemoSurface.Scenario(rawValue: ProcessInfo.processInfo.environment["DEMO_CLOUD_PAIRING"] ?? "")?.rawValue
+        #else
+        nil
+        #endif
+    }
+
+    @ViewBuilder
+    private func cloudPairingDemoRoot(_ scenario: String) -> some View {
+        #if OMNESIS_REALTIME_VOICE && targetEnvironment(simulator)
+        if let mode = CloudPairingDemoSurface.Scenario(rawValue: scenario) { CloudPairingDemoSurface(scenario: mode) }
+        #else
+        EmptyView()
+        #endif
     }
 
     static var accessAuthorizationPreview: Bool {
@@ -509,7 +528,7 @@ public final class AppStore {
     // MARK: - Coordinators
 
     @ObservationIgnored
-    private let pairingCoord: PairingCoordinator
+    let pairingCoord: PairingCoordinator
     @ObservationIgnored
     private let syncCoord: SyncCoordinator
     @ObservationIgnored
@@ -792,6 +811,10 @@ public final class AppStore {
 
     public var wsConnected: Bool {
         adminCoord.wsConnected
+    }
+
+    public var connectionPath: GatewayConnectionPath? {
+        adminCoord.connectionPath
     }
 
     public var wsState: DeviceSocket.ConnectionState {
@@ -1689,6 +1712,11 @@ public final class AppStore {
 
     // MARK: - Pairing (delegates to PairingCoordinator + orchestrates)
 
+    public func updateGatewayURL(_ url: URL) throws {
+        try pairingCoord.updateGatewayURL(url)
+        reload()
+    }
+
     public func reload() {
         pushRegistrationAttempts.invalidate()
         pushCallbackRequests.invalidate()
@@ -1826,12 +1854,16 @@ public final class AppStore {
     /// durable for the next foreground or process launch.
     func retryPendingDeviceRevocation() async {
         while let pending = pairingCoord.pendingRevocation() {
-            let session: URLSessionLike = if let revocationSession {
-                revocationSession
-            } else if pending.tlsMode == .pinnedLeaf, let fingerprint = pending.fingerprint {
-                PinnedSession(fingerprintHex: fingerprint, host: pending.url.host).session
-            } else {
-                URLSession.shared
+            let session: URLSessionLike
+            if let revocationSession { session = revocationSession } else {
+                let resolved = OmnesisURLSession.revocationSession(
+                    tlsMode: pending.tlsMode.rawValue,
+                    fingerprint: pending.fingerprint,
+                    host: pending.url.host,
+                    spkiFingerprint: pending.spkiFingerprint,
+                    directRoute: pending.directRoute
+                )
+                session = resolved === URLSession.shared ? resolved : GatewayOwnedSession(resolved)
             }
             do {
                 try await AdminClient(
@@ -2589,7 +2621,15 @@ public final class AppStore {
         await restoreLocalSourceIntentState(pairing: pairing)
         guard pairingCoord.pairing?.pairingGeneration == pairing.pairingGeneration,
               pairingCoord.pairing?.url == pairing.url else { return }
-        adminCoord.rebuildAdmin(pairing: pairing) { [weak self] admin, p in
+        let hintRefresher = pairingCoord.hintRefresher(pairing: pairing) { [weak self] current in
+            try Self.publishDirectHints(
+                current,
+                currentPairing: self?.pairingCoord.pairing,
+                notificationStore: NotificationClaimCredentials.sharedKeychain(),
+                publishWidget: TaskWidgetAppBridge.configure(pairing:)
+            )
+        }
+        adminCoord.rebuildAdmin(pairing: pairing, hintRefresher: hintRefresher) { [weak self] admin, currentPairing in
             // Drained before registration, not alongside it: an intent an
             // earlier pairing of this gateway left behind has to settle (or
             // be dropped as stale) before this pairing states which sources
@@ -2597,7 +2637,7 @@ public final class AppStore {
             // A re-pair that adopts the same device id can still
             // replay a queued detach, which pauses the source.
             await self?.reconcileLocalSourceMembership()
-            await self?.registerLocalSources(admin: admin, pairing: p)
+            await self?.registerLocalSources(admin: admin, pairing: currentPairing)
             self?.permissionHealthCoordinator.allowReportingAgain()
         }
         evaluatePhoneSetup(for: pairing)
@@ -2609,6 +2649,20 @@ public final class AppStore {
         // APNs token when notifications are already allowed — iOS re-fires
         // `didRegister…` with the same (or rotated) token.
         Task { await self.requestPushAndRegister() }
+    }
+
+    /// Fresh route facts can update availability without replacing any consumer's authority or token.
+    static func publishDirectHints(
+        _ current: Pairing,
+        currentPairing: Pairing?,
+        notificationStore: PairingStore,
+        publishWidget: (Pairing?) -> Void
+    ) throws {
+        guard let currentPairing, currentPairing.sameAuthority(as: current),
+              currentPairing.directCandidates == current.directCandidates else { return }
+        try OmnesisURLSession.updateDirectCandidates(expected: current, candidates: current.directCandidates ?? [])
+        publishWidget(current)
+        try? NotificationClaimCredentialProvisioner.updateDirectCandidates(pairing: current, store: notificationStore)
     }
 
     /// Build the iOS-side source list from the user's HK toggles and
@@ -3303,6 +3357,7 @@ extension AppStore {
         statusSnapshot: StatusSnapshot? = nil,
         indexStats: IndexStats? = nil,
         wsState: DeviceSocket.ConnectionState? = nil,
+        connectionPath: GatewayConnectionPath? = nil,
         sourceIconByType: [String: String] = [:],
         sourceIconById: [String: String] = [:],
         sourceUnitNameByType: [String: String] = PreviewMocks.agentSourceUnitNames,
@@ -3349,6 +3404,7 @@ extension AppStore {
             statusSnapshot: statusSnapshot,
             indexStats: indexStats,
             wsState: wsState,
+            connectionPath: connectionPath,
             sourceIconByType: sourceIconByType,
             sourceIconById: sourceIconById,
             sourceUnitNameByType: sourceUnitNameByType,

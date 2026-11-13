@@ -35,4 +35,8 @@ export type {
   AnswerRequestOptions,
   SubmitAnswerInput,
 } from "./answer-client.js";
-export { DEFAULT_MAX_BACKPRESSURE_WAITS, DEFAULT_UPSERT_CHUNK } from "./tunables.js";
+export {
+  DEFAULT_MAX_BACKPRESSURE_WAITS,
+  DEFAULT_UPSERT_CHUNK,
+  PAIRED_TRANSPORT_WS_HEARTBEAT_TIMEOUT_MS,
+} from "./tunables.js";

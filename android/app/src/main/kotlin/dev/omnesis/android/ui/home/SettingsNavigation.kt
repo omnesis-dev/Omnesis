@@ -31,6 +31,9 @@ internal const val POLICIES_ROUTE = "policies"
 internal const val POLICY_ROUTE_PATTERN = "$POLICIES_ROUTE/{familyId}?name={name}"
 internal const val ACCESS_AUTHORIZATION_ROUTE = "access/authorize"
 
+/** The gateway's Omnesis account and remote access. Only a build with cloud connectivity opens it. */
+internal const val OMNESIS_ACCOUNT_ROUTE = "omnesis-account"
+
 /**
  * The phone setup flow. Opened from Settings it starts at Choose, or shows one
  * source's page when that source's card opens it; the first run hosts it
@@ -67,7 +70,7 @@ internal const val ACCESS_AUTHORIZATION_ROUTE_PATTERN =
         "&device={device}&generation={generation}"
 
 private val settingsChildRoutes =
-    setOf(LAB_ROUTE, MODELS_ROUTE, DEVICES_ROUTE, POLICIES_ROUTE, ACCESS_AUTHORIZATION_ROUTE)
+    setOf(LAB_ROUTE, MODELS_ROUTE, DEVICES_ROUTE, POLICIES_ROUTE, ACCESS_AUTHORIZATION_ROUTE, OMNESIS_ACCOUNT_ROUTE)
 
 /**
  * Opens a Settings child with exactly one Settings entry beneath it. Existing child state is

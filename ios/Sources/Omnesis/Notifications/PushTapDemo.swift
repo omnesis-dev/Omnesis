@@ -47,7 +47,9 @@ struct PushTapDemoRoot: View {
     /// The `userInfo` a gateway push arrives with (the `aps` alert plus
     /// the top-level `omnesis` dict the APNs client embeds).
     private var probePayload: [AnyHashable: Any] {
-        let omnesis: [String: Any] = mode == "privacy-cold"
+        let omnesis: [String: Any] = mode.hasPrefix("pairing")
+            ? ["kind": "device-pairing", "targetId": "pairing"]
+            : mode == "privacy-cold"
             ? ["kind": "privacy-approval", "approvalId": "approval-demo"]
             : ["kind": "watch-firing", "watchId": "w_demo", "firingKey": "w_demo:1"]
         return [
@@ -77,7 +79,7 @@ struct PushTapDemoRoot: View {
             .task {
                 if mode == "widget-menu" {
                     store.notificationRouter.pendingTarget = widgetTarget
-                } else if mode == "cold" {
+                } else if mode == "cold" || mode == "pairing-cold" {
                     // Cold shape: the tap arrives before the SwiftUI task
                     // binds the delegate — buffered, then drained by the
                     // bind. The drain hands the target over via a deferred

@@ -22,6 +22,7 @@ import {
   createToken,
   validateToken,
   listTokens,
+  listDeviceIdsWithActiveScope,
   revokeToken,
   hasTokens,
   ensureBootstrapToken,
@@ -618,4 +619,26 @@ describe("reconcileDeviceTokenScopes", () => {
   test("returns null for a token that no longer exists", () => {
     expect(reconcileDeviceTokenScopes(db, randomUUID() as TokenId, "ios")).toBeNull();
   });
+});
+
+test("administrative reminder recipients have a currently active scoped token, deduplicated by device", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2028-01-01T00:00:00Z"));
+  const adminDevice = newDevice("Fictional administrator");
+  const reader = newDevice("Fictional reader");
+  const expired = newDevice("Fictional expired administrator");
+  const revoked = newDevice("Fictional revoked token");
+  createToken(db, adminDevice, [SCOPE_ADMIN]);
+  createToken(db, adminDevice, [SCOPE_ADMIN]);
+  createToken(db, reader, [SCOPE_READ]);
+  const expiring = createToken(db, expired, [SCOPE_ADMIN]);
+  db.prepare("UPDATE tokens SET expires_at = ? WHERE id = ?").run(Date.now() - 1, expiring.id);
+  const removed = createToken(db, revoked, [SCOPE_ADMIN]);
+  revokeToken(db, removed.id);
+  expect(listDeviceIdsWithActiveScope(db, SCOPE_ADMIN)).toEqual([adminDevice]);
+  expect(listDeviceIdsWithActiveScope(db, SCOPE_READ)).toEqual([reader]);
+  db.prepare("UPDATE tokens SET expires_at = ? WHERE id = ?").run(Date.now(), expiring.id);
+  expect(new Set(listDeviceIdsWithActiveScope(db, SCOPE_ADMIN))).toEqual(
+    new Set([adminDevice, expired]),
+  );
 });

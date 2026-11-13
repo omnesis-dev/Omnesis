@@ -11,6 +11,8 @@ public struct TaskWidgetCredential: Codable, Equatable, Sendable {
     public let generation: String?
     public let tlsMode: String
     public let fingerprint: String?
+    public let spkiFingerprint: String?
+    public let directCandidates: [GatewayDirectCandidate]?
 
     public init(
         url: URL,
@@ -18,7 +20,9 @@ public struct TaskWidgetCredential: Codable, Equatable, Sendable {
         deviceId: String,
         generation: String? = nil,
         tlsMode: String,
-        fingerprint: String? = nil
+        fingerprint: String? = nil,
+        spkiFingerprint: String? = nil,
+        directCandidates: [GatewayDirectCandidate]? = nil
     ) {
         self.url = url
         self.token = token
@@ -26,6 +30,8 @@ public struct TaskWidgetCredential: Codable, Equatable, Sendable {
         self.generation = generation
         self.tlsMode = tlsMode
         self.fingerprint = fingerprint
+        self.spkiFingerprint = spkiFingerprint
+        self.directCandidates = directCandidates
     }
 
     /// Opaque authority carried by rendered actions. Neither the token nor any
@@ -33,14 +39,32 @@ public struct TaskWidgetCredential: Codable, Equatable, Sendable {
     public var authorityID: String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let data = (try? encoder.encode(self)) ?? Data()
+        // LAN hints change transport availability, not authority granted to rendered actions.
+        let authority = TaskWidgetCredential(
+            url: url,
+            token: token,
+            deviceId: deviceId,
+            generation: generation,
+            tlsMode: tlsMode,
+            fingerprint: fingerprint,
+            spkiFingerprint: spkiFingerprint
+        )
+        let data = (try? encoder.encode(authority)) ?? Data()
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    var directRoute: GatewayDirectRoute? {
+        if tlsMode == "pinned-key-strict" { return try? GatewayDirectRoute.maintained(origin: url, candidates: directCandidates ?? []) }
+        guard tlsMode == "pinned-leaf-strict", let directCandidates else { return nil }
+        return try? GatewayDirectRoute(origin: url, candidates: directCandidates)
     }
 
     public var isSecure: Bool {
         guard url.scheme?.lowercased() == "https", url.host != nil, !token.isEmpty else { return false }
         if tlsMode == "system" { return true }
-        return tlsMode == "pinned-leaf" && fingerprint?.count == 64 && fingerprint?.allSatisfy(\.isHexDigit) == true
+        if tlsMode == "pinned-key-strict" { return spkiFingerprint?.count == 64 && spkiFingerprint?.allSatisfy(\.isHexDigit) == true }
+        return ["pinned-leaf", "pinned-leaf-strict"].contains(tlsMode) && fingerprint?.count == 64 && fingerprint?
+            .allSatisfy(\.isHexDigit) == true
     }
 }
 

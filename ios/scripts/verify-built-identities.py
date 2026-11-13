@@ -55,4 +55,18 @@ expect(extension_group, app_group, "app and notification extension Keychain grou
 if not app_group.endswith(f"{base}.notifications"):
     raise SystemExit(f"Keychain group does not end in {base}.notifications: {app_group!r}")
 
+# The default build declares no local network use and only its own URL scheme.
+# A cloud relay build adds both through scripts/cloud-relay-info-plist.py.
+cloud_relay = info.get("OmnesisCloudRelayEnabled") == "1"
+bundles = {"app": info}
+for name in ("OmnesisNotificationService", "OmnesisWidgets"):
+    bundles[name] = read_plist(app / "PlugIns" / f"{name}.appex")
+for label, plist in bundles.items():
+    expect("NSLocalNetworkUsageDescription" in plist, cloud_relay, f"{label} local network usage text present")
+schemes = [scheme for entry in info.get("CFBundleURLTypes", []) for scheme in entry.get("CFBundleURLSchemes", [])]
+if cloud_relay:
+    expect(len(schemes), 2, "cloud relay build URL scheme count")
+else:
+    expect(schemes, ["omnesis"], "default build URL schemes")
+
 print(f"Verified processed app, extension, widget and Watch identities for {base}")

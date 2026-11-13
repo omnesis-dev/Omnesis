@@ -3,6 +3,14 @@
 
 package dev.omnesis.android.transport.client
 
+import dev.omnesis.android.transport.dto.CloudRelayConnectBody
+import dev.omnesis.android.transport.dto.CloudRelayManaging
+import dev.omnesis.android.transport.dto.CloudRelayStatus
+import dev.omnesis.android.transport.dto.DeviceEnrollmentPolicyBody
+import dev.omnesis.android.transport.dto.GatewayPairingApproving
+import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
+import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequests
+import dev.omnesis.android.transport.dto.GatewayPairingApprovalDecision
 import dev.omnesis.android.transport.PermissionHealthSnapshot
 import dev.omnesis.android.transport.SourceMultiDeviceMode
 import dev.omnesis.android.transport.SourceModeTransitionNotConfirmed
@@ -37,6 +45,8 @@ import dev.omnesis.android.transport.dto.ModelsOverview
 import dev.omnesis.android.transport.dto.ModelBehaviorValues
 import dev.omnesis.android.transport.dto.SaveModelBehaviorBody
 import dev.omnesis.android.transport.dto.NetworkIdentity
+import dev.omnesis.android.transport.dto.PairAddressesBody
+import dev.omnesis.android.transport.dto.PairingAddressPlan
 import dev.omnesis.android.transport.dto.OkResponse
 import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.dto.Page
@@ -117,12 +127,34 @@ import okhttp3.HttpUrl
  * Admin surface (sources, descriptors, sync status, devices) plus the mutating source
  * actions. Mirrors the iOS `AdminClient` routes/shapes exactly.
  */
-class AdminClient(private val http: GatewayHttp) {
+class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, CloudRelayManaging {
+    override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> =
+        http.getJson<GatewayPairingApprovalRequests>("admin/cloud-pairing/requests").items
+
+    override suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean) {
+        http.postJson<GatewayPairingApprovalDecision, OkResponse>(
+            "admin/cloud-pairing/decision",
+            GatewayPairingApprovalDecision(requestId, approve, trustSignIn.takeIf { it }),
+        )
+    }
+
+    override suspend fun cloudRelayStatus(): CloudRelayStatus = http.getJson("admin/cloud-relay")
+
+    override suspend fun connectCloudRelay(intent: String): CloudRelayStatus =
+        http.postJson("admin/cloud-relay/connect", CloudRelayConnectBody(termsAccepted = true, intent = intent))
+
+    override suspend fun cancelCloudRelayConnect(): CloudRelayStatus = http.postEmpty("admin/cloud-relay/connect/cancel")
+
+    override suspend fun cloudRelayOperation(operation: String): CloudRelayStatus =
+        http.postEmpty("admin/cloud-relay/$operation")
+
+    override suspend fun setCloudRelayEnrollmentPolicy(policy: String): CloudRelayStatus =
+        http.putJson("admin/cloud-relay/enrollment", DeviceEnrollmentPolicyBody(policy))
+
     suspend fun lab(): dev.omnesis.android.transport.dto.LabSnapshot = http.getJson("admin/lab")
 
     suspend fun setLabFeature(id: String, enabled: Boolean): dev.omnesis.android.transport.dto.LabSnapshot =
         http.putJsonSegments(listOf("admin", "lab", id), dev.omnesis.android.transport.dto.SetLabFeatureBody(enabled))
-
 
     /**
      * Resolve a pending MCP request only after the owner supplies its short code. The reply
@@ -274,6 +306,13 @@ class AdminClient(private val http: GatewayHttp) {
             request(null)
         }
     }
+
+    /**
+     * `POST /admin/devices/pair-addresses` — every address the phone behind a pending
+     * code could pair with, judged by the gateway for that phone, with its recommendation.
+     */
+    suspend fun pairAddresses(pairingCode: String): PairingAddressPlan =
+        http.postJson("admin/devices/pair-addresses", PairAddressesBody(pairingCode))
 
     /**
      * `GET /admin/network-identities` — the addresses this gateway is reachable

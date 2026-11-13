@@ -23,6 +23,23 @@ enum PreviewMocks {
         })
     }
 
+    static let googleCloudPairingConfiguration = GoogleCloudPairingConfiguration(
+        clientId: "fictional-ios.apps.googleusercontent.com", relayOrigin: URL(string: "https://relay.example.test")!
+    )
+    static func googlePairingPanel(_ phase: GoogleCloudPairingCoordinator.Phase) -> GoogleCloudPairingPanel {
+        let hasCode = [.comparing, .waiting, .ready, .pairing].contains(phase)
+        return GoogleCloudPairingPanel(
+            phase: phase,
+            verificationCode: hasCode ? "465 774" : nil,
+            gatewayHost: hasCode ? "gateway.example.test" : nil,
+            error: phase == .failed ? CloudPairingError.refused : nil,
+
+            onSignIn: {},
+
+            onPair: {}
+        )
+    }
+
     static let copyableMarkdownInline = "Address: `42 Example Street, Exampleville`. Reference: `000042`. **Keep** this [link](https://example.com)."
     static let copyableMarkdownBlock = "42 Example Street\nExampleville\n"
     static let copyableMarkdownValueAndCode = """
@@ -752,6 +769,73 @@ enum PreviewMocks {
         NetworkIdentity(address: "host.example", label: "mDNS (.local)", kind: "mdns", offLan: false),
         NetworkIdentity(address: "198.51.100.7", label: "Tailscale (off-LAN)", kind: "tailscale", offLan: true),
     ]
+
+    static let pairingQrPayload =
+        #"{"v":4,"gatewayUrl":"https://gateway.tail-fictional.ts.net:7600","pairingCode":"7K3M-9QX2","tls":{"mode":"system"}}"#
+
+    /// The gateway's address plan for an iPhone's pairing code: a Tailscale name, a home
+    /// address, the gateway's Omnesis address, and one address an iPhone cannot use.
+    static let pairingAddressPlan = PairingAddressPlan(
+        platform: "ios",
+        addresses: [
+            PairingAddressOption(
+                gatewayUrl: "https://gateway.tail-fictional.ts.net:7600",
+                host: "gateway.tail-fictional.ts.net",
+                label: "Tailscale name",
+                summary: "Works anywhere, while Tailscale is connected on the phone.",
+                reach: "tailnet",
+                systemTrust: true
+            ),
+            PairingAddressOption(
+                gatewayUrl: "https://192.0.2.42:7600",
+                host: "192.0.2.42",
+                label: "Local network",
+                summary: "Works on the gateway's own network, typically your home Wi-Fi.",
+                reach: "local-network",
+                systemTrust: false
+            ),
+            PairingAddressOption(
+                gatewayUrl: "https://g-fictional.relay.example.test",
+                host: "g-fictional.relay.example.test",
+                label: "Omnesis address",
+                summary: "Works from anywhere. Needs remote access to stay on.",
+                reach: "anywhere",
+                systemTrust: false,
+                kind: "relay"
+            ),
+            PairingAddressOption(
+                gatewayUrl: "https://198.51.100.7:7600",
+                host: "198.51.100.7",
+                label: "Tailscale IP",
+                usable: false,
+                reason: "An iPhone refuses this address. Pair with the Tailscale name instead."
+            ),
+        ],
+        recommendedUrl: "https://gateway.tail-fictional.ts.net:7600"
+    )
+
+    /// A gateway only reachable at home, with the hint on how to reach it from elsewhere.
+    static let pairingAddressPlanHomeOnly = PairingAddressPlan(
+        platform: "ios",
+        addresses: [pairingAddressPlan.addresses[1], pairingAddressPlan.addresses[3]],
+        recommendedUrl: "https://192.0.2.42:7600",
+        awayFromHome: PairingAwayFromHomeHint(onTailnet: true, tailscaleName: nil)
+    )
+
+    /// No address this phone can use.
+    static let pairingAddressPlanNoneUsable = PairingAddressPlan(
+        platform: "ios",
+        addresses: [pairingAddressPlan.addresses[3]],
+        recommendedUrl: nil,
+        awayFromHome: PairingAwayFromHomeHint(onTailnet: false)
+    )
+
+    /// Addresses for a device that is not a phone.
+    static let pairingAddressPlanAgent = PairingAddressPlan(
+        platform: nil,
+        addresses: Array(pairingAddressPlan.addresses.prefix(2)),
+        recommendedUrl: "https://gateway.tail-fictional.ts.net:7600"
+    )
 
     // MARK: - Sync statuses
 

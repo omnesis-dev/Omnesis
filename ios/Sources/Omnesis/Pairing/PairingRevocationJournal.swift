@@ -77,7 +77,38 @@ final class PairingRevocationJournal: Sendable {
             name: pairing.gatewayName,
             scopes: pairing.scopes,
             tlsMode: pairing.tlsMode.rawValue,
-            fingerprint: pairing.fingerprint
+            fingerprint: pairing.fingerprint,
+            spkiFingerprint: pairing.spkiFingerprint,
+            directCandidates: pairing.directCandidates
+        )
+    }
+}
+
+extension OmnesisURLSession {
+    /// The session that revokes a journaled credential. Off the cloud build flag it is the
+    /// session a build without cloud connectivity used: the stored leaf pin with no trust
+    /// upgrade, and the shared session for anything else.
+    static func revocationSession(
+        tlsMode rawMode: String?,
+        fingerprint: String?,
+        host: String?,
+        spkiFingerprint: String?,
+        directRoute: GatewayDirectRoute?,
+        cloudRelayEnabled: Bool = CloudRelayFeature.enabled
+    )
+        -> URLSession {
+        guard cloudRelayEnabled else {
+            if rawMode == PairingTlsMode.pinnedLeaf.rawValue, let fingerprint {
+                return PinnedSession(fingerprintHex: fingerprint, host: host).session
+            }
+            return URLSession.shared
+        }
+        return resolveSession(
+            tlsMode: rawMode,
+            fingerprint: fingerprint,
+            host: host,
+            spkiFingerprint: spkiFingerprint,
+            directRoute: directRoute
         )
     }
 }

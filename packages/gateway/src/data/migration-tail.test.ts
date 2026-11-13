@@ -78,8 +78,10 @@ const WOUND_BACK = [
   212,
   // 213 adds a column idempotently; the installed schema already carries it.
   213,
-  // 214 persists the Lab choices; windBack drops them before replay.
+  // 214 adds device enrollment columns and the key table, which undoDeviceEnrollment drops.
   214,
+  // 215 persists the Lab choices; windBack drops them before replay.
+  215,
 ];
 
 let dir: string;
@@ -262,8 +264,29 @@ function undoKnowledge(db: Db): void {
  * exactly as the product creates them, so a row planted below is a row the
  * real code would have written.
  */
+/** Undo migration 214: the enrollment columns and their index. */
+function undoDeviceEnrollment(db: Db): void {
+  db.exec("DROP INDEX IF EXISTS idx_devices_enrollment_public_key");
+  const added: Record<string, string[]> = {
+    devices: ["enrollment_public_key", "enrollment_method", "enrollment_sign_in", "enrolled_at"],
+    device_pairings: ["enrollment_public_key", "enrollment_method", "enrollment_sign_in"],
+    tokens: ["rotated_from"],
+  };
+  for (const [table, columns] of Object.entries(added)) {
+    const present = new Set(
+      db
+        .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)
+        .all()
+        .map((row) => row.name),
+    );
+    for (const column of columns)
+      if (present.has(column)) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+  }
+}
+
 function windBack(db: Db): void {
   db.exec("DROP TABLE lab_features");
+  undoDeviceEnrollment(db);
   db.exec("ALTER TABLE agent_messages DROP COLUMN author_json");
   undoInterest(db);
   undoDecisionAnchors(db);

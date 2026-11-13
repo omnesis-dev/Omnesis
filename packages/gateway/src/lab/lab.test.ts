@@ -41,10 +41,10 @@ describe("Omnesis Lab opt-ins", () => {
   test.each([false, true])("upgrade recognizes task history: %s", (history) => {
     db.exec("CREATE TABLE open_loops (id TEXT); CREATE TABLE open_loop_ledger (id TEXT)");
     if (history) db.exec("INSERT INTO open_loop_ledger VALUES ('deleted-task-history')");
-    MIGRATIONS.find((m) => m.version === 214)!.up(db);
+    MIGRATIONS.find((m) => m.version === 215)!.up(db);
     expect(labOptIns(db).tasks).toBe(history);
     setLabFlag(db, "tasks", false);
-    MIGRATIONS.find((m) => m.version === 214)!.up(db);
+    MIGRATIONS.find((m) => m.version === 215)!.up(db);
     expect(labOptIns(db).tasks).toBe(false);
   });
   test("service updates exactly one flag and returns shared descriptions and artwork", async () => {

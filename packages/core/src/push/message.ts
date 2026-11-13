@@ -71,6 +71,9 @@ export const notificationMessageSchema = z.discriminatedUnion("kind", [
   // detail. A phone tap may only open the code-entry surface; authenticated
   // short-code lookup is the boundary that reveals the pending request.
   message("access-authorization", z.object({}).strict()),
+  message("device-pairing", z.object({}).strict()),
+  // The name is in the banner only: a tap opens Devices, and the row is found there.
+  message("device-joined", z.object({}).strict()),
 ]);
 
 export type NotificationMessage = z.infer<typeof notificationMessageSchema>;
@@ -119,6 +122,8 @@ export const notificationRouteSchema = z.discriminatedUnion("kind", [
     .object({ kind: z.literal("privacy-approval"), approvalId: z.string().min(1).max(256) })
     .strict(),
   z.object({ kind: z.literal("access-authorization") }).strict(),
+  z.object({ kind: z.literal("device-pairing") }).strict(),
+  z.object({ kind: z.literal("device-joined") }).strict(),
 ]);
 
 export type NotificationRoute = z.infer<typeof notificationRouteSchema>;
@@ -140,6 +145,8 @@ export const claimedNotificationSchema = z
       "source-permission",
       "privacy-approval",
       "access-authorization",
+      "device-pairing",
+      "device-joined",
     ]),
     targetId: z.string().min(1).max(512),
     /** Device that owns the condition, when a reminder may be claimed elsewhere. */
@@ -176,6 +183,10 @@ export function notificationTargetId(message: NotificationMessage): string {
       return message.data.approvalId;
     case "access-authorization":
       return "access";
+    case "device-pairing":
+      return "pairing";
+    case "device-joined":
+      return "devices";
     default:
       return assertNever(message);
   }
@@ -218,6 +229,8 @@ export function notificationRoute(message: NotificationMessage): NotificationRou
     case "privacy-approval":
       return { kind: message.kind, approvalId: message.data.approvalId };
     case "access-authorization":
+    case "device-pairing":
+    case "device-joined":
       return { kind: message.kind };
     default:
       return assertNever(message);

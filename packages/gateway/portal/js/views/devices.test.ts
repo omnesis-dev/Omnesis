@@ -1220,6 +1220,76 @@ describe("browser extension pairing", () => {
       expect(raw()).not.toContain("Manual entry");
     });
 
+    const omnesisAddress = {
+      gatewayUrl: "https://g-fictional1.relay.example.test",
+      host: "g-fictional1.relay.example.test",
+      label: "Omnesis address",
+      kind: "relay",
+      usable: true,
+      reach: "anywhere",
+      systemTrust: false,
+      summary: "Works from anywhere. Needs remote access to stay on.",
+    };
+
+    test("offers the gateway's Omnesis address, recommended when nothing else reaches beyond home", async () => {
+      await renderPhone("ios", {
+        platform: "ios",
+        addresses: [omnesisAddress, local],
+        recommendedUrl: omnesisAddress.gatewayUrl,
+        awayFromHome: null,
+      });
+      expect(apiMocks.buildPairQrPayload).toHaveBeenLastCalledWith({
+        pairingCode: "FICTION-2486",
+        gatewayUrl: omnesisAddress.gatewayUrl,
+      });
+      expect(host.querySelector(".devices-phone-reach")?.getAttribute("data-reach")).toBe("anywhere");
+      expect(host.querySelector(".devices-phone-reach-summary")?.textContent).toBe(
+        "Works from anywhere. Needs remote access to stay on.",
+      );
+      expect(
+        host.querySelector(".devices-phone-reach-address")?.textContent?.replace(/\s+/g, " ").trim(),
+      ).toBe("Omnesis address · g-fictional1.relay.example.test");
+      expect(host.querySelector(".devices-phone-away")).toBeNull();
+      const names = [...host.querySelectorAll(".devices-phone-choice-name")].map((n) =>
+        n.textContent?.replace(/\s+/g, " ").trim(),
+      );
+      expect(names).toEqual([
+        "Omnesis address · g-fictional1.relay.example.test (recommended)",
+        "Local network · 192.0.2.42",
+      ]);
+      // Its QR code pins the gateway's key, so the address is never offered for typing by hand.
+      expect(host.querySelector(".devices-phone-qr-raw")?.textContent).not.toContain("Manual entry");
+    });
+
+    test("lists the Omnesis address after a Tailscale name, which stays recommended", async () => {
+      await renderPhone("ios", {
+        platform: "ios",
+        addresses: [trustedName, omnesisAddress, local],
+        recommendedUrl: trustedName.gatewayUrl,
+        awayFromHome: null,
+      });
+      expect(apiMocks.buildPairQrPayload).toHaveBeenLastCalledWith({
+        pairingCode: "FICTION-2486",
+        gatewayUrl: trustedName.gatewayUrl,
+      });
+      const choices = [...host.querySelectorAll(".devices-phone-choice")].map((n) =>
+        n.textContent?.replace(/\s+/g, " ").trim(),
+      );
+      expect(choices[0]).toContain("Tailscale name · gateway.tail-example.ts.net (recommended)");
+      expect(choices[1]).toBe(
+        "Omnesis address · g-fictional1.relay.example.testWorks from anywhere. Needs remote access to stay on.",
+      );
+      await act(async () => {
+        const radio = host.querySelectorAll(".devices-phone-choice input")[1] as HTMLInputElement;
+        radio.dispatchEvent(new window.Event("change", { bubbles: true }));
+      });
+      await settle();
+      expect(apiMocks.buildPairQrPayload).toHaveBeenLastCalledWith({
+        pairingCode: "FICTION-2486",
+        gatewayUrl: omnesisAddress.gatewayUrl,
+      });
+    });
+
     test("marks the recommended address among the choices", async () => {
       await renderPhone("ios", {
         platform: "ios",

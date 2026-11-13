@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { Hono } from "hono";
 import { DeviceId, Scope, TokenId, type DeviceRecord } from "@omnesis/types";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { ClientAssertionVerifier } from "../../access/client-assertion.js";
 import { AccessService } from "../../access/service.js";
@@ -47,6 +47,8 @@ const DIRECT_AND_ANSWER_RULES = [...DIRECT_RULES, ...ANSWER_RULES];
 
 let db: Db;
 let app: Hono<AppEnv>;
+
+afterEach(() => vi.unstubAllEnvs());
 
 beforeEach(() => {
   db = new Database(":memory:") as unknown as Db;
@@ -1923,6 +1925,7 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
   }
 
   let jwksFetches: number;
+  let assertionConfiguration: Parameters<typeof createTestApp>[0];
 
   beforeEach(() => {
     jwksFetches = 0;
@@ -1962,7 +1965,8 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
         };
       },
     });
-    app = createTestApp({ clientMetadataResolver: { resolve }, clientAssertionVerifier });
+    assertionConfiguration = { clientMetadataResolver: { resolve }, clientAssertionVerifier };
+    app = createTestApp(assertionConfiguration);
   });
 
   async function authorizationCode(state: string): Promise<string> {
@@ -2135,6 +2139,62 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
     expect(jwksFetches).toBe(0);
   });
 
+  test("existing private-key clients keep their direct issuer audience when independent relay OAuth is enabled", async () => {
+    const relay = "https://opaque-relay.example.net";
+    const code = await authorizationCode("before-relay");
+    const original = await post("/oauth/token", {
+      ...codeExchange(code),
+      client_id: CLIENT_ID,
+      ...assertionFields(),
+    });
+    expect(original.status).toBe(200);
+    const tokens = (await original.json()) as { refresh_token: string };
+    app = createTestApp({ ...assertionConfiguration, additionalOAuthIssuerUrls: [relay] });
+    const direct = await post("/oauth/token", {
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token,
+      client_id: CLIENT_ID,
+      ...assertionFields(),
+    });
+    expect(direct.status).toBe(200);
+    const renewed = (await direct.json()) as { refresh_token: string };
+    const relayPost = (assertion: string) =>
+      app.request(`${relay}/oauth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: renewed.refresh_token,
+          client_id: CLIENT_ID,
+          ...assertionFields(assertion),
+        }),
+      });
+    expect((await relayPost(signedAssertion())).status).toBe(401);
+    const wrongResource = await relayPost(signedAssertion({ aud: `${relay}/oauth/token` }));
+    expect(wrongResource.status).toBe(400);
+    expect(await wrongResource.json()).toMatchObject({ error: "invalid_target" });
+    expect(
+      (
+        await post("/oauth/token", {
+          grant_type: "refresh_token",
+          refresh_token: renewed.refresh_token,
+          client_id: CLIENT_ID,
+          ...assertionFields(),
+        })
+      ).status,
+    ).toBe(200);
+    const fresh = await authorizationCode("direct-with-relay-enabled");
+    expect(
+      (
+        await post("/oauth/token", {
+          ...codeExchange(fresh),
+          client_id: CLIENT_ID,
+          ...assertionFields(),
+        })
+      ).status,
+    ).toBe(200);
+  });
+
   test("dynamic registration still refuses private_key_jwt", async () => {
     const response = await app.request(`${ORIGIN}/oauth/register`, {
       method: "POST",
@@ -2148,4 +2208,207 @@ describe("a metadata-document client authenticating with private_key_jwt", () =>
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: "invalid_client_metadata" });
   });
+});
+
+test("a completion follows the stored resource only with the cloud relay opt-in", async () => {
+  const local = "http://127.0.0.1:17600";
+  const client = await registerClient();
+  app = createTestApp({ publicBaseUrl: undefined });
+  const access = new AccessService(db, directWriteGate(db));
+  // One approved loopback request, completed from another host with no public base URL.
+  async function approved(index: number): Promise<{ handle: string; approvalId: string }> {
+    const authorize = new URL(`${local}/oauth/authorize`);
+    authorize.search = new URLSearchParams({
+      response_type: "code",
+      client_id: client.client_id,
+      redirect_uri: REDIRECT,
+      state: `stored-resource-${index}`,
+      code_challenge: createHash("sha256").update(VERIFIER).digest("base64url"),
+      code_challenge_method: "S256",
+      resource: `${local}/mcp`,
+      scope: "omnesis:access",
+    }).toString();
+    const started = await app.request(authorize);
+    expect(started.status).toBe(303);
+    const handle = new URL(started.headers.get("location")!, local).searchParams.get("request")!;
+    const lookup = await portalJson("/portal/api/access/authorizations/lookup", {
+      code: access.getAuthorizationByBrowserHandle(handle)!.userCode,
+    });
+    const approvalId = (lookup.body as { request: { approvalId: string } }).request.approvalId;
+    const decision = await portalJson(`/portal/api/access/authorizations/${approvalId}/decision`, {
+      decision: "approve",
+      selection: {
+        kind: "new-principal",
+        principalName: `Stored resource ${index}`,
+        grantName: "Selected direct access",
+        rules: DIRECT_RULES,
+        credentialLabel: "Synthetic local MCP",
+        expiresAt: null,
+      },
+    });
+    expect(decision.response.status).toBe(200);
+    return { handle, approvalId };
+  }
+  const complete = (handle: string) =>
+    app.request(
+      `https://unconfigured.example.org/oauth/authorize/complete?request=${encodeURIComponent(handle)}`,
+    );
+  try {
+    // Without the opt-in the completing request's own origin decides, as it always has.
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+    expect((await complete((await approved(0)).handle)).status).toBe(503);
+    const viaPortal = await portalJson(
+      `/portal/api/access/authorizations/${(await approved(1)).approvalId}/complete`,
+      {},
+    );
+    expect(viaPortal.response.status).toBe(503);
+    expect(viaPortal.body).toEqual({ error: "oauth-not-configured" });
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    const followed = await complete((await approved(2)).handle);
+    expect(followed.status).toBe(303);
+    expect(new URL(followed.headers.get("location")!).searchParams.get("iss")).toBe(local);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test("direct and relay issuers authorize and refresh independently, with issuer-bound resources and Host-independent completion", async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  const relay = "https://opaque-relay.example.net";
+  app = createTestApp({ additionalOAuthIssuerUrls: [relay] });
+  const access = new AccessService(db, directWriteGate(db));
+  const client = await registerClient();
+  for (const [index, origin] of [ORIGIN, relay].entries()) {
+    const other = origin === ORIGIN ? relay : ORIGIN;
+    const metadata = await app.request(`${origin}/.well-known/oauth-authorization-server`);
+    expect(await metadata.json()).toMatchObject({
+      issuer: origin,
+      token_endpoint: `${origin}/oauth/token`,
+    });
+    const protectedMetadata = await app.request(
+      `${origin}/.well-known/oauth-protected-resource/mcp`,
+    );
+    expect(await protectedMetadata.json()).toMatchObject({
+      resource: `${origin}/mcp`,
+      authorization_servers: [origin],
+    });
+    const authorize = new URL(`${origin}/oauth/authorize`);
+    authorize.search = new URLSearchParams({
+      response_type: "code",
+      client_id: client.client_id,
+      redirect_uri: REDIRECT,
+      state: `mixed-${index}`,
+      code_challenge: createHash("sha256").update(VERIFIER).digest("base64url"),
+      code_challenge_method: "S256",
+      resource: `${origin}/mcp`,
+      scope: "omnesis:access",
+    }).toString();
+    const countBefore = db.prepare("SELECT count(*) AS n FROM oauth_authorization_requests").get();
+    const cross = new URL(authorize);
+    cross.searchParams.set("resource", `${other}/mcp`);
+    const refused = await app.request(cross);
+    expect(new URL(refused.headers.get("location")!).searchParams.get("error")).toBe(
+      "invalid_target",
+    );
+    expect(db.prepare("SELECT count(*) AS n FROM oauth_authorization_requests").get()).toEqual(
+      countBefore,
+    );
+    const started = await app.request(authorize);
+    expect(started.status).toBe(303);
+    const handle = new URL(started.headers.get("location")!, origin).searchParams.get("request")!;
+    const pending = access.getAuthorizationByBrowserHandle(handle)!;
+    const lookup = await portalJson("/portal/api/access/authorizations/lookup", {
+      code: pending.userCode,
+    });
+    const approvalId = (lookup.body as { request: { approvalId: string } }).request.approvalId;
+    expect(
+      (
+        await portalJson(`/portal/api/access/authorizations/${approvalId}/decision`, {
+          decision: "approve",
+          selection: {
+            kind: "new-principal",
+            principalName: `Mixed issuer ${index}`,
+            grantName: "Selected direct access",
+            rules: DIRECT_RULES,
+            credentialLabel: "Synthetic mixed MCP",
+            expiresAt: null,
+          },
+        })
+      ).response.status,
+    ).toBe(200);
+    const callback =
+      index === 0
+        ? new URL(
+            (
+              await app.request(
+                `https://unconfigured.example.org/oauth/authorize/complete?request=${encodeURIComponent(handle)}`,
+              )
+            ).headers.get("location")!,
+          )
+        : new URL(
+            (await portalJson(`/portal/api/access/authorizations/${approvalId}/complete`, {})).body
+              .redirectTo as string,
+          );
+    expect(callback.origin + callback.pathname).toBe(REDIRECT);
+    expect(callback.searchParams.get("iss")).toBe(origin);
+    const fields = {
+      grant_type: "authorization_code",
+      code: callback.searchParams.get("code")!,
+      client_id: client.client_id,
+      redirect_uri: REDIRECT,
+      code_verifier: VERIFIER,
+      resource: `${origin}/mcp`,
+    };
+    const post = (target: string, body: Record<string, string>) =>
+      app.request(`${target}/oauth/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(body),
+      });
+    const crossToken = await post(other, fields);
+    expect(crossToken.status).toBe(400);
+    expect(await crossToken.json()).toMatchObject({ error: "invalid_target" });
+    const tokens = (await (await post(origin, fields)).json()) as {
+      access_token: string;
+      refresh_token: string;
+    };
+    expect(tokens.access_token).toMatch(/^omn_oat_/);
+    expect(access.lookupAccessToken(tokens.access_token, `${other}/mcp`)).toBeNull();
+    const refresh = {
+      grant_type: "refresh_token",
+      client_id: client.client_id,
+      refresh_token: tokens.refresh_token,
+    };
+    expect((await post(other, refresh)).status).toBe(400);
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("relay offline"));
+    try {
+      expect((await post(origin, refresh)).status).toBe(200);
+      expect(network).not.toHaveBeenCalled();
+    } finally {
+      network.mockRestore();
+    }
+  }
+  expect(
+    (await app.request("https://unconfigured.example.org/.well-known/oauth-protected-resource/mcp"))
+      .status,
+  ).toBe(404);
+});
+
+test("management-configured cloud issuer becomes available without restarting the direct OAuth service", async () => {
+  let issuers: readonly string[] = [];
+  app = createTestApp({ additionalOAuthIssuerUrls: () => issuers });
+  const cloud = "https://configured-cloud.example.test";
+  const before = await app.request(`${cloud}/.well-known/oauth-authorization-server`);
+  expect((await before.json()).issuer).toBe("https://gateway.example.org");
+  issuers = [cloud];
+  const after = await app.request(`${cloud}/.well-known/oauth-authorization-server`);
+  expect((await after.json()).issuer).toBe(cloud);
+  const direct = await app.request(
+    "https://gateway.example.org/.well-known/oauth-authorization-server",
+  );
+  expect((await direct.json()).issuer).toBe("https://gateway.example.org");
+  const attacker = await app.request(
+    "https://unconfigured.example.test/.well-known/oauth-authorization-server",
+  );
+  expect((await attacker.json()).issuer).toBe("https://gateway.example.org");
 });

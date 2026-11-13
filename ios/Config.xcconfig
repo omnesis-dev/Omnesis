@@ -5,4 +5,15 @@
 // optional include (#include?) is a no-op when the file is missing, so CI
 // and other developers don't fail on a missing Local.xcconfig.
 OMNESIS_BUNDLE_ID = dev.omnesis.ios
+// Optional Google pairing; configure public identifiers in Local.xcconfig.
+OMNESIS_GOOGLE_CLIENT_ID =
+OMNESIS_CLOUD_RELAY_URL =
+OMNESIS_GOOGLE_CALLBACK_SCHEME = com.omnesis.google-unconfigured
+// Independent opt-in for Google enrollment and cloud connectivity.
+OMNESIS_CLOUD_RELAY_ENABLED = 0
+// Native passkeys require an associated-domain-enabled signing profile and entitlements file.
+OMNESIS_CLOUD_RELAY_PASSKEYS_ENABLED = 0
+OMNESIS_CLOUD_RELAY_RP_ID = relay.omnesis.app
+// Debug builds only: let a test gateway with a private certificate join without the first-contact check.
+OMNESIS_CLOUD_RELAY_SKIP_PUBLIC_CERTIFICATE_CHECK = 0
 #include? "Local.xcconfig"

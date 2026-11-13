@@ -718,6 +718,41 @@ class AdminClientTest {
     }
 
     @Test
+    fun pair_addresses_posts_the_code_and_decodes_the_gateways_plan() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"platform":"ios","recommendedUrl":"https://gateway.tail1234.ts.net:7600","awayFromHome":null,"addresses":[
+                  {"gatewayUrl":"https://gateway.tail1234.ts.net:7600","host":"gateway.tail1234.ts.net","label":"Tailscale name","usable":true,"reach":"tailnet","systemTrust":true,"summary":"Works at home and away, as long as Tailscale is connected on the phone."},
+                  {"gatewayUrl":"https://g-7f3a91.relay.example.com","host":"g-7f3a91.relay.example.com","label":"Omnesis address","kind":"relay","usable":true,"reach":"anywhere","systemTrust":false,"summary":"Works from anywhere. Needs remote access to stay on.","futureField":1},
+                  {"gatewayUrl":"https://100.64.0.7:7600","host":"100.64.0.7","label":"Tailscale IP","usable":false,"reason":"iPhones can't use the gateway's Tailscale IP address."}]}""",
+            ),
+        )
+        server.enqueue(MockResponse().setBody("""{"platform":"android","addresses":[],"recommendedUrl":null,"awayFromHome":{"onTailnet":true,"tailscaleName":null}}"""))
+        val plan = client().pairAddresses("7K3M-9QX2")
+        val req = server.takeRequest()
+        assertEquals("POST", req.method)
+        assertEquals("/admin/devices/pair-addresses", req.path)
+        assertEquals("""{"pairingCode":"7K3M-9QX2"}""", req.body.readUtf8())
+        assertEquals("ios", plan.platform)
+        assertEquals(listOf("Tailscale name", "Omnesis address"), plan.usable.map { it.label })
+        assertEquals("relay", plan.usable[1].kind)
+        assertEquals(null, plan.usable[0].kind)
+        assertTrue(plan.usable[0].systemTrust)
+        assertEquals(false, plan.usable[1].systemTrust)
+        assertEquals("Works from anywhere. Needs remote access to stay on.", plan.usable[1].summary)
+        assertEquals("iPhones can't use the gateway's Tailscale IP address.", plan.refused.single().reason)
+        assertEquals(null, plan.awayFromHome)
+        // The recommendation is what opens selected; a refused or unknown address never is.
+        assertEquals("gateway.tail1234.ts.net", plan.selected(plan.recommendedUrl)?.host)
+        assertEquals(null, plan.selected("https://100.64.0.7:7600"))
+        assertEquals(null, plan.selected(null))
+        val none = client().pairAddresses("7K3M-9QX2")
+        assertEquals(null, none.selected(none.recommendedUrl))
+        assertEquals(true, none.awayFromHome?.onTailnet)
+        assertEquals(null, none.awayFromHome?.tailscaleName)
+    }
+
+    @Test
     fun network_identities_decodes_page() = runTest {
         server.enqueue(
             MockResponse().setBody(
