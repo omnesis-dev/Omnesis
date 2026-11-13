@@ -212,7 +212,7 @@ final class AccessDecisionsTests: XCTestCase {
         "scopeSources":{"mode":"allowlist","sourceIds":["scope-files:reader@example.org","scope-mail:reader@example.org"]},
         "release":{"mode":"unreviewed"},"filterRevision":3,
         "scopePolicies":[{"sourceId":"scope-files:reader@example.org","audience":{"accessLevel":"level-example","capability":"answer"},
-        "rules":[{"match":[{"kind":"folder","id":"projects"}],"action":"share"}],"otherwise":"hide"}]}
+        "rules":[{"match":[{"capability":"tree","field":"extra.folderIds","id":"projects"}],"action":"share"}],"otherwise":"hide"}]}
         """
         let rule = try JSONDecoder().decode(AccessGrantRule.self, from: Data(filtered.utf8))
         XCTAssertEqual(rule.boundary.sourceIds, ["scope-files:reader@example.org", "scope-mail:reader@example.org"])

@@ -287,7 +287,7 @@ final class AccessScopePolicyTests: XCTestCase {
     func testMissingPrivacyPolicyNeverDefaultsToUnreviewedRelease() {
         var draft = AccessLevelDraft(level: nil, overview: overview)
         var decisions = AccessDraftDecisions(draft: draft, overview: overview, original: draft)
-        XCTAssertEqual(decisions.problem(.release), "Choose an available policy before saving.")
+        XCTAssertEqual(decisions.problem(.release), accessReleaseProblem)
         XCTAssertEqual(decisions.release, .reviewed(policyFamilyId: ""))
         guard let answer = draft.rule("answer") else { return XCTFail("Answer starts enabled") }
         draft.setRule(answer.replacing(release: .unreviewed))
