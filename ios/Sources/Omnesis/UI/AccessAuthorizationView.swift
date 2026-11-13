@@ -32,7 +32,7 @@ struct AccessAuthorizationSheet: View {
     @State private var deciding = false
     @State private var generation = 0
     @State private var filter: AccessFilterRoute?
-    @State private var scopeLabels: [String: [ScopePreview.Item]] = [:]
+    @State private var scopeLabels: [String: [ScopeItemHint]] = [:]
     /// The screen the wizard is on: `.name` is the Connection step, the rest are the level editor's.
     @State private var step = AccessFlowStep.permissions
     @State private var policyText: AccessPolicyTextRoute?

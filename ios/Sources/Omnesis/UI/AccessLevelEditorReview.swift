@@ -119,8 +119,7 @@ extension AccessLevelEditorView {
                 let hint = scopeLabelHint(for: delta.ref, in: labelHints(capability, source.id))
                 AccessFilterItemRow(
                     ref: delta.ref,
-                    named: hint,
-                    scopes: source.scopes,
+                    hint: hint,
                     count: hint?.missing == true ? nil : hint?.count,
                     change: delta.change,
                     last: index == deltas.count - 1

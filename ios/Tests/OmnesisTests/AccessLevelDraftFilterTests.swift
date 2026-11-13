@@ -9,7 +9,7 @@ final class AccessLevelDraftFilterTests: XCTestCase {
         sourceId: "scope-chat:one",
         audience: .init(accessLevel: "level-example", capability: "answer"),
         rules: [.init(
-            match: [.init(kind: "participant", label: "Maya Reeves", identifiers: [.init(type: "email", value: "maya@example.org")])],
+            match: [.person(label: "Maya Reeves", identifiers: [.init(type: "email", value: "maya@example.org")])],
             action: "share"
         )],
         otherwise: "hide"
@@ -110,11 +110,7 @@ final class AccessLevelDraftFilterTests: XCTestCase {
             mode: mode,
             policy: value,
             sourceId: value.sourceId,
-            authoringEnabled: true,
-            preview: nil,
-            previewedPolicy: nil,
-            loading: true,
-            hasError: true
+            authoringEnabled: true
         ).decision
     }
 
@@ -126,7 +122,12 @@ final class AccessLevelDraftFilterTests: XCTestCase {
         var nothingShared = ScopeFilterMode.only.applying(to: policy)
         nothingShared.rules[0].match = []
         XCTAssertEqual(decision(.only, nothingShared), .blocked)
-        XCTAssertEqual(decision(.except, ScopeFilterMode.except.applying(to: policy)), .blocked)
+        // Counts never hold a filter back: one that names something applies before any count has arrived.
+        let hiding = ScopeFilterMode.except.applying(to: policy)
+        XCTAssertEqual(decision(.except, hiding), .apply(hiding))
+        var tooLong = hiding
+        tooLong.rules[0].match = (0 ... scopeFilterMaxEntries).map { .membership(field: "extra.chatJid", id: "chat-\($0)") }
+        XCTAssertEqual(decision(.except, tooLong), .blocked)
     }
 
     func testRefusedSavesAreClassifiedForTheStateTheEditorShows() {

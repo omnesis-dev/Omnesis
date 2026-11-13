@@ -33,6 +33,8 @@ struct DocumentInspectorSheet: View {
     let onLoadMoreOutbound: () -> Void
     let onLoadMoreInbound: () -> Void
     let onLoadMoreNearDupes: () -> Void
+    /// What a filter can see on the document, for a preview that has no gateway to load it from.
+    let previewFilterDetails: DocumentFilterDetails?
 
     enum Tab: Hashable { case metadata, graph, timeline }
     @State private var tab: Tab
@@ -50,7 +52,8 @@ struct DocumentInspectorSheet: View {
         onLoadMoreOutbound: @escaping () -> Void = {},
         onLoadMoreInbound: @escaping () -> Void = {},
         onLoadMoreNearDupes: @escaping () -> Void = {},
-        initialTab: Tab = .metadata
+        initialTab: Tab = .metadata,
+        previewFilterDetails: DocumentFilterDetails? = nil
     ) {
         self.doc = doc
         self.people = people
@@ -64,6 +67,7 @@ struct DocumentInspectorSheet: View {
         self.onLoadMoreOutbound = onLoadMoreOutbound
         self.onLoadMoreInbound = onLoadMoreInbound
         self.onLoadMoreNearDupes = onLoadMoreNearDupes
+        self.previewFilterDetails = previewFilterDetails
         self._tab = State(initialValue: initialTab)
     }
 
@@ -91,7 +95,7 @@ struct DocumentInspectorSheet: View {
                         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
                             switch tab {
                             case .metadata:
-                                MetadataPane(doc: doc)
+                                MetadataPane(doc: doc, previewFilterDetails: previewFilterDetails)
                             case .graph:
                                 GraphPane(
                                     doc: doc,
@@ -261,8 +265,10 @@ private struct TimelinePane: View {
 @available(iOS 17.0, *)
 private struct MetadataPane: View {
     let doc: DocumentDetail
+    let previewFilterDetails: DocumentFilterDetails?
 
     var body: some View {
+        DocumentAccessSection(documentId: doc.id, previewDetails: previewFilterDetails)
         coreFields
         if !tags.isEmpty {
             tagsCard
@@ -340,17 +346,7 @@ private struct MetadataPane: View {
     // MARK: helpers
 
     private func kv(_ key: String, value: String, mono: Bool = false) -> some View {
-        HStack(alignment: .top) {
-            Text(key)
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.textSecondary)
-            Spacer(minLength: 12)
-            Text(value)
-                .font(mono ? Theme.monospace(size: 11) : .system(size: 12))
-                .foregroundStyle(Theme.textPrimary)
-                .multilineTextAlignment(.trailing)
-                .textSelection(.enabled)
-        }
+        InspectorKeyValue(key: key, value: value, mono: mono)
     }
 
     /// Tags pulled from `metadata.tags` (string array on the wire).

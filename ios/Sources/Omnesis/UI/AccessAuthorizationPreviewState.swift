@@ -32,6 +32,8 @@ enum AccessAuthorizationPreviewMode {
     case requestedPermissions
     case requestedSources
     case requestedReview
+    /// The canonical request approved onto the existing "Research assistant" level, at the review.
+    case requestedExistingReview
     case notesOnly
     case conflict
     case success
@@ -66,7 +68,8 @@ struct AccessAuthorizationPreviewState {
     private static func proposal(for mode: AccessAuthorizationPreviewMode) -> AccessConnectionProposal? {
         switch mode {
         case .oldGateway: nil
-        case .requestedConnection, .requestedPermissions, .requestedSources, .requestedReview: PreviewMocks.accessCanonicalProposal
+        case .requestedConnection, .requestedPermissions, .requestedSources, .requestedReview, .requestedExistingReview:
+            PreviewMocks.accessCanonicalProposal
         case .connectionExistingLevel, .existingLevelReview: PreviewMocks.accessProposalLevelMatch
         case .connectionReplaceSuggested, .connectionReplaceOtherPicked, .replaceReview:
             PreviewMocks.accessProposalDeviceMatch
@@ -89,6 +92,9 @@ struct AccessAuthorizationPreviewState {
             // suggestion stays on its own row.
             choice?.connectionId = "principal-northstar"
         case .existingLevelReview, .replaceReview, .longNamesReview:
+            step = .review
+        case .requestedExistingReview:
+            choice?.levelId = PreviewMocks.accessCanonicalLevelId
             step = .review
         case .existingLevelAloneReview:
             // A level no connection uses yet, so nobody else shares it.

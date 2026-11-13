@@ -3,99 +3,129 @@
 
 import Foundation
 
-func scopeLabelHint(for ref: ScopeRef, in hints: [ScopePreview.Item]) -> ScopePreview.Item? {
+/// What the screens have learnt about one item a filter names: its full name, how many records it matches, the
+/// source's word for its kind, and whether the account's list still holds it. Saved filters hold ids only, so
+/// every list of a filter's items names them from these.
+struct ScopeItemHint: Equatable {
+    var ref: ScopeRef
+    var label: String
+    var count: Int?
+    /// "chat", "label", "owner", "device": what the source calls the item.
+    var noun: String?
+    var missing = false
+}
+
+func scopeLabelHint(for ref: ScopeRef, in hints: [ScopeItemHint]) -> ScopeItemHint? {
     hints.first { scopeRefIdentityMatches($0.ref, ref) }
 }
 
-func mergingScopeLabelHints(
-    _ existing: [ScopePreview.Item],
-    _ incoming: [ScopePreview.Item],
-    preserveMissing: Bool = false
-)
-    -> [ScopePreview.Item] {
-    var result: [ScopePreview.Item] = []
+/// `incoming` over `existing`, item by item. A newer hint that only knows an item is gone keeps the name an
+/// earlier one gave it, and a newer hint without a word for the item's kind keeps the earlier word.
+func mergingScopeLabelHints(_ existing: [ScopeItemHint], _ incoming: [ScopeItemHint], preserveMissing: Bool = false)
+    -> [ScopeItemHint] {
+    var result: [ScopeItemHint] = []
     var indices: [ScopePickerItemIdentity: Int] = [:]
     for item in existing + incoming {
         let key = ScopePickerItemIdentity(item.ref)
-        if let index = indices[key] {
-            var value = item
-            if preserveMissing, result[index].missing == true { value.missing = true }
-            if value.depth == nil { value.depth = result[index].depth }
-            if item.missing == true, !result[index].label.isEmpty, result[index].label != item.ref.id {
-                value.label = result[index].label
-            }
-            result[index] = value
-        } else {
+        guard let index = indices[key] else {
             indices[key] = result.count
             result.append(item)
+            continue
         }
+        var value = item
+        let earlier = result[index]
+        if preserveMissing, earlier.missing { value.missing = true }
+        if value.noun == nil { value.noun = earlier.noun }
+        if item.missing, !earlier.label.isEmpty, earlier.label != item.ref.id { value.label = earlier.label }
+        result[index] = value
     }
     return result
 }
 
-/// What a source calls an item `depth` levels down a kind's tree. A source that names its levels has a word for each,
-/// the last standing for every deeper level; nil for any other source and for an item whose depth is not known.
-func scopeLevelNoun(_ declaration: SourceScopes.Item?, depth: Int?) -> SourceScopeNoun? {
-    guard let levels = declaration?.levels, !levels.isEmpty, let depth, depth >= 0 else { return nil }
+/// What a tree calls an item `depth` levels down: a word per level, the last standing for every deeper level.
+func scopeLevelNoun(_ field: FilterEditorField?, depth: Int?) -> FilterNoun? {
+    guard let levels = field?.levels, !levels.isEmpty, let depth, depth >= 0 else { return nil }
     return levels[min(depth, levels.count - 1)]
 }
 
-/// What choosing an item `depth` levels down a tree also takes in, in the source's words; nil when nothing lies beneath it.
-func scopeNestingHint(_ declaration: SourceScopes.Item?, depth: Int?) -> String? {
-    guard let levels = declaration?.levels, !levels.isEmpty else {
-        return "Includes the \(declaration?.noun?.many ?? "folders") inside."
+/// The source's word for the item an entry names, from the editor's fields: "device" for a whole device, a tree's
+/// word for the item's level when it names its levels, and the field's word otherwise.
+func scopeFieldNoun(_ ref: ScopeRef, fields: [FilterEditorField], depth: Int? = nil) -> String? {
+    if ref.isDevice { return "device" }
+    let field = fields.first { $0.field == ref.editorField }
+    return scopeLevelNoun(field, depth: depth)?.one ?? field?.noun.one ?? (ref.isPerson ? "person" : nil)
+}
+
+/// The names a filter's counts give its items.
+func scopeItemHints(_ preview: ScopePreview, fields: [FilterEditorField]) -> [ScopeItemHint] {
+    preview.items.map {
+        ScopeItemHint(
+            ref: $0.ref, label: $0.label, count: $0.count, noun: scopeFieldNoun($0.ref, fields: fields), missing: $0.missing == true
+        )
     }
-    guard let depth, depth >= 0, depth + 1 < levels.count else { return nil }
-    return "Selecting \(levels[depth].many) includes their \(levels[depth + 1].many)."
 }
 
-/// What a saved item is called when nothing names it: the source's own word for its kind, or for its level of a tree.
-func scopeSavedItemNoun(_ ref: ScopeRef, scopes: SourceScopes?, depth: Int? = nil) -> String {
-    let declaration = scopes?.items.first { $0.kind == ref.kind }
-    return scopeLevelNoun(declaration, depth: depth)?.one ?? declaration?.noun?.one
-        ?? (ref.kind == "participant" ? "person" : ref.kind)
+/// The names a page of a field's items gives them, in their full form.
+func scopeItemHints(_ options: ScopeOptions, fields: [FilterEditorField]) -> [ScopeItemHint] {
+    options.items.map {
+        ScopeItemHint(ref: $0.ref, label: $0.label, count: $0.count, noun: scopeFieldNoun($0.ref, fields: fields, depth: $0.depth))
+    }
 }
 
-/// The name of the kind of item a filter selects, as a short caption: Label, Folder, Conversation, Person.
-func accessScopeKindName(_ ref: ScopeRef, scopes: SourceScopes?, depth: Int? = nil) -> String {
-    let noun = scopeSavedItemNoun(ref, scopes: scopes, depth: depth)
+/// What an item is called when nothing names it: the source's word for its kind, from what named the item or from
+/// the editor's fields (`noun`).
+func scopeSavedItemNoun(_ ref: ScopeRef, hint: ScopeItemHint?, noun: String? = nil) -> String {
+    hint?.noun ?? noun ?? (ref.isPerson ? "person" : ref.isDevice ? "device" : "item")
+}
+
+/// The kind of item an entry names, as a short caption: Label, Folder, Chat, Person.
+func accessScopeKindName(_ ref: ScopeRef, hint: ScopeItemHint?, noun: String? = nil) -> String {
+    let noun = scopeSavedItemNoun(ref, hint: hint, noun: noun)
     return noun.prefix(1).uppercased() + noun.dropFirst()
 }
 
 /// Whether nothing names a saved item: it was saved by id alone, and no list or count has named it since.
 /// An account that is no longer connected leaves every such item this way; a person keeps the saved name.
-func scopeNameUnavailable(_ ref: ScopeRef, previewItem: ScopePreview.Item?) -> Bool {
+func scopeNameUnavailable(_ ref: ScopeRef, hint: ScopeItemHint?) -> Bool {
     guard ref.label == nil, ref.identifiers?.isEmpty != false else { return false }
-    guard let previewItem else { return true }
-    return previewItem.missing == true && (previewItem.label.isEmpty || previewItem.label == ref.id)
+    guard let hint else { return true }
+    return hint.missing && (hint.label.isEmpty || hint.label == ref.id)
 }
 
 /// The line under an item whose name cannot be loaded.
 let scopeNameUnavailableNote = "Name unavailable"
 
-func scopeDisplayLabel(_ ref: ScopeRef, previewItem: ScopePreview.Item?, scopes: SourceScopes? = nil) -> String {
+func scopeDisplayLabel(_ ref: ScopeRef, hint: ScopeItemHint?) -> String {
     let saved = ref.label ?? ref.identifiers?.map(\.value).joined(separator: ", ")
-        ?? "Saved \(scopeSavedItemNoun(ref, scopes: scopes)) selection"
-    guard let previewItem else { return saved }
-    if previewItem.missing == true {
-        if scopeNameUnavailable(ref, previewItem: previewItem) { return saved }
-        let known = previewItem.label.isEmpty || previewItem.label == ref.id ? saved : previewItem.label
+        ?? "Saved \(scopeSavedItemNoun(ref, hint: hint)) selection"
+    guard let hint else { return saved }
+    if hint.missing {
+        if scopeNameUnavailable(ref, hint: hint) { return saved }
+        let known = hint.label.isEmpty || hint.label == ref.id ? saved : hint.label
         return known + " (unavailable)"
     }
-    return previewItem.label
+    return hint.label
 }
 
-func scopeCatalogueLabelHints(_ session: ScopePickerSession, sourceId: String) -> [ScopePreview.Item] {
+func scopeCatalogueLabelHints(_ session: ScopePickerSession, sourceId: String, fields: [FilterEditorField]) -> [ScopeItemHint] {
     let current = session.location(for: sourceId)
     let keys = session.catalogues.keys.filter { $0.sourceId == sourceId && $0 != current }.sorted {
-        ($0.kind, $0.query, $0.parentId ?? "", $0.trail.joined(separator: "/")) <
-            ($1.kind, $1.query, $1.parentId ?? "", $1.trail.joined(separator: "/"))
+        ($0.field, $0.query, $0.device ?? "", $0.parentId ?? "", $0.trail.joined(separator: "/")) <
+            ($1.field, $1.query, $1.device ?? "", $1.parentId ?? "", $1.trail.joined(separator: "/"))
     } + [current]
-    return keys.reduce(into: [ScopePreview.Item]()) { hints, key in
+    return keys.reduce(into: [ScopeItemHint]()) { hints, key in
         guard let catalogue = session.catalogues[key], catalogue.sourceId == sourceId else { return }
-        let items = catalogue.items.map {
-            ScopePreview.Item(ref: $0.ref, label: $0.label, count: $0.count, depth: $0.depth)
-        }
-        hints = mergingScopeLabelHints(hints, items)
+        hints = mergingScopeLabelHints(hints, scopeItemHints(catalogue, fields: fields))
     }
+}
+
+/// A field's tab: its word for several items, with a capital: "Labels", "Project folders".
+func scopeFieldTabTitle(_ field: FilterEditorField) -> String {
+    field.noun.many.prefix(1).uppercased() + field.noun.many.dropFirst()
+}
+
+/// A row's name in the picker: the last part of its name inside a tree, where its parent is already shown, and the
+/// full name in a list and in search results.
+func scopePickerRowTitle(_ item: ScopeOption, inTree: Bool, searching: Bool) -> String {
+    inTree && !searching ? item.shortLabel : item.label
 }

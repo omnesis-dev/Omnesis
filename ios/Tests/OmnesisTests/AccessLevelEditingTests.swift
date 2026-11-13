@@ -8,9 +8,9 @@ import XCTest
 /// and on, Direct linked to Answer and separated again, one cancelled
 /// question, and bulk choices over a searched account list.
 final class AccessLevelEditingTests: XCTestCase {
-    private let maya = ScopeRef(kind: "participant", label: "Maya Reeves", identifiers: [.init(type: "email", value: "maya@example.org")])
-    private let jamie = ScopeRef(kind: "participant", label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")])
-    private let david = ScopeRef(kind: "participant", label: "David Lin", identifiers: [.init(type: "email", value: "david@example.org")])
+    private let maya = ScopeRef.person(label: "Maya Reeves", identifiers: [.init(type: "email", value: "maya@example.org")])
+    private let jamie = ScopeRef.person(label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")])
+    private let david = ScopeRef.person(label: "David Lin", identifiers: [.init(type: "email", value: "david@example.org")])
     private let sources = (1 ... 6).map { AccessSourceInstance(id: "scope-chat:account-\($0)", name: "Account \($0)") }
     private var overview: AccessOverview {
         AccessOverview(
@@ -251,7 +251,7 @@ final class AccessLevelEditingTests: XCTestCase {
     }
 
     func testAChangedFilterListsWhatItAddsAndRemovesBeforeWhatItKeeps() {
-        let renamed = ScopeRef(kind: "participant", label: "Maya R.", identifiers: maya.identifiers)
+        let renamed = ScopeRef.person(label: "Maya R.", identifiers: maya.identifiers)
         let deltas = scopeRefDeltas(before: policy([maya, jamie]), after: policy([renamed, david]))
         XCTAssertEqual(deltas, [
             .init(ref: david, change: .added), .init(ref: jamie, change: .removed), .init(ref: renamed, change: .kept),
@@ -262,31 +262,12 @@ final class AccessLevelEditingTests: XCTestCase {
         var value = policy([maya])
         value.toggleMatch(jamie)
         XCTAssertEqual(value.rules[0].match, [maya, jamie])
-        value.toggleMatch(.init(kind: "participant", label: "Renamed", identifiers: maya.identifiers))
+        value.toggleMatch(.person(label: "Renamed", identifiers: maya.identifiers))
         XCTAssertEqual(value.rules[0].match, [jamie])
         value.toggleMatch(jamie)
 
-        let preview = ScopePreview(
-            sourceId: value.sourceId,
-            total: 3,
-            visible: 0,
-            hidden: 3,
-            unknown: 0,
-            items: [],
-            samples: [],
-            readiness: [.init(kind: "participant", ready: true)]
-        )
         let state = { (mode: ScopeFilterMode, policy: ScopePolicy) in
-            ScopeFilterCommitState(
-                mode: mode,
-                policy: policy,
-                sourceId: policy.sourceId,
-                authoringEnabled: true,
-                preview: preview,
-                previewedPolicy: policy,
-                loading: false,
-                hasError: false
-            ).decision
+            ScopeFilterCommitState(mode: mode, policy: policy, sourceId: policy.sourceId, authoringEnabled: true).decision
         }
         XCTAssertEqual(state(.only, value), .blocked)
         XCTAssertEqual(state(.except, ScopeFilterMode.except.applying(to: value)), .apply(nil))

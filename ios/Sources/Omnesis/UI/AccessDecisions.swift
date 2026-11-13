@@ -29,6 +29,9 @@ enum AccessDecisionTitle {
 /// What a decision reads as when the level does not hold the capability it belongs to.
 let accessNotGrantedText = "Not granted"
 
+/// What stops the release decision: no privacy policy chosen, and no explicit choice to release without one.
+let accessReleaseProblem = "Choose a privacy policy for Answer, or explicitly choose unreviewed release."
+
 /// What a source list says when there is no account to list.
 let accessNoConnectedAccountsMessage = "No connected accounts are available. Connect a source before granting data access."
 
@@ -69,8 +72,8 @@ struct AccessAccountStatus: Equatable {
 /// this editor cannot express.
 func accessFilterModeStatus(_ policy: ScopePolicy) -> AccessAccountStatus {
     switch AccessAccountStatus.kind(of: policy) {
-    case .only: AccessAccountStatus(kind: .only, text: "Share matching content")
-    case .except: AccessAccountStatus(kind: .except, text: "Hide matching content")
+    case .only: AccessAccountStatus(kind: .only, text: accessShareMatchingText)
+    case .except: AccessAccountStatus(kind: .except, text: accessHideMatchingText)
     case .all, .notShared: AccessAccountStatus(kind: .all, text: AccessAccountStatus.savedFilter)
     }
 }
@@ -159,7 +162,7 @@ struct AccessDraftDecisions {
         case .permissions: draft.rules.isEmpty ? accessNoCapabilityMessage : nil
         case .answerData: draft.sourceProblem("answer", overview: overview, original: original)
         case .directData: draft.sourceProblem("direct", overview: overview, original: original)
-        case .release: draft.releaseIsValid(overview: overview) ? nil : "Choose an available policy before saving."
+        case .release: draft.releaseIsValid(overview: overview) ? nil : accessReleaseProblem
         case .overview, .name, .directChoice, .future, .review: nil
         }
     }
@@ -220,7 +223,7 @@ extension AccessDraftDecisions {
         accessFilterEntryVisible(
             authoringEnabled: overview.sourceFilters?.enabled,
             sourceAllowed: isAllowed(source.id, capability: capability),
-            hasDeclaration: source.scopes != nil,
+            hasDeclaration: source.filterable == true,
             hasSavedPolicy: policy(source.id, capability: capability) != nil
         )
     }

@@ -227,18 +227,23 @@ final class GatewayLiveE2ETests: XCTestCase {
     func testPairedOwnerCanCreateReopenAndEditASourceFilteredLevel() async throws {
         let access = AccessClient(baseURL: baseURL, token: apiKey, session: session)
         var source: AccessSourceInstance?
+        var field: FilterEditorField?
         for _ in 0 ..< 60 {
             let overview = try await access.overview()
             XCTAssertTrue(overview.sourceFilters?.enabled == true)
-            source = overview.sources.first { source in
-                source.scopes?.items.contains { $0.kind == "conversation" } == true &&
-                    source.scopeReadiness?.first { $0.kind == "conversation" }?.ready == true
+            for candidate in overview.sources where candidate.filterable == true {
+                let editor = try await access.filterEditor(sourceId: candidate.id)
+                if let ready = editor.fields.first(where: { $0.capability == "membership" && $0.state.isReady }) {
+                    source = candidate
+                    field = ready
+                    break
+                }
             }
             if source != nil { break }
             try await Task.sleep(nanoseconds: 500_000_000)
         }
-        let selectedSource = try XCTUnwrap(source, "Native scope preparation did not finish")
-        let options = try await access.scopeOptions(sourceId: selectedSource.id, kind: "conversation")
+        let selectedSource = try XCTUnwrap(source, "No account offered a ready filter field")
+        let options = try await access.scopeOptions(sourceId: selectedSource.id, field: XCTUnwrap(field).field)
         let selected = try XCTUnwrap(options.items.first)
         var policy = ScopePolicy.empty(sourceId: selectedSource.id, levelId: "new", capability: "direct")
         policy.rules = [.init(match: [selected.ref], action: "share")]
@@ -252,9 +257,17 @@ final class GatewayLiveE2ETests: XCTestCase {
         let savedPolicy = try XCTUnwrap(reopened?.rules.first?.scopePolicies.first)
         XCTAssertEqual(savedPolicy.rules[0].match, [selected.ref])
         XCTAssertEqual(savedPolicy.audience.accessLevel, created.id)
-        let preview = try await access.scopePreview(savedPolicy)
+        var counted: ScopePreview?
+        for _ in 0 ..< 60 {
+            if case .ready(let value) = try await access.scopePreview(savedPolicy) {
+                counted = value
+                break
+            }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+        let preview = try XCTUnwrap(counted, "The filter's counts never arrived")
         XCTAssertEqual(preview.total, preview.visible + preview.hidden)
-        XCTAssertLessThanOrEqual(preview.unknown, preview.hidden)
+        XCTAssertLessThanOrEqual(preview.tooOld + preview.unmatched, preview.hidden)
         policy = savedPolicy
         policy.rules[0].action = "hide"
         policy.otherwise = "share"

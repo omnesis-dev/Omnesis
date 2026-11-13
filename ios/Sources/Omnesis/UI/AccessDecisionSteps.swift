@@ -124,7 +124,7 @@ struct AccessSourcesStep: View {
             .opacity(frozen ? 0.5 : 1)
             .disabled(frozen)
             if visible.isEmpty {
-                Text("No sources match this search.").accessText(.rowSecondary, color: AccessUI.secondary).padding(.top, 12)
+                Text("No accounts match this search.").accessText(.rowSecondary, color: AccessUI.secondary).padding(.top, 12)
             }
         }
         if !frozen { AccessProblemText(text: decisions.problem(step)) }
@@ -362,7 +362,7 @@ extension View {
     func accessFilterEditor(
         _ route: Binding<AccessFilterRoute?>,
         decisions: Binding<AccessDraftDecisions>,
-        labels: Binding<[String: [ScopePreview.Item]]>,
+        labels: Binding<[String: [ScopeItemHint]]>,
         client: AccessClient?
     )
         -> some View {

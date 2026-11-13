@@ -122,8 +122,8 @@ public struct AccessSourceInstance: Codable, Equatable, Identifiable, Sendable {
     public let icon: String?
     public let available: Bool
     public var sourceType: String?
-    public var scopes: SourceScopes?
-    public var scopeReadiness: [ScopeKindReadiness]?
+    /// Whether the account's source declares a field a filter can use. The filter editor says which.
+    public var filterable: Bool?
 
     public init(id: String, name: String, icon: String? = nil, available: Bool = true) {
         self.id = id

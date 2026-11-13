@@ -7,13 +7,14 @@ import SwiftUI
 @available(iOS 17.0, *)
 extension SourceFilterPickerView {
     var location: ScopePickerLocation {
-        .init(sourceId: source.id, kind: kind, query: query, parentId: parentId, ancestors: ancestors)
+        .init(sourceId: source.id, field: field, query: query, parentId: parentId, device: device, ancestors: ancestors)
     }
 
-    /// The path to the open folder, from the root every account has, named in the source's word for its top level.
+    /// The path to the open item, from the root every account has, named in the source's word for its top level.
+    /// Each item on the way is named by the last part of its name.
     var folderTrail: [String] {
-        let roots = scopeLevelNoun(declaration, depth: 0)?.many ?? declaration?.noun?.many ?? "folders"
-        return ["All " + roots] + ancestors.map(\.label)
+        let roots = scopeLevelNoun(declaration, depth: 0)?.many ?? declaration?.noun.many ?? "folders"
+        return ["All " + roots] + ancestors.map(\.shortLabel)
     }
 
     var folderScopeText: String {
@@ -22,8 +23,11 @@ extension SourceFilterPickerView {
 
     /// Opens the ancestor at `depth` of the trail; depth 0 is the root.
     func openAncestor(depth: Int) {
-        ancestors = Array(ancestors.prefix(depth))
-        parentId = ancestors.last?.ref.id
+        var moved = session
+        moved.openAncestor(depth: depth)
+        ancestors = moved.ancestors
+        device = moved.device
+        parentId = moved.parentId
     }
 
     var pickerRows: [ScopePickerRow] {
@@ -123,7 +127,9 @@ struct ScopePickerLayoutKey: PreferenceKey {
 #if DEBUG
 #Preview("Folder picker scroll") {
     NavigationStack {
-        SourceFilterPickerView(source: PreviewMocks.accessDrive, options: PreviewMocks.accessRootFolderOptions) { _ in }
+        SourceFilterPickerView(
+            source: PreviewMocks.accessDrive, editor: PreviewMocks.accessDriveEditor, options: PreviewMocks.accessRootFolderOptions
+        ) { _ in }
     }.environment(AppStore.preview())
 }
 #endif

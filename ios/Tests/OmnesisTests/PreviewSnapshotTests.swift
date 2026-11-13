@@ -8973,7 +8973,7 @@ final class PreviewSnapshotTests: XCTestCase {
         let last = try XCTUnwrap(options.items.last)
         for scheme in [ColorScheme.light, .dark] {
             let name = scheme == .dark ? "dark" : "light"
-            var saved = ScopePickerSession(kind: "folder", sourceId: source.id)
+            var saved = ScopePickerSession(field: PreviewMocks.accessFolderField, sourceId: source.id)
             let location = saved.location(for: source.id)
             saved.catalogues[location] = options
             saved.positions[location] = .init(itemId: .item(.init(last.ref)), index: options.items.count - 1)
@@ -9053,7 +9053,7 @@ final class PreviewSnapshotTests: XCTestCase {
         let store = AppStore.preview()
         await store.awaitPairingRuntimeForTesting()
         store.injectAccessClientForTesting(client)
-        var saved = ScopePickerSession(kind: "folder", sourceId: source.id)
+        var saved = ScopePickerSession(field: PreviewMocks.accessFolderField, sourceId: source.id)
         let location = saved.location(for: source.id)
         let leading = ScopePickerAnchor.item(.init(options.items[57].ref))
         saved.catalogues[location] = options
@@ -9169,26 +9169,15 @@ final class PreviewSnapshotTests: XCTestCase {
         let source = PreviewMocks.accessDrive
         let items = (0 ..< 65).map { index in
             ScopeOption(
-                ref: .init(kind: "folder", id: "example-folder-\(index)"),
+                ref: .tree(field: PreviewMocks.accessFolderField, id: "example-folder-\(index)"),
                 label: index == 0 ? "First folder" : index == 64 ? "Last folder" : "Example folder \(index)",
                 count: index + 1
             )
         }
         let firstPage = ScopeOptions(
-            sourceId: source.id,
-            sourceType: "google-drive",
-            scopes: PreviewMocks.scopeDriveContract,
-            readiness: [.init(kind: "folder", ready: true)],
-            items: Array(items.prefix(50)),
-            nextCursor: "second"
+            sourceId: source.id, field: PreviewMocks.accessFolderField, items: Array(items.prefix(50)), nextCursor: "second"
         )
-        let secondPage = ScopeOptions(
-            sourceId: source.id,
-            sourceType: "google-drive",
-            scopes: PreviewMocks.scopeDriveContract,
-            readiness: [.init(kind: "folder", ready: true)],
-            items: Array(items.suffix(15))
-        )
+        let secondPage = ScopeOptions(sourceId: source.id, field: PreviewMocks.accessFolderField, items: Array(items.suffix(15)))
         return (firstPage, secondPage)
     }
 
@@ -9199,7 +9188,12 @@ final class PreviewSnapshotTests: XCTestCase {
         -> (UIWindow, UIHostingController<AnyView>) {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
-        var picker = SourceFilterPickerView(source: source, session: session, selected: { _ in })
+        var picker = SourceFilterPickerView(
+            source: source,
+            editor: PreviewMocks.accessEditors[source.id],
+            session: session,
+            selected: { _ in }
+        )
         picker.mountedForTesting = mounted
         let view = NavigationStack {
             picker
@@ -9249,11 +9243,12 @@ final class PreviewSnapshotTests: XCTestCase {
     private func validatedAccessGalleryOverview() throws -> AccessOverview {
         let overview = PreviewMocks.accessCanonicalOverview
         XCTAssertEqual(overview.sources.map(\.sourceType), ["gmail", "google-drive", "whatsapp-messages"])
-        XCTAssertEqual(PreviewMocks.accessGmail.scopes?.items.first?.identifiers, ["email", "domain"])
-        XCTAssertEqual(PreviewMocks.accessWhatsApp.scopes?.items.last?.identifiers, ["phone"])
-        XCTAssertEqual(PreviewMocks.accessDrive.scopes?.items.map(\.kind), ["folder"])
+        XCTAssertEqual(PreviewMocks.accessGmailEditor.fields.first?.identifiers, ["email", "domain"])
+        XCTAssertEqual(PreviewMocks.accessWhatsAppEditor.fields.last?.identifiers, ["phone"])
+        XCTAssertEqual(PreviewMocks.accessDriveEditor.fields.map(\.field), [PreviewMocks.accessFolderField])
         let options = PreviewMocks.accessConversations + PreviewMocks.accessPeople + PreviewMocks.accessRootFolders
-            + PreviewMocks.accessProjectFolders
+            + PreviewMocks.accessProjectFolders + PreviewMocks.accessSessionDevices + PreviewMocks.accessHomeFolders
+            + PreviewMocks.accessOwnerRepositories
         let saved = overview.levels.flatMap(\.rules).flatMap(\.scopePolicies) + [PreviewMocks.accessWhatsAppChangedPolicy]
         try assertProviderFixtureWireRefs(options.map(\.ref) + saved.flatMap(\.rules).flatMap(\.match))
         XCTAssertEqual(overview.levels.map(\.name), ["Research assistant", "Notes capture"])
@@ -9261,17 +9256,25 @@ final class PreviewSnapshotTests: XCTestCase {
         return overview
     }
 
+    /// Every fixture entry names a field its account's editor declares, with that field's capability, and puts only
+    /// the keys of its kind of entry on the wire.
     private func assertProviderFixtureWireRefs(_ refs: [ScopeRef]) throws {
+        let fields = PreviewMocks.accessEditors.values.flatMap(\.fields)
         for ref in refs {
             let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(ref)) as? [String: Any])
-            if ref.kind == "participant" {
-                XCTAssertEqual(Set(object.keys), ["kind", "label", "identifiers"])
+            let declared = try XCTUnwrap(fields.first { $0.field == ref.editorField }, "No account declares \(ref.editorField)")
+            XCTAssertEqual(declared.capability, ref.capability)
+            if ref.isPerson {
+                XCTAssertEqual(Set(object.keys), ["capability", "label", "identifiers"])
                 XCTAssertFalse((ref.label ?? "").isEmpty)
                 XCTAssertFalse((ref.identifiers ?? []).isEmpty)
+                XCTAssertTrue(ref.identifiers?.allSatisfy { declared.identifiers?.contains($0.type) == true } == true)
             } else {
-                XCTAssertTrue(["label", "folder", "conversation"].contains(ref.kind))
-                XCTAssertEqual(Set(object.keys), ["kind", "id"])
-                XCTAssertFalse((ref.id ?? "").isEmpty)
+                XCTAssertEqual(
+                    Set(object.keys),
+                    declared.perDevice ? ["capability", "field", "id", "device"] : ["capability", "field", "id"]
+                )
+                XCTAssertNotNil(ref.id)
             }
         }
     }
@@ -9364,7 +9367,23 @@ final class PreviewSnapshotTests: XCTestCase {
         accessGallery("filter-review") {
             PreviewMocks.accessFilterEditor(whatsApp, policy: saved, preview: PreviewMocks.accessWhatsAppPreview, step: .review)
         }
-        accessGallery("filter-counting") { PreviewMocks.accessFilterEditor(whatsApp, policy: saved, step: .review) }
+        accessGallery("filter-review-counts") {
+            PreviewMocks.accessFilterEditor(
+                PreviewMocks.accessDrive, policy: PreviewMocks.accessDrivePolicy, preview: PreviewMocks.accessDrivePreview, step: .review
+            )
+        }
+        accessGallery("filter-needs-resync") {
+            PreviewMocks.accessFilterEditor(PreviewMocks.accessGmail, policy: nil, step: .matches, session: PreviewMocks.accessLabelSession)
+        }
+        accessGallery("filter-resyncing") {
+            PreviewMocks.accessFilterEditor(
+                PreviewMocks.accessDrive,
+                policy: nil,
+                editor: PreviewMocks.accessDriveResyncingEditor,
+                step: .matches,
+                session: PreviewMocks.accessDriveFolderSession
+            )
+        }
         accessGallery("filter-account-not-connected") {
             PreviewMocks.accessFilterEditor(PreviewMocks.accessDisconnectedWhatsApp, policy: saved, named: false)
         }
@@ -9384,6 +9403,7 @@ final class PreviewSnapshotTests: XCTestCase {
         accessGalleryApproval("approval-permissions", mode: .requestedPermissions)
         accessGalleryApproval("approval-sources", mode: .requestedSources)
         accessGalleryApproval("approval-review", mode: .requestedReview, height: 915)
+        accessGalleryApproval("approval-review-existing", mode: .requestedExistingReview)
     }
 
     private func accessGalleryApproval(_ slug: String, mode: AccessAuthorizationPreviewMode, height: CGFloat = 852) {

@@ -10,12 +10,8 @@ final class AccessScopePolicyTests: XCTestCase {
         audience: .init(accessLevel: "level-example", capability: "answer"),
         rules: [.init(
             match: [
-                .init(
-                    kind: "participant",
-                    label: "Maya",
-                    identifiers: [.init(type: "email", value: "maya@example.org")]
-                ),
-                .init(kind: "conversation", id: "cedar"),
+                .person(label: "Maya", identifiers: [.init(type: "email", value: "maya@example.org")]),
+                .membership(field: "extra.chatJid", id: "cedar"),
             ],
             action: "hide"
         )],
@@ -288,18 +284,6 @@ final class AccessScopePolicyTests: XCTestCase {
         XCTAssertEqual(rules.first { $0.capability == "direct" }?.scopePolicies, [])
     }
 
-    func testSourcePreparationBlocksEmptyListsButUnrelatedKindsDoNot() {
-        let empty = ScopePolicy.empty(sourceId: "scope-chat:one", levelId: "new", capability: "answer")
-        XCTAssertFalse(empty.readyToSave([.init(kind: "participant", ready: false, reason: "backfill")]))
-        XCTAssertTrue(empty.readyToSave([.init(kind: "folder", ready: false, reason: "metadata-refresh")]))
-        XCTAssertTrue(policy.readyToSave([
-            .init(kind: "participant", ready: true),
-            .init(kind: "conversation", ready: true),
-            .init(kind: "folder", ready: false),
-        ]))
-        XCTAssertFalse(policy.readyToSave([.init(kind: "participant", ready: false), .init(kind: "conversation", ready: true)]))
-    }
-
     func testMissingPrivacyPolicyNeverDefaultsToUnreviewedRelease() {
         var draft = AccessLevelDraft(level: nil, overview: overview)
         var decisions = AccessDraftDecisions(draft: draft, overview: overview, original: draft)
@@ -412,19 +396,27 @@ extension AccessScopePolicyTests {
         XCTAssertEqual(ScopeFilterMode(policy: original, hasSavedPolicy: true), .except)
     }
 
-    func testFolderNavigationKeepsSearchAndMethodUntilAnExplicitKindChange() {
-        let folder = ScopeOption(ref: .init(kind: "folder", id: "design"), label: "Design", count: 8)
-        var session = ScopePickerSession(kind: "folder", query: "plan", parentId: "design", ancestors: [folder])
-        session.changeKind("folder", scopes: nil)
+    func testFolderNavigationKeepsSearchAndMethodUntilAnExplicitFieldChange() {
+        let folder = ScopeOption(ref: .tree(field: "extra.folderIds", id: "design"), label: "Design", count: 8)
+        var session = ScopePickerSession(field: "extra.folderIds", query: "plan", parentId: "design", ancestors: [folder])
+        session.changeField("extra.folderIds", fields: [])
         XCTAssertEqual(session.parentId, "design")
         XCTAssertEqual(session.ancestors, [folder])
         XCTAssertEqual(session.query, "plan")
-        XCTAssertEqual(session.kind, "folder")
-        session.changeKind("label", scopes: nil)
+        XCTAssertEqual(session.field, "extra.folderIds")
+        let people = FilterEditorField(
+            field: FilterEditorField.peopleField,
+            capability: "person",
+            noun: .init(one: "person", many: "people"),
+            picker: "search",
+            identifiers: ["email", "domain"]
+        )
+        session.changeField(FilterEditorField.peopleField, fields: [people])
         XCTAssertNil(session.parentId)
         XCTAssertTrue(session.ancestors.isEmpty)
         XCTAssertEqual(session.query, "plan")
-        XCTAssertEqual(session.kind, "label")
+        XCTAssertEqual(session.field, FilterEditorField.peopleField)
+        XCTAssertEqual(session.identifierType, "email")
     }
 }
 
@@ -499,18 +491,14 @@ extension AccessScopePolicyTests {
 }
 
 extension AccessScopePolicyTests {
-    func testAllContentCommitRemovesRestrictionDuringBackfillWithoutInventingHiddenFacts() {
+    func testAllContentCommitRemovesTheFilterAndCountsNeverHoldOneBack() {
         let all = ScopeFilterMode.all.applying(to: policy)
         XCTAssertEqual(
             ScopeFilterCommitState(
                 mode: .all,
                 policy: all,
                 sourceId: all.sourceId,
-                authoringEnabled: true,
-                preview: nil,
-                previewedPolicy: nil,
-                loading: true,
-                hasError: true
+                authoringEnabled: true
             ).decision,
             .apply(nil)
         )
@@ -519,11 +507,7 @@ extension AccessScopePolicyTests {
                 mode: .all,
                 policy: all,
                 sourceId: all.sourceId,
-                authoringEnabled: false,
-                preview: nil,
-                previewedPolicy: nil,
-                loading: false,
-                hasError: false
+                authoringEnabled: false
             ).decision,
             .blocked
         )
@@ -532,36 +516,18 @@ extension AccessScopePolicyTests {
                 mode: .all,
                 policy: all,
                 sourceId: "other-source",
-                authoringEnabled: true,
-                preview: nil,
-                previewedPolicy: nil,
-                loading: false,
-                hasError: false
+                authoringEnabled: true
             ).decision,
             .blocked
-        )
-        let pending = ScopePreview(
-            sourceId: policy.sourceId,
-            total: 3,
-            visible: 0,
-            hidden: 3,
-            unknown: 3,
-            items: [],
-            samples: [],
-            readiness: [.init(kind: "participant", ready: false, reason: "backfill")]
         )
         XCTAssertEqual(
             ScopeFilterCommitState(
                 mode: .except,
                 policy: policy,
                 sourceId: policy.sourceId,
-                authoringEnabled: true,
-                preview: pending,
-                previewedPolicy: policy,
-                loading: false,
-                hasError: false
+                authoringEnabled: true
             ).decision,
-            .blocked
+            .apply(policy)
         )
     }
 }
@@ -591,14 +557,14 @@ extension AccessScopePolicyTests {
 
 extension AccessScopePolicyTests {
     func testLabelHydrationKeepsBeforeAndAfterIdentitiesWithoutBecomingAuthority() {
-        let before = ScopeRef(kind: "folder", id: "old-folder")
-        let after = ScopeRef(kind: "folder", id: "new-folder")
-        let first = ScopePreview.Item(ref: before, label: "Design", count: 7)
-        let second = ScopePreview.Item(ref: after, label: "Archive", count: 7)
+        let before = ScopeRef.tree(field: "extra.folderIds", id: "old-folder")
+        let after = ScopeRef.tree(field: "extra.folderIds", id: "new-folder")
+        let first = ScopeItemHint(ref: before, label: "Design", count: 7)
+        let second = ScopeItemHint(ref: after, label: "Archive", count: 7)
         let hints = mergingScopeLabelHints([first], [second])
         XCTAssertEqual(hints.map(\.label), ["Design", "Archive"])
         XCTAssertFalse(scopeRefIdentityMatches(before, after))
-        let updated = ScopePreview.Item(ref: before, label: "Design plans", count: 8)
+        let updated = ScopeItemHint(ref: before, label: "Design plans", count: 8)
         XCTAssertEqual(mergingScopeLabelHints(hints, [updated]).map(\.label), ["Design plans", "Archive"])
     }
 }
@@ -622,18 +588,14 @@ extension AccessScopePolicyTests {
 
 extension AccessScopePolicyTests {
     func testMissingSelectionKeepsParticipantNameAndUsesSeparateNonparticipantDisplayHints() {
-        let participant = ScopeRef(
-            kind: "participant",
-            label: "Jamie Lopez",
-            identifiers: [.init(type: "email", value: "jamie@example.org")]
-        )
-        let missingParticipant = ScopePreview.Item(ref: participant, label: "Jamie Lopez", count: 0, missing: true)
-        XCTAssertEqual(scopeDisplayLabel(participant, previewItem: missingParticipant), "Jamie Lopez (unavailable)")
-        let folder = ScopeRef(kind: "folder", id: "opaque-selection-key")
-        let missingFolder = ScopePreview.Item(ref: folder, label: "opaque-selection-key", count: 0, missing: true)
-        XCTAssertEqual(scopeDisplayLabel(folder, previewItem: missingFolder), "Saved folder selection")
-        let current = ScopePreview.Item(ref: folder, label: "Blueprints", count: 8)
-        XCTAssertEqual(scopeDisplayLabel(folder, previewItem: current), "Blueprints")
+        let participant = ScopeRef.person(label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")])
+        let missingParticipant = ScopeItemHint(ref: participant, label: "Jamie Lopez", count: 0, noun: "person", missing: true)
+        XCTAssertEqual(scopeDisplayLabel(participant, hint: missingParticipant), "Jamie Lopez (unavailable)")
+        let folder = ScopeRef.tree(field: "extra.folderIds", id: "opaque-selection-key")
+        let missingFolder = ScopeItemHint(ref: folder, label: "opaque-selection-key", count: 0, noun: "folder", missing: true)
+        XCTAssertEqual(scopeDisplayLabel(folder, hint: missingFolder), "Saved folder selection")
+        let current = ScopeItemHint(ref: folder, label: "Blueprints", count: 8, noun: "folder")
+        XCTAssertEqual(scopeDisplayLabel(folder, hint: current), "Blueprints")
     }
 }
 

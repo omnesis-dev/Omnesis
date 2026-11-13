@@ -162,7 +162,7 @@ final class AccessApprovalDraftTests: XCTestCase {
         let filter = ScopePolicy(
             sourceId: "github:maya-reeves",
             audience: .init(accessLevel: "level-saved", capability: "answer"),
-            rules: [.init(match: [.init(kind: "folder", id: "projects")], action: "share")],
+            rules: [.init(match: [.tree(field: "extra.folderIds", id: "projects")], action: "share")],
             otherwise: "hide"
         )
         var copied = filter

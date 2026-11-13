@@ -18,6 +18,15 @@ struct AccessLevelUsage: Equatable {
         integrations = (level.devices ?? []).map(\.name)
     }
 
+    /// The agents a document's access check lists on a level, in the gateway's order: its connections, and the
+    /// paired devices that answer under it.
+    init(agents: [DocumentAccessAudit.Agent]) {
+        let names = agents.filter { $0.kind != "device" }.map(\.name)
+        connections = names
+        connectionCount = names.count
+        integrations = agents.filter { $0.kind == "device" }.map(\.name)
+    }
+
     var inUse: Bool {
         connectionCount > 0 || !integrations.isEmpty
     }

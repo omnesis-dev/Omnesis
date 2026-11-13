@@ -27,10 +27,15 @@ extension PreviewSnapshotTests {
         )
     }
 
-    /// A typed address that names no address of its type, with what to enter said under the field.
+    /// A typed number the gateway refuses, with its sentence under the field.
     func testAccessFilterPickerRefusesATypedAddress() {
         snapshot(
-            SourceFilterPickerView(source: PreviewMocks.accessWhatsApp, typedInput: "maya@example.org") { _ in }
+            SourceFilterPickerView(
+                source: PreviewMocks.accessWhatsApp,
+                editor: PreviewMocks.accessWhatsAppEditor,
+                typedInput: "+44 (0)7700 900123",
+                typedProblem: "Enter a valid phone number. Include the international country code."
+            ) { _ in }
                 .background(Theme.bgPrimary)
                 .environment(AppStore.preview(sourceIconByType: PreviewMocks.accessGalleryIcons)),
             name: "access-filter-typed-address-refused",
@@ -40,72 +45,82 @@ extension PreviewSnapshotTests {
         )
     }
 
-    /// A tree whose source names its levels, opened one level down: the trail starts at the source's word for
-    /// its roots, and the open item is offered by its own level's noun.
-    func testAccessFilterPickerNamesTheLevelsOfATree() {
-        let scopes = SourceScopes(items: [
-            .init(
-                kind: "folder",
-                noun: .init(one: "shelf or binder", many: "shelves and binders"),
-                levels: [.init(one: "shelf", many: "shelves"), .init(one: "binder", many: "binders")],
-                picker: "tree",
-                link: "hierarchy"
-            ),
-        ])
-        let readiness = [ScopeKindReadiness(kind: "folder", ready: true)]
-        var source = AccessSourceInstance(id: "shelves:reader@example.org", name: "Shelves · reader@example.org")
-        source.sourceType = "shelves"
-        source.scopes = scopes
-        source.scopeReadiness = readiness
-        let shelf = ScopeOption(
-            ref: .init(kind: "folder", id: "shelf-travel"), label: "Travel plans", count: 12, hasChildren: true, depth: 0
-        )
-        let binders = [("binder-spring", "Spring itinerary", 7), ("binder-rail", "Rail passes", 5)].map {
-            ScopeOption(ref: .init(kind: "folder", id: $0.0), label: $0.1, count: $0.2, parentId: "shelf-travel", depth: 1)
-        }
-        var session = ScopePickerSession(kind: "folder", sourceId: source.id)
-        session.ancestors = [shelf]
-        session.parentId = shelf.ref.id
-        session.catalogues[session.location(for: source.id)] = ScopeOptions(
-            sourceId: source.id, sourceType: "shelves", scopes: scopes, readiness: readiness, items: binders
-        )
-        snapshot(
-            SourceFilterPickerView(source: source, session: session) { _ in }
-                .background(Theme.bgPrimary)
-                .environment(AppStore.preview(sourceIconByType: PreviewMocks.accessGalleryIcons)),
-            name: "access-filter-tree-levels",
-            size: CGSize(width: 393, height: 852),
-            ignoresSafeArea: true,
-            standardRange: true
-        )
-    }
-
-    /// The filter of two accounts whose trees are not plain folders, each at its choices and at its review:
-    /// a coding agent's sessions by project folder, and repositories under their owners.
+    /// The filter of the trees beyond plain folders, at their choices and at their review: a coding agent's sessions
+    /// by project folder on two devices, and repositories under their owners. The device level shows the devices;
+    /// inside a tree each row is named by the last part of its name.
     func testAccessGalleryTrees() {
         let sessions = PreviewMocks.accessSessions
+        let studio = PreviewMocks.accessSessionDevices[0]
         let work = PreviewMocks.accessHomeFolders[0]
-        accessTreeGallery("filter-picker-project-folders") {
+        accessTreeGallery("filter-picker-devices") {
             PreviewMocks.accessTreeFilter(
-                sessions, sharing: work, total: 46, openOn: PreviewMocks.accessHomeFolder, listing: PreviewMocks.accessHomeFolders
+                sessions,
+                editor: PreviewMocks.accessSessionsEditor,
+                sharing: work,
+                total: 58,
+                openAlong: [],
+                listing: PreviewMocks.accessSessionDevices
             )
         }
-        accessTreeGallery("filter-review-project-folders") { PreviewMocks.accessTreeFilter(sessions, sharing: work, total: 46) }
+        accessTreeGallery("filter-picker-project-folders") {
+            PreviewMocks.accessTreeFilter(
+                sessions,
+                editor: PreviewMocks.accessSessionsEditor,
+                sharing: work,
+                total: 58,
+                openAlong: [studio, PreviewMocks.accessHomeFolder],
+                listing: PreviewMocks.accessHomeFolders
+            )
+        }
+        accessTreeGallery("filter-review-project-folders") {
+            PreviewMocks.accessTreeFilter(sessions, editor: PreviewMocks.accessSessionsEditor, sharing: work, total: 58)
+        }
+        accessTreeGallery("filter-collector-behind") {
+            PreviewMocks.accessTreeFilter(
+                sessions, editor: PreviewMocks.accessSessionsBehindEditor, sharing: work, total: 58, openAlong: [], listing: []
+            )
+        }
         let repositories = PreviewMocks.accessRepositories
         let owner = PreviewMocks.accessOwner
         accessTreeGallery("filter-picker-repositories") {
             PreviewMocks.accessTreeFilter(
-                repositories, sharing: owner, total: 42, openOn: owner, listing: PreviewMocks.accessOwnerRepositories
+                repositories,
+                editor: PreviewMocks.accessRepositoriesEditor,
+                sharing: owner,
+                total: 42,
+                openAlong: [owner],
+                listing: PreviewMocks.accessOwnerRepositories
             )
         }
-        accessTreeGallery("filter-review-repositories") { PreviewMocks.accessTreeFilter(repositories, sharing: owner, total: 42) }
+        accessTreeGallery("filter-review-repositories") {
+            PreviewMocks.accessTreeFilter(repositories, editor: PreviewMocks.accessRepositoriesEditor, sharing: owner, total: 42)
+        }
     }
 
-    private func accessTreeGallery(_ slug: String, @ViewBuilder _ content: () -> some View) {
+    /// A WhatsApp day's inspector, with what a filter can see on it and the way to who can read it, and that page.
+    func testAccessGalleryDocument() {
+        let doc = PreviewMocks.accessDocumentDetail
+        accessTreeGallery("document-details", icons: PreviewMocks.accessGalleryIcons) {
+            DocumentInspectorSheet(
+                doc: doc, people: [], refs: nil, attachments: [], previewFilterDetails: PreviewMocks.accessDocumentFilterDetails
+            )
+        }
+        accessTreeGallery("document-access", height: 1240, icons: PreviewMocks.accessGalleryIcons) {
+            DocumentAccessView(documentId: doc.id, previewAudit: PreviewMocks.accessDocumentAudit)
+        }
+        accessTreeGallery("document-access-loading", icons: PreviewMocks.accessGalleryIcons) {
+            DocumentAccessView(documentId: doc.id)
+        }
+    }
+
+    private func accessTreeGallery(
+        _ slug: String, height: CGFloat = 852, icons: [String: String] = PreviewMocks.accessTreeIcons,
+        @ViewBuilder _ content: () -> some View
+    ) {
         snapshot(
-            content().environment(AppStore.preview(sourceIconByType: PreviewMocks.accessTreeIcons)),
+            content().environment(AppStore.preview(sourceIconByType: icons)),
             name: "gallery-\(slug)",
-            size: CGSize(width: 393, height: 852),
+            size: CGSize(width: 393, height: height),
             ignoresSafeArea: true,
             standardRange: true
         )

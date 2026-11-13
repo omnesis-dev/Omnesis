@@ -237,66 +237,6 @@ struct AccessLevelDraft: Equatable {
     }
 }
 
-/// The identifier for an address typed by hand, or nil when the text names no address of that type. It reads every
-/// way of writing an address the gateway reads (separators, a leading 00, a tel: or mailto: prefix, a display name,
-/// capitals) into the gateway's spelling, so the item is recognised as already selected and lines up with the counts
-/// the gateway returns for it. The gateway stays the authority on what it saves.
-func scopeTypedIdentifier(_ value: String, type: String) -> ScopeIdentifier? {
-    guard value.count <= 512 else { return nil }
-    let text = value.precomposedStringWithCompatibilityMapping.trimmingCharacters(in: .whitespacesAndNewlines)
-    let typed: String? = switch type {
-    case "phone": TypedAddress.phone(text)
-    case "email": TypedAddress.email(text)
-    case "domain": TypedAddress.domain(text)
-    default: nil
-    }
-    return typed.map { ScopeIdentifier(type: type, value: $0) }
-}
-
-private enum TypedAddress {
-    static func phone(_ text: String) -> String? {
-        // "+44 (0)20 …" does not say whether the zero is dialled, so it names no single number.
-        guard !matches(text, "\\(\\s*0\\s*\\)") else { return nil }
-        var value = replacing(text, "^tel:", with: "", caseInsensitive: true)
-        value = replacing(value, "[\\u2010-\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]", with: "-")
-        value = replacing(value, "[\\s().-]", with: "")
-        if matches(value, "^00[1-9]") { value = "+" + value.dropFirst(2) }
-        return matches(value, "^\\+[1-9][0-9]{6,14}$") ? value : nil
-    }
-
-    static func email(_ text: String) -> String? {
-        var value = text
-        if let angle = text.range(of: "<[^<>]*>$", options: .regularExpression) {
-            value = String(text[angle].dropFirst().dropLast())
-        }
-        value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        value = hostName(replacing(value, "^mailto:", with: "", caseInsensitive: true))
-        return value.count <= 320 && matches(value, "^[^\\s@<>]+@[^\\s@<>]+\\.[^\\s@<>]+$") ? value : nil
-    }
-
-    static func domain(_ text: String) -> String? {
-        let value = hostName(replacing(text, "^@", with: ""))
-        // A host name written in another script is left for the gateway to judge.
-        let pattern = value.allSatisfy(\.isASCII)
-            ? "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
-            : "^[^\\s@/:*.]+(?:\\.[^\\s@/:*.]+)+$"
-        return value.count <= 253 && matches(value, pattern) ? value : nil
-    }
-
-    private static func hostName(_ value: String) -> String {
-        replacing(value.lowercased(), "\\.+$", with: "")
-    }
-
-    private static func matches(_ value: String, _ pattern: String) -> Bool {
-        value.range(of: pattern, options: .regularExpression) != nil
-    }
-
-    private static func replacing(_ value: String, _ pattern: String, with replacement: String, caseInsensitive: Bool = false) -> String {
-        let options: String.CompareOptions = caseInsensitive ? [.regularExpression, .caseInsensitive] : .regularExpression
-        return value.replacingOccurrences(of: pattern, with: replacement, options: options)
-    }
-}
-
 /// Navigation never mutates permissions; only explicit decisions change the draft.
 enum AccessFlowStep: String, Hashable {
     case overview, name, permissions, answerData, directChoice, directData, future, release, review
@@ -328,13 +268,18 @@ extension AccessLevelDraft {
     }
 }
 
-/// How much of a shared account a filter leaves: "All content", or the kind of filter and how many items it names.
+/// How much of a shared account a filter leaves: "All content", or what the filter does and how many items it names,
+/// "Share matching content · 3 items".
 func accessBoundaryStatus(_ policy: ScopePolicy?) -> String {
     guard let policy else { return "All content" }
     guard policy.editable else { return AccessAccountStatus.savedFilter }
     let count = policy.rules[0].match.count
-    return "\(policy.rules[0].action == "share" ? "Only" : "Except") \(count) selected \(count == 1 ? "match" : "matches")"
+    let mode = policy.rules[0].action == "share" ? accessShareMatchingText : accessHideMatchingText
+    return "\(mode) · \(count) \(count == 1 ? "item" : "items")"
 }
+
+let accessShareMatchingText = "Share matching content"
+let accessHideMatchingText = "Hide matching content"
 
 enum ScopeFilterStep: Equatable { case mode, matches, review }
 
@@ -417,19 +362,15 @@ struct ScopeFilterCommitState {
     var policy: ScopePolicy
     var sourceId: String
     var authoringEnabled: Bool
-    var preview: ScopePreview?
-    var previewedPolicy: ScopePolicy?
-    var loading: Bool
-    var hasError: Bool
 
+    /// Counts never hold a filter back: the gateway enforces whatever it saves, and a count still being worked out
+    /// says nothing about whether the filter is right.
     var decision: ScopeFilterCommit {
         guard authoringEnabled, policy.editable, policy.sourceId == sourceId else { return .blocked }
         // Hiding nothing shares everything, which is the account without a filter.
         if mode == .all || (mode == .except && policy.rules.allSatisfy(\.match.isEmpty)) { return .apply(nil) }
         // Sharing only what matches nothing would block the account; that is refused rather than saved.
-        guard !policy.rules.allSatisfy(\.match.isEmpty) else { return .blocked }
-        guard !loading, !hasError, policy.withinLimits, let preview,
-              preview.sourceId == sourceId, previewedPolicy == policy, policy.readyToSave(preview.readiness) else { return .blocked }
+        guard !policy.rules.allSatisfy(\.match.isEmpty), policy.withinLimits else { return .blocked }
         return .apply(policy)
     }
 }
@@ -606,8 +547,9 @@ extension AccessLevelDraft {
 }
 
 func scopeReferenceLessThan(_ lhs: ScopeRef, _ rhs: ScopeRef) -> Bool {
-    if lhs.kind != rhs.kind { return lhs.kind < rhs.kind }
-    if lhs.id != rhs.id { return (lhs.id == nil ? 0 : 1, lhs.id ?? "") < (rhs.id == nil ? 0 : 1, rhs.id ?? "") }
+    let left = (lhs.capability, lhs.field ?? "", lhs.device ?? "", lhs.id ?? "")
+    let right = (rhs.capability, rhs.field ?? "", rhs.device ?? "", rhs.id ?? "")
+    if left != right { return left < right }
     return (lhs.identifiers ?? []).lexicographicallyPrecedes(rhs.identifiers ?? []) { ($0.type, $0.value) < ($1.type, $1.value) }
 }
 
@@ -671,12 +613,14 @@ func scopePreviewCanRetry(_ error: Error) -> Bool {
     return true
 }
 
-func scopePreviewFailureMessage(_ error: Error, classifiedFallbackTitle: String) -> String {
+/// What the review says when the counts cannot be read. The editor keeps asking by itself while another try may
+/// succeed.
+func scopePreviewFailureMessage(_ error: Error) -> String {
     if case GatewayClient.Error.unauthorized = error {
         return "Your gateway connection changed. Check your connection, then close and reopen this filter."
     }
     if case GatewayClient.Error.notFound = error {
         return "This account is unavailable. Close this filter and return to data selection."
     }
-    return classifiedFallbackTitle + ". Your selections are kept."
+    return "Counts unavailable"
 }

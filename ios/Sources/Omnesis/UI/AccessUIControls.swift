@@ -312,18 +312,27 @@ struct AccessCapabilityPills: View {
 
     private var pills: some View {
         ForEach(AccessCapability.allCases, id: \.self) { capability in
-            let held = holdings.holds(capability)
-            let color = held ? Self.color(capability) : AccessUI.muted
-            Text(capability.label.uppercased())
-                .kerning(0.4)
-                .accessText(.capability, color: color)
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, 7)
-                .frame(minHeight: 20)
-                .background(held ? color.opacity(0.10) : Color.clear, in: .rect(cornerRadius: 5))
-                .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(held ? color.opacity(0.45) : AccessUI.muted.opacity(0.6)) }
+            AccessCapabilityPill(capability: capability, held: holdings.holds(capability))
         }
+    }
+}
+
+/// One capability as a pill: in its colour when held, muted when not. The label is always written out.
+struct AccessCapabilityPill: View {
+    let capability: AccessCapability
+    let held: Bool
+
+    var body: some View {
+        let color = held ? Self.color(capability) : AccessUI.muted
+        Text(capability.label.uppercased())
+            .kerning(0.4)
+            .accessText(.capability, color: color)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 7)
+            .frame(minHeight: 20)
+            .background(held ? color.opacity(0.10) : Color.clear, in: .rect(cornerRadius: 5))
+            .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(held ? color.opacity(0.45) : AccessUI.muted.opacity(0.6)) }
     }
 
     private static func color(_ capability: AccessCapability) -> Color {
@@ -378,11 +387,11 @@ struct AccessFilterItemRow<Trailing: View>: View {
 
 extension AccessFilterItemRow {
     /// A saved item as every list of a filter's items names it: its kind, the best name known for it, and a note
-    /// when nothing names it. `named` is what a list or a count has said about the item.
+    /// when nothing names it. `hint` is what a list or a count has said about the item.
     init(
         ref: ScopeRef,
-        named: ScopePreview.Item?,
-        scopes: SourceScopes?,
+        hint: ScopeItemHint?,
+        noun: String? = nil,
         count: Int?,
         counting: Bool = false,
         status: String? = nil,
@@ -391,9 +400,9 @@ extension AccessFilterItemRow {
         @ViewBuilder trailing: @escaping () -> Trailing
     ) {
         self.init(
-            kind: accessScopeKindName(ref, scopes: scopes, depth: named?.depth),
-            label: scopeDisplayLabel(ref, previewItem: named, scopes: scopes),
-            note: scopeNameUnavailable(ref, previewItem: named) ? scopeNameUnavailableNote : nil,
+            kind: accessScopeKindName(ref, hint: hint, noun: noun),
+            label: scopeDisplayLabel(ref, hint: hint),
+            note: scopeNameUnavailable(ref, hint: hint) ? scopeNameUnavailableNote : nil,
             count: count,
             counting: counting,
             status: status,
@@ -405,8 +414,8 @@ extension AccessFilterItemRow {
 }
 
 extension AccessFilterItemRow where Trailing == EmptyView {
-    init(ref: ScopeRef, named: ScopePreview.Item?, scopes: SourceScopes?, count: Int?, change: ScopeRefChange, last: Bool) {
-        self.init(ref: ref, named: named, scopes: scopes, count: count, change: change, last: last) { EmptyView() }
+    init(ref: ScopeRef, hint: ScopeItemHint?, count: Int?, change: ScopeRefChange, last: Bool) {
+        self.init(ref: ref, hint: hint, count: count, change: change, last: last) { EmptyView() }
     }
 
     init(
