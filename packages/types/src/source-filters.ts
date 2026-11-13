@@ -39,8 +39,9 @@ export interface FilterNoun {
  * The field holds the source's own id for what a record belongs to, never a
  * display name. On a `string-array` field an empty array means the record
  * belongs to nothing and an absent field means it is not known; a `string`
- * field has no way to say "nothing", so it suits only a field every record
- * carries.
+ * field has no way to say "nothing", so it suits only a field whose records
+ * each belong to exactly one thing, and it is left out of a record for which
+ * that thing is not known.
  */
 export interface DocumentFieldFilterSpec {
   capability: "membership" | "tree";

@@ -265,6 +265,8 @@ async function parsePiSession(
   return {
     id: parsedHeader.id,
     cwd: parsedHeader.cwd,
+    // Pi records the working directory once, in the file's header.
+    startCwd: parsedHeader.cwd,
     name,
     model,
     parentSessionId: parentSessionId(parsedHeader.parentSession),
@@ -316,7 +318,7 @@ export default defineSource({
   multiDevice: { mode: "partitioned" },
   conversational: true,
   contract: {
-    outputRevision: 1,
+    outputRevision: 2,
     // The host resolves the stored cursor against this before `sync` runs,
     // so an unrecognised value is refused as unreadable rather than read as
     // "no sessions yet".
@@ -327,7 +329,10 @@ export default defineSource({
   documentEventProfile: createLocalAgentSessionDocumentEventProfile({
     harnessId: "pi",
     agentName: "Pi",
+    projectFolderSince: 2,
   }),
+  resyncCost:
+    "Your Pi session files are read again on each computer that has them: nothing is downloaded, and it takes a few minutes at most.",
   icon: piIcon,
   config: configSchema.object({
     sessionsPath: configSchema.path({

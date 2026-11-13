@@ -6686,6 +6686,7 @@
         "packages/gateway/src/http/routes/oauth-access.test.ts",
         "packages/gateway/src/models/routes.test.ts",
         "packages/providers/claude-code/src/index.test.ts",
+        "packages/providers/claude-code/src/project-folder.test.ts",
         "scripts/release/install-sh-docker.test.mjs",
         "scripts/release/install-sh-first-run.test.mjs",
         "scripts/release/install-sh-package.test.mjs"
@@ -8840,6 +8841,11 @@
       "value": "Maya Quinn Lopez",
       "paths": ["packages/gateway/src/merge-candidates.test.ts"],
       "reason": "reviewed invented fixture"
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": ["evals/universes/folder-filters/cast.json"],
+      "reason": "Invented cast of the folder-filters universe."
     },
     {
       "value": "Maya Reeves",

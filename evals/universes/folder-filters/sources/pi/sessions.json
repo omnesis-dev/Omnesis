@@ -1,0 +1,37 @@
+[
+  {
+    "id": "ff-pi-atlas",
+    "createdAt": "2026-03-01T10:00:00.000Z",
+    "prompt": "zqfilter PROMPT_ATLAS How should I handle the pagination cursor of the invented Atlas API?",
+    "answer": "zqfilter ANSWER_ATLAS Return an opaque cursor and keep the page size fixed.",
+    "project": "/srv/work/atlas-api"
+  },
+  {
+    "id": "ff-pi-guide",
+    "createdAt": "2026-03-02T10:00:00.000Z",
+    "prompt": "zqfilter PROMPT_GUIDE How should I handle the invented Atlas API changelog page?",
+    "answer": "zqfilter ANSWER_GUIDE List the newest release first and link each entry to its guide.",
+    "project": "/srv/work/atlas-api/docs"
+  },
+  {
+    "id": "ff-pi-billing",
+    "createdAt": "2026-03-03T10:00:00.000Z",
+    "prompt": "zqfilter PROMPT_BILLING How should I handle rounding in the invented billing export?",
+    "answer": "zqfilter ANSWER_BILLING Round once, at the end, and store amounts in minor units.",
+    "project": "/srv/work/billing"
+  },
+  {
+    "id": "ff-pi-garden",
+    "createdAt": "2026-03-04T10:00:00.000Z",
+    "prompt": "zqfilter PROMPT_GARDEN How should I handle the invented garden watering log?",
+    "answer": "zqfilter ANSWER_GARDEN Record the date and the bed, and water the seedlings in the morning.",
+    "project": "/srv/personal/garden-notes"
+  },
+  {
+    "id": "ff-pi-bench",
+    "createdAt": "2026-03-05T10:00:00.000Z",
+    "prompt": "zqfilter PROMPT_BENCH How should I handle the invented workbench drawer labels?",
+    "answer": "zqfilter ANSWER_BENCH Label each drawer on the front edge and keep a list inside the lid.",
+    "project": "/srv/workshop/bench"
+  }
+]
