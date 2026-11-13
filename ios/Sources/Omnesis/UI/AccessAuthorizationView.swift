@@ -23,15 +23,19 @@ struct AccessAuthorizationSheet: View {
     /// The Connection step's choices; nil when the gateway offers no
     /// Connection step.
     @State private var choice: AccessConnectionChoice?
-    @State private var overview: AccessOverview?
-    @State private var form = AccessAuthorizationFormState(sourceIds: [])
+    /// The new access level this approval draws, over the overview read with the request; nil until a request is open.
+    @State private var level: AccessDraftDecisions?
     @State private var loading = false
     @State private var lookupError: Error?
     @State private var actionError: Error?
     @State private var actionChoiceRefresh = AccessAuthorizationChoiceRefresh.notAttempted
     @State private var deciding = false
     @State private var generation = 0
-    @State private var step = AccessAuthorizationStep.permissions
+    @State private var filter: AccessFilterRoute?
+    @State private var scopeLabels: [String: [ScopePreview.Item]] = [:]
+    /// The screen the wizard is on: `.name` is the Connection step, the rest are the level editor's.
+    @State private var step = AccessFlowStep.permissions
+    @State private var policyText: AccessPolicyTextRoute?
     @State private var outcome: AccessAuthorizationOutcome?
     /// The waiting request this sheet was opened for, when it was opened from
     /// the overview rather than from a code. Cleared when that request can no
@@ -39,6 +43,7 @@ struct AccessAuthorizationSheet: View {
     @State private var requestId: String?
 
     private let initialLookup: AccessAuthorizationLookupKey?
+    private var hostsNavigation = true
 
     init(initialCode: String? = nil, automaticallyLookup: Bool = true) {
         initialLookup = automaticallyLookup ? initialCode.map { AccessAuthorizationLookupKey.code($0) } : nil
@@ -54,17 +59,20 @@ struct AccessAuthorizationSheet: View {
     }
 
     #if DEBUG
+    /// `hostsNavigation: false` draws the sheet's content without its navigation stack, for a render
+    /// taller than a screen: a navigation stack never lays its content out taller than the display.
     init(
         previewRequest: AccessAuthorizationRequest,
         overview: AccessOverview,
-        mode: AccessAuthorizationPreviewMode
+        mode: AccessAuthorizationPreviewMode,
+        hostsNavigation: Bool = true
     ) {
         initialLookup = nil
+        self.hostsNavigation = hostsNavigation
         _request = State(initialValue: previewRequest)
-        _overview = State(initialValue: overview)
         let state = AccessAuthorizationPreviewState(request: previewRequest, overview: overview, mode: mode)
         _choice = State(initialValue: state.choice)
-        _form = State(initialValue: state.form)
+        _level = State(initialValue: state.level)
         _step = State(initialValue: state.step)
         _actionError = State(initialValue: state.actionError)
         _actionChoiceRefresh = State(initialValue: state.actionChoiceRefresh)
@@ -81,42 +89,8 @@ struct AccessAuthorizationSheet: View {
     #endif
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let outcome {
-                    AccessAuthorizationOutcomeContent(
-                        outcome: outcome,
-                        clientName: request?.clientName,
-                        onDone: { dismiss() }
-                    )
-                } else if let request, let overview {
-                    decisionView(request: request, overview: overview)
-                } else {
-                    AccessAuthorizationCodeEntry(
-                        code: $code,
-                        loading: loading,
-                        errorMessage: lookupError.map(accessAuthorizationLookupMessage),
-                        onLookup: { Task { await lookup() } }
-                    )
-                }
-            }
-            .navigationTitle(navigationTitle)
-            .navigationBarTitleDisplayMode(.inline)
-            // Value-based so the document is built only once it is navigated
-            // to, and keeps its loading state however often the decision
-            // content it is reached from is rebuilt.
-            .navigationDestination(for: AccessPolicyTextRoute.self) { route in
-                PrivacyPolicyScreen(familyId: route.familyId, name: route.name)
-            }
-            .toolbar {
-                if outcome == nil {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { dismiss() }
-                            .disabled(deciding)
-                    }
-                }
-            }
-            .background(Theme.bgPrimary.ignoresSafeArea())
+        Group {
+            if hostsNavigation { NavigationStack { content } } else { content }
         }
         .omnesisColorScheme()
         .onDisappear { generation += 1 }
@@ -126,256 +100,180 @@ struct AccessAuthorizationSheet: View {
         }
     }
 
+    private var content: some View {
+        Group {
+            if let outcome {
+                AccessAuthorizationOutcomeContent(
+                    outcome: outcome,
+                    clientName: request?.clientName,
+                    onDone: { dismiss() }
+                )
+            } else if let request, let level {
+                decisionView(request: request, level: level)
+            } else {
+                AccessAuthorizationCodeEntry(
+                    code: $code,
+                    loading: loading,
+                    errorMessage: lookupError.map(accessAuthorizationLookupMessage),
+                    onLookup: { Task { await lookup() } }
+                )
+            }
+        }
+        .navigationTitle(navigationTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $policyText) { route in
+            PrivacyPolicyScreen(familyId: route.familyId, name: route.name)
+        }
+        .toolbar {
+            // The decision screens bring their own bar; the code form uses the navigation bar's.
+            if outcome == nil, request == nil || level == nil {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                        .tint(Theme.accent)
+                        .disabled(deciding)
+                }
+            }
+        }
+        .background(Theme.bgPrimary.ignoresSafeArea())
+        .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+    }
+
     private var navigationTitle: String {
         if let outcome {
             return outcome == .approved ? "Access granted" : "Request denied"
         }
-        return request == nil ? "Connect an agent" : "Review access"
+        return request == nil ? AccessConnectionCopy.connectAgent : AccessConnectionCopy.reviewAccess
     }
 
-    private func decisionView(
-        request: AccessAuthorizationRequest,
-        overview: AccessOverview
-    )
-        -> some View {
-        VStack(spacing: 0) {
-            requestHeader(request: request)
-            Form {
-                // A taken level name is explained under the field it is about.
-                if let actionError, !accessAuthorizationIsLevelNameTaken(actionError) {
-                    Section("Authorization changed") {
-                        Text(accessAuthorizationDecisionMessage(
+    private func decisionView(request: AccessAuthorizationRequest, level: AccessDraftDecisions) -> some View {
+        let flow = accessAuthorizationFlow(choice: choice, draft: level.draft)
+        let current = flow.contains(step) ? step : flow[0]
+        let decisions = Binding(get: { self.level ?? level }, set: { self.level = $0 })
+        return AccessFrame {
+            AccessTopBar(title: navigationTitle) { AccessBarButton("Close") { dismiss() }.disabled(deciding) }
+        } content: {
+            VStack(spacing: 0) {
+                requestHeader(request: request, flow: flow, current: current)
+                AccessScroll {
+                    // A taken level name is explained under the field it is about.
+                    if let actionError, !accessAuthorizationIsLevelNameTaken(actionError) {
+                        AccessBanner(message: accessAuthorizationDecisionMessage(
                             errorCode: accessAuthorizationErrorCode(actionError),
                             choiceRefresh: actionChoiceRefresh
                         ))
-                        .foregroundStyle(Theme.warning)
                     }
-                    .listRowBackground(Theme.bgSecondary)
+                    stepContent(current, request: request, decisions: decisions, flow: flow)
                 }
-                stepContent(request: request, overview: overview)
+                .id(current)
             }
-            .onChange(of: choice?.levelName) {
-                if let actionError, accessAuthorizationIsLevelNameTaken(actionError) {
-                    self.actionError = nil
-                }
-            }
-            .scrollContentBackground(.hidden)
-            // The header above already separates itself with its own padding;
-            // the list's default top inset on top of that reads as a gap.
-            .contentMargins(.top, Theme.Spacing.sm, for: .scrollContent)
-            .background(Theme.bgPrimary)
-            wizardActions(request: request, overview: overview)
-                .padding(.horizontal, Theme.Spacing.md)
-                .padding(.vertical, Theme.Spacing.sm)
-                .background(Theme.bgPrimary)
+        } footer: {
+            AccessFooter { wizardActions(request: request, level: level, flow: flow, current: current) }
         }
+        .onChange(of: choice?.levelName) {
+            if let actionError, accessAuthorizationIsLevelNameTaken(actionError) {
+                self.actionError = nil
+            }
+        }
+        .accessFilterEditor($filter, decisions: decisions, labels: $scopeLabels, client: store.access)
     }
 
     /// Who is asking and how long the request stands, above the wizard itself.
     ///
-    /// This is the page's own furniture: it does not scroll away with a step's
-    /// questions, and it is not a card, so the numbered steps below it read as
-    /// the progress through the whole screen.
-    private func requestHeader(request: AccessAuthorizationRequest) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+    /// This is the sheet's own furniture: it does not scroll away with a step's
+    /// questions, so the numbered steps below it read as the progress through
+    /// the whole screen.
+    private func requestHeader(request: AccessAuthorizationRequest, flow: [AccessFlowStep], current: AccessFlowStep) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 // The name is whatever the client called itself, so it is
                 // labelled as self-reported rather than presented as an
                 // identity Omnesis verified.
-                Text("Client name, self-reported")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textMuted)
-                Text(request.clientName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.textPrimary)
+                Text("Client name, self-reported").accessText(.pill, color: AccessUI.muted).fontWeight(.regular)
+                Text(request.clientName).accessText(.cardTitle)
                 // The deadline is the only part of the page that moves, so it
                 // alone is redrawn every second.
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     let nowMillis = Int64(context.date.timeIntervalSince1970 * 1000)
                     Text(accessAuthorizationDeadlineText(expiresAt: request.expiresAt, nowMillis: nowMillis))
-                        .font(.caption)
-                        .foregroundStyle(nowMillis >= request.expiresAt ? Theme.warning : Theme.textMuted)
+                        .accessText(.caption, color: nowMillis >= request.expiresAt ? Theme.warning : AccessUI.secondary)
+                        .fontWeight(.regular)
                 }
             }
             AccessAuthorizationStepIndicator(
-                steps: steps,
-                current: step,
+                steps: accessAuthorizationIndicatorSteps(flow),
+                current: AccessAuthorizationStep(current),
                 compact: dynamicTypeSize.isAccessibilitySize,
-                onSelect: { step = $0 }
+                // A finished step reopens at its first screen.
+                onSelect: { target in if let first = flow.first(where: { AccessAuthorizationStep($0) == target }) { step = first } }
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, Theme.Spacing.lg)
-        .padding(.bottom, Theme.Spacing.sm)
+        .padding(.horizontal, AccessUI.inset)
+        .padding(.top, 4)
+        .padding(.bottom, 4)
         .background(Theme.bgPrimary)
     }
 
     @ViewBuilder
     private func stepContent(
+        _ current: AccessFlowStep,
         request: AccessAuthorizationRequest,
-        overview: AccessOverview
+        decisions: Binding<AccessDraftDecisions>,
+        flow: [AccessFlowStep]
     )
         -> some View {
-        switch step {
-        case .connection:
-            if let current = choice {
+        let overview = decisions.wrappedValue.overview
+        switch current {
+        case .name:
+            if let chosen = choice {
                 AccessAuthorizationConnectionStep(
                     // Reads fall back to the choice this step was drawn with,
                     // so a frame that still shows the step after the choice
                     // is cleared has something to read.
-                    choice: Binding(get: { choice ?? current }, set: { choice = $0 }),
+                    choice: Binding(get: { choice ?? chosen }, set: { choice = $0 }),
                     request: request,
                     overview: overview,
-                    levelNameRefusal: levelNameTaken ? AccessConnectionCopy.levelNameTaken : nil
+                    levelNameRefused: levelNameTaken
                 )
             }
         case .permissions:
-            permissionsStep(request: request)
-        case .data:
-            if form.answerActive(request: request), form.directEnabled {
-                sourceBoundaryChoice()
-            }
-            ForEach(form.sourceScopes(request: request), id: \.self) { scope in
-                AccessSourceRuleEditor(
-                    scope: scope,
-                    value: Binding(
-                        get: { form.sources(for: scope) },
-                        set: { form.setSources($0, for: scope) }
-                    ),
-                    sources: overview.sources,
-                    store: store
-                )
-            }
-            if form.answerActive(request: request) {
-                AccessAnswerReleaseSection(form: $form, overview: overview)
-            }
+            AccessHeader(title: AccessStepCopy.title(.permissions))
+            AccessPermissionsStep(decisions: decisions)
         case .review:
+            filtersUnavailableBanner(decisions.wrappedValue)
             AccessAuthorizationReviewSection(
-                request: request,
-                overview: overview,
-                connection: choice?.review(overview: overview)
-                    ?? .legacy(request: request, reconnect: reconnect),
-                form: choice?.reviewForm(request: request, overview: overview, form: form) ?? form
+                connection: choice?.review(overview: overview) ?? .legacy(request: request, reconnect: reconnect),
+                decisions: decisions.wrappedValue,
+                holdings: accessCapabilityHoldings(rules: choice?.existingRules(overview: overview) ?? []),
+                // A decision is changed on its own screen, when this approval asks it.
+                change: { decision in if flow.contains(decision) { step = decision } }
             )
+        default:
+            filtersUnavailableBanner(decisions.wrappedValue)
+            AccessHeader(title: AccessStepCopy.title(current), subtitle: AccessStepCopy.subtitle(current))
+            dataContent(current, decisions: decisions)
         }
     }
 
-    private func permissionsStep(request: AccessAuthorizationRequest) -> some View {
-        Section("What should this connection be allowed to do?") {
-            Toggle(isOn: Binding(
-                get: { form.answerActive(request: request) },
-                set: { form.answerEnabled = request.requiresAnswer ? true : $0 }
-            )) {
-                permissionLabel(
-                    title: "Answer",
-                    detail: "Ask questions using allowed sources. A privacy policy can "
-                        + "review every answer before it is released."
-                )
-            }
-            .disabled(request.requiresAnswer)
-            Toggle(isOn: $form.directEnabled) {
-                permissionLabel(
-                    title: "Direct",
-                    detail: "Search and read raw matching records.",
-                    // The consequence sits in Direct's own description and
-                    // speaks up once Direct is chosen — before that it is
-                    // one option among three.
-                    warning: "Direct is not protected by a privacy policy.",
-                    warningActive: form.directEnabled
-                )
-            }
-            Toggle(isOn: $form.notesEnabled) {
-                permissionLabel(
-                    title: "Notes",
-                    detail: "Save notes with Tell Omnesis. The agent’s name is recorded "
-                        + "with each note. This does not grant access to read existing notes."
-                )
-            }
-            if request.requiresAnswer {
-                Text("Answer is required by this integration.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            if !form.holdings(request: request).holdsAnything {
-                Text(accessNoCapabilityMessage)
-                    .font(.footnote)
-                    .foregroundStyle(Theme.danger)
-            }
+    /// One decision about data, drawn by the step the level editor draws it with.
+    @ViewBuilder
+    private func dataContent(_ page: AccessFlowStep, decisions: Binding<AccessDraftDecisions>) -> some View {
+        switch page {
+        case .directChoice: AccessDirectChoiceStep(decisions: decisions)
+        case .directData: AccessSourcesStep(decisions: decisions, capability: "direct") { filter = .init(source: $0, capability: "direct") }
+        case .future: AccessNewSourcesStep(decisions: decisions)
+        case .release: AccessReleaseStep(decisions: decisions) { policyText = .init(familyId: $0.id, name: $0.name) }
+        default: AccessSourcesStep(decisions: decisions, capability: "answer") { filter = .init(source: $0, capability: "answer") }
         }
-        .listRowBackground(Theme.bgSecondary)
     }
 
-    /// One source list or two, as a plain pair of options worded as what they
-    /// do — the same shape as the new-source choice inside each list, so the
-    /// two read as siblings.
-    private func sourceBoundaryChoice() -> some View {
-        // No header: the two options name the object and the choice, and a
-        // heading above them would only restate the list heading below.
-        Section {
-            sourceBoundaryOption(
-                linked: true,
-                title: "Allow the same sources for Answer and Direct",
-                detail: "One selection controls both capabilities."
-            )
-            sourceBoundaryOption(
-                linked: false,
-                title: "Allow different sources",
-                detail: "Direct may expose raw records, so a narrower boundary can be useful."
-            )
-        }
-        .listRowBackground(Theme.bgSecondary)
-    }
-
-    private func sourceBoundaryOption(
-        linked: Bool,
-        title: String,
-        detail: String
-    )
-        -> some View {
-        Button {
-            // Unlinking starts Direct from the list the two shared, so the
-            // separate list opens where the shared one left off.
-            if !linked, form.linkSources { form.directSources = form.answerSources }
-            form.linkSources = linked
-        } label: {
-            HStack(alignment: .top, spacing: Theme.Spacing.sm) {
-                Image(
-                    systemName: form.linkSources == linked
-                        ? "largecircle.fill.circle"
-                        : "circle"
-                )
-                .foregroundStyle(Theme.accent)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Theme.textPrimary)
-                    Text(detail)
-                        .font(.footnote)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(form.linkSources == linked ? .isSelected : [])
-    }
-
-    private func permissionLabel(
-        title: String,
-        detail: String,
-        warning: String? = nil,
-        warningActive: Bool = false
-    )
-        -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).fontWeight(.semibold)
-            Text(detail)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            if let warning {
-                Text(warning)
-                    .font(warningActive ? .footnote.weight(.bold) : .footnote)
-                    .foregroundStyle(warningActive ? Theme.danger : Theme.textSecondary)
-            }
+    /// Says that the level this approval draws cannot be created, on a gateway that does not offer writing the
+    /// filters it carries.
+    @ViewBuilder
+    private func filtersUnavailableBanner(_ level: AccessDraftDecisions) -> some View {
+        if choice == nil || choice?.path == .newLevel, level.filtersNeedAuthoring {
+            AccessBanner(message: accessNewFilteredLevelUnavailableMessage)
         }
     }
 }
@@ -387,18 +285,11 @@ struct AccessPolicyTextRoute: Hashable {
     let name: String?
 }
 
+let accessNewFilteredLevelUnavailableMessage =
+    "New access with filters is unavailable. Choose an existing level or change the allowed capabilities."
+
 @available(iOS 17.0, *)
 extension AccessAuthorizationSheet {
-    private var steps: [AccessAuthorizationStep] {
-        // Data & privacy asks which sources a capability may read and how its
-        // answers are released. A Notes-only grant has neither question, so
-        // the step is skipped rather than shown empty.
-        let readsSources = form.directEnabled
-            || form.answerEnabled
-            || request?.requiresAnswer == true
-        return accessAuthorizationSteps(choice: choice, readsSources: readsSources)
-    }
-
     /// Whether the last approval was refused for its access level name. The
     /// refusal stands until that name is edited.
     private var levelNameTaken: Bool {
@@ -407,71 +298,80 @@ extension AccessAuthorizationSheet {
 
     private func wizardActions(
         request: AccessAuthorizationRequest,
-        overview: AccessOverview
+        level: AccessDraftDecisions,
+        flow: [AccessFlowStep],
+        current: AccessFlowStep
     )
         -> some View {
-        let currentSteps = steps
-        let index = currentSteps.firstIndex(of: step) ?? 0
-        let last = index == currentSteps.count - 1
-        return HStack(spacing: Theme.Spacing.sm) {
-            if index == 0 {
-                Button("Deny", role: .destructive) {
-                    Task { await decide(request: request, overview: overview, approve: false) }
+        let index = flow.firstIndex(of: current) ?? 0
+        let first = index == 0
+        let last = index == flow.count - 1
+        return HStack(spacing: 12) {
+            Button {
+                if first {
+                    Task { await decide(request: request, level: level, approve: false) }
+                } else {
+                    step = flow[index - 1]
                 }
-                .disabled(deciding)
-            } else {
-                Button("Back") { step = currentSteps[index - 1] }
-                    .buttonStyle(.bordered)
-                    .disabled(deciding)
+            } label: {
+                Text(first ? "Deny" : "Back")
+                    .accessText(.button, color: first ? Theme.danger : Theme.accent)
+                    .padding(.horizontal, 24)
+                    .frame(minHeight: AccessUI.buttonHeight)
+                    .overlay { if !first { Capsule().strokeBorder(AccessUI.divider) } }
+                    .contentShape(.rect)
             }
-            Spacer()
+            .buttonStyle(.plain)
+            .disabled(deciding)
             // Of the actions, only this one depends on the clock: it stops
             // accepting once the request has expired.
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Button(last ? "Allow access" : "Continue") {
                     if last {
-                        Task { await decide(request: request, overview: overview, approve: true) }
+                        Task { await decide(request: request, level: level, approve: true) }
                     } else {
-                        step = currentSteps[index + 1]
+                        step = flow[index + 1]
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AccessPrimaryButtonStyle())
                 .disabled(
                     deciding || Int64(context.date.timeIntervalSince1970 * 1000) >= request.expiresAt
-                        || !canContinue(request: request, overview: overview)
+                        || !canContinue(current, request: request, level: level, flow: flow)
                 )
             }
         }
     }
 
     private func canContinue(
+        _ current: AccessFlowStep,
         request: AccessAuthorizationRequest,
-        overview: AccessOverview
+        level: AccessDraftDecisions,
+        flow: [AccessFlowStep]
     )
         -> Bool {
-        switch step {
-        case .connection:
-            choice.map {
-                $0.isComplete(request: request, overview: overview) && !$0.levelNameRefusalApplies(levelNameTaken)
+        switch current {
+        case .name:
+            return choice.map {
+                $0.isComplete(request: request, overview: level.overview) && !$0.levelNameRefusalApplies(levelNameTaken)
             } ?? true
+        case .review:
+            return selection(request: request, level: level) != nil
         case .permissions:
-            form.holdings(request: request).holdsAnything
-        case .data, .review:
-            selection(request: request, overview: overview) != nil
+            return level.problem(current) == nil
+        default:
+            guard level.problem(current) == nil else { return false }
+            // The last question about data is not left for a review that could not be approved.
+            return flow.last { $0 != .review } != current || selection(request: request, level: level) != nil
         }
     }
 
     /// What approval sends: the Connection step's choice, or the `connect`
     /// selection a gateway without connection proposals accepts.
-    private func selection(
-        request: AccessAuthorizationRequest,
-        overview: AccessOverview
-    )
-        -> AccessAuthorizationSelection? {
-        guard let choice else { return form.selection(request: request, overview: overview) }
+    private func selection(request: AccessAuthorizationRequest, level: AccessDraftDecisions) -> AccessAuthorizationSelection? {
+        guard let choice else { return accessConnectSelection(rules: level.sendableRules, request: request) }
         // A level name the gateway refused is not sent again unedited.
         guard !choice.levelNameRefusalApplies(levelNameTaken) else { return nil }
-        return choice.selection(request: request, overview: overview, form: form)
+        return choice.selection(request: request, overview: level.overview, newLevelRules: level.sendableRules)
     }
 
     @MainActor
@@ -529,7 +429,7 @@ extension AccessAuthorizationSheet {
     @MainActor
     private func decide(
         request: AccessAuthorizationRequest,
-        overview: AccessOverview,
+        level: AccessDraftDecisions,
         approve: Bool
     ) async {
         let nowMillis = Int64(Date().timeIntervalSince1970 * 1000)
@@ -547,7 +447,7 @@ extension AccessAuthorizationSheet {
         }
         let decision: AccessAuthorizationDecision
         if approve {
-            guard let selection = selection(request: request, overview: overview) else {
+            guard let selection = selection(request: request, level: level) else {
                 return
             }
             decision = .approve(selection)
@@ -665,9 +565,8 @@ extension AccessAuthorizationSheet {
             nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
         )
         reconnect = envelope.reconnect
-        overview = loaded
         choice = opening.choice
-        form = opening.form
+        level = opening.level
         step = opening.step
     }
 }
@@ -675,9 +574,27 @@ extension AccessAuthorizationSheet {
 #if DEBUG
 #Preview("Access permissions including Notes") {
     AccessAuthorizationSheet(
-        previewRequest: PreviewMocks.accessAuthorizationRequest,
-        overview: PreviewMocks.accessOverview,
-        mode: .permissions
+        previewRequest: PreviewMocks.accessCanonicalRequest,
+        overview: PreviewMocks.accessCanonicalOverview,
+        mode: .requestedPermissions
+    )
+    .environment(AppStore.preview())
+}
+
+#Preview("Answer sources") {
+    AccessAuthorizationSheet(
+        previewRequest: PreviewMocks.accessCanonicalRequest,
+        overview: PreviewMocks.accessCanonicalOverview,
+        mode: .requestedSources
+    )
+    .environment(AppStore.preview())
+}
+
+#Preview("Review before allowing access") {
+    AccessAuthorizationSheet(
+        previewRequest: PreviewMocks.accessCanonicalRequest,
+        overview: PreviewMocks.accessCanonicalOverview,
+        mode: .requestedReview
     )
     .environment(AppStore.preview())
 }
@@ -694,6 +611,14 @@ extension AccessAuthorizationSheet {
 #Preview("Request no longer waiting") {
     AccessAuthorizationSheet(previewLookupError: AccessAuthorizationLocalError.noLongerPending)
         .environment(AppStore.preview())
+}
+
+#Preview("Sources with filter editing unavailable") {
+    AccessAuthorizationSheet(
+        previewRequest: PreviewMocks.accessAuthorizationRequest,
+        overview: PreviewMocks.scopeReadOnlyOverview,
+        mode: .sharedSources
+    ).environment(AppStore.preview())
 }
 #endif
 

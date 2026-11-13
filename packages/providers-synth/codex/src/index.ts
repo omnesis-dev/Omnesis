@@ -20,6 +20,8 @@ const sessionSchema = z
     prompt: z.string().min(1),
     answer: z.string().min(1),
     project: z.string().optional(),
+    /** A directory the session had moved to by the time it answered. */
+    movedTo: z.string().optional(),
   })
   .strict();
 export type SessionFixture = z.infer<typeof sessionSchema>;
@@ -40,6 +42,9 @@ export function sessionRecords(session: SessionFixture): Record<string, unknown>
       timestamp: session.createdAt,
       payload: { type: "user_message", message: session.prompt },
     },
+    ...(session.movedTo
+      ? [{ type: "turn_context", timestamp: session.createdAt, payload: { cwd: session.movedTo } }]
+      : []),
     {
       type: "response_item",
       timestamp: session.createdAt,

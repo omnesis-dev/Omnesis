@@ -46,7 +46,6 @@
     "src/e2e/mcp-answer.e2e.test.ts",
     "src/e2e/multi-collector.e2e.test.ts",
     "src/e2e/needs-auth-reminder.e2e.test.ts",
-    "src/e2e/trail-graph.e2e.test.ts",
     "src/e2e/watch-journal.e2e.test.ts",
     "src/gateway-config.test.ts",
     "src/main.test.ts",

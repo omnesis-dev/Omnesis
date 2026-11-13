@@ -351,6 +351,9 @@ class SessionManager @Inject constructor(
     private val _taskNoteCaptureAvailable = MutableStateFlow(false)
     val taskNoteCaptureAvailable: StateFlow<Boolean> = _taskNoteCaptureAvailable.asStateFlow()
 
+    private val _accessLevelEditingAvailable = MutableStateFlow(false)
+    val accessLevelEditingAvailable: StateFlow<Boolean> = _accessLevelEditingAvailable.asStateFlow()
+
     private val _taskConversationsAvailable = MutableStateFlow(false)
     val taskConversationsAvailable: StateFlow<Boolean> = _taskConversationsAvailable.asStateFlow()
 
@@ -559,6 +562,7 @@ class SessionManager @Inject constructor(
         _tasksAvailable.value = false
         _taskNoteCaptureAvailable.value = false
         _taskConversationsAvailable.value = false
+        _accessLevelEditingAvailable.value = false
         _dictation.value = null
         _watchRelayStatus.value = null
         _noteAgent.value = null
@@ -928,6 +932,7 @@ class SessionManager @Inject constructor(
         else if (!tasksWereAvailable) TaskWidgetUpdates.refresh(applicationContext)
         _taskNoteCaptureAvailable.value = status.taskNoteCapture
         _taskConversationsAvailable.value = status.taskConversations
+        _accessLevelEditingAvailable.value = status.accessLevelEditing
         _dictation.value = status.dictation
         _watchRelayStatus.value =
             WatchRelayStatus(status.dictation, status.watchCapture ?: WatchCaptureStatusDto())

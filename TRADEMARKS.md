@@ -105,6 +105,10 @@ You are free to use, modify, run, and redistribute the code under the AGPL. When
 - If you distribute a modified version publicly, rename it so users aren't confused about what they're running.
 - Nominative references ("compatible with Omnesis", "based on Omnesis") are fine.
 
+## Test fixtures
+
+The Android screenshot tests render source accounts with their provider icons. Because those tests run without a network, `android/app/src/test/resources/access-render-icons.json` embeds small Gmail and Google Drive marks (Google LLC) and the WhatsApp mark (WhatsApp LLC) as fixture data. They are used only to render test screenshots, never shipped in the app, and remain the property of their respective owners.
+
 ## Reporting concerns
 
 If you are a brand owner and have concerns about how Omnesis displays your mark, please open an issue and we will adjust promptly.

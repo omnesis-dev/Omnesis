@@ -3,6 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { assertNever } from "@omnesis/core";
+import { ScopePolicyEditError } from "./scope-policy-store.js";
 
 import { findDeviceBoundSignIn } from "./store-connections.js";
 import { getConnectionGrant } from "./store-levels.js";
@@ -193,6 +194,7 @@ function createDecisionLevel(
   try {
     levelId = insertLevel(db, name, rules, actorTokenId, now).id;
   } catch (error) {
+    if (error instanceof ScopePolicyEditError) throw new DecisionRefusedError("invalid-selection");
     if (isLevelNameConflict(error)) throw new DecisionRefusedError("level-name-taken");
     throw error;
   }

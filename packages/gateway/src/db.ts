@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { installConversationEvidence } from "./sources/omnesis-chat/evidence-projection.js";
 type Db = Database.Database;
 import { installTemporalDocumentEpochs } from "./brain/knowledge/temporal-document-epochs.js";
+import { reconcileScopeFactState } from "./access/scope-activation.js";
 import { runSchemaSetup } from "./data/schema.js";
 import { runDowngradeCompatCheck, runMigrations } from "./data/migrations.js";
 import { openEncryptedSqlite } from "./sqlite-encryption.js";
@@ -248,6 +249,8 @@ export function createDatabase(path: string, opts: GatewayDatabaseOptions = {}):
   // Cross-table triggers must follow historical table rebuilds, whose renames
   // would otherwise rewrite their references to temporary migration tables.
   db.transaction(() => installTemporalDocumentEpochs(db))();
+  // Migration 216 creates the filter tables this reads, so it is asked again.
+  reconcileScopeFactState(db);
   db.transaction(() => installConversationEvidence(db))();
 
   return db;

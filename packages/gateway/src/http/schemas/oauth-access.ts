@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
+import { grantRulesSchema } from "../../access/store-rules.js";
 
 export const oauthRegisterBody = z
   .object({
@@ -73,48 +74,7 @@ export const oauthRevokeForm = z
 
 export const accessLookupBody = z.object({ code: z.string().min(1).max(20) }).strict();
 
-const accessSources = z
-  .object({
-    mode: z.enum(["all", "allowlist", "denylist"]),
-    sourceIds: z.array(z.string().min(1).max(512)).max(256),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.mode === "allowlist" && value.sourceIds.length === 0) {
-      context.addIssue({
-        code: "custom",
-        path: ["sourceIds"],
-        message: "Select at least one source when using selected-sources-only access.",
-      });
-    }
-  });
-const accessRules = z
-  .array(
-    z.discriminatedUnion("capability", [
-      z.object({ capability: z.literal("direct"), sources: accessSources }).strict(),
-      z
-        .object({
-          capability: z.literal("notes"),
-          sources: z
-            .object({ mode: z.literal("all"), sourceIds: z.array(z.string()).length(0) })
-            .strict(),
-        })
-        .strict(),
-      z
-        .object({
-          capability: z.literal("answer"),
-          sources: accessSources,
-          release: z.discriminatedUnion("mode", [
-            z.object({ mode: z.literal("reviewed"), policyFamilyId: z.string().uuid() }).strict(),
-            z.object({ mode: z.literal("unreviewed") }).strict(),
-          ]),
-        })
-        .strict(),
-    ]),
-  )
-  .min(1)
-  .max(3)
-  .refine((rules) => new Set(rules.map((rule) => rule.capability)).size === rules.length);
+const accessRules = grantRulesSchema;
 
 const accessName = z.string().trim().min(1).max(120);
 
@@ -191,8 +151,20 @@ export const accessRevokeBody = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("principal"), id: z.string().uuid() }).strict(),
 ]);
 
+const expectedFilterRevisions = z
+  .object({
+    direct: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    answer: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  })
+  .strict()
+  .optional();
+
 export const accessGrantUpdateBody = z
-  .object({ expectedRevision: z.number().int().positive(), rules: accessRules })
+  .object({
+    expectedRevision: z.number().int().positive(),
+    expectedFilterRevisions,
+    rules: accessRules,
+  })
   .strict();
 
 export const accessLevelCreateBody = z.object({ name: accessName, rules: accessRules }).strict();
@@ -200,6 +172,7 @@ export const accessLevelCreateBody = z.object({ name: accessName, rules: accessR
 export const accessLevelUpdateBody = z
   .object({
     expectedRevision: z.number().int().positive(),
+    expectedFilterRevisions,
     name: accessName.optional(),
     rules: accessRules.optional(),
   })

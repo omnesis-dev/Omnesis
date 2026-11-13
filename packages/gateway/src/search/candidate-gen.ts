@@ -27,6 +27,11 @@
  * thread, after this returns.
  */
 
+import {
+  staleScopeSearchSources,
+  withScopeSearchAuthorization,
+  type ScopeSearchAuthorization,
+} from "./scope-authorization.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { createLogger } from "@omnesis/core";
@@ -90,6 +95,7 @@ export interface CandidateGenResources {
  */
 export interface CandidateGenRequest {
   /** `browse` lists documents newest-first; `hybrid` runs bm25 + vector. */
+  scopeAuthorization?: ScopeSearchAuthorization;
   mode: "hybrid" | "browse";
   /** MATCH text for BM25. */
   bm25Text: string;
@@ -160,9 +166,35 @@ export interface CandidateGenResult {
   vectorDegraded: boolean;
   /** Feedback lines produced here (v1: none — bm25 dropped tokens ride the stage report). */
   notices: SearchNotice[];
+  /**
+   * Filtered sources whose facts in the index were not at the requested
+   * generation. Nothing was searched: `results` is empty and the caller must
+   * not present it as an answer.
+   */
+  staleScopeSourceIds?: string[];
 }
 
 export function runCandidateGen(
+  res: CandidateGenResources,
+  req: CandidateGenRequest,
+): CandidateGenResult {
+  return withScopeSearchAuthorization(res.indexDb, req.scopeAuthorization, () => {
+    const staleScopeSourceIds = staleScopeSearchSources(res.indexDb, req.filters.sourceIds);
+    if (staleScopeSourceIds.length)
+      return {
+        results: [],
+        contentHashByDoc: Object.create(null) as Record<string, string>,
+        stageReports: {},
+        timing: {},
+        vectorDegraded: false,
+        notices: [],
+        staleScopeSourceIds,
+      };
+    return runScopedCandidateGen(res, req);
+  });
+}
+
+function runScopedCandidateGen(
   res: CandidateGenResources,
   req: CandidateGenRequest,
 ): CandidateGenResult {

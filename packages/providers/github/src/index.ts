@@ -30,6 +30,7 @@ import { githubCommitsIcon, githubThreadsIcon } from "./icons.js";
 import { GithubThreadsSource } from "./threads.js";
 import { GithubCommitsSource } from "./commits.js";
 import { githubCommitsStateSpec, githubThreadsStateSpec } from "./state.js";
+import { scopeContracts } from "./scope-contracts.js";
 import { validateGithubCommitsCursor, validateGithubThreadsCursor } from "./types.js";
 import type { GithubContext } from "./types.js";
 
@@ -47,7 +48,9 @@ export {
   THREADS_RENDER_VERSION,
   COMMITS_RENDER_VERSION,
 } from "./normalizer.js";
-export { parseRepoFilter, resolveRepoList } from "./repo-selection.js";
+export { parseRepoFilter, resolveRepos } from "./repo-selection.js";
+export { RepoScopes, repoScopeCatalogue } from "./repo-scopes.js";
+export type { RepoScopeCursor } from "./repo-scopes.js";
 export type { GithubContext, GithubThreadsCursor, GithubCommitsCursor } from "./types.js";
 
 /**
@@ -291,6 +294,7 @@ export default defineProvider<GithubContext>({
         apiVersion: 2,
         requires: ["state-envelope", "snapshot-sessions"],
       },
+      scopes: scopeContracts.github,
       urlPatterns: THREAD_URL_PATTERNS,
       urlCanonicalizer: GITHUB_URL_CANONICALIZER,
       selfIdentity: { aliasPrefix: "github", accountPattern: "^([^@]+)" },
@@ -309,7 +313,7 @@ export default defineProvider<GithubContext>({
         });
         return {
           icon: githubThreadsIcon,
-          sync: (cursor) => source.sync(validateGithubThreadsCursor(cursor)),
+          sync: (cursor, opts) => source.sync(validateGithubThreadsCursor(cursor), opts),
         };
       },
     },
@@ -333,6 +337,7 @@ export default defineProvider<GithubContext>({
         apiVersion: 2,
         requires: ["state-envelope", "snapshot-sessions"],
       },
+      scopes: scopeContracts["github-commits"],
       urlPatterns: COMMIT_URL_PATTERNS,
       urlCanonicalizer: GITHUB_URL_CANONICALIZER,
       selfIdentity: { aliasPrefix: "github", accountPattern: "^([^@]+)" },
@@ -349,7 +354,7 @@ export default defineProvider<GithubContext>({
         });
         return {
           icon: githubCommitsIcon,
-          sync: (cursor) => source.sync(validateGithubCommitsCursor(cursor)),
+          sync: (cursor, opts) => source.sync(validateGithubCommitsCursor(cursor), opts),
         };
       },
     },

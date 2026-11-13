@@ -256,6 +256,8 @@ const auditCommand = defineCommand({
 interface AccessLevelRuleDto {
   capability: "answer" | "direct" | "notes";
   sources: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
+  /** The rule's whole boundary when it has source filters; `sources` then leaves the filtered accounts out. */
+  scopeSources?: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
   release?: { mode: "reviewed"; policyFamilyId: string } | { mode: "unreviewed" };
 }
 
@@ -282,12 +284,13 @@ function ruleSources(
   const connected = sources
     .filter((source) => source.available !== false)
     .map((source) => source.id);
-  const named = new Set(rule.sources.sourceIds);
-  if (rule.sources.mode === "all" || (rule.sources.mode === "denylist" && named.size === 0)) {
+  const boundary = rule.scopeSources ?? rule.sources;
+  const named = new Set(boundary.sourceIds);
+  if (boundary.mode === "all" || (boundary.mode === "denylist" && named.size === 0)) {
     return "all sources";
   }
   const allowed = connected.filter((id) =>
-    rule.sources.mode === "allowlist" ? named.has(id) : !named.has(id),
+    boundary.mode === "allowlist" ? named.has(id) : !named.has(id),
   ).length;
   return `${allowed} of ${connected.length} sources`;
 }

@@ -177,8 +177,18 @@ struct AccessConnectionFixtures {
         )
     }
 
-    /// A blank permissions form over the fixtures' sources.
-    func form(request: AccessAuthorizationRequest? = nil, overview: AccessOverview? = nil) -> AccessAuthorizationFormState {
-        .opening(request: request ?? self.request(), overview: overview ?? self.overview(), prefill: nil)
+    /// The blank new level an approval opens on, over the fixtures' sources.
+    func level(request: AccessAuthorizationRequest? = nil, overview: AccessOverview? = nil) -> AccessDraftDecisions {
+        let request = request ?? self.request()
+        let overview = overview ?? self.overview()
+        let draft = AccessLevelDraft.approving(request: request, overview: overview, prefill: nil)
+        return AccessDraftDecisions(draft: draft, overview: overview, original: draft, answerRequired: request.requiresAnswer)
+    }
+
+    /// That level with every fixture source ticked for Answer, which makes it one approval can send.
+    func levelReadingEverySource() -> AccessDraftDecisions {
+        var drawn = level()
+        drawn.draft.setBoundary(.init(mode: .allowlist, sourceIds: known.sorted()), capability: "answer", authoringEnabled: true)
+        return drawn
     }
 }

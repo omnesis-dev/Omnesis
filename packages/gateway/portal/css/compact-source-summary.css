@@ -1,0 +1,425 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ * Copyright (c) 2026 Adrien Conrath */
+
+.compact-source-header {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  line-height: 1.4;
+}
+.compact-source-header strong {
+  font-size: inherit;
+  font-weight: 600;
+}
+.compact-source-icon {
+  display: inline-flex;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+.compact-source-icon img,
+.compact-source-icon svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+.compact-source-account {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.compact-filter-table-wrap {
+  min-width: 0;
+}
+.compact-filter-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+}
+.compact-filter-table th,
+.compact-filter-table td {
+  padding: 5px 8px;
+  vertical-align: middle;
+  border: 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.compact-filter-table tbody tr:last-child > td {
+  border-bottom: 0;
+}
+.compact-filter-table th:first-child,
+.compact-filter-table td:first-child {
+  padding-left: 0;
+}
+.compact-filter-table th:last-child,
+.compact-filter-table td:last-child {
+  padding-right: 0;
+}
+.compact-filter-table thead th {
+  padding-top: 0;
+  padding-bottom: 4px;
+  border-bottom-color: var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+.compact-filter-kind {
+  width: 96px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.compact-filter-value {
+  overflow-wrap: anywhere;
+}
+.compact-filter-identifiers,
+.compact-filter-value small {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.compact-filter-identifiers {
+  display: inline;
+  margin-left: 6px;
+}
+.compact-filter-value small {
+  display: block;
+}
+.compact-filter-count {
+  width: 1%;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.compact-filter-action {
+  width: 1%;
+  text-align: right;
+}
+.compact-filter-table .compact-filter-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.compact-filter-table .compact-filter-remove:hover:not(:disabled) {
+  background: var(--overlay-strong);
+  color: var(--danger);
+}
+.compact-filter-table tr.is-removed .compact-filter-name {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+.compact-filter-diff {
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+tr.is-added .compact-filter-diff {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  color: var(--success);
+}
+tr.is-removed .compact-filter-diff {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+.compact-filter-empty {
+  padding: 18px 8px !important;
+  color: var(--text-secondary);
+}
+.compact-source-summaries {
+  display: grid;
+  min-width: 0;
+}
+.compact-account-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 16px;
+  min-width: 0;
+}
+.compact-account-identity {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.compact-account-state {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.compact-account-identity + .compact-account-state {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+/* One pill per account states its boundary; its tone tracks how much is shared. */
+.access-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.access-pill.is-off {
+  color: var(--text-secondary);
+}
+.access-pill.is-only {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.access-pill.is-hide {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.compact-policy-summary {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.compact-source-summary .compact-policy-summary {
+  padding-left: 26px;
+}
+.compact-policy-mode,
+.compact-retained-notice,
+.compact-policy-impact {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.compact-policy-mode {
+  margin-bottom: 5px;
+}
+.compact-policy-impact {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-variant-numeric: tabular-nums;
+}
+.compact-policy-impact > span + span::before {
+  content: "·";
+  margin-right: 6px;
+}
+.compact-policy-impact strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.compact-policy-impact .btn-secondary {
+  min-height: 28px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.compact-setting-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0;
+}
+.compact-setting-values > div {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.compact-setting-values dt {
+  color: var(--text-secondary);
+}
+.compact-setting-values dd {
+  margin: 0;
+  font-weight: 500;
+}
+.compact-release-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.compact-release-summary > strong {
+  font-weight: 500;
+}
+.compact-release-summary > span {
+  color: var(--text-secondary);
+}
+.compact-topic-count {
+  margin: 0 !important;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+/* Settings a review leaves alone: one quiet label-and-value row each. */
+.compact-unchanged-settings {
+  color: var(--text-secondary);
+}
+.compact-unchanged-settings > h4 {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.compact-unchanged-settings > div {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.compact-unchanged-settings > div > section {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 16px;
+  padding: 8px 14px;
+}
+.compact-unchanged-settings > div > section + section {
+  border-top: 1px solid var(--border-light);
+}
+.compact-unchanged-settings h5 {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+.compact-unchanged-settings .compact-setting-values dd,
+.compact-unchanged-settings .compact-release-summary > strong {
+  color: var(--text-secondary);
+}
+.compact-retained-account {
+  display: grid;
+  gap: 2px;
+  margin-top: 5px;
+}
+.guided-unchanged-accounts {
+  margin: 0;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.guided-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.compact-info {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+.compact-info > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-width: 24px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: help;
+}
+.compact-info > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.compact-info > [role="tooltip"] {
+  position: absolute;
+  z-index: 15;
+  bottom: 100%;
+  left: 0;
+  width: max-content;
+  max-width: min(250px, 70vw);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 400;
+  box-shadow: 0 3px 12px #0002;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: auto;
+}
+.compact-info:hover > [role="tooltip"],
+.compact-info:focus-within > [role="tooltip"] {
+  visibility: visible;
+  opacity: 1;
+}
+@media (max-width: 600px) {
+  .compact-source-header {
+    gap: 4px 6px;
+  }
+  .compact-filter-table th,
+  .compact-filter-table td {
+    padding: 6px 4px;
+  }
+  .compact-filter-table {
+    font-size: 12px;
+  }
+  .compact-filter-kind {
+    width: 72px;
+  }
+  .compact-filter-identifiers {
+    display: block;
+    margin-left: 0;
+  }
+  .compact-source-summary .compact-policy-summary {
+    padding-left: 0;
+  }
+  .compact-unchanged-settings > div > section {
+    grid-template-columns: 1fr;
+  }
+  .compact-info > [role="tooltip"] {
+    left: auto;
+    right: 0;
+  }
+}
+@media (pointer: coarse), (max-width: 560px) {
+  .compact-filter-table .compact-filter-remove {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+  .compact-info > button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+}
+
+.compact-info[data-dismissed="true"] > [role="tooltip"] {
+  visibility: hidden;
+  opacity: 0;
+}

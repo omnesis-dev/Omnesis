@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { DEFAULT_CONFIG_DIR, listBrokeredAccountIds, resolveAttachmentConfig } from "@omnesis/core";
 import { defineProvider } from "@omnesis/source-sdk";
+import { scopeContracts } from "./scope-contracts.js";
 import {
   GoogleProvider,
   discoverAccounts,
@@ -131,6 +132,7 @@ export default defineProvider<GoogleContext>({
       id: "gmail",
       name: "Gmail",
       description: "Emails from your Gmail account",
+      scopes: scopeContracts["gmail"],
       unitName: "emails",
       urlPatterns: [{ regex: "mail\\.google\\.com/mail/.*#[^/]*/([a-f0-9]+)$" }],
       // Gmail's web app — already ingested here, so the browser-capture
@@ -263,6 +265,7 @@ export default defineProvider<GoogleContext>({
       id: "google-drive",
       name: "Google Drive",
       description: "Files from your Google Drive",
+      scopes: scopeContracts["google-drive"],
       unitName: "files",
       urlPatterns: [
         { regex: "docs\\.google\\.com/(?:document|spreadsheets|presentation)/d/([^/]+)" },
@@ -317,7 +320,7 @@ export default defineProvider<GoogleContext>({
           attachmentConfig,
           extractAttachment: host?.extractAttachment,
         });
-        return { sync: (cursor) => source.sync(cursor) };
+        return { sync: (cursor, opts) => source.sync(cursor, opts) };
       },
     },
     {

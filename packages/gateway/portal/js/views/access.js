@@ -14,13 +14,15 @@
 // - `access/access-list.js` — `AccessList`, each access level followed by the
 //   connections that use it.
 // - `access/level-editor.js` — `LevelEditorPage` and `NewLevelPage`, the
-//   wizard editing or creating a level.
-// - `access/grant-wizard.js` — `GrantWizard`, the step shape every
-//   permissions decision runs through, whoever is deciding.
+//   pages editing or creating a level.
+// - `access/level-decisions.js` — `LevelDecision`, the one screen each
+//   permissions decision is made on, whichever page asks.
+// - `access/approval-wizard.js` — `ApprovalWizard`, the steps of approving a
+//   connection.
 // - `access/authorization.js` — `RequestReview` for a pending OAuth request,
 //   and the authorization helpers (`authorizationEndpointLabel`,
 //   `authorizationErrorMessage`, `authorizationStatusNotice`,
-//   `buildAuthorizationSelection`, `reviewSourceScopes`, `sourceSummary`).
+//   `buildAuthorizationSelection`).
 // - `access/connection-step.js` — the approval's Connection step, and
 //   `initialAuthorizationRules`.
 // - `access/move-dialog.js` — `MoveConnectionDialog`.
@@ -28,6 +30,8 @@
 //   requests still waiting on the owner.
 // - `access/connect-dialog.js` — `ConnectAgentDialog`, the MCP server address
 //   and the short-code entry that opens a pending request for review.
+// - `access/page-header.js` — `PageHeader` and `BackButton`, the head of a
+//   page opened from the list.
 // - `access/name-fields.js`, `access/terms.js`, `access/shared.js` — helpers
 //   those modules have in common.
 //
@@ -61,6 +65,7 @@ import { ConnectAgentDialog } from "./access/connect-dialog.js";
 import { LevelEditorPage, NewLevelPage } from "./access/level-editor.js";
 import { MoveConnectionDialog } from "./access/move-dialog.js";
 import { LEVEL_NAME_TAKEN_MESSAGE } from "./access/name-fields.js";
+import { BackButton } from "./access/page-header.js";
 import { PendingRequests } from "./access/pending-requests.js";
 import {
   hostedClientsHint,
@@ -82,8 +87,6 @@ export {
   authorizationErrorMessage,
   authorizationStatusNotice,
   buildAuthorizationSelection,
-  reviewSourceScopes,
-  sourceSummary,
 } from "./access/authorization.js";
 export { initialAuthorizationRules } from "./access/connection-step.js";
 export { effectiveAccessState } from "./access/shared.js";
@@ -126,6 +129,8 @@ export function AccessView({
   const [pending, setPending] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [notice, setNotice] = useState("");
+  const noticeRef = useRef(null);
+  useEffect(() => { if (notice) noticeRef.current?.focus?.(); }, [notice, newLevel, levelId]);
   // The connection a Remove is being confirmed for, and the level that goes
   // with it when it is that level's last connection.
   const [removal, setRemoval] = useState(null);
@@ -136,6 +141,9 @@ export function AccessView({
   // way to the gateway. The disabled buttons only follow on the next render, so
   // a second press in the same moment is refused here rather than sent twice.
   const inFlightRef = useRef(false);
+  const activeAuthorization = useRef(authorizationId);
+  activeAuthorization.current = authorizationId;
+  const refreshSequence = useRef(0);
   // The connection the move dialog is open for, with the dialog's own state.
   const [moving, setMoving] = useState(null);
   // What a window opened only to finish one request says once there is
@@ -159,20 +167,23 @@ export function AccessView({
    * is typing into — and a successful one clears only a failed load's own
    * banner, never a removal's.
    */
-  async function refresh({ background = false } = {}) {
+  async function refresh({ background = false, expectedAuthorizationId } = {}) {
+    const sequence=++refreshSequence.current;
+    const current=()=>sequence===refreshSequence.current && (expectedAuthorizationId===undefined || activeAuthorization.current===expectedAuthorizationId);
     try {
       const loaded = await getAccessOverview();
+      if(!current()) return null;
       setOverview(loaded);
       setOverviewReady(true);
       if (!background || !overviewReady) setError("");
       return loaded;
     } catch (error) {
-      if (background) return null;
+      if (!current() || background) return null;
       setOverviewReady(false);
       setError(errorMessage(error, "Agent access could not be loaded."));
       return null;
     } finally {
-      setLoading(false);
+      if(current()) setLoading(false);
     }
   }
 
@@ -185,7 +196,9 @@ export function AccessView({
    * to saying the refreshed lookup cannot be reviewed.
    */
   async function reloadPending() {
-    const [result, loaded] = await Promise.all([getAccessAuthorization(authorizationId), refresh()]);
+    const id=authorizationId;
+    const [result, loaded] = await Promise.all([getAccessAuthorization(id), refresh({expectedAuthorizationId:id})]);
+    if(activeAuthorization.current!==id || result.request.approvalId!==id) return null;
     if (result.request.status !== "pending") {
       await finishDecision(result.request.status);
       return null;
@@ -443,7 +456,7 @@ export function AccessView({
     } catch (error) {
       setLevelDeletion(null);
       setError(error?.serverMessage === "level-in-use"
-        ? "Move its connections and integrations off it first."
+        ? "This access level is still in use. Move its connections and integrations off it first."
         : errorMessage(error, "The access level could not be deleted."));
       await refresh({ background: true });
     } finally {
@@ -518,7 +531,7 @@ export function AccessView({
     || ((levelId || newLevel) && loading)
   ) {
     return html`<div class="access-view access-detail-state">
-      <button type="button" class="doc-back access-page-back" onClick=${backToAccess}>← Back to access</button>
+      <${BackButton} onClick=${backToAccess} />
       ${detailLoading || loading
         ? html`<p class="loading">Loading access details…</p>`
         : html`<p class="access-error" role="alert">${error || "This access detail is no longer available."}</p>`}
@@ -527,7 +540,7 @@ export function AccessView({
 
   if (authorizationId && matchingRequest && !pending.connection) {
     return html`<div class="access-view access-detail-state">
-      <button type="button" class="doc-back access-page-back" onClick=${backToAccess}>← Back to access</button>
+      <${BackButton} onClick=${backToAccess} />
       <p class="access-error" role="alert">${UNLOADABLE_APPROVAL_MESSAGE}</p>
     </div>`;
   }
@@ -535,7 +548,7 @@ export function AccessView({
   if (authorizationId && matchingRequest) {
     return html`<div class="access-view">
       <${RequestReview}
-        key=${matchingRequest.id}
+        key=${matchingRequest.approvalId}
         request=${matchingRequest}
         connection=${pending.connection}
         overview=${overview}
@@ -566,13 +579,13 @@ export function AccessView({
     const level = levels.find((candidate) => candidate.id === levelId);
     if (!level) {
       return html`<div class="access-view access-detail-state">
-        <button type="button" class="doc-back access-page-back" onClick=${backToAccess}>← Back to access</button>
+        <${BackButton} onClick=${backToAccess} />
         <p class="access-error" role="alert">This access level is no longer available.</p>
       </div>`;
     }
     return html`<div class="access-view">
       <${LevelEditorPage}
-        key=${`${level.id}-${level.revision}`}
+        key=${level.id}
         level=${level}
         connections=${entries.filter((entry) => entry.levelId === level.id && isLiveConnection(entry))}
         overview=${overview}
@@ -611,6 +624,7 @@ export function AccessView({
 
   return html`
     <div class="access-view">
+      ${notice && html`<p class="access-notice" role="status" tabindex="-1" ref=${noticeRef}>${notice}</p>`}
       <header class="access-header">
         <div>
           <h2 ref=${accessHeadingRef} tabIndex="-1">Agent access</h2>
@@ -663,7 +677,6 @@ export function AccessView({
         ? html`<${PendingRequests} requests=${overview.pendingRequests} />`
         : null}
 
-      ${notice && html`<p class="access-notice" role="status">${notice}</p>`}
       ${error && html`<p class="access-error" role="alert">${error}</p>`}
 
       ${loading
@@ -726,6 +739,7 @@ export function AccessView({
       <${ConfirmModal}
         open=${Boolean(levelDeletion)}
         title=${`Delete “${levelDeletion?.name ?? ""}”?`}
+        body="This cannot be undone."
         confirmLabel=${confirming ? "Deleting…" : "Delete"}
         destructive
         confirmDisabled=${confirming}

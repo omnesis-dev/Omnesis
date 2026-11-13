@@ -14,6 +14,7 @@ import { mountSelfIdentitySourcesRoutes } from "./admin/self-identity-sources.js
 import { mountSelfRoutes } from "./admin/self.js";
 import { mountKnownUrlPatternsRoutes } from "./admin/known-url-patterns.js";
 import { mountOwnedWebDomainsRoutes } from "./admin/owned-web-domains.js";
+import { mountSourceScopesRoutes } from "./admin/source-scopes.js";
 import { mountSourceDocumentProfilesRoutes } from "./admin/source-document-profiles.js";
 import { mountWidgetOriginsRoutes } from "./admin/widget-origins.js";
 import { mountWidgetRenderersRoutes } from "./admin/widget-renderers.js";
@@ -56,6 +57,7 @@ export function mountAdminRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   mountKnownUrlPatternsRoutes(app, deps);
   mountOwnedWebDomainsRoutes(app);
   mountSourceDocumentProfilesRoutes(app, deps);
+  mountSourceScopesRoutes(app, deps);
   mountWidgetOriginsRoutes(app);
   mountWidgetRenderersRoutes(app);
   mountDoctorRoutes(app, deps);

@@ -53,6 +53,7 @@ import {
   lookupDocumentIdsBySourceUrl,
 } from "../data/repositories/DocumentRepository.js";
 import { permittedSourceIds } from "../access/permitted-sources.js";
+import { sourceScopeInclusionSql } from "../access/scope-sql.js";
 import { matchDocumentIdPrefix } from "../data/like-prefix-seek.js";
 import {
   reconstructBoundDocumentRef,
@@ -69,7 +70,11 @@ import { graphContextPolicy } from "../search/graph-context-policy.js";
 import { parseQuery, type ParsedFilterToken } from "../search/query-parser.js";
 import { withActivity } from "../observability/main-activity.js";
 import { hydrateBrowserRecord } from "./record-browser-urls.js";
-import { isKnowledgeReadDocument, isKnowledgeReadSource } from "./knowledge-read-policy.js";
+import {
+  KNOWLEDGE_READ_SOURCE_IDS,
+  isKnowledgeReadDocument,
+  isKnowledgeReadSource,
+} from "./knowledge-read-policy.js";
 import type Database from "better-sqlite3";
 import type {
   Breadcrumb,
@@ -155,7 +160,7 @@ export function createGatewaySearchPort(
       if (parsed) rejectUnsupportedRestrictedFilters(parsed.tokens);
       const requestedFilters = parsed ? mergeFilters(parsed.filters, input.filters) : input.filters;
       let permitted = authorization && db ? permittedSourceIds(db, authorization) : null;
-      if (!knowledgeReads && db) {
+      if (!knowledgeReads && db && !authorization?.scopePolicies.length) {
         // Pass the boundary before ranking so withheld mirrors cannot crowd
         // original documents out of a capped candidate set.
         const sources = db
@@ -191,9 +196,18 @@ export function createGatewaySearchPort(
               ? false
               : labFeatureEnabled(db, "brain") && labFeatureEnabled(db, "tasks"),
         },
-        permitted
+        permitted || authorization?.scopePolicies.length
           ? {
-              sourceIds: searchSourceIntersection(permitted),
+              ...(permitted ? { sourceIds: searchSourceIntersection(permitted) } : {}),
+              // A filtered search states its boundary as policies, so the
+              // knowledge sources are excluded by name; every other search
+              // already listed the sources it may read above.
+              ...(authorization?.scopePolicies.length
+                ? {
+                    scopePolicies: authorization.scopePolicies,
+                    ...(!knowledgeReads ? { excludedSourceIds: KNOWLEDGE_READ_SOURCE_IDS } : {}),
+                  }
+                : {}),
               ...(!authorization?.restricted ? { graphContext: "unrestricted" as const } : {}),
             }
           : undefined,
@@ -493,6 +507,19 @@ export function createGatewayDocumentPort(
         if (options?.knowledgeReads === false && isKnowledgeReadDocument(db, documentId))
           return null;
         const permitted = authorization ? permittedSourceIds(db, authorization) : null;
+        if (authorization?.scopePolicies.length) {
+          const scopeFilter = sourceScopeInclusionSql(
+            authorization.scopePolicies,
+            "d.id",
+            "d.source_id",
+          );
+          if (
+            !db
+              .prepare(`SELECT 1 FROM documents d WHERE d.id = ? AND (${scopeFilter.sql})`)
+              .get(documentId, ...scopeFilter.params)
+          )
+            return null;
+        }
         const rows =
           options?.maxStoredDocumentBytes === undefined && !permitted
             ? listDocumentsByIds(db, [documentId])
@@ -677,20 +704,26 @@ export function createGatewayDocumentByUrlPort(
         return { url, durationMs: Date.now() - t0 };
       }
       const permitted = authorization ? permittedSourceIds(db, authorization) : null;
-      const rows = permitted
-        ? db.transaction((candidateIds: readonly string[]) => {
-            const sourceLookup = db.prepare<[string], { source_id: string }>(
-              "SELECT source_id FROM documents WHERE id = ?",
-            );
-            const allowedIds = candidateIds.filter((id) => {
-              const row = sourceLookup.get(id);
-              return row ? permitted.has(row.source_id) : false;
-            });
-            // Authorization and materialization share one reader snapshot, and
-            // denied candidate bodies are never loaded into the process.
-            return allowedIds.length > 0 ? listDocumentsByIds(db, allowedIds) : [];
-          })(ids)
-        : listDocumentsByIds(db, ids);
+      const rows =
+        permitted || authorization?.scopePolicies.length
+          ? db.transaction((candidateIds: readonly string[]) => {
+              const scopeFilter = sourceScopeInclusionSql(
+                authorization?.scopePolicies ?? [],
+                "d.id",
+                "d.source_id",
+              );
+              const sourceLookup = db.prepare<unknown[], { source_id: string }>(
+                `SELECT d.source_id FROM documents d WHERE d.id = ? AND (${scopeFilter.sql})`,
+              );
+              const allowedIds = candidateIds.filter((id) => {
+                const row = sourceLookup.get(id, ...scopeFilter.params);
+                return row ? permitted === null || permitted.has(row.source_id) : false;
+              });
+              // Authorization and materialization share one reader snapshot, and
+              // denied candidate bodies are never loaded into the process.
+              return allowedIds.length > 0 ? listDocumentsByIds(db, allowedIds) : [];
+            })(ids)
+          : listDocumentsByIds(db, ids);
       if (rows.length === 0) {
         return { url, durationMs: Date.now() - t0 };
       }

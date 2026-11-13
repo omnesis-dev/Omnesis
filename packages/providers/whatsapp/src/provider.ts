@@ -1593,6 +1593,15 @@ export class WhatsAppProvider implements Provider {
     // both by normalizing to JID strings.
     sock.ev.on("group-participants.update", ({ id, participants, action }) => {
       if (!id || !participants?.length) return;
+      for (const participant of participants as Array<
+        string | { id?: string; lid?: string; phoneNumber?: string }
+      >) {
+        if (typeof participant === "object" && participant.phoneNumber) {
+          const lid =
+            participant.lid ?? (participant.id?.endsWith("@lid") ? participant.id : undefined);
+          if (lid) this.store.setLIDPhoneFromPn(lid, participant.phoneNumber);
+        }
+      }
       const jids = (participants as Array<string | { id?: string }>)
         .map((p) => (typeof p === "string" ? p : p?.id))
         .filter((j): j is string => typeof j === "string" && j.length > 0);
@@ -1786,6 +1795,61 @@ export class WhatsAppProvider implements Provider {
    * Fetch all groups the account is participating in and store their rosters.
    * Called after history sync to seed group memberships.
    */
+  /** A scope witness requires successful current upstream metadata, never cached roster contents. */
+  async refreshScopeGroupRosters(jids: readonly string[]): Promise<Set<string>> {
+    const sock = this.sock;
+    const generation = this.connectionGeneration;
+    const fresh = new Set<string>();
+    if (!sock || !this.connected) return fresh;
+    const current = () =>
+      this.sock === sock && this.connectionGeneration === generation && this.connected;
+    const accept = (jid: string, meta: unknown) => {
+      if (!current() || !meta || typeof meta !== "object") return;
+      const data = meta as { id?: unknown; participants?: unknown[] };
+      if (data.id !== undefined && data.id !== jid) return;
+      if (
+        !Array.isArray(data.participants) ||
+        data.participants.some(
+          (item) =>
+            !item ||
+            typeof item !== "object" ||
+            typeof (item as { id?: unknown }).id !== "string" ||
+            !(item as { id: string }).id,
+        )
+      )
+        return;
+      const ids = this.ingestGroupMetadata(
+        jid,
+        meta as Parameters<WhatsAppProvider["ingestGroupMetadata"]>[1],
+      );
+      this.store.updateGroupRoster(jid, ids);
+      fresh.add(jid);
+    };
+    if (typeof sock.groupMetadata === "function") {
+      // Bound provider pressure as well as the gateway's eventual writer work.
+      for (let index = 0; index < jids.length; index += 4) {
+        if (!current()) return new Set();
+        await Promise.all(
+          jids.slice(index, index + 4).map(async (jid) => {
+            try {
+              accept(jid, await sock.groupMetadata!(jid));
+            } catch {
+              /* Inaccessible/departed groups retain no refresh witness. */
+            }
+          }),
+        );
+      }
+    } else if (typeof sock.groupFetchAllParticipating === "function") {
+      try {
+        const groups = await sock.groupFetchAllParticipating();
+        if (groups && typeof groups === "object") for (const jid of jids) accept(jid, groups[jid]);
+      } catch {
+        /* A failed enumeration proves no individual cached roster current. */
+      }
+    }
+    return current() ? fresh : new Set();
+  }
+
   private async refreshAllGroupRosters(sock: WASocket): Promise<void> {
     if (typeof sock.groupFetchAllParticipating !== "function") return;
     try {

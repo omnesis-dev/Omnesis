@@ -19,6 +19,8 @@
  */
 
 import Database from "better-sqlite3";
+import { createScopeMirrorSchema, replayScopeMirror } from "../indexer/scope-mirror.js";
+import { sourceFiltersInUse } from "../access/source-filters-in-use.js";
 type Db = Database.Database;
 import { existsSync } from "node:fs";
 import { parentPort } from "node:worker_threads";
@@ -127,6 +129,11 @@ function openGatewayReadConn(path: string, gatewayDbKeyHex?: string): Db {
   db.exec("PRAGMA mmap_size = 0");
   return db;
 }
+
+/** How often the scope mirror checks whether source filters have come into use. */
+const SCOPE_MIRROR_UNUSED_POLL_MS = 60_000;
+let scopeMirrorDb: Db | undefined;
+let scopeMirrorTimer: ReturnType<typeof setTimeout> | undefined;
 
 function openIndexWriteConn(path: string, indexDbKeyHex?: string): Db {
   // Open index.db with standard pragmas.
@@ -621,6 +628,47 @@ async function handleInit(init: IndexerInit): Promise<void> {
   try {
     const gatewayDb = openGatewayReadConn(init.gatewayDbPath, init.gatewayDbKeyHex);
     const indexDb = openIndexWriteConn(init.indexDbPath, init.indexDbKeyHex);
+    createScopeMirrorSchema(indexDb);
+    scopeMirrorDb = indexDb;
+    const scopeReplayIdleMs = Math.min(1000, Math.max(50, init.indexBacklogIntervalMs));
+    const replayScopes = () => {
+      if (state?.paused || state?.shuttingDown) {
+        scopeMirrorTimer = setTimeout(replayScopes, scopeReplayIdleMs);
+        return;
+      }
+      // Nothing is mirrored while source filters are not in use: no facts are
+      // kept then, so the replay is only asked again at a slow cadence.
+      if (!sourceFiltersInUse(gatewayDb)) {
+        scopeMirrorTimer = setTimeout(replayScopes, SCOPE_MIRROR_UNUSED_POLL_MS);
+        return;
+      }
+      let work = false;
+      try {
+        work =
+          replayScopeMirror(gatewayDb, indexDb, {
+            batchSize: Math.min(100, init.dbWriteBatchSize),
+            maxBatches: 1,
+          }).pages > 0;
+      } catch (error) {
+        log(
+          "warn",
+          "indexer-worker",
+          `scope facts replay failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      for (const row of indexDb
+        .prepare<[], { source_id: string; epoch: string; generation: number }>(
+          "SELECT * FROM index_scope_acknowledgements LIMIT 100",
+        )
+        .all()) {
+        post({
+          type: "scopeReplayAck",
+          completed: { sourceId: row.source_id, epoch: row.epoch, generation: row.generation },
+        });
+      }
+      scopeMirrorTimer = setTimeout(replayScopes, work ? 0 : scopeReplayIdleMs);
+    };
+    replayScopes();
     // Detect a model swap that bypassed the runtime config-change path
     // (env-override edits while the gateway is down, same-name file
     // replaced with a different dim, fresh installs whose stamp is
@@ -1107,6 +1155,9 @@ async function handleInit(init: IndexerInit): Promise<void> {
     armReconcile();
     armReindexMissing();
   } catch (err) {
+    if (scopeMirrorTimer) clearTimeout(scopeMirrorTimer);
+    scopeMirrorTimer = undefined;
+    scopeMirrorDb = undefined;
     const msg = err instanceof Error ? err.message : String(err);
     startupIndexResources = null;
     for (const request of deferredSourceDeletes.splice(0)) {
@@ -1529,6 +1580,9 @@ function handleDeleteDocumentIndexBatch(
 }
 
 async function handleShutdown(): Promise<void> {
+  scopeMirrorDb = undefined;
+  if (scopeMirrorTimer) clearTimeout(scopeMirrorTimer);
+  scopeMirrorTimer = undefined;
   // The guard saves and releases the graph on its own timer; it must not fire
   // into databases this shutdown is about to close.
   graphKeeper?.stop();
@@ -1682,6 +1736,14 @@ function handleUpdateCutoffs(cutoffs: IndexerCutoffMap): void {
 
 parentPort.on("message", (msg: MainToIndexer) => {
   switch (msg.type) {
+    case "scopeReplayAcknowledged":
+      if (state?.paused || state?.shuttingDown) break;
+      scopeMirrorDb
+        ?.prepare(
+          "DELETE FROM index_scope_acknowledgements WHERE source_id=? AND epoch=? AND generation=?",
+        )
+        .run(msg.completed.sourceId, msg.completed.epoch, msg.completed.generation);
+      break;
     case "init":
       void handleInit(msg);
       break;

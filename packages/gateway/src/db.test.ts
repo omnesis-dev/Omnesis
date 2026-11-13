@@ -3166,14 +3166,16 @@ describe("upsertWithCursorYieldable", () => {
       },
     };
 
+    // Scoped sources may commit one document per prefix. Bound by input work,
+    // allowing the constant cursor/control phases without assuming chunk size.
     let iterations = 0;
-    while (iterations < 20) {
+    while (iterations <= docs.length + 8) {
       iterations += 1;
       const out = upsertWithCursorYieldable(db, nextArgs, { token, chunkSize: 50 });
       if (out.kind === "done") break;
       nextArgs = out.resume;
     }
-    expect(iterations).toBeLessThan(20);
+    expect(iterations).toBeLessThanOrEqual(docs.length + 8);
 
     // Every doc landed, exactly once.
     const present = checkExistingExternalIds(
@@ -3229,7 +3231,7 @@ describe("upsertWithCursorYieldable", () => {
     };
     let final: Extract<ReturnType<typeof upsertWithCursorYieldable>, { kind: "done" }> | null =
       null;
-    for (let iteration = 0; iteration < 30; iteration += 1) {
+    for (let iteration = 0; iteration <= fresh.length + newDocuments.length + 8; iteration += 1) {
       const out = upsertWithCursorYieldable(db, args, {
         token: { requested: () => true },
         chunkSize: 10,
@@ -3493,7 +3495,7 @@ describe("upsertWithCursorYieldable", () => {
     let iterations = 0;
     for (;;) {
       iterations += 1;
-      if (iterations > 60) throw new Error("did not converge");
+      if (iterations > docs.length + 8) throw new Error("did not converge");
       const step = upsertWithCursorYieldable(db, nextArgs, { token, chunkSize: 50 });
       if (step.kind === "done") break;
       nextArgs = step.resume;

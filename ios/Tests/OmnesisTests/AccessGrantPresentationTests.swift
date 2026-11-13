@@ -4,9 +4,9 @@
 @testable import Omnesis
 import XCTest
 
-/// How a grant decision is *presented*: which capability occupies which slot
-/// and in what tone, which capabilities a source list speaks for when it
-/// refuses, and what the owner's choice about future sources leaves alone.
+/// How a grant decision is *presented*: which capability occupies which slot,
+/// what a source list says when it refuses, and what the owner's choice about
+/// future sources leaves alone.
 final class AccessGrantPresentationTests: XCTestCase {
     private let known: Set<String> = [
         "github:maya-reeves",
@@ -19,7 +19,9 @@ final class AccessGrantPresentationTests: XCTestCase {
             boundary: AccessSourceBoundary(mode: .all, sourceIds: []),
             knownSourceIds: known
         )
-        state.blockAll(known)
+        for sourceId in known {
+            state.setAllowed(false, sourceId: sourceId)
+        }
         XCTAssertEqual(
             state.boundary(knownSourceIds: known),
             AccessSourceBoundary(mode: .denylist, sourceIds: known.sorted())
@@ -72,36 +74,17 @@ final class AccessGrantPresentationTests: XCTestCase {
         XCTAssertEqual(AccessCapability.allCases.map(\.label), ["Answer", "Direct", "Notes"])
     }
 
-    func testAGrantedCapabilityIsNeverDrawnAsWithheld() {
-        for capability in AccessCapability.allCases {
-            XCTAssertNotEqual(
-                accessCapabilityTone(capability, held: true),
-                .withheld,
-                "\(capability.label) granted must not read as withheld"
-            )
-            XCTAssertEqual(accessCapabilityTone(capability, held: false), .withheld)
-        }
-    }
-
-    func testDangerBelongsToDirectAndUnreviewedReleaseIsTheWarningTone() {
-        XCTAssertEqual(accessCapabilityTone(.direct, held: true), .raw)
-        XCTAssertEqual(accessCapabilityTone(.answer, held: true), .granted)
+    func testPillRowReadsAsOneSentence() {
         XCTAssertEqual(
-            accessCapabilityTone(.answer, held: true, unreviewed: true),
-            .unreviewed
+            AccessCapabilityHoldings(answer: true, direct: true).spokenSummary,
+            "Answer and Direct allowed, Notes not allowed"
         )
-        XCTAssertEqual(accessCapabilityTone(.notes, held: true), .notes)
-        // Unreviewed release must not borrow Direct's tone: two dangers on one
-        // row means neither is read as one.
-        XCTAssertNotEqual(
-            accessCapabilityTone(.answer, held: true, unreviewed: true),
-            accessCapabilityTone(.direct, held: true)
-        )
-        // A withheld capability cannot be warned about.
+        XCTAssertEqual(AccessCapabilityHoldings(notes: true).spokenSummary, "Notes allowed, Answer and Direct not allowed")
         XCTAssertEqual(
-            accessCapabilityTone(.answer, held: false, unreviewed: true),
-            .withheld
+            AccessCapabilityHoldings(answer: true, direct: true, notes: true).spokenSummary,
+            "Answer, Direct and Notes allowed"
         )
+        XCTAssertEqual(AccessCapabilityHoldings().spokenSummary, "Answer, Direct and Notes not allowed")
     }
 
     func testHoldingsReadEveryCapabilityOffTheRulesBeingApproved() {
@@ -115,17 +98,9 @@ final class AccessGrantPresentationTests: XCTestCase {
         ])
         XCTAssertEqual(
             holdings,
-            AccessCapabilityHoldings(
-                answer: true,
-                direct: true,
-                notes: true,
-                answerUnreviewed: true
-            )
+            AccessCapabilityHoldings(answer: true, direct: true, notes: true)
         )
         XCTAssertTrue(holdings.holdsAnything)
-        XCTAssertEqual(holdings.tone(.answer), .unreviewed)
-        XCTAssertEqual(holdings.tone(.direct), .raw)
-        XCTAssertEqual(holdings.tone(.notes), .notes)
 
         let reviewed = accessCapabilityHoldings(rules: [
             .answer(
@@ -133,63 +108,51 @@ final class AccessGrantPresentationTests: XCTestCase {
                 release: .reviewed(policyFamilyId: "policy-example")
             ),
         ])
-        XCTAssertEqual(reviewed.tone(.answer), .granted)
-        XCTAssertEqual(reviewed.tone(.direct), .withheld)
+        XCTAssertEqual(reviewed, AccessCapabilityHoldings(answer: true))
         XCTAssertFalse(accessCapabilityHoldings(rules: []).holdsAnything)
     }
 
-    func testASharedSourceListRefusesInTheNameOfBothCapabilities() {
-        XCTAssertEqual(
-            accessSourceBoundaryError(
-                scope: .shared,
-                permitsAnyKnownSource: false,
-                recordedSelectionCount: 0
-            ),
-            "Select at least one source for Answer and Direct."
+    /// A new level over the known sources whose Answer and Direct each keep their own list.
+    private func draft(answer: [String], direct: [String]) -> (draft: AccessLevelDraft, overview: AccessOverview) {
+        let overview = AccessOverview(
+            principals: [],
+            sources: known.sorted().map { AccessSourceInstance(id: $0, name: $0) },
+            policyFamilies: [AccessPolicyFamilySummary(id: "policy-example", name: "Standard", revision: "1")],
+            defaultPolicyFamilyId: "policy-example"
         )
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        draft.setEnabled("direct", true, overview: overview)
+        draft.setDirectSameAsAnswer(false)
+        draft.setBoundary(.init(mode: .allowlist, sourceIds: answer), capability: "answer", authoringEnabled: true)
+        draft.setBoundary(.init(mode: .allowlist, sourceIds: direct), capability: "direct", authoringEnabled: true)
+        return (draft, overview)
+    }
+
+    func testAnEmptySourceListRefusesInTheNameOfItsCapability() {
+        let empty = draft(answer: [], direct: [])
         XCTAssertEqual(
-            accessSourceBoundaryError(
-                scope: .answer,
-                permitsAnyKnownSource: false,
-                recordedSelectionCount: 0
-            ),
+            empty.draft.sourceProblem("answer", overview: empty.overview, original: empty.draft),
             "Select at least one source for Answer."
         )
         XCTAssertEqual(
-            accessSourceBoundaryError(
-                scope: .direct,
-                permitsAnyKnownSource: false,
-                recordedSelectionCount: 0
-            ),
+            empty.draft.sourceProblem("direct", overview: empty.overview, original: empty.draft),
             "Select at least one source for Direct."
         )
+        let chosen = draft(answer: ["github:maya-reeves"], direct: [])
+        XCTAssertNil(chosen.draft.sourceProblem("answer", overview: chosen.overview, original: chosen.draft))
+        XCTAssertNil(chosen.draft.sourceProblem("notes", overview: chosen.overview, original: chosen.draft))
     }
 
-    func testAnOversizedSourceListIsNamedBeforeAnEmptyOne() {
+    func testASourceListHoldsAtMostWhatARuleCanRecord() {
+        let tooMany = (0 ... accessMaxSourceSelections).map { "github:workspace-\($0)" }
+        let atTheLimit = Array(tooMany.dropLast(2)) + ["github:maya-reeves"]
+        XCTAssertEqual(atTheLimit.count, accessMaxSourceSelections)
+        let lists = draft(answer: tooMany, direct: atTheLimit)
         XCTAssertEqual(
-            accessSourceBoundaryError(
-                scope: .shared,
-                permitsAnyKnownSource: false,
-                recordedSelectionCount: accessMaxSourceSelections + 1
-            ),
-            "Answer and Direct can record at most 256 source selections."
+            lists.draft.sourceProblem("answer", overview: lists.overview, original: lists.draft),
+            "Answer can record at most 256 source selections."
         )
-        XCTAssertNil(
-            accessSourceBoundaryError(
-                scope: .answer,
-                permitsAnyKnownSource: true,
-                recordedSelectionCount: accessMaxSourceSelections
-            )
-        )
-    }
-
-    func testEachScopeTitlesItsOwnList() {
-        XCTAssertEqual(AccessSourceScope.answer.editorTitle, "Answer sources")
-        XCTAssertEqual(AccessSourceScope.direct.editorTitle, "Direct sources")
-        XCTAssertEqual(
-            AccessSourceScope.shared.editorTitle,
-            "Sources for Answer and Direct"
-        )
+        XCTAssertNil(lists.draft.sourceProblem("direct", overview: lists.overview, original: lists.draft))
     }
 
     // MARK: - Unmapped failures
@@ -265,6 +228,4 @@ final class AccessGrantPresentationTests: XCTestCase {
             XCTAssertEqual(step.shortTitle, step.title, "\(step) should not be abbreviated")
         }
     }
-
-    // MARK: - The form
 }

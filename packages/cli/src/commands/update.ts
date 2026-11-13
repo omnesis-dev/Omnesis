@@ -125,6 +125,7 @@ import {
   assessDockerApplyEvidence,
   assessSourceApplyEvidence,
   assessUpdate,
+  sourceFilterRollbackNote,
   migrationBackupNote,
   channelToDistTag,
   CLI_PACKAGE,
@@ -438,6 +439,8 @@ function updateApplyStateStore(configDir: string): UpdateApplyStateStore {
 /** Effects the update flows need — injected so tests can fake them. */
 export interface UpdateFlowDeps {
   run: CommandRunner;
+  /** Fresh gateway compatibility evidence; absent on hosts without a gateway. */
+  readCompatibility?(): Promise<unknown>;
   /** Refuse unsupported target source tooling before the checkout or services change. */
   checkSourceNode(rootDir: string, targetCommit: string): Promise<void>;
   /** Completion proof for installer-managed source and container applies. */
@@ -852,6 +855,8 @@ async function rollBackAndFail(
   deps.updateLock?.setStep("rolling back");
   console.log();
   console.log(`${c.red}${reason}${c.reset}`);
+  const scopeNote = sourceFilterRollbackNote(await updateCompatibility(deps));
+  if (scopeNote) printUpdateNotes([scopeNote], null);
   console.log(`${c.yellow}Rolling back to ${applyPlan.previous}.${c.reset}`);
 
   let rollbackStateError: string | null = null;
@@ -1789,6 +1794,24 @@ function printPlan(steps: readonly UpdateStep[], targetLabel: string): void {
   }
 }
 
+/** Read-only best effort: an offline gateway must not prevent update recovery. */
+async function updateCompatibility(deps: UpdateFlowDeps) {
+  if (!deps.roles.gateway.present) return undefined;
+  if (!deps.readCompatibility) return {};
+  try {
+    return { current: await deps.readCompatibility() };
+  } catch {
+    return {};
+  }
+}
+
+async function assessHostUpdate(deps: UpdateFlowDeps, target: string) {
+  // Only a downgrade needs the extra read; ordinary upgrades retain their path.
+  const basic = assessUpdate(deps.currentVersion, target);
+  if (basic.direction !== "downgrade") return basic;
+  return assessUpdate(deps.currentVersion, target, await updateCompatibility(deps));
+}
+
 /** The warnings under a plan: the assessment's, then what its migrations mean for it. */
 function printUpdateNotes(notes: readonly string[], migration: string | null): void {
   for (const note of [...notes, ...(migration ? [migration] : [])]) {
@@ -2018,7 +2041,7 @@ export async function updateNpmGlobal(
     normalizeVersion(deps.currentVersion),
     opts.registry,
   );
-  const assessment = assessUpdate(deps.currentVersion, target);
+  const assessment = await assessHostUpdate(deps, target);
   const arrow = assessment.direction === "downgrade" ? "↓" : "→";
   console.log(
     `${assessment.direction === "downgrade" ? "Downgrade" : "Update"} on the ${opts.channel} channel: ` +
@@ -2280,7 +2303,7 @@ export async function updateSourceCheckout(
       );
     }
     target = stableTag;
-    assessment = assessUpdate(deps.currentVersion, versionFromStableTag(stableTag)!);
+    assessment = await assessHostUpdate(deps, versionFromStableTag(stableTag)!);
   }
 
   const targetLabel = opts.edge
@@ -2475,6 +2498,10 @@ export async function updateSourceCheckout(
     );
   }
   if (ancestry.code === 1) {
+    if (assessment?.direction !== "downgrade") {
+      const note = sourceFilterRollbackNote(await updateCompatibility(deps));
+      if (note) printUpdateNotes([note], null);
+    }
     await judgeNonAncestorTarget(deps, {
       rootDir: opts.rootDir,
       target,
@@ -2752,7 +2779,7 @@ export async function updateDocker(
     roles,
     select,
   };
-  const assessment = assessUpdate(flowDeps.currentVersion, target);
+  const assessment = await assessHostUpdate(flowDeps, target);
 
   if (evidence.recovery === "unfinished") {
     console.log(
@@ -3364,6 +3391,15 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
 
   const deps: UpdateFlowDeps = {
     run: spawnRunner,
+    readCompatibility: async () => {
+      // Public, bounded and best-effort: no new trust prompt or credential requirement.
+      const response = await fetch(`${GATEWAY_REQUEST_URL}/health`, {
+        signal: AbortSignal.timeout(2_000),
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Gateway compatibility evidence is unavailable.");
+      return response.json() as Promise<unknown>;
+    },
     checkSourceNode: (rootDir, commit) => assertSourceTargetNode(spawnRunner, rootDir, commit),
     applyState: updateApplyStateStore(configDir),
     interruptions: updateInterruptionRouter,

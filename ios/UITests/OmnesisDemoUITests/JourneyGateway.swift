@@ -76,6 +76,19 @@ struct JourneyGateway {
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 
+    /// Access-level setup must use the same genuinely paired owner as the app.
+    func ownerGateway(pairingJSON: String) throws -> JourneyGateway {
+        let object = try JSONSerialization.jsonObject(with: Data(pairingJSON.utf8)) as? [String: Any]
+        guard object?["url"] as? String == url.absoluteString,
+              (object?["fingerprint"] as? String)?.lowercased() == fingerprint,
+              object?["tlsMode"] as? String == "pinned-leaf",
+              let deviceId = object?["deviceId"] as? String, !deviceId.isEmpty,
+              let deviceToken = object?["token"] as? String, !deviceToken.isEmpty else {
+            throw JourneyGatewayError.unexpectedResponse("paired owner configuration")
+        }
+        return JourneyGateway(url: url, token: deviceToken, fingerprint: fingerprint)
+    }
+
     /// Mints a one-time iPhone pairing code and returns the QR payload the
     /// gateway would show for it, pinned to the gateway's own certificate.
     func mintPairingPayload(deviceName: String) throws -> String {
@@ -102,6 +115,78 @@ struct JourneyGateway {
         }
     }
 
+    /// Real collector metadata and owner API setup for the folder picker journey.
+    func prepareFolderScrollLevel() throws -> (id: String, name: String, sourceId: String) {
+        let deadline = Date().addingTimeInterval(90)
+        var sourceId: String?
+        while Date() < deadline {
+            let overview = try request("GET", "/admin/access", body: nil)
+            guard (overview["sourceFilters"] as? [String: Any])?["enabled"] as? Bool == true else {
+                throw JourneyGatewayError.unexpectedResponse("source filter authoring is not enabled")
+            }
+            let sources = overview["sources"] as? [[String: Any]] ?? []
+            if let source = sources.first(where: { ($0["id"] as? String)?.hasPrefix("google-drive:") == true }),
+               let id = source["id"] as? String,
+               let readiness = source["scopeReadiness"] as? [[String: Any]],
+               readiness.contains(where: { $0["kind"] as? String == "folder" && $0["ready"] as? Bool == true }) {
+                sourceId = id
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        guard let sourceId else { throw JourneyGatewayError.timedOut("Drive folder readiness") }
+        let first = try folderOptions(sourceId: sourceId)
+        guard let items = first["items"] as? [[String: Any]], items.count == 50,
+              let cursor = first["nextCursor"] as? String else {
+            throw JourneyGatewayError.unexpectedResponse("folder catalogue first50")
+        }
+        let second = try folderOptions(sourceId: sourceId, cursor: cursor)
+        guard let remaining = second["items"] as? [[String: Any]], remaining.count == 15,
+              second["nextCursor"] == nil else {
+            throw JourneyGatewayError.unexpectedResponse("folder catalogue final15")
+        }
+        guard (items + remaining).compactMap({ $0["label"] as? String }) == (0 ..< 65).map({ String(format: "Journey folder %03d", $0) })
+        else {
+            throw JourneyGatewayError.unexpectedResponse("ordered collector folder catalogue")
+        }
+        let name = "Folder gesture \(UUID().uuidString.prefix(8))"
+        let rule: [String: Any] = ["capability": "direct", "sources": ["mode": "allowlist", "sourceIds": [sourceId]]]
+        let result = try request("POST", "/admin/access/levels", body: [
+            "name": name,
+            "rules": [rule],
+        ])
+        guard let level = result["level"] as? [String: Any], let id = level["id"] as? String else {
+            throw JourneyGatewayError.unexpectedResponse("create folder gesture level")
+        }
+        return (id, name, sourceId)
+    }
+
+    func hasSelectedFolder(levelId: String, sourceId: String, folderId: String) throws -> Bool {
+        let overview = try request("GET", "/admin/access", body: nil)
+        let levels = overview["levels"] as? [[String: Any]] ?? []
+        let level = levels.first { $0["id"] as? String == levelId }
+        let rules = level?["rules"] as? [[String: Any]] ?? []
+        guard rules.count == 1, let direct = rules.first, direct["capability"] as? String == "direct",
+              let boundary = direct["sources"] as? [String: Any], boundary["mode"] as? String == "allowlist",
+              boundary["sourceIds"] as? [String] == [sourceId],
+              let policies = direct["scopePolicies"] as? [[String: Any]], policies.count == 1,
+              let policy = policies.first, policy["sourceId"] as? String == sourceId,
+              let audience = policy["audience"] as? [String: Any], audience.count == 2,
+              audience["accessLevel"] as? String == levelId, audience["capability"] as? String == "direct" else { return false }
+        let decisions = policy["rules"] as? [[String: Any]] ?? []
+        let refs = decisions.flatMap { $0["match"] as? [[String: Any]] ?? [] }
+        return policy["otherwise"] as? String == "hide" && decisions.count == 1 && decisions[0]["action"] as? String == "share"
+            && refs.count == 1 && refs[0].count == 2 && refs[0]["kind"] as? String == "folder" && refs[0]["id"] as? String == folderId
+    }
+
+    private func folderOptions(sourceId: String, cursor: String? = nil) throws -> [String: Any] {
+        var components = URLComponents()
+        components.path = "/admin/access/source-filters/\(sourceId)/options"
+        components.queryItems = [.init(name: "kind", value: "folder"), .init(name: "parentId", value: "journey-folders-root")]
+        if let cursor { components.queryItems?.append(.init(name: "cursor", value: cursor)) }
+        return try request("GET", components.string!, body: nil)
+    }
+
     private func post(_ path: String, body: [String: String]) throws -> [String: Any] {
         try request("POST", path, body: body)
     }
@@ -109,11 +194,14 @@ struct JourneyGateway {
     private func request(
         _ method: String,
         _ path: String,
-        body: [String: String]?,
+        body: [String: Any]?,
         authorized: Bool = true
     ) throws
         -> [String: Any] {
-        var request = URLRequest(url: url.appendingPathComponent(path))
+        guard let endpoint = URL(string: path, relativeTo: url) else {
+            throw JourneyGatewayError.invalidConfiguration(path)
+        }
+        var request = URLRequest(url: endpoint)
         request.httpMethod = method
         request.timeoutInterval = 30
         if authorized {

@@ -5,11 +5,26 @@ import {
   recordSourceInventoryPage,
   recordSourceInventoryDocument,
 } from "./SourceInventoryRepository.js";
-import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
-import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { randomUUID } from "node:crypto";
-import { createLogger, normalizeUrl } from "@omnesis/core";
+import { createLogger, normalizeUrl, parseSourceKey } from "@omnesis/core";
+import { applySourceScopeUpdates } from "../../access/scope-updates.js";
+import { sourceFiltersActive } from "../../access/scope-activation.js";
+import {
+  advanceScopePageWork,
+  advanceScopeFactPageWork,
+  beginScopePageWork,
+  scopePageAuthorityRejected,
+} from "../../access/scope-page-work.js";
+import { hasConversationScopeRebuilds } from "../../access/scope-conversations.js";
+import { getSourceScopes } from "../../access/scope-descriptors.js";
+import {
+  captureScopeFactRebuildTargets,
+  type ScopeFactRebuildTarget,
+} from "../../access/scope-fact-rebuilds.js";
+import { ensureScopeBackfillState } from "../../access/scope-backfill.js";
+import { projectStoredDocumentScopes } from "../../access/scope-projection.js";
+import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import {
   registerDocumentTemporalProjectionCoverage,
   replaceDocumentTemporalProjections,
@@ -51,6 +66,7 @@ import {
 import { findRemovedSourceIds } from "./SourceRepository.js";
 import { retractAliasAssertions } from "./PersonAliasRepository.js";
 import { deleteSourceWatermark, upsertSourceWatermark } from "./WatermarkRepository.js";
+import type Database from "better-sqlite3";
 import type { UrlCanonicalizerSpec, EdgeDeclaration } from "@omnesis/core";
 
 const log = createLogger("gateway:documents");
@@ -59,7 +75,7 @@ import type {
   SourceWatermark,
   SyncCursor,
 } from "@omnesis/source-sdk";
-import type { DocumentInput } from "@omnesis/types";
+import type { DocumentInput, SourceScopes } from "@omnesis/types";
 import type {
   ListDocumentsOptions,
   ListedDocumentRow,
@@ -326,6 +342,52 @@ export function upsertDocuments(
   const suppressedDocuments = tombstoned.suppressed;
   documents = filterRemovedSourceDocuments(db, tombstoned.kept);
 
+  // Filter facts are projected only while source filters are active. While
+  // they are not, no declaration is read and the batch is written exactly as
+  // a batch of a source without one, with no read made on filters' behalf.
+  //
+  // Declarations are tiny and constant for this bounded ingest batch. Reading
+  // them once per source avoids a lookup per document inside the transaction.
+  const scopeDeclarations = new Map<
+    string,
+    { sourceType: string; scopes: SourceScopes | null; requiresHosting: boolean }
+  >();
+  if (sourceFiltersActive(db)) {
+    const sourceTypeForScope = db.prepare<[string], { type: string; multi_device_mode: string }>(
+      "SELECT type,multi_device_mode FROM sources WHERE id = ?",
+    );
+    for (const sourceId of new Set(documents.map((doc) => doc.sourceId))) {
+      const source = sourceTypeForScope.get(sourceId);
+      const sourceType = source?.type ?? parseSourceKey(sourceId).sourceType;
+      scopeDeclarations.set(sourceId, {
+        sourceType,
+        scopes: getSourceScopes(db, sourceType),
+        requiresHosting: !!source && source.multi_device_mode !== "exclusive",
+      });
+    }
+  }
+  if (options.scopeRefreshActorId)
+    for (const [sourceId, entry] of scopeDeclarations) {
+      if (!entry.scopes) continue;
+      const context = {
+        sourceId,
+        providerId: "",
+        streamId: options.streams?.[sourceId] ?? "",
+        cursorDeviceId: options.cursorRows?.[sourceId],
+        writeEpoch: options.writeEpochs?.[sourceId],
+        authorityId: options.scopeRefreshActorId,
+        requiredHostingAuthority: entry.requiresHosting,
+      };
+      if (scopePageAuthorityRejected(db, context))
+        return {
+          remaining: [],
+          rejectedSourceIds: [sourceId],
+          ignoredReplicaDocuments: [],
+          suppressedDocuments,
+          acceptedDocumentCount: 0,
+        };
+      beginScopePageWork(db, context, undefined);
+    }
   const stmt = db.prepare(`
     INSERT INTO documents (id, provider_id, source_id, external_id, stream_id, partition_key, title, content, content_hash, extracted_content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at, source_url)
     VALUES ($id, $provider_id, $source_id, $external_id, $stream_id, $partition_key, $title, $content, $content_hash, $extracted_content_hash, $metadata, $source_created_at, $source_updated_at, $ingested_at, $updated_at, $source_url)
@@ -508,6 +570,11 @@ export function upsertDocuments(
     // number it inserted; they feed the per-source stats maintenance.
     const insertedBySource = new Map<string, number>();
     const inventorySources = new Set<string>();
+    for (const sourceId of new Set(docs.map((doc) => doc.sourceId))) {
+      const declaration = scopeDeclarations.get(sourceId);
+      if (declaration?.scopes)
+        ensureScopeBackfillState(db, sourceId, declaration.sourceType, declaration.scopes);
+    }
     for (const doc of docs) {
       if (documentTemporalProjection && doc.sourceId !== documentTemporalProjection.sourceId) {
         throw new Error(
@@ -555,6 +622,24 @@ export function upsertDocuments(
           options.replicaVersionPolicies?.[doc.sourceId] === "source-updated-at" ? 1 : 0,
       }) as { id: string } | undefined;
       const inserted = stored?.id === insertedId;
+      const declaration = scopeDeclarations.get(doc.sourceId);
+      if (stored && declaration?.scopes) {
+        projectStoredDocumentScopes(
+          db,
+          {
+            id: stored.id,
+            providerId: doc.providerId,
+            sourceId: doc.sourceId,
+            streamId,
+            externalId: doc.externalId,
+            metadata: doc.metadata,
+            writeEpoch: options.writeEpochs?.[doc.sourceId],
+            snapshotAuthority: options.scopeSnapshotAuthority?.[doc.sourceId],
+            authorityId: options.scopeAuthorityIds?.[doc.sourceId] ?? options.scopeRefreshActorId,
+          },
+          declaration.scopes,
+        );
+      }
       if (
         options.replicaVersionPolicies?.[doc.sourceId] === "source-updated-at" &&
         stored === undefined
@@ -678,9 +763,12 @@ export function upsertDocuments(
   // Default chunkSize=5 so a 20-document batch hits four yield checks per
   // call.
   const chunkSize = options.chunkSize ?? 5;
+  const scopedSources = new Set<string>(
+    [...scopeDeclarations].filter(([, entry]) => entry.scopes !== null).map(([id]) => id),
+  );
   let processed = 0;
   while (processed < documents.length) {
-    const end = nextChunkEnd(documents, processed, chunkSize);
+    const end = nextChunkEnd(documents, processed, chunkSize, scopedSources);
     const chunk = documents.slice(processed, end);
     insertMany(chunk);
     processed = end;
@@ -721,11 +809,21 @@ function nextChunkEnd(
   documents: readonly PreparedDocumentInput[],
   start: number,
   chunkSize: number,
+  scopedSources: ReadonlySet<string>,
 ): number {
-  if (documents[start].content.length >= HUGE_DOC_CONTENT_BYTES) return start + 1;
+  if (
+    documents[start].content.length >= HUGE_DOC_CONTENT_BYTES ||
+    scopedSources.has(documents[start].sourceId)
+  )
+    return start + 1;
   const limit = Math.min(start + chunkSize, documents.length);
   let end = start + 1;
-  while (end < limit && documents[end].content.length < HUGE_DOC_CONTENT_BYTES) end += 1;
+  while (
+    end < limit &&
+    documents[end].content.length < HUGE_DOC_CONTENT_BYTES &&
+    !scopedSources.has(documents[end].sourceId)
+  )
+    end += 1;
   return end;
 }
 
@@ -2072,6 +2170,7 @@ export function applyReplicaOmissions(db: Db, a: ReplicaOmissionArgs): ReplicaVe
  * `POST /documents/with-cursor` HTTP route.
  */
 export interface UpsertWithCursorArgs {
+  scopeUpdates?: import("@omnesis/types").SourceScopeUpdates;
   initialInventory?: { id: string; startedAt: string };
   pendingPageId?: string;
   providerId: string;
@@ -2086,6 +2185,8 @@ export interface UpsertWithCursorArgs {
   ignoredReplicaDocuments?: Array<{ sourceId: string; externalId: string }>;
   /** Internal continuation state for accepted rows written before a cooperative yield. */
   acceptedDocumentsBeforeResume?: number;
+  /** Exact staged revisions owned by this page; newer sibling revisions supersede them. */
+  scopeFactRebuildTargets?: readonly ScopeFactRebuildTarget[];
   /** Documents to upsert. Empty / omitted is fine. */
   documents?: DocumentInput[];
   /**
@@ -2111,6 +2212,10 @@ export interface UpsertWithCursorArgs {
    * Unset means unrestricted.
    */
   deletionAuthority?: boolean;
+  /** Verified source-page writer identity, never accepted from the request body. */
+  scopeAuthorityId?: string;
+  /** Trusted admission decision; exclusive legacy shared-row writers need no membership. */
+  requiredHostingAuthority?: boolean;
   /**
    * What this member's final-page snapshot said about the items it keeps alive
    * against another member's deletion: the ones it still named, and the ones it
@@ -2263,13 +2368,28 @@ export function upsertWithCursor(
   args: UpsertWithCursorArgs,
   canonicalizers?: ReadonlyMap<string, UrlCanonicalizerSpec>,
 ): UpsertWithCursorResult {
+  // Asked before the transaction opens, so the answer can be remembered.
+  const filtersInUse = sourceFiltersActive(db);
   const txn = db.transaction((a: UpsertWithCursorArgs): UpsertWithCursorResult => {
     // If the source was wiped after this sync started (its echoed
     // wipeEpoch is now stale), reject the whole write — applying its documents
     // would re-add deleted data and advancing its cursor would resurrect a
     // stale position onto the now-empty source, defeating the resync. The
     // check is inside the txn so it's atomic with the writes (single writer).
-    if (writeEpochIsRejected(db, a.sourceId, a.wipeEpoch, a.cursorDeviceId ?? "")) {
+    if (
+      writeEpochIsRejected(db, a.sourceId, a.wipeEpoch, a.cursorDeviceId ?? "") ||
+      (filtersInUse &&
+        a.scopeAuthorityId !== undefined &&
+        scopePageAuthorityRejected(db, {
+          sourceId: a.sourceId,
+          providerId: a.providerId,
+          streamId: a.streamId ?? "",
+          cursorDeviceId: a.cursorDeviceId,
+          writeEpoch: a.wipeEpoch,
+          authorityId: a.scopeAuthorityId,
+          requiredHostingAuthority: a.requiredHostingAuthority,
+        }))
+    ) {
       return {
         tombstoneDeletedDocumentIds: [],
         ignoredReplicaDocuments: a.ignoredReplicaDocuments ?? [],
@@ -2329,6 +2449,11 @@ export function upsertWithCursor(
           writeEpochs: a.wipeEpoch === undefined ? undefined : { [a.sourceId]: a.wipeEpoch },
           cursorRows: { [a.sourceId]: cursorRow },
           streams: { [a.sourceId]: streamId },
+          scopeSnapshotAuthority: { [a.sourceId]: a.deletionAuthority !== false },
+          scopeAuthorityIds:
+            (a.scopeAuthorityId ?? a.replicaClaimDeviceId)
+              ? { [a.sourceId]: (a.scopeAuthorityId ?? a.replicaClaimDeviceId)! }
+              : undefined,
           replicaVersionPolicies:
             a.replicaVersionPolicy === undefined
               ? undefined
@@ -2448,6 +2573,21 @@ export function upsertWithCursor(
     // `upsertWithCursor` is the only write path that carries documents, so it
     // is the only one that may advance `last_document_at`. Stamping it here
     // keeps the timestamp atomic with the documents it describes.
+    // Facts a collector sent are applied only while source filters are in
+    // use; otherwise the page is stored as one that carried none.
+    if (filtersInUse && a.scopeUpdates !== undefined)
+      applySourceScopeUpdates(
+        db,
+        {
+          sourceId: a.sourceId,
+          providerId: a.providerId,
+          streamId: a.streamId ?? "",
+          writeEpoch: a.wipeEpoch,
+          authorityId: a.scopeAuthorityId ?? a.replicaClaimDeviceId,
+          snapshotAuthority: a.deletionAuthority !== false,
+        },
+        a.scopeUpdates,
+      );
     setSyncState(
       db,
       a.sourceId,
@@ -2505,54 +2645,29 @@ export function upsertWithCursor(
  */
 export const UPSERT_WITH_CURSOR_CHUNK_SIZE = 50;
 
+/** Whether the source's type has declared filter kinds this gateway can read. */
+function declaresSourceScopes(db: Db, sourceId: string): boolean {
+  const sourceType = db
+    .prepare<[string], { type: string }>("SELECT type FROM sources WHERE id=?")
+    .get(sourceId)?.type;
+  return sourceType !== undefined && getSourceScopes(db, sourceType) !== null;
+}
+
 /**
- * Yieldable variant of `upsertWithCursor`. Splits the document list
- * across multiple writer transactions; pre-final chunks upsert
- * documents ONLY, the final chunk runs the original atomic step
- * (last-chunk upsert + tombstones + absence marks + setSyncState).
+ * Commit bounded content and scope-metadata prefixes before the final cursor
+ * transaction. Resume arguments contain only unconsumed items, so a preempted
+ * page cannot replay a prefix over a newer observation. Privacy revocations
+ * precede prefixes; readiness, reopening refreshes, catalogue replacement,
+ * tombstones, reconciliation and the cursor stay in the final transaction.
  *
- * Correctness rationale:
+ * Conversation sources publish content first and drain staged native roster
+ * work before that final transaction. Each roster remains incomplete while
+ * staged, including after cancellation or a process restart. The source write
+ * fence retains the verified lease actor across writer yields; every entry
+ * also checks the current durable actor and write epoch.
  *
- *   - **Cursor atomicity** — `setSyncState` only runs in the final
- *     transaction, paired with whatever tombstones / absence marks / docs
- *     belong to that chunk. If the writer crashes or yields between
- *     chunks, the cursor is NOT advanced. The collector's per-page
- *     request fails or times out, the collector retries the entire
- *     page on its next sync, and `upsertDocuments` is idempotent
- *     (ON CONFLICT DO UPDATE) so already-applied chunks are no-ops
- *     on retry. No data loss.
- *
- *   - **Delete atomicity** — `deletedExternalIds` and the snapshot's
- *     absence marks are held until the final chunk. They never apply
- *     before all upserts in this page are durable, preserving the
- *     original "no half-state visible" guarantee.
- *
- *   - **Order preservation** — within the final chunk, the order is
- *     upsert → tombstone → absence marks → setSyncState. Across the call
- *     as a whole, all upserts happen before any of those (same as the
- *     one-transaction version).
- *
- *   - **Yield safety** — `token.requested()` is polled BETWEEN
- *     chunks (never mid-transaction). The yield outcome carries the
- *     remaining-docs slice as its resume args; the rest of the args
- *     (deletedExternalIds, absencePlan, hasMore,
- *     cursor, meta) flow through unchanged so the eventual final chunk
- *     has the full reconciliation context.
- *
- *   - **Small-batch fast path** — when there's no token (legacy
- *     direct-handle callers) or when docs.length is at or below the
- *     chunk size, the function delegates to `upsertWithCursor` for a
- *     single atomic transaction. No semantic change for small pages.
- *
- *   - **Empty docs** — if `documents` is empty/missing, we
- *     immediately delegate to the legacy path (just tombstones +
- *     absence marks + cursor in one txn). No reason to chunk a
- *     deletes-only page.
- *
- * Returned value semantics: same shape as `upsertWithCursor`. The
- * `absence` outcome comes from the final chunk (which only marks when
- * `hasMore=false`), so it is accurate regardless of whether the call
- * yielded mid-stream.
+ * Direct callers without a preemption token retain one atomic transaction;
+ * oversized native projections stay incomplete for a bounded drainer.
  */
 export function upsertWithCursorYieldable(
   db: Db,
@@ -2569,6 +2684,17 @@ export function upsertWithCursorYieldable(
   const chunkSize = opts.chunkSize ?? UPSERT_WITH_CURSOR_CHUNK_SIZE;
   const canonicalizers = opts.canonicalizers;
   const docs = args.documents ?? [];
+
+  const scopeContext = {
+    sourceId: args.sourceId,
+    providerId: args.providerId,
+    streamId: args.streamId ?? "",
+    cursorDeviceId: args.cursorDeviceId,
+    writeEpoch: args.wipeEpoch,
+    authorityId: args.scopeAuthorityId ?? args.replicaClaimDeviceId,
+    requiredHostingAuthority: args.requiredHostingAuthority,
+    snapshotAuthority: args.deletionAuthority !== false,
+  };
   if (args.pendingPageId !== undefined) {
     const pending = getPendingSourcePage(db, args.sourceId, args.cursorDeviceId ?? "");
     if (!pending || pending.id !== args.pendingPageId || pending.cursorCommitted) {
@@ -2585,7 +2711,12 @@ export function upsertWithCursorYieldable(
 
   // A resumed yield re-enters this function after other writer ops had a
   // chance to run. Fence it before any pre-final chunk can write.
-  if (writeEpochIsRejected(db, args.sourceId, args.wipeEpoch, args.cursorDeviceId ?? "")) {
+  const filtersInUse = sourceFiltersActive(db);
+  if (
+    filtersInUse
+      ? scopePageAuthorityRejected(db, scopeContext)
+      : writeEpochIsRejected(db, args.sourceId, args.wipeEpoch, args.cursorDeviceId ?? "")
+  ) {
     return {
       kind: "done",
       value: {
@@ -2596,9 +2727,20 @@ export function upsertWithCursorYieldable(
     };
   }
 
-  // Fast path: small batch OR no token. Atomic single transaction —
-  // matches legacy behaviour exactly.
-  if (!token || docs.length <= chunkSize) {
+  // A page has filter work when source filters are in use and it carries
+  // facts, belongs to a source that declares filter kinds, or has roster or
+  // fact rebuilds waiting. Every other page takes none of the steps below
+  // that exist for that work: it is chunked, fenced and committed as a page
+  // of a source without a declaration.
+  const scopeWork =
+    filtersInUse &&
+    (args.scopeUpdates !== undefined ||
+      args.scopeFactRebuildTargets !== undefined ||
+      declaresSourceScopes(db, args.sourceId) ||
+      hasConversationScopeRebuilds(db, scopeContext));
+  // Legacy direct callers remain atomic. Metadata/native roster pages use the
+  // bounded path even when there are no content documents.
+  if (!token || (docs.length <= chunkSize && !scopeWork)) {
     return { kind: "done", value: upsertWithCursor(db, args, canonicalizers) };
   }
 
@@ -2614,7 +2756,8 @@ export function upsertWithCursorYieldable(
   // transaction boundaries: it commits each sub-chunk independently and
   // collapses to one doc per transaction when any doc is >=1MB, so a
   // single fat row never parks the writer next to a full peer chunk.
-  const finalChunkStart = Math.max(0, docs.length - chunkSize);
+  if (scopeWork) beginScopePageWork(db, scopeContext, args.scopeUpdates);
+  const finalChunkStart = scopeWork ? docs.length : Math.max(0, docs.length - chunkSize);
   const preFinal = docs.slice(0, finalChunkStart);
   const {
     remaining,
@@ -2628,11 +2771,16 @@ export function upsertWithCursorYieldable(
     preFinal,
     {
       token,
-      chunkSize,
+      chunkSize: scopeWork ? 1 : chunkSize,
       initialInventory: args.initialInventory,
       writeEpochs: args.wipeEpoch === undefined ? undefined : { [args.sourceId]: args.wipeEpoch },
       cursorRows: { [args.sourceId]: args.cursorDeviceId ?? "" },
       streams: { [args.sourceId]: args.streamId ?? "" },
+      scopeSnapshotAuthority: { [args.sourceId]: args.deletionAuthority !== false },
+      scopeAuthorityIds:
+        (args.scopeAuthorityId ?? args.replicaClaimDeviceId)
+          ? { [args.sourceId]: (args.scopeAuthorityId ?? args.replicaClaimDeviceId)! }
+          : undefined,
       replicaVersionPolicies:
         args.replicaVersionPolicy === undefined
           ? undefined
@@ -2677,11 +2825,27 @@ export function upsertWithCursorYieldable(
       },
     };
   }
+  // Capture before yielding: a later sibling must not make its newer queue
+  // revision part of this page's publication barrier.
+  const remainingIds = new Set(remaining.map((doc) => doc.externalId));
+  const ignoredIds = new Set(ignoredReplicaDocuments.map((doc) => doc.externalId));
+  const scopeFactRebuildTargets = scopeWork
+    ? [
+        ...(args.scopeFactRebuildTargets ?? []),
+        ...captureScopeFactRebuildTargets(
+          db,
+          scopeContext,
+          preFinal
+            .filter((doc) => !remainingIds.has(doc.externalId) && !ignoredIds.has(doc.externalId))
+            .map((doc) => doc.externalId),
+        ),
+      ]
+    : [];
   const rebasedPlan =
     args.absencePlan === undefined || absencePlanInvalidated || absencePlanScope === undefined
       ? undefined
       : { ...args.absencePlan, revision: absencePlanScope.revision };
-  if (remaining.length > 0) {
+  if (remaining.length > 0 || (scopeWork && preFinal.length > 0 && token.requested())) {
     // `upsertDocuments` polled the token and yielded mid pre-final. Resume by
     // document IDENTITY, not by a recomputed index: `upsertDocuments` drops
     // tombstoned docs up front, so its `remaining` is a slice of the
@@ -2697,6 +2861,7 @@ export function upsertWithCursorYieldable(
       resume: {
         ...args,
         documents: [...remaining, ...docs.slice(finalChunkStart)],
+        ...(scopeWork ? { scopeFactRebuildTargets } : {}),
         absencePlan: rebasedPlan,
         ignoredReplicaDocuments: [
           ...(args.ignoredReplicaDocuments ?? []),
@@ -2716,13 +2881,61 @@ export function upsertWithCursorYieldable(
   // (the huge-doc guard is bypassed) — accepted, because the cursor advance
   // MUST commit in the same transaction as the reconcile; the chunk is bounded
   // (<= chunkSize docs) so the O(chunk)-not-O(source) invariant still holds.
+  if (!scopeWork) {
+    return {
+      kind: "done",
+      value: upsertWithCursor(
+        db,
+        {
+          ...args,
+          documents: docs.slice(finalChunkStart),
+          absencePlan: rebasedPlan,
+          ignoredReplicaDocuments: [
+            ...(args.ignoredReplicaDocuments ?? []),
+            ...ignoredReplicaDocuments,
+          ],
+          acceptedDocumentsBeforeResume:
+            (args.acceptedDocumentsBeforeResume ?? 0) + acceptedDocumentCount,
+        },
+        canonicalizers,
+      ),
+    };
+  }
+  const scopeOutcome = advanceScopePageWork(db, scopeContext, args.scopeUpdates, token);
+  if (scopeOutcome.kind === "rejected")
+    return {
+      kind: "done",
+      value: {
+        tombstoneDeletedDocumentIds: [],
+        ignoredReplicaDocuments: [
+          ...(args.ignoredReplicaDocuments ?? []),
+          ...ignoredReplicaDocuments,
+        ],
+        rejected: true,
+      },
+    };
   const finalArgs: UpsertWithCursorArgs = {
     ...args,
+    scopeUpdates: scopeOutcome.updates,
+    scopeFactRebuildTargets: [...scopeFactRebuildTargets, ...scopeOutcome.factTargets],
     documents: docs.slice(finalChunkStart),
     absencePlan: rebasedPlan,
     ignoredReplicaDocuments: [...(args.ignoredReplicaDocuments ?? []), ...ignoredReplicaDocuments],
     acceptedDocumentsBeforeResume:
       (args.acceptedDocumentsBeforeResume ?? 0) + acceptedDocumentCount,
   };
+  if (scopeOutcome.kind === "yield") return { kind: "yield", resume: finalArgs };
+  const targets = finalArgs.scopeFactRebuildTargets ?? [];
+  const factOutcome = advanceScopeFactPageWork(db, scopeContext, targets, token);
+  if (factOutcome === "yield") return { kind: "yield", resume: finalArgs };
+  if (factOutcome === "rejected")
+    return {
+      kind: "done",
+      value: {
+        tombstoneDeletedDocumentIds: [],
+        ignoredReplicaDocuments: finalArgs.ignoredReplicaDocuments ?? [],
+        rejected: true,
+      },
+    };
   return { kind: "done", value: upsertWithCursor(db, finalArgs, canonicalizers) };
 }

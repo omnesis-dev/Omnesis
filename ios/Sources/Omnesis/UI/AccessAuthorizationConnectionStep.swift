@@ -11,17 +11,12 @@ import SwiftUI
 /// in again, an existing connection it takes over.
 @available(iOS 17.0, *)
 struct AccessAuthorizationConnectionStep: View {
-    /// The width a name field needs beside its label. A label that leaves
-    /// less than this moves above the field.
-    private static let inlineFieldWidth: CGFloat = 120
-
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding var choice: AccessConnectionChoice
     let request: AccessAuthorizationRequest
     let overview: AccessOverview
-    /// The gateway's refusal of the access level name, shown under the field
-    /// it is about until that name is edited.
-    let levelNameRefusal: String?
+    /// Whether the gateway refused the access level name, which is said under
+    /// the field until that name is edited.
+    let levelNameRefused: Bool
 
     /// The connections that can be replaced as the step is drawn.
     private var connections: [AccessLiveConnection] {
@@ -34,23 +29,31 @@ struct AccessAuthorizationConnectionStep: View {
         } else {
             newConnectionSections
         }
+        Text("Going back leaves this request pending until it expires. You can enter the code again.")
+            .accessText(.rowSecondary, color: AccessUI.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 16)
     }
 
     @ViewBuilder
     private var newConnectionSections: some View {
-        Section {
-            nameField(AccessConnectionCopy.nameLabel, text: clamped(\.name), identifier: "access-connection-name")
-            if let error = choice.nameError {
-                errorText(error)
+        AccessSectionHeading(AccessConnectionCopy.nameLabel, first: true)
+        // The heading above already names the field, so the empty field shows no placeholder.
+        TextField(AccessConnectionCopy.nameLabel, text: clampedName, prompt: Text(verbatim: ""))
+            .autocorrectionDisabled()
+            .accessibilityIdentifier("access-connection-name")
+            .modifier(AccessFieldChrome())
+        AccessProblemText(text: choice.nameError)
+        AccessSectionHeading(AccessConnectionCopy.levelSection)
+        helperText(AccessConnectionCopy.levelHelper)
+        let levels = choice.orderedLevels(overview: overview)
+        card {
+            ForEach(levels) { level in
+                levelRow(level)
+                AccessDivider().padding(.horizontal, AccessUI.cardPadding)
             }
-        }
-        .listRowBackground(Theme.bgSecondary)
-        Section(AccessConnectionCopy.levelSection) {
-            helperText(AccessConnectionCopy.levelHelper)
-            ForEach(choice.orderedLevels(overview: overview)) { levelRow($0) }
             newLevelRow
         }
-        .listRowBackground(Theme.bgSecondary)
         // Nothing to replace means there is no way into replace mode.
         if !connections.isEmpty {
             modeSwitch(AccessConnectionCopy.replaceEntry, replacing: true)
@@ -59,12 +62,23 @@ struct AccessAuthorizationConnectionStep: View {
 
     @ViewBuilder
     private var replaceSections: some View {
-        Section(AccessConnectionCopy.replaceTitle) {
-            helperText(AccessConnectionCopy.replaceHelper)
-            ForEach(connections) { connectionRow($0) }
+        let listed = connections
+        AccessSectionHeading(AccessConnectionCopy.replaceTitle, first: true)
+        helperText(AccessConnectionCopy.replaceHelper)
+        card {
+            ForEach(Array(listed.enumerated()), id: \.element.id) { index, connection in
+                connectionRow(connection)
+                if index < listed.count - 1 { AccessDivider().padding(.horizontal, AccessUI.cardPadding) }
+            }
         }
-        .listRowBackground(Theme.bgSecondary)
         modeSwitch(AccessConnectionCopy.newConnectionEntry, replacing: false)
+    }
+
+    /// The one tinted surface that holds the rows to pick from.
+    private func card(@ViewBuilder rows: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 0) { rows() }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AccessUI.surface, in: .rect(cornerRadius: AccessUI.cardRadius))
     }
 
     private func levelRow(_ level: AccessLevelSummary) -> some View {
@@ -75,10 +89,8 @@ struct AccessAuthorizationConnectionStep: View {
             choice.levelId = level.id
         } content: {
             taggedTitle(level.name, suggested: choice.suggestion(for: level) != nil)
-            AccessCapabilityTriad(holdings: accessCapabilityHoldings(rules: level.rules))
-            Text(AccessConnectionCopy.connectionCount(level.connectionCount))
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
+            AccessCapabilityPills(holdings: accessCapabilityHoldings(rules: level.rules)).padding(.vertical, 2)
+            detailText(AccessConnectionCopy.connectionCount(level.connectionCount))
             if let suggestion = choice.suggestion(for: level) {
                 suggestionText(suggestion)
             }
@@ -89,7 +101,7 @@ struct AccessAuthorizationConnectionStep: View {
     /// The last row: a new access level, whose name is asked for inside the
     /// row once it is picked.
     private var newLevelRow: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+        VStack(alignment: .leading, spacing: 0) {
             radioRow(selected: choice.levelId == nil, unavailable: nil) {
                 choice.levelId = nil
             } content: {
@@ -97,13 +109,20 @@ struct AccessAuthorizationConnectionStep: View {
             }
             .accessibilityIdentifier("access-level-new")
             if choice.levelId == nil {
-                VStack(alignment: .leading, spacing: 3) {
-                    nameField(AccessConnectionCopy.levelNameLabel, text: clamped(\.levelName), identifier: "access-level-name")
-                    if let error = choice.levelNameError(overview: overview) ?? levelNameRefusal {
-                        errorText(error)
-                    }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(AccessConnectionCopy.levelNameLabel)
+                        .accessText(.caption, color: AccessUI.secondary)
+                        .fontWeight(.regular)
+                        .accessibilityHidden(true)
+                    AccessLevelNameField(
+                        name: $choice.levelName,
+                        problem: choice.levelNameError(overview: overview) ?? (levelNameRefused ? accessLevelNameTakenMessage : nil),
+                        fill: Theme.bgPrimary
+                    )
                 }
-                .padding(.leading, Theme.Spacing.xl)
+                .padding(.leading, AccessUI.cardPadding + AccessUI.controlSize + AccessUI.iconGap)
+                .padding(.trailing, AccessUI.cardPadding)
+                .padding(.bottom, AccessUI.cardPadding)
             }
         }
     }
@@ -117,13 +136,9 @@ struct AccessAuthorizationConnectionStep: View {
         } content: {
             taggedTitle(connection.name, suggested: choice.suggestion(for: connection) != nil)
             if let level = connection.level(in: overview) {
-                Text(AccessConnectionCopy.connectionLevel(level.name))
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary)
+                detailText(AccessConnectionCopy.connectionLevel(level.name))
             }
-            Text(AccessConnectionCopy.lastUsed(connection.lastUsedAt))
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
+            detailText(AccessConnectionCopy.lastUsed(connection.lastUsedAt))
             if let suggestion = choice.suggestion(for: connection) {
                 suggestionText(suggestion)
             }
@@ -137,13 +152,13 @@ struct AccessAuthorizationConnectionStep: View {
     private func taggedTitle(_ title: String, suggested: Bool) -> some View {
         if suggested {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: Theme.Spacing.xs) {
+                HStack(spacing: 8) {
                     rowTitle(title)
-                    suggestedTag
+                    AccessPill(text: AccessConnectionCopy.suggestedTag, tone: .accent)
                 }
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     rowTitle(title)
-                    suggestedTag
+                    AccessPill(text: AccessConnectionCopy.suggestedTag, tone: .accent)
                 }
             }
         } else {
@@ -151,68 +166,16 @@ struct AccessAuthorizationConnectionStep: View {
         }
     }
 
-    private var suggestedTag: some View {
-        Text(AccessConnectionCopy.suggestedTag)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(Theme.accent)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.45), lineWidth: 1))
+    private func rowTitle(_ title: String) -> some View {
+        Text(title).accessText(.cardTitle).frame(minHeight: AccessUI.controlSize)
     }
 
-    private func rowTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Theme.textPrimary)
+    private func detailText(_ text: String) -> some View {
+        Text(text).accessText(.rowSecondary, color: AccessUI.secondary)
     }
 
     private func suggestionText(_ text: String) -> some View {
-        Text(text)
-            .font(.caption)
-            .foregroundStyle(Theme.accent)
-    }
-
-    /// A name field with its label leading on the same line. At accessibility
-    /// sizes, and whenever the label leaves the field too little room, the
-    /// label sits above the field instead.
-    @ViewBuilder
-    private func nameField(_ label: String, text: Binding<String>, identifier: String) -> some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            stackedNameField(label, text: text, identifier: identifier)
-        } else {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.sm) {
-                    fieldLabel(label)
-                        .fixedSize(horizontal: true, vertical: false)
-                    nameInput(label, text: text, identifier: identifier)
-                        .frame(minWidth: Self.inlineFieldWidth, idealWidth: Self.inlineFieldWidth, maxWidth: .infinity)
-                }
-                stackedNameField(label, text: text, identifier: identifier)
-            }
-        }
-    }
-
-    private func stackedNameField(_ label: String, text: Binding<String>, identifier: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            fieldLabel(label)
-            nameInput(label, text: text, identifier: identifier)
-        }
-    }
-
-    /// The visible label. VoiceOver reads the same name from the field.
-    private func fieldLabel(_ label: String) -> some View {
-        Text(label)
-            .font(.subheadline)
-            .foregroundStyle(Theme.textSecondary)
-            .accessibilityHidden(true)
-    }
-
-    /// The field, named by `label` for VoiceOver. The label drawn beside it
-    /// already names it, so the empty field shows no placeholder.
-    private func nameInput(_ label: String, text: Binding<String>, identifier: String) -> some View {
-        TextField(label, text: text, prompt: Text(verbatim: ""))
-            .autocorrectionDisabled()
-            .accessibilityIdentifier(identifier)
+        Text(text).accessText(.rowSecondary, color: Theme.accent)
     }
 
     /// One pickable row. An unavailable one stays listed, faint, with its
@@ -226,22 +189,18 @@ struct AccessAuthorizationConnectionStep: View {
     )
         -> some View {
         Button(action: select) {
-            HStack(alignment: .top, spacing: Theme.Spacing.sm) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(unavailable == nil ? Theme.accent : Theme.textMuted)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .top, spacing: AccessUI.iconGap) {
+                AccessControlMark(kind: .radio, selected: selected, tint: unavailable == nil ? Theme.accent : AccessUI.muted)
+                VStack(alignment: .leading, spacing: 4) {
                     content()
                     if let unavailable {
-                        Text(unavailable)
-                            .font(.caption)
-                            .foregroundStyle(Theme.warning)
-                            .accessibilityHidden(true)
+                        Text(unavailable).accessText(.rowSecondary, color: Theme.warning).accessibilityHidden(true)
                     }
                 }
                 .accessibilityElement(children: .combine)
                 Spacer(minLength: 0)
             }
+            .padding(AccessUI.cardPadding)
             .opacity(unavailable == nil ? 1 : 0.55)
             .contentShape(Rectangle())
         }
@@ -252,33 +211,21 @@ struct AccessAuthorizationConnectionStep: View {
     }
 
     private func modeSwitch(_ title: String, replacing: Bool) -> some View {
-        Section {
-            Button(title) { choice.replacing = replacing }
-                .font(.footnote.weight(.semibold))
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier(replacing ? "access-replace-mode" : "access-new-connection-mode")
+        Button { choice.replacing = replacing } label: {
+            Text(title).accessText(.label, color: Theme.accent).frame(minHeight: 44)
         }
-        .listRowBackground(Color.clear)
+        .buttonStyle(.plain)
+        .padding(.top, 12)
+        .accessibilityIdentifier(replacing ? "access-replace-mode" : "access-new-connection-mode")
     }
 
     private func helperText(_ text: String) -> some View {
-        Text(text)
-            .font(.footnote)
-            .foregroundStyle(Theme.textSecondary)
+        Text(text).accessText(.subtitle, color: AccessUI.secondary).fixedSize(horizontal: false, vertical: true).padding(.bottom, 12)
     }
 
-    private func errorText(_ message: String) -> some View {
-        Text(message)
-            .font(.footnote)
-            .foregroundStyle(Theme.danger)
-    }
-
-    /// A name field that never holds more than the gateway accepts.
-    private func clamped(_ keyPath: WritableKeyPath<AccessConnectionChoice, String>) -> Binding<String> {
-        Binding(
-            get: { choice[keyPath: keyPath] },
-            set: { choice[keyPath: keyPath] = accessConnectionClampedName($0) }
-        )
+    /// The connection's name, never holding more than the gateway accepts.
+    private var clampedName: Binding<String> {
+        Binding(get: { choice.name }, set: { choice.name = accessConnectionClampedName($0) })
     }
 }
 

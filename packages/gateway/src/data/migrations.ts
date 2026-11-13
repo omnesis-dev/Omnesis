@@ -77,13 +77,12 @@ import {
 } from "../enrichment/temporal-annotations/storage.js";
 import { createDocumentTemporalProjectionTables } from "../enrichment/temporal-projections/document-storage.js";
 import { supersedeNotificationsByCollapseIdPrefix } from "../push/queue.js";
+import { advanceWorkflowDisclosure, parseReview } from "../privacy/store-internals.js";
 import {
-  advanceWorkflowDisclosure,
   createAnswerApprovalListIndexes,
   createAnswerPrivacyTables,
   createDirectAuditTables,
-  parseReview,
-} from "../privacy/store.js";
+} from "../privacy/store-schema.js";
 import {
   createSubscriptionApprovalListIndexes,
   createSubscriptionTables,
@@ -92,6 +91,15 @@ import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/reb
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
+import { createScopeDescriptorsSchema } from "../access/scope-descriptors.js";
+import { createScopePolicyStore } from "../access/scope-policy-store.js";
+import {
+  createScopeStorageFloor,
+  reconcileLegacyScopeBoundaries,
+} from "../access/scope-storage-floor.js";
+import { backfillScopePolicySourceIndex } from "../access/scope-policy-source-index.js";
+import { createScopeFactsSchema } from "../access/scope-schema.js";
+import { createAnswerScopeSchema } from "../privacy/answer-scope-schema.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -4992,6 +5000,25 @@ export const MIGRATIONS: readonly Migration[] = [
       createLabTable(db);
       db.exec(`INSERT OR IGNORE INTO lab_features (id, enabled)
         VALUES ('tasks', EXISTS(SELECT 1 FROM open_loops UNION ALL SELECT 1 FROM open_loop_ledger LIMIT 1));`);
+    },
+  },
+  {
+    // One step for everything a source filter keeps: saved policies and their
+    // source index, document facts with their publication and refresh state,
+    // source scope declarations, Answer source proofs, and the guards that
+    // keep a filtered capability narrow under a gateway that predates them.
+    // Every creator is idempotent and the two passes visit capability
+    // settings only, so the step costs nothing on an install with no filter.
+    version: 216,
+    description: "add source filters: policies, document facts and Answer source proofs",
+    up(db) {
+      createScopePolicyStore(db);
+      createScopeFactsSchema(db);
+      createScopeDescriptorsSchema(db);
+      createAnswerScopeSchema(db);
+      backfillScopePolicySourceIndex(db);
+      createScopeStorageFloor(db);
+      reconcileLegacyScopeBoundaries(db);
     },
   },
 ];

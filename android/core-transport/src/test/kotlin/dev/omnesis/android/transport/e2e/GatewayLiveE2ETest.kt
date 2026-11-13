@@ -433,7 +433,7 @@ class GatewayLiveE2ETest {
     @Test
     fun whoami_returns_scopes() = runBlocking {
         val who = gateway.whoami()
-        assertTrue("bootstrap token should carry scopes", who.scopes.isNotEmpty())
+        assertTrue("paired owner token should carry scopes", who.scopes.isNotEmpty())
     }
 
     /**
@@ -510,6 +510,42 @@ class GatewayLiveE2ETest {
     fun access_grant_choices_decode() = runBlocking {
         val overview = admin.accessOverview()
         assertTrue("access source identities should be non-blank", overview.sources.all { it.id.isNotBlank() })
+    }
+
+    @Test
+    fun paired_owner_creates_reopens_and_edits_a_source_filtered_level() = runBlocking {
+        var source: dev.omnesis.android.transport.dto.AccessSourceInstance? = null
+        for (attempt in 0 until 60) {
+            val overview = admin.accessOverview()
+            assertTrue("The isolated gateway must enable filter authoring", overview.sourceFilters?.enabled == true)
+            source = overview.sources.firstOrNull { candidate -> candidate.scopes?.items?.any { it.kind == "conversation" } == true &&
+                candidate.scopeReadiness?.firstOrNull { it.kind == "conversation" }?.ready == true }
+            if (source != null) break
+            kotlinx.coroutines.delay(500)
+        }
+        val selectedSource = requireNotNull(source) { "Native scope preparation did not finish" }
+        val selected = admin.scopeOptions(selectedSource.id, "conversation").items.first()
+        val boundary = dev.omnesis.android.transport.dto.AccessSourceBoundary(dev.omnesis.android.transport.dto.AccessSourceMode.ALLOWLIST, listOf(selectedSource.id))
+        var policy = dev.omnesis.android.transport.dto.ScopePolicy(selectedSource.id, dev.omnesis.android.transport.dto.ScopeAudience("new", "direct"),
+            listOf(dev.omnesis.android.transport.dto.ScopeRule(listOf(selected.ref), "share")), "hide")
+        val created = admin.createAccessLevel(dev.omnesis.android.transport.dto.AccessLevelCreateBody("native scope editor ${java.util.UUID.randomUUID()}",
+            listOf(dev.omnesis.android.transport.dto.AccessGrantRule.direct(boundary).copy(filterRevision = 0, scopePolicies = listOf(policy)))))
+        val reopened = admin.accessOverview().levels.first { it.id == created.id }
+        val saved = reopened.rules.single().scopePolicies.single()
+        org.junit.Assert.assertEquals(listOf(selected.ref), saved.rules.single().match)
+        org.junit.Assert.assertEquals(created.id, saved.audience.accessLevel)
+        val preview = admin.scopePreview(saved)
+        org.junit.Assert.assertEquals(preview.total, preview.visible + preview.hidden)
+        assertTrue(preview.unknown <= preview.hidden)
+        policy = saved.copy(rules = listOf(saved.rules.single().copy(action = "hide")), otherwise = "share")
+        val revision = created.rules.single().filterRevision ?: 0
+        val updated = admin.updateAccessLevel(created.id, dev.omnesis.android.transport.dto.AccessLevelUpdateBody(created.name,
+            listOf(created.rules.single().copy(scopePolicies = listOf(policy))), created.revision, mapOf("direct" to revision)))
+        assertTrue(updated.revision > created.revision)
+        try {
+            admin.updateAccessLevel(created.id, dev.omnesis.android.transport.dto.AccessLevelUpdateBody(created.name, created.rules, created.revision, mapOf("direct" to revision)))
+            org.junit.Assert.fail("A stale native save must not erase a newer filter")
+        } catch (error: GatewayException.ServerError) { org.junit.Assert.assertEquals(409, error.status) }
     }
 
     @Test

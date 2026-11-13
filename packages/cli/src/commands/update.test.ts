@@ -565,6 +565,80 @@ describe("updateNpmGlobal", () => {
     expect(output()).toMatch(/Downgrade/);
   });
 
+  test("prints the conditional filter downgrade warning before installing or confirming", async () => {
+    const runner = fakeRunner([
+      { code: 0, stdout: "0.1.0\n" },
+      { code: 0, stdout: "" },
+    ]);
+    const readCompatibility = vi.fn(async () => ({ compat: { sourceScopes: { min: 1, max: 1 } } }));
+    const confirm = vi.fn(async () => {
+      expect(output()).toContain("If source filters are configured");
+      expect(runner.calls).toHaveLength(1);
+    });
+    await updateNpmGlobal(
+      { channel: "stable", dryRun: false, force: true },
+      makeDeps(runner, {
+        roles: hostRoles({ gateway: supervised }),
+        readCompatibility,
+        confirm,
+      }),
+    );
+    expect(readCompatibility).toHaveBeenCalledOnce();
+    expect(confirm).toHaveBeenCalledOnce();
+  });
+
+  test("an unavailable compatibility probe does not block downgrade recovery", async () => {
+    const runner = fakeRunner([
+      { code: 0, stdout: "0.1.0\n" },
+      { code: 0, stdout: "" },
+    ]);
+    await updateNpmGlobal(
+      { channel: "stable", dryRun: false, force: true },
+      makeDeps(runner, {
+        roles: hostRoles({ gateway: supervised }),
+        readCompatibility: async () => {
+          throw new Error("offline");
+        },
+      }),
+    );
+    expect(runner.calls).toHaveLength(2);
+    expect(output()).toContain(
+      "If source filters are configured, verify that the target gateway supports them.",
+    );
+  });
+
+  test("warns before restoring a previous build when automatic rollback cannot reach the gateway", async () => {
+    const runner = fakeRunner([
+      { code: 0, stdout: "0.3.0\n" },
+      { code: 1, stdout: "Install failed" },
+      { code: 0, stdout: "" },
+    ]);
+    const wrapped: CommandRunner = async (spec, mode, options) => {
+      if (spec.args.includes("omnesis@0.2.0")) {
+        expect(output()).toContain(
+          "If source filters are configured, verify that the target gateway supports them.",
+        );
+        expect(output()).toContain("Rolling back to 0.2.0");
+      }
+      return runner.run(spec, mode, options);
+    };
+    await expect(
+      updateNpmGlobal(
+        { channel: "stable", dryRun: false },
+        makeDeps(
+          { run: wrapped, calls: runner.calls },
+          {
+            roles: hostRoles({ gateway: supervised }),
+            readCompatibility: async () => {
+              throw new Error("Gateway stopped");
+            },
+          },
+        ),
+      ),
+    ).rejects.toMatchObject({ exitCode: EXIT_FAILURE });
+    expect(runner.calls.some((call) => call.spec.args.includes("omnesis@0.2.0"))).toBe(true);
+  });
+
   test("downgrade proceeds with --force", async () => {
     const runner = fakeRunner([
       { code: 0, stdout: "0.1.0\n" },

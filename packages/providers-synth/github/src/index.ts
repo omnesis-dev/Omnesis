@@ -7,16 +7,17 @@ import {
   fakeLocalFlow,
   preDiscoveredAccounts,
   selfAccountId,
-  syncFromFixture,
-  type SynthCursor,
 } from "@omnesis/providers-synth-common";
 import {
   loadCommitEntries,
+  loadCommitRepos,
   loadThreadEntries,
+  loadThreadRepos,
   mapCommit,
   mapThread,
   mapThreadEdges,
 } from "./fixtures.js";
+import { repoFixtureSource } from "./repo-source.js";
 import type { ProviderSourceEntry } from "@omnesis/source-sdk";
 
 const { type: _type, ...rest } = realGithub;
@@ -64,19 +65,15 @@ export default defineProvider<Record<string, never>>({
         // not know it. Inheriting the declaration refuses it on the next tick.
         contract: undefined,
         async create({ sourceId, providerId, accountId: account }) {
-          const entries = loadThreadEntries();
           const ctx = { sourceId, providerId };
           const commitsSourceId = `github-commits:${account}`;
-          return {
-            async sync(cursor) {
-              return syncFromFixture(
-                entries,
-                cursor as SynthCursor | null,
-                (e) => mapThread(e, ctx),
-                { sourceId, mapEdges: (e) => mapThreadEdges(e, { ...ctx, commitsSourceId }) },
-              );
-            },
-          };
+          return repoFixtureSource(
+            sourceId,
+            loadThreadRepos(),
+            loadThreadEntries(),
+            (e) => mapThread(e, ctx),
+            (e) => mapThreadEdges(e, { ...ctx, commitsSourceId }),
+          );
         },
       };
     }
@@ -87,18 +84,10 @@ export default defineProvider<Record<string, never>>({
         // not know it. Inheriting the declaration refuses it on the next tick.
         contract: undefined,
         async create({ sourceId, providerId }) {
-          const entries = loadCommitEntries();
           const ctx = { sourceId, providerId };
-          return {
-            async sync(cursor) {
-              return syncFromFixture(
-                entries,
-                cursor as SynthCursor | null,
-                (e) => mapCommit(e, ctx),
-                { sourceId },
-              );
-            },
-          };
+          return repoFixtureSource(sourceId, loadCommitRepos(), loadCommitEntries(), (e) =>
+            mapCommit(e, ctx),
+          );
         },
       };
     }

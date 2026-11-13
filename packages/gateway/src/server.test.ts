@@ -466,6 +466,7 @@ describe("health endpoint", () => {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         taskConversations: { min: 1, max: 1 },
         taskNoteCapture: { min: 1, max: 1 },
+        accessLevelEditing: { min: 1, max: 1 },
       });
 
       process.env.OMNESIS_SYNTHETIC = "1";
@@ -484,6 +485,7 @@ describe("health endpoint", () => {
         sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
         taskConversations: { min: 1, max: 1 },
         taskNoteCapture: { min: 1, max: 1 },
+        accessLevelEditing: { min: 1, max: 1 },
         browserNotes: { min: 1, max: 1 },
         browserFind: { min: 1, max: 2 },
         browserFindSuggest: { min: 1, max: 1 },
@@ -9329,6 +9331,7 @@ describe("GET /status", () => {
     expect(body.capabilities).toEqual({
       taskConversations: { min: 1, max: 1 },
       taskNoteCapture: { min: 1, max: 1 },
+      accessLevelEditing: { min: 1, max: 1 },
     });
   });
 
@@ -11513,6 +11516,7 @@ describe("POST /admin/background/run/:taskName", () => {
   });
 
   test.each([
+    "backfill.scopeFacts",
     "backfill.mergeCandidatesDetect",
     "nearDup.inboxFlush",
     "backfill.nearDupDfRefresh",

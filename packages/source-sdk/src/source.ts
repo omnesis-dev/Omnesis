@@ -115,6 +115,8 @@ export interface SyncProgress {
  * Defaults to `SyncCursor` (opaque record) for backward compatibility.
  */
 export interface SyncResult<TCursor extends SyncCursor = SyncCursor> {
+  /** Optional scope metadata updates, atomically checkpointed with this page. */
+  scopeUpdates?: import("@omnesis/types").SourceScopeUpdates;
   /** Documents to upsert */
   documents: DocumentInput[];
 
@@ -364,6 +366,7 @@ export function syncPage<TCursor extends SyncCursor>(
   documents: DocumentInput[],
   cursor: TCursor,
   opts?: {
+    scopeUpdates?: import("@omnesis/types").SourceScopeUpdates;
     hasMore?: boolean;
     deletedExternalIds?: string[];
     presentExternalIds?: string[];
@@ -381,6 +384,7 @@ export function syncPage<TCursor extends SyncCursor>(
   return {
     documents,
     cursor,
+    ...(opts?.scopeUpdates !== undefined ? { scopeUpdates: opts.scopeUpdates } : {}),
     deletedExternalIds: opts?.deletedExternalIds ?? [],
     presentExternalIds: opts?.presentExternalIds,
     presentClaims: opts?.presentClaims,

@@ -24,6 +24,11 @@ import { getDocumentCount, getSourceStats } from "./helpers.js";
  * authors can extend fixtures without breaking this suite.
  */
 
+// Body fixtures only: native hierarchy catalogues do not emit Documents.
+const DOCUMENT_FIXTURE_FILES: Readonly<Record<string, readonly string[]>> = {
+  "google-drive": ["files.json"],
+};
+
 /**
  * Count the Documents an unstructured synth provider emits from its fixture
  * files under `<universe>/sources/<sourceType>/`: one parent Document per
@@ -41,7 +46,9 @@ function fixtureEntryCount(sourceType: string): number {
   const universe = loadActiveUniverse();
   const dir = join(universe.dir, "sources", sourceType);
   let count = 0;
-  for (const f of readdirSync(dir).filter((name) => name.endsWith(".json"))) {
+  const files =
+    DOCUMENT_FIXTURE_FILES[sourceType] ?? readdirSync(dir).filter((name) => name.endsWith(".json"));
+  for (const f of files) {
     const data = JSON.parse(readFileSync(join(dir, f), "utf-8")) as unknown;
     for (const entries of entryArrays(data)) {
       count += entries.length; // one parent Document per fixture entry

@@ -8,6 +8,13 @@ import { assertNever } from "@omnesis/core";
 import { appendAnswerAuditEvent, auditDisplay } from "./store-audit.js";
 import { detectCredentialHardStop } from "./reviewer.js";
 import { credentialScanText, parseStoredCitations } from "./answer-citations.js";
+import {
+  beginAnswerTaskScope,
+  saveAnswerTaskScopeReads,
+  assertAnswerTaskScopeCurrent,
+  scopeChanged,
+  invalidateStaleHeldAnswerTask,
+} from "./answer-scope.js";
 
 import {
   advanceWorkflowDisclosure,
@@ -109,6 +116,7 @@ export function beginAnswerTask(db: PrivacyDb, input: BeginAnswerTaskInput): Beg
           "UPDATE answer_conversations SET active_task_id = ?, updated_at = ? WHERE id = ?",
         ).run(duplicate.id, input.now, duplicate.conversation_id);
         appendExternalRequestAudit(db, duplicate.id, input);
+        beginAnswerTaskScope(db, duplicate.id, input.scopeAuthorization);
         return {
           workflowId: duplicate.workflow_id,
           workflowPurpose: workflow.purpose,
@@ -118,6 +126,12 @@ export function beginAnswerTask(db: PrivacyDb, input: BeginAnswerTaskInput): Beg
           state: "running",
         };
       }
+      if (
+        input.scopeAuthorization &&
+        !db.prepare("SELECT 1 FROM answer_task_scope WHERE task_id=?").get(duplicate.id)
+      )
+        throw scopeChanged();
+      assertAnswerTaskScopeCurrent(db, duplicate.id);
       return {
         workflowId: duplicate.workflow_id,
         workflowPurpose: workflow.purpose,
@@ -245,6 +259,7 @@ export function beginAnswerTask(db: PrivacyDb, input: BeginAnswerTaskInput): Beg
       "UPDATE answer_conversations SET active_task_id = ?, updated_at = ? WHERE id = ?",
     ).run(input.ids.taskId, input.now, conversationId);
     appendExternalRequestAudit(db, input.ids.taskId, input);
+    beginAnswerTaskScope(db, input.ids.taskId, input.scopeAuthorization);
 
     return {
       workflowId,
@@ -302,6 +317,8 @@ export function completeAnswerTask(db: PrivacyDb, input: CompleteAnswerTaskInput
       throw new AnswerStoreError("task_state_conflict", "Answer task is no longer running.");
     }
     const reviewJson = JSON.stringify(input.review);
+    saveAnswerTaskScopeReads(db, task.id, input.scopeReads);
+    assertAnswerTaskScopeCurrent(db, task.id);
 
     switch (input.outcome.kind) {
       case "release": {
@@ -574,10 +591,15 @@ export function resolvePrivacyApproval(
   db: PrivacyDb,
   input: ResolveApprovalInput,
 ): AnswerResponse | null {
-  return db.transaction(() => {
+  let sourceScopeStale = false;
+  const response = db.transaction(() => {
     const joined = getApprovalJoined(db, input.approvalId);
     if (!joined) return null;
     if (joined.approval_status !== "pending") return responseForTask(db, joined.id);
+    if (invalidateStaleHeldAnswerTask(db, joined.id, input.now)) {
+      sourceScopeStale = true;
+      return null;
+    }
 
     if (joined.approval_expires_at <= input.now) {
       expireJoinedApproval(db, joined, input.now);
@@ -722,6 +744,8 @@ export function resolvePrivacyApproval(
     });
     return responseForTask(db, joined.id);
   })();
+  if (sourceScopeStale) throw scopeChanged();
+  return response;
 }
 
 export function expirePrivacyApprovals(db: PrivacyDb, now: number): number {
@@ -765,6 +789,11 @@ function ensureConversationAvailableWithExpiryAudit(
 ): void {
   if (activeTaskId) {
     const task = getTask(db, activeTaskId);
+    if (
+      task?.status === "approval_required" &&
+      invalidateStaleHeldAnswerTask(db, activeTaskId, now)
+    )
+      return;
     if (task?.status === "approval_required" && task.approval_id) {
       const approval = getApprovalJoined(db, task.approval_id);
       if (

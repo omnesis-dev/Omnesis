@@ -21,6 +21,10 @@ export type SyncLeaseDecision = SyncLeaseGrant | SyncLeaseDenial;
 
 /** Re-evaluated after write-fence admission; held stable through the commit. */
 export interface SourcePageWriteAuthority {
+  /** Source ownership/lease actor revalidated under the write fence. */
+  scopeAuthorityId?: string | null;
+  /** Whether admission required this hosting actor to own or join the source. */
+  requiredHostingAuthority?: boolean;
   deletionAuthority: boolean;
   reconcileAuthority: boolean;
   resetReplicaCursors?: true;

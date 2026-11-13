@@ -1963,6 +1963,68 @@ describe("assessUpdate", () => {
     expect(a.notes.join(" ")).toMatch(/resets? any source|resync/i);
   });
 
+  const scopeManifest = { protocols: { sourceScopes: { current: 1, min: 1, max: 1 } } };
+
+  test("uses actual compatibility evidence to warn conditionally about unverified downgrade targets", () => {
+    const assessment = assessUpdate("0.3.0", "0.2.0", { current: scopeManifest });
+    expect(assessment.notes.join(" ")).toContain("If source filters are configured");
+    expect(assessment.notes.join(" ")).toContain("target filter enforcement has not been verified");
+    expect(assessment.notes.join(" ")).toContain("denies filtered source accounts entirely");
+  });
+
+  test("a target advertising compatible filtering does not get a filter warning", () => {
+    const assessment = assessUpdate("0.3.0", "0.2.0", {
+      current: scopeManifest,
+      target: scopeManifest,
+    });
+    expect(assessment.notes.join(" ")).not.toContain("source filters");
+  });
+
+  test("protocol2 enforcement is not considered preserved by a protocol1 target", () => {
+    const current = { protocols: { sourceScopes: { current: 2, min: 1, max: 2 } } };
+    expect(assessUpdate("0.3.0", "0.2.0", { target: scopeManifest }).notes.join(" ")).toContain(
+      "source filters",
+    );
+    expect(
+      assessUpdate("0.3.0", "0.2.0", { current, target: scopeManifest }).notes.join(" "),
+    ).toContain("source filters");
+    expect(
+      assessUpdate("0.3.0", "0.2.0", { current, target: current }).notes.join(" "),
+    ).not.toContain("source filters");
+  });
+
+  test("an observed legacy target receives the conservative downgrade warning", () => {
+    expect(
+      assessUpdate("0.3.0", "0.2.0", {
+        current: scopeManifest,
+        target: { protocols: {} },
+      }).notes.join(" "),
+    ).toContain("If source filters are configured");
+  });
+
+  test.each([
+    {},
+    { current: { compat: {} } },
+    { current: { protocols: { sourceScopes: { min: "1", max: 1 } } } },
+  ])("warns conditionally when gateway support is unverified: %j", (evidence) => {
+    expect(assessUpdate("0.3.0", "0.2.0", evidence).notes.join(" ")).toContain(
+      "If source filters are configured, verify that the target gateway supports them.",
+    );
+  });
+
+  test("callers without a gateway compatibility assessment retain legacy behavior", () => {
+    expect(assessUpdate("0.3.0", "0.2.0").notes.join(" ")).not.toContain("source filters");
+  });
+
+  test("public health evidence is accepted without assuming a release cutoff", () => {
+    expect(
+      assessUpdate("90.0.0", "80.0.0", { current: { compat: scopeManifest.protocols } }).notes.join(
+        " ",
+      ),
+    ).toContain("source filters");
+    expect(assessUpdate("0.1.0", "0.2.0", { current: scopeManifest }).notes).toEqual([]);
+  });
+
   test("same version is a no-op with no notes", () => {
     const a = assessUpdate("0.2.0", "v0.2.0");
     expect(a.direction).toBe("same");

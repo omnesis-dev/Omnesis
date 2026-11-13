@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   sha256Hex,
   personMention,
@@ -21,6 +23,7 @@ import {
   type ProviderId,
   type SourceId,
 } from "@omnesis/types";
+import type { DriveFolderEntry } from "./drive-source.js";
 
 export interface GmailBinaryAttachment {
   assetPath: string;
@@ -56,6 +59,8 @@ export interface EmailEntry {
   sentAt: string;
   threadId: string;
   labels: string[];
+  /** Explicit source-native IDs, independent from display labels. */
+  labelIds?: string[];
   /** Structurally declared planned time, projected by the Gmail descriptor. */
   scheduledAt?: string;
   /** Structurally declared deadline, projected by the Gmail descriptor. */
@@ -70,7 +75,7 @@ export function loadEmails(): EmailEntry[] {
 }
 export function mapEmail(
   e: EmailEntry,
-  ctx: { sourceId: SourceId; providerId: ProviderId },
+  ctx: { sourceId: SourceId; providerId: ProviderId; scopeFactsSupported?: boolean },
 ): DocumentInput | DocumentInput[] {
   const people: PersonMention[] = [
     { ...personMention(e.from, "sender"), emails: [e.fromEmail] },
@@ -107,6 +112,19 @@ export function mapEmail(
       documentType: "email",
       sourceUrl: gmailSourceUrl(e.externalId),
       tags: e.labels,
+      ...(ctx.scopeFactsSupported && e.labelIds
+        ? {
+            scopeFacts: {
+              kinds: ["label" as const],
+              facts: e.labelIds.map((id, index) => ({
+                kind: "label" as const,
+                id,
+                label: e.labels[index] ?? id,
+              })),
+              complete: ["label" as const],
+            },
+          }
+        : {}),
       people,
       ...(e.scheduledAt ? { scheduledAt: e.scheduledAt } : {}),
       ...(e.dueAt ? { dueAt: e.dueAt } : {}),
@@ -240,7 +258,7 @@ export function mapEventRecord(e: EventEntry, sourceAccount: string): Record<str
 
 // ── Drive ─────────────────────────────────────────────────────────
 
-interface DriveFileEntry {
+export interface DriveFileEntry {
   externalId: string;
   name: string;
   mimeType: string;
@@ -248,6 +266,7 @@ interface DriveFileEntry {
   owner: string;
   createdAt: string;
   modifiedAt: string;
+  parentIds?: string[];
 }
 let filesCache: DriveFileEntry[] | null = null;
 export function loadFiles(): DriveFileEntry[] {
@@ -259,9 +278,20 @@ export function loadFiles(): DriveFileEntry[] {
   );
   return filesCache;
 }
+export function loadDriveFolders(): DriveFolderEntry[] {
+  const universe = loadActiveUniverse();
+  return existsSync(join(universe.dir, "sources", "google-drive", "folders.json"))
+    ? loadSourceFixtureJson<DriveFolderEntry[]>(universe, "google-drive", "folders.json")
+    : [];
+}
 export function mapDriveFile(
   e: DriveFileEntry,
-  ctx: { sourceId: SourceId; providerId: ProviderId },
+  ctx: {
+    sourceId: SourceId;
+    providerId: ProviderId;
+    scopeHierarchySupported?: boolean;
+    scopeRefreshEpoch?: string;
+  },
 ): DocumentInput {
   return {
     sourceId: ctx.sourceId,
@@ -273,6 +303,18 @@ export function mapDriveFile(
     // Like the real Drive normalizer, join attachments/files by raw extraction.
     extractedContentHash: computeContentHash(e.content),
     metadata: {
+      ...(ctx.scopeHierarchySupported && e.parentIds
+        ? {
+            scopeHierarchy: [
+              {
+                kind: "folder" as const,
+                parentIds: e.parentIds,
+                complete: true,
+                refreshEpoch: ctx.scopeRefreshEpoch,
+              },
+            ],
+          }
+        : {}),
       documentType: "file",
       sourceUrl: `https://drive.google.com/file/d/${e.externalId}/view`,
       people: [personMention(e.owner, "owner")],

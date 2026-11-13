@@ -64,6 +64,7 @@ import type {
   DocumentIngestionContext,
   DocumentInput,
   SourceId,
+  SourceScopeUpdates,
   SyncIssue,
   SyncIssueAssessment,
 } from "@omnesis/types";
@@ -87,6 +88,25 @@ export function isGatewayValidationError(err: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether a page's scope updates say anything. A source that negotiated scopes
+ * may return the envelope on every page, so its presence alone is not progress.
+ */
+export function scopeUpdatesCarryFacts(updates: SourceScopeUpdates | undefined): boolean {
+  if (!updates) return false;
+  return (
+    updates.hierarchy !== undefined ||
+    [
+      updates.documents,
+      updates.entities,
+      updates.replaceEntityKinds,
+      updates.readiness,
+      updates.refreshes,
+      updates.conversations,
+    ].some((facts) => facts !== undefined && facts.length > 0)
+  );
 }
 
 /** Replay keeps its key space; only additive account ownership may precede it. */
@@ -214,6 +234,7 @@ export class SourceSyncRunner {
     private readonly syncTimeoutMs: number,
     private readonly feedProcess: FeedProcessSupervisor = new FeedProcessSupervisor(),
     private readonly ingestionContext?: DocumentIngestionContext,
+    private readonly scopeRefreshActorId?: string,
   ) {}
 
   /**
@@ -571,7 +592,7 @@ export class SourceSyncRunner {
       start: "resume",
       page: pageCount,
       deadline: runInfo.deadline,
-      ...(source.multiDeviceMode
+      ...(mode === "handoff" || mode === "replicated"
         ? { role: this.heldLeases.has(source.id) ? ("holder" as const) : ("member" as const) }
         : {}),
     });
@@ -721,10 +742,57 @@ export class SourceSyncRunner {
           return;
         }
 
+        // Only a source that declares scopes negotiates them. The gateway is
+        // asked before each page because it can be rolled back mid-run. A
+        // question that cannot be answered never fails the page: it syncs
+        // without filter facts, as it would from a collector that has none,
+        // and the gateway keeps such documents out of every filter until a
+        // later page brings their facts.
+        const negotiated = async <T>(ask: () => Promise<T>, unanswered: T): Promise<T> => {
+          try {
+            return await ask();
+          } catch (err) {
+            log.warn(
+              `Source filter negotiation failed for ${source.id}; syncing this page without filter facts: ${toErrorMessage(err)}`,
+            );
+            return unanswered;
+          }
+        };
+        const supportsSourceScopes =
+          source.scopes !== undefined ? this.gateway.supportsSourceScopes : undefined;
+        const scopeFactsSupported = supportsSourceScopes
+          ? await negotiated(() => supportsSourceScopes.call(this.gateway), false)
+          : false;
+        const scopeHierarchySupported =
+          scopeFactsSupported && supportsSourceScopes
+            ? await negotiated(() => supportsSourceScopes.call(this.gateway, 2), false)
+            : false;
+        const getScopeRefreshState = this.gateway.getScopeRefreshState;
+        const scopeRefresh =
+          scopeHierarchySupported && getScopeRefreshState
+            ? await negotiated(() => getScopeRefreshState.call(this.gateway, source.id), undefined)
+            : undefined;
+        const scopeRefreshEpochs = scopeRefresh?.epochs;
+        const scopeRefreshRequestIds = scopeRefresh?.requestIds;
         // Route to structured or unstructured sync
         if (isStructuredSource) {
           const syncStructured = () =>
-            source.instance.syncStructured!(cursor, { signal, run: runOf() });
+            source.instance.syncStructured!(cursor, {
+              signal,
+              run: runOf(),
+              ...(scopeFactsSupported ? { scopeFactsSupported: true } : {}),
+              ...(scopeHierarchySupported ? { scopeHierarchySupported: true } : {}),
+              ...(scopeHierarchySupported ? { scopeRefreshEpochsSupported: true } : {}),
+              ...(scopeRefreshEpochs && Object.keys(scopeRefreshEpochs).length
+                ? { scopeRefreshEpochs }
+                : {}),
+              ...(scopeRefreshRequestIds && Object.keys(scopeRefreshRequestIds).length
+                ? { scopeRefreshRequestIds }
+                : {}),
+              ...(scopeHierarchySupported && this.scopeRefreshActorId
+                ? { scopeRefreshActorId: this.scopeRefreshActorId }
+                : {}),
+            });
           let result =
             pendingStructuredPage?.result ??
             (wipeEpoch !== undefined && this.gateway.runWithSourceWriteEpoch
@@ -873,6 +941,7 @@ export class SourceSyncRunner {
                 pendingPageId: pendingStructuredPage?.id,
                 providerId: source.providerId,
                 sourceId: source.id,
+                scopeUpdates: result.scopeUpdates,
                 documents: pendingStructuredPage
                   ? result.documents
                   : this.documentsWithIngestionContext(result.documents),
@@ -1003,7 +1072,23 @@ export class SourceSyncRunner {
           );
           hasMore = result.hasMore;
         } else {
-          const sync = () => source.instance.sync(cursor, { signal, run: runOf() });
+          const sync = () =>
+            source.instance.sync(cursor, {
+              signal,
+              run: runOf(),
+              ...(scopeFactsSupported ? { scopeFactsSupported: true } : {}),
+              ...(scopeHierarchySupported ? { scopeHierarchySupported: true } : {}),
+              ...(scopeHierarchySupported ? { scopeRefreshEpochsSupported: true } : {}),
+              ...(scopeRefreshEpochs && Object.keys(scopeRefreshEpochs).length
+                ? { scopeRefreshEpochs }
+                : {}),
+              ...(scopeRefreshRequestIds && Object.keys(scopeRefreshRequestIds).length
+                ? { scopeRefreshRequestIds }
+                : {}),
+              ...(scopeHierarchySupported && this.scopeRefreshActorId
+                ? { scopeRefreshActorId: this.scopeRefreshActorId }
+                : {}),
+            });
           const result =
             wipeEpoch !== undefined && this.gateway.runWithSourceWriteEpoch
               ? await this.gateway.runWithSourceWriteEpoch(source.id, wipeEpoch, sync)
@@ -1029,6 +1114,7 @@ export class SourceSyncRunner {
           const writeResult = await this.gateway.upsertWithCursor({
             providerId: source.providerId,
             sourceId: source.id,
+            scopeUpdates: result.scopeUpdates,
             documents: this.documentsWithIngestionContext(result.documents),
             documentTemporalProjections: source.documentTemporalProjections,
             deletedExternalIds:
@@ -1097,7 +1183,11 @@ export class SourceSyncRunner {
 
           // Avoid hot-looping when a push-based source reports
           // hasMore but has no data yet (waiting for data to arrive)
-          if (hasMore && result.documents.length === 0) {
+          if (
+            hasMore &&
+            result.documents.length === 0 &&
+            !scopeUpdatesCarryFacts(result.scopeUpdates)
+          ) {
             await new Promise((r) => setTimeout(r, 2000));
           }
         }

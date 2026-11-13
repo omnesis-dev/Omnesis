@@ -120,7 +120,7 @@ describe("applyRunFilterChange", () => {
 
     expect(cognition.applyRunFilterChange("run_1", "all", "sweep", setValue)).toBe(true);
     expect(setValue).toHaveBeenCalledWith("sweep");
-    expect(replaceState).toHaveBeenCalledWith(null, "", "/portal/debug/brain/runs");
+    expect(replaceState).toHaveBeenCalledWith({ __omnesisRouteIndex: 0 }, "", "/portal/debug/brain/runs");
     expect(dispatchEvent.mock.calls[0]?.[0]).toMatchObject({ type: "route-change" });
   });
 

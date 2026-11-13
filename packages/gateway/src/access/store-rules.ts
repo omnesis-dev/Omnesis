@@ -3,9 +3,20 @@
 
 import * as z from "zod/v4";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
+import { isScopeQuarantined } from "./scope-quarantine.js";
 
+import { getSourceScopes } from "./scope-descriptors.js";
+import { canonicalScopePolicies, parseScopePolicyV1, scopePolicyV1Schema } from "./scope-policy.js";
+import { readScopeState } from "./scope-policy-store.js";
+import { conservativeSources } from "./scope-legacy-boundary.js";
 import type { Db } from "../data/types.js";
-import type { AccessCapability, AccessGrantCapability, AccessGrantRuleInput } from "./types.js";
+import type {
+  AccessCapability,
+  AccessGrantCapability,
+  AccessGrantRule,
+  AccessGrantRuleInput,
+} from "./types.js";
+import type { ScopePolicy } from "@omnesis/types";
 
 /**
  * Access rules: the shape grants and levels store, how supplied rules are
@@ -29,10 +40,15 @@ const notesSourcesSchema = z.strictObject({
   mode: z.literal("all"),
   sourceIds: z.array(z.string()).length(0),
 });
+const scopeFields = {
+  filterRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  scopePolicies: z.array(scopePolicyV1Schema).max(256).optional(),
+};
 const grantRuleSchema = z.discriminatedUnion("capability", [
-  z.strictObject({ capability: z.literal("direct"), sources: sourcesSchema }),
+  z.strictObject({ capability: z.literal("direct"), sources: sourcesSchema, ...scopeFields }),
   z.strictObject({ capability: z.literal("notes"), sources: notesSourcesSchema }),
   z.strictObject({
+    ...scopeFields,
     capability: z.literal("answer"),
     sources: sourcesSchema,
     release: z.discriminatedUnion("mode", [
@@ -70,6 +86,14 @@ export function readLevelRuleInputs(db: Db, levelId: string): AccessGrantRuleInp
     .all(levelId);
   const rules: AccessGrantRuleInput[] = [];
   for (const row of rows) {
+    const scope = readScopeState(db, "level", levelId, row.capability);
+    if (isScopeQuarantined(db, "level", levelId, row.capability)) {
+      row.source_mode = "allowlist";
+      row.source_ids = "[]";
+    } else if (scope?.scopePolicies.length) {
+      row.source_mode = scope.sourceMode;
+      row.source_ids = JSON.stringify(scope.sourceIds);
+    }
     const sourceIds = parseStringArray(row.source_ids);
     if (
       sourceIds === null ||
@@ -86,6 +110,7 @@ export function readLevelRuleInputs(db: Db, levelId: string): AccessGrantRuleInp
     rules.push(
       capabilityToRule({
         capability: row.capability,
+        ...(scope ?? {}),
         sourceMode: row.source_mode,
         sourceIds,
         releaseMode: row.release_mode,
@@ -105,14 +130,44 @@ export function storedRuleShape(capabilities: readonly AccessGrantCapability[]):
 
 export function capabilityToRule(capability: AccessGrantCapability): AccessGrantRuleInput {
   const sources = { mode: capability.sourceMode, sourceIds: capability.sourceIds };
-  if (capability.capability !== "answer") return { capability: capability.capability, sources };
+  const scopes =
+    capability.filterRevision || capability.scopePolicies?.length
+      ? {
+          filterRevision: capability.filterRevision ?? 0,
+          scopePolicies: capability.scopePolicies ?? [],
+        }
+      : {};
+  if (capability.capability !== "answer")
+    return { capability: capability.capability, sources, ...scopes };
   return capability.releaseMode === "reviewed" && capability.policyFamilyId
     ? {
         capability: "answer",
+        ...scopes,
         sources,
         release: { mode: "reviewed", policyFamilyId: capability.policyFamilyId },
       }
-    : { capability: "answer", sources, release: { mode: "unreviewed" } };
+    : { capability: "answer", ...scopes, sources, release: { mode: "unreviewed" } };
+}
+
+/**
+ * A capability as a response carries it. Without filters it is exactly the
+ * rule a request would send. With filters, `sources` is the conservative
+ * boundary, so a client that copies `sources` and drops the filter it does not
+ * know cannot grant the filtered source whole, and `scopeSources` is the real one.
+ */
+export function capabilityToWireRule(capability: AccessGrantCapability): AccessGrantRule {
+  const rule = capabilityToRule(capability);
+  if (!capability.scopePolicies?.length) return rule;
+  const conservative = conservativeSources({
+    sourceMode: capability.sourceMode,
+    sourceIds: capability.sourceIds,
+    scopePolicies: capability.scopePolicies,
+  });
+  return {
+    ...rule,
+    sources: { mode: conservative.sourceMode, sourceIds: conservative.sourceIds },
+    scopeSources: rule.sources,
+  };
 }
 
 interface CapabilityRow {
@@ -140,6 +195,26 @@ function readCapabilities(
     .all(id);
   const capabilities: AccessGrantCapability[] = [];
   for (const row of rows) {
+    const scope = readScopeState(
+      db,
+      table === "access_grant_capabilities" ? "grant" : "level",
+      id,
+      row.capability,
+    );
+    if (
+      isScopeQuarantined(
+        db,
+        table === "access_grant_capabilities" ? "grant" : "level",
+        id,
+        row.capability,
+      )
+    ) {
+      row.source_mode = "allowlist";
+      row.source_ids = "[]";
+    } else if (scope?.scopePolicies.length) {
+      row.source_mode = scope.sourceMode;
+      row.source_ids = JSON.stringify(scope.sourceIds);
+    }
     const sourceIds = parseStringArray(row.source_ids);
     if (
       sourceIds === null ||
@@ -156,6 +231,7 @@ function readCapabilities(
     }
     capabilities.push({
       capability: row.capability,
+      ...(scope ?? {}),
       sourceMode: row.source_mode,
       sourceIds,
       releaseMode: row.release_mode,
@@ -182,6 +258,12 @@ export function normalizeGrantRules(
     const sourceIds = [...new Set(rule.sources.sourceIds)].sort();
     return {
       capability: rule.capability,
+      ...("filterRevision" in rule && rule.filterRevision !== undefined
+        ? { filterRevision: rule.filterRevision }
+        : {}),
+      ...("scopePolicies" in rule && rule.scopePolicies !== undefined
+        ? { scopePolicies: canonicalScopePolicies(rule.scopePolicies) }
+        : {}),
       sourceMode:
         rule.sources.mode === "denylist" && sourceIds.length === 0
           ? ("all" as const)
@@ -235,12 +317,65 @@ export function legacyGrantRules(
   }));
 }
 
+/**
+ * `retainedSourceIds` and `retainedPolicies` are what the rule's owner already
+ * holds. A source it keeps naming may have gone, and a filter it keeps exactly
+ * as saved is not checked against its source again: the source may have been
+ * removed or be preparing its facts once more, and enforcement fails closed on
+ * both, so neither is a reason to refuse an edit that leaves the filter alone.
+ */
 export function validateGrantRuleReferences(
   db: Db,
   rules: Readonly<StoredGrantRules>,
   retainedSourceIds: ReadonlySet<string> = new Set(),
+  retainedPolicies: readonly ScopePolicy[] = [],
 ): void {
+  const retained = new Set(retainedPolicies.map((policy) => JSON.stringify(policy)));
   for (const rule of rules) {
+    const policies = rule.scopePolicies ?? [];
+    if (new Set(policies.map((policy) => policy.sourceId)).size !== policies.length) {
+      throw new Error("Only one filter is allowed per source and capability.");
+    }
+    for (const policy of policies) {
+      const listed = rule.sourceIds.includes(policy.sourceId);
+      if (
+        (rule.sourceMode === "allowlist" && !listed) ||
+        (rule.sourceMode === "denylist" && listed)
+      ) {
+        throw new Error("A filter must belong to a granted source.");
+      }
+      if (typeof policy.audience !== "object" || policy.audience.capability !== rule.capability) {
+        throw new Error("Invalid filter capability.");
+      }
+      if (retained.has(JSON.stringify(policy))) continue;
+      const source = db
+        .prepare<[string], { type: string }>("SELECT type FROM sources WHERE id = ?")
+        .get(policy.sourceId);
+      if (!source) throw new Error("Invalid filter source.");
+      const scopes = getSourceScopes(db, source.type);
+      if (!scopes) throw new Error("Source filtering is not available for this source.");
+      parseScopePolicyV1(policy, scopes);
+      if (
+        !db
+          .prepare<[string], { ready: number }>(
+            "SELECT ready FROM scope_fact_backfill WHERE source_id = ? AND ready = 1",
+          )
+          .get(policy.sourceId)
+      )
+        throw new Error("Source filter facts are still being prepared.");
+      const kinds = new Set(policy.rules.flatMap((entry) => entry.match.map((ref) => ref.kind)));
+      for (const kind of kinds) {
+        if (kind !== "label" && kind !== "folder") continue;
+        if (
+          !db
+            .prepare<[string, string], { ready: number }>(
+              "SELECT ready FROM source_scope_kind_readiness WHERE source_id = ? AND kind = ? AND ready = 1",
+            )
+            .get(policy.sourceId, kind)
+        )
+          throw new Error("This filter needs a complete source metadata refresh.");
+      }
+    }
     if (rule.policyFamilyId) {
       const family = db
         .prepare<[string], { present: number }>(

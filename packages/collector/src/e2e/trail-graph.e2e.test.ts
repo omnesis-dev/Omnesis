@@ -172,12 +172,12 @@ describe("Trail graph — attachment + dedup + thread (default universe)", () =>
     expect(seed!.attachments.length, "seed should have attachment nested").toBeGreaterThanOrEqual(
       1,
     );
-    expect(seed!.attachments[0]!.doc.title).toBe("Q4-Vendor-Assessment.pdf");
+    expect(seed!.attachments[0]!.doc?.title).toBe("Q4-Vendor-Assessment.pdf");
 
-    const titles = trail.events.map((e) => e.doc.title);
+    const titles = trail.events.map((e) => e.doc?.title);
     const allTitles = [
       ...titles,
-      ...trail.events.flatMap((e) => e.attachments.map((a) => a.doc.title)),
+      ...trail.events.flatMap((e) => e.attachments.map((a) => a.doc?.title)),
     ];
     expect(
       allTitles.some((t) => t === "Q4-Vendor-Assessment.pdf"),
@@ -192,9 +192,9 @@ describe("Trail graph — attachment + dedup + thread (default universe)", () =>
     const trail = await harness.gatewayJson<EventTrail>(`/documents/${gmailDoc!.id}/trail?depth=4`);
     expect(trail.events.length).toBeGreaterThanOrEqual(2);
 
-    const titles = trail.events.map((e) => e.doc.title);
+    const titles = trail.events.map((e) => e.doc?.title);
     expect(
-      titles.some((t) => t.includes("Re: Q4 Vendor Assessment")),
+      titles.some((t) => t?.includes("Re: Q4 Vendor Assessment")),
       "trail should include the thread reply",
     ).toBe(true);
   });
@@ -205,7 +205,7 @@ describe("Trail graph — attachment + dedup + thread (default universe)", () =>
     const waDoc = findDoc(db, "synth-whatsapp-015");
     expect(waDoc).toBeTruthy();
 
-    const cliEnv = {
+    const cliEnv: NodeJS.ProcessEnv = {
       ...process.env,
       OMNESIS_GATEWAY_URL: harness.gatewayUrl,
       OMNESIS_TOKEN: harness.apiKey,
@@ -234,7 +234,15 @@ describe("Trail graph — attachment + dedup + thread (default universe)", () =>
     const trail = JSON.parse(stdout.slice(start)) as EventTrail;
     expect(trail.seeds.length).toBeGreaterThan(0);
     expect(trail.events.length).toBeGreaterThanOrEqual(1);
-    expect(trail.events[0]!.kind).toBe("seed");
+    expect(trail.seeds).toContain(`doc:${waDoc!.id}`);
+    expect(
+      trail.events.find((event) => event.kind === "seed" && event.doc?.documentId === waDoc!.id),
+      "trail should retain the requested seed among chronologically ordered events",
+    ).toBeTruthy();
+    const eventTimes = trail.events
+      .filter((event) => event.at !== null)
+      .map((event) => Date.parse(event.at!));
+    expect(eventTimes).toEqual([...eventTimes].sort((a, b) => a - b));
     expect(typeof trail.stats.elapsedMs).toBe("number");
   });
 });

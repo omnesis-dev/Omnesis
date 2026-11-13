@@ -273,10 +273,11 @@ export class SearchWorkerPool {
    * fewest calls in flight (ties rotate), so a fast query never waits behind a
    * slow one while another worker sits idle, and correlates the reply by id.
    * Rejects if the pool is disposed, no worker is ready, or the worker fails —
-   * the caller (`SearchPipeline.candidateGen`) catches and falls back to the
-   * identical `runCandidateGen` on main.
+   * a starting pool waits for its first ready worker. Unfiltered callers may
+   * retain their inline fallback; filtered callers require worker execution.
    */
   async candidateGen(request: CandidateGenRequest): Promise<CandidateGenResult> {
+    if (this.isStarting) await this.firstReady();
     return (await this.dispatch("search-worker", (id, enqueueMs) => ({
       type: "call",
       id,

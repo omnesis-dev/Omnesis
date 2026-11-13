@@ -98,9 +98,7 @@ export const CALENDAR_MAX_RESULTS = 250;
 
 export const DRIVE_MAX_CONTENT_SIZE = 10 * 1024 * 1024;
 
-// Does NOT include `parents`/`driveId`/`ownedByMe`. Adding those is the
-// prerequisite for propagating folder path as metadata (folder-cache
-// resolver, three-bucket semantics).
+// Stable base query for legacy gateways; the negotiated hierarchy path adds parents/driveId.
 export const DRIVE_FILE_FIELDS =
   "id,name,mimeType,createdTime,modifiedTime,size,webViewLink,owners,shared,trashed,permissions(emailAddress,displayName,role,type)";
 

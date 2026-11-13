@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { clearScopeLabels } from "./components/source-filter-labels.js";
+
 import { portalDeviceName, portalInstallId } from "./lib/storage.js";
 import { NOTES_HISTORY_PAGE_SIZE } from "./lib/notes.js";
 
@@ -86,6 +88,7 @@ export async function checkSession() {
   // has even logged in.
   const res = await fetch("/portal/api/session", { credentials: "same-origin" });
   const data = await res.json();
+  if (!data.authenticated || _csrfToken !== (data.csrfToken ?? null)) clearScopeLabels();
   _authenticated = data.authenticated;
   _scope = data.scope ?? null;
   _csrfToken = data.authenticated ? (data.csrfToken ?? null) : null;
@@ -113,6 +116,7 @@ export async function login(token) {
   });
   const data = await res.json();
   if (data.ok) {
+    clearScopeLabels();
     _authenticated = true;
     _scope = data.scope;
     _csrfToken = data.csrfToken ?? null;
@@ -125,6 +129,7 @@ export async function login(token) {
  * Log out (clear session cookie).
  */
 export async function logout() {
+  clearScopeLabels();
   await fetch("/portal/api/logout", {
     method: "POST",
     credentials: "same-origin",
@@ -182,6 +187,7 @@ async function request(method, path, opts = {}) {
   const init = {
     method,
     ...(opts.cache ? { cache: opts.cache } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
     headers:
       opts.body !== undefined || (opts.csrf && _csrfToken)
         ? {
@@ -949,8 +955,14 @@ export const revokeTokenById = (id) =>
 // --- Delegated MCP access (Portal owner surface) ---
 
 /** Every connection an agent holds on this gateway, with the access levels they can share. */
-export const getAccessOverview = () =>
-  request("GET", "/admin/access", { cache: "no-store" });
+export const getAccessOverview = (signal) =>
+  request("GET", "/admin/access", { cache: "no-store", signal });
+
+export const getSourceFilterOptions = (sourceId, query, signal) =>
+  request("GET", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/options`, { query, signal, cache: "no-store" });
+
+export const previewSourceFilter = (sourceId, policy, signal) =>
+  request("POST", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/preview`, { body: { policy }, signal });
 
 /**
  * Resolve the short code shown by an MCP client's authorization window: the

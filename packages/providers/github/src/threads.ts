@@ -22,16 +22,18 @@ import {
   buildThreadBatchQuery,
 } from "./queries.js";
 import { commitExternalId, parsePendingRef, pendingRef, threadExternalId } from "./types.js";
-import { reconcileMissingRepos, resolveRepoList } from "./repo-selection.js";
+import { reconcileMissingRepos, resolveRepos } from "./repo-selection.js";
+import { RepoScopes } from "./repo-scopes.js";
 import {
   gapRepo,
   resumeRepoSnapshot,
   startRepoSnapshot,
+  unlistedRepos,
   withRepoSnapshot,
 } from "./repo-snapshot.js";
 import type { DocumentInput, ProviderId, SourceId } from "@omnesis/types";
 import type { EdgeDeclaration, SourceConfig } from "@omnesis/core";
-import type { SyncResult } from "@omnesis/source-sdk";
+import type { SyncOptions, SyncResult } from "@omnesis/source-sdk";
 import type { GithubClient } from "./client.js";
 import type { DiscoveryConnection } from "./queries.js";
 import type {
@@ -177,6 +179,9 @@ export interface GithubThreadsSourceOptions {
  *    because editing a comment does not bump the parent's `updated_at`;
  * 3. materialization — batches of pending refs are fetched whole over GraphQL
  *    and re-rendered as complete documents;
+ * Every document carries the repository it sits in, for the filters of an
+ * access level; see `repo-scopes.ts`.
+ *
  * 4. cycle end — a snapshot cycle emits `presentExternalIds` so deletions and
  *    transfers sweep. A snapshot that skipped a repository emits nothing: the
  *    walk knows it did not look everywhere. A snapshot that looked everywhere
@@ -187,15 +192,22 @@ export interface GithubThreadsSourceOptions {
 export class GithubThreadsSource {
   private readonly opts: GithubThreadsSourceOptions;
   private readonly now: () => number;
+  /** The filter catalogue as the call in progress sees it. */
+  private scope = new RepoScopes<GithubThreadsCursor>({}, undefined);
 
   constructor(opts: GithubThreadsSourceOptions) {
     this.opts = opts;
     this.now = opts.now ?? Date.now;
   }
 
-  async sync(cursor: GithubThreadsCursor | null): Promise<SyncResult<GithubThreadsCursor>> {
+  async sync(
+    cursor: GithubThreadsCursor | null,
+    opts?: SyncOptions,
+  ): Promise<SyncResult<GithubThreadsCursor>> {
     try {
-      return await this.runSync(cursor);
+      const cur: GithubThreadsCursor = { ...(cursor ?? {}), renderVersion: THREADS_RENDER_VERSION };
+      this.scope = new RepoScopes(cur, opts);
+      return this.scope.handshake() ?? this.scope.publish(await this.runSync(cur));
     } catch (err) {
       if (err instanceof SyncError) throw err;
       throw new SyncError("unknown", err instanceof Error ? err.message : String(err), {
@@ -204,25 +216,27 @@ export class GithubThreadsSource {
     }
   }
 
-  private async runSync(
-    cursor: GithubThreadsCursor | null,
-  ): Promise<SyncResult<GithubThreadsCursor>> {
-    const cur: GithubThreadsCursor = { ...(cursor ?? {}), renderVersion: THREADS_RENDER_VERSION };
+  private async runSync(cur: GithubThreadsCursor): Promise<SyncResult<GithubThreadsCursor>> {
     const pending: PendingRef[] = [...(cur.pending ?? [])];
     const pendingSet = new Set(pending);
 
     // Cycle start.
     if (cur.discoveryQueue === undefined && !cur.lane && pending.length === 0) {
-      const repoList = await resolveRepoList(
+      const repos = await resolveRepos(
         this.opts.client,
         this.opts.sourceConfig as Record<string, unknown> | undefined,
       );
+      const catalogue = this.scope.startCycle(repos);
+      if (catalogue.catalogueRemaining) return syncPage([], cur, { hasMore: true });
+      const repoList = repos.map((repo) => repo.full_name);
       cur.discoveryQueue = [...repoList];
-      cur.snapshotMode = shouldEnterSnapshotMode(
-        cur,
-        this.now,
-        this.opts.snapshotIntervalMs ?? SNAPSHOT_INTERVAL_MS,
-      );
+      cur.snapshotMode =
+        catalogue.snapshot ||
+        shouldEnterSnapshotMode(
+          cur,
+          this.now,
+          this.opts.snapshotIntervalMs ?? SNAPSHOT_INTERVAL_MS,
+        );
       const reconciled = reconcileMissingRepos({
         repoList,
         knownRepos: Object.keys(cur.repos ?? {}),
@@ -238,7 +252,8 @@ export class GithubThreadsSource {
       log.info(
         `Cycle start: ${repoList.length} repos, snapshot=${cur.snapshotMode ? "yes" : "no"}`,
       );
-      if (repoList.length === 0) return this.finishCycle(cur, [], []);
+      // A refresh opened on this page closes on a later one.
+      if (repoList.length === 0 && !catalogue.began) return this.finishCycle(cur, [], []);
       return syncPage([], cur, { hasMore: true });
     }
 
@@ -283,6 +298,7 @@ export class GithubThreadsSource {
   ): SyncResult<GithubThreadsCursor> {
     const wasSnapshot = cur.snapshotMode === true;
     const enumeration = resumeRepoSnapshot(cur);
+    if (wasSnapshot) this.scope.finishSnapshot(unlistedRepos(cur, enumeration));
     cur.discoveryQueue = undefined;
     cur.lane = undefined;
     cur.snapshotMode = false;
@@ -371,6 +387,7 @@ export class GithubThreadsSource {
   ): Promise<void> {
     let budget = MAX_LANE_PAGES_PER_CALL;
     while (budget > 0) {
+      if (this.scope.full) return;
       if (!cur.lane) {
         // Between repositories is where discovery yields to materialization.
         // The cap is checked here and not only on entry: a snapshot cycle
@@ -599,6 +616,7 @@ export class GithubThreadsSource {
     // claim vouches for.
     if (snapshot) {
       withRepoSnapshot(cur, (enumeration) => enumeration.add(lane.repo, presentThisPage));
+      this.scope.listed(lane.repo, presentThisPage);
     }
     // A page claiming more without a cursor cannot be resumed — finish the
     // lane rather than re-reading page one forever. The lane still advances,
@@ -757,12 +775,15 @@ export class GithubThreadsSource {
       if (this.opts.dataCutoff && node.createdAt < this.opts.dataCutoff) continue;
       if (head.discussion) {
         docs.push(
-          discussionToDocument(
-            node as GqlDiscussion,
+          this.scope.stamp(
+            discussionToDocument(
+              node as GqlDiscussion,
+              head.repo,
+              this.opts.providerId,
+              this.opts.sourceId,
+              refKinds,
+            ),
             head.repo,
-            this.opts.providerId,
-            this.opts.sourceId,
-            refKinds,
           ),
         );
       } else {
@@ -773,7 +794,7 @@ export class GithubThreadsSource {
           this.opts.sourceId,
           refKinds,
         );
-        docs.push(normalized.doc);
+        docs.push(this.scope.stamp(normalized.doc, head.repo));
         edges.push(...this.threadEdges(head.repo, normalized));
       }
     }

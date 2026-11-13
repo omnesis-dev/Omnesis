@@ -114,7 +114,7 @@ interface ChatMessage {
     sizeBytes: number;
   }>;
 }
-interface DailyChatEntry {
+export interface DailyChatEntry {
   externalId: string;
   chatId: string;
   chatTitle: string;
@@ -168,6 +168,8 @@ export function mapChat(
       people,
       extra: {
         chatId: e.chatId,
+        conversationId: e.chatId,
+        chatName: e.chatTitle,
         date: e.date,
         messageCount: e.messages.length,
       },

@@ -6,17 +6,19 @@ import { SyncError } from "@omnesis/types";
 import { syncPage } from "@omnesis/source-sdk";
 import { COMMITS_RENDER_VERSION, commitToDocument } from "./normalizer.js";
 import { commitExternalId } from "./types.js";
-import { reconcileMissingRepos, resolveRepoList } from "./repo-selection.js";
+import { reconcileMissingRepos, resolveRepos } from "./repo-selection.js";
+import { RepoScopes } from "./repo-scopes.js";
 import {
   gapRepo,
   resumeRepoSnapshot,
   startRepoSnapshot,
+  unlistedRepos,
   withRepoSnapshot,
 } from "./repo-snapshot.js";
 import { INCREMENTAL_MARGIN_MS, SNAPSHOT_INTERVAL_MS, shouldEnterSnapshotMode } from "./threads.js";
 import type { SourceConfig } from "@omnesis/core";
 import type { DocumentInput, ProviderId, SourceId } from "@omnesis/types";
-import type { SyncResult } from "@omnesis/source-sdk";
+import type { SyncOptions, SyncResult } from "@omnesis/source-sdk";
 import type { GithubClient } from "./client.js";
 import type { GithubCommitsCursor, RepoCommitState } from "./types.js";
 
@@ -59,20 +61,28 @@ export interface GithubCommitsSourceOptions {
  * is judged by the known-sha set, never by listing order. A daily snapshot
  * re-lists everything so force-pushed-away commits sweep via
  * `presentExternalIds` and force-pushed-in commits are noticed as unknown
- * shas.
+ * shas. Every document carries the repository it sits in, for the filters of
+ * an access level; see `repo-scopes.ts`.
  */
 export class GithubCommitsSource {
   private readonly opts: GithubCommitsSourceOptions;
   private readonly now: () => number;
+  /** The filter catalogue as the call in progress sees it. */
+  private scope = new RepoScopes<GithubCommitsCursor>({}, undefined);
 
   constructor(opts: GithubCommitsSourceOptions) {
     this.opts = opts;
     this.now = opts.now ?? Date.now;
   }
 
-  async sync(cursor: GithubCommitsCursor | null): Promise<SyncResult<GithubCommitsCursor>> {
+  async sync(
+    cursor: GithubCommitsCursor | null,
+    opts?: SyncOptions,
+  ): Promise<SyncResult<GithubCommitsCursor>> {
     try {
-      return await this.runSync(cursor);
+      const cur: GithubCommitsCursor = { ...(cursor ?? {}), renderVersion: COMMITS_RENDER_VERSION };
+      this.scope = new RepoScopes(cur, opts);
+      return this.scope.handshake() ?? this.scope.publish(await this.runSync(cur));
     } catch (err) {
       if (err instanceof SyncError) throw err;
       throw new SyncError("unknown", err instanceof Error ? err.message : String(err), {
@@ -81,25 +91,27 @@ export class GithubCommitsSource {
     }
   }
 
-  private async runSync(
-    cursor: GithubCommitsCursor | null,
-  ): Promise<SyncResult<GithubCommitsCursor>> {
-    const cur: GithubCommitsCursor = { ...(cursor ?? {}), renderVersion: COMMITS_RENDER_VERSION };
+  private async runSync(cur: GithubCommitsCursor): Promise<SyncResult<GithubCommitsCursor>> {
     const pending: string[] = [...(cur.pending ?? [])];
     const pendingSet = new Set(pending);
 
     // Cycle start.
     if (cur.discoveryQueue === undefined && !cur.lane && pending.length === 0) {
-      const repoList = await resolveRepoList(
+      const repos = await resolveRepos(
         this.opts.client,
         this.opts.sourceConfig as Record<string, unknown> | undefined,
       );
+      const catalogue = this.scope.startCycle(repos);
+      if (catalogue.catalogueRemaining) return syncPage([], cur, { hasMore: true });
+      const repoList = repos.map((repo) => repo.full_name);
       cur.discoveryQueue = [...repoList];
-      cur.snapshotMode = shouldEnterSnapshotMode(
-        cur,
-        this.now,
-        this.opts.snapshotIntervalMs ?? SNAPSHOT_INTERVAL_MS,
-      );
+      cur.snapshotMode =
+        catalogue.snapshot ||
+        shouldEnterSnapshotMode(
+          cur,
+          this.now,
+          this.opts.snapshotIntervalMs ?? SNAPSHOT_INTERVAL_MS,
+        );
       const reconciled = reconcileMissingRepos({
         repoList,
         knownRepos: Object.keys(cur.repos ?? {}),
@@ -115,7 +127,8 @@ export class GithubCommitsSource {
       log.info(
         `Cycle start: ${repoList.length} repos, snapshot=${cur.snapshotMode ? "yes" : "no"}`,
       );
-      if (repoList.length === 0) return this.finishCycle(cur, []);
+      // A refresh opened on this page closes on a later one.
+      if (repoList.length === 0 && !catalogue.began) return this.finishCycle(cur, []);
       return syncPage([], cur, { hasMore: true });
     }
 
@@ -157,6 +170,7 @@ export class GithubCommitsSource {
   ): SyncResult<GithubCommitsCursor> {
     const wasSnapshot = cur.snapshotMode === true;
     const enumeration = resumeRepoSnapshot(cur);
+    if (wasSnapshot) this.scope.finishSnapshot(unlistedRepos(cur, enumeration));
     cur.discoveryQueue = undefined;
     cur.lane = undefined;
     cur.snapshotMode = false;
@@ -209,6 +223,7 @@ export class GithubCommitsSource {
   ): Promise<void> {
     let budget = MAX_LANE_PAGES_PER_CALL;
     while (budget > 0) {
+      if (this.scope.full) return;
       if (!cur.lane) {
         // Yield to materialization between repositories; see threads.ts for
         // why the entry check in `runSync` alone never does.
@@ -294,6 +309,7 @@ export class GithubCommitsSource {
         merged.length > MAX_KNOWN_SHAS ? merged.slice(merged.length - MAX_KNOWN_SHAS) : merged;
     }
     if (snapshot) {
+      this.scope.listed(lane.repo, presentThisPage);
       withRepoSnapshot(cur, (enumeration) => {
         enumeration.add(lane.repo, presentThisPage);
         // The last page of this repository's listing is the only place its set
@@ -334,7 +350,12 @@ export class GithubCommitsSource {
         const detail = await this.opts.client.getCommit(repo, sha);
         const committedAt = detail.commit.committer?.date ?? detail.commit.author?.date;
         if (!(this.opts.dataCutoff && committedAt && committedAt < this.opts.dataCutoff)) {
-          docs.push(commitToDocument(detail, repo, this.opts.providerId, this.opts.sourceId));
+          docs.push(
+            this.scope.stamp(
+              commitToDocument(detail, repo, this.opts.providerId, this.opts.sourceId),
+              repo,
+            ),
+          );
         }
       } catch (err) {
         if (err instanceof SyncError && err.kind === "permission") {

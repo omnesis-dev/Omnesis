@@ -30,9 +30,9 @@ enum AccessConnectionCopy {
     static let suggestedTag = "Suggested"
     static let needsAnswer = "This agent needs Answer."
     static let newLevel = "New access level"
+    static let connectAgent = "Connect an agent"
+    static let reviewAccess = "Review access"
     static let levelNameLabel = "Access level name"
-    static let levelNameEmpty = "Enter a name for this access level."
-    static let levelNameTaken = "An access level with that name already exists."
     static let replaceEntry = "Signing in again? Replace a connection"
     static let replaceTitle = "Replace a connection"
     static let replaceHelper = "The new sign-in takes over the chosen connection's name and access level. "
@@ -86,7 +86,8 @@ func accessConnectionTrimmedName(_ value: String) -> String? {
 }
 
 /// A name cut to what the gateway accepts, at a character boundary. The
-/// fields apply it as the owner types, so a name is never refused for length.
+/// connection name's field applies it as the owner types, so that name is
+/// never refused for length.
 func accessConnectionClampedName(_ value: String) -> String {
     accessAuthorizationPrefix(value, maxUTF16Length: accessConnectionNameMaxLength)
 }
@@ -146,6 +147,11 @@ func accessLiveConnections(_ overview: AccessOverview, nowMillis: Int64) -> [Acc
         }
 }
 
+/// The access levels in the order every list shows them: by name, whatever the case.
+func accessLevelsByName(_ overview: AccessOverview) -> [AccessLevelSummary] {
+    overview.levels.sorted { accessNameOrder($0.name, $0.id, $1.name, $1.id) }
+}
+
 private func accessNameOrder(_ lhsName: String, _ lhsId: String, _ rhsName: String, _ rhsId: String) -> Bool {
     let left = lhsName.lowercased()
     let right = rhsName.lowercased()
@@ -161,6 +167,9 @@ struct AccessConnectionReview: Equatable {
     let replaces: String?
     /// The note that other connections share the level, when they do.
     let levelFootnote: String?
+    /// Whether this approval makes the level's decisions, on its own steps: a new level, or a gateway without
+    /// connection proposals. A connection to an existing level takes that level's decisions as they are.
+    var decidesPermissions = true
 
     /// A gateway without connection proposals connects the client to the
     /// principal it recognises, or to a new one named after the client.
@@ -240,12 +249,8 @@ struct AccessConnectionChoice: Equatable {
 
     /// The levels to pick from: the suggested one first, the rest by name.
     func orderedLevels(overview: AccessOverview) -> [AccessLevelSummary] {
-        overview.levels.sorted { lhs, rhs in
-            if (lhs.id == suggestedLevelId) != (rhs.id == suggestedLevelId) {
-                return lhs.id == suggestedLevelId
-            }
-            return accessNameOrder(lhs.name, lhs.id, rhs.name, rhs.id)
-        }
+        let named = accessLevelsByName(overview)
+        return named.filter { $0.id == suggestedLevelId } + named.filter { $0.id != suggestedLevelId }
     }
 
     /// The line under the suggested level, naming the connection that uses it.
@@ -267,18 +272,10 @@ struct AccessConnectionChoice: Equatable {
         return accessConnectionTrimmedName(name) == nil ? AccessConnectionCopy.nameEmpty : nil
     }
 
-    /// Why the new level's name cannot be sent: it is empty, or an access
-    /// level in `overview` already has it, ignoring case and surrounding
-    /// spaces as the gateway does. The gateway's own refusal still backs
-    /// this up for a level created after the overview was read.
+    /// Why the new level's name cannot be sent, as the level editor judges
+    /// a name. Only a new level sends one.
     func levelNameError(overview: AccessOverview) -> String? {
-        guard path == .newLevel else { return nil }
-        guard let trimmed = accessConnectionTrimmedName(levelName) else { return AccessConnectionCopy.levelNameEmpty }
-        let wanted = trimmed.lowercased()
-        let taken = overview.levels.contains { level in
-            accessConnectionTrimmedName(level.name)?.lowercased() == wanted
-        }
-        return taken ? AccessConnectionCopy.levelNameTaken : nil
+        path == .newLevel ? accessLevelNameProblem(levelName, id: "new", levels: overview.levels) : nil
     }
 
     /// Whether the gateway's refusal of a level name still bars approval.
@@ -325,64 +322,30 @@ struct AccessConnectionChoice: Equatable {
         }
     }
 
-    /// The steps this path walks through. Only a new level has permissions
-    /// to draw, and Data & privacy stays out of a Notes-only one.
-    func steps(readsSources: Bool) -> [AccessAuthorizationStep] {
-        guard path == .newLevel else { return [.connection, .review] }
-        return readsSources ? [.connection, .permissions, .data, .review] : [.connection, .permissions, .review]
-    }
-
-    /// The permissions the connection would hold: the form's for a new
-    /// level, the existing level's, or those of the connection replaced.
-    func effectiveRules(
-        request: AccessAuthorizationRequest,
-        overview: AccessOverview,
-        form: AccessAuthorizationFormState
-    )
-        -> [AccessGrantRule]? {
+    /// The permissions the connection takes on as they stand: the existing
+    /// level's, or those of the connection replaced. Nil for a new level,
+    /// whose permissions this approval draws.
+    func existingRules(overview: AccessOverview) -> [AccessGrantRule]? {
         switch path {
-        case .newLevel:
-            let rules = form.rules(request: request, overview: overview)
-            return rules.isEmpty ? nil : rules
-        case .existingLevel:
-            return selectedLevel(overview: overview)?.rules
-        case .replace:
-            return selectedConnection(overview: overview)?.grant.rules
+        case .newLevel: nil
+        case .existingLevel: selectedLevel(overview: overview)?.rules
+        case .replace: selectedConnection(overview: overview)?.grant.rules
         }
-    }
-
-    /// The form the review prints. Only a new level is drawn in the form;
-    /// the other paths print the permissions they take on, named by the
-    /// policy those rules are judged against even when the overview no
-    /// longer lists it.
-    func reviewForm(
-        request: AccessAuthorizationRequest,
-        overview: AccessOverview,
-        form: AccessAuthorizationFormState
-    )
-        -> AccessAuthorizationFormState {
-        guard path != .newLevel, let rules = effectiveRules(request: request, overview: overview, form: form) else {
-            return form
-        }
-        var review = AccessAuthorizationFormState.opening(request: request, overview: overview, prefill: rules)
-        for case .answer(_, .reviewed(let familyId)) in rules {
-            review.policyFamilyId = familyId
-        }
-        return review
     }
 
     /// What approval sends, or nil while the choices are incomplete.
+    /// `newLevelRules` are the rules drawn for a new level, nil while they
+    /// cannot be sent.
     func selection(
         request: AccessAuthorizationRequest,
         overview: AccessOverview,
-        form: AccessAuthorizationFormState
+        newLevelRules: [AccessGrantRule]?
     )
         -> AccessAuthorizationSelection? {
         guard isComplete(request: request, overview: overview) else { return nil }
         switch path {
         case .newLevel:
-            let rules = form.rules(request: request, overview: overview)
-            guard !rules.isEmpty,
+            guard let rules = newLevelRules,
                   let name = accessConnectionTrimmedName(name),
                   let levelName = accessConnectionTrimmedName(levelName) else { return nil }
             return .newConnection(name: name, level: .new(name: levelName, rules: rules))
@@ -414,7 +377,8 @@ struct AccessConnectionChoice: Equatable {
                 connectionName: accessConnectionTrimmedName(name) ?? name,
                 accessLevel: level?.name,
                 replaces: nil,
-                levelFootnote: Self.sharedFootnote(otherConnections: level?.connectionCount ?? 0)
+                levelFootnote: Self.sharedFootnote(otherConnections: level?.connectionCount ?? 0),
+                decidesPermissions: false
             )
         case .replace:
             let target = selectedConnection(overview: overview)
@@ -424,7 +388,8 @@ struct AccessConnectionChoice: Equatable {
                 accessLevel: level?.name,
                 replaces: target.map { AccessConnectionCopy.replaces(connection: $0.name) },
                 // The connection being replaced is one of the level's own.
-                levelFootnote: Self.sharedFootnote(otherConnections: (level?.connectionCount ?? 0) - 1)
+                levelFootnote: Self.sharedFootnote(otherConnections: (level?.connectionCount ?? 0) - 1),
+                decidesPermissions: false
             )
         }
     }
@@ -434,11 +399,20 @@ struct AccessConnectionChoice: Equatable {
     }
 }
 
-/// The wizard's steps: those of the Connection step's path, or, for a
-/// gateway without connection proposals, the permissions flow on its own.
-func accessAuthorizationSteps(choice: AccessConnectionChoice?, readsSources: Bool) -> [AccessAuthorizationStep] {
-    if let choice { return choice.steps(readsSources: readsSources) }
-    return readsSources ? [.permissions, .data, .review] : [.permissions, .review]
+/// The screens an approval walks through, in order. The Connection step
+/// (`.name`) comes first when the gateway proposes one. A new level, and the
+/// flow of a gateway without proposals, then ask the level editor's questions
+/// for a new level; a level or connection that already exists goes straight
+/// to the review.
+func accessAuthorizationFlow(choice: AccessConnectionChoice?, draft: AccessLevelDraft) -> [AccessFlowStep] {
+    guard let choice else { return draft.creationSteps }
+    return [.name] + (choice.path == .newLevel ? draft.creationSteps : [.review])
+}
+
+/// The numbered steps the indicator shows for a flow, each once.
+func accessAuthorizationIndicatorSteps(_ flow: [AccessFlowStep]) -> [AccessAuthorizationStep] {
+    var seen: Set<AccessAuthorizationStep> = []
+    return flow.map(AccessAuthorizationStep.init).filter { seen.insert($0).inserted }
 }
 
 /// Where the wizard opens for a pending request: on the Connection step when
@@ -448,8 +422,9 @@ func accessAuthorizationSteps(choice: AccessConnectionChoice?, readsSources: Boo
 /// expired.
 struct AccessAuthorizationOpening {
     let choice: AccessConnectionChoice?
-    let form: AccessAuthorizationFormState
-    let step: AccessAuthorizationStep
+    /// The new level the approval draws, as its decision screens edit it.
+    let level: AccessDraftDecisions
+    let step: AccessFlowStep
 
     init(
         request: AccessAuthorizationRequest,
@@ -458,21 +433,14 @@ struct AccessAuthorizationOpening {
         reconnect: AccessReconnectProposal?,
         nowMillis: Int64
     ) {
-        guard let connection else {
-            choice = nil
-            form = .opening(request: request, overview: overview, prefill: reconnect?.grant.rules)
-            step = .permissions
-            return
+        let opened = connection.map {
+            AccessConnectionChoice.opening(request: request, overview: overview, proposal: $0, nowMillis: nowMillis)
         }
-        let opened = AccessConnectionChoice.opening(
-            request: request,
-            overview: overview,
-            proposal: connection,
-            nowMillis: nowMillis
-        )
+        let prefill = connection == nil ? reconnect?.grant.rules : opened?.prefillRules
+        let draft = AccessLevelDraft.approving(request: request, overview: overview, prefill: prefill)
         choice = opened
-        form = .opening(request: request, overview: overview, prefill: opened.prefillRules)
-        step = .connection
+        level = AccessDraftDecisions(draft: draft, overview: overview, original: draft, answerRequired: request.requiresAnswer)
+        step = opened == nil ? .permissions : .name
     }
 }
 
@@ -482,13 +450,13 @@ func accessAuthorizationIsLevelNameTaken(_ error: Error) -> Bool {
     accessAuthorizationErrorCode(error) == "level-name-taken"
 }
 
-/// The step a refused approval returns the wizard to, or nil to stay on the
+/// The screen a refused approval returns the wizard to, or nil to stay on the
 /// current one. A taken level name is fixed on the Connection step. A stale
 /// selection whose choices were refreshed reopens where the refreshed
 /// request opens: the Connection step when the gateway proposes one,
 /// otherwise Permissions.
-func accessAuthorizationRefusalStep(error: Error, hasChoice: Bool, refreshed: Bool) -> AccessAuthorizationStep? {
-    if accessAuthorizationIsLevelNameTaken(error) { return hasChoice ? .connection : nil }
+func accessAuthorizationRefusalStep(error: Error, hasChoice: Bool, refreshed: Bool) -> AccessFlowStep? {
+    if accessAuthorizationIsLevelNameTaken(error) { return hasChoice ? .name : nil }
     guard refreshed, accessAuthorizationIsStaleSelectionError(error) else { return nil }
-    return hasChoice ? .connection : .permissions
+    return hasChoice ? .name : .permissions
 }

@@ -58,6 +58,7 @@ let package = Package(
             exclude: [
                 // Renders SwiftUI views to PNGs — needs UIKit (iOS only).
                 "PreviewSnapshotTests.swift",
+                "AccessSnapshotTests.swift",
                 "TaskWidgetSnapshotTests.swift",
                 "TaskFanControllerTests.swift",
                 // Exercises MarkdownCache and real clipboard controls through UIKit.

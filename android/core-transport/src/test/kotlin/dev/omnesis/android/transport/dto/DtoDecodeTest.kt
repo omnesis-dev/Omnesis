@@ -348,6 +348,17 @@ class DtoDecodeTest {
     }
 
     @Test
+    fun access_level_editing_is_offered_only_by_a_gateway_that_advertises_it() {
+        fun status(capabilities: String?) = OmnesisJson.decodeFromString<StatusSnapshot>(
+            if (capabilities == null) """{"documents":{"total":0}}""" else """{"documents":{"total":0},"capabilities":$capabilities}""",
+        )
+        assertFalse(status(null).accessLevelEditing)
+        assertFalse(status("""{"taskNoteCapture":{"min":1,"max":1}}""").accessLevelEditing)
+        assertFalse(status("""{"accessLevelEditing":{"min":2,"max":3}}""").accessLevelEditing)
+        assertTrue(status("""{"accessLevelEditing":{"min":1,"max":1}}""").accessLevelEditing)
+    }
+
+    @Test
     fun status_offers_task_conversations_only_for_a_range_this_build_speaks() {
         fun status(capabilities: String?) = OmnesisJson.decodeFromString<StatusSnapshot>(
             if (capabilities == null) """{"documents":{"total":3}}""" else """{"documents":{"total":3},"capabilities":$capabilities}""",

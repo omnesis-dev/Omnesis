@@ -847,7 +847,15 @@ export class SourceService {
           "SYNC_LEASE_CHANGED",
           "The sync lease changed before this page was admitted; retry after claiming the lease",
         );
+      const source = getSource(this.deps.db, SourceId(rawId));
+      const actor = auth.deviceId ? getDevice(this.deps.db, auth.deviceId) : null;
       return {
+        scopeAuthorityId: auth.deviceId ?? undefined,
+        requiredHostingAuthority:
+          !!source &&
+          !!actor &&
+          SOURCE_HOSTING_DEVICE_KINDS.includes(actor.kind) &&
+          this.modeFor(source) !== "exclusive",
         deletionAuthority: gate.reconcile,
         reconcileAuthority: gate.reconcile,
         resetReplicaCursors: gate.resetReplicaCursors,

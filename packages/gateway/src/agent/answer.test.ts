@@ -369,6 +369,7 @@ afterEach(() => {
 describe("AgentService.generateReadOnlyAnswerCandidate", () => {
   it("uses only the supplied scoped tools and prompt for a restricted external Answer", async () => {
     const backend = new RecordingBackend();
+    const scopeReads = { recordDocuments: vi.fn(), markComplete: vi.fn() };
     const scopedSearch = {
       name: "search_many",
       description: "Scoped search",
@@ -379,10 +380,14 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
       backendFactory: () => backend,
       ports: { search: stubSearch, document: stubDocument },
       systemPrompt: "GLOBAL_DENIED_CATALOG_CANARY",
-      externalAnswerScope: async () => ({
-        tools: [scopedSearch],
-        systemPrompt: "SCOPED_PROMPT_WITHOUT_DENIED_DATA",
-      }),
+      externalAnswerScope: async (authorization, observer) => {
+        expect(authorization).toBe(restrictedAnswerAuthorization);
+        expect(observer).toBe(scopeReads);
+        return {
+          tools: [scopedSearch],
+          systemPrompt: "SCOPED_PROMPT_WITHOUT_DENIED_DATA",
+        };
+      },
     });
 
     await service.generateReadOnlyAnswerCandidate(
@@ -390,12 +395,60 @@ describe("AgentService.generateReadOnlyAnswerCandidate", () => {
       [],
       undefined,
       undefined,
-      { corpusAuthorization: restrictedAnswerAuthorization },
+      { corpusAuthorization: restrictedAnswerAuthorization, scopeReads },
     );
     expect(backend.turns[0]?.tools.map((tool) => tool.name)).toEqual(["search_many"]);
     expect(backend.turns[0]?.systemPrompt).toContain("SCOPED_PROMPT_WITHOUT_DENIED_DATA");
     expect(JSON.stringify(backend.turns[0])).not.toContain("GLOBAL_DENIED_CATALOG_CANARY");
     await service.dispose();
+  });
+
+  it("rechecks cumulative scope after an asynchronous scoped tool before the model receives its result", async () => {
+    let allowed = true;
+    const invoke = vi.fn(async () => {
+      await Promise.resolve();
+      allowed = false;
+      return {
+        kind: "structured",
+        resultType: "fictional",
+        data: { canary: "withheld-tool-result" },
+      } as const;
+    });
+    const backend = new CitingBackend(["fictional-document"]);
+    const scopeReads = {
+      recordDocuments: vi.fn(),
+      markComplete: vi.fn(),
+      assertCurrent() {
+        if (!allowed) throw new Error("Fictional source access changed.");
+      },
+    };
+    const service = new AgentService({
+      backendFactory: () => backend,
+      ports: { search: stubSearch, document: stubDocument },
+      systemPrompt: "Fictional prompt",
+      externalAnswerScope: async () => ({
+        tools: [
+          {
+            name: "annotate_many",
+            description: "Fictional citation",
+            schema: z.object({}),
+            invoke,
+          },
+        ],
+        systemPrompt: "Fictional scoped prompt",
+      }),
+    });
+    try {
+      await expect(
+        service.generateReadOnlyAnswerCandidate("Fictional question", [], undefined, undefined, {
+          corpusAuthorization: restrictedAnswerAuthorization,
+          scopeReads,
+        }),
+      ).rejects.toBeDefined();
+      expect(invoke).toHaveBeenCalledOnce();
+    } finally {
+      await service.dispose();
+    }
   });
 
   it.each(["0", "1"])(

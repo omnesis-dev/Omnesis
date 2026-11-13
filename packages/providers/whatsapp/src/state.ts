@@ -30,6 +30,7 @@
  * the matching gateway state or force a resync when restoring an archive.
  */
 
+import { isScopeRefreshBookmark } from "@omnesis/source-sdk";
 import type { SourceStateSpec } from "@omnesis/source-sdk";
 import type { WhatsAppSyncCursor } from "./types.js";
 
@@ -46,9 +47,21 @@ export const whatsappStateSpec: SourceStateSpec<WhatsAppSyncCursor> = {
     if (value.phase !== "bootstrap" && value.phase !== "incremental") return null;
     if (typeof value.lastTimestamp !== "number") return null;
     if (
+      value.scopeParticipantRefresh !== undefined &&
+      !isScopeRefreshBookmark(value.scopeParticipantRefresh)
+    )
+      return null;
+    if (
       typeof value.committedSeq !== "number" ||
       !Number.isSafeInteger(value.committedSeq) ||
       value.committedSeq < 0
+    )
+      return null;
+    if (
+      value.scopeCommittedSeq !== undefined &&
+      (typeof value.scopeCommittedSeq !== "number" ||
+        !Number.isSafeInteger(value.scopeCommittedSeq) ||
+        value.scopeCommittedSeq < 0)
     )
       return null;
     if (value.storeId !== undefined && (typeof value.storeId !== "string" || !value.storeId))

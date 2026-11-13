@@ -99,6 +99,7 @@ const sourceTypeSchema = z.string().transform((s, ctx) => {
 const deviceCapabilitySchema = z
   .object({
     sourceContract: sourceContractWireRangeSchema.optional(),
+    sourceScopes: sourceContractWireRangeSchema.optional(),
     hostableSourceTypes: z.array(sourceTypeSchema).optional(),
     pushBasedSourceTypes: z.array(sourceTypeSchema).optional(),
     multiDeviceModes: z.record(sourceTypeSchema, z.enum(MULTI_DEVICE_MODES)).optional(),

@@ -524,7 +524,14 @@ const MERGE_CLASS_CTE = `RECURSIVE merge_class(id, depth) AS (
 export function listLivePersonAnnotationsForPerson(
   db: Db,
   personId: string,
-  limitOrOptions: number | { limit?: number; before?: { sortAt: number; id: string } } = 20,
+  limitOrOptions:
+    | number
+    | {
+        limit?: number;
+        before?: { sortAt: number; id: string };
+        /** Trusted predicate on evidence-document alias d, applied before LIMIT. */
+        evidenceInclusion?: { sql: string; params: readonly string[] };
+      } = 20,
 ): PersonAnnotationRow[] {
   const options = typeof limitOrOptions === "number" ? { limit: limitOrOptions } : limitOrOptions;
   const cursor = options.before
@@ -532,6 +539,18 @@ export function listLivePersonAnnotationsForPerson(
            OR (COALESCE(updated_at, created_at) = ? AND id < ?))`
     : "";
   const params: Array<string | number> = [personId];
+  const evidence = options.evidenceInclusion;
+  const evidenceClause = evidence
+    ? `
+    AND EXISTS (SELECT 1 FROM documents d WHERE d.id = person_annotations.evidence_doc_id
+      AND (${evidence.sql}))
+    AND NOT EXISTS (
+      SELECT 1 FROM person_annotation_evidence e LEFT JOIN documents d ON d.id = e.evidence_doc_id
+      WHERE e.annotation_id = person_annotations.id AND e.broken_at IS NULL
+        AND (d.id IS NULL OR NOT (${evidence.sql}))
+    )`
+    : "";
+  if (evidence) params.push(...evidence.params, ...evidence.params);
   if (options.before) {
     params.push(options.before.sortAt, options.before.sortAt, options.before.id);
   }
@@ -543,6 +562,7 @@ export function listLivePersonAnnotationsForPerson(
         WHERE ${knowledgeOwnerReadPredicate(db, "person_annotations.id")} AND person_id IN (SELECT id FROM merge_class)
           AND invalidated_at IS NULL
           AND EXISTS (SELECT 1 FROM documents WHERE documents.id = person_annotations.evidence_doc_id)
+          ${evidenceClause}
           ${cursor}
         ORDER BY COALESCE(updated_at, created_at) DESC, id DESC LIMIT ?`,
     )

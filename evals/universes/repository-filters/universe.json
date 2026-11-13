@@ -1,0 +1,25 @@
+{
+  "name": "repository-filters",
+  "description": "One GitHub account that sees a work organization and personal repositories, for the filters that share or hide repositories and owners: two repositories of the organization northstar-labs, one whose name extends another's, one of an organization whose name extends northstar-labs, two personal repositories of which one is a fork of a work repository, and one the listing gives no id for. Every record carries the word zqfilter and a title and body of its own, so a test can state exactly which records a filter leaves.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "workstation",
+      "name": "Studio-Northstar-workstation",
+      "kind": "collector"
+    }
+  ],
+  "sources": [
+    {
+      "descriptorId": "github",
+      "accountIds": ["maya-reeves"],
+      "device": "workstation"
+    },
+    {
+      "descriptorId": "github-commits",
+      "accountIds": ["maya-reeves"],
+      "device": "workstation"
+    }
+  ]
+}

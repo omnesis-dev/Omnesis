@@ -303,3 +303,53 @@ test("temporary impairment preserves known child inventory for subsequent health
   );
   expect(extract).toHaveBeenCalledTimes(4 + recovered.documents.length / 2);
 });
+
+test("synthetic labels retain explicit IDs across display rename and negotiate native facts", async () => {
+  const fixture: EmailEntry = {
+    ...entry(),
+    attachments: [],
+    labels: ["Cedar"],
+    labelIds: ["Label_original"],
+  };
+  const supported = { ...context, scopeFactsSupported: true };
+  const first = mapEmail(fixture, supported) as import("@omnesis/types").DocumentInput;
+  const renamed = mapEmail(
+    { ...fixture, labels: ["Cedar renamed"] },
+    supported,
+  ) as import("@omnesis/types").DocumentInput;
+  const recreated = mapEmail(
+    { ...fixture, labelIds: ["Label_recreated"] },
+    supported,
+  ) as import("@omnesis/types").DocumentInput;
+  expect(first.metadata.scopeFacts?.facts[0]).toMatchObject({
+    kind: "label",
+    id: "Label_original",
+  });
+  expect(renamed.metadata.scopeFacts?.facts[0]).toMatchObject({
+    kind: "label",
+    id: "Label_original",
+    label: "Cedar renamed",
+  });
+  expect(recreated.metadata.scopeFacts?.facts[0]).toMatchObject({
+    kind: "label",
+    id: "Label_recreated",
+  });
+  const legacy = mapEmail(fixture, context) as import("@omnesis/types").DocumentInput;
+  expect(legacy.metadata.scopeFacts).toBeUndefined();
+});
+
+test("synthetic Gmail publishes label readiness only after a negotiated complete page", async () => {
+  const fixture: EmailEntry = {
+    ...entry(),
+    attachments: [],
+    labels: ["Cedar"],
+    labelIds: ["Label_original"],
+  };
+  const source = createGmailFixtureSource([fixture], context, {});
+  const result = await source.sync(null, { scopeFactsSupported: true });
+  expect(result.documents[0]?.metadata.scopeFacts?.complete).toEqual(["label"]);
+  expect(result.scopeUpdates?.readiness).toEqual([{ kind: "label", complete: true }]);
+  const legacy = await source.sync(null);
+  expect(legacy.documents[0]?.metadata.scopeFacts).toBeUndefined();
+  expect(legacy.scopeUpdates).toBeUndefined();
+});

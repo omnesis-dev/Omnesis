@@ -15,15 +15,29 @@ import {
   type StoredOAuthTokens,
 } from "@modelcontextprotocol/client";
 
+import type { ScopePolicy } from "@omnesis/types";
+
 export type TestGrantCapability = "direct" | "answer" | "notes";
 export type TestGrantRule =
   | {
-      capability: "direct" | "notes";
+      capability: "notes";
       sources: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
     }
   | {
-      capability: "answer";
+      capability: "direct";
+      filterRevision?: number;
+      scopePolicies?: ScopePolicy[];
       sources: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
+      /** Responses only: the real boundary of a rule with filters. */
+      scopeSources?: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
+    }
+  | {
+      capability: "answer";
+      filterRevision?: number;
+      scopePolicies?: ScopePolicy[];
+      sources: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
+      /** Responses only: the real boundary of a rule with filters. */
+      scopeSources?: { mode: "all" | "allowlist" | "denylist"; sourceIds: string[] };
       release: { mode: "reviewed"; policyFamilyId: string } | { mode: "unreviewed" };
     };
 
@@ -50,6 +64,16 @@ export interface PendingMcpAuthorization {
   transport: StreamableHTTPClientTransport;
   consentUrl: URL;
   requestHandle: string;
+}
+
+/**
+ * The rule a client that knows source filters sends back for one it was
+ * served: the real boundary in `sources`, and no `scopeSources`.
+ */
+export function requestRule<Rule extends TestGrantRule>(rule: Rule): Rule {
+  if (rule.capability === "notes" || !rule.scopeSources) return rule;
+  const { scopeSources, ...sent } = rule;
+  return { ...sent, sources: scopeSources } as Rule;
 }
 
 export interface PortalSession {
@@ -619,8 +643,9 @@ export async function portalJson<T>(
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = body === undefined ? "GET" : "POST",
 ): Promise<T> {
   const response = await portalFetch(gatewayUrl, portal, method, path, body);
-  if (!response.ok) assertStatus(response, 200, path);
   const text = await response.text();
+  if (!response.ok)
+    throw new Error(`${path} returned HTTP ${response.status}: ${text.slice(0, 2000)}`);
   try {
     return JSON.parse(text) as T;
   } catch {

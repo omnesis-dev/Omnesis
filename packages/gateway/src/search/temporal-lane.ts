@@ -42,6 +42,13 @@
  * document ids are resolved upstream from `omnesis.db`.
  */
 
+import { visibleChunkClause } from "./visible-chunks.js";
+import { scopeSearchActive, withScopeSearchPredicate } from "./scope-authorization.js";
+import { scopedVectorCandidates } from "./scoped-vector.js";
+import { withDocIdRestriction } from "./docid-filter.js";
+import { buildMetadataFilter } from "./metadata.js";
+import { browseByRecency } from "./browse.js";
+import { bm25Search } from "./bm25.js";
 import {
   filterCommonTokens,
   joinRankedCandidates,
@@ -135,6 +142,60 @@ export function temporalLaneCandidates(
   if (limit <= 0 || lane.windows.length === 0 || allowedDocumentIds?.length === 0)
     return finish([]);
 
+  if (scopeSearchActive(db)) {
+    const window = windowRowids(lane, undefined);
+    return withScopeSearchPredicate(
+      db,
+      { sql: `c.rowid IN (${window.sql})`, params: window.params.map(String) },
+      () => {
+        const metadata = buildMetadataFilter(filters, "c");
+        report.eventDocuments = withDocIdRestriction(
+          db,
+          "c.document_id",
+          allowedDocumentIds,
+          ({ clause, params }) =>
+            db
+              .prepare<unknown[], { n: number }>(
+                `SELECT COUNT(DISTINCT c.document_id) AS n FROM chunks c
+            WHERE ${visibleChunkClause("c")} AND ${metadata.clause}${clause}
+            AND c.document_id IN(SELECT value FROM json_each(?))`,
+              )
+              .get(...metadata.params, ...params, JSON.stringify(lane.eventDocumentIds))?.n ?? 0,
+        );
+        const bm25 = bm25Search(db, lane.text, filters, limit, {
+          documentIds: allowedDocumentIds,
+          commonTokenThreshold: options.commonTokenThreshold,
+        }).candidates;
+        const vector = lane.vector
+          ? scopedVectorCandidates(db, lane.vector, filters, limit, allowedDocumentIds)
+          : [];
+        report.bm25Candidates = bm25.length;
+        report.vectorCandidates = vector.length;
+        if (bm25.length || vector.length) return finish(fuseLaneLists(bm25, vector, limit));
+        report.timeOrdered = true;
+        const ids = withDocIdRestriction(
+          db,
+          "c.document_id",
+          allowedDocumentIds,
+          ({ clause, params }) =>
+            db
+              .prepare<unknown[], { id: string }>(
+                `SELECT c.document_id AS id FROM chunks c WHERE ${visibleChunkClause("c")} AND ${metadata.clause}${clause}
+          GROUP BY c.document_id ORDER BY CASE WHEN c.document_id IN (SELECT value FROM json_each(?)) THEN 0 ELSE 1 END,
+          MAX(c.source_created_at) DESC LIMIT ?`,
+              )
+              .all(...metadata.params, ...params, JSON.stringify(lane.eventDocumentIds), limit)
+              .map((row) => row.id),
+        );
+        const order = new Map(ids.map((id, i) => [id, i]));
+        return finish(
+          browseByRecency(db, filters, ids, limit).sort(
+            (a, b) => order.get(a.documentId)! - order.get(b.documentId)!,
+          ),
+        );
+      },
+    );
+  }
   const allowed = allowedDocumentIds ? new Set(allowedDocumentIds) : undefined;
   const narrow =
     allowedDocumentIds && allowedDocumentIds.length <= WINDOW_RESTRICTION_MAX_DOCUMENTS

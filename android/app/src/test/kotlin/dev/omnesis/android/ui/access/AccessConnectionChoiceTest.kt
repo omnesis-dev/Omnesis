@@ -41,13 +41,12 @@ class AccessConnectionChoiceTest {
         val choice = requireNotNull(form.connection)
         assertEquals(AccessConnectionPath.NEW_LEVEL, choice.path)
         assertEquals("Fictional assistant 2", choice.name)
-        assertEquals("Fictional reading", choice.levelName)
+        assertEquals("Fictional reading", form.level.name)
         assertFalse(choice.replacing)
         assertNull(choice.suggestedConnection(overview(), NOW))
-        // The permissions a new level starts with are the defaults.
-        assertTrue(form.answerEnabled)
-        assertFalse(form.directEnabled)
-        assertEquals("policy_example", form.policyFamilyId)
+        // The permissions a new level starts with are the level editor's for a new level.
+        assertEquals(AccessLevelDraft.opening(null, overview()).rules, form.level.rules)
+        assertEquals(AccessAnswerRelease.reviewed("policy_example"), form.level.rule(AccessCapability.ANSWER)?.release)
         assertEquals(
             listOf(
                 AccessAuthorizationStep.CONNECTION,
@@ -55,21 +54,20 @@ class AccessConnectionChoiceTest {
                 AccessAuthorizationStep.DATA,
                 AccessAuthorizationStep.REVIEW,
             ),
-            authorizationSteps(form, requiresAnswer = false),
+            authorizationSteps(form),
         )
     }
 
     @Test fun a_level_name_the_gateway_left_blank_starts_from_the_client_name_within_the_limit() {
         val long = "n".repeat(140)
-        val choice = AccessConnectionChoice.initial(
+        val form = AccessAuthorizationForm.initial(
             request().copy(clientName = "  $long "),
             overview(),
             proposal().copy(defaultName = long, defaultLevelName = " "),
-            NOW,
+            nowMillis = NOW,
         )
-        assertEquals(120, choice.name.length)
-        assertEquals(120, choice.levelName.length)
-        assertEquals("n".repeat(120), choice.levelName)
+        assertEquals(120, form.connection?.name?.length)
+        assertEquals("n".repeat(120), form.level.name)
     }
 
     @Test fun an_existing_level_recommendation_preselects_the_matched_level_and_offers_it_first() {
@@ -89,7 +87,7 @@ class AccessConnectionChoiceTest {
         )
         assertEquals(
             listOf(AccessAuthorizationStep.CONNECTION, AccessAuthorizationStep.REVIEW),
-            authorizationSteps(form, requiresAnswer = false),
+            authorizationSteps(form),
         )
         assertEquals(
             AccessAuthorizationSelection.NewConnection(
@@ -126,8 +124,8 @@ class AccessConnectionChoiceTest {
 
         // Chosen anyway, it cannot be approved.
         val chosen = choice.copy(levelId = "level_archive")
-        assertFalse(chosen.canContinue(bound, overview()))
         val form = AccessAuthorizationForm.initial(bound, overview(), proposal()).copy(connection = chosen)
+        assertFalse(chosen.canContinue(bound, overview(), form.level))
         assertNull(form.selection(bound, overview()))
     }
 
@@ -143,7 +141,7 @@ class AccessConnectionChoiceTest {
         assertEquals("principal_laptop", choice.suggestedConnection(overview(), NOW)?.id)
         assertEquals(
             listOf(AccessAuthorizationStep.CONNECTION, AccessAuthorizationStep.REVIEW),
-            authorizationSteps(form, requiresAnswer = false),
+            authorizationSteps(form),
         )
         assertEquals(
             AccessAuthorizationSelection.ReplaceConnection("principal_laptop", 5),
@@ -197,7 +195,7 @@ class AccessConnectionChoiceTest {
         // The list still marks it, beside the reason it cannot be picked.
         assertEquals("principal_aurora", choice.suggestedConnection(overview(), NOW)?.id)
         // Picked by hand in replace mode, it still cannot serve the request.
-        assertFalse(choice.copy(replacing = true, connectionId = "principal_aurora").canContinue(bound, overview()))
+        assertFalse(choice.copy(replacing = true, connectionId = "principal_aurora").canContinue(bound, overview(), form.level))
     }
 
     @Test fun a_new_level_recommendation_with_a_matched_level_still_suggests_that_level() {
@@ -245,9 +243,7 @@ class AccessConnectionChoiceTest {
             proposal(match = match(levelId = null, rules = rules)),
         )
         assertEquals(AccessConnectionPath.NEW_LEVEL, form.connection?.path)
-        assertFalse(form.answerEnabled)
-        assertTrue(form.directEnabled)
-        assertTrue(form.notesEnabled)
+        assertEquals(listOf(AccessCapability.NOTES, AccessCapability.DIRECT), form.level.rules.map { it.capability })
         val selection = form.selection(request(), overview()) as AccessAuthorizationSelection.NewConnection
         assertEquals("Fictional assistant 2", selection.name)
         assertEquals(AccessConnectionLevel.New("Fictional reading", rules), selection.level)
@@ -256,61 +252,67 @@ class AccessConnectionChoiceTest {
     /* ── Names ── */
 
     @Test fun a_connection_needs_a_name_and_a_new_level_needs_one_too() {
-        val base = AccessAuthorizationForm.initial(request(), overview(), proposal()).copy(
-            answerSources = AccessSourceSelectionState(allowedSourceIds = setOf("notes:fictional")),
-        )
+        val base = AccessAuthorizationForm.initial(request(), overview(), proposal()).editing { it.reading(AccessCapability.ANSWER, "notes:fictional") }
         val choice = requireNotNull(base.connection)
-        assertTrue(choice.canContinue(request(), overview()))
+        val level = base.level
+        assertTrue(choice.canContinue(request(), overview(), level))
 
         val unnamed = choice.copy(name = "   ")
         assertEquals("Enter a name for this connection.", unnamed.nameError)
-        assertFalse(unnamed.canContinue(request(), overview()))
+        assertFalse(unnamed.canContinue(request(), overview(), level))
         assertNull(base.copy(connection = unnamed).selection(request(), overview()))
 
-        val unnamedLevel = choice.copy(levelName = "")
-        assertEquals("Enter a name for this access level.", unnamedLevel.levelNameError(overview()))
-        assertFalse(unnamedLevel.canContinue(request(), overview()))
+        val unnamedLevel = level.copy(name = "")
+        assertEquals("Enter a name for this access level.", unnamedLevel.nameError(overview()))
+        assertFalse(choice.canContinue(request(), overview(), unnamedLevel))
+
+        // A name longer than the gateway accepts is refused in the same words for both, and never sent.
+        val long = "n".repeat(121)
+        assertEquals("Use at most 120 characters.", choice.copy(name = long).nameError)
+        assertEquals("Use at most 120 characters.", level.copy(name = long).nameError(overview()))
+        assertNull(base.copy(connection = choice.copy(name = long)).selection(request(), overview()))
+        assertNull(base.copy(level = level.copy(name = long)).selection(request(), overview()))
+        assertNull(choice.copy(name = " " + "n".repeat(120) + " ").nameError)
 
         // An existing level asks no level name, and a replacement asks no name at all.
-        assertTrue(unnamedLevel.copy(levelId = "level_research").canContinue(request(), overview()))
-        assertTrue(unnamed.copy(replacing = true, connectionId = "principal_laptop").canContinue(request(), overview()))
+        assertTrue(choice.copy(levelId = "level_research").canContinue(request(), overview(), unnamedLevel))
+        assertTrue(unnamed.copy(replacing = true, connectionId = "principal_laptop").canContinue(request(), overview(), level))
 
         // Names are sent trimmed.
-        val padded = base.copy(connection = choice.copy(name = "  Desk agent ", levelName = " Desk reading  "))
+        val padded = base.copy(level = level.copy(name = " Desk reading  "), connection = choice.copy(name = "  Desk agent "))
         val selection = padded.selection(request(), overview()) as AccessAuthorizationSelection.NewConnection
         assertEquals("Desk agent", selection.name)
         assertEquals("Desk reading", (selection.level as AccessConnectionLevel.New).name)
     }
 
     @Test fun a_new_level_named_like_a_live_level_is_refused_before_the_gateway_is_asked() {
-        val base = AccessAuthorizationForm.initial(request(), overview(), proposal()).copy(
-            answerSources = AccessSourceSelectionState(allowedSourceIds = setOf("notes:fictional")),
-        )
+        val base = AccessAuthorizationForm.initial(request(), overview(), proposal()).editing { it.reading(AccessCapability.ANSWER, "notes:fictional") }
         val choice = requireNotNull(base.connection)
-        assertNull(choice.levelNameError(overview()))
+        assertNull(base.level.nameError(overview()))
 
-        // Trimmed and regardless of case, as the gateway compares live level names.
+        // Trimmed and regardless of case, as the gateway compares live level names; the level editor refuses the name in the same words.
         listOf("Research", "  RESEARCH ", "Archive").forEach { taken ->
-            val clash = choice.copy(levelName = taken)
-            assertEquals("An access level with that name already exists.", clash.levelNameError(overview()))
-            assertFalse(clash.canContinue(request(), overview()))
-            assertNull(base.copy(connection = clash).selection(request(), overview()))
+            val clash = base.level.copy(name = taken)
+            assertEquals("An access level already uses this name. Choose another.", clash.nameError(overview()))
+            assertFalse(choice.canContinue(request(), overview(), clash))
+            assertNull(base.copy(level = clash).selection(request(), overview()))
         }
 
         // A name that only contains a live level's name is free, and so is one no live level has.
-        assertNull(choice.copy(levelName = "Research 2").levelNameError(overview()))
-        assertNull(choice.copy(levelName = "Research").levelNameError(overview().copy(levels = emptyList())))
+        assertNull(base.level.copy(name = "Research 2").nameError(overview()))
+        assertNull(base.level.copy(name = "Research").nameError(overview().copy(levels = emptyList())))
 
         // Only a new level is named: an existing level or a replacement ignores the leftover name.
-        val clash = choice.copy(levelName = "research")
-        assertTrue(clash.copy(levelId = "level_capture").canContinue(request(), overview()))
-        assertTrue(clash.copy(replacing = true, connectionId = "principal_laptop").canContinue(request(), overview()))
+        val clash = base.level.copy(name = "research")
+        assertTrue(choice.copy(levelId = "level_capture").canContinue(request(), overview(), clash))
+        assertTrue(choice.copy(replacing = true, connectionId = "principal_laptop").canContinue(request(), overview(), clash))
     }
 
     @Test fun an_unpicked_replacement_or_a_level_that_went_away_cannot_continue() {
-        val choice = AccessConnectionChoice.initial(request(), overview(), proposal(), NOW)
-        assertFalse(choice.copy(replacing = true).canContinue(request(), overview()))
-        assertFalse(choice.copy(levelId = "level_removed").canContinue(request(), overview()))
+        val form = AccessAuthorizationForm.initial(request(), overview(), proposal(), nowMillis = NOW)
+        val choice = requireNotNull(form.connection)
+        assertFalse(choice.copy(replacing = true).canContinue(request(), overview(), form.level))
+        assertFalse(choice.copy(levelId = "level_removed").canContinue(request(), overview(), form.level))
     }
 
     /* ── Lists ── */
@@ -381,7 +383,7 @@ class AccessConnectionChoiceTest {
         assertEquals("Fictional assistant 2", review.connectionName)
         assertEquals("Fictional reading (new)", review.accessLevel)
         assertNull(review.replaces)
-        assertEquals(form, review.permissions)
+        assertEquals(form.level.serializedRules, review.rules)
         assertNull(sharedLevelFootnote(review.otherConnections))
     }
 
@@ -393,10 +395,13 @@ class AccessConnectionChoiceTest {
         assertEquals("Fictional assistant 2", review.connectionName)
         assertEquals("Research", review.accessLevel)
         assertNull(review.replaces)
-        assertTrue(review.permissions.answerEnabled)
-        assertTrue(review.permissions.directEnabled)
+        // The level is reviewed as it is saved, whatever this approval's own draft holds.
+        assertEquals(overview().levels.single { it.id == "level_research" }.rules, review.rules)
         // A policy the level names but that is no longer published is stated, not replaced.
-        assertEquals("Privacy policy", review.permissions.answerPrivacySummary(overview()))
+        assertEquals(
+            "Privacy review · Saved policy unavailable",
+            releaseSummary(review.rules.single { it.capability == AccessCapability.ANSWER }, overview()),
+        )
         assertEquals(2, review.otherConnections)
         assertEquals(
             "Also used by 2 other connections. Changing this access level later changes all of them.",
@@ -421,11 +426,7 @@ class AccessConnectionChoiceTest {
         assertEquals("The current sign-in of Northstar laptop", review.replaces)
         assertEquals(
             listOf(AccessCapability.ANSWER, AccessCapability.DIRECT),
-            listOfNotNull(
-                AccessCapability.ANSWER.takeIf { review.permissions.answerEnabled },
-                AccessCapability.DIRECT.takeIf { review.permissions.directEnabled },
-                AccessCapability.NOTES.takeIf { review.permissions.notesEnabled },
-            ),
+            ACCESS_CAPABILITIES.filter { capability -> review.rules.any { it.capability == capability } },
         )
         // The replaced connection is one of the level's two; one other shares it.
         assertEquals(1, review.otherConnections)
@@ -441,10 +442,10 @@ class AccessConnectionChoiceTest {
         )
         val form = AccessAuthorizationForm.initial(request(), overview(), reconnect = reconnect)
         assertNull(form.connection)
-        assertTrue(form.notesEnabled)
+        assertEquals(listOf(AccessGrantRule.notes()), form.level.rules)
         assertEquals(
             listOf(AccessAuthorizationStep.PERMISSIONS, AccessAuthorizationStep.REVIEW),
-            authorizationSteps(form, requiresAnswer = false),
+            authorizationSteps(form),
         )
         assertTrue(form.selection(request(), overview()) is AccessAuthorizationSelection.Connect)
         val review = reviewSummary(request(), overview(), form, legacyConnectionName = "Fictional research agent")

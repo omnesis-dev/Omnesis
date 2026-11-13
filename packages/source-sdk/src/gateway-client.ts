@@ -5,6 +5,7 @@ import type { RowKey } from "./row-key.js";
 import type { SnapshotClaim } from "./snapshot.js";
 import type {
   DocumentInput,
+  SourceScopes,
   PersonMention,
   AccountId,
   SourceId,
@@ -501,6 +502,9 @@ export interface GatewayClient {
 
   /** Get the last sync state for a source */
   getSyncState(sourceId: SourceId): Promise<SyncState | null>;
+  getScopeRefreshState?(
+    sourceId: SourceId,
+  ): Promise<import("@omnesis/types").SourceScopeRefreshState>;
   /** Resume an initial enumeration whose first cursor page was interrupted. */
   getInitialSourceInventory?(sourceId: SourceId): Promise<InitialSourceInventory | undefined>;
   /**
@@ -649,6 +653,10 @@ export interface GatewayClient {
    */
   setOwnedWebDomains(domains: string[]): Promise<void>;
 
+  /** Optional for clients that predate source filters. Never throws: an unanswered probe means the gateway takes no scope facts for now. */
+  supportsSourceScopes?(minimumVersion?: number): Promise<boolean>;
+  setSourceScopes?(entries: Array<{ sourceType: string; scopes: SourceScopes }>): Promise<void>;
+
   /**
    * Push the `documentEventProfile` of every KNOWN source type (every loaded
    * source definition's declaration), not just the added ones. Called once on
@@ -712,6 +720,7 @@ export interface GatewayClient {
    * the source's snapshot enumeration is complete.
    */
   upsertWithCursor(args: {
+    scopeUpdates?: import("@omnesis/types").SourceScopeUpdates;
     initialInventory?: InitialSourceInventory;
     providerId: ProviderId;
     sourceId: SourceId;

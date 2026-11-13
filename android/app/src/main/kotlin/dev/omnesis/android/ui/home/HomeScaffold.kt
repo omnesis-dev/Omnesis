@@ -726,6 +726,12 @@ fun HomeScaffold(
             composable(OMNESIS_ACCOUNT_ROUTE) {
                 CloudAccountScreen(onBack = { nav.returnToSettings() })
             }
+            composable("access-home") {
+                dev.omnesis.android.ui.access.AccessHomeScreen(
+                    onClose = { nav.popBackStack() },
+                    onConnect = { openSettingsChild(ACCESS_AUTHORIZATION_ROUTE) },
+                )
+            }
             composable(POLICIES_ROUTE) {
                 PoliciesListScreen(
                     onBack = { nav.returnToSettings() },
@@ -1047,6 +1053,7 @@ fun HomeScaffold(
                     },
                     onOpenPolicies = { openSettingsChild(POLICIES_ROUTE) },
                     onOpenOmnesisAccount = { openSettingsChild(OMNESIS_ACCOUNT_ROUTE) },
+                    onOpenAccessHome = { openSettingsChild("access-home") },
                     onOpenAccessAuthorization = {
                         openSettingsChild(ACCESS_AUTHORIZATION_ROUTE)
                     },

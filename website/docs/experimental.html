@@ -288,6 +288,128 @@
           page capture remains available without experimental mode. Notes in the portal and mobile
           apps remain available as usual.
         </p>
+        <h3 id="source-filters">Source filters for external agents</h3>
+        <p>
+          <code>OMNESIS_EXPERIMENTAL=1</code> is required to change source filters. This contract is
+          unstable. A filter belongs to one source account and one access-level capability: Direct
+          or Answer. It names a single list, either only those items or everything except those
+          items. No filter is added automatically to an existing access level: an upgrade leaves
+          every level granting its source accounts whole until its owner narrows one.
+        </p>
+        <p>
+          The gateway decides access from stable source facts. When a required fact is missing or
+          unresolved, the document is hidden under either list mode. Source declarations and fact
+          backfill are independent of the indexing of document text, and run only while experimental
+          mode is on or a saved filter exists. Older collectors do not widen permissions, and older
+          editors cannot overwrite a filtered boundary without its current filter revision. Saved
+          filters continue to apply when experimental mode is switched off.
+        </p>
+        <p>
+          Records indexed before filters were in use need no resync. After the gateway restarts with
+          experimental mode on, it works through the records it stores, and each collector, on
+          reconnecting, syncs its filterable sources at once to report their labels, folders and
+          repositories without sending a record again. Until an account has finished, the editor
+          shows it as still being prepared and a filter that needs those facts cannot be saved;
+          connections without a filter read as before.
+        </p>
+
+        <p>
+          In Settings → Access, create an access level or change its data access. Select source
+          accounts, then customize the content allowed from an account. Choose the sharing rule,
+          then build a table of selected items using catalogue searches or a typed email address,
+          domain or phone number. Current match counts appear in the builder; Apply waits for a
+          valid preview of the exact selection. Choosing all content removes that account's filter;
+          it does not block the account. Direct on a new level can use the same sources and filters
+          as Answer; saved capabilities stay independent unless you explicitly copy them. Review
+          describes the sharing rule and selected items. Editing a level shows the changed decisions
+          before saving. If another editor changes the level, your draft stays visible until you
+          explicitly reload and discard it.
+        </p>
+
+        <p>
+          WhatsApp and iMessage filters can select conversations or people. Gmail filters can select
+          people, exact email domains or native labels. Drive filters select folders and include
+          their descendants and files added later. GitHub and GitHub Commits filters select
+          repositories, or an owner — a user or an organization — together with every repository it
+          holds, including ones added later. Other sources retain whole-account access. Conversation
+          membership includes silent members; missing or unresolved membership hides the affected
+          records. Gmail label renames preserve a filter; a deleted label replaced with one of the
+          same name does not. Drive folder moves update which files match.
+        </p>
+        <p>
+          A GitHub filter follows a repository and an owner by GitHub's own identifiers, not by
+          name. A renamed repository or organization keeps its filter. A repository transferred to
+          another owner moves with it at once: it leaves a filter on its old owner and joins one on
+          its new owner, while a filter that names the repository itself is unchanged. A fork
+          belongs to the account that holds it, not to the repository it was forked from. Share only
+          a work organization, or hide a personal account, to keep the two apart. A repository
+          removed from the source's list, or one GitHub no longer lists for the token, is withheld
+          under every filter until the source drops its records. Each connected GitHub account has
+          its own filters: a repository that two accounts can see is filtered separately for each.
+          The first sync after filters are switched on lists every issue, pull request, discussion
+          and commit once to place it in its repository, without downloading any of them again; a
+          repository's records stay hidden under a filter until that listing has reached them.
+        </p>
+        <p>
+          Local Files filters select folders inside the folders the source is configured with, and
+          include every folder and file beneath them. A filter keeps naming the same folder when the
+          configured folders change. Claude Code, Codex and Pi filters select project folders: a
+          session is filed under the directory it worked in, and a filter on a folder covers the
+          sessions run in it and in any directory beneath it. A folder matches by whole path
+          segments, so <code>work</code> does not cover <code>workshop</code>. A folder inside the
+          home directory is named from <code>~</code>, so one filter covers the same folder on every
+          device that hosts the source, wherever each device keeps its home directory. Folder names
+          differing only by case are one folder on macOS and two on Linux. A session that stepped
+          into subdirectories stays under the directory it started in: a filter on one of those
+          subdirectories neither shares nor hides it, and only a filter on the starting directory or
+          a folder above it does. A session that recorded no directory, or worked in two unrelated
+          directories, has no single folder and is hidden whenever a folder filter applies to its
+          account. A moved file, or a session continued in another directory, follows its new folder
+          at the next sync. Files and sessions indexed before folder filters were in use are filed
+          at the first sync afterwards.
+        </p>
+        <p>
+          Search the stored catalogue or type a supported phone number, email address or domain.
+          Saved people are snapshots of those identifiers: merging contacts does not expand access.
+          Additional known addresses require an explicit addition. The editor shows item counts.
+          While an account's counts are still being worked out, the editor says it is counting,
+          reads them again by itself, and makes Apply available once they arrive.
+        </p>
+
+        <p>
+          A filtered Answer keeps self-memory facts only when every live evidence document is
+          readable. Analytics remain available for whole, permitted source accounts; a filtered
+          account contributes no analytics tables. Shared tables that also contain a filtered
+          account are unavailable because their aggregates cannot be separated safely. Wiki context,
+          graph context, message counts and temporal queries are omitted while a filter applies.
+          Your standing instructions still reach every run.
+        </p>
+
+        <h4 id="source-scopes">Declaring filterable items in a source</h4>
+        <p>
+          With <code>OMNESIS_EXPERIMENTAL=1</code>, a filter can name only what a source declares.
+          This declaration contract is unstable. A source lists the items a filter may name in
+          <code>scopes.items</code>: conversations, participant identifiers, labels or folders. Each
+          item declares how its relationship to a document changes. A source whose folders form a
+          tree of differently named levels lists a noun for each level in <code>levels</code>, roots
+          first, and every client then names an item by its depth: GitHub declares owners and
+          repositories this way. Shared consumers read this declaration; they never infer source
+          semantics from a source name or display label. Sources without a declaration retain
+          whole-source access boundaries.
+        </p>
+        <p>
+          Facts use source-native IDs and saved phone numbers or email addresses, rather than
+          mutable person records. Missing facts are unknown, not an empty list. A source-owned
+          <code>legacyProjection</code> recipe can derive conversation IDs and native participants
+          from stored metadata. Label names and display paths cannot substitute for label or folder
+          IDs. Keep declarations in a pure provider <code>scope-contracts.ts</code> module and
+          regenerate the packaged catalogue with
+          <code>node --import tsx scripts/generate-source-scopes.mjs</code>. Increase the
+          declaration revision when its projection meaning changes; an older collector cannot
+          replace a newer declaration. <a href="building-sources">Building a source</a> covers the
+          rest of the source contract.
+        </p>
+
         <h3 id="browser-extension-find">Find and reopen indexed content</h3>
         <p>
           On compatible gateways, an already paired browser enables

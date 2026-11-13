@@ -133,6 +133,12 @@ export interface LocalAgentSessionFileState {
    * safe direction.
    */
   rootId?: string;
+  /**
+   * The directory the session worked in, null when it has no single one. Absent
+   * on a state written before directories were recorded; such a file is read
+   * again once a folder filter needs to know.
+   */
+  directory?: string | null;
 }
 
 export interface LocalAgentSessionParseOptions {

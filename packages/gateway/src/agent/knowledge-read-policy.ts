@@ -6,6 +6,11 @@ import { OPEN_LOOP_SOURCE_ID } from "../brain/open-loop-source/source-meta.js";
 import type Database from "better-sqlite3";
 import type { ToolHandle } from "@omnesis/agent";
 
+export const KNOWLEDGE_READ_SOURCE_IDS: readonly string[] = [
+  KNOWLEDGE_SOURCE_ID,
+  OPEN_LOOP_SOURCE_ID,
+];
+
 /** The two gateway-owned projections of maintained pages and tracked outcomes. */
 export function isKnowledgeReadSource(sourceId: string): boolean {
   return sourceId === KNOWLEDGE_SOURCE_ID || sourceId === OPEN_LOOP_SOURCE_ID;

@@ -41,8 +41,8 @@ final class AccessConnectionRulesTests: XCTestCase {
 
         choice.levelId = fixtures.notesLevel.id
         XCTAssertFalse(choice.isComplete(request: needsAnswer, overview: noAnswer))
-        let form = fixtures.form(request: needsAnswer, overview: noAnswer)
-        XCTAssertNil(choice.selection(request: needsAnswer, overview: noAnswer, form: form))
+        let level = fixtures.level(request: needsAnswer, overview: noAnswer)
+        XCTAssertNil(choice.selection(request: needsAnswer, overview: noAnswer, newLevelRules: level.sendableRules))
         choice.levelId = nil
         choice.replacing = true
         choice.connectionId = "principal-desk"
@@ -59,7 +59,7 @@ final class AccessConnectionRulesTests: XCTestCase {
         XCTAssertEqual(unpreselected.suggestedLevelId, fixtures.notesLevel.id)
     }
 
-    func testNamesAreRequiredAndCutToTheGatewayLimit() {
+    func testNamesAreRequiredAndHeldToTheGatewayLimit() {
         let request = fixtures.request()
         let overview = fixtures.overview()
         var choice = fixtures.opened(fixtures.proposal(.newLevel, match: false))
@@ -73,6 +73,11 @@ final class AccessConnectionRulesTests: XCTestCase {
         choice.levelId = fixtures.zetaLevel.id
         XCTAssertNil(choice.levelNameError(overview: overview))
         XCTAssertTrue(choice.isComplete(request: request, overview: overview))
+
+        choice.levelId = nil
+        choice.levelName = String(repeating: "a", count: 121)
+        XCTAssertEqual(choice.levelNameError(overview: overview), "Use at most 120 characters.")
+        XCTAssertFalse(choice.isComplete(request: request, overview: overview))
 
         XCTAssertEqual(accessConnectionClampedName(String(repeating: "a", count: 130)).count, 120)
         let fill = String(repeating: "N", count: 119)
@@ -142,8 +147,9 @@ final class AccessConnectionRulesTests: XCTestCase {
         )
         XCTAssertNil(plain.choice)
         XCTAssertEqual(plain.step, .permissions)
-        XCTAssertEqual(accessAuthorizationSteps(choice: nil, readsSources: true), [.permissions, .data, .review])
-        XCTAssertEqual(accessAuthorizationSteps(choice: nil, readsSources: false), [.permissions, .review])
+        let flow = accessAuthorizationFlow(choice: nil, draft: plain.level.draft)
+        XCTAssertEqual(flow, plain.level.draft.creationSteps)
+        XCTAssertEqual(accessAuthorizationIndicatorSteps(flow), [.permissions, .data, .review])
         XCTAssertEqual(AccessConnectionReview.legacy(request: request, reconnect: nil).connectionName, "Northstar Assistant")
 
         let reconnect = AccessReconnectProposal(
@@ -160,8 +166,9 @@ final class AccessConnectionRulesTests: XCTestCase {
         )
         XCTAssertNil(recognised.choice)
         XCTAssertEqual(recognised.step, .permissions)
+        XCTAssertEqual(accessAuthorizationIndicatorSteps(recognised.level.draft.creationSteps), [.permissions, .review])
         XCTAssertEqual(
-            recognised.form.selection(request: request, overview: overview),
+            accessConnectSelection(rules: recognised.level.sendableRules, request: request),
             .connect(rules: [.notes], credentialLabel: "Northstar Assistant")
         )
         XCTAssertEqual(
@@ -192,9 +199,9 @@ final class AccessConnectionRulesTests: XCTestCase {
     func testARefusalReturnsTheWizardToTheStepThatFixesIt() {
         let taken = GatewayClient.Error.serverError(status: 409, body: #"{"error":"level-name-taken"}"#)
         let stale = GatewayClient.Error.serverError(status: 409, body: #"{"error":"stale-revision"}"#)
-        XCTAssertEqual(accessAuthorizationRefusalStep(error: taken, hasChoice: true, refreshed: false), .connection)
+        XCTAssertEqual(accessAuthorizationRefusalStep(error: taken, hasChoice: true, refreshed: false), .name)
         XCTAssertNil(accessAuthorizationRefusalStep(error: taken, hasChoice: false, refreshed: false))
-        XCTAssertEqual(accessAuthorizationRefusalStep(error: stale, hasChoice: true, refreshed: true), .connection)
+        XCTAssertEqual(accessAuthorizationRefusalStep(error: stale, hasChoice: true, refreshed: true), .name)
         XCTAssertEqual(accessAuthorizationRefusalStep(error: stale, hasChoice: false, refreshed: true), .permissions)
         XCTAssertNil(accessAuthorizationRefusalStep(error: stale, hasChoice: true, refreshed: false))
         XCTAssertNil(
@@ -203,26 +210,26 @@ final class AccessConnectionRulesTests: XCTestCase {
     }
 
     /// A new level's name that a listed level already has, ignoring case and
-    /// surrounding spaces, bars the step with the gateway's own wording
+    /// surrounding spaces, bars the step with the level editor's wording
     /// before anything is sent. Only a new level is checked.
     func testANewLevelNameAlreadyInUseBarsTheStep() {
         let request = fixtures.request()
         let overview = fixtures.overview()
-        var form = fixtures.form()
-        form.answerSources.allowAll(fixtures.known)
+        let rules = fixtures.levelReadingEverySource().sendableRules
+        XCTAssertNotNil(rules)
         var choice = fixtures.opened(fixtures.proposal(.newLevel, match: false))
         XCTAssertNil(choice.levelNameError(overview: overview))
         for taken in ["Research assistants", "  research ASSISTANTS ", "Notes Only"] {
             choice.levelName = taken
-            XCTAssertEqual(choice.levelNameError(overview: overview), "An access level with that name already exists.")
-            XCTAssertEqual(choice.levelNameError(overview: overview), AccessConnectionCopy.levelNameTaken)
+            XCTAssertEqual(choice.levelNameError(overview: overview), "An access level already uses this name. Choose another.")
+            XCTAssertEqual(choice.levelNameError(overview: overview), accessLevelNameTakenMessage)
             XCTAssertFalse(choice.isComplete(request: request, overview: overview))
-            XCTAssertNil(choice.selection(request: request, overview: overview, form: form))
+            XCTAssertNil(choice.selection(request: request, overview: overview, newLevelRules: rules))
         }
         choice.levelName = "Research assistants 2"
         XCTAssertNil(choice.levelNameError(overview: overview))
         XCTAssertTrue(choice.isComplete(request: request, overview: overview))
-        XCTAssertNotNil(choice.selection(request: request, overview: overview, form: form))
+        XCTAssertNotNil(choice.selection(request: request, overview: overview, newLevelRules: rules))
         XCTAssertNil(choice.levelNameError(overview: fixtures.overview(levels: [])))
 
         choice.levelName = "Zeta"
@@ -311,16 +318,14 @@ final class AccessConnectionRulesTests: XCTestCase {
         XCTAssertTrue(choice.isComplete(request: request, overview: fixtures.overview()))
         let levelGone = fixtures.overview(levels: [fixtures.zetaLevel, fixtures.notesLevel])
         XCTAssertFalse(choice.isComplete(request: request, overview: levelGone))
-        XCTAssertNil(choice.selection(request: request, overview: levelGone, form: fixtures.form(overview: levelGone)))
+        XCTAssertNil(choice.selection(request: request, overview: levelGone, newLevelRules: nil))
         XCTAssertNil(choice.review(overview: levelGone).accessLevel)
     }
 
-    /// The review of an existing level or a replacement prints the rules
-    /// taken on, named by their own policy: by name when it is listed,
-    /// otherwise as a privacy policy, never as the default policy.
-    func testTheReviewPrintsTheRulesTakenOnWithTheirOwnPolicy() {
+    /// The review of an existing level or a replacement shows the
+    /// capabilities of the rules taken on, whatever their policy.
+    func testTheReviewReadsTheCapabilitiesOfTheRulesTakenOn() {
         typealias Fixture = AccessConnectionFixtures
-        let request = fixtures.request()
         let retiredRules: [AccessGrantRule] = [
             .answer(
                 sources: AccessSourceBoundary(mode: .all, sourceIds: []),
@@ -334,26 +339,20 @@ final class AccessConnectionRulesTests: XCTestCase {
             levels: [level],
             principals: [Fixture.principal("principal-desk", name: "Northstar desk", grants: [grant])]
         )
-        let blank = fixtures.form(overview: overview)
-        XCTAssertEqual(accessAnswerPrivacySummary(form: blank, overview: overview), "Work-safe")
-
         var choice = fixtures.opened(fixtures.proposal(.replace, matchedBy: "device"), overview: overview)
         XCTAssertEqual(choice.path, .replace)
-        let replaced = choice.reviewForm(request: request, overview: overview, form: blank)
-        XCTAssertEqual(replaced.holdings(request: request), AccessCapabilityHoldings(answer: true, notes: true))
-        XCTAssertEqual(replaced.policyFamilyId, "policy-retired")
-        XCTAssertEqual(accessAnswerPrivacySummary(form: replaced, overview: overview), "Privacy policy")
+        XCTAssertEqual(choice.existingRules(overview: overview), retiredRules)
+        XCTAssertFalse(choice.review(overview: overview).decidesPermissions)
 
         choice.replacing = false
         choice.levelId = level.id
         XCTAssertEqual(choice.path, .existingLevel)
-        let joined = choice.reviewForm(request: request, overview: overview, form: blank)
-        XCTAssertEqual(joined.holdings(request: request), AccessCapabilityHoldings(answer: true, notes: true))
-        XCTAssertEqual(accessAnswerPrivacySummary(form: joined, overview: overview), "Privacy policy")
+        XCTAssertEqual(choice.existingRules(overview: overview), retiredRules)
+        XCTAssertFalse(choice.review(overview: overview).decidesPermissions)
 
-        let listed = fixtures.opened(fixtures.proposal(.replace, matchedBy: "device"))
-        let listedReview = listed.reviewForm(request: request, overview: fixtures.overview(), form: fixtures.form())
-        XCTAssertEqual(accessAnswerPrivacySummary(form: listedReview, overview: fixtures.overview()), "Work-safe")
+        choice.levelId = nil
+        XCTAssertNil(choice.existingRules(overview: overview))
+        XCTAssertTrue(choice.review(overview: overview).decidesPermissions)
     }
 
     /// A connection whose grant has expired cannot be taken over: it is not
@@ -404,7 +403,7 @@ final class AccessConnectionRulesTests: XCTestCase {
         XCTAssertEqual(picked.connectionId, "principal-desk")
         XCTAssertTrue(picked.isComplete(request: request, overview: overview))
         XCTAssertEqual(
-            picked.selection(request: request, overview: overview, form: fixtures.form(overview: overview)),
+            picked.selection(request: request, overview: overview, newLevelRules: nil),
             .replaceConnection(connectionId: "principal-desk", expectedGrantRevision: 6)
         )
         XCTAssertEqual(picked.review(overview: overview).connectionName, "Northstar desk")

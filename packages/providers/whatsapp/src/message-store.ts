@@ -597,6 +597,20 @@ export class MessageStore {
       );
       CREATE INDEX IF NOT EXISTS messages_by_chat_ts ON messages(chat_jid, ts);
 
+      CREATE TABLE IF NOT EXISTS scope_membership_changes (
+        chat_jid TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL,
+        observed_at TEXT NOT NULL,
+        emit_seq INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS scope_membership_emit ON scope_membership_changes(emit_seq);
+      CREATE TABLE IF NOT EXISTS scope_member_chats (
+        native_jid TEXT NOT NULL,
+        chat_jid TEXT NOT NULL,
+        PRIMARY KEY(native_jid,chat_jid)
+      ) WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS scope_rosters (chat_jid TEXT PRIMARY KEY);
+
       CREATE TABLE IF NOT EXISTS dirty_days (
         chat_jid TEXT NOT NULL,
         date TEXT NOT NULL,
@@ -963,6 +977,7 @@ export class MessageStore {
     const stub: StoredChat = { jid, name: jid, isGroup: jid.endsWith("@g.us") };
     this.chats.set(jid, stub);
     this.writeChat(stub);
+    this.markScopeMembershipChanged(jid, false);
   }
 
   /** Bind object for the message INSERT statements. */
@@ -996,6 +1011,7 @@ export class MessageStore {
   /** Upsert one message row and mark its day dirty. Caller owns the transaction. */
   private writeMessage(m: StoredMessage): void {
     this.ensureChat(m.chatJid);
+    this.indexMessageScope(m);
     this.stmts.insertMessage.run(this.messageParams(m));
     this.markDirtyRow(m.chatJid, messageDate(m.timestamp));
   }
@@ -1032,6 +1048,7 @@ export class MessageStore {
         const info = this.stmts.insertMessageIfAbsent.run(this.messageParams(m));
         if (info.changes > 0) {
           imported++;
+          this.indexMessageScope(m);
           this.markDirtyRow(m.chatJid, messageDate(m.timestamp));
         } else {
           merged++;
@@ -1068,15 +1085,13 @@ export class MessageStore {
               };
         this.chats.set(chat.jid, next);
         this.writeChat(next);
+        if (!existing) this.markScopeMembershipChanged(chat.jid, false);
       }
     });
     tx(chats);
   }
 
-  /**
-   * Replace a group's full participant roster. Does NOT mark days dirty — a
-   * roster change alone re-renders lazily on the next message for that chat.
-   */
+  /** Replace a full roster and publish its membership independently of message days. */
   updateGroupRoster(jid: string, participants: string[]): void {
     const existing = this.chats.get(jid);
     const next: StoredChat = existing
@@ -1090,6 +1105,17 @@ export class MessageStore {
         };
     this.chats.set(jid, next);
     this.writeChat(next);
+    const known = !!this.db.prepare("SELECT 1 FROM scope_rosters WHERE chat_jid=?").get(jid);
+    this.db.prepare("INSERT OR IGNORE INTO scope_rosters VALUES(?)").run(jid);
+    this.setMeta(`scope_roster_uncertain:${jid}`, "0");
+    this.unindexScopeIdentities(jid, existing?.participants ?? []);
+    this.indexScopeIdentities(jid, participants);
+    if (
+      !known ||
+      JSON.stringify([...(existing?.participants ?? [])].sort()) !==
+        JSON.stringify([...participants].sort())
+    )
+      this.markScopeMembershipChanged(jid);
   }
 
   updateGroupRosters(rosters: Map<string, string[]> | Record<string, string[]>): void {
@@ -1116,19 +1142,48 @@ export class MessageStore {
     };
     this.chats.set(jid, next);
     this.writeChat(next);
+    this.indexScopeIdentities(jid, participantJids);
+    if (set.size !== (existing?.participants?.length ?? 0)) this.markScopeMembershipChanged(jid);
   }
 
   removeGroupParticipants(jid: string, participantJids: string[]): void {
     const existing = this.chats.get(jid);
     if (!existing?.participants) return;
-    const remove = new Set(participantJids);
+    const identity = (value: string) => {
+      const normalized = value.replace(/:\d+(?=@)/, "");
+      const phone = normalized.endsWith("@lid")
+        ? this._lidPhoneMap.get(bareLid(normalized))
+        : pnToE164(normalized);
+      return phone ? `phone:${phone}` : normalized;
+    };
+    const remove = new Set(participantJids.map(identity));
+    const unknownRemoval = participantJids.some(
+      (value) =>
+        value.endsWith("@lid") &&
+        !this._lidPhoneMap.has(bareLid(value)) &&
+        !existing.participants!.some((member) => identity(member) === identity(value)),
+    );
+    const wasAuthoritative = this.isScopeRosterAuthoritative(jid);
+    if (unknownRemoval && wasAuthoritative) {
+      this.db.prepare("DELETE FROM scope_rosters WHERE chat_jid=?").run(jid);
+      this.setMeta(`scope_roster_uncertain:${jid}`, "1");
+    }
     const next: StoredChat = {
       ...existing,
-      participants: existing.participants.filter((p) => !remove.has(p)),
+      participants: existing.participants.filter((p) => !remove.has(identity(p))),
       participantsFetchedAt: nowSeconds(),
     };
     this.chats.set(jid, next);
     this.writeChat(next);
+    this.unindexScopeIdentities(
+      jid,
+      existing.participants.filter((p) => remove.has(identity(p))),
+    );
+    if (
+      next.participants!.length !== existing.participants.length ||
+      (unknownRemoval && wasAuthoritative)
+    )
+      this.markScopeMembershipChanged(jid);
   }
 
   addContacts(contacts: StoredContact[]): void {
@@ -1152,6 +1207,12 @@ export class MessageStore {
           : contact;
         this.contacts.set(contact.jid, merged);
         this.writeContact(merged);
+        // A LID-linked contact supplies the phone a LID member resolves to
+        // while the LID map has no entry, so linking or unlinking one changes
+        // the membership of every chat that member is in.
+        if (existing?.lid !== merged.lid)
+          for (const lid of [existing?.lid, merged.lid])
+            if (lid) this.markScopeMappingChanged(bareLid(lid));
 
         const mapping = deriveLidMapping(merged);
         if (mapping) this.recordLidPhone(mapping[0], mapping[1]);
@@ -1179,11 +1240,191 @@ export class MessageStore {
       this._lidPhoneMap.delete(lidUser);
       this.stmts.deleteLid.run(lidUser);
       this.stmts.insertContested.run(lidUser);
+      this.markScopeMappingChanged(lidUser);
       log.warn(`Contested WhatsApp LID ${lidUser}: maps to >1 phone — emitting LID-only`);
       return;
     }
     this._lidPhoneMap.set(lidUser, phone);
     this.stmts.upsertLid.run(lidUser, phone);
+    if (existing !== phone) this.markScopeMappingChanged(lidUser);
+  }
+
+  /** Index the identities a chat's membership names; true when one was not indexed before. */
+  private indexScopeIdentities(chatJid: string, jids: readonly string[]): boolean {
+    const insert = this.db.prepare("INSERT OR IGNORE INTO scope_member_chats VALUES(?,?)");
+    let added = false;
+    for (const jid of jids)
+      if (insert.run(jid.replace(/:\d+(?=@)/, ""), chatJid).changes > 0) added = true;
+    return added;
+  }
+
+  /**
+   * Forget members that left a roster. One that still counts as a speaker is
+   * indexed again when the chat's membership is next built, and one that
+   * speaks later is a first-time speaker again.
+   */
+  private unindexScopeIdentities(chatJid: string, jids: readonly string[]): void {
+    const remove = this.db.prepare(
+      "DELETE FROM scope_member_chats WHERE native_jid=? AND chat_jid=?",
+    );
+    for (const jid of jids) remove.run(jid.replace(/:\d+(?=@)/, ""), chatJid);
+  }
+
+  /**
+   * Index a message's chat and speaker. Without an authoritative roster the
+   * membership lists the chat's speakers, so a first-time speaker is a
+   * membership change. Self-authored and system messages name no member.
+   * Caller owns the transaction and the change notification.
+   */
+  private indexMessageScope(m: StoredMessage): void {
+    this.indexScopeIdentities(m.chatJid, [m.chatJid]);
+    if (m.fromMe || m.type === "system") return;
+    if (
+      this.indexScopeIdentities(m.chatJid, [m.senderJid]) &&
+      !this.isScopeRosterAuthoritative(m.chatJid)
+    )
+      this.markScopeMembershipChanged(m.chatJid, false);
+  }
+
+  private markScopeMembershipChanged(chatJid: string, notify = true): void {
+    const revision = (Number(this.getMeta("scope_membership_revision")) || 0) + 1;
+    this.setMeta("scope_membership_revision", String(revision));
+    this.db
+      .prepare(
+        `INSERT INTO scope_membership_changes VALUES(?,?,?,NULL)
+      ON CONFLICT(chat_jid) DO UPDATE SET revision=excluded.revision,observed_at=excluded.observed_at,emit_seq=NULL`,
+      )
+      .run(chatJid, revision, new Date().toISOString());
+    if (notify) this.changeHandler?.();
+  }
+
+  private markScopeMappingChanged(lid: string): void {
+    for (const row of this.db
+      .prepare<[string], { chat_jid: string }>(
+        "SELECT chat_jid FROM scope_member_chats WHERE native_jid=?",
+      )
+      .all(`${lid}@lid`))
+      this.markScopeMembershipChanged(row.chat_jid);
+  }
+
+  isScopeRosterAuthoritative(chatJid: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM scope_rosters WHERE chat_jid=?").get(chatJid);
+  }
+
+  isScopeRosterUncertain(chatJid: string): boolean {
+    return this.getMeta(`scope_roster_uncertain:${chatJid}`) === "1";
+  }
+
+  isScopeLidContested(jid: string): boolean {
+    return this._contestedLids.has(bareLid(jid));
+  }
+
+  /** A provider refresh cut invalidates every cached witness in O(1). */
+  resetScopeRefreshWitnesses(): void {
+    this.setMeta("scope_refresh_generation", randomUUID());
+  }
+
+  markScopeRefreshWitness(chatJid: string, epoch: string): void {
+    let generation = this.getMeta("scope_refresh_generation");
+    if (!generation) {
+      generation = randomUUID();
+      this.setMeta("scope_refresh_generation", generation);
+    }
+    this.setMeta(`scope_refresh_witness:${chatJid}`, `${generation}:${epoch}`);
+  }
+
+  hasScopeRefreshWitness(chatJid: string, epoch: string): boolean {
+    const generation = this.getMeta("scope_refresh_generation");
+    return (
+      !!generation && this.getMeta(`scope_refresh_witness:${chatJid}`) === `${generation}:${epoch}`
+    );
+  }
+
+  scopeConversationPage(after: string, limit = 200): string[] {
+    return this.db
+      .prepare<[string, number], { chat_jid: string }>(
+        "SELECT chat_jid FROM scope_membership_changes WHERE chat_jid>? ORDER BY chat_jid LIMIT ?",
+      )
+      .all(after, limit)
+      .map((row) => row.chat_jid);
+  }
+
+  scopeMembershipCandidates(committedSeq: number, limit = 200): string[] {
+    const confirmed =
+      Number.isSafeInteger(committedSeq) && committedSeq >= 0 && committedSeq <= this.emitSeqCounter
+        ? committedSeq
+        : 0;
+    return this.db
+      .prepare<[number, number], { chat_jid: string }>(
+        "SELECT chat_jid FROM scope_membership_changes WHERE emit_seq IS NULL OR emit_seq>? ORDER BY revision,chat_jid LIMIT ?",
+      )
+      .all(confirmed, limit)
+      .map((row) => row.chat_jid);
+  }
+
+  scopeConversationVersion(chatJid: string): { revision: number; observed_at: string } | undefined {
+    return this.db
+      .prepare<[string], { revision: number; observed_at: string }>(
+        "SELECT revision,observed_at FROM scope_membership_changes WHERE chat_jid=?",
+      )
+      .get(chatJid);
+  }
+
+  scopeConversationSenders(chatJid: string): string[] {
+    const jids = this.db
+      .prepare<[string], { sender_jid: string }>(
+        "SELECT DISTINCT sender_jid FROM messages WHERE chat_jid=? AND from_me=0 AND type!='system'",
+      )
+      .all(chatJid)
+      .map((row) => row.sender_jid);
+    this.indexScopeIdentities(chatJid, jids);
+    return jids;
+  }
+
+  enrollScopeMembership(): void {
+    if (this.getMeta("scope_membership_enrolled") === "1") return;
+    this.db.transaction(() => {
+      for (const jid of this.chats.keys()) this.markScopeMembershipChanged(jid, false);
+      this.setMeta("scope_membership_enrolled", "1");
+    })();
+  }
+
+  drainScopeMembership(
+    committedSeq: number,
+    limit = DEFAULT_DRAIN_LIMIT,
+    work?: { max: number; cost(chatJid: string): number },
+  ): {
+    chats: Array<{ chat_jid: string; revision: number; observed_at: string }>;
+    emitSeq: number;
+    morePending: boolean;
+  } {
+    const confirmed =
+      Number.isSafeInteger(committedSeq) && committedSeq >= 0 && committedSeq <= this.emitSeqCounter
+        ? committedSeq
+        : 0;
+    const rows = this.db
+      .prepare<[number, number], { chat_jid: string; revision: number; observed_at: string }>(
+        `SELECT chat_jid,revision,observed_at FROM scope_membership_changes
+      WHERE emit_seq IS NULL OR emit_seq>? ORDER BY revision,chat_jid LIMIT ?`,
+      )
+      .all(confirmed, limit + 1);
+    const chats: typeof rows = [];
+    let cost = 0;
+    for (const row of rows.slice(0, limit)) {
+      const next = work?.cost(row.chat_jid) ?? 1;
+      if (chats.length > 0 && work && cost + next > work.max) break;
+      chats.push(row);
+      cost += next;
+    }
+    const emitSeq = chats.length ? ++this.emitSeqCounter : confirmed;
+    this.db.transaction(() => {
+      for (const row of chats)
+        this.db
+          .prepare("UPDATE scope_membership_changes SET emit_seq=? WHERE chat_jid=?")
+          .run(emitSeq, row.chat_jid);
+      this.setMeta("emit_seq_counter", String(this.emitSeqCounter));
+    })();
+    return { chats, emitSeq, morePending: rows.length > chats.length };
   }
 
   setLIDPhone(lid: string, phone: string): void {

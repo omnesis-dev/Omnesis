@@ -13,7 +13,7 @@ import {
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import picomatch from "picomatch";
 import {
   createLogger,
@@ -27,6 +27,7 @@ import {
   probeTreeReadAccess,
   syncPage,
   SnapshotEnumeration,
+  withPathScopes,
   config as configSchema,
   type SourceInstance,
   type SyncProgress,
@@ -49,6 +50,7 @@ import { normalizeFile } from "./normalizer.js";
 import { localFilesIconDataUri } from "./icons.js";
 import { localFilesDocumentEventProfile } from "./document-event-profile.js";
 import { localFilesStateSpec } from "./state.js";
+import { scopeContracts } from "./scope-contracts.js";
 import { SKIP_RETRY_MS } from "./types.js";
 import type { LocalFileEntry, LocalFileState, LocalFilesSyncCursor } from "./types.js";
 
@@ -434,6 +436,7 @@ export default defineSource({
   // different files. Ship partitioned — never replicated, which would let
   // two machines overwrite and delete each other's rows.
   multiDevice: { mode: "partitioned" },
+  scopes: scopeContracts["local-files"],
   supportedPlatforms: ["darwin", "linux"],
   // Deliberately under-weighted until relevance is proven against a real
   // corpus: the disk must not swamp every search result on day one.
@@ -617,7 +620,7 @@ export default defineSource({
       };
     }
 
-    return {
+    const instance: SourceInstance<LocalFilesSyncCursor> = {
       probeReadAccess: ({ signal }) =>
         probeTreeReadAccess({
           signal,
@@ -981,5 +984,17 @@ export default defineSource({
         });
       },
     };
+    // A file is in the folder holding it and in every folder above that one,
+    // up to the configured folder it was found under.
+    return withPathScopes(instance, {
+      layout: { home: homedir(), roots },
+      inventory: (cursor) =>
+        cursor.version === CURSOR_VERSION
+          ? Object.entries(cursor.fileMap).map(([path, file]) => ({
+              externalId: file.stableId,
+              directory: dirname(path),
+            }))
+          : [],
+    });
   },
 });

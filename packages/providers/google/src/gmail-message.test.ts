@@ -2,8 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect, beforeEach, vi } from "vitest";
-import { addsToMessage, messageDate, selfAuthoredMailText } from "./gmail-message.js";
+import { projectDocumentScopeFacts } from "@omnesis/source-sdk";
+import {
+  addsToMessage,
+  messageDate,
+  selfAuthoredMailText,
+  messagePeople,
+} from "./gmail-message.js";
 import { createMockGmail, createGmailSource, makeGmailMessage } from "./testing/mock-google.js";
+import definition from "./index.js";
 import type { DocumentInput } from "@omnesis/types";
 
 const b64 = (s: string | Buffer) => Buffer.from(s).toString("base64url");
@@ -339,5 +346,57 @@ describe("self-authored vocabulary text", () => {
       data: makeGmailMessage("authored", { from: "other@example.com", labelIds: ["SENT"] }),
     }));
     expect((await source.sync(null)).documents[0]?.metadata.selfAuthoredText).toBeUndefined();
+  });
+});
+
+describe("Google source scope declarations", () => {
+  test("Gmail projects native mail participants but leaves label names unknown", () => {
+    const scopes = definition.sources.find((source) => source.id === "gmail")!.scopes!;
+    const projected = projectDocumentScopeFacts(
+      {
+        documentType: "email",
+        tags: ["Personal"],
+        people: messagePeople(
+          {
+            from: "Maya <maya@example.org>",
+            to: "owner@example.org",
+            cc: "Jamie <jamie@example.com>",
+          },
+          "Please contact sarah@example.io later.",
+        ),
+      },
+      scopes,
+    );
+    expect(projected.complete).toEqual(["participant"]);
+    expect(projected.facts).toContainEqual({
+      kind: "participant",
+      identifier: { type: "email", value: "maya@example.org" },
+    });
+    expect(projected.facts).toContainEqual({
+      kind: "participant",
+      identifier: { type: "email", value: "jamie@example.com" },
+    });
+    expect(projected.facts).not.toContainEqual({
+      kind: "participant",
+      identifier: { type: "email", value: "sarah@example.io" },
+    });
+    expect(projected.facts.every((fact) => fact.kind === "participant")).toBe(true);
+    expect(scopes.items.map((item) => item.kind)).toEqual(["participant", "label"]);
+  });
+
+  test("Drive declares hierarchical folder selection without inventing legacy ancestry", () => {
+    const scopes = definition.sources.find((source) => source.id === "google-drive")!.scopes!;
+    expect(scopes.items).toEqual([
+      {
+        kind: "folder",
+        noun: { one: "folder", many: "folders" },
+        picker: "tree",
+        link: "hierarchy",
+      },
+    ]);
+    expect(projectDocumentScopeFacts({ documentType: "file" }, scopes)).toEqual({
+      facts: [],
+      complete: [],
+    });
   });
 });

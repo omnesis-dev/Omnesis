@@ -69,9 +69,6 @@ internal fun unavailableReason(rules: List<AccessGrantRule>, request: AccessAuth
         null
     }
 
-/** The refusal a new access level's name earns when a live level already has it. */
-internal const val LEVEL_NAME_TAKEN_MESSAGE = "An access level with that name already exists."
-
 internal fun connectionCountLabel(count: Int): String = when (count) {
     0 -> "No connections"
     1 -> "1 connection"
@@ -102,13 +99,13 @@ internal fun sharedLevelFootnote(others: Int): String? = when {
  * The Connection step's answers.
  *
  * [levelId] names the existing level the new connection uses, or is null while "New access
- * level" is chosen. [replacing] switches the step to picking a connection to take over, and
- * [connectionId] is the one picked; the other answers are kept for a return to normal mode.
+ * level" is chosen; the new level's name is its draft's. [replacing] switches the step to
+ * picking a connection to take over, and [connectionId] is the one picked; the other answers
+ * are kept for a return to normal mode.
  */
 data class AccessConnectionChoice(
     val proposal: AccessConnectionProposal,
     val name: String,
-    val levelName: String,
     val levelId: String? = null,
     val replacing: Boolean = false,
     val connectionId: String? = null,
@@ -120,20 +117,11 @@ data class AccessConnectionChoice(
             else -> AccessConnectionPath.NEW_LEVEL
         }
 
-    val nameError: String? get() = if (name.isBlank()) "Enter a name for this connection." else null
-
-    /**
-     * Why the new level's name cannot be used: it is empty, or it is already the name of a live
-     * level in [overview], compared trimmed and regardless of case as the gateway compares it.
-     * The gateway's own `level-name-taken` refusal covers a level created since [overview] was read.
-     */
-    fun levelNameError(overview: AccessOverview): String? {
-        val trimmed = levelName.trim()
-        return when {
-            trimmed.isEmpty() -> "Enter a name for this access level."
-            overview.levels.any { it.name.trim().equals(trimmed, ignoreCase = true) } -> LEVEL_NAME_TAKEN_MESSAGE
-            else -> null
-        }
+    /** Why the connection's name cannot be used: it is empty, or longer than the gateway accepts. */
+    val nameError: String? get() = when {
+        name.isBlank() -> "Enter a name for this connection."
+        name.trim().length > MAX_ACCESS_NAME_LENGTH -> NAME_TOO_LONG_MESSAGE
+        else -> null
     }
 
     /**
@@ -168,30 +156,27 @@ data class AccessConnectionChoice(
     fun target(overview: AccessOverview): AccessConnectionTarget? =
         connections(overview).firstOrNull { it.id == connectionId }
 
-    /** Whether the Connection step's own questions are answered well enough to move on. */
-    fun canContinue(request: AccessAuthorizationRequest, overview: AccessOverview): Boolean = when (path) {
-        AccessConnectionPath.NEW_LEVEL -> nameError == null && levelNameError(overview) == null
+    /** Whether the Connection step's own questions are answered well enough to move on; [level] is the new level's draft. */
+    fun canContinue(request: AccessAuthorizationRequest, overview: AccessOverview, level: AccessLevelDraft): Boolean = when (path) {
+        AccessConnectionPath.NEW_LEVEL -> nameError == null && level.nameError(overview) == null
         AccessConnectionPath.EXISTING_LEVEL ->
             nameError == null && level(overview)?.let { unavailableReason(it.rules, request) == null } == true
         AccessConnectionPath.REPLACE ->
             target(overview)?.let { unavailableReason(it.grant.rules, request) == null } == true
     }
 
-    /** The decision this choice describes, with [form] holding a new level's permissions. */
+    /** The decision this choice describes, with [form] holding a new level's name and permissions. */
     fun selection(
         request: AccessAuthorizationRequest,
         overview: AccessOverview,
         form: AccessAuthorizationForm,
     ): AccessAuthorizationSelection? {
-        if (!canContinue(request, overview)) return null
+        if (!canContinue(request, overview, form.level)) return null
         return when (path) {
-            AccessConnectionPath.NEW_LEVEL -> AccessAuthorizationSelection.NewConnection(
-                name = name.trim(),
-                level = AccessConnectionLevel.New(
-                    name = levelName.trim(),
-                    rules = form.ownRules(request, overview) ?: return null,
-                ),
-            )
+            AccessConnectionPath.NEW_LEVEL -> {
+                if (form.permissionsError(overview) != null) return null
+                AccessAuthorizationSelection.NewConnection(name = name.trim(), level = AccessConnectionLevel.New(name = form.level.name.trim(), rules = form.level.serializedRules))
+            }
             AccessConnectionPath.EXISTING_LEVEL -> requireNotNull(level(overview)).let {
                 AccessAuthorizationSelection.NewConnection(
                     name = name.trim(),
@@ -219,10 +204,6 @@ data class AccessConnectionChoice(
             val base = AccessConnectionChoice(
                 proposal = proposal,
                 name = utf16Prefix(proposal.defaultName.trim(), MAX_ACCESS_NAME_LENGTH),
-                levelName = utf16Prefix(
-                    proposal.defaultLevelName.trim().ifEmpty { request.clientName.trim() },
-                    MAX_ACCESS_NAME_LENGTH,
-                ),
             )
             val match = proposal.match ?: return base
             when (proposal.recommended) {
@@ -236,12 +217,17 @@ data class AccessConnectionChoice(
             }
             return base
         }
+
+        /** The name a new access level starts with: the gateway's proposal, else the client's own name, cut to what the gateway accepts. */
+        fun defaultLevelName(request: AccessAuthorizationRequest, proposal: AccessConnectionProposal): String =
+            utf16Prefix(proposal.defaultLevelName.trim().ifEmpty { request.clientName.trim() }, MAX_ACCESS_NAME_LENGTH)
     }
 }
 
 /**
  * What the Review step states: the connection, its access level, what it replaces, and the
- * permissions it gets as a form, so every path is reviewed with the same rows.
+ * [rules] it gets, so every path is reviewed with the same rows. [linked] is whether Direct
+ * uses Answer's sources and filters, which the rows then state once.
  *
  * [accessLevel] and [replaces] are null when their row is not shown. [otherConnections] is how
  * many live connections other than this one use the same level.
@@ -250,13 +236,16 @@ internal data class AccessReviewSummary(
     val connectionName: String,
     val accessLevel: String?,
     val replaces: String?,
-    val permissions: AccessAuthorizationForm,
+    val rules: List<AccessGrantRule>,
+    val linked: Boolean,
     val otherConnections: Int,
 )
 
 /**
- * The review of [form]'s decision. A gateway that predates connections has no level to name,
- * and its connection is the one it reconnects the client to, or else the client itself.
+ * The review of [form]'s decision. A new level, and the client's own access on a gateway that
+ * predates connections, are reviewed as exactly the rules the approval sends. Such a gateway
+ * has no level to name, and its connection is the one it reconnects the client to, or else the
+ * client itself.
  */
 internal fun reviewSummary(
     request: AccessAuthorizationRequest,
@@ -264,42 +253,33 @@ internal fun reviewSummary(
     form: AccessAuthorizationForm,
     legacyConnectionName: String? = null,
 ): AccessReviewSummary {
-    val choice = form.connection ?: return AccessReviewSummary(
+    val decided = AccessReviewSummary(
         connectionName = legacyConnectionName ?: request.clientName,
         accessLevel = null,
         replaces = null,
-        permissions = form,
+        rules = form.level.serializedRules,
+        linked = form.level.directLinked,
         otherConnections = 0,
     )
+    fun existing(rules: List<AccessGrantRule>?) = (rules ?: decided.rules) to (rules?.let(::directLinkedIn) ?: decided.linked)
+    val choice = form.connection ?: return decided
     return when (choice.path) {
-        AccessConnectionPath.NEW_LEVEL -> AccessReviewSummary(
-            connectionName = choice.name.trim(),
-            accessLevel = "${choice.levelName.trim()} (new)",
-            replaces = null,
-            permissions = form,
-            otherConnections = 0,
-        )
+        AccessConnectionPath.NEW_LEVEL -> decided.copy(connectionName = choice.name.trim(), accessLevel = "${form.level.name.trim()} (new)")
         AccessConnectionPath.EXISTING_LEVEL -> {
             val level = choice.level(overview)
-            AccessReviewSummary(
-                connectionName = choice.name.trim(),
-                accessLevel = level?.name,
-                replaces = null,
-                permissions = level?.let { AccessAuthorizationForm.describing(it.rules, overview, publishedPolicyOnly = false) }
-                    ?: form,
-                otherConnections = level?.connectionCount ?: 0,
-            )
+            val (rules, linked) = existing(level?.rules)
+            decided.copy(connectionName = choice.name.trim(), accessLevel = level?.name, rules = rules, linked = linked, otherConnections = level?.connectionCount ?: 0)
         }
         AccessConnectionPath.REPLACE -> {
             val target = choice.target(overview)
             val level = target?.grant?.levelId?.let { id -> overview.levels.firstOrNull { it.id == id } }
-            AccessReviewSummary(
+            val (rules, linked) = existing(target?.grant?.rules)
+            decided.copy(
                 connectionName = target?.name.orEmpty(),
                 accessLevel = level?.name,
                 replaces = target?.let { "The current sign-in of ${it.name}" },
-                permissions = target?.let {
-                    AccessAuthorizationForm.describing(it.grant.rules, overview, publishedPolicyOnly = false)
-                } ?: form,
+                rules = rules,
+                linked = linked,
                 // The replaced connection is one of the level's own connections.
                 otherConnections = ((level?.connectionCount ?: 1) - 1).coerceAtLeast(0),
             )

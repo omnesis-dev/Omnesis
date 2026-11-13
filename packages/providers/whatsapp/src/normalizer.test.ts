@@ -2,8 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect } from "vitest";
+import { projectDocumentScopeFacts } from "@omnesis/source-sdk";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { normalizeDayChat, resolveDisplayName, whatsappSourceUrl } from "./normalizer.js";
+import definition from "./index.js";
 import type { StoredMessage, StoredChat, StoredContact } from "./types.js";
 
 function makeMsg(overrides: Partial<StoredMessage> = {}): StoredMessage {
@@ -1825,5 +1827,37 @@ describe("self-authored vocabulary evidence", () => {
         origin: "written",
       },
     ]);
+  });
+});
+
+describe("source scope facts", () => {
+  test("projects silent roster members and LID-to-phone identities without display names", () => {
+    const chatJid = "fictional-scope-group@g.us";
+    const doc = normalizeDayChat(
+      chatJid,
+      "2026-01-12",
+      [makeMsg({ chatJid, senderJid: "opaque-scope-person@lid", senderName: "Fictional sender" })],
+      {
+        jid: chatJid,
+        name: "Cedar planning",
+        isGroup: true,
+        participants: ["12025550124@s.whatsapp.net"],
+      },
+      emptyContacts,
+      ProviderId("whatsapp"),
+      SourceId("whatsapp-messages:+12025550125"),
+      new Map([["opaque-scope-person", "+12025550123"]]),
+    );
+    const projected = projectDocumentScopeFacts(doc.metadata, definition.scopes!);
+    expect(projected.facts).toContainEqual({ kind: "conversation", id: chatJid });
+    expect(projected.facts).toContainEqual({
+      kind: "participant",
+      identifier: { type: "phone", value: "+12025550123" },
+    });
+    expect(projected.facts).toContainEqual({
+      kind: "participant",
+      identifier: { type: "phone", value: "+12025550124" },
+    });
+    expect(projected.complete).toEqual(["conversation"]);
   });
 });

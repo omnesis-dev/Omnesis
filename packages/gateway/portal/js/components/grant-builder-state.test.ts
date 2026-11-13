@@ -11,7 +11,6 @@ const {
   newGrantRule,
   normalizeGrantRules,
   serializeGrantRules,
-  setAllSourcesAllowed,
   setFutureSourcesAllowed,
   setSourceAllowed,
   setSourceMode,
@@ -32,12 +31,12 @@ describe("Grant Builder state", () => {
     };
 
     expect(serializeGrantRules(state)).toEqual([
-      { capability: "direct", sources: { mode: "allowlist", sourceIds: [] } },
       {
         capability: "answer",
         sources: { mode: "allowlist", sourceIds: ["calendar:work", "github:work"] },
         release: { mode: "reviewed", policyFamilyId: POLICY },
       },
+      { capability: "direct", sources: { mode: "allowlist", sourceIds: [] } },
     ]);
   });
 
@@ -58,14 +57,6 @@ describe("Grant Builder state", () => {
       "calendar:work",
       "github:work",
     ]);
-    expect(setAllSourcesAllowed(rule, SOURCES, false).sources).toEqual({
-      mode: "allowlist",
-      sourceIds: [],
-    });
-    expect(setAllSourcesAllowed(rule, SOURCES, true).sources).toEqual({
-      mode: "denylist",
-      sourceIds: [],
-    });
   });
 
   it("changes future-source behavior without changing current access", () => {
@@ -82,17 +73,6 @@ describe("Grant Builder state", () => {
 
     const futureBlocked = setFutureSourcesAllowed(futureAllowed, false, SOURCES);
     expect(futureBlocked.sources).toEqual({ mode: "allowlist", sourceIds: ["github:work"] });
-  });
-
-  it("converts block-all into an empty allowlist so future sources stay blocked", () => {
-    const rule = {
-      ...newGrantRule("direct"),
-      sources: { mode: "all", sourceIds: [] },
-    };
-    expect(setAllSourcesAllowed(rule, SOURCES, false).sources).toEqual({
-      mode: "allowlist",
-      sourceIds: [],
-    });
   });
 
   it("normalizes V1 all-source rules but defaults newly enabled rules to an empty allowlist", () => {
@@ -114,7 +94,7 @@ describe("Grant Builder state", () => {
   });
 
   it("requires a capability and an explicit Answer release decision", () => {
-    expect(validateGrantRules({})).toBe("Select at least one capability.");
+    expect(validateGrantRules({})).toBe("Choose at least one permission.");
     expect(validateGrantRules({
       answer: {
         ...newGrantRule("answer", ""),
@@ -131,14 +111,13 @@ describe("Grant Builder state", () => {
     })).toBeNull();
   });
 
-  it("names both capabilities when one shared list leaves them without a source", () => {
+  it("names the capability whose list leaves it without a source, the way its own decision does", () => {
     const empty = { mode: "allowlist" as const, sourceIds: [] };
-    // One list standing for two capabilities earns one refusal naming both.
+    // Two empty lists are refused one at a time, Answer first.
     expect(validateGrantRules({
       answer: { ...newGrantRule("answer", "policy-1"), sources: empty },
       direct: { ...newGrantRule("direct"), sources: empty },
-    })).toBe("Select at least one source for Answer and Direct.");
-    // Diverged lists are separate boundaries, so the empty one is named alone.
+    })).toBe("Select at least one source for Answer.");
     expect(validateGrantRules({
       answer: {
         ...newGrantRule("answer", "policy-1"),
@@ -159,7 +138,6 @@ describe("Grant Builder state", () => {
     // Without the known sources the shape alone looks fine; the list is what catches it.
     expect(validateGrantRules({ direct: noneNow })).toBeNull();
     expect(validateGrantRules({ direct: setSourceAllowed(noneNow, "github:work", true) }, known)).toBeNull();
-    expect(validateGrantRules({ direct: setAllSourcesAllowed(noneNow, SOURCES, true) }, known)).toBeNull();
   });
 
   it("reports source selections that exceed the HTTP boundary", () => {
@@ -172,16 +150,55 @@ describe("Grant Builder state", () => {
     })).toBe("Direct can record at most 256 source selections.");
   });
 
-  it("keeps block-all fail-closed for sources connected later", () => {
-    expect(
-      setAllSourcesAllowed(
+  describe("a filtered rule's sources on the wire", () => {
+    const policy = {
+      sourceId: "mail:personal",
+      audience: { accessLevel: "level-1", capability: "answer" },
+      rules: [{ action: "share", match: [{ kind: "label", id: "invented-label" }] }],
+      otherwise: "hide",
+    };
+    const release = { mode: "reviewed", policyFamilyId: "policy-1" };
+
+    it("edits the selection in scopeSources and sends it back as sources alone", () => {
+      const wire = {
+        capability: "answer",
+        // Filtered accounts are left out of `sources` for clients that ignore filters.
+        sources: { mode: "allowlist", sourceIds: ["github:work"] },
+        scopeSources: { mode: "allowlist", sourceIds: ["mail:personal", "github:work"] },
+        release,
+        filterRevision: 4,
+        scopePolicies: [policy],
+      };
+      const state = normalizeGrantRules([wire], "policy-1");
+      expect(state.answer.sources).toEqual({
+        mode: "allowlist",
+        sourceIds: ["github:work", "mail:personal"],
+      });
+      expect(isSourceAllowed(state.answer, "mail:personal")).toBe(true);
+      expect(state.answer).not.toHaveProperty("scopeSources");
+      expect(validateGrantRules(state)).toBeNull();
+      expect(serializeGrantRules(state)).toEqual([
         {
-          ...newGrantRule("direct"),
-          sources: { mode: "denylist", sourceIds: ["fictional:already-blocked"] },
+          capability: "answer",
+          sources: { mode: "allowlist", sourceIds: ["github:work", "mail:personal"] },
+          release,
+          filterRevision: 4,
+          scopePolicies: [policy],
         },
-        ["fictional:one", "fictional:two"],
-        false,
-      ).sources,
-    ).toEqual({ mode: "allowlist", sourceIds: [] });
+      ]);
+    });
+
+    it("reads sources as the selection when the rule carries no scopeSources", () => {
+      const wire = {
+        capability: "answer",
+        sources: { mode: "denylist", sourceIds: ["calendar:work"] },
+        release,
+        filterRevision: 4,
+        scopePolicies: [policy],
+      };
+      const state = normalizeGrantRules([wire], "policy-1");
+      expect(state.answer.sources).toEqual({ mode: "denylist", sourceIds: ["calendar:work"] });
+      expect(serializeGrantRules(state)).toEqual([wire]);
+    });
   });
 });

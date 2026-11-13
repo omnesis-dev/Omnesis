@@ -53,6 +53,7 @@ import {
 } from "@omnesis/providers-synth-common";
 import {
   createLogger,
+  SOURCE_SCOPES_PROTOCOL_RANGE,
   readSecretTextFile,
   type AttachmentExtractFn,
   type AudioTranscribeFn,
@@ -383,7 +384,7 @@ export interface HarnessDevice {
   readonly engine: SyncEngine;
   readonly gateway: HttpGatewayClient;
   /** Production-like control connection for collector-kind roster entries. */
-  readonly ws?: GatewayWsClient;
+  ws?: GatewayWsClient;
 }
 
 /**
@@ -438,6 +439,15 @@ export function nearDupRebuildOnAnyFile(): { dfRefreshPeriodMs: number } {
   return { dfRefreshPeriodMs: 1 };
 }
 
+interface ControlLink {
+  token: string;
+  capabilities: DeviceCapability;
+  engine: SyncEngine;
+}
+
+/** No tick fires on its own: a test triggers every sync it wants. */
+const SYNC_INTERVAL = "999999s";
+
 export class SyntheticE2EHarness {
   gatewayPort = 0;
   gatewayUrl = "";
@@ -458,6 +468,11 @@ export class SyntheticE2EHarness {
   private devices: HarnessDevice[] = [];
   private statusListeners = new Set<(change: StatusChangeEvent, device: HarnessDevice) => void>();
   private allDescriptors: SourceDescriptor[] = [];
+  private allDefinitions: SourceOrProviderDefinition[] = [];
+  /** How many times each collector has published its filter declarations, by device id. */
+  private scopePublications = new Map<string, number>();
+  /** What each collector's control connection is opened with, by device id. */
+  private controlLinks = new Map<string, ControlLink>();
   private universe: string;
   private gatewayMode: SyntheticGatewayMode;
   private readonly labFeatures: Partial<Record<"brain" | "tasks" | "watches", boolean>>;
@@ -548,6 +563,7 @@ export class SyntheticE2EHarness {
     );
     const allDescriptors = allDefinitions.flatMap((def) => mod.extractDescriptors(def));
     this.allDescriptors = allDescriptors;
+    this.allDefinitions = allDefinitions;
 
     if (allDefinitions.length === 0) {
       throw new Error(
@@ -577,7 +593,7 @@ export class SyntheticE2EHarness {
       }
     }
 
-    const defaultSyncInterval = "999999s";
+    const defaultSyncInterval = SYNC_INTERVAL;
 
     // Start the optional fake backends BEFORE the gateway so their URLs
     // are available to bake into the gateway's omnesis.json + env.
@@ -732,6 +748,7 @@ export class SyntheticE2EHarness {
         hostname: `${entry.id}.example.com`,
         platform: entry.kind === "collector" ? process.platform : entry.kind,
         hostableSourceTypes: hostableSourceTypes.map(SourceType),
+        sourceScopes: SOURCE_SCOPES_PROTOCOL_RANGE,
         ...(entry.kind === "collector" || hostsLeaseBackedMode ? { syncLease: true } : {}),
         ...(Object.keys(hostedModes).length > 0 ? { multiDeviceModes: hostedModes } : {}),
         ...(Object.keys(replicaVersionPolicies).length > 0 ? { replicaVersionPolicies } : {}),
@@ -781,12 +798,9 @@ export class SyntheticE2EHarness {
       reportSetupFailures(setupFailures, hostAssignments, this.universe, log);
       let ws: GatewayWsClient | undefined;
       if (entry.kind === "collector") {
-        ws = new GatewayWsClient(this.gatewayUrl, created.token, { capabilities });
-        ws.onCommand(async (command) => {
-          if (command.type === "sources.snapshot") return { ok: true, applied: true };
-          throw new Error(`Unsupported synthetic harness command: ${command.type}`);
-        });
-        ws.connect();
+        const link = { token: created.token, capabilities, engine };
+        this.controlLinks.set(created.device.id, link);
+        ws = this.openControlConnection(created.device.id, link);
         await this.waitForDeviceOnline(created.device.id);
       }
       const device: HarnessDevice = {
@@ -895,6 +909,69 @@ export class SyntheticE2EHarness {
         { sources: device.sourceConfigs, defaultSyncInterval },
         { skipInitialSync: true },
       );
+    }
+  }
+
+  /** Open a collector's control connection, answering the gateway as a real collector does. */
+  private openControlConnection(deviceId: string, link: ControlLink): GatewayWsClient {
+    const ws = new GatewayWsClient(this.gatewayUrl, link.token, {
+      capabilities: link.capabilities,
+    });
+    ws.onCommand(async (command) => {
+      if (command.type !== "sources.snapshot")
+        throw new Error(`Unsupported synthetic harness command: ${command.type}`);
+      // The gateway sends the snapshot each time a collector connects, and a
+      // real collector answers by publishing its filter declarations through
+      // its engine. Not awaited, as there: the snapshot is acknowledged first.
+      void this.publishSourceScopes(deviceId, link.engine);
+      return { ok: true, applied: true };
+    });
+    ws.connect();
+    return ws;
+  }
+
+  /** Publish the declarations of every known source type, as a collector does on connecting. */
+  private async publishSourceScopes(deviceId: string, engine: SyncEngine): Promise<void> {
+    const { collectSourceScopes } = await import("../source-manager.js");
+    await engine.pushSourceScopes(collectSourceScopes(this.allDefinitions));
+    this.scopePublications.set(deviceId, (this.scopePublications.get(deviceId) ?? 0) + 1);
+  }
+
+  /**
+   * Take every roster collector off the gateway, as when its machine sleeps or
+   * loses the network: its syncs in flight settle, nothing new starts, and its
+   * control connection closes. The collector keeps everything it knows.
+   */
+  async disconnectCollectors(): Promise<void> {
+    await this.stopSyncLoopsAndDrain();
+    for (const device of this.devices) device.ws?.disconnect();
+  }
+
+  /**
+   * Bring the roster's collectors back after `disconnectCollectors`: each
+   * resumes its sync loop, reconnects, and publishes its declarations as a
+   * collector does on connecting. No sync is triggered here; whatever a
+   * collector starts on reconnecting is its own doing.
+   */
+  async reconnectCollectors(): Promise<void> {
+    for (const device of this.devices) {
+      await device.engine.startSyncLoop(
+        { sources: device.sourceConfigs, defaultSyncInterval: SYNC_INTERVAL },
+        { skipInitialSync: true },
+      );
+    }
+    for (const device of this.devices) {
+      const link = this.controlLinks.get(device.deviceId);
+      if (!link) continue;
+      const published = this.scopePublications.get(device.deviceId) ?? 0;
+      device.ws = this.openControlConnection(device.deviceId, link);
+      await this.waitForDeviceOnline(device.deviceId, 30_000);
+      const deadline = Date.now() + 30_000;
+      while ((this.scopePublications.get(device.deviceId) ?? 0) <= published) {
+        if (Date.now() >= deadline)
+          throw new Error(`Collector "${device.rosterId}" did not publish after reconnecting`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
     }
   }
 
@@ -1232,7 +1309,8 @@ export class SyntheticE2EHarness {
     // to disappear, a scheduled sync / push / status emit mid-flight would hit a
     // dead socket and surface as an unhandled rejection. The test drives the
     // gateway directly over HTTP after the restart, so the sync loop is not
-    // needed again.
+    // needed again — unless it takes the collectors offline around the restart
+    // with `disconnectCollectors` and brings them back with `reconnectCollectors`.
     for (const device of this.devices) device.engine.stopSyncLoop();
     await this.killGatewaySubprocess();
     // Wait until the old gateway is truly unreachable before rebinding the port.
@@ -1602,8 +1680,8 @@ export class SyntheticE2EHarness {
     return this.gateway.getSyncState(SourceId(sourceId));
   }
 
-  private async waitForDeviceOnline(deviceId: string): Promise<void> {
-    const deadline = Date.now() + 10_000;
+  private async waitForDeviceOnline(deviceId: string, timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const { items } = await this.gatewayJson<{ items: Array<{ id: string; online: boolean }> }>(
         "/admin/devices",
@@ -1611,7 +1689,7 @@ export class SyntheticE2EHarness {
       if (items.some((device) => device.id === deviceId && device.online)) return;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    throw new Error(`Synthetic collector ${deviceId} did not become ready within 10000ms`);
+    throw new Error(`Synthetic collector ${deviceId} did not become ready within ${timeoutMs}ms`);
   }
 
   async destroy(): Promise<void> {

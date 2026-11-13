@@ -174,6 +174,22 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
         http.getPrivateJson(listOf("admin", "access", "authorizations", id))
 
     /** Authority choices available to a paired owner approving an MCP request. */
+    suspend fun createAccessLevel(body: dev.omnesis.android.transport.dto.AccessLevelCreateBody) =
+        http.postJson<dev.omnesis.android.transport.dto.AccessLevelCreateBody, dev.omnesis.android.transport.dto.AccessLevelReply>("admin/access/levels", body).level
+
+    suspend fun updateAccessLevel(id: String, body: dev.omnesis.android.transport.dto.AccessLevelUpdateBody) =
+        http.patchJson<dev.omnesis.android.transport.dto.AccessLevelUpdateBody, dev.omnesis.android.transport.dto.AccessLevelReply>("admin/access/levels/${pathEncode(id)}", body).level
+
+    /** `DELETE /admin/access/levels/{id}`. The gateway refuses a level that connections or integrations use with `level-in-use`. */
+    suspend fun deleteAccessLevel(id: String) = http.deleteSegments(listOf("admin", "access", "levels", id))
+
+    suspend fun scopeOptions(sourceId: String, kind: String, query: String = "", parentId: String? = null, cursor: String? = null): dev.omnesis.android.transport.dto.ScopeOptions =
+        http.getPrivateJson(listOf("admin", "access", "source-filters", sourceId, "options"),
+            buildMap { put("kind", kind); put("q", query); parentId?.let { put("parentId", it) }; cursor?.let { put("cursor", it) } })
+
+    suspend fun scopePreview(policy: dev.omnesis.android.transport.dto.ScopePolicy): dev.omnesis.android.transport.dto.ScopePreview =
+        http.postJsonSegments(listOf("admin", "access", "source-filters", policy.sourceId, "preview"), dev.omnesis.android.transport.dto.ScopePreviewBody(policy))
+
     suspend fun accessOverview(): AccessOverview = http.getPrivateJson(listOf("admin", "access"))
 
     /** Approve or deny a pending MCP authorization request. */

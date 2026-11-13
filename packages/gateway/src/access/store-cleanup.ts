@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { assertNever } from "@omnesis/core";
+import { noteSourceFilterOwnersChanged } from "./source-filters-in-use.js";
 
 import { appendAudit, AUTHORIZATION_REQUEST_TTL_MS } from "./store-helpers.js";
 import type { Db } from "../data/types.js";
@@ -316,6 +317,7 @@ function retireAbandonedLevels(db: Db, reaped: readonly ReapedRequestRow[], now:
     const level = findAbandoned.get(row.created_level_id);
     if (!level) continue;
     retire.run(now, now, row.created_level_id);
+    noteSourceFilterOwnersChanged();
     appendAudit(db, {
       eventType: "level-deleted",
       detail: {

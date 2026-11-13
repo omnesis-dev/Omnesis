@@ -6,6 +6,7 @@
  * lexical index when one is attached, by FTS5 otherwise.
  */
 
+import { scopeSearchActive } from "./scope-authorization.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { buildMetadataFilter } from "./metadata.js";
@@ -338,7 +339,7 @@ export function bm25Search(
   }
   const filter = buildMetadataFilter(filters, "c");
 
-  let ranker = opts?.ranker;
+  let ranker = scopeSearchActive(db) ? undefined : opts?.ranker;
   let effectiveQuery = query;
   let droppedTokens: string[] = [];
   if (opts?.commonTokenThreshold && opts.commonTokenThreshold > 0) {
@@ -361,9 +362,10 @@ export function bm25Search(
   if (!ftsQuery) return { candidates: [], droppedTokens, ranker: "fts5" };
 
   try {
-    const rows = docIds
-      ? filterFirst(db, ftsQuery, filter, docIds, limit)
-      : rankWithFts(db, ftsQuery, filter, limit);
+    const rows =
+      docIds || scopeSearchActive(db)
+        ? filterFirst(db, ftsQuery, filter, docIds, limit)
+        : rankWithFts(db, ftsQuery, filter, limit);
     return { candidates: rows.map(toCandidate), droppedTokens, ranker: "fts5" };
   } catch (err) {
     // `toFts5Query` should prevent malformed MATCH input, but the

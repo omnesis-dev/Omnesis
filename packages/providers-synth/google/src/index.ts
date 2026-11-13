@@ -21,11 +21,11 @@ import {
   mapEmail,
   mapEvent,
   mapEventRecord,
-  mapDriveFile,
+  loadDriveFolders,
   mapContact,
 } from "./fixtures.js";
 import { createGmailFixtureSource } from "./gmail-source.js";
-import { hasBinaryAttachments } from "./gmail-attachments.js";
+import { createDriveFixtureSource } from "./drive-source.js";
 import type { StructuredSyncResult } from "@omnesis/source-sdk";
 
 const { type: _type, ...rest } = realGoogle;
@@ -45,7 +45,6 @@ interface SourceWiring {
 const wiring: Record<string, SourceWiring> = {
   gmail: { load: loadEmails, map: mapEmail },
   "google-calendar": { load: loadEvents, map: mapEvent },
-  "google-drive": { load: loadFiles, map: mapDriveFile },
   "google-contacts": { load: loadContacts, map: mapContact },
 };
 
@@ -122,20 +121,24 @@ export default defineProvider<Record<string, never>>({
       async create({ sourceId, providerId, sourceConfig, host }) {
         if (s.id === "gmail") {
           const emails = loadEmails();
-          if (emails.some(hasBinaryAttachments))
-            return createGmailFixtureSource(
-              emails,
-              { sourceId, providerId },
-              {
-                extractAttachment: host?.extractAttachment,
-                attachmentConfig: resolveAttachmentConfig(sourceConfig, {
-                  defaultEnabled: true,
-                  includeAudioTypes: host?.includeAudioTypes,
-                }),
-              },
-            );
+          return createGmailFixtureSource(
+            emails,
+            { sourceId, providerId },
+            {
+              extractAttachment: host?.extractAttachment,
+              attachmentConfig: resolveAttachmentConfig(sourceConfig, {
+                defaultEnabled: true,
+                includeAudioTypes: host?.includeAudioTypes,
+              }),
+            },
+          );
         }
         const w = wiring[s.id];
+        if (s.id === "google-drive")
+          return createDriveFixtureSource(loadFiles(), loadDriveFolders(), {
+            sourceId,
+            providerId,
+          });
         if (!w) throw new Error(`No synth wiring for google source: ${s.id}`);
         const entries = w.load();
         return {

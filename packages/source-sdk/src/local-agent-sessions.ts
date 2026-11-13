@@ -21,6 +21,10 @@ import {
 import { SnapshotEnumeration } from "./snapshot.js";
 import { syncPage } from "./source.js";
 import { probeTreeReadAccess } from "./read-access-tree.js";
+import { sharedWorkingDirectory } from "./path-scopes.js";
+import { withPathScopes } from "./path-scope-sync.js";
+import type { PathScopeEntry } from "./path-scope-sync.js";
+import type { PathScopeLayout } from "./path-scopes.js";
 import type { SnapshotClaim } from "./snapshot.js";
 import type { ConversationMessage } from "@omnesis/core";
 import type { DocumentInput, ProviderId, SourceId, SyncIssue } from "@omnesis/types";
@@ -57,6 +61,12 @@ const MAX_CURSOR_BYTES = 16 * 1024 * 1024;
 export interface ParsedLocalAgentSession {
   id: string;
   cwd?: string;
+  /**
+   * Every working directory the session recorded, in the order it entered
+   * them. Defaults to `cwd` alone. A folder filter files the session under
+   * the one directory holding all of them; see `sharedWorkingDirectory`.
+   */
+  directories?: readonly string[];
   name?: string;
   branch?: string;
   model?: string;
@@ -98,6 +108,11 @@ export interface CreateLocalAgentSessionSourceOptions {
   providerId: ProviderId;
   sourceId: SourceId;
   dataCutoff?: string;
+  /**
+   * Publish each session's working directory as a folder a source filter can
+   * name. The source's definition must declare a hierarchical `folder` scope.
+   */
+  folders?: PathScopeLayout;
 }
 
 function newestFileKeysBySession(
@@ -217,6 +232,23 @@ function rootEnumeration(
   return enumeration;
 }
 
+/** The working directory of every document the cursor holds. */
+function documentDirectories(
+  cursor: LocalAgentSessionCursor,
+  policy: LocalAgentSessionAdapter["duplicateSessionPolicy"],
+): PathScopeEntry[] {
+  // Oldest first, so a document held by several files takes the newest one's
+  // directory: the file whose rendering of it is the one stored.
+  return livingFiles(cursor.files, policy)
+    .sort(([aKey, a], [bKey, b]) => a.mtimeMs - b.mtimeMs || (aKey < bKey ? -1 : 1))
+    .flatMap(([, state]) =>
+      state.externalIds.map((externalId) => ({
+        externalId,
+        directory: typeof state.directory === "string" ? state.directory : null,
+      })),
+    );
+}
+
 function displayName(session: ParsedLocalAgentSession): { chatName?: string; project?: string } {
   const project = session.cwd ? basename(session.cwd) : undefined;
   const parts = [session.name?.trim(), project, session.branch?.trim()].filter(
@@ -308,7 +340,7 @@ export function createLocalAgentSessionSource(
 ): SourceInstance<LocalAgentSessionCursor> {
   const roots = options.adapter.roots.map((root) => root.path);
 
-  return {
+  const source: SourceInstance<LocalAgentSessionCursor> = {
     probeReadAccess: ({ signal }) =>
       probeTreeReadAccess({
         signal,
@@ -428,6 +460,10 @@ export function createLocalAgentSessionSource(
       for (const [sessionId, winner] of previousWinners) {
         if (currentWinners.get(sessionId) !== winner) changedSessionIds.add(sessionId);
       }
+      // A file read before directories were recorded is read once more when
+      // the gateway takes folder facts, so its documents can be filed.
+      const recordsMissingDirectory =
+        options.folders !== undefined && syncOptions?.scopeHierarchySupported === true;
       const continuing =
         cursor?.version === 2 && cursor.scanKey === scanKey && cursor.pendingFileKeys !== undefined;
       const mayReuse = cursor?.version === 2 && cursor.scanKey === scanKey;
@@ -493,6 +529,7 @@ export function createLocalAgentSessionSource(
           if (
             mayReuse &&
             previous?.complete &&
+            !(recordsMissingDirectory && previous.directory === undefined) &&
             previous.rootId === file.rootId &&
             sameLocalAgentSessionFileRevision(previous, file) &&
             !previous.externalIds.some((externalId) =>
@@ -554,6 +591,7 @@ export function createLocalAgentSessionSource(
               externalIds: previous?.externalIds ?? [],
               complete: false,
               lastKnownComplete,
+              ...(previous?.directory !== undefined ? { directory: previous.directory } : {}),
             };
             continue;
           }
@@ -651,6 +689,9 @@ export function createLocalAgentSessionSource(
             sessionId: session.ignored ? undefined : session.id,
             externalIds: sessionDocuments.map((document) => document.externalId),
             complete: true,
+            directory: sharedWorkingDirectory(
+              session.directories ?? (session.cwd === undefined ? [] : [session.cwd]),
+            ),
           };
         } catch (error) {
           if (syncOptions?.signal?.aborted) throw syncOptions.signal.reason;
@@ -671,6 +712,7 @@ export function createLocalAgentSessionSource(
             externalIds: previous?.externalIds ?? [],
             complete: false,
             lastKnownComplete,
+            ...(previous?.directory !== undefined ? { directory: previous.directory } : {}),
           };
         }
       }
@@ -773,4 +815,14 @@ export function createLocalAgentSessionSource(
       });
     },
   };
+  const folders = options.folders;
+  return folders === undefined
+    ? source
+    : withPathScopes(source, {
+        layout: folders,
+        inventory: (cursor) =>
+          cursor.version === 2
+            ? documentDirectories(cursor, options.adapter.duplicateSessionPolicy)
+            : [],
+      });
 }

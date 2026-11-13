@@ -24,11 +24,15 @@
  * restriction in their candidate SQL directly.
  */
 
+import type { ScopePolicy } from "@omnesis/types";
+import {
+  readScopeSourceGenerations,
+  type ScopeSourceGeneration,
+} from "../access/scope-generations.js";
 import {
   knowledgeDocumentsReadable,
   type KnowledgeReadabilityReads,
 } from "../brain/knowledge/retrieval-fence.js";
-import { readRetrievalCoverage } from "./retrieval-coverage.js";
 type Db = Database.Database;
 import {
   createLogger,
@@ -50,26 +54,27 @@ import {
   resolveNumericDateOrder,
   type NumericDateOrderSetting,
 } from "../enrichment/dates/config.js";
-import { eventDocumentsInWindows, type TemporalIndexReader } from "./temporal-event-docs.js";
-import {
-  parseTemporalIntent,
-  type TemporalIntent,
-  type TemporalIntentOptions,
-} from "./temporal-intent.js";
-import { runCandidateGen } from "./candidate-gen.js";
-import { describeQuery } from "./query-log.js";
-import { dedupeByContentHashWith } from "./dedupe.js";
-import { buildFacets } from "./facets.js";
-import { mergeFilters } from "./filters.js";
-import { shouldBrowse } from "./browse.js";
-import { resolvePersonDocIds } from "./person-filter.js";
-import { parseQuery, pillTokenForRoles } from "./query-parser.js";
+import { getUrlTraversalHubSources } from "../url-graph-roles.js";
 import {
   directAgentProvenanceReads,
   type AgentProvenanceReads,
   type ExternalDocumentKey,
 } from "./agent-provenance.js";
-import { getUrlTraversalHubSources } from "../url-graph-roles.js";
+import { parseQuery, pillTokenForRoles } from "./query-parser.js";
+import { resolvePersonDocIds } from "./person-filter.js";
+import { shouldBrowse } from "./browse.js";
+import { mergeFilters } from "./filters.js";
+import { buildFacets } from "./facets.js";
+import { dedupeByContentHashWith } from "./dedupe.js";
+import { describeQuery } from "./query-log.js";
+import { runCandidateGen } from "./candidate-gen.js";
+import {
+  parseTemporalIntent,
+  type TemporalIntent,
+  type TemporalIntentOptions,
+} from "./temporal-intent.js";
+import { eventDocumentsInWindows, type TemporalIndexReader } from "./temporal-event-docs.js";
+import { readRetrievalCoverage } from "./retrieval-coverage.js";
 import {
   resolveSearchSettings,
   resolveDiversityConfig,
@@ -99,6 +104,20 @@ import type {
   SearchQuery,
   SearchResponse,
 } from "./types.js";
+
+const SCOPE_SEARCH_UNAVAILABLE_MESSAGES = {
+  changed: "Source permissions changed while searching. Retry the search.",
+  catchingUp:
+    "Search is still catching up with a source that has a filter. Retry the search shortly.",
+  worker:
+    "Search with source filters needs an available search worker. Set gateway.searchWorker.concurrency above 0, or retry when search workers are ready.",
+} as const;
+
+export class ScopeSearchUnavailableError extends Error {
+  constructor(reason: keyof typeof SCOPE_SEARCH_UNAVAILABLE_MESSAGES = "worker") {
+    super(SCOPE_SEARCH_UNAVAILABLE_MESSAGES[reason]);
+  }
+}
 
 const log = createLogger("gateway:search");
 
@@ -167,6 +186,25 @@ export class SearchPipeline {
   private vectorUnavailableReason: string | null = null;
   private searchConfig?: SearchConfig;
   private gatewayDb?: Db;
+  private scopeAuthorizationReads?: {
+    scopeSourceGenerations(sourceIds: readonly string[]): Promise<ScopeSourceGeneration[]>;
+  };
+  setScopeAuthorizationReads(reads: {
+    scopeSourceGenerations(sourceIds: readonly string[]): Promise<ScopeSourceGeneration[]>;
+  }): void {
+    this.scopeAuthorizationReads = reads;
+  }
+  private async scopeGenerations(sourceIds: readonly string[]): Promise<ScopeSourceGeneration[]> {
+    try {
+      return this.scopeAuthorizationReads
+        ? await this.scopeAuthorizationReads.scopeSourceGenerations(sourceIds)
+        : this.gatewayDb
+          ? readScopeSourceGenerations(this.gatewayDb, sourceIds)
+          : [];
+    } catch {
+      return [];
+    }
+  }
   /** Where hits are fenced; without it, on {@link gatewayDb} on this thread. */
   private knowledgeReadability?: KnowledgeReadabilityReads;
   /** Where agent search provenance is walked; without it, on {@link gatewayDb} on this thread. */
@@ -383,14 +421,14 @@ export class SearchPipeline {
   /**
    * Attach (or clear) the dedicated search-worker pool. Wired at boot when
    * `gateway.searchWorker.concurrency > 0`. Clearing (`undefined`) reverts to
-   * pure main-thread candidate generation.
+   * main-thread candidate generation for unfiltered requests.
    */
   setSearchPool(pool: SearchWorkerPool | undefined): void {
     this.searchWorkerPool = pool;
     log.info(
       pool
         ? "Search pipeline: worker pool attached — candidate generation runs off the main thread when the pool has headroom"
-        : "Search pipeline: worker pool cleared — candidate generation runs inline on the main thread",
+        : "Search pipeline: worker pool cleared — unfiltered candidate generation runs inline",
     );
   }
 
@@ -409,25 +447,26 @@ export class SearchPipeline {
   }
 
   /**
-   * Delegate-or-fallback gate for candidate generation (mirrors the io-pool
-   * posture). Delegates to the worker while the pool is wired, ready, not
-   * disposed, and below its inflight ceiling (none unless an operator set one,
-   * so a burst queues on the workers); otherwise — or on any worker
-   * rejection — runs the IDENTICAL `runCandidateGen` inline on the main thread.
-   * The fallback is byte-identical because it is the same function over the same
-   * `index.db` + usearch read handle; the only observable difference is that
-   * main's event loop blocks for that one query. Search is therefore never
-   * failed by a worker problem — it degrades to pre-Slice-3B behaviour.
+   * Candidate generation runs on ready workers, waiting for initial capacity
+   * while a pool starts. Unfiltered requests keep their identical inline
+   * fallback. Filtered requests fail explicitly when workers are unavailable:
+   * their SQL-authorized vector scan must never block the main thread.
    */
   private async candidateGen(req: CandidateGenRequest): Promise<CandidateGenResult> {
     const pool = this.searchWorkerPool;
-    if (pool && pool.isReady && pool.inflightCount < pool.maxInflightBeforeFallback) {
+    const scoped = !!req.scopeAuthorization;
+    if (
+      pool &&
+      (pool.isReady || (scoped && pool.isStarting)) &&
+      pool.inflightCount < pool.maxInflightBeforeFallback
+    ) {
       try {
         return await pool.candidateGen(req);
       } catch (err) {
         // Worker crashed / exited / init-failed / call rejected. Never fail the
-        // search on a dead worker — degrade to the identical main-thread code.
+        // unfiltered search on a dead worker — retain the main-thread fallback.
         this.searchWorkerFallbacks.error += 1;
+        if (scoped) throw new ScopeSearchUnavailableError();
         log.warn(
           `search-worker candidate-gen failed, running on main: ${
             err instanceof Error ? err.message : String(err)
@@ -438,6 +477,7 @@ export class SearchPipeline {
     }
     // Saturated (or not-yet-ready / disposed) pool, or no pool at all.
     this.searchWorkerFallbacks[pool ? "saturated" : "unconfigured"] += 1;
+    if (scoped) throw new ScopeSearchUnavailableError();
     return runCandidateGen(this.mainResources(), req);
   }
 
@@ -459,6 +499,7 @@ export class SearchPipeline {
     text: string,
     timeZone: string,
     referenceTime: string | undefined,
+    requireWorker = false,
   ): Promise<TemporalIntent | null> {
     const reference = referenceTime ? Date.parse(referenceTime) : Date.now();
     if (Number.isNaN(reference)) return null;
@@ -483,6 +524,7 @@ export class SearchPipeline {
         );
       }
     }
+    if (requireWorker) return null;
     try {
       return parseTemporalIntent(text, options);
     } catch (err) {
@@ -496,7 +538,10 @@ export class SearchPipeline {
   async search(
     query: SearchQuery,
     authorization?: {
-      readonly sourceIds: readonly string[];
+      readonly sourceIds?: readonly string[];
+      readonly scopePolicies?: readonly ScopePolicy[];
+      /** Sources a filtered search must not read; honoured only beside `scopePolicies`. */
+      readonly excludedSourceIds?: readonly string[];
       /** Server-derived all-sources grant; never supplied by a search body. */
       readonly graphContext?: "unrestricted";
     },
@@ -508,7 +553,16 @@ export class SearchPipeline {
       /** Resolved in the provenance read's snapshot; see `AgentSearchProvenanceOptions`. */
       excludeExternalDocuments?: readonly ExternalDocumentKey[];
     },
+    scopeAttempt = 0,
   ): Promise<SearchResponse> {
+    const scopePolicies = authorization?.scopePolicies ?? [];
+    // Exclusion by name exists only on the filtered path. A search without
+    // filters lists the sources it may read in `sourceIds` and keeps the
+    // ordinary candidate path, so an exclusion alone is a caller's mistake.
+    if (!scopePolicies.length && authorization?.excludedSourceIds?.length) {
+      throw new Error("Source exclusion requires source filter policies.");
+    }
+    const filteredSources = [...new Set(scopePolicies.map((policy) => policy.sourceId))];
     const startMs = Date.now();
     // Capture the scheduler's inflight state at search start so we can
     // attribute a slow search to whatever writer / background work was
@@ -560,7 +614,7 @@ export class SearchPipeline {
     // defaults have been expanded, and before either candidate lane runs.
     // Empty intersections deliberately become an impossible source id because
     // an empty sourceIds array means "unfiltered" to the search stages.
-    if (authorization) {
+    if (authorization?.sourceIds !== undefined) {
       const permitted = new Set(authorization.sourceIds);
       const intersection = filters.sourceIds
         ? filters.sourceIds.filter((sourceId) => permitted.has(sourceId))
@@ -637,7 +691,12 @@ export class SearchPipeline {
     // event-time read wait for the reading.
     const reading: Promise<TemporalIntent | null> =
       mode === "hybrid" && temporalConfig.enabled
-        ? this.readTemporalIntent(effectiveText, timeZone, query.temporal?.referenceTime)
+        ? this.readTemporalIntent(
+            effectiveText,
+            timeZone,
+            query.temporal?.referenceTime,
+            scopePolicies.length > 0,
+          )
         : Promise.resolve(null);
 
     let queryVector: Float32Array | null = null;
@@ -697,6 +756,7 @@ export class SearchPipeline {
         intent.windows,
         timeZone,
         filters.sourceIds,
+        { includeAnnotations: !scopePolicies.length },
       ).finally(() => {
         eventMs = Date.now() - eventStart;
       });
@@ -722,7 +782,19 @@ export class SearchPipeline {
           }
         : undefined;
 
+    const scopeGenerations = filteredSources.length
+      ? await this.scopeGenerations(filteredSources)
+      : [];
     const cg = await this.candidateGen({
+      ...(scopePolicies.length
+        ? {
+            scopeAuthorization: {
+              policies: scopePolicies,
+              generations: scopeGenerations,
+              excludedSourceIds: authorization?.excludedSourceIds,
+            },
+          }
+        : {}),
       mode,
       bm25Text: effectiveText,
       prefixLastToken: options?.prefixLastToken,
@@ -755,6 +827,15 @@ export class SearchPipeline {
       commonTokenThreshold: ctx.commonTokenThreshold,
       ...(temporal ? { temporal } : {}),
     });
+    if (cg.staleScopeSourceIds?.length) {
+      // The generations were read before the index was, so one mismatch can be
+      // the index having moved ahead of them; a second is the index behind.
+      if (scopeAttempt < 1) return this.search(query, authorization, options, scopeAttempt + 1);
+      log.info(
+        `Search refused: scope facts for ${cg.staleScopeSourceIds.length} filtered source(s) are not current in the index`,
+      );
+      throw new ScopeSearchUnavailableError("catchingUp");
+    }
 
     // Merge the core's outputs back onto the shared context so the downstream
     // main-thread stages and the response mapping see them as if the stages had
@@ -775,7 +856,7 @@ export class SearchPipeline {
 
     // RefCount enriches both paths and never re-sorts, so the pool order the
     // core produced is what the finalize slices.
-    if (this.refCountStage.isEnabled(ctx)) {
+    if (!scopePolicies.length && this.refCountStage.isEnabled(ctx)) {
       await this.refCountStage.execute(ctx);
     }
 
@@ -801,6 +882,7 @@ export class SearchPipeline {
         options?.agentContext &&
         v2.enabled &&
         this.gatewayDb &&
+        !scopePolicies.length &&
         (!authorization || authorization.graphContext === "unrestricted")
       ) {
         this.hydrateMetadataFields(ctx.results);
@@ -823,6 +905,7 @@ export class SearchPipeline {
           options?.graphContext &&
           v2.enabled &&
           this.gatewayDb &&
+          !scopePolicies.length &&
           (!authorization || authorization.graphContext === "unrestricted")
         ) {
           // Only the configured top results pay for graph traversal.
@@ -848,10 +931,34 @@ export class SearchPipeline {
     };
     await finalizeVisibleResults();
     if (query.includeBoundRow) {
-      await this.hydrateBoundRows(ctx.results);
+      await this.hydrateBoundRows(
+        ctx.results.filter(
+          (result) => !scopePolicies.some((policy) => policy.sourceId === result.sourceId),
+        ),
+      );
       await finalizeVisibleResults();
     }
 
+    if (filteredSources.length) {
+      const current = await this.scopeGenerations(filteredSources);
+      const changed = new Set(
+        filteredSources.filter((sourceId) => {
+          const before = scopeGenerations.find((entry) => entry.sourceId === sourceId);
+          const after = current.find((entry) => entry.sourceId === sourceId);
+          return (
+            !before ||
+            !after ||
+            before.generation < 0 ||
+            before.epoch !== after.epoch ||
+            before.generation !== after.generation
+          );
+        }),
+      );
+      if (changed.size) {
+        if (scopeAttempt < 1) return this.search(query, authorization, options, scopeAttempt + 1);
+        throw new ScopeSearchUnavailableError("changed");
+      }
+    }
     const facets = buildFacets(ctx.results);
     ctx.timing.totalMs = Date.now() - startMs;
 

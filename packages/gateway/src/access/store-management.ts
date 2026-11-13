@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { experimentalEnabled } from "@omnesis/core";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
-
 import { privacyPolicyDeletionBlockedReason } from "../privacy/policy-history.js";
+import { getSourceScopes } from "./scope-descriptors.js";
+import { sourceScopeReadiness } from "./scope-editor-readiness.js";
 
 import { oauthClientAuthenticates } from "./store-clients.js";
 import { appendAudit, getActiveCredential, hashSecret } from "./store-helpers.js";
 import { listAccessLevels } from "./store-level-summaries.js";
-import { capabilityToRule, getGrantCapabilities } from "./store-rules.js";
+import { capabilityToWireRule, getGrantCapabilities } from "./store-rules.js";
 import type { Db } from "../data/types.js";
 import type {
   AccessGrant,
@@ -32,7 +34,7 @@ export function loadGrantSummary(db: Db, grantId: string): AccessGrantSummary | 
   const grant = grantFromRow(db, row);
   return {
     ...grant,
-    rules: grant.capabilities.map(capabilityToRule),
+    rules: grant.capabilities.map(capabilityToWireRule),
     credentials: db
       .prepare<[string], CredentialRow>(
         `${CREDENTIAL_SELECT} WHERE c.grant_id = ? AND c.kind = 'interactive' ORDER BY c.created_at, c.id`,
@@ -349,6 +351,12 @@ export function listAccessOverview(
     )
     .all()
     .map(credentialFromRow);
+  const levels = listAccessLevels(db, now);
+  const filtersEnabled = experimentalEnabled();
+  const includeFilters =
+    filtersEnabled ||
+    levels.some((level) => level.rules.some((rule) => rule.scopePolicies?.length)) ||
+    grants.some((grant) => grant.capabilities.some((rule) => rule.scopePolicies?.length));
   const availableSources = db
     .prepare<[], { id: string; type: string; label: string | null; icon: string | null }>(
       `SELECT s.id, s.type,
@@ -364,6 +372,13 @@ export function listAccessOverview(
       name: source.label ?? source.type,
       icon: source.icon,
       available: true,
+      ...(includeFilters
+        ? {
+            sourceType: source.type,
+            scopes: getSourceScopes(db, source.type) ?? undefined,
+            scopeReadiness: sourceScopeReadiness(db, source.id),
+          }
+        : {}),
     }));
   const availableSourceIds = new Set(availableSources.map((source) => source.id));
   const missingReferencedSourceIds = [
@@ -384,6 +399,7 @@ export function listAccessOverview(
       deletionBlockedReason: privacyPolicyDeletionBlockedReason(db, family.id),
     }));
   return {
+    ...(includeFilters ? { sourceFilters: { enabled: filtersEnabled } } : {}),
     sources: [
       ...availableSources,
       ...missingReferencedSourceIds.map((id) => ({
@@ -396,14 +412,14 @@ export function listAccessOverview(
     policyFamilies,
     defaultPolicyFamilyId: DEFAULT_PRIVACY_POLICY_FAMILY_ID,
     privacyPolicies: policyFamilies,
-    levels: listAccessLevels(db, now),
+    levels,
     principals: principals.map((principal) => ({
       ...principal,
       grants: grants
         .filter((grant) => grant.principalId === principal.id)
         .map((grant) => ({
           ...grant,
-          rules: grant.capabilities.map(capabilityToRule),
+          rules: grant.capabilities.map(capabilityToWireRule),
           credentials: credentials.filter((credential) => credential.grantId === grant.id),
         })),
     })),

@@ -35,6 +35,7 @@ import type { z } from "zod";
 import type { Context } from "hono";
 import type { AuthorWatchRequest, AuthorWatchResult } from "../../watch/authoring.js";
 import type { AnswerService } from "../../privacy/answer-service.js";
+import type { DeviceAnswerScope } from "../../access/device-answer-scope.js";
 import type { AppEnv, RouteApp } from "./types.js";
 
 const log = createLogger("gateway:http").child("routes:subscriptions");
@@ -84,6 +85,12 @@ export interface SubscriptionRoutesDeps {
   /** Getter because model reconfiguration hot-swaps the live AnswerService. */
   getAnswerService?: () => AnswerService | undefined;
   /**
+   * What the calling device may be answered from over `/answer`. A firing
+   * answer researches the whole corpus, so it is refused for a device whose
+   * access level filters a source.
+   */
+  deviceAnswerScope?: (deviceId: string, tokenId: string) => DeviceAnswerScope;
+  /**
    * Turn an integration's request into a Watch V2 watch that wakes it back.
    *
    * The creation path once the first engine is retired. The record it produces
@@ -115,6 +122,30 @@ export interface SubscriptionRoutesDeps {
 function caller(auth: { deviceId: string | null; tokenId: string | null }): SubscriptionCaller {
   if (!auth.deviceId) throw new HttpError(403, "DEVICE_REQUIRED", "A paired device is required.");
   return { deviceId: auth.deviceId, tokenId: auth.tokenId };
+}
+
+/**
+ * A firing answer runs with every corpus tool and no source boundary, so a
+ * device whose access level filters one of its Answer sources gets no firing
+ * answer rather than one drawn from items the filter hides. A level that only
+ * lists whole sources does not bound a firing answer.
+ */
+function assertFiringAnswerUnrestricted(
+  deps: SubscriptionRoutesDeps,
+  authCaller: SubscriptionCaller,
+): void {
+  if (!deps.deviceAnswerScope) {
+    throw new ServiceUnavailableError("device answer access is not configured on this gateway");
+  }
+  if (!authCaller.tokenId) return;
+  const answerScope = deps.deviceAnswerScope(authCaller.deviceId, authCaller.tokenId);
+  if (answerScope.kind === "level" && answerScope.authorization.scopePolicies.length > 0) {
+    throw new HttpError(
+      403,
+      "ACCESS_LEVEL_RESTRICTED",
+      "This device's access level filters a source, so it cannot ask about a firing.",
+    );
+  }
 }
 
 function mapError(err: unknown): never {
@@ -461,6 +492,7 @@ export function mountSubscriptionRoutes(app: RouteApp, deps: SubscriptionRoutesD
         throw new ServiceUnavailableError("Agent harness not enabled on this gateway.");
       }
       const authCaller = caller(c.get("auth"));
+      assertFiringAnswerUnrestricted(deps, authCaller);
       const firingId = c.req.param("id");
       const body = c.req.valid("json");
       const includeCitations = parseAnswerCitationsQuery(c.req.query("citations"));

@@ -19,7 +19,7 @@ final class AccessWireTypesTests: XCTestCase {
 
     func testEmptyEffectiveSourceSelectionDoesNotPermitApproval() {
         let known: Set = ["notes:fictional"]
-        var selection = AccessSourceSelectionState.newGrant(knownSourceIds: known)
+        var selection = AccessSourceSelectionState(boundary: .init(mode: .allowlist, sourceIds: []), knownSourceIds: known)
         XCTAssertFalse(selection.permitsAnyKnownSource(known))
         selection.setAllowed(true, sourceId: "notes:fictional")
         XCTAssertTrue(selection.permitsAnyKnownSource(known))
@@ -120,14 +120,6 @@ final class AccessWireTypesTests: XCTestCase {
         "gmail:maya.reeves@example.com",
         "claude-transcripts:workstation",
     ]
-
-    func testNewGrantIsEmptyAllowlist() {
-        let state = AccessSourceSelectionState.newGrant(knownSourceIds: known)
-        XCTAssertEqual(
-            state.boundary(knownSourceIds: known),
-            AccessSourceBoundary(mode: .allowlist, sourceIds: [])
-        )
-    }
 
     func testAuthorizationConflictMessageDistinguishesRefreshSuccessFromFailure() {
         XCTAssertEqual(

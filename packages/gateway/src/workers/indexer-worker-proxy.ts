@@ -16,6 +16,10 @@
 import { Worker } from "node:worker_threads";
 import { createLogger, resolveWorkerEntry } from "@omnesis/core";
 import { UNLIMITED_MAX_AGE } from "@omnesis/config";
+import {
+  SCOPE_REPLAY_ACK_BATCH_SIZE,
+  type ScopeSourceGeneration,
+} from "../access/scope-generations.js";
 import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { PendingRequest } from "./pending-request.js";
 import type { BackgroundJob, JobObservation, JobState } from "../background-jobs/types.js";
@@ -63,6 +67,7 @@ export function buildIndexerCutoffMap(config: {
 }
 
 export interface IndexerWorkerOptions {
+  acknowledgeScopeReplay?: (completed: ScopeSourceGeneration) => Promise<number>;
   lexicalOnly?: boolean;
   /** Bound to this worker's model configuration, never the current replacement. */
   beginModelCall?: () => { success(): void; failure(error: unknown): void };
@@ -194,6 +199,7 @@ const DELETE_SOURCE_INDEX_TIMEOUT_MS = 60_000;
 const FLUSH_SAVE_TIMEOUT_MS = 20_000;
 
 export class IndexerWorkerProxy implements Embedder {
+  private readonly scopeReplayAcks = new Set<string>();
   private worker: Worker;
   private ready: Promise<void>;
   private resolveReady!: () => void;
@@ -642,6 +648,25 @@ export class IndexerWorkerProxy implements Embedder {
 
   private handleMessage(msg: IndexerToMain): void {
     switch (msg.type) {
+      case "scopeReplayAck": {
+        if (!this.opts.acknowledgeScopeReplay) break;
+        const key = JSON.stringify(msg.completed);
+        if (this.scopeReplayAcks.has(key)) break;
+        this.scopeReplayAcks.add(key);
+        void this.opts
+          .acknowledgeScopeReplay(msg.completed)
+          .then((deleted) => {
+            if (deleted < SCOPE_REPLAY_ACK_BATCH_SIZE)
+              this.post({ type: "scopeReplayAcknowledged", completed: msg.completed });
+          })
+          .catch((error: unknown) => {
+            log.warn(
+              `scope replay acknowledgement failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          })
+          .finally(() => this.scopeReplayAcks.delete(key));
+        break;
+      }
       case "embeddingStarted": {
         const call = this.opts.beginModelCall?.();
         if (call) this.modelCalls.set(msg.id, call);

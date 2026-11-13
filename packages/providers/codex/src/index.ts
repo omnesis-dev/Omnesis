@@ -7,6 +7,7 @@ import {
   defineSource,
   config as configSchema,
   expandHostPath,
+  hostHomeDir,
   type SourceInstance,
 } from "@omnesis/source-sdk";
 import {
@@ -20,6 +21,7 @@ import {
 } from "@omnesis/source-sdk/local-agent-sessions";
 import { SyncError } from "@omnesis/types";
 import { codexIcon } from "./icon.js";
+import { scopeContracts } from "./scope-contracts.js";
 import { codexStateSpec } from "./state.js";
 
 /**
@@ -128,6 +130,7 @@ async function parseCodexSession(
 ): Promise<ParsedLocalAgentSession> {
   let sessionId: string | undefined;
   let cwd: string | undefined;
+  const directories = new Set<string>();
   let branch: string | undefined;
   let model: string | undefined;
   let parentSessionId: string | undefined;
@@ -171,6 +174,7 @@ async function parseCodexSession(
             ? payload.session_id
             : threadId;
         cwd = typeof payload.cwd === "string" ? payload.cwd : undefined;
+        if (cwd !== undefined) directories.add(cwd);
         parentSessionId =
           typeof payload.parent_thread_id === "string"
             ? payload.parent_thread_id
@@ -191,7 +195,10 @@ async function parseCodexSession(
         if (payload.model !== undefined && typeof payload.model !== "string") {
           structurallyComplete = false;
         }
-        if (typeof payload.cwd === "string") cwd = payload.cwd;
+        if (typeof payload.cwd === "string") {
+          cwd = payload.cwd;
+          directories.add(payload.cwd);
+        }
         if (typeof payload.model === "string") model = payload.model;
         return;
       }
@@ -283,6 +290,7 @@ async function parseCodexSession(
   return {
     id: sessionId,
     cwd,
+    directories: [...directories],
     branch,
     model,
     parentSessionId,
@@ -318,6 +326,7 @@ export default defineSource({
   primaryCount: "documents",
   singleInstance: true,
   multiDevice: { mode: "partitioned" },
+  scopes: scopeContracts["codex"],
   conversational: true,
   contract: {
     // The host resolves the stored cursor against this before `sync` runs,
@@ -356,6 +365,8 @@ export default defineSource({
       providerId,
       sourceId,
       dataCutoff,
+      // Sessions record the directory as the machine that ran them names it.
+      folders: { home: hostHomeDir() },
       adapter: {
         harnessId: "codex",
         agentName: "Codex",

@@ -789,3 +789,44 @@ confirms before merge, each with the exact steps:
 - Finish with the ranked report, the list of files you changed, and the
   manual validation list. Do not declare the source ready: that is the
   author's and maintainers' call once § 17 is done.
+
+## Source scope facts (when declared)
+
+- `scopes.items` declares only source-native, stable item kinds and accepted
+  identifier types. Display names never decide access, and shared consumers
+  never branch on the source name.
+- A legacy projection recipe reads only source-owned metadata. Native people
+  identifiers are captured independently of mutable person merges; body-only
+  mentions do not count. Unknown or unresolved identifiers remain incomplete.
+- Conversation membership applies to every stored day, including silent
+  members, and membership changes invalidate historical facts. Labels use
+  stable IDs and follow label-only changes. Folder facts include ancestors;
+  moves invalidate affected descendants before any bounded recompute.
+- A source that reads directories from disk files its documents by folder
+  through `withPathScopes` (`packages/source-sdk/src/path-scope-sync.ts`) and
+  names folders with `pathScopeFolders`; it does not build ids, labels or
+  ancestor chains of its own. Its cursor records each document's directory, a
+  document with no directory is reported unknown, and it publishes no folder
+  hierarchy besides the helper's.
+- A tree whose levels are different things (an owner, then its repositories)
+  declares a noun per level in `levels`, roots first, and keeps `noun` as the
+  word for the kind as a whole; no client then calls an item by another
+  level's name or by "folder". Every document type the source produces carries
+  the fact, and a document the source cannot place says so (`complete: false`)
+  rather than omitting it. Items are named by the upstream's stable ids, so a
+  rename keeps a saved filter and a move changes one node.
+- New fact payloads are negotiated with the gateway compatibility manifest.
+  A source with no scope declaration keeps its existing behavior. A filtered
+  read fails closed on absent or stale facts; attachments inherit their parent.
+- Required native refresh cuts bind durable cursor progress to the native
+  store, registered actor and holder/member role. A restart request keeps its
+  nonce across retries and follows a replacement epoch only after the gateway
+  acknowledges that nonce; an unrelated epoch change is not an acknowledgement.
+  Members never rotate or release the source-wide refresh fence.
+- A required epoch is echoed only after fresh authoritative native observation,
+  never by relabelling cached metadata. Unreachable or malformed native rows
+  stay unknown. Full refreshes paginate aggregate work, survive lost cursors,
+  and omit unsupported wire fields after a gateway downgrade.
+- Tests cover both list modes, missing facts, identifier stability and each
+  declared link's update behavior. Refresh readiness is explicit, not inferred
+  from a display tag or from one document having complete facts.

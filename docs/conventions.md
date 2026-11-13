@@ -40,6 +40,82 @@ Source providers expose a `defineSource<Cursor>({...})` factory call rather than
 
 - Helper: `packages/source-sdk/src/define-source.ts`
 
+### External source filters use provider declarations and native facts
+
+Source-specific filter semantics live in `scopes` on the provider descriptor.
+That includes the words: an item's `noun`, and for a tree whose levels are
+different things a noun per level in `levels` (GitHub: owner, then repository).
+The gateway reports each tree item's `depth`, and a client picks the level's
+noun from the declaration; it never spells a source's word itself.
+Serializable legacy projection recipes let the gateway derive stored metadata
+without loading provider packages. Authorization snapshots capture policies and
+their revision; identifiers remain independent of mutable person merges.
+
+A filter matches by exact equality between a saved identifier and a stored fact,
+so both sides take their spelling from `canonicalScopeIdentifier`: the policy
+boundary canonicalizes what a client typed or picked, and the fact projection
+canonicalizes what a source declared. Do not normalize a phone number, address
+or domain for filters anywhere else; a second rule is a filter that silently
+never matches.
+
+The shared SQL evaluator treats absent completeness as unknown and denies the
+document under both list modes. Capability storage keeps its canonical boundary
+separate from conservative whole-source rows, so older gateways deny filtered
+sources. Existing whole-source authorization digests remain unchanged.
+
+The feature costs nothing until it is used. Fact triggers, declaration seeding,
+fact backfill and collector fact negotiation run only while source filters are
+in use: experimental mode is on, or a live access level holds a saved filter
+(`packages/gateway/src/access/scope-activation.ts`). Served rules give clients
+that predate filters a conservative `sources` boundary and carry the real one in
+`scopeSources`, so an older client can narrow a filtered level but never widen it.
+
+- Contract: `packages/types/src/source-scopes.ts`
+- Metadata projection: `packages/source-sdk/src/scope-facts.ts`
+- Identifier spelling: `packages/source-sdk/src/scope-identifiers.ts`
+- Folders of directory-reading sources: `packages/source-sdk/src/path-scopes.ts`
+  (naming) and `path-scope-sync.ts` (publication)
+- Evaluator: `packages/gateway/src/access/scope-sql.ts`
+- Compatibility storage: `packages/gateway/src/access/scope-policy-store.ts`
+
+Source-owned pure `scope-contracts.ts` modules also generate the gateway's
+packaged declaration catalogue. Regenerate it with
+`node --import tsx scripts/generate-source-scopes.mjs`; its check test prevents
+provider/catalogue drift. The gateway can then backfill an existing corpus
+before its collectors update, without importing native provider runtimes.
+Declaration revisions are monotonic (omission means generation 1); older
+collector publications cannot replace newer packaged contracts. An unreadable
+future contract keeps its stored form and revokes source readiness on rollback.
+
+Search mirrors facts through a durable, coalesced per-subject dirty queue.
+Source generations and a boot epoch fence stale or restored index snapshots;
+a mirror publishes its covered generation atomically, then acknowledges only
+that covered work to the corpus writer. Filtered queries apply the SQL policy
+and generation fence before candidate limits, in the same index snapshot.
+The query checks authority again after asynchronous work and retries a race
+once. Heavy filtered candidate work requires a search worker rather than
+falling back to a full vector scan on the gateway's main thread.
+
+- Corpus generations: `packages/gateway/src/access/scope-generations.ts`
+- Index replay: `packages/gateway/src/indexer/scope-mirror.ts`
+- Candidate authority: `packages/gateway/src/search/scope-authorization.ts`
+
+Native refreshes use protocol 2, negotiated independently from whole-source sync.
+Each required source/kind epoch fences every subject until its producer explicitly
+reports that epoch after a fresh native observation. Completing the global scan
+never blesses omitted rows. A lost cursor requests a new cut with a nonce; only
+that nonce's server acknowledgment permits adoption of the rotated epoch. Cursor
+progress also binds to the actual collector identity and native-store provenance.
+Legacy collectors keep syncing ordinary content, while affected filtered reads
+remain unknown until current metadata arrives.
+
+Answer tasks persist the canonical scope and cumulative document evidence for all
+prompt and tool reads, including inherited history. Every subsequent model stage
+and final disclosure rechecks that evidence. Direct reads use the same capture at
+egress, after asynchronous audit and transcript work. Generation fallback is
+conservative when evidence is incomplete; bearer rotation never resets usage or
+makes an inaccessible historical turn eligible.
+
 ### Voice is a media lease on the canonical agent
 
 The speech frontend delegates substantive work to `AgentService.openVoiceSession`.

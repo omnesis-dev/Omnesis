@@ -27,6 +27,7 @@ import {
 import { BuildAbortedError, GenerationBuilder } from "./generation-builder.js";
 import { directIndexWriteGate, withFreshIndexWriteGate } from "./index-write-gate.js";
 import { resolveEmbedderEncoding, type EmbedderEncoding } from "./embedder-prefixes.js";
+import type { ScopeSourceGeneration } from "../access/scope-generations.js";
 import type { Embedder } from "./types.js";
 import type { IndexerStatusReporter } from "./indexer-status.js";
 import type { InferenceRegistry } from "../inference/registry.js";
@@ -134,6 +135,7 @@ export interface IndexerModelInfo {
  * these are re-created inside the lifecycle.
  */
 export interface IndexerLifecycleDeps {
+  acknowledgeScopeReplay?: (completed: ScopeSourceGeneration) => Promise<number>;
   /** Capability→backend resolver. loadConfig/resolve('embedder')/getBackendApiKey. */
   inferenceRegistry: InferenceRegistry;
   /** Live config store. .get() is read on every startIndexer/runEmbedSwap. */
@@ -673,6 +675,7 @@ export class IndexerLifecycle {
     }
 
     const proxy = new IndexerWorkerProxy({
+      acknowledgeScopeReplay: this.deps.acknowledgeScopeReplay,
       lexicalOnly,
       beginModelCall,
       modelPath,

@@ -7,6 +7,7 @@ import {
   defineSource,
   config as configSchema,
   expandHostPath,
+  hostHomeDir,
   type SourceInstance,
 } from "@omnesis/source-sdk";
 import {
@@ -19,6 +20,7 @@ import {
   type ParsedLocalAgentSession,
 } from "@omnesis/source-sdk/local-agent-sessions";
 import { claudeCodeIcon } from "./icon.js";
+import { scopeContracts } from "./scope-contracts.js";
 import { claudeCodeStateSpec } from "./state.js";
 
 /**
@@ -445,12 +447,16 @@ async function parseClaudeCodeSession(
   if (id !== null && id !== undefined) structurallyComplete = false;
 
   let cwd: string | undefined;
+  const directories = new Set<string>();
   let branch: string | undefined;
   let model: string | undefined;
   const messages: ParsedLocalAgentSession["messages"] = [];
   let humanTurn = false;
   for (const node of reversed.reverse()) {
-    if (node.cwd !== undefined) cwd = node.cwd;
+    if (node.cwd !== undefined) {
+      cwd = node.cwd;
+      directories.add(node.cwd);
+    }
     if (node.branch !== undefined) branch = node.branch;
     if (node.model !== undefined) model = node.model;
     if (node.turnOrigin === "human") humanTurn = true;
@@ -466,6 +472,7 @@ async function parseClaudeCodeSession(
   return {
     id: sessionId,
     cwd,
+    directories: [...directories],
     name: customTitle?.trim() || aiTitle?.trim() || undefined,
     branch,
     model,
@@ -500,6 +507,7 @@ export default defineSource({
   primaryCount: "documents",
   singleInstance: true,
   multiDevice: { mode: "partitioned" },
+  scopes: scopeContracts["claude-code"],
   conversational: true,
   contentRetention: "best-effort",
   contract: {
@@ -539,6 +547,8 @@ export default defineSource({
       providerId,
       sourceId,
       dataCutoff,
+      // Sessions record the directory as the machine that ran them names it.
+      folders: { home: hostHomeDir() },
       adapter: {
         harnessId: "claude-code",
         agentName: "Claude Code",

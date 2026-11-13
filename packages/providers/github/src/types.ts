@@ -4,6 +4,7 @@
 import { isSnapshotLedger, makeCursorValidator } from "@omnesis/source-sdk";
 import type { SnapshotLedger, SyncCursor } from "@omnesis/source-sdk";
 import type { GithubClient } from "./client.js";
+import type { RepoScopeCursor } from "./repo-scopes.js";
 
 /** Shared per-account context handed to both sources. */
 export interface GithubContext {
@@ -124,7 +125,7 @@ export interface LaneState {
   dropped?: boolean;
 }
 
-export interface GithubThreadsCursor extends SyncCursor {
+export interface GithubThreadsCursor extends SyncCursor, RepoScopeCursor {
   /** Cursor schema/render version — a mismatch forces a full re-walk. */
   renderVersion?: number;
   /** Per-repo lane watermarks, keyed by `owner/repo`. */
@@ -178,7 +179,7 @@ export interface RepoCommitState {
   knownShas?: string[];
 }
 
-export interface GithubCommitsCursor extends SyncCursor {
+export interface GithubCommitsCursor extends SyncCursor, RepoScopeCursor {
   renderVersion?: number;
   repos?: Record<string, RepoCommitState>;
   /** The repo listing currently mid-walk. */
@@ -278,6 +279,10 @@ export interface RestCommentRow {
 
 export interface RestRepoRow {
   full_name: string;
+  /** GitHub's id for the repository, which a rename or a transfer keeps. */
+  id?: number;
+  /** The user or organization that holds the repository, with GitHub's id for it. */
+  owner?: { id?: number; login?: string } | null;
 }
 
 export interface RestCommitListRow {

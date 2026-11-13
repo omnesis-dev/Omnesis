@@ -3,8 +3,10 @@
 
 // Helpers the Access pages and the neighbouring Policies tab read: which
 // policies an overview carries, the connections and access levels it lists,
-// how a server error is worded, how a moment is printed, what a capability is
-// called and whether a piece of access is still active.
+// how a server error is worded, how a moment is printed and whether a piece
+// of access is still active.
+
+import { useEffect, useState } from "preact/hooks";
 
 import { defaultPolicyFamilyId, normalizeGrantRules } from "../../components/grant-builder-state.js";
 
@@ -181,8 +183,18 @@ export function expiresInLabel(expiresAt, now = Date.now()) {
   return `Expires in ${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
-export function capabilityLabel(capability) {
-  return capability === "notes" ? "Notes" : capability === "direct" ? "Direct" : "Answer";
+/**
+ * The current time, refreshed every half minute: fine-grained enough for
+ * `expiresInLabel`, which counts whole minutes, on a page that stays open
+ * while a request's few minutes run out.
+ */
+export function useExpiryClock() {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(tick);
+  }, []);
+  return now;
 }
 
 export function effectiveAccessState(entity, now = Date.now()) {

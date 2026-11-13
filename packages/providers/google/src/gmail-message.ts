@@ -15,11 +15,11 @@ import {
   splitEmailList,
   type MailAddress,
 } from "@omnesis/core";
+import { MAX_PEOPLE_PER_MESSAGE } from "./gmail-limits.js";
 import type { gmail_v1 } from "googleapis";
 import type { PersonMention } from "@omnesis/types";
 
-/** More people than this on one message are dropped rather than handed to the people graph. */
-const MAX_PEOPLE_PER_MESSAGE = 1_000;
+export { MAX_PEOPLE_PER_MESSAGE } from "./gmail-limits.js";
 
 /** Value of a header on a part, matched case-insensitively. */
 export function partHeader(part: gmail_v1.Schema$MessagePart, name: string): string | undefined {

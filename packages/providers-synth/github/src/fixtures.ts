@@ -20,6 +20,7 @@
 
 import { commitToDocument, discussionToDocument, threadToDocument } from "@omnesis/provider-github";
 import { loadActiveUniverse, loadSourceFixtureJson } from "@omnesis/providers-synth-common";
+import type { repoScopeCatalogue } from "@omnesis/provider-github";
 import type { EdgeDeclaration } from "@omnesis/core";
 import type { DocumentInput, ProviderId, SourceId } from "@omnesis/types";
 
@@ -33,17 +34,40 @@ type CommitDetail = Parameters<typeof commitToDocument>[0];
 type RefKinds = NonNullable<Parameters<typeof threadToDocument>[4]>;
 type ThreadKind = RefKinds extends ReadonlyMap<number, infer K> ? K : never;
 
-interface ThreadsFixture {
-  /** `owner/repo` every thread in the file belongs to. */
+/**
+ * How GitHub identifies a repository and whoever holds it. A repository
+ * without these is one a filter cannot name, as on the live source.
+ */
+interface RepoIdentity {
+  /** `owner/repo`. */
   repo: string;
+  /** GitHub's id for the repository. */
+  id?: number;
+  /** The user or organization holding it, with GitHub's id for them. */
+  owner?: { id: number; login: string };
+}
+
+interface ThreadsFixture extends RepoIdentity {
   threads: ThreadNode[];
   discussions: DiscussionNode[];
 }
 
-interface CommitsFixture {
-  repo: string;
+interface CommitsFixture extends RepoIdentity {
   commits: CommitDetail[];
 }
+
+/** A fixture file holds one repository, or several under `repositories`. */
+type FixtureFile<T> = T | { repositories: T[] };
+const repositoriesOf = <T>(file: FixtureFile<T>): T[] =>
+  "repositories" in (file as object) ? (file as { repositories: T[] }).repositories : [file as T];
+
+/** A repository as the account's listing names it. */
+export type RepoRow = Parameters<typeof repoScopeCatalogue>[0][number];
+const repoRow = (fixture: RepoIdentity): RepoRow => ({
+  full_name: fixture.repo,
+  ...(fixture.id !== undefined ? { id: fixture.id } : {}),
+  ...(fixture.owner ? { owner: fixture.owner } : {}),
+});
 
 /** One materializable unit of the threads source. */
 export type ThreadEntry =
@@ -141,46 +165,71 @@ function refKindsFor(
 // Loading
 // ---------------------------------------------------------------------------
 
-let threadCache: ThreadEntry[] | null = null;
-let commitCache: CommitEntry[] | null = null;
+let threadCache: { entries: ThreadEntry[]; repos: RepoRow[] } | null = null;
+let commitCache: { entries: CommitEntry[]; repos: RepoRow[] } | null = null;
 
-/** Threads then discussions, in fixture order — a stable, deterministic page sequence. */
-export function loadThreadEntries(): ThreadEntry[] {
+function loadThreads(): { entries: ThreadEntry[]; repos: RepoRow[] } {
   if (threadCache) return threadCache;
-  const fixture = loadSourceFixtureJson<ThreadsFixture>(
-    loadActiveUniverse(),
-    "github",
-    "threads.json",
+  const fixtures = repositoriesOf(
+    loadSourceFixtureJson<FixtureFile<ThreadsFixture>>(
+      loadActiveUniverse(),
+      "github",
+      "threads.json",
+    ),
   );
-  const kindIndex = buildKindIndex(fixture);
-  const repo = fixture.repo;
-  threadCache = [
-    ...fixture.threads.map((node): ThreadEntry => ({
-      kind: "thread",
-      repo,
-      node,
-      refKinds: refKindsFor(threadRefTexts(node), node.number, kindIndex),
-    })),
-    ...fixture.discussions.map((node): ThreadEntry => ({
-      kind: "discussion",
-      repo,
-      node,
-      refKinds: refKindsFor(discussionRefTexts(node), node.number, kindIndex),
-    })),
-  ];
+  threadCache = {
+    repos: fixtures.map(repoRow),
+    // Issue, pull-request and discussion numbers are a repository's own, so
+    // each repository resolves its `#N` references against itself.
+    entries: fixtures.flatMap((fixture) => {
+      const kindIndex = buildKindIndex(fixture);
+      const repo = fixture.repo;
+      return [
+        ...fixture.threads.map((node): ThreadEntry => ({
+          kind: "thread",
+          repo,
+          node,
+          refKinds: refKindsFor(threadRefTexts(node), node.number, kindIndex),
+        })),
+        ...fixture.discussions.map((node): ThreadEntry => ({
+          kind: "discussion",
+          repo,
+          node,
+          refKinds: refKindsFor(discussionRefTexts(node), node.number, kindIndex),
+        })),
+      ];
+    }),
+  };
   return threadCache;
 }
 
-export function loadCommitEntries(): CommitEntry[] {
+function loadCommits(): { entries: CommitEntry[]; repos: RepoRow[] } {
   if (commitCache) return commitCache;
-  const fixture = loadSourceFixtureJson<CommitsFixture>(
-    loadActiveUniverse(),
-    "github-commits",
-    "commits.json",
+  const fixtures = repositoriesOf(
+    loadSourceFixtureJson<FixtureFile<CommitsFixture>>(
+      loadActiveUniverse(),
+      "github-commits",
+      "commits.json",
+    ),
   );
-  commitCache = fixture.commits.map((detail) => ({ repo: fixture.repo, detail }));
+  commitCache = {
+    repos: fixtures.map(repoRow),
+    entries: fixtures.flatMap((fixture) =>
+      fixture.commits.map((detail) => ({ repo: fixture.repo, detail })),
+    ),
+  };
   return commitCache;
 }
+
+/**
+ * Each repository's threads then its discussions, in fixture order — a stable,
+ * deterministic page sequence.
+ */
+export const loadThreadEntries = (): ThreadEntry[] => loadThreads().entries;
+export const loadCommitEntries = (): CommitEntry[] => loadCommits().entries;
+/** The repositories each source's fixture holds, as the account's listing would name them. */
+export const loadThreadRepos = (): RepoRow[] => loadThreads().repos;
+export const loadCommitRepos = (): RepoRow[] => loadCommits().repos;
 
 /** Drop the parsed fixtures — testing aid for a universe switch. */
 export function resetFixtureCache(): void {

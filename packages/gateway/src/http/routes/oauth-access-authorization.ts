@@ -586,7 +586,7 @@ export function mountOAuthAuthorizationRoutes(
   app.post(
     "/admin/access/levels",
     noStore,
-    scope.portalAdmin(),
+    scope.accessEditorAdmin((deviceId) => access.isNativeAccessEditorDevice(deviceId)),
     validateJson(accessLevelCreateBody),
     async (c) => {
       const result = await access.createLevel({
@@ -601,7 +601,7 @@ export function mountOAuthAuthorizationRoutes(
   app.patch(
     "/admin/access/levels/:id",
     noStore,
-    scope.portalAdmin(),
+    scope.accessEditorAdmin((deviceId) => access.isNativeAccessEditorDevice(deviceId)),
     validateJson(accessLevelUpdateBody),
     async (c) => {
       const levelId = oauthApprovalId.safeParse(c.req.param("id"));
@@ -620,19 +620,24 @@ export function mountOAuthAuthorizationRoutes(
       return c.json({ level: result.value });
     },
   );
-  app.delete("/admin/access/levels/:id", noStore, scope.portalAdmin(), async (c) => {
-    const levelId = oauthApprovalId.safeParse(c.req.param("id"));
-    if (!levelId.success) return c.json({ error: "not-found" }, 404);
-    const result = await access.deleteLevel({
-      levelId: levelId.data,
-      actorTokenId: c.get("auth").tokenId!,
-    });
-    if (!result.ok) {
-      return c.json({ error: result.error }, result.error === "not-found" ? 404 : 409);
-    }
-    log.info(`Access level ${levelId.data} deleted`);
-    return c.json({ removed: true });
-  });
+  app.delete(
+    "/admin/access/levels/:id",
+    noStore,
+    scope.accessEditorAdmin((deviceId) => access.isNativeAccessEditorDevice(deviceId)),
+    async (c) => {
+      const levelId = oauthApprovalId.safeParse(c.req.param("id"));
+      if (!levelId.success) return c.json({ error: "not-found" }, 404);
+      const result = await access.deleteLevel({
+        levelId: levelId.data,
+        actorTokenId: c.get("auth").tokenId!,
+      });
+      if (!result.ok) {
+        return c.json({ error: result.error }, result.error === "not-found" ? 404 : 409);
+      }
+      log.info(`Access level ${levelId.data} deleted`);
+      return c.json({ removed: true });
+    },
+  );
   app.put(
     "/admin/access/connections/:id/level",
     noStore,

@@ -1,0 +1,452 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright (c) 2026 Adrien Conrath */
+
+.source-filter-editor p {
+  margin: 0;
+  line-height: 1.5;
+  font-size: 13px;
+}
+.source-filter-notice {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg-tertiary);
+}
+/* Stands where a count will appear, and leads the line that says counting is under way. */
+.source-filter-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: source-filter-spin 0.8s linear infinite;
+}
+p > .source-filter-spinner,
+.compact-policy-impact > .source-filter-spinner {
+  margin-right: 8px;
+}
+@keyframes source-filter-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .source-filter-spinner {
+    animation-duration: 2.4s;
+  }
+}
+.source-filter-unchecked {
+  display: grid;
+  gap: 2px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.source-filter-unchecked p {
+  margin: 0;
+}
+.source-filter-unchecked .source-filter-unchecked-detail {
+  color: var(--text-secondary);
+}
+.source-filter-search {
+  display: grid;
+  font-size: 13px;
+}
+.source-filter-search input,
+.source-filter-typed input,
+.source-filter-typed select {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 5px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.source-filter-breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.source-filter-breadcrumbs button {
+  background: none;
+  border: 0;
+  padding: 4px;
+  color: var(--text-link);
+  cursor: pointer;
+  font-size: 12px;
+}
+.source-filter-breadcrumbs > [aria-current] {
+  padding: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.source-filter-breadcrumbs > :nth-child(n + 3)::before {
+  content: "› ";
+  color: var(--text-muted);
+}
+.source-filter-location {
+  padding: 4px 4px 4px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.source-filter-select-location {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.source-filter-options {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.source-filter-options li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.source-filter-options label {
+  display: flex;
+  flex: 1;
+  cursor: pointer;
+  font-size: 13px;
+}
+.source-filter-options label > span {
+  overflow-wrap: anywhere;
+}
+.source-filter-options small {
+  color: var(--text-secondary);
+}
+.source-filter-typed legend {
+  font-size: 12px;
+}
+.source-filter-proposals {
+  display: grid;
+  gap: 6px;
+}
+.source-filter-proposals > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.source-filter-proposals span {
+  overflow-wrap: anywhere;
+}
+.source-filter-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.source-filter-preview {
+  display: grid;
+  gap: 8px;
+}
+.source-filter-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.source-filter-counts strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* The selected-filter table is the builder; searches add rows through overlays. */
+.modal-panel:has(.guided-filter-editor) {
+  width: min(760px, calc(100vw - 40px));
+  max-height: min(760px, calc(100dvh - 40px));
+  display: flex;
+  flex-direction: column;
+}
+.modal-panel:has(.guided-filter-editor) .modal-title {
+  font-size: 18px;
+  line-height: 1.35;
+}
+.modal-panel:has(.guided-filter-editor) .modal-head {
+  padding: 16px 20px 12px;
+}
+.modal-panel:has(.guided-filter-editor) .modal-body {
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  padding: 0 20px 16px;
+}
+.guided-filter-editor {
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 14px;
+}
+.filter-task-context {
+  display: flex;
+  padding-top: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.filter-task-context > span:last-child {
+  margin-left: auto;
+}
+.filter-task-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 2px;
+}
+/* Tall enough that a search's results open over the builder without being cut off. */
+.filter-builder-stage {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: min(340px, 50dvh);
+}
+.filter-builder-inputs {
+  display: grid;
+  gap: 10px;
+}
+.filter-builder-searches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  position: relative;
+  z-index: 2;
+}
+.filter-builder-searches > :only-child {
+  grid-column: 1 / -1;
+}
+.guided-filter-editor button,
+.guided-filter-editor select,
+.guided-filter-editor input:not([type="checkbox"]):not([type="radio"]) {
+  min-height: 32px;
+  font-size: 13px;
+  line-height: 1.3;
+  padding: 6px 10px;
+}
+.guided-filter-editor input[type="checkbox"],
+.guided-filter-editor input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.guided-filter-editor .source-filter-mode {
+  display: grid;
+  gap: 4px;
+  padding: 2px 0;
+}
+.guided-filter-editor .source-filter-mode label {
+  display: flex;
+  align-items: flex-start;
+  min-height: 36px;
+  gap: 10px;
+  padding: 6px 0;
+}
+.guided-filter-editor .source-filter-mode label input {
+  margin-top: 3px;
+}
+.guided-filter-editor .source-filter-mode label span {
+  display: grid;
+  gap: 2px;
+}
+.guided-filter-editor .source-filter-mode label strong {
+  font-weight: 500;
+}
+.guided-filter-editor .source-filter-mode label small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.source-filter-mode-note {
+  color: var(--text-secondary);
+}
+.source-filter-search {
+  margin: 0;
+  gap: 5px;
+}
+.source-filter-picker-overlay {
+  position: relative;
+  min-width: 0;
+}
+.source-filter-picker-overlay:focus-within {
+  z-index: 3;
+}
+.source-filter-picker-overlay .source-filter-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(440px, calc(100vw - 64px));
+  max-height: min(300px, 40dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #0003;
+  z-index: 4;
+}
+.filter-builder-searches > :nth-child(even) .source-filter-results {
+  left: auto;
+  right: 0;
+}
+.source-filter-options {
+  max-height: none;
+  overflow: visible;
+}
+.source-filter-options li {
+  padding: 0;
+  border: 0;
+  gap: 6px;
+  min-height: 32px;
+}
+.source-filter-options label {
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 32px;
+}
+.source-filter-options label > span {
+  flex: 1;
+  min-width: 0;
+}
+.source-filter-options small {
+  display: inline;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.source-filter-options input {
+  margin: 0;
+}
+.source-filter-exact .source-filter-typed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.source-filter-typed > span {
+  white-space: nowrap;
+  font-size: 12px;
+}
+.source-filter-typed select {
+  width: auto;
+  max-width: 142px;
+  flex: 0 1 auto;
+}
+.source-filter-typed input {
+  flex: 1;
+  width: 100px;
+}
+.source-filter-typed button {
+  flex-shrink: 0;
+}
+.filter-selection-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.filter-selection-heading strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.filter-selection-heading > span,
+.filter-selection-empty,
+.filter-option-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.guided-filter-editor .filter-selection-empty {
+  min-height: 90px;
+  padding: 14px 0;
+}
+.source-filter-count-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.guided-filter-footer {
+  display: flex;
+  flex-shrink: 0;
+  margin-top: auto;
+  justify-content: space-between;
+  gap: 10px;
+}
+.guided-filter-footer > span {
+  display: flex;
+  gap: 8px;
+}
+@media (max-width: 560px) {
+  .modal-panel:has(.guided-filter-editor) {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+  .modal-panel:has(.guided-filter-editor) .modal-head {
+    padding: 12px 14px;
+  }
+  .modal-panel:has(.guided-filter-editor) .modal-body {
+    padding: 0 12px 12px;
+  }
+  .filter-builder-searches {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .filter-builder-searches > :nth-child(even) .source-filter-results {
+    left: 0;
+    right: auto;
+  }
+  .source-filter-picker-overlay .source-filter-results {
+    width: 100%;
+    max-width: 100%;
+    max-height: 32dvh;
+  }
+  .source-filter-exact .source-filter-typed {
+    flex-wrap: wrap;
+  }
+  .source-filter-typed > span {
+    flex-basis: 100%;
+  }
+  .source-filter-options small {
+    font-size: 10px;
+  }
+}
+@media (pointer: coarse), (max-width: 560px) {
+  .guided-filter-editor button,
+  .guided-filter-editor select,
+  .guided-filter-editor input:not([type="checkbox"]):not([type="radio"]),
+  .source-filter-options li,
+  .source-filter-options label,
+  .guided-filter-editor .source-filter-mode label {
+    min-height: 44px;
+  }
+}
+
+/* Keep focused controls at the native mobile type size to avoid browser zoom. */
+@media (max-width: 560px) {
+  .guided-filter-editor input:not([type="checkbox"]):not([type="radio"]),
+  .guided-filter-editor select {
+    font-size: 16px;
+  }
+}

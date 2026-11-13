@@ -89,3 +89,21 @@ export function withRepoSnapshot(
 export function gapRepo(cur: RepoSnapshotCursor, repo: string, reason: string): void {
   withRepoSnapshot(cur, (enumeration) => enumeration.gap(repo, reason));
 }
+
+/**
+ * The repositories whose stored documents this snapshot cycle did not list to
+ * the end: the ones it opened and could not read, and the ones this source has
+ * synced before that the listing no longer names.
+ */
+export function unlistedRepos(
+  cur: RepoSnapshotCursor & { repos?: Record<string, unknown> },
+  enumeration: SnapshotEnumeration,
+): string[] {
+  const opened = new Set(cur.snapshotRepos ?? []);
+  return [
+    ...new Set([
+      ...enumeration.gaps.map((gap) => gap.partition),
+      ...Object.keys(cur.repos ?? {}).filter((repo) => !opened.has(repo)),
+    ]),
+  ];
+}

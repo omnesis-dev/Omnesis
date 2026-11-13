@@ -17,6 +17,8 @@
  * the over-fetched set by cosine before it is cut to `limit`.
  */
 
+import { scopeSearchActive } from "./scope-authorization.js";
+import { scopedVectorCandidates } from "./scoped-vector.js";
 import { hasPostJoinFilter, normalizeDateTo } from "./metadata.js";
 import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
 import { visibleChunkClause } from "./visible-chunks.js";
@@ -50,6 +52,8 @@ export function hnswSearchCandidates(
   limit: number,
   options?: HnswSearchOptions,
 ): SearchCandidate[] {
+  if (scopeSearchActive(indexDb))
+    return scopedVectorCandidates(indexDb, queryEmbedding, filters, limit, options?.documentIds);
   const overFetch = options?.hnswOverFetch ?? 10;
   const hasDocIdFilter = options?.documentIds !== undefined;
   const hasFilters =

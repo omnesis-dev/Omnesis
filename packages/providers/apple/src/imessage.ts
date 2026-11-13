@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -23,7 +24,13 @@ import {
   AudioRejectedError,
   assertNever,
 } from "@omnesis/core";
-import { SourceId, ProviderId, isTransientSyncError } from "@omnesis/types";
+import { SourceId, ProviderId, SyncError, isTransientSyncError } from "@omnesis/types";
+import {
+  SOURCE_SCOPE_PAGE_WORK,
+  conversationScopeWork,
+  planScopeRefresh,
+} from "@omnesis/source-sdk";
+import { imessageScopeMembership } from "./imessage-scope-membership.js";
 import { unavailableStorePage } from "./store-unavailable.js";
 import { parseAttributedBody } from "./imessage-attributed-body.js";
 import {
@@ -54,8 +61,8 @@ import type {
   AttachmentExtractFn,
   AudioTranscribeFn,
 } from "@omnesis/core";
-import type { SyncCursor, SyncProgress, SyncResult } from "@omnesis/source-sdk";
-import type { DocumentInput, SyncIssue } from "@omnesis/types";
+import type { SyncCursor, SyncProgress, SyncResult, SyncOptions } from "@omnesis/source-sdk";
+import type { DocumentInput, SyncIssue, SourceScopeConversationUpdate } from "@omnesis/types";
 import type { AppleProvider } from "./provider.js";
 import type {
   AppleIMessageSyncCursor,
@@ -195,6 +202,11 @@ export class AppleIMessageSource {
   /** Optional ISO 8601 cutoff — messages sent before this date are excluded. */
   readonly dataCutoff?: string;
 
+  private scopeEpoch: string = randomUUID();
+  private scopeSequence = 0;
+  private scopeObservation:
+    { epoch: string; sequence: number; observedAt: string; refreshEpoch?: string } | undefined;
+  private scopeMembershipUpdates = new Map<string, SourceScopeConversationUpdate>();
   private isTranscriptionVocabularyEnabled?: () => boolean;
   private attachmentConfig: AttachmentExtractionConfig;
   private extractAttachment?: AttachmentExtractFn;
@@ -221,7 +233,11 @@ export class AppleIMessageSource {
     this.configDir = opts.configDir;
   }
 
-  async sync(cursor: SyncCursor | null): Promise<SyncResult> {
+  async sync(cursor: SyncCursor | null, opts?: SyncOptions): Promise<SyncResult> {
+    if (!opts?.scopeRefreshEpochsSupported && cursor?.scopeParticipantRefresh !== undefined) {
+      const { scopeParticipantRefresh: _refresh, ...legacy } = cursor;
+      cursor = legacy;
+    }
     const db = this.provider.getIMessageDb();
     if (!db) {
       throwOnOpenFailure(this.provider.getIMessageOpenFailure());
@@ -236,6 +252,65 @@ export class AppleIMessageSource {
       );
       state = null;
     }
+    const nativeStat =
+      opts?.scopeRefreshEpochsSupported && opts.scopeRefreshEpochs?.participant
+        ? statSync(this.provider.imessageDbFilePath)
+        : undefined;
+    if (nativeStat && this.provider.getIMessageDb() !== db)
+      throw new SyncError(
+        "transient",
+        "The native message store changed during scope refresh. Retry the sync.",
+      );
+    const nativeStoreId = nativeStat
+      ? `${nativeStat.dev}:${nativeStat.ino}:${nativeStat.birthtimeMs}`
+      : undefined;
+    const previousRefresh =
+      state && nativeStoreId && state.scopeParticipantRefresh?.storeId === nativeStoreId
+        ? state.scopeParticipantRefresh
+        : undefined;
+    const scopePlan = planScopeRefresh(
+      previousRefresh,
+      opts?.scopeRefreshEpochs?.participant,
+      opts?.scopeFactsSupported === true && opts?.scopeRefreshEpochsSupported === true,
+      opts?.run?.role,
+      opts?.scopeRefreshRequestIds?.participant,
+      opts?.scopeRefreshActorId,
+    );
+    if (scopePlan.restart)
+      return {
+        documents: [],
+        deletedExternalIds: [],
+        cursor: {
+          ...state,
+          lastRowId: state?.lastRowId ?? 0,
+          scopeParticipantRefresh: { ...scopePlan.bookmark!, storeId: nativeStoreId },
+        },
+        scopeUpdates: {
+          refreshes: [
+            {
+              kind: "participant",
+              active: true,
+              epoch: scopePlan.epoch,
+              restart: true,
+              requestId: scopePlan.bookmark?.requestId,
+            },
+          ],
+        },
+        hasMore: scopePlan.continueImmediately,
+      };
+    this.scopeMembershipUpdates.clear();
+    this.scopeObservation = opts?.scopeFactsSupported
+      ? {
+          epoch: state?.scopeEpoch ?? this.scopeEpoch,
+          sequence: Math.max(state?.scopeSequence ?? 0, this.scopeSequence) + 1,
+          observedAt: new Date().toISOString(),
+          ...(scopePlan.epoch ? { refreshEpoch: scopePlan.epoch } : {}),
+        }
+      : undefined;
+    if (this.scopeObservation) {
+      this.scopeEpoch = this.scopeObservation.epoch;
+      this.scopeSequence = this.scopeObservation.sequence;
+    }
     const lastRowId = state?.lastRowId ?? 0;
     const isBootstrap = lastRowId === 0;
     // A sync from no cursor is a bootstrap or a resync: clips the gateway
@@ -246,6 +321,32 @@ export class AppleIMessageSource {
 
     // Convert dataCutoff to iMessage nanosecond timestamp for filtering
     const cutoffNs = this.dataCutoff ? isoToImessageNs(this.dataCutoff) : null;
+    const scopeRefresh = this.refreshScopeMembership(
+      db,
+      scopePlan.scan
+        ? {
+            ...state,
+            lastRowId: state?.lastRowId ?? 0,
+            scopeRosterCursor: scopePlan.bookmark?.after ?? "",
+            scopeRosterComplete: false,
+          }
+        : state,
+    );
+    const finishScopePage = (result: SyncResult): SyncResult => {
+      if (scopePlan.bookmark)
+        result.cursor.scopeParticipantRefresh = {
+          ...scopePlan.bookmark,
+          storeId: nativeStoreId,
+          after: scopePlan.scan ? scopeRefresh.cursor : scopePlan.bookmark.after,
+          completed: scopePlan.scan ? scopeRefresh.complete : scopePlan.bookmark.completed,
+        };
+      if (scopePlan.controls && scopePlan.scan && scopeRefresh.complete)
+        result.scopeUpdates = {
+          ...result.scopeUpdates,
+          refreshes: [{ kind: "participant", active: false, epoch: scopePlan.epoch }],
+        };
+      return result;
+    };
 
     // At bootstrap with a cutoff, jump only to the row immediately before the
     // earliest post-cutoff message. This is safe even when ROWID and message
@@ -275,7 +376,7 @@ export class AppleIMessageSource {
       PAGE_SIZE + 1,
     ]);
 
-    const hasMore = rows.length > PAGE_SIZE;
+    const hasMore = rows.length > PAGE_SIZE || scopeRefresh.more;
     const pageRows = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
 
     if (pageRows.length === 0) {
@@ -308,8 +409,11 @@ export class AppleIMessageSource {
           emittedDayKeys,
         )),
       );
-      return {
+      return finishScopePage({
         documents,
+        ...(this.scopeObservation
+          ? { scopeUpdates: { conversations: [...this.scopeMembershipUpdates.values()] } }
+          : {}),
         deletedExternalIds: [],
         presentExternalIds,
         issues: this.transcriptionIssues(),
@@ -320,10 +424,18 @@ export class AppleIMessageSource {
           lastRowId: effectiveLastRowId,
           lastSnapshotSignature: snapshotSignature,
           lastDaySignatures: daySignatures,
+          ...(this.scopeObservation
+            ? {
+                scopeEpoch: this.scopeObservation.epoch,
+                scopeSequence: this.scopeObservation.sequence,
+                scopeRosterCursor: scopeRefresh.cursor,
+                scopeRosterComplete: scopeRefresh.complete,
+              }
+            : {}),
         } satisfies AppleIMessageSyncCursor,
-        hasMore: false,
+        hasMore: scopeRefresh.more,
         progress: imessageProgress(isBootstrap ? "bootstrap" : "incremental", 0),
-      };
+      });
     }
 
     const maxRowId = pageRows[pageRows.length - 1].rowId;
@@ -494,8 +606,11 @@ export class AppleIMessageSource {
       `Sync produced ${documents.length} docs from ${pageRows.length} messages (${isBootstrap ? "bootstrap" : "incremental"}, hasMore: ${hasMore}, snapshot: ${presentExternalIds?.length ?? "unchanged"})`,
     );
 
-    return {
+    return finishScopePage({
       documents,
+      ...(this.scopeObservation
+        ? { scopeUpdates: { conversations: [...this.scopeMembershipUpdates.values()] } }
+        : {}),
       deletedExternalIds: [], // iMessage hard-deletes rows; snapshot path catches them gateway-side
       presentExternalIds,
       issues: hasMore ? undefined : this.transcriptionIssues(),
@@ -504,6 +619,14 @@ export class AppleIMessageSource {
         cycleQueueTotal: hasMore ? totalMessages : undefined,
         lastSnapshotSignature: snapshotSignature,
         lastDaySignatures: daySignatures,
+        ...(this.scopeObservation
+          ? {
+              scopeEpoch: this.scopeObservation.epoch,
+              scopeSequence: this.scopeObservation.sequence,
+              scopeRosterCursor: scopeRefresh.cursor,
+              scopeRosterComplete: scopeRefresh.complete,
+            }
+          : {}),
       } satisfies AppleIMessageSyncCursor,
       hasMore,
       progress: imessageProgress(
@@ -511,6 +634,56 @@ export class AppleIMessageSource {
         parsed.length,
         totalMessages !== undefined && totalMessages > 0 ? totalMessages : undefined,
       ),
+    });
+  }
+
+  /** One bounded native roster page upgrades existing days without a content resync. */
+  private refreshScopeMembership(
+    db: Db,
+    state: AppleIMessageSyncCursor | null,
+  ): { cursor: string; complete: boolean; more: boolean } {
+    if (!this.scopeObservation)
+      return {
+        cursor: state?.scopeRosterCursor ?? "",
+        complete: state?.scopeRosterComplete ?? false,
+        more: false,
+      };
+    if (state?.scopeRosterComplete)
+      return { cursor: state.scopeRosterCursor ?? "", complete: true, more: false };
+    // Below the generic scope update wire page limit; independent from message pages.
+    const limit = 200;
+    const rows = db
+      .prepare<
+        [string, number],
+        { chatIdentifier: string; displayName: string | null; service: string | null }
+      >(
+        `SELECT chat_identifier AS chatIdentifier,MAX(display_name) AS displayName,MAX(service_name) AS service
+      FROM chat WHERE chat_identifier > ? GROUP BY chat_identifier ORDER BY chat_identifier LIMIT ?`,
+      )
+      .all(state?.scopeRosterCursor ?? "", limit + 1);
+    const page: typeof rows = [];
+    let work = 0;
+    const cache = new Map<string, string[]>();
+    for (const row of rows.slice(0, limit)) {
+      const handles = this.fetchChatRoster(db, row.chatIdentifier, cache);
+      const chat: IMessageChatInfo = {
+        chatIdentifier: row.chatIdentifier,
+        displayName: row.displayName,
+        isGroup: handles.length > 1,
+        service: row.service ?? "iMessage",
+        participantHandles: handles,
+      };
+      const update = imessageScopeMembership(chat, this.id, [], this.scopeObservation);
+      const cost = conversationScopeWork(update);
+      if (page.length > 0 && work + cost > SOURCE_SCOPE_PAGE_WORK) break;
+      page.push(row);
+      work += cost;
+      this.scopeMembershipUpdates.set(update.id, update);
+    }
+    return {
+      cursor: page.at(-1)?.chatIdentifier ?? state?.scopeRosterCursor ?? "",
+      complete: rows.length <= page.length,
+      more: rows.length > page.length,
     };
   }
 
@@ -689,9 +862,10 @@ export class AppleIMessageSource {
       displayName: row.chatDisplayName,
       isGroup,
       service: row.service ?? "iMessage",
-      participantHandles: isGroup
-        ? this.fetchChatRoster(db, row.chatIdentifier, rosterCache)
-        : undefined,
+      participantHandles:
+        isGroup || this.scopeObservation
+          ? this.fetchChatRoster(db, row.chatIdentifier, rosterCache)
+          : undefined,
     };
   }
 
@@ -730,6 +904,10 @@ export class AppleIMessageSource {
       this.id,
       this.isTranscriptionVocabularyEnabled?.() === true,
     );
+    if (this.scopeObservation) {
+      const snapshot = imessageScopeMembership(info, this.id, dayParsed, this.scopeObservation);
+      doc.metadata.extra = { ...doc.metadata.extra, scopeConversation: snapshot };
+    }
     const attachmentDocs = await this.extractAttachments(doc, dayParsed, attMap);
     return [doc, ...attachmentDocs];
   }

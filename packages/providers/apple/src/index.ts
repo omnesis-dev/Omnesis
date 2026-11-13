@@ -10,6 +10,7 @@ import {
   resolveAttachmentConfig,
 } from "@omnesis/core";
 import { defineProvider } from "@omnesis/source-sdk";
+import { scopeContracts } from "./scope-contracts.js";
 import { unavailableStorePage } from "./store-unavailable.js";
 import { throwOnOpenFailure } from "./db-helpers/internal.js";
 import { AppleProvider } from "./provider.js";
@@ -351,6 +352,7 @@ export default defineProvider<AppleContext>({
       id: "apple-imessage",
       name: "Apple iMessage",
       description: "Messages from iMessage",
+      scopes: scopeContracts["apple-imessage"],
       unitName: "messages",
       // Voice clips are transcribed inline into the conversation rather than
       // emitted as separate attachment child-docs. iMessage only — the other
@@ -400,7 +402,7 @@ export default defineProvider<AppleContext>({
         return {
           probeReadAccess,
           probeLocalStores,
-          sync: (cursor) => source.sync(cursor),
+          sync: (cursor, opts) => source.sync(cursor, opts),
           watchPaths: source.watchPaths,
           dispose: async () => source.dispose(),
         };

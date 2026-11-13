@@ -328,7 +328,7 @@ function LevelGroup({ level, levels, connections, overview, levelActions, connec
             <${ConnectionList} connections=${connections} label=${`Connections using ${level.name}`} actions=${connectionActions} />
           </${LevelSection}>`
         : devices.length === 0
-          ? html`<p class="access-level-empty">No connections use this access level yet.</p>`
+          ? html`<p class="access-level-empty">No connections</p>`
           : null}
       ${devices.length > 0
         ? html`<${LevelSection} title="Used by integrations" count=${devices.length}>

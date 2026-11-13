@@ -10,13 +10,14 @@ something on screen.
 
 ## What they cover
 
-| Journey          | What the test does                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pairing          | Starts unpaired, taps _Pair with your gateway_, gets past the camera (no camera on a simulator; the Android test declines the permission), pastes the QR payload the gateway minted, checks the confirmation names the gateway, confirms. It passes when phone setup shows _Connection verified_ and the gateway lists the new device, then skips setup and lands on the Ask screen.          |
-| Search           | Opens the menu, picks Search, types `Acme Q3 Planning` and waits for that document in the results.                                                                                                                                                                                                                                                                                            |
-| Open a document  | The search above, then a tap on the result; passes when the document's text (`Draft the migration plan by Friday`) is on screen.                                                                                                                                                                                                                                                              |
-| Ask the agent    | Types `Where was I on September 2?` on the Ask screen and sends it; passes when the answer names `Studio Northstar`.                                                                                                                                                                                                                                                                          |
-| Lose the network | Opens Settings and takes the network away, then brings it back. Android toggles airplane mode, so the system's network callback fires; a simulator shares its host's network, so iOS stops a local forwarder between app and gateway and returns to the app instead. Passes when the row reads as a temporary state without asking to pair again, then reads _Connected_ on the same pairing. |
+| Journey                | What the test does                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pairing                | Starts unpaired, taps _Pair with your gateway_, gets past the camera (no camera on a simulator; the Android test declines the permission), pastes the QR payload the gateway minted, checks the confirmation names the gateway, confirms. It passes when phone setup shows _Connection verified_ and the gateway lists the new device, then skips setup and lands on the Ask screen.          |
+| Search                 | Opens the menu, picks Search, types `Acme Q3 Planning` and waits for that document in the results.                                                                                                                                                                                                                                                                                            |
+| Open a document        | The search above, then a tap on the result; passes when the document's text (`Draft the migration plan by Friday`) is on screen.                                                                                                                                                                                                                                                              |
+| Ask the agent          | Types `Where was I on September 2?` on the Ask screen and sends it; passes when the answer names `Studio Northstar`.                                                                                                                                                                                                                                                                          |
+| Folder filtering (iOS) | Uses real swipes to load a second folder page, selects a folder, reopens at the retained visible region, types another query and checks its first result, then saves and verifies the exact selected reference through the paired owner API.                                                                                                                                                  |
+| Lose the network       | Opens Settings and takes the network away, then brings it back. Android toggles airplane mode, so the system's network callback fires; a simulator shares its host's network, so iOS stops a local forwarder between app and gateway and returns to the app instead. Passes when the row reads as a temporary state without asking to pair again, then reads _Connected_ on the same pairing. |
 
 The gateway serves the `e2e-minimal` universe (`evals/universes/e2e-minimal/`,
 see `docs/universes.md`), a corpus small enough for a hosted runner to embed in
@@ -25,6 +26,17 @@ The agent's answer is the `default` universe's recorded scenario
 `temporal-recall`, replayed by the gateway's replay backend, so no model runs.
 The only model involved is the embedding model the gateway needs to index the
 corpus for `POST /search`.
+
+The folder journey uses an invented parent with 65 child folders in the same
+universe. It checks the real provider catalogue returns 50 items followed by
+15, rather than supplying an oversized response. Source-filter authoring
+requires `OMNESIS_EXPERIMENTAL=1`, so the iOS script runs this journey in a
+phase of its own: after the main journeys it restarts its throwaway gateway on
+the corpus it already indexed with the gate on. The main journeys keep the
+gateway the environment asks for, and no running gateway or operator
+configuration changes. This is experimental filter-authoring coverage.
+The provided-bookmark snapshot checks rendered consumption of a saved
+position. The journey checks that real touch input records and restores it.
 
 Each journey is independent. Pairing starts from an app with no stored
 credentials. The others start paired with a device credential of their own:
@@ -82,6 +94,7 @@ any other gateway.
 ```bash
 scripts/run-mobile-journeys.sh ios
 OMNESIS_JOURNEY_ONLY=MobileJourneyUITests/testAskingTheAgentShowsItsAnswer scripts/run-mobile-journeys.sh ios
+OMNESIS_JOURNEY_ONLY=SourceFilterFolderGestureUITests/testRealFolderSwipesRetainPageTwoAndSelectedReference scripts/run-mobile-journeys.sh ios
 ```
 
 **Android** needs an emulator already running (the journeys reach the gateway
@@ -104,8 +117,9 @@ it with `OMNESIS_JOURNEY_EMULATOR_OPTIONS` and runs the same journeys again.
 Locally, restart your own AVD.
 After a failure, `/tmp/omnesis-mobile-journeys/artifacts/` holds a screen
 recording of the whole run, the failure screenshots (inside the `.xcresult`
-bundle and exported to `failure-attachments/` on iOS; `failure-screenshots/`
-on Android, with the Compose semantics tree in `logcat.txt` under the
+bundle and exported to `failure-attachments/` on iOS, where the recording, the
+bundle and the xcodebuild log are kept per phase, `stable` and `experimental`;
+`failure-screenshots/` on Android, with the Compose semantics tree in `logcat.txt` under the
 `OmnesisJourney` tag), the test reports and the gateway's logs.
 
 ## In CI
