@@ -444,63 +444,79 @@ test("a resync that cannot start says so and offers the button again", async () 
   expect(button("Resync Fictional account")).not.toBeNull();
 });
 
-test("fields waiting for the same resync share one block and one button, with no search for either", async () => {
-  const needs = (noun: string) => ({
-    status: "needs-resync",
-    cost: "This reads about 900 messages a day.",
-    text: `${noun} filters need Fictional to be resynced. Your rooms stay searchable meanwhile. This reads about 900 messages a day.`,
-  });
+test("the account's resync is one block with the gateway's sentence and one button, and no search for the fields it covers", async () => {
+  const needs = (text: string) => ({ status: "needs-resync", cost: null, text });
   api.getSourceFilterEditor.mockResolvedValue(
-    editorWith([
-      { ...peopleField, state: needs("People") },
-      { ...roomField, state: needs("Room") },
-      folderField,
-    ]),
+    editorWith(
+      [
+        { ...peopleField, state: needs("People filters need Fictional to be resynced.") },
+        { ...roomField, state: needs("Room filters need Fictional to be resynced.") },
+        folderField,
+      ],
+      {
+        resync: {
+          state: "needs-resync",
+          fields: ["extra.roomId", "$people"],
+          text: "Room and people filters need Fictional to be resynced. Your rooms stay searchable meanwhile.",
+        },
+      },
+    ),
   );
   await mount();
   const blocks = [...host.querySelectorAll<HTMLElement>(".source-filter-field-state")];
-  expect(blocks.map((block) => block.getAttribute("aria-label"))).toEqual(["People and rooms"]);
+  expect(blocks.map((block) => block.getAttribute("aria-label"))).toEqual(["Rooms and people"]);
   expect(blocks[0]!.querySelector(".source-filter-state p")?.textContent).toBe(
-    "People and room filters need Fictional to be resynced. Your rooms stay searchable meanwhile. This reads about 900 messages a day.",
+    "Room and people filters need Fictional to be resynced. Your rooms stay searchable meanwhile.",
   );
-  expect(blocks[0]!.querySelectorAll("button")).toHaveLength(1);
+  expect([...blocks[0]!.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+    "Resync Fictional account",
+  ]);
   expect(searchOf("people")).toBeNull();
   expect(searchOf("rooms")).toBeNull();
   expect(host.querySelector(".source-filter-typed")).toBeNull();
   expect(searchOf("folders")).not.toBeNull();
 });
 
-test("a resync in progress is one block for the account; fields in other states keep their own", async () => {
-  const resyncing = { status: "resyncing", processed: 212, total: 900, text: "Resyncing Fictional: 212 of about 900." };
+test("a running resync is one progress block; a field it does not cover keeps its own block", async () => {
   const pending = { status: "list-pending", text: "Waiting for Fictional to send its list of folders." };
   api.getSourceFilterEditor.mockResolvedValue(
-    editorWith([
-      { ...roomField, state: resyncing },
-      { ...peopleField, state: resyncing },
-      { ...folderField, state: pending },
-    ]),
+    editorWith(
+      [roomField, peopleField, { ...folderField, state: pending }],
+      {
+        resync: {
+          state: "resyncing",
+          fields: ["extra.roomId", "$people"],
+          processed: 212,
+          total: 900,
+          text: "Resyncing Fictional: 212 of about 900.",
+        },
+      },
+    ),
   );
   await mount();
   const blocks = [...host.querySelectorAll<HTMLElement>(".source-filter-field-state")];
   expect(blocks.map((block) => block.getAttribute("aria-label"))).toEqual(["Rooms and people", "Folders"]);
-  expect(blocks[0]!.querySelectorAll("progress")).toHaveLength(1);
   expect(blocks[0]!.querySelector("p")?.textContent).toBe("Resyncing Fictional: 212 of about 900.");
+  const bar = blocks[0]!.querySelector("progress")!;
+  expect([bar.getAttribute("value"), bar.getAttribute("max")]).toEqual(["212", "900"]);
   expect(blocks[1]!.textContent).toContain("Waiting for Fictional to send its list of folders.");
+  expect(host.querySelectorAll(".filter-builder-searches input[type=search]")).toHaveLength(0);
 });
 
-test("sentences that do not open the gateway's usual way are shown one after another", async () => {
-  // @ts-expect-error — portal modules are plain JavaScript.
-  const { sharedResyncText } = await import("./source-filter-fields.js");
-  expect(
-    sharedResyncText([
-      { state: { text: "Label filters need Fictional to be resynced. It reads about 900 a day." } },
-      { state: { text: "People filters need Fictional to be resynced. It reads about 900 a day." } },
-      { state: { text: "Folder filters need Fictional to be resynced. It reads about 900 a day." } },
+test("a gateway that sends no account resync gives each waiting field its own block", async () => {
+  const needs = (text: string) => ({ status: "needs-resync", cost: null, text });
+  api.getSourceFilterEditor.mockResolvedValue(
+    editorWith([
+      { ...peopleField, state: needs("People filters need Fictional to be resynced.") },
+      { ...roomField, state: needs("Room filters need Fictional to be resynced.") },
     ]),
-  ).toBe("Label, people and folder filters need Fictional to be resynced. It reads about 900 a day.");
-  expect(sharedResyncText([{ state: { text: "Resync first." } }, { state: { text: "Then again." } }])).toBe(
-    "Resync first. Then again.",
   );
+  await mount();
+  const blocks = [...host.querySelectorAll<HTMLElement>(".source-filter-field-state")];
+  expect(blocks.map((block) => block.querySelector(".source-filter-state p")?.textContent)).toEqual([
+    "People filters need Fictional to be resynced.",
+    "Room filters need Fictional to be resynced.",
+  ]);
 });
 
 test("an editor that cannot be loaded says so, keeps the saved entries and can be asked again", async () => {

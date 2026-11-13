@@ -76,12 +76,15 @@ export function SourceFilterEditor({
       : null,
   );
   const error = mode === "all" ? null : filterDraftError(draft);
-  const ready = (editor?.fields ?? []).filter(fieldReady);
-  const waiting = (editor?.fields ?? []).filter((field) => !fieldReady(field));
+  const waiting = waitingFieldGroups(editor);
+  const covered = new Set(waiting.flatMap((group) => group.fields.map((field) => field.field)));
+  const ready = (editor?.fields ?? []).filter(
+    (field) => fieldReady(field) && !covered.has(field.field),
+  );
   const identifiers = ready.find((field) => field.capability === "person")?.identifiers ?? [];
   // A resync the owner started shows as starting until the gateway reports it.
   useEffect(() => {
-    if (resync.starting && !waiting.some((field) => field.state?.status === "needs-resync"))
+    if (resync.starting && !waiting.some((group) => group.state.status === "needs-resync"))
       setResync({ starting: false, error: "" });
   }, [editor]);
   const startResync = async () => {
@@ -201,13 +204,13 @@ export function SourceFilterEditor({
                           : null
                       }
                       ${identifiers.length ? html`<${ExactIdentifierInput} types=${identifiers} selected=${selected} onToggle=${toggle} />` : null}
-                      ${waitingFieldGroups(editor?.fields).map(
+                      ${waiting.map(
                         (group) =>
                           html`<section class="source-filter-field-state" key=${group.key} aria-label=${group.name}>
                             <strong>${group.name}</strong>
                             <${FilterFieldState}
                               source=${source}
-                              fields=${group.fields}
+                              state=${group.state}
                               starting=${resync.starting}
                               error=${resync.error}
                               onResync=${startResync}
