@@ -39,12 +39,11 @@ import {
   type CompiledFilter,
   type FieldDetail,
 } from "./filter-sql.js";
+import { SOURCE_FILTER_MAX_ENTRIES, sourceFilterEntryCount } from "./scope-policy.js";
 import type { Db } from "../data/types.js";
 
 /** Entries on one page. */
 export const FILTER_OPTIONS_PAGE = 50;
-/** Entries or identifiers one filter may hold. */
-export const FILTER_MAX_ENTRIES = 256;
 
 export type FilterEditorResult<T> =
   | { ok: true; value: T }
@@ -497,10 +496,10 @@ export function filterPersonIdentifiers(
        )
        SELECT DISTINCT a.alias_type, a.alias FROM person_aliases a JOIN members m ON m.id = a.person_id
         WHERE a.alias_type IN (SELECT value FROM json_each(?))
-        ORDER BY a.alias_type, a.alias LIMIT ${FILTER_MAX_ENTRIES + 1}`,
+        ORDER BY a.alias_type, a.alias LIMIT ${SOURCE_FILTER_MAX_ENTRIES + 1}`,
     )
     .all(personId, JSON.stringify(kinds.filter((kind) => kind === "email" || kind === "phone")));
-  if (rows.length > FILTER_MAX_ENTRIES) return null;
+  if (rows.length > SOURCE_FILTER_MAX_ENTRIES) return null;
   const found = new Map<string, FilterIdentifier>();
   for (const row of rows) {
     const type = row.alias_type === "email" ? "email" : "phone";
@@ -569,13 +568,6 @@ function personOptions(
 
 // ── Preview ─────────────────────────────────────────────────────────────────
 
-function entryCount(filter: SourceFilter): number {
-  return (filter.rules?.[0]?.match ?? []).reduce(
-    (total, ref) => total + (ref.capability === "person" ? ref.identifiers.length : 1),
-    0,
-  );
-}
-
 /**
  * What a draft filter would do to an account: how many records it leaves
  * readable, how many it hides and why, and what each entry matches. Counted
@@ -592,7 +584,10 @@ export function readFilterPreview(
     if (!fields) return { ok: false, error: "source-not-found" };
     let compiled: CompiledFilter;
     try {
-      if (filter.sourceId !== sourceId || entryCount(filter) > FILTER_MAX_ENTRIES) {
+      if (
+        filter.sourceId !== sourceId ||
+        sourceFilterEntryCount([filter]) > SOURCE_FILTER_MAX_ENTRIES
+      ) {
         return { ok: false, error: "invalid-filter" };
       }
       compiled = compileSourceFilter(filter, fields);
