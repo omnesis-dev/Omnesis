@@ -38,18 +38,44 @@ retry_seconds="${NPM_CI_RETRY_SECONDS:-10}"
 logs="$(mktemp -d)"
 trap 'rm -rf "$logs"' EXIT
 
-dropped_packages() {
+# Optional packages a host may lack by design. smart-whisper ships no prebuilt
+# binary: its install script compiles whisper.cpp against the Node headers this
+# script points node-gyp at and downloads nothing, so a host whose compiler
+# rejects the source (GCC 14 and later do: #891) fails the same way on every
+# attempt, and the gateway then runs without local transcription
+# (docs/releasing.md). Anywhere but a build that requires its optional
+# packages, losing one of these, together with the packages nested under it, is
+# reported and never retried. Several names are separated by `|`.
+may_lack="smart-whisper"
+
+# The install path of every package npm dropped, one per line.
+dropped_paths() {
   cat "$logs"/*.log 2>/dev/null |
-    sed -n 's|.* failed optional dependency .*node_modules/||p' |
+    sed -n 's|.* failed optional dependency ||p' |
+    LC_ALL=C sort -u
+}
+
+# The package names among the paths on stdin, on one line.
+names() {
+  sed -n 's|.*node_modules/||p' |
     LC_ALL=C sort -u |
     tr '\n' ' ' |
     sed 's/ $//'
 }
 
+lacking_by_design="/node_modules/($may_lack)(/|\$)"
+lacking=
+
 while :; do
   rm -f "$logs"/*
   if npm ci --logs-dir "$logs" "$@"; then
-    dropped="$(dropped_packages)"
+    paths="$(dropped_paths)"
+    if [ "${NPM_CI_REQUIRE_OPTIONAL:-0}" = 1 ]; then
+      dropped="$(printf '%s\n' "$paths" | names)"
+    else
+      dropped="$(printf '%s\n' "$paths" | grep -Ev "$lacking_by_design" | names)"
+      lacking="$(printf '%s\n' "$paths" | grep -oE "$lacking_by_design" | sed 's|/$||' | names)"
+    fi
     [ -z "$dropped" ] && break
     problem="npm ci dropped optional packages that failed to install: $dropped"
     if [ "$attempt" -ge "$max_attempts" ]; then
@@ -76,3 +102,7 @@ while :; do
   sleep "$((attempt * retry_seconds))"
   attempt=$((attempt + 1))
 done
+
+if [ -n "$lacking" ]; then
+  echo "::notice::npm ci could not build $lacking on this host; this tree runs without it" >&2
+fi
