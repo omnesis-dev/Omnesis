@@ -27,7 +27,12 @@
 
 import { createLogger, resolveAttachmentConfig } from "@omnesis/core";
 import { loadActiveUniverse, loadSourceFixtureJson } from "@omnesis/providers-synth-common";
-import { WhatsAppProvider, WhatsAppMessagesSource } from "@omnesis/provider-whatsapp";
+import {
+  WhatsAppProvider,
+  WhatsAppMessagesSource,
+  whatsappFilterLists,
+} from "@omnesis/provider-whatsapp";
+import { withFilterLists } from "@omnesis/source-sdk";
 import { FakeWhatsAppServer } from "@omnesis/provider-whatsapp/testing";
 import type { FakeCorpus, PushHistoryOptions } from "@omnesis/provider-whatsapp/testing";
 import type { CreateOptions, SourceInstance } from "@omnesis/source-sdk";
@@ -240,14 +245,17 @@ export async function createWrapsRealWhatsApp(opts: CreateOptions): Promise<Sour
   };
   controllers.set(String(sourceId), controller);
 
-  return {
-    sync: (cursor, opts) => source.sync(cursor, opts),
-    onPushEvent: (cb: () => void) => source.onPushEvent(cb),
-    onSourceError: (cb: (error: string) => void) => source.onSourceError(cb),
-    onResync: () => source.onResync(),
-    async dispose() {
-      controllers.delete(String(sourceId));
-      await provider.disconnect();
+  return withFilterLists<SourceInstance>(
+    {
+      sync: (cursor, opts) => source.sync(cursor, opts),
+      onPushEvent: (cb: () => void) => source.onPushEvent(cb),
+      onSourceError: (cb: (error: string) => void) => source.onSourceError(cb),
+      onResync: () => source.onResync(),
+      async dispose() {
+        controllers.delete(String(sourceId));
+        await provider.disconnect();
+      },
     },
-  };
+    whatsappFilterLists(provider.getStore(), source.id),
+  );
 }

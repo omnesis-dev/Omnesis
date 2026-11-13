@@ -1,0 +1,33 @@
+{
+  "self": "p_self",
+  "people": [
+    {
+      "id": "p_self",
+      "name": "Sam Rivera",
+      "emails": ["sam.rivera@icloud.example"],
+      "phones": ["+12025550101"]
+    },
+    {
+      "id": "p_maya",
+      "name": "Maya Reeves",
+      "emails": ["maya.reeves@example.com"],
+      "phones": ["+12025550123"]
+    },
+    {
+      "id": "p_jamie",
+      "name": "Jamie Lopez",
+      "phones": ["+12025550142"]
+    },
+    {
+      "id": "p_david",
+      "name": "David Lin",
+      "emails": ["david.lin@example.org"],
+      "phones": ["+12025550177"]
+    },
+    {
+      "id": "p_offers",
+      "name": "Northstar Offers"
+    }
+  ],
+  "orgs": []
+}

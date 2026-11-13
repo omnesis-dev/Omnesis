@@ -270,6 +270,31 @@ describe("AppleIMessageSource", () => {
     expect(source.providerId).toBe(ProviderId("apple:test@icloud.com"));
   });
 
+  test("a sync from an empty cursor sends every day again, each with its chat", async () => {
+    insertMessage(testDb, 1, 1, { text: "First", handleId: 1, date: DATE_2024_03_08_10AM });
+    insertMessage(testDb, 2, 2, { text: "Second", handleId: 2, date: DATE_2024_03_08_11AM });
+    insertMessage(testDb, 3, 2, { text: "Third", handleId: 1, date: DATE_2024_03_09_10AM });
+
+    const first = await source.sync(null);
+    const settled = await source.sync(first.cursor);
+    expect(settled.documents).toHaveLength(0);
+
+    // What a resync does: the same source is read again with no cursor.
+    const again = await source.sync(null);
+
+    const days = (result: typeof first) =>
+      result.documents
+        .map((doc) => [doc.externalId, doc.metadata.extra?.chatIdentifier])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    expect(days(again)).toEqual([
+      ["+14085550123:2024-03-08", "+14085550123"],
+      ["chat-group-1:2024-03-08", "chat-group-1"],
+      ["chat-group-1:2024-03-09", "chat-group-1"],
+    ]);
+    expect(days(again)).toEqual(days(first));
+    expect(again.hasMore).toBe(false);
+  });
+
   test("returns empty result when no messages", async () => {
     const result = await source.sync(null);
     expect(result.documents).toHaveLength(0);
