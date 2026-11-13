@@ -22,7 +22,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|value| value.to_string())
             .unwrap_or_else(|_| request.language.clone());
         let stemmer = Stemmer::try_from_name(&request.language)
-            .or_else(|_| Stemmer::try_from_name(language.split('-').next().unwrap_or("und")))
+            .or_else(|_| {
+                Stemmer::try_from_name(match language.split('-').next().unwrap_or("und") {
+                    "nb" | "nn" => "norwegian",
+                    other => other,
+                })
+            })
             .ok();
         let stem = stemmer
             .as_ref()

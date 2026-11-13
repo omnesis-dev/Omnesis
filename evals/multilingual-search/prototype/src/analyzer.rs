@@ -161,7 +161,11 @@ pub fn analyze(text: &str, config: &Config, prefix_last: bool) -> Result<Analysi
             let stemmer = if config.mode == Mode::Stem
                 && !(prefix_last && index == last && surface_index == last_surface)
             {
-                Stemmer::try_from_name(language).ok()
+                Stemmer::try_from_name(match language {
+                    "nb" | "nn" => "norwegian",
+                    other => other,
+                })
+                .ok()
             } else {
                 None
             };
@@ -459,5 +463,14 @@ mod tests {
         let latin = analyze("cafe\u{301}", &config("fr", Mode::Exact), false).unwrap();
         assert_eq!(latin.tokens[0].text, "café");
         assert_eq!(latin.tokens[0].end, 6);
+    }
+
+    #[test]
+    fn norwegian_locale_codes_select_the_supported_algorithm() {
+        for language in ["nb", "nn", "no", "nob"] {
+            let value = analyze("bilene", &config(language, Mode::Stem), false).unwrap();
+            assert_eq!(value.tokens[0].algorithm.as_deref(), Some("norwegian"));
+            assert_eq!(value.tokens[0].text, "bil");
+        }
     }
 }
